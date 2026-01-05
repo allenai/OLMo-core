@@ -556,6 +556,7 @@ class Attention(AttentionBase):
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
             Required together with ``max_doc_len`` when using intra-document masking.
+            For Ulysses CP, this should be the full unsharded document lengths.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
 
@@ -665,6 +666,8 @@ class Attention(AttentionBase):
                 )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
+        # Note: For Ulysses CP, cu_doc_lens should already be the full unsharded
+        # document lengths (set by the transformer model).
         att = self.sdpa(
             q,
             k,

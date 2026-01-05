@@ -28,7 +28,8 @@ class FLA(nn.Module):
         cu_doc_lens: Optional[torch.Tensor] = None,
         **_kwargs,
     ) -> torch.Tensor:
-        # FIXME: Right now we just ignore the kwargs.
+        # Note: For Ulysses CP, cu_doc_lens should already be the full unsharded
+        # document lengths (set by the transformer model).
         if self.kv_cache_manager is not None and self.kv_cache_manager.current_position() == 0:
             raise NotImplementedError()  # prefill
         elif self.kv_cache_manager is not None:

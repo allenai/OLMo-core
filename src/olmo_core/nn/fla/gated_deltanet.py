@@ -284,8 +284,19 @@ class GatedDeltaNet(nn.Module):
         if self.cp_enabled:
             if batch_size != 1:
                 raise AssertionError("Context parallelism only supports batch_size == 1")
-            if cu_seqlens is None:
-                total_len = q_len * dist.get_world_size(self._cp_group)
+            # For Ulysses CP, the kernel runs on the full gathered sequence after all-to-all.
+            # cu_seqlens must reflect the full sequence, not the sharded local sequence.
+            total_len = q_len * dist.get_world_size(self._cp_group)
+            if cu_seqlens is not None:
+                # cu_seqlens was provided (this is the full unsharded cu_doc_lens from the model)
+                # Validate that it covers the full sequence length
+                if int(cu_seqlens[-1]) != total_len:
+                    raise RuntimeError(
+                        f"cu_seqlens[-1]={int(cu_seqlens[-1])} does not match expected full sequence "
+                        f"length {total_len} for Ulysses CP. Make sure cu_doc_lens_full is passed."
+                    )
+            else:
+                # No cu_seqlens provided, create synthetic one for the full sequence
                 cu_seqlens = torch.tensor(
                     [0, total_len],
                     dtype=torch.int32,
@@ -387,6 +398,31 @@ class GatedDeltaNet(nn.Module):
                     f"NaN in GatedDeltaNet QKV after all-to-all! "
                     f"q.shape={q.shape}, k.shape={k.shape}, v.shape={v.shape}"
                 )
+            # DEBUG: Check g and beta for NaN/Inf
+            if torch.isnan(g).any() or torch.isnan(beta).any():
+                raise RuntimeError(
+                    f"NaN in GatedDeltaNet g or beta! "
+                    f"g_nan={torch.isnan(g).sum()}, beta_nan={torch.isnan(beta).sum()}"
+                )
+            if torch.isinf(g).any() or torch.isinf(beta).any():
+                raise RuntimeError(
+                    f"Inf in GatedDeltaNet g or beta! "
+                    f"g_inf={torch.isinf(g).sum()}, beta_inf={torch.isinf(beta).sum()}"
+                )
+
+            # DEBUG: Print value ranges going into chunk_gated_delta_rule
+            import logging
+
+            _log = logging.getLogger(__name__)
+            _log.warning(
+                f"[DEBUG chunk_gated_delta_rule inputs] "
+                f"q: min={q.min().item():.4f}, max={q.max().item():.4f}, shape={q.shape} | "
+                f"k: min={k.min().item():.4f}, max={k.max().item():.4f} | "
+                f"v: min={v.min().item():.4f}, max={v.max().item():.4f} | "
+                f"g: min={g.min().item():.4f}, max={g.max().item():.4f} | "
+                f"beta: min={beta.min().item():.4f}, max={beta.max().item():.4f} | "
+                f"cu_seqlens={cu_seqlens}"
+            )
 
             o, recurrent_state = chunk_gated_delta_rule(
                 q=q,
@@ -403,7 +439,8 @@ class GatedDeltaNet(nn.Module):
             # DEBUG: Check for NaN after chunk_gated_delta_rule
             if torch.isnan(o).any():
                 raise RuntimeError(
-                    f"NaN in GatedDeltaNet after chunk_gated_delta_rule! o.shape={o.shape}"
+                    f"NaN in GatedDeltaNet after chunk_gated_delta_rule! o.shape={o.shape}, "
+                    f"cu_seqlens={cu_seqlens}, num_heads_local={q.shape[2]}"
                 )
 
             # Transform back from head-parallel to context-parallel partitioning
