@@ -219,7 +219,6 @@ class FLA(nn.Module):
     def init_kv_cache_manager(self, batch_size: int):
         raise NotImplementedError()
 
-    @torch._dynamo.disable()
     def forward(
         self,
         x: torch.Tensor,
