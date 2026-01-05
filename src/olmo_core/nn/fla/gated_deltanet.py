@@ -751,6 +751,16 @@ class ShortConvolution(nn.Conv1d):
         # Rearrange weight and ensure contiguous for Triton kernel
         weight = rearrange(weight, "d 1 w -> d w").contiguous()
 
+        # Debug: verify shapes match
+        expected_channels = weight.shape[0]
+        actual_channels = x.shape[-1]
+        assert expected_channels == actual_channels, (
+            f"Channel mismatch in ShortConvolution: weight has {expected_channels} channels, "
+            f"input has {actual_channels} channels. "
+            f"hidden_size={self.hidden_size}, cp_enabled={self.cp_enabled}, "
+            f"cp_range=[{getattr(self, '_cp_channel_start', None)}:{getattr(self, '_cp_channel_end', None)}]"
+        )
+
         return causal_conv1d(
             x=x.contiguous(),
             weight=weight,
