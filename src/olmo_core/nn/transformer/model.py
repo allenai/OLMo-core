@@ -207,6 +207,10 @@ class Transformer(nn.Module):
             device = self.device
         rope_buffers = {}
         for key, block in self.blocks.items():
+            # FLA blocks don't have attention/RoPE, skip them
+            if not hasattr(block, "attention"):
+                rope_buffers[int(key)] = None
+                continue
             rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)  # type: ignore
             rope_buffers[int(key)] = None if rope is None else rope.get_buffers(seq_len, device)
         return rope_buffers
