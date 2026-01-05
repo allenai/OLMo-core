@@ -468,6 +468,17 @@ class GatedDeltaNet(nn.Module):
             raise NotImplementedError("Ring context parallelism is not supported for GatedDeltaNet")
         if uly is None:
             raise ValueError("Ulysses context parallelism is required for GatedDeltaNet CP")
+
+        # Ulysses CP requires the effective head count to be divisible by CP world size.
+        # The effective head count is num_v_heads (since q, k are expanded to match v's head count).
+        cp_world_size = cp_mesh.size()
+        if self.num_v_heads % cp_world_size != 0:
+            raise ValueError(
+                f"Ulysses context parallelism requires num_v_heads ({self.num_v_heads}) "
+                f"to be divisible by CP world size ({cp_world_size}). "
+                f"Consider adjusting num_v_heads or CP degree."
+            )
+
         self.uly = uly
 
         group = cp_mesh.get_group()
