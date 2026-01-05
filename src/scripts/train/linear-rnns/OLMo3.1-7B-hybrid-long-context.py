@@ -162,14 +162,6 @@ def build_data_components(
         seed=34521,
         num_workers=16,
         prefetch_factor=8,
-        skip_batches=[
-            966,
-            967,
-            968,
-            969,
-            970,
-            971,
-        ],  # Something in this batch causes invalid arguments to FLA triton kernel
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
