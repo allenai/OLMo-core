@@ -18,7 +18,6 @@ from olmo_core.internal.experiment import (
 )
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.fla.layer import FLAConfig
-from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
@@ -90,7 +89,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
 
     # Save memory by using fused linear loss implementation.
-    config.lm_head.loss_implementation = LMLossImplementation.fused_linear
+    # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     return config.with_rope_scaling(
         # Yarn scaling for full attention layers only
