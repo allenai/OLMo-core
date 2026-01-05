@@ -1082,14 +1082,14 @@ def test_ulysses_load_balancer_shard_by_document():
     )
     assert res0[0].tolist() == [[0, 1, 2, 3, 4, 5]]
     # Full sequences are reconstructed via all-to-all, so we pass through the original document lengths
-    assert opts0["cu_doc_lens"].tolist() == cu_doc_lens
+    assert opts0["cu_doc_lens"].tolist() == cu_doc_lens.tolist()
 
     res1, opts1 = _get_ulysses_lb(1, 2).batch_shard_by_document(
         inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
     )
     assert res1[0].tolist() == [[6, 7, 8, 9, 10, 11]]
     # Full sequences are reconstructed via all-to-all, so we pass through the original document lengths
-    assert opts1["cu_doc_lens"].tolist() == cu_doc_lens
+    assert opts1["cu_doc_lens"].tolist() == cu_doc_lens.tolist()
 
 
 @pytest.mark.parametrize(
