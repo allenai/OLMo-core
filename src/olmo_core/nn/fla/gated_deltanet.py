@@ -675,7 +675,7 @@ class ShortConvolution(nn.Conv1d):
             f"cp_range=[{getattr(self, '_cp_channel_start', None)}:{getattr(self, '_cp_channel_end', None)}]"
         )
 
-        return causal_conv1d(
+        return _causal_conv1d(
             x=x,
             weight=weight,
             bias=bias,
@@ -775,3 +775,32 @@ class ShortConvolution(nn.Conv1d):
         local_channels = self.hidden_size // self._cp_world_size
         self._cp_channel_start = self._cp_rank * local_channels
         self._cp_channel_end = self._cp_channel_start + local_channels
+
+
+@torch._dynamo.disable()
+def _causal_conv1d(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+    residual: torch.Tensor | None,
+    initial_state: torch.Tensor | None,
+    output_final_state: bool,
+    activation: str | None,
+    backend: str | None,
+    cu_seqlens: torch.LongTensor | None,
+    chunk_indices: torch.LongTensor | None,
+    **kwargs: Unpack[dict],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    return causal_conv1d(
+        x=x,
+        weight=weight,
+        bias=bias,
+        residual=residual,
+        initial_state=initial_state,
+        output_final_state=output_final_state,
+        activation=activation,
+        backend=backend,
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+        **kwargs,
+    )
