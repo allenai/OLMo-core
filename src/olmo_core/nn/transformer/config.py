@@ -783,7 +783,7 @@ class TransformerConfig(Config):
             vocab_size=vocab_size,
             dropless=dropless,
             capacity_factor=None if dropless else 1.2,  # adjust as needed
-            # lb_loss_weight=kwargs.pop("lb_loss_weight", 0.01),
+            lb_loss_weight=kwargs.pop("lb_loss_weight", 0.01),
             z_loss_weight=kwargs.pop("z_loss_weight", 0.001),
             reordered_norm=kwargs.pop("reordered_norm", True),
             qk_norm=kwargs.pop("qk_norm", True),
