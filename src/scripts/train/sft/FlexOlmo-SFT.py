@@ -369,6 +369,24 @@ class SFTRouterConfig(Config):
                     # "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
+        elif model_name == "olmoe-2x7b-expert-bias":
+            # MoE model configuration for router SFT
+            model = TransformerConfig.olmoe_nx7b_with_expert_bias(  # Use MoE configuration
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=2,
+                top_k=2,  # Override default of 1
+                lb_loss_weight=0.0,
+                z_loss_weight=0.001,
+                use_flash=True,
+                # freeze_params=[],  # Don't freeze anything initially - we'll do it manually
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    # "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
+                ],
+            )
         elif model_name == "olmoe-3x7b":
             # MoE model configuration for router SFT
             model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
