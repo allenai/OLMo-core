@@ -568,6 +568,9 @@ class FlashAttention2Backend(AttentionBackend):
                 # (same on all CP ranks), so we use them directly after gathering the full sequence.
                 # This is the default state of cu_doc_lens and max_doc_len before a load balancer is applied.
 
+                # Save shape info for restoring after attention
+                B, T, H_local, D = q.shape
+
                 # Run attention with full sequence, partitioned heads
                 out = dispatch_flash_attn(
                     q,
@@ -584,6 +587,10 @@ class FlashAttention2Backend(AttentionBackend):
                     softmax_scale=self.scale,
                     window_size=self.window_size,
                 )
+
+                # Restore 4D shape if varlen flash attention returned 3D
+                if out.dim() == 3:
+                    out = out.view(B, T, H_local, D)
 
                 # Transform back from head-parallel to context-parallel partitioning
                 # [B, T, H/CP, D] -> [B, T/CP, H, D]
