@@ -12,7 +12,7 @@
 # * Your (Beaker) username.
 # * All other args are passed to torchrun.
 srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
-    ./src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid-long-context.py train OLMo3.1-7B-6T-30h-long-context lambda \
+    ./src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid-long-context.py train OLMo3.1-7B-6T-30h-soup-long-context lambda \
     --launch=null \
     --dataset.mix_base_dir="gs://ai2-llm/" \
     --model.block.attention.backend=flash_2 \
