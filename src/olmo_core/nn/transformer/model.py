@@ -463,13 +463,6 @@ class Transformer(nn.Module):
                                 rope_buffers.freqs_cis, self.device
                             )
 
-                # For Ulysses CP with intra-document masking, both attention and FLA layers
-                # need the original unsharded cu_doc_lens since kernels run on the full
-                # gathered sequence after all-to-all. Overwrite the sharded values.
-                if cu_doc_lens is not None:
-                    all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
-                    all_block_kwargs["max_doc_len"] = max_doc_len
-
             input_ids = all_block_kwargs.pop("input_ids")
             labels = all_block_kwargs.pop("labels", None)
         else:
