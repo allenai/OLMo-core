@@ -160,8 +160,16 @@ def build_data_components(
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=common.global_batch_size,
         seed=34521,
-        num_workers=8,
-        skip_batches=[968],  # Something in this batch causes invalid arguments to FLA triton kernel
+        num_workers=16,
+        prefetch_factor=8,
+        skip_batches=[
+            966,
+            967,
+            968,
+            969,
+            970,
+            971,
+        ],  # Something in this batch causes invalid arguments to FLA triton kernel
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
