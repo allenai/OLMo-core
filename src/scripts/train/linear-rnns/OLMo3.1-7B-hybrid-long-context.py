@@ -173,7 +173,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             load_trainer_state=False,
             load_optim_state=True,
             # !!! TODO: update this to the final midtrain checkpoint
-            load_path=f"{common.root_dir}/checkpoints/willm/linear-rnns/OLMo3.1-7B-hybrid-midtraining/step21634/",
+            load_path=f"{common.root_dir}/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-midtrain-deux/step23842/",
             save_folder=f"{common.root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
