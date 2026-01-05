@@ -357,7 +357,7 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
-        # Shard inputs and RoPE buffers on sequence dimension if using ring context parallelism.
+        # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
             inputs = [input_ids]
             seq_dims = [1]
@@ -367,6 +367,7 @@ class Transformer(nn.Module):
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
             for block_idx, rope_buffers in self.get_rope_buffers(S, torch.device("cpu")).items():
                 if rope_buffers is not None:
+                    # Also shard RoPE buffers based on the context parallelism load balancer.
                     if rope_buffers.pos_sin is not None:
                         inputs.append(rope_buffers.pos_sin)
                         seq_dims.append(0)
@@ -607,6 +608,8 @@ class Transformer(nn.Module):
         """
         if ring is not None:
             self._cp_load_balancer = ring.load_balancer.build(cp_mesh)
+        elif uly is not None:
+            self._cp_load_balancer = uly.load_balancer.build(cp_mesh)
 
         for block in self.blocks.values():
             cast(TransformerBlockBase, block).apply_cp(cp_mesh, ring=ring, uly=uly)

@@ -25,6 +25,11 @@ class RingAttentionLoadBalancerType(StrEnum):
     ➡️ :class:`RingAttentionLlama3LoadBalancer`
     """
 
+    ulysses = "ulysses"
+    """
+    ➡️ :class:`UlyssesLoadBalancer`
+    """
+
     def build(self, cp_mesh: DeviceMesh) -> "RingAttentionLoadBalancer":
         """
         Build the load balancer.
@@ -36,6 +41,8 @@ class RingAttentionLoadBalancerType(StrEnum):
             return RingAttentionZigZagLoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
         elif self == self.llama3:
             return RingAttentionLlama3LoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
+        elif self == self.ulysses:
+            return UlyssesLoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
         else:
             raise NotImplementedError(self)
 

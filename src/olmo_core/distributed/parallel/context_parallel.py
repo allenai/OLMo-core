@@ -92,7 +92,9 @@ class UlyssesContextParallelStyle(Config):
     Configuration for Ulysses-style context parallelism.
     """
 
-    pass
+    @property
+    def load_balancer(self) -> "RingAttentionLoadBalancerType":
+        return RingAttentionLoadBalancerType.ulysses
 
 
 def _get_zig_zag_load_balancer():
