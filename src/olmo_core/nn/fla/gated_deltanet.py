@@ -852,7 +852,9 @@ class ShortConvolution(nn.Conv1d):
         # Store CP info for slicing in forward
         self._cp_mesh = cp_mesh
         self._cp_world_size = cp_mesh.size()
-        self._cp_rank = cp_mesh.get_rank()
+        # Use get_local_rank() to get rank within the CP group (0 to CP-1),
+        # not the global rank across all processes.
+        self._cp_rank = cp_mesh.get_local_rank()
         self.cp_enabled = True
 
         # Compute the local channel range
