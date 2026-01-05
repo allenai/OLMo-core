@@ -29,6 +29,7 @@ from olmo_core.nn.attention import (
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
 )
+from olmo_core.nn.attention.ring import UlyssesLoadBalancer
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
@@ -930,25 +931,27 @@ def test_no_global_rope_with_sliding_window(
         assert attn.rope is None
 
 
-def _get_lb(rank: int, world_size: int) -> RingAttentionZigZagLoadBalancer:
+def _get_zigzag_lb(rank: int, world_size: int) -> RingAttentionZigZagLoadBalancer:
     return RingAttentionZigZagLoadBalancer(cp_rank=rank, cp_world_size=world_size)
 
 
 def test_zig_zag_load_balancer_padding():
-    x, padding_added = _get_lb(0, 4).pad(torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0), 1, -1)
+    x, padding_added = _get_zigzag_lb(0, 4).pad(
+        torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0), 1, -1
+    )
     assert x.tolist() == [[0, 1, 2, 3, 4, 5, -1, -1]]
     assert padding_added == 2
 
 
 def test_zig_zag_load_balancer_shard():
     x = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7]).unsqueeze(0)
-    assert _get_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
+    assert _get_zigzag_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
         [
             0,
             7,
         ]
     ]
-    assert _get_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
+    assert _get_zigzag_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
         [
             3,
             4,
@@ -958,13 +961,17 @@ def test_zig_zag_load_balancer_shard():
 
 def test_zig_zag_load_balancer_shard_with_padding():
     x = torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0)
-    assert _get_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[0].tolist() == [
+    assert _get_zigzag_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [
         [
             0,
             -1,
         ]
     ]
-    assert _get_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[0].tolist() == [
+    assert _get_zigzag_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [
         [
             3,
             4,
@@ -976,9 +983,9 @@ def test_zig_zag_load_balancer_shard_by_document():
     x = torch.tensor(list(range(12))).unsqueeze(0)
     cu_doc_lens = torch.tensor([0, 8, 12])
 
-    assert _get_lb(0, 2).batch_shard_by_document(inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens)[
-        0
-    ][0].tolist() == [
+    assert _get_zigzag_lb(0, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )[0][0].tolist() == [
         [
             0,
             1,
@@ -989,9 +996,9 @@ def test_zig_zag_load_balancer_shard_by_document():
         ]
     ]
 
-    assert _get_lb(1, 2).batch_shard_by_document(inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens)[
-        0
-    ][0].tolist() == [
+    assert _get_zigzag_lb(1, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )[0][0].tolist() == [
         [
             2,
             3,
@@ -1007,7 +1014,7 @@ def test_zig_zag_load_balancer_shard_by_document_with_padding():
     x = torch.tensor(list(range(12))).unsqueeze(0)
     cu_doc_lens = torch.tensor([0, 7, 10])
 
-    res, opts = _get_lb(0, 2).batch_shard_by_document(
+    res, opts = _get_zigzag_lb(0, 2).batch_shard_by_document(
         inputs=[x],
         seq_dims=[1],
         cu_doc_lens=cu_doc_lens,
@@ -1025,6 +1032,64 @@ def test_zig_zag_load_balancer_shard_by_document_with_padding():
             -1,
         ]
     ]
+
+
+def _get_ulysses_lb(rank: int, world_size: int) -> UlyssesLoadBalancer:
+    return UlyssesLoadBalancer(cp_rank=rank, cp_world_size=world_size)
+
+
+def test_ulysses_load_balancer_padding():
+    x, padding_added = _get_ulysses_lb(0, 4).pad(
+        torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0), 1, -1
+    )
+    assert x.tolist() == [[0, 1, 2, 3, 4, 5, -1, -1]]
+    assert padding_added == 2
+
+
+def test_ulysses_load_balancer_shard():
+    x = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7]).unsqueeze(0)
+    # Ulysses uses contiguous sharding, so each rank gets a contiguous chunk
+    assert _get_ulysses_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[0, 1]]
+    assert _get_ulysses_lb(1, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[2, 3]]
+    assert _get_ulysses_lb(2, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[4, 5]]
+    assert _get_ulysses_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[6, 7]]
+
+
+def test_ulysses_load_balancer_shard_with_padding():
+    x = torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0)
+    # 6 tokens with CP=4 -> pads to 8 tokens, then each rank gets 2
+    assert _get_ulysses_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[0, 1]]
+    assert _get_ulysses_lb(1, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[2, 3]]
+    assert _get_ulysses_lb(2, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[4, 5]]
+    assert _get_ulysses_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[-1, -1]]
+
+
+def test_ulysses_load_balancer_shard_by_document():
+    x = torch.tensor(list(range(12))).unsqueeze(0)
+    cu_doc_lens = torch.tensor([0, 8, 12])
+
+    # Ulysses with CP=2: rank 0 gets tokens 0-5, rank 1 gets tokens 6-11
+    res0, opts0 = _get_ulysses_lb(0, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )
+    assert res0[0].tolist() == [[0, 1, 2, 3, 4, 5]]
+    # Full sequences are reconstructed via all-to-all, so we pass through the original document lengths
+    assert opts0["cu_doc_lens"].tolist() == cu_doc_lens
+
+    res1, opts1 = _get_ulysses_lb(1, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )
+    assert res1[0].tolist() == [[6, 7, 8, 9, 10, 11]]
+    # Full sequences are reconstructed via all-to-all, so we pass through the original document lengths
+    assert opts1["cu_doc_lens"].tolist() == cu_doc_lens
 
 
 @pytest.mark.parametrize(
