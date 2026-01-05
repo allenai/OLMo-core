@@ -365,6 +365,14 @@ class GatedDeltaNet(nn.Module):
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
         if self.cp_enabled and self.uly is not None:
             assert self._cp_group is not None
+
+            # DEBUG: Check for NaN before all-to-all in GatedDeltaNet
+            if torch.isnan(q).any() or torch.isnan(k).any() or torch.isnan(v).any():
+                raise RuntimeError(
+                    f"NaN in GatedDeltaNet QKV before all-to-all! "
+                    f"q_nan={torch.isnan(q).sum()}, k_nan={torch.isnan(k).sum()}, v_nan={torch.isnan(v).sum()}"
+                )
+
             # Transform from context-parallel to head-parallel partitioning
             # [B, T/CP, H, D] -> [B, T, H/CP, D]
             q = all_to_all_cp2hp(q, self._cp_group)
@@ -372,6 +380,13 @@ class GatedDeltaNet(nn.Module):
             v = all_to_all_cp2hp(v, self._cp_group)
             g = all_to_all_cp2hp(g.unsqueeze(-1), self._cp_group).squeeze(-1)
             beta = all_to_all_cp2hp(beta.unsqueeze(-1), self._cp_group).squeeze(-1)
+
+            # DEBUG: Check for NaN after all-to-all in GatedDeltaNet
+            if torch.isnan(q).any() or torch.isnan(k).any() or torch.isnan(v).any():
+                raise RuntimeError(
+                    f"NaN in GatedDeltaNet QKV after all-to-all! "
+                    f"q.shape={q.shape}, k.shape={k.shape}, v.shape={v.shape}"
+                )
 
             o, recurrent_state = chunk_gated_delta_rule(
                 q=q,
@@ -384,6 +399,12 @@ class GatedDeltaNet(nn.Module):
                 cu_seqlens=cu_seqlens,
                 use_qk_l2norm_in_kernel=True,
             )
+
+            # DEBUG: Check for NaN after chunk_gated_delta_rule
+            if torch.isnan(o).any():
+                raise RuntimeError(
+                    f"NaN in GatedDeltaNet after chunk_gated_delta_rule! o.shape={o.shape}"
+                )
 
             # Transform back from head-parallel to context-parallel partitioning
             # [B, T, H/CP, D] -> [B, T/CP, H, D]

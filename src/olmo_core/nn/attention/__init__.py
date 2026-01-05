@@ -604,9 +604,24 @@ class Attention(AttentionBase):
                 )
             if self.kv_cache_manager is not None:
                 raise RuntimeError("KV cache is not supported with Ulysses context parallelism")
+
+            # DEBUG: Check for NaN before all-to-all
+            if torch.isnan(q).any() or torch.isnan(k).any() or torch.isnan(v).any():
+                raise RuntimeError(
+                    f"NaN in QKV before Ulysses all-to-all! "
+                    f"q_nan={torch.isnan(q).sum()}, k_nan={torch.isnan(k).sum()}, v_nan={torch.isnan(v).sum()}"
+                )
+
             q = _a2a_heads(q, is_qkv=True, group=self._cp_pg)
             k = _a2a_heads(k, is_qkv=True, group=self._cp_pg)
             v = _a2a_heads(v, is_qkv=True, group=self._cp_pg)
+
+            # DEBUG: Check for NaN after all-to-all
+            if torch.isnan(q).any() or torch.isnan(k).any() or torch.isnan(v).any():
+                raise RuntimeError(
+                    f"NaN in QKV after Ulysses all-to-all! "
+                    f"q.shape={q.shape}, k.shape={k.shape}, v.shape={v.shape}"
+                )
 
         if self.rope is not None:
             # In ring CP we must be given pre-sharded buffers
@@ -623,6 +638,15 @@ class Attention(AttentionBase):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
+
+            # DEBUG: Check RoPE buffer sizes for Ulysses
+            if self._cp_ulysses:
+                log.debug(
+                    f"[Ulysses RoPE] q.shape={q.shape}, "
+                    f"pos_sin.shape={pos_sin.shape if pos_sin is not None else None}, "
+                    f"pos_cos.shape={pos_cos.shape if pos_cos is not None else None}"
+                )
+
             q, k = self.rope(
                 q,
                 k,
@@ -632,6 +656,13 @@ class Attention(AttentionBase):
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
             )
+
+            # DEBUG: Check for NaN after RoPE
+            if torch.isnan(q).any() or torch.isnan(k).any():
+                raise RuntimeError(
+                    f"NaN after RoPE! q.shape={q.shape}, k.shape={k.shape}, "
+                    f"pos_sin provided={pos_sin is not None}, pos_cos provided={pos_cos is not None}"
+                )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -647,6 +678,13 @@ class Attention(AttentionBase):
             local_k_slice=local_k_slice,
             cache_leftpad=cache_leftpad,
         )
+
+        # DEBUG: Check for NaN after SDPA
+        if torch.isnan(att).any():
+            raise RuntimeError(
+                f"NaN after SDPA! att.shape={att.shape}, "
+                f"q.shape={q.shape}, k.shape={k.shape}, v.shape={v.shape}"
+            )
 
         if self._cp_ulysses:
             assert self._cp_pg is not None

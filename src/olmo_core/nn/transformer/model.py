@@ -538,6 +538,12 @@ class Transformer(nn.Module):
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
+        # DEBUG: NaN detection after embeddings
+        if torch.isnan(h).any():
+            raise RuntimeError(
+                f"NaN detected after embeddings! input_ids range: [{input_ids.min()}, {input_ids.max()}]"
+            )
+
         # Run each block.
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
@@ -546,6 +552,14 @@ class Transformer(nn.Module):
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             h = block(h, **all_block_kwargs, **block_kwargs)
+
+            # DEBUG: NaN detection after each block
+            if torch.isnan(h).any():
+                block_type = type(block).__name__
+                raise RuntimeError(
+                    f"NaN detected after block {block_idx} ({block_type})! "
+                    f"h.shape={h.shape}, h.abs().max()={h.abs().max().item():.6f}"
+                )
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
