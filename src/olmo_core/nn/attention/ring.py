@@ -238,149 +238,25 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
         return F.pad(x, padding, value=value), padding_to_add
 
 
-class UlyssesLoadBalancer(RingAttentionLoadBalancer):
-    """
-    Implements simple contiguous sequence sharding for Ulysses-style context parallelism.
-
-    Unlike ring attention which uses zig-zag or other interleaving strategies,
-    Ulysses just needs simple contiguous chunking since the all-to-all communication
-    handles the sequence/head exchange.
-    """
-
-    def batch_shard(
-        self,
-        *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> List[torch.Tensor]:
-        assert len(inputs) == len(seq_dims)
-        assert len(set(x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims))) == 1
-        if pad_values is not None:
-            assert len(inputs) == len(pad_values)
-
-        if length_multiple is None:
-            length_multiple = self.cp_world_size
-        elif length_multiple % self.cp_world_size != 0:
-            raise RuntimeError(
-                f"length multiple ({length_multiple}) must be divisible by "
-                f"CP degree ({self.cp_world_size})"
-            )
-
-        out = []
-        for x, seq_dim, pad_value in zip(
-            inputs,
-            seq_dims,
-            pad_values or [None for _ in range(len(inputs))],  # type: ignore
-        ):
-            seq_len = x.shape[seq_dim]
-
-            # Pad if needed to make divisible by CP world size
-            if seq_len % length_multiple != 0:
-                if pad_value is None:
-                    raise RuntimeError(
-                        f"sequence dimension size ({seq_len}) must be divisible by "
-                        f"{length_multiple}, otherwise provide a padding value"
-                    )
-                else:
-                    x, _ = self.pad(x, seq_dim, pad_value, length_multiple=length_multiple)
-
-            # Simple contiguous chunking - each rank gets seq_len / cp_world_size tokens
-            local_seq_len = x.shape[seq_dim] // self.cp_world_size
-            start = self.cp_rank * local_seq_len
-            end = start + local_seq_len
-
-            # Use torch.ops.aten.slice for efficiency
-            local_value = torch.ops.aten.slice(x, dim=seq_dim, start=start, end=end).contiguous()
-            out.append(local_value)
-
-        return out
-
-    def batch_shard_by_document(
-        self,
-        *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
-        cu_doc_lens: torch.Tensor,
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
-        # For now, Ulysses with intra-document masking just uses simple sharding
-        # The cu_doc_lens need to be adjusted for the local sequence length
-        assert len(inputs) == len(seq_dims)
-        if pad_values is not None:
-            assert len(inputs) == len(pad_values)
-
-        if cu_doc_lens.device.type != "cpu":
-            raise RuntimeError("expected 'cu_doc_lens' to be on CPU")
-        if cu_doc_lens.ndim != 1:
-            raise RuntimeError("expected 'cu_doc_lens' to be a 1D tensor")
-        if cu_doc_lens[0] != 0:
-            raise RuntimeError("expected 'cu_doc_lens' to start with a 0")
-
-        # Shard the inputs
-        out = self.batch_shard(
-            inputs=inputs,
-            seq_dims=seq_dims,
-            pad_values=pad_values,
-            length_multiple=length_multiple,
-        )
-
-        # Adjust cu_doc_lens for the local shard
-        # Each rank has a contiguous chunk, so we need to compute local document boundaries
-        total_len = int(cu_doc_lens[-1])
-        if length_multiple is None:
-            length_multiple = self.cp_world_size
-        padded_len = ensure_multiple_of(total_len, length_multiple)
-        local_len = padded_len // self.cp_world_size
-        local_start = self.cp_rank * local_len
-        local_end = local_start + local_len
-
-        # Compute local cu_doc_lens by finding which documents overlap with our local range
-        local_cu_doc_lens = [0]
-        for i in range(len(cu_doc_lens) - 1):
-            doc_start = int(cu_doc_lens[i])
-            doc_end = int(cu_doc_lens[i + 1])
-
-            # Compute overlap with local range
-            overlap_start = max(doc_start, local_start)
-            overlap_end = min(doc_end, local_end)
-
-            if overlap_start < overlap_end:
-                # This document has tokens in our local range
-                local_doc_len = overlap_end - overlap_start
-                local_cu_doc_lens.append(local_cu_doc_lens[-1] + local_doc_len)
-
-        local_cu_doc_lens = torch.tensor(
-            local_cu_doc_lens, dtype=cu_doc_lens.dtype, device=cu_doc_lens.device
-        )
-        local_max_doc_len = (
-            (local_cu_doc_lens[1:] - local_cu_doc_lens[:-1]).max().item()
-            if len(local_cu_doc_lens) > 1
-            else 0
-        )
-
-        return out, dict(cu_doc_lens=local_cu_doc_lens, max_doc_len=local_max_doc_len)
-
-    def pad(
-        self,
-        x: torch.Tensor,
-        seq_dim: int,
-        value: Union[int, float],
-        length_multiple: Optional[int] = None,
-    ) -> Tuple[torch.Tensor, int]:
-        if length_multiple is None:
-            length_multiple = self.cp_world_size
-        pad_to = ensure_multiple_of(x.shape[seq_dim], length_multiple)
-        padding_to_add = pad_to - x.shape[seq_dim]
-        padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
-        return F.pad(x, padding, value=value), padding_to_add
-
-
 class RingAttentionLlama3LoadBalancer(RingAttentionLoadBalancer):
     """
-    Implements Llama3's load-balancing strategy.
+    Implements Llama3's load-balancing strategy for context parallelism.
+
+    The Llama3 strategy assigns each rank a contiguous slice of the full sequence.
+    Rank ``i`` receives positions ``[i * local_len, (i + 1) * local_len)`` where
+    ``local_len = total_seq_len // cp_world_size``.
+
+    This strategy is designed specifically for **intra-document masking** with
+    variable-length documents packed into a single sequence. It computes separate
+    cumulative sequence lengths for queries (``cu_doc_lens_q``) and keys
+    (``cu_doc_lens_k``) per rank, enabling proper causal masking across document
+    boundaries within the ring attention loop. Padding is added as a synthetic
+    document at the end when the total sequence length is not divisible by the
+    context parallel world size.
+
+    .. note::
+        This strategy only supports :meth:`batch_shard_by_document` and will raise
+        an error if :meth:`batch_shard` is called directly.
     """
 
     def batch_shard(
@@ -500,5 +376,116 @@ class RingAttentionLlama3LoadBalancer(RingAttentionLoadBalancer):
         padding_to_add: int,
         value: Union[int, float],
     ) -> Tuple[torch.Tensor, int]:
+        padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
+        return F.pad(x, padding, value=value), padding_to_add
+
+
+class UlyssesLoadBalancer(RingAttentionLoadBalancer):
+    """
+    Implements simple contiguous sequence sharding for Ulysses-style context parallelism.
+
+    Unlike ring attention which uses zig-zag or other interleaving strategies,
+    Ulysses just needs simple contiguous chunking since the all-to-all communication
+    handles the sequence/head exchange.
+    """
+
+    def batch_shard(
+        self,
+        *,
+        inputs: List[torch.Tensor],
+        seq_dims: List[int],
+        pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
+    ) -> List[torch.Tensor]:
+        assert len(inputs) == len(seq_dims)
+        assert len(set(x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims))) == 1
+        if pad_values is not None:
+            assert len(inputs) == len(pad_values)
+
+        if length_multiple is None:
+            length_multiple = self.cp_world_size
+        elif length_multiple % self.cp_world_size != 0:
+            raise RuntimeError(
+                f"length multiple ({length_multiple}) must be divisible by "
+                f"CP degree ({self.cp_world_size})"
+            )
+
+        out = []
+        for x, seq_dim, pad_value in zip(
+            inputs,
+            seq_dims,
+            pad_values or [None for _ in range(len(inputs))],  # type: ignore
+        ):
+            seq_len = x.shape[seq_dim]
+
+            # Pad if needed to make divisible by CP world size
+            if seq_len % length_multiple != 0:
+                if pad_value is None:
+                    raise RuntimeError(
+                        f"sequence dimension size ({seq_len}) must be divisible by "
+                        f"{length_multiple}, otherwise provide a padding value"
+                    )
+                else:
+                    x, _ = self.pad(x, seq_dim, pad_value, length_multiple=length_multiple)
+
+            # Simple contiguous chunking - each rank gets seq_len / cp_world_size tokens
+            local_seq_len = x.shape[seq_dim] // self.cp_world_size
+            start = self.cp_rank * local_seq_len
+            end = start + local_seq_len
+
+            # Use torch.ops.aten.slice for efficiency
+            local_value = torch.ops.aten.slice(x, dim=seq_dim, start=start, end=end).contiguous()
+            out.append(local_value)
+
+        return out
+
+    def batch_shard_by_document(
+        self,
+        *,
+        inputs: List[torch.Tensor],
+        seq_dims: List[int],
+        cu_doc_lens: torch.Tensor,
+        pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
+    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        # Ulysses reconstructs full sequences via all-to-all, so we don't shard cu_doc_lens.
+        # We just shard the inputs and pass through the original document boundaries.
+        assert len(inputs) == len(seq_dims)
+        if pad_values is not None:
+            assert len(inputs) == len(pad_values)
+
+        if cu_doc_lens.device.type != "cpu":
+            raise RuntimeError("expected 'cu_doc_lens' to be on CPU")
+        if cu_doc_lens.ndim != 1:
+            raise RuntimeError("expected 'cu_doc_lens' to be a 1D tensor")
+        if cu_doc_lens[0] != 0:
+            raise RuntimeError("expected 'cu_doc_lens' to start with a 0")
+
+        # Shard the inputs (handles padding to length_multiple internally)
+        out = self.batch_shard(
+            inputs=inputs,
+            seq_dims=seq_dims,
+            pad_values=pad_values,
+            length_multiple=length_multiple,
+        )
+
+        # Compute max_doc_len from the original (unsharded) cu_doc_lens
+        max_doc_len = (cu_doc_lens[1:] - cu_doc_lens[:-1]).max().item()
+
+        # Pass through the original cu_doc_lens and max_doc_len unchanged
+        # since Ulysses reconstructs full sequences before attention
+        return out, dict(cu_doc_lens=cu_doc_lens, max_doc_len=max_doc_len)
+
+    def pad(
+        self,
+        x: torch.Tensor,
+        seq_dim: int,
+        value: Union[int, float],
+        length_multiple: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, int]:
+        if length_multiple is None:
+            length_multiple = self.cp_world_size
+        pad_to = ensure_multiple_of(x.shape[seq_dim], length_multiple)
+        padding_to_add = pad_to - x.shape[seq_dim]
         padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
         return F.pad(x, padding, value=value), padding_to_add

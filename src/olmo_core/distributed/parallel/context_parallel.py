@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from olmo_core.config import Config
-from olmo_core.distributed.autograd import all_to_all
+from olmo_core.distributed.nn import all_to_all_single
 from olmo_core.distributed.utils import get_world_size
 
 if TYPE_CHECKING:
@@ -49,7 +49,7 @@ def all_to_all_cp2hp(
     input_split = input_.view(B, t_local, world_size, h_out, d_in).permute(2, 0, 1, 3, 4)
     input_split = input_split.flatten(0, 3)
 
-    exchanged = all_to_all(cp_group, input_split)
+    exchanged = all_to_all_single(cp_group, input_split)
 
     # [CP, B, T/CP, H/CP, D] -> [B, CP, T/CP, H/CP, D] -> [B, T, H/CP, D]
     exchanged = exchanged.view(world_size, B, t_local, h_out, d_in).permute(1, 0, 2, 3, 4)
@@ -81,7 +81,7 @@ def all_to_all_hp2cp(
     input_split = input_.view(B, world_size, t_out, h_in, d_in).permute(1, 0, 2, 3, 4)
     input_split = input_split.flatten(0, 3)
 
-    exchanged = all_to_all(cp_group, input_split)
+    exchanged = all_to_all_single(cp_group, input_split)
 
     # [CP, B, T/CP, H/CP, D] -> [B, T/CP, CP, H/CP, D] -> [B, T/CP, H, D]
     exchanged = exchanged.view(world_size, B, t_out, h_in, d_in).permute(1, 2, 0, 3, 4)
