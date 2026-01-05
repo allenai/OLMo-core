@@ -30,10 +30,11 @@ def test_qwen3_has_head_qk_norm():
     config = TransformerConfig.qwen3_8B(vocab_size=1024, n_layers=2)
     assert config.block.attention.qk_norm is not None
     assert config.block.attention.use_head_qk_norm is True
+    assert config.block.attention.head_dim == 128
 
     model = config.build(init_device="cpu")
 
-    head_dim = config.d_model // config.block.attention.n_heads
+    head_dim = config.block.attention.head_dim
     assert model.blocks["0"].attention.q_norm.weight.shape == (head_dim,)
     assert model.blocks["0"].attention.k_norm.weight.shape == (head_dim,)
 

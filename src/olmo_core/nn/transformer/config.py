@@ -1072,11 +1072,12 @@ class TransformerConfig(ModelConfig):
             n_layers=kwargs.pop("n_layers", 28),
             n_heads=kwargs.pop("n_heads", 16),
             n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=2816, bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=3072, bias=False),
             **kwargs,
         )
 
@@ -1088,11 +1089,12 @@ class TransformerConfig(ModelConfig):
             n_layers=kwargs.pop("n_layers", 28),
             n_heads=kwargs.pop("n_heads", 16),
             n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=5632, bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=6144, bias=False),
             **kwargs,
         )
 
@@ -1104,11 +1106,12 @@ class TransformerConfig(ModelConfig):
             n_layers=kwargs.pop("n_layers", 36),
             n_heads=kwargs.pop("n_heads", 32),
             n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=6912, bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=9728, bias=False),
             **kwargs,
         )
 
@@ -1120,6 +1123,7 @@ class TransformerConfig(ModelConfig):
             n_layers=kwargs.pop("n_layers", 36),
             n_heads=kwargs.pop("n_heads", 32),
             n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
@@ -1136,11 +1140,12 @@ class TransformerConfig(ModelConfig):
             n_layers=kwargs.pop("n_layers", 48),
             n_heads=kwargs.pop("n_heads", 40),
             n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=13824, bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=17408, bias=False),
             **kwargs,
         )
 
@@ -1152,11 +1157,12 @@ class TransformerConfig(ModelConfig):
             n_layers=kwargs.pop("n_layers", 64),
             n_heads=kwargs.pop("n_heads", 40),
             n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=27648, bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=25600, bias=False),
             **kwargs,
         )
 
@@ -1169,6 +1175,7 @@ class TransformerConfig(ModelConfig):
         n_layers: int,
         n_heads: int,
         n_kv_heads: Optional[int] = None,
+        head_dim: Optional[int] = None,
         qk_norm: bool = False,
         use_head_qk_norm: bool = False,
         layer_norm_eps: float = 1e-5,
@@ -1232,6 +1239,7 @@ class TransformerConfig(ModelConfig):
                 name=att_type,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
+                head_dim=head_dim,
                 bias=False,
                 rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
                 qk_norm=layer_norm if qk_norm else None,
