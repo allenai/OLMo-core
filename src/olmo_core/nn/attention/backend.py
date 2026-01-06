@@ -10,6 +10,7 @@ from torch.distributed import DeviceMesh
 from olmo_core.config import StrEnum
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
+    all_to_all_cp2hp_qkvpacked,
     all_to_all_hp2cp,
 )
 from olmo_core.nn.attention.kv_cache import KVCacheManager
@@ -142,7 +143,6 @@ class AttentionBackend(nn.Module):
         self.cache = cache
         self.cp_pg: Optional[dist.ProcessGroup] = None
         self.cp_enabled = False
-        self.cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
         self.head_stride: int = 1
 
     @classmethod
@@ -488,17 +488,44 @@ class FlashAttention2Backend(AttentionBackend):
                 )
 
             if self.cp_enabled:
-                assert self.cp_pg is not None and self.cp_load_balancer is not None
-                return dispatch_ring_flash_attn_qkvpacked(
-                    qkv,
-                    group=self.cp_pg,
-                    strategy=self.cp_load_balancer,
-                    cu_seqlens=cu_doc_lens,
-                    max_seqlen=max_doc_len,
-                    dropout_p=self.dropout_p,
-                    softmax_scale=self.scale,
-                    causal=True,
-                )
+                assert self.cp_pg is not None
+                if self.ring is not None:
+                    return dispatch_ring_flash_attn_qkvpacked(
+                        qkv,
+                        group=self.cp_pg,
+                        strategy=self.ring.load_balancer,
+                        cu_seqlens=cu_doc_lens,
+                        max_seqlen=max_doc_len,
+                        dropout_p=self.dropout_p,
+                        softmax_scale=self.scale,
+                        causal=True,
+                        window_size=self.window_size,
+                    )
+                elif self.uly is not None:
+                    # Transform packed qkv from context-parallel to head-parallel partitioning
+                    # [B, T/CP, 3, H, D] -> [B, T, 3, H/CP, D]
+                    qkv = all_to_all_cp2hp_qkvpacked(qkv, self.cp_pg)
+                    B, T, _, H_local, D = qkv.shape
+
+                    # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                    # (same on all CP ranks), so we use them directly after gathering the full sequence.
+
+                    # Run attention with full sequence, partitioned heads
+                    out = dispatch_flash_attn_qkvpacked(
+                        qkv,
+                        cu_seqlens=cu_doc_lens,
+                        max_seqlen=max_doc_len,
+                        dropout_p=self.dropout_p,
+                        softmax_scale=self.scale,
+                        causal=True,
+                        window_size=self.window_size,
+                    )
+
+                    # Transform back from head-parallel to context-parallel partitioning
+                    # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                    return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                else:
+                    raise RuntimeError("One of ring or uly must be specified")
             else:
                 return dispatch_flash_attn_qkvpacked(
                     qkv,
@@ -507,6 +534,7 @@ class FlashAttention2Backend(AttentionBackend):
                     dropout_p=self.dropout_p,
                     softmax_scale=self.scale,
                     causal=True,
+                    window_size=self.window_size,
                 )
 
         q, k, v = qkv
@@ -533,15 +561,14 @@ class FlashAttention2Backend(AttentionBackend):
             )
 
         if self.cp_enabled:
+            assert self.cp_pg is not None
             if self.ring is not None:
-                assert self.cp_pg is not None and self.cp_load_balancer is not None
-                assert self.ring is not None
                 return dispatch_ring_flash_attn(
                     q,
                     k,
                     v,
                     group=self.cp_pg,
-                    strategy=self.cp_load_balancer,
+                    strategy=self.ring.load_balancer,
                     cu_seqlens=cu_doc_lens,
                     cu_seqlens_q=cu_doc_lens_q,
                     cu_seqlens_k=cu_doc_lens_k,
@@ -556,8 +583,6 @@ class FlashAttention2Backend(AttentionBackend):
                     window_size=self.window_size,
                 )
             elif self.uly is not None:
-                assert self.cp_pg is not None
-
                 # Transform from context-parallel to head-parallel partitioning
                 # [B, T/CP, H, D] -> [B, T, H/CP, D]
                 q = all_to_all_cp2hp(q, self.cp_pg)
@@ -685,12 +710,44 @@ class FlashAttention3Backend(AttentionBackend):
                     f"'{self.__class__.__name__}' doesn't support packed QKV with sliding window attention"
                 )
 
+            if self.cp_enabled:
+                assert self.cp_pg is not None
+                if self.ring is not None:
+                    raise RuntimeError(
+                        f"'{self.__class__.__name__}' doesn't support ring context parallelism"
+                    )
+                elif self.uly is not None:
+                    # Transform packed qkv from context-parallel to head-parallel partitioning
+                    # [B, T/CP, 3, H, D] -> [B, T, 3, H/CP, D]
+                    qkv = all_to_all_cp2hp_qkvpacked(qkv, self.cp_pg)
+                    B, T, _, H_local, D = qkv.shape
+
+                    # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                    # (same on all CP ranks), so we use them directly after gathering the full sequence.
+
+                    # Run attention with full sequence, partitioned heads
+                    out = dispatch_flash_attn_3_qkvpacked(
+                        qkv,
+                        cu_seqlens=cu_doc_lens,
+                        max_seqlen=max_doc_len,
+                        softmax_scale=self.scale,
+                        causal=True,
+                        window_size=self.window_size,
+                    )
+
+                    # Transform back from head-parallel to context-parallel partitioning
+                    # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                    return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                else:
+                    raise RuntimeError("One of ring or uly must be specified")
+
             return dispatch_flash_attn_3_qkvpacked(
                 qkv,
                 cu_seqlens=cu_doc_lens,
                 max_seqlen=max_doc_len,
                 softmax_scale=self.scale,
                 causal=True,
+                window_size=self.window_size,
             )
 
         q, k, v = qkv
