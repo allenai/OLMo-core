@@ -92,10 +92,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     intra_document_masking = False
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_mix_0925_official,  # note: updated to 0925 mix
-        tokenizer=tokenizer_config,
-        mix_base_dir=root_dir,
+        DataMix.OLMo_mix_0925,  # note: updated to 0925 mix
+        mix_base_dir="gs://ai2-llm",
         work_dir=work_dir,
+        tokenizer=tokenizer_config,
         sequence_length=SEQ_LENGTH,
         # max target sequence length doesn't affect how the data is loaded, just how it's cached behind the scenes
         max_target_sequence_length=max(SEQ_LENGTH, 8192),
