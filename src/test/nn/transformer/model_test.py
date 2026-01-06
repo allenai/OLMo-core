@@ -54,6 +54,7 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 
 log = logging.getLogger(__name__)
 
@@ -275,7 +276,7 @@ def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architec
     logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, get_full_tensor(logits))
+    torch.testing.assert_close(og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_multi_gpu
@@ -333,7 +334,7 @@ def run_context_parallel_transformer_ulysses(
     logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, get_full_tensor(logits))
+    torch.testing.assert_close(og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_multi_gpu

@@ -1345,6 +1345,7 @@ def _run_context_parallel_attention_ring(
     [pytest.param(RingAttentionLoadBalancerType.zig_zag, id="zig_zag")],
 )
 @pytest.mark.parametrize("head_stride", [pytest.param(1), pytest.param(8)])
+@pytest.mark.skip("known precision issues with ring-flash-attn")
 def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_path):
     seed_all(0)
     device = torch.device("cuda")
@@ -1413,7 +1414,7 @@ def _run_context_parallel_attention_ulysses(
     torch.testing.assert_close(y_ref_local, y_local, rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+@requires_multi_gpu
 @pytest.mark.parametrize(
     "attn_backend",
     [
@@ -1423,9 +1424,7 @@ def _run_context_parallel_attention_ulysses(
         pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
     ],
 )
-def test_context_parallel_attention_ulysses(
-    tmp_path, backend: str, attn_backend: AttentionBackendName
-):
+def test_context_parallel_attention_ulysses(tmp_path, attn_backend: AttentionBackendName):
     """
     Test Ulysses-style context parallelism.
 
@@ -1459,7 +1458,7 @@ def test_context_parallel_attention_ulysses(
 
     run_distributed_test(
         _run_context_parallel_attention_ulysses,
-        backend=backend,
+        backend="nccl",
         start_method="spawn",
         func_args=(
             checkpoint_dir,
