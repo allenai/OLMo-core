@@ -55,9 +55,8 @@ def test_dion(device: torch.device, tmp_path):
     model(torch.randint(0, 1024, (2, 8), device=device).int()).sum().backward()
     optim.step()
 
-    # Save and then restore a checkpoint, and make sure fixed fields reset.
-    # Store original initial_lr values before modifying them.
-    # TODO: double check this test.
+    # Test that initial_lr is a "fixed field" that gets reset on checkpoint load.
+    # Corrupt initial_lr, save, then load—initial_lr should be restored to original, not loaded from checkpoint.
     original_initial_lrs = [group["initial_lr"] for group in optim.param_groups]
     for group in optim.param_groups:
         group["initial_lr"] = 1e-8
