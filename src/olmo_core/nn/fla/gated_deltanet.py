@@ -253,6 +253,7 @@ class GatedDeltaNet(nn.Module):
         self.cp_enabled = False
         self.uly: Optional[UlyssesContextParallelStyle] = None
 
+    @torch._dynamo.disable
     def forward(
         self,
         hidden_states: torch.Tensor,
