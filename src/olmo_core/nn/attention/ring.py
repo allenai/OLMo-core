@@ -1,11 +1,12 @@
 from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 
-from olmo_core.config import StrEnum
+from olmo_core.config import Config, StrEnum
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.utils import ensure_multiple_of
 
@@ -516,3 +517,33 @@ class UlyssesLoadBalancer(RingAttentionLoadBalancer):
         padding_to_add = pad_to - x.shape[seq_dim]
         padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
         return F.pad(x, padding, value=value), padding_to_add
+
+
+@dataclass
+class UlyssesContextParallelStyle(Config):
+    """
+    Configuration for Ulysses-style context parallelism.
+    """
+
+    @property
+    def load_balancer(self) -> "RingAttentionLoadBalancerType":
+        return RingAttentionLoadBalancerType.ulysses
+
+
+@dataclass
+class RingContextParallelStyle(Config):
+    """
+    Configuration for ring attention-style context parallelism.
+    """
+
+    load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
+    """
+    The type of load balancer to use for ring attention.
+    """
+
+    head_stride: int = 1
+    """
+    The stride of the head dimension to process for each iteration of ring attention. A value of 1
+    means each iteration will process one k and one v head. A value of 2 will process two k and two
+    v heads, etc. A larger stride will reduce the number of communication ops.
+    """

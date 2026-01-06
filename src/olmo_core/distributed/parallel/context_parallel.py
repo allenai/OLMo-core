@@ -1,14 +1,10 @@
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
 import torch
 
 from olmo_core.config import Config
 from olmo_core.distributed.nn import all_to_all_single
 from olmo_core.distributed.utils import get_world_size
-
-if TYPE_CHECKING:
-    from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType
 
 
 @dataclass
@@ -85,44 +81,3 @@ def all_to_all_hp2cp(
     exchanged = exchanged.view(world_size, B, t_out, h_in, d_in).permute(1, 2, 0, 3, 4)
     exchanged = exchanged.reshape(B, t_out, h_in * world_size, d_in)
     return exchanged
-
-
-@dataclass
-class UlyssesContextParallelStyle(Config):
-    """
-    Configuration for Ulysses-style context parallelism.
-    """
-
-    @property
-    def load_balancer(self) -> "RingAttentionLoadBalancerType":
-        from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType
-
-        return RingAttentionLoadBalancerType.ulysses
-
-
-def _get_zig_zag_load_balancer():
-    """Lazy import to avoid circular dependency."""
-    from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType
-
-    return RingAttentionLoadBalancerType.zig_zag
-
-
-@dataclass
-class RingContextParallelStyle(Config):
-    """
-    Configuration for ring attention-style context parallelism.
-    """
-
-    load_balancer: "RingAttentionLoadBalancerType" = field(
-        default_factory=_get_zig_zag_load_balancer
-    )
-    """
-    The type of load balancer to use for ring attention.
-    """
-
-    head_stride: int = 1
-    """
-    The stride of the head dimension to process for each iteration of ring attention. A value of 1
-    means each iteration will process one k and one v head. A value of 2 will process two k and two
-    v heads, etc. A larger stride will reduce the number of communication ops.
-    """

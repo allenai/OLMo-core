@@ -8,10 +8,6 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 
 from olmo_core.config import StrEnum
-from olmo_core.distributed.parallel import (
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
-)
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
     all_to_all_hp2cp,
@@ -32,7 +28,11 @@ from .flash_attn_api import (
     has_flash_attn_3,
     has_ring_flash_attn,
 )
-from .ring import RingAttentionLoadBalancerType
+from .ring import (
+    RingAttentionLoadBalancerType,
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from .te_attn_api import TEDotProductAttention, has_te_attn
 
 
