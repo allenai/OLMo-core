@@ -6,7 +6,6 @@ import torch
 from olmo_core.nn.hf.convert import convert_state_from_hf
 from olmo_core.nn.transformer import TransformerConfig
 
-
 try:
     from transformers import AutoModelForCausalLM, Qwen3Config
 except ImportError:
