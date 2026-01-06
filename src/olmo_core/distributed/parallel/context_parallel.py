@@ -95,6 +95,8 @@ class UlyssesContextParallelStyle(Config):
 
     @property
     def load_balancer(self) -> "RingAttentionLoadBalancerType":
+        from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType
+
         return RingAttentionLoadBalancerType.ulysses
 
 
