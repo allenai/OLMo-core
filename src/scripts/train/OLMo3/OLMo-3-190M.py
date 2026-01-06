@@ -11,21 +11,32 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.common import build_launch_config, get_gpu_type, get_root_dir, get_work_dir
+from olmo_core.internal.common import (
+    build_launch_config,
+    get_gpu_type,
+    get_root_dir,
+    get_work_dir,
+)
 from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelWrappingStrategy
-from olmo_core.optim import CosWithWarmup, NorMuonConfig
+from olmo_core.nn.transformer import (
+    TransformerConfig,
+    TransformerDataParallelWrappingStrategy,
+)
+from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
-from olmo_core.train.train_module import TransformerDataParallelConfig, TransformerTrainModuleConfig
+from olmo_core.train.train_module import (
+    TransformerDataParallelConfig,
+    TransformerTrainModuleConfig,
+)
 
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**19  # ~524k tokens
 CHINCHILLA_MULTIPLE = 1.0  # Train to 1x Chinchilla optimality
-FOR_BENCHMARKING = True
+FOR_BENCHMARKING = False
 
 
 def estimate_lr(model_params: int, chinchilla_multiple: float = 1.0) -> float:
@@ -69,10 +80,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQ_LENGTH * 2,
         max_sequence_length=SEQ_LENGTH,
-        optim=NorMuonConfig(
-            lr=estimate_lr(model_config.num_non_embedding_params, CHINCHILLA_MULTIPLE),
+        optim=SkipStepAdamWConfig(
+            lr=3e-4,
             weight_decay=0.1,
             betas=(0.9, 0.95),
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
