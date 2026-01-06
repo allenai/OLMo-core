@@ -255,9 +255,9 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
 
         # Assert no params are in multiple categories
         all_categorized = embed_params + matrix_params + vector_params + lm_head_params
-        assert len(all_categorized) == len(set(all_categorized)), (
-            "Some parameters are in multiple categories"
-        )
+        assert len(all_categorized) == len(
+            set(all_categorized)
+        ), "Some parameters are in multiple categories"
 
         return {
             "embed": embed_params,
