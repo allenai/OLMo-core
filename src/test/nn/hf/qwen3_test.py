@@ -33,9 +33,6 @@ def test_qwen3_has_head_qk_norm():
     assert model.blocks["0"].attention.k_norm.weight.shape == (head_dim,)
 
 
-@pytest.mark.skipif(
-    not hasattr(transformers, "Qwen3Config"), reason="Qwen3Config not available in transformers"
-)
 def test_qwen3_conversion_mappings():
     hf_config = transformers.Qwen3Config(
         vocab_size=64,
@@ -65,9 +62,6 @@ def test_qwen3_conversion_mappings():
 
 
 @pytest.mark.skipif(
-    not hasattr(transformers, "Qwen3Config"), reason="Qwen3Config not available in transformers"
-)
-@pytest.mark.skipif(
     not os.environ.get("HF_TOKEN"),
     reason="HF_TOKEN not set",
 )
@@ -82,6 +76,11 @@ def test_qwen3_matches_huggingface():
     hf_model.eval()
     hf_config = hf_model.config
 
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_name,
+        token=os.environ.get("HF_TOKEN"),
+    )
+
     olmo_config = TransformerConfig.qwen3_0_6B(
         vocab_size=hf_config.vocab_size,
     )
@@ -95,10 +94,19 @@ def test_qwen3_matches_huggingface():
     olmo_model.load_state_dict(converted_state)
     olmo_model.eval()
 
-    input_ids = torch.randint(0, 1000, (2, 16))
+    prompt = "Hello, Qwen3! This is a test. Please generate 64 tokens."
+    input_ids = tokenizer.encode(prompt, return_tensors="pt")
 
     with torch.no_grad():
-        hf_logits = hf_model(input_ids).logits
-        olmo_logits = olmo_model(input_ids)
+        generated = hf_model.generate(
+            input_ids,
+            max_new_tokens=64,
+            do_sample=False,
+            pad_token_id=tokenizer.eos_token_id,
+        )
 
-    torch.testing.assert_close(hf_logits, olmo_logits, rtol=1e-4, atol=1e-4)
+    with torch.no_grad():
+        hf_logits = hf_model(generated).logits
+        olmo_logits = olmo_model(generated)
+
+    torch.testing.assert_close(hf_logits, olmo_logits, rtol=1e-6, atol=1e-6)
