@@ -63,7 +63,7 @@ eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers"]
 wandb = ["wandb"]
-all = ["ai2-olmo-core[dev,dion,beaker,comet,eval,torchao,transformers,wandb]"]
+all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,torchao,transformers,wandb]"]
 
 
 [tool.setuptools]
