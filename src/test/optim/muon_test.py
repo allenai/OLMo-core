@@ -19,7 +19,7 @@ from olmo_core.utils import get_default_device, seed_all
 
 
 def build_transformer_model() -> Transformer:
-    config = TransformerConfig.olmo2_30M(vocab_size=1024)
+    config = TransformerConfig.olmo2_30M(vocab_size=1024, n_layers=2)
     model = config.build()
     return model
 

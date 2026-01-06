@@ -20,7 +20,7 @@ from olmo_core.utils import get_default_device, seed_all
 
 
 def build_transformer_model() -> Transformer:
-    config = TransformerConfig.olmo2_30M(vocab_size=1024)
+    config = TransformerConfig.olmo2_30M(vocab_size=1024, n_layers=2)
     model = config.build()
     return model
 
@@ -117,8 +117,9 @@ def _run_tensor_parallel_dion():
     world_size = torch.distributed.get_world_size()
 
     # Tensor-parallel Transformer
+    dp_config = TransformerDataParallelConfig(name=DataParallelType.fsdp)
     tp_config = TransformerTensorParallelConfig(degree=world_size)
-    world_mesh = build_world_mesh(tp=tp_config, device_type=device.type)
+    world_mesh = build_world_mesh(dp=dp_config, tp=tp_config, device_type=device.type)
     config = TransformerConfig.olmo2_30M(vocab_size=1024)
     model = config.build(init_device=device.type)
     model.train()
