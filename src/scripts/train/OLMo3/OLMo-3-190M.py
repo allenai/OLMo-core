@@ -25,6 +25,7 @@ from olmo_core.train.train_module import TransformerDataParallelConfig, Transfor
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**19  # ~524k tokens
 CHINCHILLA_MULTIPLE = 1.0  # Train to 1x Chinchilla optimality
+FOR_BENCHMARKING = False
 
 
 def estimate_lr(model_params: int, chinchilla_multiple: float = 1.0) -> float:
@@ -125,6 +126,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 save_interval=1000,
                 ephemeral_save_interval=None,
                 save_async=True,
+                enabled=not FOR_BENCHMARKING,
             ),
         )
         .with_callback(
