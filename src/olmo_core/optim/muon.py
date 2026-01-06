@@ -2,11 +2,12 @@ import logging
 from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Literal, Tuple, Union
+from typing import Any, Tuple, Union
 
 import torch
 from torch.distributed.device_mesh import DeviceMesh
 
+from olmo_core.config import StrEnum
 from olmo_core.distributed.parallel import (
     MeshDimName,
     get_dp_model_mesh,
@@ -28,6 +29,14 @@ def _import_dion():
             "Install it with: pip install git+https://github.com/microsoft/dion.git"
         ) from e
     return Muon, NorMuon
+
+
+class MuonAdjustLRStrategy(StrEnum):
+    spectral_norm = "spectral_norm"
+    """Adjust based on spectral norm, for learning rate transfer across model scale."""
+
+    rms_norm = "rms_norm"
+    """Adjust based on RMS norm, for learning rate compatibility with Adam/AdamW (Kimi/Moonlight style: https://arxiv.org/abs/2502.16982)"""
 
 
 @dataclass
@@ -67,13 +76,8 @@ class MuonConfig(MatrixAwareOptimConfig):
     nesterov: bool = False
     """Whether to use Nesterov momentum."""
 
-    adjust_lr: Literal["spectral_norm", "rms_norm"] | None = "rms_norm"
-    """
-    How to adjust the learning rate for Muon updates.
-    - "spectral_norm": Adjust based on spectral norm, for learning rate transfer across model scale.
-    - "rms_norm": Adjust based on RMS norm, for learning rate compatibility with Adam/AdamW (Kimi/Moonlight style: https://arxiv.org/abs/2502.16982)
-    - None: Do not adjust the learning rate.
-    """
+    adjust_lr: MuonAdjustLRStrategy | None = MuonAdjustLRStrategy.rms_norm
+    """How to adjust the learning rate for Muon updates."""
 
     use_triton: bool = False
     """
