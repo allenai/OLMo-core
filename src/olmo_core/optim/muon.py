@@ -100,7 +100,7 @@ class MuonConfig(MatrixAwareOptimConfig):
         params = self.categorize_parameters(model)
 
         # Matrix parameters are optimized with Muon.
-        matrix_override = OptimGroupOverride(params=params["matrix"], opts=dict(algorithm="muon"))
+        matrix_override = OptimGroupOverride(params=params["matrix"], opts=dict())
 
         # Vector, embedding, and lm_head parameters are optimized with AdamW.
         embed_override = OptimGroupOverride(

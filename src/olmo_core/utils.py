@@ -453,12 +453,6 @@ def filter_warnings():
         message="failed to load.*",
         module="torchvision.io.image",
     )
-    # TransformerEngine warnings.
-    warnings.filterwarnings(
-        action="ignore",
-        message="Supported flash-attn versions are.*",
-        module="transformer_engine.pytorch.attention.dot_product_attention",
-    )
 
 
 def set_env_variables():
