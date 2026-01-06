@@ -50,7 +50,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,
         root_dir=root_dir,
-        workspace="ai2/olmo-3-microanneals",
+        workspace="ai2/OLMo_3",
         num_nodes=16,
         nccl_debug=True,
         # override priority from the CLI eg `--launch.priority=high`
