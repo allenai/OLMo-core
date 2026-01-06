@@ -359,6 +359,10 @@ def setup_logging(
     logging.captureWarnings(True)
     logging.getLogger("urllib3").setLevel(logging.ERROR)
     logging.getLogger("google").setLevel(logging.WARNING)
+    if get_local_rank() != 0:
+        logging.getLogger("transformer_engine.pytorch.attention.dot_product_attention").setLevel(
+            logging.ERROR
+        )
 
     _LOGGING_CONFIGURED = True
 
