@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
-from transformers import AutoModelForCausalLM, AutoTokenizer, Gemma3TextConfig, Olmo2Config
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    Gemma3TextConfig,
+    Olmo2Config,
+)
 
 from olmo_core.nn.hf.checkpoint import load_hf_model, save_hf_model
 from olmo_core.nn.transformer.config import TransformerConfig
@@ -103,6 +108,7 @@ def test_load_hf_gemma3(tmp_path: Path):
 
     n_heads = model_config.block.attention.n_heads
     head_dim = model_config.d_model // n_heads
+    assert model_config.block.feed_forward is not None
     hf_config = Gemma3TextConfig(
         vocab_size=vocab_size,
         hidden_size=model_config.d_model,
@@ -158,6 +164,7 @@ def test_gemma3_debug_layer_by_layer(tmp_path: Path):
 
     n_heads = model_config.block.attention.n_heads
     head_dim = model_config.d_model // n_heads
+    assert model_config.block.feed_forward is not None
     hf_config = Gemma3TextConfig(
         vocab_size=vocab_size,
         hidden_size=model_config.d_model,
@@ -229,6 +236,7 @@ def test_gemma3_debug_layer_by_layer(tmp_path: Path):
         block.attention.register_forward_hook(make_olmo_hook(f"layer{i}_attn"))
         block.feed_forward_norm.register_forward_hook(make_olmo_hook(f"layer{i}_ff_norm"))
         block.feed_forward.register_forward_hook(make_olmo_hook(f"layer{i}_ff"))
+    assert model.lm_head.norm is not None
     model.lm_head.norm.register_forward_hook(make_olmo_hook("final_norm"))
     model.lm_head.w_out.register_forward_hook(make_olmo_hook("lm_head"))
 

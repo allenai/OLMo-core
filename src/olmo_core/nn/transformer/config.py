@@ -1275,9 +1275,11 @@ class TransformerConfig(ModelConfig):
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
                 router=MoERouterConfig(top_k=top_k),
-                shared_mlp=None
-                if shared_expert_hidden_size is None
-                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                shared_mlp=(
+                    None
+                    if shared_expert_hidden_size is None
+                    else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False)
+                ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),
