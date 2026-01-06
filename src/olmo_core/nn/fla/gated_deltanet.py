@@ -326,6 +326,16 @@ class GatedDeltaNet(nn.Module):
                 q_proj = _to_channel_parallel(q_proj, self._cp_group)
                 k_proj = _to_channel_parallel(k_proj, self._cp_group)
                 v_proj = _to_channel_parallel(v_proj, self._cp_group)
+                # Log shapes prior to conv for debugging
+                logging.warning(
+                    "[GatedDeltaNet CP] Before conv: q_proj=%s k_proj=%s v_proj=%s "
+                    "hidden_states=%s cu_seqlens_last=%s",
+                    tuple(q_proj.shape),
+                    tuple(k_proj.shape),
+                    tuple(v_proj.shape),
+                    tuple(hidden_states.shape),
+                    int(cu_seqlens[-1]) if cu_seqlens is not None else None,
+                )
 
             q, conv_state_q = self.q_conv1d(
                 x=q_proj,
