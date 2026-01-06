@@ -2,7 +2,7 @@ import logging
 from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Tuple, Type, Union
+from typing import Any, Literal, Tuple, Union
 
 import torch
 from torch.distributed.device_mesh import DeviceMesh
@@ -18,8 +18,16 @@ from olmo_core.optim.config import MatrixAwareOptimConfig, OptimGroupOverride
 
 log = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    from dion import Muon
+
+def _import_dion():
+    try:
+        from dion import Muon, NorMuon  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "The 'dion' package is required for Muon/NorMuon optimizers. "
+            "Install it with: pip install git+https://github.com/microsoft/dion.git"
+        ) from e
+    return Muon, NorMuon
 
 
 @dataclass
@@ -75,9 +83,8 @@ class MuonConfig(MatrixAwareOptimConfig):
     """
 
     @classmethod
-    def optimizer(cls) -> Type["Muon"]:
-        from dion import Muon
-
+    def optimizer(cls) -> type:
+        Muon, _ = _import_dion()
         return Muon
 
     def default_group_overrides(self, model: torch.nn.Module) -> list[OptimGroupOverride]:
@@ -184,17 +191,15 @@ class MuonConfig(MatrixAwareOptimConfig):
         log.info(f"Muon parallelism_config: {parallelism_config}")
         return parallelism_config
 
-    def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs) -> "Muon":
+    def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs):
         """
         Create the optimizer.
         """
-        from dion import Muon  # type: ignore[reportMissingImports]
-
         torch._dynamo.config.recompile_limit = 16
 
         parallelism_config = self.build_parallelism_config()
 
-        optim: Muon = self.optimizer()(
+        optim = self.optimizer()(
             self.build_groups(model, strict=strict),
             **parallelism_config,
             **kwargs,
@@ -214,7 +219,6 @@ class NorMuonConfig(MuonConfig):
     """Beta2 for Muon"""
 
     @classmethod
-    def optimizer(cls) -> Type["NorMuon"]:
-        from dion import NorMuon
-
+    def optimizer(cls) -> type:
+        _, NorMuon = _import_dion()
         return NorMuon

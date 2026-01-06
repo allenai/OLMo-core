@@ -1,7 +1,7 @@
 import logging
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Tuple, Type
+from typing import Tuple
 
 import torch
 from torch.distributed.device_mesh import DeviceMesh
@@ -19,8 +19,17 @@ from olmo_core.optim.config import MatrixAwareOptimConfig, OptimGroupOverride
 
 log = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    from dion import Dion
+
+def _import_dion():
+    """Import and return Dion from dion, raising a helpful error if not installed."""
+    try:
+        from dion import Dion  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "The 'dion' package is required for the Dion optimizer. "
+            "Install it with: pip install git+https://github.com/microsoft/dion.git"
+        ) from e
+    return Dion
 
 
 @dataclass
@@ -60,10 +69,8 @@ class DionConfig(MatrixAwareOptimConfig):
     """
 
     @classmethod
-    def optimizer(cls) -> Type["Dion"]:
-        from dion import Dion  # type: ignore[reportMissingImports]
-
-        return Dion
+    def optimizer(cls) -> type:
+        return _import_dion()
 
     def default_group_overrides(self, model: torch.nn.Module) -> list[OptimGroupOverride]:
         """
@@ -136,16 +143,14 @@ class DionConfig(MatrixAwareOptimConfig):
         log.info(f"Dion parallelism_config: {meshes}")
         return meshes
 
-    def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs) -> "Dion":
+    def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs):
         """
         Create the optimizer.
         """
-        from dion import Dion  # type: ignore[reportMissingImports]
-
         torch._dynamo.config.recompile_limit = 16
 
         parallelism_config = self.build_parallelism_config()
-        optim: Dion = self.optimizer()(
+        optim = self.optimizer()(
             self.build_groups(model, strict=strict),
             replicate_mesh_grad_sync=False,  # HSDP / FSDP / DDP will handle gradient sync internally
             **parallelism_config,

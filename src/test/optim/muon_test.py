@@ -5,10 +5,7 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.distributed.parallel import (
-    DataParallelType,
-    build_world_mesh,
-)
+from olmo_core.distributed.parallel import DataParallelType, build_world_mesh
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.optim.muon import MuonConfig
