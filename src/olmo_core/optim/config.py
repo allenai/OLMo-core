@@ -253,6 +253,12 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
         uncategorized = all_model_params - categorized_params
         assert not uncategorized, f"Uncategorized parameters: {uncategorized}"
 
+        # Assert no params are in multiple categories
+        all_categorized = embed_params + matrix_params + vector_params + lm_head_params
+        assert len(all_categorized) == len(set(all_categorized)), (
+            "Some parameters are in multiple categories"
+        )
+
         return {
             "embed": embed_params,
             "matrix": matrix_params,

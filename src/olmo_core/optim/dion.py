@@ -104,7 +104,6 @@ class DionConfig(MatrixAwareOptimConfig):
 
         Supports:
         - Single-device: All meshes are None
-        - DDP (not supported, would be): replicate_mesh = DP mesh, outer_shard_mesh = None
         - FSDP: outer_shard_mesh = DP mesh, replicate_mesh = None
         - HSDP: replicate_mesh = DP replicate mesh, outer_shard_mesh = DP shard mesh
         - TP: inner_shard_mesh = TP mesh (can be combined with FSDP or HSDP)
@@ -144,10 +143,14 @@ class DionConfig(MatrixAwareOptimConfig):
         return meshes
 
     def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs):
-        """
-        Create the optimizer.
-        """
-        torch._dynamo.config.recompile_limit = 16
+        # When using Dion, we need to set the recompile limit to 16 to avoid triggering an error
+        # due to too many recompile requests. Typically, on the second recompilation, torch attempts
+        # to compile a dynamic version of the op, unless dynamic=False is marked. Too many different
+        # shapes passed to a compiled op with dynamic=False will trigger this error. Since we have
+        # grad matrices with many different shapes, we need to set the recompile limit higher than
+        # the default of 8.
+        # https://docs.pytorch.org/docs/stable/compile/programming_model.recompilation.html
+        torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 16)
 
         parallelism_config = self.build_parallelism_config()
         optim = self.optimizer()(

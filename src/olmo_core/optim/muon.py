@@ -196,13 +196,16 @@ class MuonConfig(MatrixAwareOptimConfig):
         return parallelism_config
 
     def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs):
-        """
-        Create the optimizer.
-        """
-        torch._dynamo.config.recompile_limit = 16
+        # When using Muon, we need to set the recompile limit to 16 to avoid triggering an error
+        # due to too many recompile requests. Typically, on the second recompilation, torch attempts
+        # to compile a dynamic version of the op, unless dynamic=False is marked. Too many different
+        # shapes passed to a compiled op with dynamic=False will trigger this error. Since we have
+        # grad matrices with many different shapes, we need to set the recompile limit higher than
+        # the default of 8.
+        # https://docs.pytorch.org/docs/stable/compile/programming_model.recompilation.html
+        torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 16)
 
         parallelism_config = self.build_parallelism_config()
-
         optim = self.optimizer()(
             self.build_groups(model, strict=strict),
             **parallelism_config,
