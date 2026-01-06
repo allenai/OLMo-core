@@ -239,13 +239,23 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
 
     def categorize_parameters(self, model: nn.Module) -> Dict[str, List[str]]:
         assert isinstance(model, Transformer)
-        embed_params = [f"embeddings.{n}" for n, p in model.embeddings.named_parameters()]
-        matrix_params = [f"blocks.{n}" for n, p in model.blocks.named_parameters() if p.ndim >= 2]
+
+        embed_params = [
+            f"embeddings.{n}" for n, p in model.embeddings.named_parameters() if p.ndim == 2
+        ]
+        matrix_params = [f"blocks.{n}" for n, p in model.blocks.named_parameters() if p.ndim == 2]
         vector_params = [f"blocks.{n}" for n, p in model.blocks.named_parameters() if p.ndim < 2]
         vector_params += [f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim < 2]
         lm_head_params = [
-            f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim >= 2
+            f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim == 2
         ]
+
+        # Convolution layers typically use parameter tensors with 3+ dimensions. These are currently
+        # not supported. Experimental support for for 3+ dim parameters is available in the Muon
+        # optimizer. It simply flattens the parameters into a 2D tensor.
+        # Check for 3D+ parameters which are not supported
+        params_3d_plus = [n for n, p in model.named_parameters() if p.ndim > 2]
+        assert not params_3d_plus, f"3D+ parameters are not supported: {params_3d_plus}"
 
         # Assert all parameters are categorized
         all_model_params = {n for n, p in model.named_parameters() if p.requires_grad}
@@ -255,9 +265,9 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
 
         # Assert no params are in multiple categories
         all_categorized = embed_params + matrix_params + vector_params + lm_head_params
-        assert len(all_categorized) == len(
-            set(all_categorized)
-        ), "Some parameters are in multiple categories"
+        assert len(all_categorized) == len(set(all_categorized)), (
+            "Some parameters are in multiple categories"
+        )
 
         return {
             "embed": embed_params,
