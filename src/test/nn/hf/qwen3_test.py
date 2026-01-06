@@ -1,3 +1,4 @@
+import logging
 import os
 
 import pytest
@@ -6,6 +7,8 @@ import transformers
 
 from olmo_core.nn.hf.convert import convert_state_from_hf
 from olmo_core.nn.transformer import TransformerConfig
+
+log = logging.getLogger(__name__)
 
 
 def test_qwen3_forward_pass():
@@ -105,8 +108,14 @@ def test_qwen3_matches_huggingface():
             pad_token_id=tokenizer.eos_token_id,
         )
 
+    generated_text = tokenizer.decode(generated[0], skip_special_tokens=True)
+    log.info(f"Generated text: {generated_text}")
+
     with torch.no_grad():
         hf_logits = hf_model(generated).logits
         olmo_logits = olmo_model(generated)
+
+    diff = (hf_logits - olmo_logits).abs()
+    log.info(f"Logits diff mean: {diff.mean().item():.2e}, std: {diff.std().item():.2e}")
 
     torch.testing.assert_close(hf_logits, olmo_logits, rtol=1e-6, atol=1e-6)
