@@ -96,7 +96,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        cp_config=TransformerContextParallelConfig.ulysses(degree=2),
+        cp_config=TransformerContextParallelConfig.zig_zag(degree=2),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
