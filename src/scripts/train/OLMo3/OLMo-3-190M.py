@@ -17,7 +17,7 @@ from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelWrappingStrategy
-from olmo_core.optim import CosWithWarmup, MuonConfig
+from olmo_core.optim import CosWithWarmup, DionConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import TransformerDataParallelConfig, TransformerTrainModuleConfig
@@ -69,7 +69,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQ_LENGTH * 2,
         max_sequence_length=SEQ_LENGTH,
-        optim=MuonConfig(
+        optim=DionConfig(
             lr=estimate_lr(model_config.num_non_embedding_params, CHINCHILLA_MULTIPLE),
             weight_decay=0.1,
             betas=(0.9, 0.95),
