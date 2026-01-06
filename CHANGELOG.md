@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix overflow when too many global flops are computed.
 - Ladder lmevaluator typo.
 - Made some functions involved in data loading preprocessing more robust to race conditions.
+- GAPMonitorCallback would raise an error if a local tensor shard had 0 elements.
 
 ### Changed
 
