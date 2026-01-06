@@ -71,11 +71,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.dolma2()
 
+    # attn_backend = (
+    #     AttentionBackendName.flash_2 if "B200" in gpu_type else AttentionBackendName.flash_3
+    # )
+    attn_backend = AttentionBackendName.flash_2
     model_config = TransformerConfig.olmo3_190M(
-        vocab_size=tokenizer_config.padded_vocab_size(),
-        attn_backend=AttentionBackendName.flash_2
-        if "B200" in gpu_type
-        else AttentionBackendName.flash_3,
+        vocab_size=tokenizer_config.padded_vocab_size(), attn_backend=attn_backend
     )
 
     train_module_config = TransformerTrainModuleConfig(
