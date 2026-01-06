@@ -409,6 +409,14 @@ class GatedDeltaNet(nn.Module):
             expected_full = q_len * world_size
             cu_last = int(cu_seqlens[-1]) if cu_seqlens is not None else None
             seq_len_after_a2a = q.shape[1]
+            n_docs = (cu_seqlens.numel() - 1) if cu_seqlens is not None else None
+            if cu_seqlens is not None:
+                doc_lens = (cu_seqlens[1:] - cu_seqlens[:-1]).to(torch.int32)
+                max_doc = int(doc_lens.max())
+                min_doc = int(doc_lens.min())
+                mean_doc = float(doc_lens.float().mean())
+            else:
+                max_doc = min_doc = mean_doc = None
             if cu_last is None:
                 logging.warning(
                     "[GatedDeltaNet CP] cu_seqlens is None; expected_full=%s, seq_len_after_a2a=%s",
@@ -425,7 +433,8 @@ class GatedDeltaNet(nn.Module):
                 )
             logging.warning(
                 "[GatedDeltaNet CP] Shapes before kernel (rank=%s): "
-                "q=%s k=%s v=%s g=%s beta=%s cu_last=%s expected_full=%s seq_after_a2a=%s",
+                "q=%s k=%s v=%s g=%s beta=%s cu_last=%s expected_full=%s seq_after_a2a=%s "
+                "n_docs=%s doc_len[min/mean/max]=%s/%s/%s",
                 dist.get_rank(self._cp_group) if dist.is_initialized() else "n/a",
                 tuple(q.shape),
                 tuple(k.shape),
@@ -435,6 +444,10 @@ class GatedDeltaNet(nn.Module):
                 cu_last,
                 expected_full,
                 seq_len_after_a2a,
+                n_docs,
+                min_doc,
+                mean_doc,
+                max_doc,
             )
 
             o, recurrent_state = chunk_gated_delta_rule(
@@ -589,7 +602,7 @@ class ShortConvolution(nn.Conv1d):
         kernel_size: int,
         bias: bool = False,
         activation: str | None = "silu",
-        backend: str | None = "triton",
+        backend: str | None = "cuda",
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         **kwargs,
