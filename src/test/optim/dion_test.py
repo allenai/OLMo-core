@@ -112,12 +112,12 @@ def test_hsdp_dion(shard_degree: int, num_replicas: int):
     )
 
 
-def _run_tensor_parallel_dion():
+def _run_tensor_parallel_dion(dp_type: DataParallelType):
     device = get_default_device()
     world_size = torch.distributed.get_world_size()
 
     # Tensor-parallel Transformer
-    dp_config = TransformerDataParallelConfig(name=DataParallelType.fsdp)
+    dp_config = TransformerDataParallelConfig(name=dp_type)
     tp_config = TransformerTensorParallelConfig(degree=world_size)
     world_mesh = build_world_mesh(dp=dp_config, tp=tp_config, device_type=device.type)
     config = TransformerConfig.olmo2_30M(vocab_size=1024)
@@ -141,6 +141,13 @@ def _run_tensor_parallel_dion():
 
 @requires_dion
 @requires_multi_gpu
-def test_tensor_parallel_dion():
+@pytest.mark.parametrize(
+    "dp_type",
+    [
+        pytest.param(DataParallelType.fsdp, id="fsdp"),
+        pytest.param(DataParallelType.hsdp, id="hsdp"),
+    ],
+)
+def test_tensor_parallel_dion(dp_type: DataParallelType):
     seed_all(0)
-    run_distributed_test(_run_tensor_parallel_dion, backend="nccl")
+    run_distributed_test(_run_tensor_parallel_dion, backend="nccl", func_args=(dp_type,))
