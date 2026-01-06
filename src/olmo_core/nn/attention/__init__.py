@@ -44,6 +44,7 @@ from .ring import (
     RingAttentionZigZagLoadBalancer,
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
+    UlyssesLoadBalancer,
 )
 
 __all__ = [
@@ -66,6 +67,9 @@ __all__ = [
     "RingAttentionLoadBalancer",
     "RingAttentionZigZagLoadBalancer",
     "RingAttentionLlama3LoadBalancer",
+    "UlyssesLoadBalancer",
+    "RingContextParallelStyle",
+    "UlyssesContextParallelStyle",
 ]
 
 log = logging.getLogger(__name__)

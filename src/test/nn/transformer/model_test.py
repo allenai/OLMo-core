@@ -16,8 +16,6 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.distributed.parallel import (
     DataParallelConfig,
     DataParallelType,
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
     build_world_mesh,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
@@ -27,6 +25,7 @@ from olmo_core.nn.attention import (
     RingAttentionLoadBalancerType,
     SlidingWindowAttentionConfig,
 )
+from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
