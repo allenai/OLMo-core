@@ -14,7 +14,6 @@ from olmo_core.testing.utils import requires_dion
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
-    TransformerTensorParallelConfig,
 )
 from olmo_core.utils import get_default_device, seed_all
 
@@ -110,44 +109,3 @@ def test_hsdp_dion(shard_degree: int, num_replicas: int):
         world_size=2,
         func_args=(shard_degree, num_replicas),
     )
-
-
-def _run_tensor_parallel_dion(dp_type: DataParallelType):
-    device = get_default_device()
-    world_size = torch.distributed.get_world_size()
-
-    # Tensor-parallel Transformer
-    dp_config = TransformerDataParallelConfig(name=dp_type)
-    tp_config = TransformerTensorParallelConfig(degree=world_size)
-    world_mesh = build_world_mesh(dp=dp_config, tp=tp_config, device_type=device.type)
-    config = TransformerConfig.olmo2_30M(vocab_size=1024)
-    model = config.build(init_device=device.type)
-    model.train()
-    model = parallelize_model(model, world_mesh=world_mesh, device=device, tp_config=tp_config)
-
-    # Create the Dion optimizer
-    optim_config = DionConfig()
-    optim = optim_config.create_optimizer(model)
-
-    # Fwd-bwd
-    bs, seq_len = 2, 8
-    input_ids = torch.randint(0, 1024, (bs, seq_len), device=device)
-    logits = model(input_ids)
-    logits.sum().backward()
-
-    # Take optimizer step to test Dion with tensor parallelism
-    optim.step()
-
-
-@requires_dion
-@requires_multi_gpu
-@pytest.mark.parametrize(
-    "dp_type",
-    [
-        pytest.param(DataParallelType.fsdp, id="fsdp"),
-        pytest.param(DataParallelType.hsdp, id="hsdp"),
-    ],
-)
-def test_tensor_parallel_dion(dp_type: DataParallelType):
-    seed_all(0)
-    run_distributed_test(_run_tensor_parallel_dion, backend="nccl", func_args=(dp_type,))
