@@ -2,15 +2,10 @@ import os
 
 import pytest
 import torch
+import transformers
 
 from olmo_core.nn.hf.convert import convert_state_from_hf
 from olmo_core.nn.transformer import TransformerConfig
-
-try:
-    from transformers import AutoModelForCausalLM, Qwen3Config
-except ImportError:
-    AutoModelForCausalLM = None
-    Qwen3Config = None
 
 
 def test_qwen3_forward_pass():
@@ -38,9 +33,11 @@ def test_qwen3_has_head_qk_norm():
     assert model.blocks["0"].attention.k_norm.weight.shape == (head_dim,)
 
 
-@pytest.mark.skipif(Qwen3Config is None, reason="Qwen3Config not available in transformers")
+@pytest.mark.skipif(
+    not hasattr(transformers, "Qwen3Config"), reason="Qwen3Config not available in transformers"
+)
 def test_qwen3_conversion_mappings():
-    hf_config = Qwen3Config(
+    hf_config = transformers.Qwen3Config(
         vocab_size=64,
         hidden_size=16,
         intermediate_size=32,
@@ -68,8 +65,7 @@ def test_qwen3_conversion_mappings():
 
 
 @pytest.mark.skipif(
-    AutoModelForCausalLM is None or Qwen3Config is None,
-    reason="transformers not available",
+    not hasattr(transformers, "Qwen3Config"), reason="Qwen3Config not available in transformers"
 )
 @pytest.mark.skipif(
     not os.environ.get("HF_TOKEN"),
@@ -78,7 +74,7 @@ def test_qwen3_conversion_mappings():
 def test_qwen3_matches_huggingface():
     model_name = "Qwen/Qwen3-0.6B"
 
-    hf_model = AutoModelForCausalLM.from_pretrained(
+    hf_model = transformers.AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.float32,
         token=os.environ.get("HF_TOKEN"),

@@ -386,14 +386,24 @@ class Attention(AttentionBase):
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
-        self.head_dim = head_dim if head_dim is not None else d_model // n_heads
         self.d_model = d_model
-        q_out_dim = n_heads * self.head_dim
-        kv_out_dim = self.n_kv_heads * self.head_dim
-        self.w_q = nn.Linear(d_model, q_out_dim, bias=bias, dtype=dtype, device=init_device)
-        self.w_k = nn.Linear(d_model, kv_out_dim, bias=bias, dtype=dtype, device=init_device)
-        self.w_v = nn.Linear(d_model, kv_out_dim, bias=bias, dtype=dtype, device=init_device)
-        self.w_out = nn.Linear(q_out_dim, d_model, bias=bias, dtype=dtype, device=init_device)
+        # Some models (e.g. Qwen3) use explicit head_dim that differs from d_model // n_heads.
+        if head_dim is not None:
+            self.head_dim = head_dim
+        else:
+            self.head_dim = d_model // n_heads
+        self.w_q = nn.Linear(
+            d_model, n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_k = nn.Linear(
+            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_v = nn.Linear(
+            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_out = nn.Linear(
+            n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device
+        )
 
         self.gate = gate
         self.w_g: Optional[nn.Linear] = None
@@ -415,8 +425,10 @@ class Attention(AttentionBase):
                 self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
                 self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
             else:
-                self.q_norm = qk_norm.build(size=q_out_dim, init_device=init_device)
-                self.k_norm = qk_norm.build(size=kv_out_dim, init_device=init_device)
+                self.q_norm = qk_norm.build(size=n_heads * self.head_dim, init_device=init_device)
+                self.k_norm = qk_norm.build(
+                    size=self.n_kv_heads * self.head_dim, init_device=init_device
+                )
 
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:
