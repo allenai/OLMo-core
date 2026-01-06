@@ -87,6 +87,7 @@ def all_to_all_hp2cp(
     return exchanged
 
 
+@dataclass
 class UlyssesContextParallelStyle(Config):
     """
     Configuration for Ulysses-style context parallelism.
