@@ -37,9 +37,9 @@ def _all_to_all_equal_split():
 
     expected_grad = torch.ones_like(input_tensor)
     assert input_tensor.grad is not None, f"Rank {rank}: gradient is None"
-    assert torch.allclose(input_tensor.grad, expected_grad), (
-        f"Rank {rank}: expected grad {expected_grad}, got {input_tensor.grad}"
-    )
+    assert torch.allclose(
+        input_tensor.grad, expected_grad
+    ), f"Rank {rank}: expected grad {expected_grad}, got {input_tensor.grad}"
 
 
 def _all_to_all_unequal_split():
@@ -71,9 +71,9 @@ def _all_to_all_unequal_split():
         input_split_sizes=input_split_sizes,
     )
     expected_size = sum(output_split_sizes)
-    assert output.shape[0] == expected_size, (
-        f"Rank {rank}: expected size {expected_size}, got {output.shape[0]}"
-    )
+    assert (
+        output.shape[0] == expected_size
+    ), f"Rank {rank}: expected size {expected_size}, got {output.shape[0]}"
 
     if rank == 0:
         expected = torch.tensor([0.0, 10.0, 10.0], device=device, dtype=torch.float32)
@@ -87,9 +87,9 @@ def _all_to_all_unequal_split():
 
     expected_grad = torch.ones_like(input_tensor)
     assert input_tensor.grad is not None, f"Rank {rank}: gradient is None"
-    assert torch.allclose(input_tensor.grad, expected_grad), (
-        f"Rank {rank}: expected grad {expected_grad}, got {input_tensor.grad}"
-    )
+    assert torch.allclose(
+        input_tensor.grad, expected_grad
+    ), f"Rank {rank}: expected grad {expected_grad}, got {input_tensor.grad}"
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
