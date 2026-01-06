@@ -12,6 +12,7 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_gpu_type, get_root_dir, get_work_dir
+from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import AttentionBackendName
@@ -120,6 +121,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 CHINCHILLA_MULTIPLE, model_params=model_config.num_active_non_embedding_params
             ),
         )
+        .with_callbacks(configure_required_callbacks(run_name_with_ts))
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
@@ -140,8 +142,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(tokenizer_config, SEQ_LENGTH, cli_context.cluster, task_set="fast")
     )
+    if not FOR_BENCHMARKING:
+        trainer_config = trainer_config.with_recommended_evals(
+            tokenizer_config, SEQ_LENGTH, cli_context.cluster, task_set="fast"
+        )
 
     experiment_config = ExperimentConfig(
         run_name=cli_context.run_name,

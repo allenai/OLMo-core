@@ -23,9 +23,9 @@ from olmo_core.train.callbacks import (
     Callback,
     CheckpointerCallback,
     ConfigSaverCallback,
+    GAPMonitorCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    MonkeyPatcherCallback,
     ProfilerCallback,
     SlackNotifierCallback,
     WandBCallback,
@@ -116,6 +116,22 @@ def configure_trainer(
     return trainer_config
 
 
+def configure_required_callbacks(run_name: str) -> Dict[str, Callback]:
+    callbacks = {
+        "config_saver": ConfigSaverCallback(),
+        "profiler": ProfilerCallback(enabled=False),
+        "garbage_collector": GarbageCollectorCallback(),
+        "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
+        "gap_monitor": GAPMonitorCallback(enabled=False),
+    }
+    beaker_user = get_beaker_username()
+    if beaker_user is not None:
+        callbacks["beaker"] = BeakerCallback()
+    if torch.cuda.is_available():
+        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
+    return callbacks
+
+
 def configure_default_callbacks(
     run_name: str,
     wandb_group_name: str,
@@ -123,31 +139,19 @@ def configure_default_callbacks(
     checkpoint_save_interval: int | None = 1000,
     ephemeral_checkpoint_save_interval: int | None = None,
 ) -> Dict[str, Callback]:
-    callbacks = {
-        "checkpointer": CheckpointerCallback(
-            save_interval=checkpoint_save_interval,
-            ephemeral_save_interval=ephemeral_checkpoint_save_interval,
-            save_async=False,  # TODO: enable async saving when augusta stops being silly
-        ),
-        "config_saver": ConfigSaverCallback(),
-        "profiler": ProfilerCallback(enabled=False),
-        "garbage_collector": GarbageCollectorCallback(),
-        "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
-        "monkey_patcher": MonkeyPatcherCallback(),
-        "wandb": WandBCallback(
-            name=run_name,
-            group=wandb_group_name,
-            project=wandb_project,
-            entity="ai2-llm",
-            cancel_check_interval=20,
-            enabled=True,
-        ),
-    }
-
-    beaker_user = get_beaker_username()
-    if beaker_user is not None:
-        callbacks["beaker"] = BeakerCallback()
-    if torch.cuda.is_available():
-        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
+    callbacks = configure_required_callbacks(run_name)
+    callbacks["checkpointer"] = CheckpointerCallback(
+        save_interval=checkpoint_save_interval,
+        ephemeral_save_interval=ephemeral_checkpoint_save_interval,
+        save_async=True,
+    )
+    callbacks["wandb"] = WandBCallback(
+        name=run_name,
+        group=wandb_group_name,
+        project=wandb_project,
+        entity="ai2-llm",
+        cancel_check_interval=20,
+        enabled=True,
+    )
 
     return callbacks
