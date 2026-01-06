@@ -25,11 +25,12 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerDataParallelWrappingStrategy,
 )
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import CosWithWarmup, DionConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
+    TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -80,13 +81,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQ_LENGTH * 2,
         max_sequence_length=SEQ_LENGTH,
-        optim=SkipStepAdamWConfig(
+        optim=DionConfig(
             lr=3e-4,
             weight_decay=0.1,
             betas=(0.9, 0.95),
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -95,6 +93,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
+        tp_config=TransformerTensorParallelConfig(degree=2),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
