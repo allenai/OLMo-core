@@ -17,8 +17,7 @@ from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelWrappingStrategy
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride
-from olmo_core.optim.adamw import SkipStepAdamWConfig
+from olmo_core.optim import CosWithWarmup, MuonConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import TransformerDataParallelConfig, TransformerTrainModuleConfig
@@ -26,7 +25,7 @@ from olmo_core.train.train_module import TransformerDataParallelConfig, Transfor
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**19  # ~524k tokens
 CHINCHILLA_MULTIPLE = 1.0  # Train to 1x Chinchilla optimality
-FOR_BENCHMARKING = False
+FOR_BENCHMARKING = True
 
 
 def estimate_lr(model_params: int, chinchilla_multiple: float = 1.0) -> float:
@@ -70,13 +69,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQ_LENGTH * 2,
         max_sequence_length=SEQ_LENGTH,
-        optim=SkipStepAdamWConfig(
+        optim=MuonConfig(
             lr=estimate_lr(model_config.num_non_embedding_params, CHINCHILLA_MULTIPLE),
             weight_decay=0.1,
             betas=(0.9, 0.95),
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(

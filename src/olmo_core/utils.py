@@ -360,14 +360,6 @@ def setup_logging(
     logging.getLogger("urllib3").setLevel(logging.ERROR)
     logging.getLogger("google").setLevel(logging.WARNING)
 
-    # Suppress "Supported flash-attn versions are ..." warning on non-rank-0.
-    # Make it clear where the warning is coming from.
-    te_logger = logging.getLogger("transformer_engine.pytorch.attention.dot_product_attention")
-    te_logger.handlers = []  # Remove any handlers TE might have added
-    te_logger.propagate = True  # Ensure it uses root logger's handlers
-    if get_local_rank() != 0:
-        te_logger.setLevel(logging.ERROR)
-
     _LOGGING_CONFIGURED = True
 
 
@@ -460,6 +452,12 @@ def filter_warnings():
         action="ignore",
         message="failed to load.*",
         module="torchvision.io.image",
+    )
+    # TransformerEngine warnings.
+    warnings.filterwarnings(
+        action="ignore",
+        message="Supported flash-attn versions are.*",
+        module="transformer_engine.pytorch.attention.dot_product_attention",
     )
 
 
