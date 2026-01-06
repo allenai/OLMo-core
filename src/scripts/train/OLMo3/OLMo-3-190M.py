@@ -29,7 +29,6 @@ from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConf
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import (
-    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
@@ -71,10 +70,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.dolma2()
 
-    # attn_backend = (
-    #     AttentionBackendName.flash_2 if "B200" in gpu_type else AttentionBackendName.flash_3
-    # )
-    attn_backend = AttentionBackendName.flash_2
+    attn_backend = (
+        AttentionBackendName.flash_2 if "B200" in gpu_type else AttentionBackendName.flash_3
+    )
     model_config = TransformerConfig.olmo3_190M(
         vocab_size=tokenizer_config.padded_vocab_size(), attn_backend=attn_backend
     )
@@ -97,7 +95,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        cp_config=TransformerContextParallelConfig.zig_zag(degree=2),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
