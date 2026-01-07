@@ -635,7 +635,7 @@ class ModelLadder(Config):
                 "beaker": callbacks.BeakerCallback(),
                 "wandb": callbacks.WandBCallback(
                     name=run_name,
-                    group=run_name,
+                    group=self.name,
                     project=self.project or self.name,
                     cancel_check_interval=50,
                     enabled=not for_benchmarking,

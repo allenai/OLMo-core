@@ -63,7 +63,10 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepAdamWConfig:
         del batch_size  # unused
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
-        # but divide by 2 for WSD schedule (seems to work empirically).
+        # but divide by 2 for WSD schedule, which empirically seems to be a good value, at least (seems to work empirically).
+        # for 4xChinchilla runs.
+        # TODO: this should be adapted to the length of the run. See this report
+        # https://wandb.ai/ai2-llm/olmo3-ladder-tune-lr/reports/Olmo-3-ladder-LR-sweep--VmlldzoxNTUxNzE4Nw
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
         lr /= 2.0
         lr *= self.lr_multiplier

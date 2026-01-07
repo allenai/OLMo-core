@@ -18,7 +18,6 @@ from olmo_core.launch.beaker import (
     is_running_in_beaker_batch_job,
 )
 from olmo_core.model_ladder import *
-from olmo_core.model_ladder.utils import get_mix_base_dir
 from olmo_core.utils import prepare_cli_environment
 
 from .common import build_launch_config, get_gpu_type, get_root_dir
@@ -100,7 +99,7 @@ def parse_args(
         parser.add_argument(
             "--cluster",
             type=str,
-            choices=["ai2/augusta", "ai2/jupiter", "ai2/titan", "lambda"],
+            choices=["ai2/augusta", "ai2/jupiter", "ai2/titan"],
             default="ai2/augusta",
             help="The Beaker cluster to launch each run on.",
         )
@@ -290,7 +289,8 @@ def parse_args(
 
 
 def get_default_ladder_factory(
-    configure_model: Callable[[argparse.Namespace], ModelConfigurator]
+    configure_model: Callable[[argparse.Namespace], ModelConfigurator],
+    configure_run: Callable[[argparse.Namespace], RunConfigurator] | None = None,
 ) -> Callable[[argparse.Namespace], ModelLadder]:
     def factory(args: argparse.Namespace) -> ModelLadder:
         tokenizer = TokenizerConfig.dolma2()
@@ -299,10 +299,8 @@ def get_default_ladder_factory(
                 sources=[
                     NumpyDocumentSourceMixConfig(
                         tokenizer=tokenizer,
-                        mix=DataMix.OLMo_mix_0925_official
-                        if args.cluster == "lambda"
-                        else DataMix.OLMo_mix_0925,
-                        mix_base_dir=get_mix_base_dir(args.cluster),
+                        mix=DataMix.OLMo_mix_0925,
+                        mix_base_dir="gs://ai2-llm/",
                     )
                 ],
                 sequence_length=args.sequence_length,
@@ -316,7 +314,9 @@ def get_default_ladder_factory(
             max_devices=args.max_gpus,
             device_type=get_gpu_type(args.cluster),
             model_configurator=configure_model(args),
-            run_configurator=WSDSChinchillaRunConfigurator(
+            run_configurator=configure_run(args)
+            if configure_run is not None
+            else WSDSChinchillaRunConfigurator(
                 chinchilla_multiple=args.chinchilla_multiple,
                 lr_multiplier=args.lr_multiplier,
             ),
@@ -335,17 +335,20 @@ def get_default_ladder_factory(
 def main(
     configure_ladder: Callable[[argparse.Namespace], ModelLadder] | None | None = None,
     configure_model: Callable[[argparse.Namespace], ModelConfigurator] | None = None,
+    configure_run: Callable[[argparse.Namespace], RunConfigurator] | None = None,
     size_enum: Type[TransformerSize] = TransformerSize,
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
-    assert (configure_ladder is None) != (
-        configure_model is None
-    ), "Either configure_ladder or configure_model must be provided, but not both."
-
     if configure_ladder is None:
-        assert configure_model is not None
+        assert (
+            configure_model is not None
+        ), "configure_model is required if configure_ladder is unspecified"
 
-        configure_ladder = get_default_ladder_factory(configure_model)
+        configure_ladder = get_default_ladder_factory(configure_model, configure_run)
+    else:
+        assert (
+            configure_model is None and configure_run is None
+        ), "configure_model / configure_run and mutually exclusive with configure_ladder"
 
     args = parse_args(
         configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
