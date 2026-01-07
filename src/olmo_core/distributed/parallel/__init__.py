@@ -47,9 +47,6 @@ __all__ = [
     "PipelineScheduleType",
     "PipelineSplitStyle",
     "PipelineSchedule",
-    "ContextParallelConfig",
-    "RingContextParallelStyle",
-    "UlyssesContextParallelStyle",
 ]
 
 log = logging.getLogger(__name__)
@@ -156,13 +153,17 @@ def build_world_mesh(
     global _WORLD_MESH
 
     if _WORLD_MESH is not None:
-        raise RuntimeError("world mesh already exists! You can only call 'build_world_mesh' once!")
+        raise RuntimeError(
+            "world mesh already exists! You can only call 'build_world_mesh' once!"
+        )
 
     device_type = device_type or get_default_device().type
     dp_world_size = get_world_size()
 
     if pp is None and tp is None and cp is None and dp is None and ep is None:
-        return init_device_mesh(device_type, (dp_world_size,), mesh_dim_names=(MeshDimName.dp,))
+        return init_device_mesh(
+            device_type, (dp_world_size,), mesh_dim_names=(MeshDimName.dp,)
+        )
 
     if dp is None:
         raise OLMoConfigurationError(
@@ -269,7 +270,8 @@ def get_device_mesh_info(device_mesh: DeviceMesh) -> str:
     shape: str
     if device_mesh.mesh_dim_names is not None:
         shape = ", ".join(
-            f"{dim_name}={d}" for dim_name, d in zip(device_mesh.mesh_dim_names, device_mesh.shape)
+            f"{dim_name}={d}"
+            for dim_name, d in zip(device_mesh.mesh_dim_names, device_mesh.shape)
         )
     else:
         shape = ", ".join(f"{d}" for d in device_mesh.shape)
@@ -311,7 +313,9 @@ def build_expert_parallel_mesh(
 
 def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...]]:
     if (dim_names := device_mesh.mesh_dim_names) is None:
-        raise RuntimeError("could not determine DP model sub-mesh without dimension names")
+        raise RuntimeError(
+            "could not determine DP model sub-mesh without dimension names"
+        )
 
     # Expert parallel dims get flattened into a DP dimension.
     if MeshDimName.dp in dim_names and MeshDimName.ep in dim_names:
@@ -424,6 +428,36 @@ def get_dp_process_group(device_mesh: DeviceMesh) -> ProcessGroup:
         return dp_mesh.get_group()
 
 
+def get_dp_shard_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
+    """
+    Get the data parallel shard sub-mesh associated with a ``DeviceMesh``
+    created from :func:`build_world_mesh()`.
+    :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
+    """
+    device_mesh, dim_names = _get_model_mesh(device_mesh)
+    if MeshDimName.dp_shard in dim_names:
+        return device_mesh[MeshDimName.dp_shard]
+    else:
+        raise RuntimeError(
+            f"could not determine data parallel shard sub-mesh from mesh with dimensions {dim_names}"
+        )
+
+
+def get_dp_replicate_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
+    """
+    Get the data parallel replicate sub-mesh associated with a ``DeviceMesh``
+    created from :func:`build_world_mesh()`.
+    :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
+    """
+    device_mesh, dim_names = _get_model_mesh(device_mesh)
+    if MeshDimName.dp_replicate in dim_names:
+        return device_mesh[MeshDimName.dp_replicate]
+    else:
+        raise RuntimeError(
+            f"could not determine data parallel replicate sub-mesh from mesh with dimensions {dim_names}"
+        )
+
+
 def get_ep_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
     Get the expert parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
@@ -432,7 +466,9 @@ def get_ep_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
     """
     if device_mesh.mesh_dim_names is None:
-        raise RuntimeError("could not determine expert parallel sub-mesh without dimension names")
+        raise RuntimeError(
+            "could not determine expert parallel sub-mesh without dimension names"
+        )
 
     if MeshDimName.ep in device_mesh.mesh_dim_names:
         return device_mesh[MeshDimName.ep]
@@ -471,7 +507,9 @@ def get_cp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
     """
     if device_mesh.mesh_dim_names is None:
-        raise RuntimeError("could not determine context parallel sub-mesh without dimension names")
+        raise RuntimeError(
+            "could not determine context parallel sub-mesh without dimension names"
+        )
 
     if MeshDimName.cp in device_mesh.mesh_dim_names:
         return device_mesh[MeshDimName.cp]
@@ -489,7 +527,9 @@ def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
     """
     if device_mesh.mesh_dim_names is None:
-        raise RuntimeError("could not determine pipeline parallel sub-mesh without dimension names")
+        raise RuntimeError(
+            "could not determine pipeline parallel sub-mesh without dimension names"
+        )
 
     if MeshDimName.pp in device_mesh.mesh_dim_names:
         return device_mesh[MeshDimName.pp]
@@ -499,7 +539,9 @@ def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
         )
 
 
-def get_pp_stage_mesh(device_mesh: DeviceMesh, pp_mesh: Optional[DeviceMesh] = None) -> DeviceMesh:
+def get_pp_stage_mesh(
+    device_mesh: DeviceMesh, pp_mesh: Optional[DeviceMesh] = None
+) -> DeviceMesh:
     """
     Get the sub-mesh for a single pipeline stage.
 
@@ -515,7 +557,9 @@ def get_pp_stage_mesh(device_mesh: DeviceMesh, pp_mesh: Optional[DeviceMesh] = N
             "could not determine pipeline parallel stage sub-mesh without dimension names"
         )
 
-    target_dims = tuple(n for n in device_mesh.mesh_dim_names if n not in pp_mesh.mesh_dim_names)
+    target_dims = tuple(
+        n for n in device_mesh.mesh_dim_names if n not in pp_mesh.mesh_dim_names
+    )
     return device_mesh[target_dims]
 
 

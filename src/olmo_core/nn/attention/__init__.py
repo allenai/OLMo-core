@@ -48,11 +48,15 @@ from .ring import (
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
     UlyssesLoadBalancer,
 )
 
 
-def _a2a_heads(x: torch.Tensor, *, is_qkv: bool, group: dist.ProcessGroup) -> torch.Tensor:
+def _a2a_heads(
+    x: torch.Tensor, *, is_qkv: bool, group: dist.ProcessGroup
+) -> torch.Tensor:
     """All-to-all across head dimension (Ulysses-style)."""
     b, t, h, d = x.shape
     x_flat = x.reshape(b * t, h, d).contiguous()
@@ -83,6 +87,8 @@ __all__ = [
     "RingAttentionZigZagLoadBalancer",
     "RingAttentionLlama3LoadBalancer",
     "UlyssesLoadBalancer",
+    "RingContextParallelStyle",
+    "UlyssesContextParallelStyle",
 ]
 
 log = logging.getLogger(__name__)
@@ -157,7 +163,9 @@ class SlidingWindowAttentionConfig(Config):
         """
         window_size = self._get_window_size(layer_idx, n_layers)
         if window_size == -1:
-            raise ValueError(f"Layer {layer_idx} is not configured for sliding window attention.")
+            raise ValueError(
+                f"Layer {layer_idx} is not configured for sliding window attention."
+            )
         return window_size
 
 
@@ -215,7 +223,11 @@ class AttentionConfig(ModuleConfig):
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads or n_heads
         head_dim = d_model // n_heads
-        bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
+        bias = (
+            self.bias
+            if self.bias is not None
+            else self.name != AttentionType.normalized
+        )
 
         params = 0
 
@@ -285,7 +297,9 @@ class AttentionConfig(ModuleConfig):
         if sliding_window_config is not None and sliding_window_config.should_use_swa(
             layer_idx, n_layers
         ):
-            kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
+            kwargs["window_size"] = sliding_window_config.get_window_size(
+                layer_idx, n_layers
+            )
         else:  # global (non-SWA) layer
             rope_config: Optional[RoPEConfig] = kwargs.get("rope")
             if rope_config is not None and rope_config.no_global_rope:
@@ -401,14 +415,26 @@ class Attention(AttentionBase):
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
         self.head_dim = d_model // n_heads
-        self.w_q = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w_q = nn.Linear(
+            d_model, d_model, bias=bias, dtype=dtype, device=init_device
+        )
         self.w_k = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+            d_model,
+            self.n_kv_heads * self.head_dim,
+            bias=bias,
+            dtype=dtype,
+            device=init_device,
         )
         self.w_v = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+            d_model,
+            self.n_kv_heads * self.head_dim,
+            bias=bias,
+            dtype=dtype,
+            device=init_device,
         )
-        self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w_out = nn.Linear(
+            d_model, d_model, bias=bias, dtype=dtype, device=init_device
+        )
 
         self.gate = gate
         self.w_g: Optional[nn.Linear] = None
@@ -418,7 +444,9 @@ class Attention(AttentionBase):
                     d_model, self.n_heads, bias=bias, dtype=dtype, device=init_device
                 )
             elif gate.granularity == GateGranularity.elementwise:
-                self.w_g = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+                self.w_g = nn.Linear(
+                    d_model, d_model, bias=bias, dtype=dtype, device=init_device
+                )
 
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
@@ -455,7 +483,8 @@ class Attention(AttentionBase):
                 )
             elif backend is None:
                 warnings.warn(
-                    "'use_flash' is deprecated, use 'backend=flash_2' instead", DeprecationWarning
+                    "'use_flash' is deprecated, use 'backend=flash_2' instead",
+                    DeprecationWarning,
                 )
                 backend = AttentionBackendName.flash_2
 
@@ -464,7 +493,9 @@ class Attention(AttentionBase):
         window_size_tuple: Tuple[int, int] = (-1, -1)
         if window_size is not None:
             if window_size <= 0:
-                raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
+                raise OLMoConfigurationError(
+                    f"'window_size' must be positive (got {window_size})"
+                )
 
             if backend is None and flash_attn_api.has_flash_attn_2():
                 # note: flash_3 and te backends are faster than flash_2 and also support SWA
@@ -604,7 +635,9 @@ class Attention(AttentionBase):
                     f"to be divisible by cp degree ({world_size})"
                 )
             if self.kv_cache_manager is not None:
-                raise RuntimeError("KV cache is not supported with Ulysses context parallelism")
+                raise RuntimeError(
+                    "KV cache is not supported with Ulysses context parallelism"
+                )
 
             q = _a2a_heads(q, is_qkv=True, group=self._cp_pg)
             k = _a2a_heads(k, is_qkv=True, group=self._cp_pg)
@@ -624,7 +657,11 @@ class Attention(AttentionBase):
                     "sharded by the context parallel load balancer"
                 )
 
-            start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
+            start_pos = (
+                self.kv_cache_manager.current_position()
+                if self.kv_cache_manager
+                else None
+            )
 
             q, k = self.rope(
                 q,
@@ -720,9 +757,13 @@ class Attention(AttentionBase):
             # if full-dim norm: output is sharded on the embedding dimension (B, T, E [sharded])
             #    which will be reshaped into (B, T, H [sharded], D)
             # if head-wise norm: output is sharded on the head dimension (B, T, H [sharded], D)
-            plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
+            plan["q_norm"] = SequenceParallel(
+                use_local_output=True, output_layouts=Shard(2)
+            )
         if self.k_norm is not None:
-            plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
+            plan["k_norm"] = SequenceParallel(
+                use_local_output=True, output_layouts=Shard(2)
+            )
 
         parallelize_module(
             module=self,
@@ -780,7 +821,9 @@ class Attention(AttentionBase):
         # For sliding window attention, effective sequence length is limited by window size
         # Note that flash attention technically uses more flops (14x multiplier) due to recomputation,
         # however, we just compute the idealized flops for SDPA.
-        effective_seq_len = min(self.window_size, seq_len) if self.window_size else seq_len
+        effective_seq_len = (
+            min(self.window_size, seq_len) if self.window_size else seq_len
+        )
         attn_flops = 12 * self.n_heads * self.head_dim * effective_seq_len
 
         return param_flops + attn_flops
@@ -830,7 +873,9 @@ class NormalizedAttention(Attention):
         self.sk_init_value = 1.0
         self.sk_init_scaling = 1.0 / math.sqrt(d_model)
         self.sk = nn.Parameter(
-            torch.empty(self.head_dim * self.n_kv_heads, dtype=dtype, device=init_device)
+            torch.empty(
+                self.head_dim * self.n_kv_heads, dtype=dtype, device=init_device
+            )
         )
 
         self.reset_parameters()
@@ -899,7 +944,11 @@ class NormalizedAttention(Attention):
                     "sharded by the context parallel load balancer"
                 )
 
-            start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
+            start_pos = (
+                self.kv_cache_manager.current_position()
+                if self.kv_cache_manager
+                else None
+            )
             q, k = self.rope(
                 q,
                 k,
@@ -941,7 +990,9 @@ class NormalizedAttention(Attention):
     ):
         del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
 
-        raise NotImplementedError("TP is not implemented yet for the normalized attention variant")
+        raise NotImplementedError(
+            "TP is not implemented yet for the normalized attention variant"
+        )
 
     @torch.no_grad()
     def normalize_matrices(self):
@@ -1000,13 +1051,19 @@ class FusedAttention(AttentionBase):
 
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
-        self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, dtype=dtype, device=init_device)
-        self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w_qkv = nn.Linear(
+            d_model, 3 * d_model, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_out = nn.Linear(
+            d_model, d_model, bias=bias, dtype=dtype, device=init_device
+        )
         self.clip_qkv = clip_qkv
         self.rope: Optional[FusedRotaryEmbedding] = None
         if rope is not None:
             if rope.name != "fused":
-                raise OLMoConfigurationError(f"{self.__class__.__name__} requires fused RoPE")
+                raise OLMoConfigurationError(
+                    f"{self.__class__.__name__} requires fused RoPE"
+                )
             rope_class = rope.build(self.head_dim, cache=cache)
             assert isinstance(rope_class, FusedRotaryEmbedding)
             self.rope = rope_class
@@ -1099,7 +1156,9 @@ class FusedAttention(AttentionBase):
     ):
         del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
 
-        raise NotImplementedError("TP is not implemented yet for the fused attention variant")
+        raise NotImplementedError(
+            "TP is not implemented yet for the fused attention variant"
+        )
 
     def apply_cp(
         self,

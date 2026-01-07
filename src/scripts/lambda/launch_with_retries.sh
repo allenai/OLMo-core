@@ -16,7 +16,7 @@ shift
 
 for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
     if [ -z "${!var}" ]; then
-        log_error "Usage: $0 <job_script.sbatch> <run_name> <nodes>"
+        log_error "Usage: $0 <job_script.sbatch> <run_name> <nodes> [args...]"
         exit 1
     fi
 done
@@ -27,7 +27,7 @@ if [ -z "$SLACK_WEBHOOK_URL" ]; then
 fi
 
 while true; do
-    JOB_ID=$(launch_job "$JOB_SCRIPT" "$RUN_NAME" "$NODES")
+    JOB_ID=$(launch_job "$JOB_SCRIPT" "$RUN_NAME" "$NODES" "$@")
     if ! [ $? -eq 0 ]; then
         log_warning "Retrying in 5 seconds..."
         sleep 5

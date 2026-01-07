@@ -68,9 +68,9 @@ torchao = ["torchao==0.15.0"]
 transformers = ["transformers"]
 wandb = ["wandb"]
 fla = [
-    "flash-linear-attention",
+    "flash-linear-attention"
 ]
-all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,fla]"]
+all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fla,torchao,transformers,wandb]"]
 
 
 [tool.setuptools]
@@ -146,8 +146,15 @@ exclude = [
 reportPrivateImportUsage = false
 
 [tool.ty.rules]
-possibly-unbound-attribute = "ignore"
-possibly-unbound-import = "ignore"
+possibly-missing-attribute = "ignore"
+possibly-missing-import = "ignore"
+unresolved-attribute = "warn"
+
+[[tool.ty.overrides]]
+include = ["src/olmo_core/nn/**"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
 
 [tool.mypy]
 ignore_missing_imports = true

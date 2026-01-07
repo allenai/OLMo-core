@@ -20,6 +20,7 @@ from olmo_core.nn.fla import FLAConfig
 from olmo_core.ops import attach_auxiliary_loss
 
 from ..attention import AttentionConfig
+from ..attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
 from ..functional import l2_normalize
@@ -66,7 +67,11 @@ class TransformerBlockBase(nn.Module):
 
     @abstractmethod
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         raise NotImplementedError
 
@@ -129,7 +134,11 @@ class TransformerBlock(TransformerBlockBase):
         self.d_model = d_model
         self.block_idx = block_idx
         self.attention = attention.build(
-            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+            d_model,
+            layer_idx=block_idx,
+            n_layers=n_layers,
+            init_device=init_device,
+            cache=cache,
         )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
         self.attention_residual_stream = ResidualStream(
@@ -149,11 +158,19 @@ class TransformerBlock(TransformerBlockBase):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = self.attention_residual_stream(x, self.attention(self.attention_norm(x), **kwargs))
-        return self.feed_forward_residual_stream(h, self.feed_forward(self.feed_forward_norm(h)))
+        h = self.attention_residual_stream(
+            x, self.attention(self.attention_norm(x), **kwargs)
+        )
+        return self.feed_forward_residual_stream(
+            h, self.feed_forward(self.feed_forward_norm(h))
+        )
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         parallelize_module(
             self,
@@ -165,7 +182,9 @@ class TransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(
-            self.attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.attention_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
         parallelize_module(
             self.attention_residual_stream.dropout,
@@ -182,7 +201,9 @@ class TransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(
-            self.feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.feed_forward_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
         parallelize_module(
             self.feed_forward_residual_stream.dropout,
@@ -214,8 +235,12 @@ class TransformerBlock(TransformerBlockBase):
         **fsdp_kwargs,
     ):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
-            fsdp_att = cast(FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs))
-            fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs))
+            fsdp_att = cast(
+                FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs)
+            )
+            fsdp_mlp = cast(
+                FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
+            )
             fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
             if prefetch_factor > 0:
                 fsdp_root.set_modules_to_forward_prefetch([fsdp_att])
@@ -271,7 +296,9 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
 
         # LayerNorm scaling factor 1/sqrt(layer_id), where layer_id is 1-based.
         ln_scale_value = 1.0 / math.sqrt(block_idx + 1)
-        self.register_buffer("ln_scale", torch.tensor(ln_scale_value, dtype=torch.float32))
+        self.register_buffer(
+            "ln_scale", torch.tensor(ln_scale_value, dtype=torch.float32)
+        )
 
     def forward(
         self,
@@ -305,8 +332,12 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = self.attention_residual_stream(x, self.attention_norm(self.attention(x, **kwargs)))
-        return self.feed_forward_residual_stream(h, self.feed_forward_norm(self.feed_forward(h)))
+        h = self.attention_residual_stream(
+            x, self.attention_norm(self.attention(x, **kwargs))
+        )
+        return self.feed_forward_residual_stream(
+            h, self.feed_forward_norm(self.feed_forward(h))
+        )
 
 
 class PeriNormTransformerBlock(TransformerBlock):
@@ -354,21 +385,32 @@ class PeriNormTransformerBlock(TransformerBlock):
     ) -> torch.Tensor:
         del loss_div_factor
         h = self.attention_residual_stream(
-            x, self.post_attention_norm(self.attention(self.attention_norm(x), **kwargs))
+            x,
+            self.post_attention_norm(self.attention(self.attention_norm(x), **kwargs)),
         )
         return self.feed_forward_residual_stream(
             h, self.post_feed_forward_norm(self.feed_forward(self.feed_forward_norm(h)))
         )
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
-        super().apply_tp(tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled)
-        parallelize_module(
-            self.post_feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        super().apply_tp(
+            tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled
         )
         parallelize_module(
-            self.post_attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.post_feed_forward_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
+        )
+        parallelize_module(
+            self.post_attention_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
 
 
@@ -394,7 +436,11 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         self.d_model = d_model
         self.block_idx = block_idx
         self.attention = attention.build(
-            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+            d_model,
+            layer_idx=block_idx,
+            n_layers=n_layers,
+            init_device=init_device,
+            cache=cache,
         )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
 
@@ -406,7 +452,9 @@ class NormalizedTransformerBlock(TransformerBlockBase):
 
         self.mlp_alpha_init_value = 0.05
         self.mlp_alpha_init_scaling = 1.0 / math.sqrt(d_model)
-        self.mlp_alpha = nn.Parameter(torch.empty(d_model, dtype=torch.float32, device=init_device))
+        self.mlp_alpha = nn.Parameter(
+            torch.empty(d_model, dtype=torch.float32, device=init_device)
+        )
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -429,7 +477,8 @@ class NormalizedTransformerBlock(TransformerBlockBase):
                 x,
                 l2_normalize(self.attention(x, **kwargs)),
                 (
-                    self.attn_alpha * (self.attn_alpha_init_value / self.attn_alpha_init_scaling)
+                    self.attn_alpha
+                    * (self.attn_alpha_init_value / self.attn_alpha_init_scaling)
                 ).abs(),
             )
         )
@@ -438,12 +487,19 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             torch.lerp(
                 h,
                 l2_normalize(self.feed_forward(h)),
-                (self.mlp_alpha * (self.mlp_alpha_init_value / self.mlp_alpha_init_scaling)).abs(),
+                (
+                    self.mlp_alpha
+                    * (self.mlp_alpha_init_value / self.mlp_alpha_init_scaling)
+                ).abs(),
             )
         )
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         del tp_mesh, input_layout, float8_enabled
 
@@ -528,7 +584,11 @@ class MoETransformerBlock(TransformerBlockBase):
         self.d_model = d_model
         self.block_idx = block_idx
         self.attention = attention.build(
-            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+            d_model,
+            layer_idx=block_idx,
+            n_layers=n_layers,
+            init_device=init_device,
+            cache=cache,
         )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
         self.feed_forward_moe = feed_forward_moe.build(
@@ -584,7 +644,9 @@ class MoETransformerBlock(TransformerBlockBase):
     ) -> torch.Tensor:
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(
-            self.feed_forward_moe(self.feed_forward_norm(h), loss_div_factor=loss_div_factor)
+            self.feed_forward_moe(
+                self.feed_forward_norm(h), loss_div_factor=loss_div_factor
+            )
         )
 
     def apply_pp(self, pp_mesh: DeviceMesh):
@@ -595,7 +657,11 @@ class MoETransformerBlock(TransformerBlockBase):
         self._ep_enabled = True
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         parallelize_module(
             self,
@@ -607,7 +673,9 @@ class MoETransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(
-            self.attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.attention_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
 
         self.attention.apply_tp(
@@ -619,7 +687,9 @@ class MoETransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(
-            self.feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.feed_forward_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
 
         self.feed_forward_moe.apply_tp(
@@ -630,7 +700,9 @@ class MoETransformerBlock(TransformerBlockBase):
             float8_enabled=float8_enabled,
         )
 
-        parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
+        parallelize_module(
+            self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
 
         self._tp_enabled = True
 
@@ -651,9 +723,12 @@ class MoETransformerBlock(TransformerBlockBase):
         **fsdp_kwargs,
     ):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
-            fsdp_att = cast(FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs))
+            fsdp_att = cast(
+                FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs)
+            )
             fsdp_moe = cast(
-                FSDPModule, fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs)
+                FSDPModule,
+                fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs),
             )
             fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
             if prefetch_factor > 0:
@@ -685,7 +760,9 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     ) -> torch.Tensor:
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(
-            self.feed_forward_norm(self.feed_forward_moe(h, loss_div_factor=loss_div_factor))
+            self.feed_forward_norm(
+                self.feed_forward_moe(h, loss_div_factor=loss_div_factor)
+            )
         )
 
     def apply_fsdp(
@@ -696,9 +773,12 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         **fsdp_kwargs,
     ):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
-            fsdp_att = cast(FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs))
+            fsdp_att = cast(
+                FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs)
+            )
             fsdp_moe = cast(
-                FSDPModule, fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs)
+                FSDPModule,
+                fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs),
             )
             fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
             if prefetch_factor > 0:
@@ -754,7 +834,10 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
 
     @abstractmethod
     def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     ) -> torch.Tensor:
         raise NotImplementedError
 
@@ -776,9 +859,9 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         if not self.use_combined_forward:
-            return self.sparse_forward(x, loss_div_factor=loss_div_factor) + self.dense_forward(
-                x, **kwargs
-            )
+            return self.sparse_forward(
+                x, loss_div_factor=loss_div_factor
+            ) + self.dense_forward(x, **kwargs)
         else:
             # NOTE: alternatively could do something like this, but even with an extra stream it's
             # not as fast as the hand-crafted 'combined_forward()'.
@@ -792,9 +875,15 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
             return self.combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
-        super().apply_tp(tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled)
+        super().apply_tp(
+            tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled
+        )
 
         self.feed_forward.apply_tp(
             tp_mesh,
@@ -804,7 +893,9 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         )
 
         parallelize_module(
-            self.feed_forward_moe_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.feed_forward_moe_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
 
     def apply_fsdp(
@@ -832,21 +923,28 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                     FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs)
                 )
                 fsdp_mlp = cast(
-                    FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
+                    FSDPModule,
+                    fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs),
                 )
                 fsdp_moe = cast(
-                    FSDPModule, fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs)
+                    FSDPModule,
+                    fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs),
                 )
-                fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
+                fsdp_root = cast(
+                    FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+                )
                 if prefetch_factor > 0:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_router, fsdp_moe, fsdp_att])
+                    fsdp_root.set_modules_to_forward_prefetch(
+                        [fsdp_router, fsdp_moe, fsdp_att]
+                    )
                     fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
             else:
                 fsdp_att = cast(
                     FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs)
                 )
                 fsdp_mlp = cast(
-                    FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
+                    FSDPModule,
+                    fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs),
                 )
                 #  fsdp_moe = cast(
                 #      FSDPModule,
@@ -857,16 +955,24 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                     if self.feed_forward_moe.shared_mlp is None
                     else cast(
                         FSDPModule,
-                        fully_shard(self.feed_forward_moe.shared_mlp, mesh=dp_mesh, **fsdp_kwargs),
+                        fully_shard(
+                            self.feed_forward_moe.shared_mlp,
+                            mesh=dp_mesh,
+                            **fsdp_kwargs,
+                        ),
                     )
                 )
-                fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
+                fsdp_root = cast(
+                    FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+                )
 
                 if prefetch_factor > 0:
                     #  fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
                     fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_router])
                     if fsdp_shared_mlp is not None:
-                        fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp, fsdp_shared_mlp])
+                        fsdp_att.set_modules_to_forward_prefetch(
+                            [fsdp_mlp, fsdp_shared_mlp]
+                        )
                     else:
                         fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
         else:
@@ -880,10 +986,15 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     ) -> torch.Tensor:
         return self.dropout(
-            self.feed_forward_moe(self.feed_forward_moe_norm(x), loss_div_factor=loss_div_factor)
+            self.feed_forward_moe(
+                self.feed_forward_moe_norm(x), loss_div_factor=loss_div_factor
+            )
         )
 
     def combined_forward(
@@ -899,8 +1010,8 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 
         x_moe = get_local_tensor(self.feed_forward_moe_norm(x))
 
-        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x_moe, loss_div_factor=loss_div_factor
+        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = (
+            self.router(x_moe, loss_div_factor=loss_div_factor)
         )
 
         if router_aux_loss is not None:
@@ -986,10 +1097,15 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
     def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     ) -> torch.Tensor:
         return self.dropout(
-            self.feed_forward_moe_norm(self.feed_forward_moe(x, loss_div_factor=loss_div_factor))
+            self.feed_forward_moe_norm(
+                self.feed_forward_moe(x, loss_div_factor=loss_div_factor)
+            )
         )
 
     def combined_forward(
@@ -1005,8 +1121,8 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
 
         x_moe = get_local_tensor(x)
 
-        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x_moe, loss_div_factor=loss_div_factor
+        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = (
+            self.router(x_moe, loss_div_factor=loss_div_factor)
         )
 
         if router_aux_loss is not None:
@@ -1106,7 +1222,9 @@ class FLABlock(TransformerBlockBase):
         self.fla = fla.build(d_model, n_heads, init_device=init_device)
         self.fla_norm = layer_norm.build(d_model, init_device=init_device)
         if feed_forward is not None:
-            self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
+            self.feed_forward = feed_forward.build(
+                d_model=d_model, init_device=init_device
+            )
             self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         else:
             self.feed_forward = None
@@ -1141,10 +1259,13 @@ class FLABlock(TransformerBlockBase):
         **fsdp_kwargs,
     ):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
-            fsdp_fla = cast(FSDPModule, fully_shard(self.fla, mesh=dp_mesh, **fsdp_kwargs))
+            fsdp_fla = cast(
+                FSDPModule, fully_shard(self.fla, mesh=dp_mesh, **fsdp_kwargs)
+            )
             if self.feed_forward is not None:
                 fsdp_mlp = cast(
-                    FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
+                    FSDPModule,
+                    fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs),
                 )
             else:
                 fsdp_mlp = None
@@ -1157,7 +1278,11 @@ class FLABlock(TransformerBlockBase):
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         parallelize_module(
             self,
@@ -1168,8 +1293,12 @@ class FLABlock(TransformerBlockBase):
             ),
         )
 
-        parallelize_module(self.fla_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
-        parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
+        parallelize_module(
+            self.fla_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
+        parallelize_module(
+            self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
 
         self.fla.apply_tp(
             tp_mesh,
@@ -1182,7 +1311,9 @@ class FLABlock(TransformerBlockBase):
         if self.feed_forward is not None:
             assert self.feed_forward_norm is not None
             parallelize_module(
-                self.feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+                self.feed_forward_norm,
+                device_mesh=tp_mesh,
+                parallelize_plan=SequenceParallel(),
             )
             self.feed_forward.apply_tp(
                 tp_mesh,

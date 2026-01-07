@@ -1,11 +1,12 @@
 from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 
-from olmo_core.config import StrEnum
+from olmo_core.config import Config, StrEnum
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.utils import ensure_multiple_of
 
@@ -25,6 +26,11 @@ class RingAttentionLoadBalancerType(StrEnum):
     ➡️ :class:`RingAttentionLlama3LoadBalancer`
     """
 
+    ulysses = "ulysses"
+    """
+    ➡️ :class:`UlyssesLoadBalancer`
+    """
+
     def build(self, cp_mesh: DeviceMesh) -> "RingAttentionLoadBalancer":
         """
         Build the load balancer.
@@ -33,9 +39,15 @@ class RingAttentionLoadBalancerType(StrEnum):
         cp_rank = get_rank(pg)
         cp_world_size = get_world_size(pg)
         if self == self.zig_zag:
-            return RingAttentionZigZagLoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
+            return RingAttentionZigZagLoadBalancer(
+                cp_rank=cp_rank, cp_world_size=cp_world_size
+            )
         elif self == self.llama3:
-            return RingAttentionLlama3LoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
+            return RingAttentionLlama3LoadBalancer(
+                cp_rank=cp_rank, cp_world_size=cp_world_size
+            )
+        elif self == self.ulysses:
+            return UlyssesLoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
         else:
             raise NotImplementedError(self)
 
@@ -127,11 +139,16 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
                         f"{length_multiple}, otherwise provide a padding value"
                     )
                 else:
-                    x, _ = self.pad(x, seq_dim, pad_value, length_multiple=length_multiple)
+                    x, _ = self.pad(
+                        x, seq_dim, pad_value, length_multiple=length_multiple
+                    )
 
             x_chunks = x.chunk(2 * self.cp_world_size, dim=seq_dim)
             local_value = torch.cat(
-                [x_chunks[self.cp_rank], x_chunks[2 * self.cp_world_size - self.cp_rank - 1]],
+                [
+                    x_chunks[self.cp_rank],
+                    x_chunks[2 * self.cp_world_size - self.cp_rank - 1],
+                ],
                 dim=seq_dim,
             )
             out.append(local_value.contiguous())
@@ -191,7 +208,10 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
                     ]
                 )
             local_value = torch.cat(local_values, dim=seq_dim).contiguous()
-            if length_multiple is not None and local_value.shape[seq_dim] % length_multiple != 0:
+            if (
+                length_multiple is not None
+                and local_value.shape[seq_dim] % length_multiple != 0
+            ):
                 if pad_value is None:
                     raise RuntimeError(
                         "You must provide a 'pad_value' when 'length_multiple' is specified!"
@@ -205,7 +225,9 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
         if pad_values is not None:
             cumulative_padding = torch.cat(
                 [
-                    torch.tensor([0], dtype=cu_doc_lens.dtype, device=cu_doc_lens.device),
+                    torch.tensor(
+                        [0], dtype=cu_doc_lens.dtype, device=cu_doc_lens.device
+                    ),
                     torch.tensor(padding_added, device=cu_doc_lens.device).cumsum(
                         0, dtype=cu_doc_lens.dtype
                     ),
@@ -216,10 +238,15 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
         local_cu_doc_lens = cu_doc_lens // self.cp_world_size
         if final_padding is not None:
             local_cu_doc_lens = torch.cat(
-                [local_cu_doc_lens, (local_cu_doc_lens[-1] + final_padding).unsqueeze(0)]
+                [
+                    local_cu_doc_lens,
+                    (local_cu_doc_lens[-1] + final_padding).unsqueeze(0),
+                ]
             )
 
-        local_max_doc_len = (local_cu_doc_lens[1:] - local_cu_doc_lens[:-1]).max().item()
+        local_max_doc_len = (
+            (local_cu_doc_lens[1:] - local_cu_doc_lens[:-1]).max().item()
+        )
 
         return out, dict(cu_doc_lens=local_cu_doc_lens, max_doc_len=local_max_doc_len)
 
@@ -285,7 +312,9 @@ class RingAttentionLlama3LoadBalancer(RingAttentionLoadBalancer):
         try:
             from ring_flash_attn import llama3_flash_attn_prepare_cu_seqlens
         except ImportError as e:
-            raise RuntimeError(f"ring-flash-attn is required for {self.__class__.__name__}") from e
+            raise RuntimeError(
+                f"ring-flash-attn is required for {self.__class__.__name__}"
+            ) from e
 
         assert len(inputs) == len(seq_dims)
         if pad_values is not None:
@@ -304,7 +333,9 @@ class RingAttentionLlama3LoadBalancer(RingAttentionLoadBalancer):
             length_multiple = length_multiple * self.cp_world_size
 
         total_length = int(cu_doc_lens[-1])
-        padding_to_add = total_length - ensure_multiple_of(total_length, length_multiple)
+        padding_to_add = total_length - ensure_multiple_of(
+            total_length, length_multiple
+        )
         local_length = (total_length + padding_to_add) // self.cp_world_size
 
         if padding_to_add > 0:
@@ -426,7 +457,9 @@ class UlyssesLoadBalancer(RingAttentionLoadBalancer):
                         f"{length_multiple}, otherwise provide a padding value"
                     )
                 else:
-                    x, _ = self.pad(x, seq_dim, pad_value, length_multiple=length_multiple)
+                    x, _ = self.pad(
+                        x, seq_dim, pad_value, length_multiple=length_multiple
+                    )
 
             # Simple contiguous chunking - each rank gets seq_len / cp_world_size tokens
             local_seq_len = x.shape[seq_dim] // self.cp_world_size
@@ -434,7 +467,9 @@ class UlyssesLoadBalancer(RingAttentionLoadBalancer):
             end = start + local_seq_len
 
             # Use torch.ops.aten.slice for efficiency
-            local_value = torch.ops.aten.slice(x, dim=seq_dim, start=start, end=end).contiguous()
+            local_value = torch.ops.aten.slice(
+                x, dim=seq_dim, start=start, end=end
+            ).contiguous()
             out.append(local_value)
 
         return out
@@ -509,3 +544,33 @@ class UlyssesLoadBalancer(RingAttentionLoadBalancer):
         padding_to_add = pad_to - x.shape[seq_dim]
         padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
         return F.pad(x, padding, value=value), padding_to_add
+
+
+@dataclass
+class UlyssesContextParallelStyle(Config):
+    """
+    Configuration for Ulysses-style context parallelism.
+    """
+
+    @property
+    def load_balancer(self) -> "RingAttentionLoadBalancerType":
+        return RingAttentionLoadBalancerType.ulysses
+
+
+@dataclass
+class RingContextParallelStyle(Config):
+    """
+    Configuration for ring attention-style context parallelism.
+    """
+
+    load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
+    """
+    The type of load balancer to use for ring attention.
+    """
+
+    head_stride: int = 1
+    """
+    The stride of the head dimension to process for each iteration of ring attention. A value of 1
+    means each iteration will process one k and one v head. A value of 2 will process two k and two
+    v heads, etc. A larger stride will reduce the number of communication ops.
+    """

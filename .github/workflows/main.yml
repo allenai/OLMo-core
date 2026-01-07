@@ -162,6 +162,7 @@ jobs:
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 --ignore-glob='src/test/nn/transformer*' \
                 --ignore-glob='src/test/nn/moe*' \
+                --ignore-glob='src/test/optim*' \
                 src/test/
 
           - name: Test checkpoint (GPU)
@@ -184,6 +185,13 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/moe*
+
+          - name: Test optim (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/optim*
     steps:
       - uses: actions/checkout@v5
         with:

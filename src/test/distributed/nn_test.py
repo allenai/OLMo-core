@@ -18,7 +18,11 @@ def _all_to_all_equal_split():
     # Create input tensor where each rank has [rank, rank, ...]
     # Shape: (world_size, 2) - each rank sends 2 elements to each other rank
     input_tensor = torch.full(
-        (world_size, 2), float(rank), device=device, dtype=torch.float32, requires_grad=True
+        (world_size, 2),
+        float(rank),
+        device=device,
+        dtype=torch.float32,
+        requires_grad=True,
     )
 
     # Test forward pass
@@ -29,7 +33,9 @@ def _all_to_all_equal_split():
     expected = torch.tensor(
         [[float(i)] * 2 for i in range(world_size)], device=device, dtype=torch.float32
     )
-    assert torch.allclose(output, expected), f"Rank {rank}: expected {expected}, got {output}"
+    assert torch.allclose(output, expected), (
+        f"Rank {rank}: expected {expected}, got {output}"
+    )
 
     # Test backward pass
     loss = output.sum()
@@ -79,7 +85,9 @@ def _all_to_all_unequal_split():
         expected = torch.tensor([0.0, 10.0, 10.0], device=device, dtype=torch.float32)
     else:
         expected = torch.tensor([1.0, 1.0, 11.0], device=device, dtype=torch.float32)
-    assert torch.allclose(output, expected), f"Rank {rank}: expected {expected}, got {output}"
+    assert torch.allclose(output, expected), (
+        f"Rank {rank}: expected {expected}, got {output}"
+    )
 
     # Test backward pass
     loss = output.sum()

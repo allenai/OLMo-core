@@ -124,9 +124,12 @@ function post_to_slack {
 }
 
 function launch_job {
-    local JOB_SCRIPT="$1"
-    local RUN_NAME="$2"
-    local NODES="$3"
+    local JOB_SCRIPT=$1
+    shift
+    local RUN_NAME=$1
+    shift
+    local NODES=$1
+    shift
     for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
         if [ -z "${!var}" ]; then
             log_error "Usage: launch_job <job_script.sbatch> <run_name> <nodes>"
@@ -172,11 +175,11 @@ function launch_job {
     fi
 
     # Find an open port to use for distributed training.
-    log_info "Submitting job script: $JOB_SCRIPT"
+    log_info "Submitting job script: $JOB_SCRIPT $*"
 
     # Submit the job and capture the output (the Job ID).
     # The --parsable option ensures only the Job ID is returned.
-    JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "$JOB_SCRIPT")
+    JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "$JOB_SCRIPT" "$@")
 
     # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
     if [ $? -eq 0 ]; then
