@@ -16,7 +16,7 @@ shift
 
 for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
     if [ -z "${!var}" ]; then
-        log_error "Usage: $0 <job_script.sbatch> <run_name> <nodes>"
+        log_error "Usage: $0 <job_script.sbatch> <run_name> <nodes> [args...]"
         exit 1
     fi
 done
@@ -25,7 +25,7 @@ if [ -z "$SLACK_WEBHOOK_URL" ]; then
     log_warning "SLACK_WEBHOOK_URL environment variable is not set."
 fi
 
-JOB_ID=$(launch_job "$JOB_SCRIPT" "$RUN_NAME" "$NODES")
+JOB_ID=$(launch_job "$JOB_SCRIPT" "$RUN_NAME" "$NODES" "$@")
 if ! [ $? -eq 0 ]; then
     exit 1
 fi

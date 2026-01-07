@@ -293,6 +293,7 @@ class TransformerConfig(ModelConfig):
     n_layers: int
     block: TransformerBlockConfig
     lm_head: LMHeadConfig
+    embedding_norm: Optional[LayerNormConfig] = None
     name: TransformerType = TransformerType.default
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
@@ -325,6 +326,7 @@ class TransformerConfig(ModelConfig):
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
                 block=self.block,
+                embedding_norm=self.embedding_norm,
                 lm_head=self.lm_head,
                 dtype=self.dtype.as_pt(),
                 init_method=self.init_method,
@@ -334,6 +336,7 @@ class TransformerConfig(ModelConfig):
                 block_overrides=self.block_overrides,
             )
         elif self.name == TransformerType.normalized:
+            assert self.embedding_norm is None
             model = NormalizedTransformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
@@ -353,6 +356,7 @@ class TransformerConfig(ModelConfig):
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
                 block=self.block,
+                embedding_norm=self.embedding_norm,
                 lm_head=self.lm_head,
                 dtype=self.dtype.as_pt(),
                 init_method=self.init_method,
@@ -393,6 +397,8 @@ class TransformerConfig(ModelConfig):
 
         # Embedding params.
         num_params += self.d_model * self.vocab_size
+        if self.embedding_norm is not None:
+            num_params += self.embedding_norm.num_params(self.d_model)
 
         # All block params.
         num_block_params = self.block.num_params(self.d_model)
@@ -419,6 +425,8 @@ class TransformerConfig(ModelConfig):
 
         # Embedding params.
         num_active_params += self.d_model * self.vocab_size
+        if self.embedding_norm is not None:
+            num_active_params += self.embedding_norm.num_params(self.d_model)
 
         # All block active params.
         num_active_block_params = self.block.num_active_params(self.d_model)
