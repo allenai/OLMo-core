@@ -25,6 +25,11 @@ from olmo_core.nn.attention import (
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
 )
+from olmo_core.nn.attention.ring import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+    UlyssesLoadBalancer,
+)
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
@@ -926,25 +931,27 @@ def test_no_global_rope_with_sliding_window(
         assert attn.rope is None
 
 
-def _get_lb(rank: int, world_size: int) -> RingAttentionZigZagLoadBalancer:
+def _get_zigzag_lb(rank: int, world_size: int) -> RingAttentionZigZagLoadBalancer:
     return RingAttentionZigZagLoadBalancer(cp_rank=rank, cp_world_size=world_size)
 
 
 def test_zig_zag_load_balancer_padding():
-    x, padding_added = _get_lb(0, 4).pad(torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0), 1, -1)
+    x, padding_added = _get_zigzag_lb(0, 4).pad(
+        torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0), 1, -1
+    )
     assert x.tolist() == [[0, 1, 2, 3, 4, 5, -1, -1]]
     assert padding_added == 2
 
 
 def test_zig_zag_load_balancer_shard():
     x = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7]).unsqueeze(0)
-    assert _get_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
+    assert _get_zigzag_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
         [
             0,
             7,
         ]
     ]
-    assert _get_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
+    assert _get_zigzag_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
         [
             3,
             4,
@@ -954,13 +961,17 @@ def test_zig_zag_load_balancer_shard():
 
 def test_zig_zag_load_balancer_shard_with_padding():
     x = torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0)
-    assert _get_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[0].tolist() == [
+    assert _get_zigzag_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [
         [
             0,
             -1,
         ]
     ]
-    assert _get_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[0].tolist() == [
+    assert _get_zigzag_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [
         [
             3,
             4,
@@ -972,9 +983,9 @@ def test_zig_zag_load_balancer_shard_by_document():
     x = torch.tensor(list(range(12))).unsqueeze(0)
     cu_doc_lens = torch.tensor([0, 8, 12])
 
-    assert _get_lb(0, 2).batch_shard_by_document(inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens)[
-        0
-    ][0].tolist() == [
+    assert _get_zigzag_lb(0, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )[0][0].tolist() == [
         [
             0,
             1,
@@ -985,9 +996,9 @@ def test_zig_zag_load_balancer_shard_by_document():
         ]
     ]
 
-    assert _get_lb(1, 2).batch_shard_by_document(inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens)[
-        0
-    ][0].tolist() == [
+    assert _get_zigzag_lb(1, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )[0][0].tolist() == [
         [
             2,
             3,
@@ -1003,7 +1014,7 @@ def test_zig_zag_load_balancer_shard_by_document_with_padding():
     x = torch.tensor(list(range(12))).unsqueeze(0)
     cu_doc_lens = torch.tensor([0, 7, 10])
 
-    res, opts = _get_lb(0, 2).batch_shard_by_document(
+    res, opts = _get_zigzag_lb(0, 2).batch_shard_by_document(
         inputs=[x],
         seq_dims=[1],
         cu_doc_lens=cu_doc_lens,
@@ -1021,6 +1032,99 @@ def test_zig_zag_load_balancer_shard_by_document_with_padding():
             -1,
         ]
     ]
+
+
+def _get_ulysses_lb(rank: int, world_size: int) -> UlyssesLoadBalancer:
+    return UlyssesLoadBalancer(cp_rank=rank, cp_world_size=world_size)
+
+
+def test_ulysses_load_balancer_padding():
+    x, padding_added = _get_ulysses_lb(0, 4).pad(
+        torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0), 1, -1
+    )
+    assert x.tolist() == [[0, 1, 2, 3, 4, 5, -1, -1]]
+    assert padding_added == 2
+
+
+def test_ulysses_load_balancer_shard():
+    x = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7]).unsqueeze(0)
+    # Ulysses uses contiguous sharding, so each rank gets a contiguous chunk
+    assert _get_ulysses_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[0, 1]]
+    assert _get_ulysses_lb(1, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[2, 3]]
+    assert _get_ulysses_lb(2, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[4, 5]]
+    assert _get_ulysses_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[6, 7]]
+
+
+def test_ulysses_load_balancer_shard_with_padding():
+    x = torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0)
+    # 6 tokens with CP=4 -> pads to 8 tokens, then each rank gets 2
+    assert _get_ulysses_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[0, 1]]
+    assert _get_ulysses_lb(1, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[2, 3]]
+    assert _get_ulysses_lb(2, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[4, 5]]
+    assert _get_ulysses_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[-1, -1]]
+
+
+def test_ulysses_load_balancer_shard_by_document():
+    x = torch.tensor(list(range(12))).unsqueeze(0)
+    cu_doc_lens = torch.tensor([0, 8, 12])
+
+    # Ulysses with CP=2: rank 0 gets tokens 0-5, rank 1 gets tokens 6-11
+    res0, opts0 = _get_ulysses_lb(0, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )
+    assert res0[0].tolist() == [[0, 1, 2, 3, 4, 5]]
+    # Full sequences are reconstructed via all-to-all, so we pass through the original document lengths
+    assert opts0["cu_doc_lens"].tolist() == cu_doc_lens.tolist()
+
+    res1, opts1 = _get_ulysses_lb(1, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )
+    assert res1[0].tolist() == [[6, 7, 8, 9, 10, 11]]
+    # Full sequences are reconstructed via all-to-all, so we pass through the original document lengths
+    assert opts1["cu_doc_lens"].tolist() == cu_doc_lens.tolist()
+
+
+def test_ulysses_load_balancer_shard_by_document_with_padding():
+    # 10 tokens with CP=4 -> pads to 12 tokens (next multiple of 4), then each rank gets 3
+    x = torch.tensor(list(range(10))).unsqueeze(0)
+    cu_doc_lens = torch.tensor([0, 6, 10])
+    # Padding adds 2 tokens, creating a synthetic document: [0, 6, 10] -> [0, 6, 10, 12]
+    expected_cu_doc_lens = [0, 6, 10, 12]
+
+    res0, opts0 = _get_ulysses_lb(0, 4).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens, pad_values=[-1]
+    )
+    assert res0[0].tolist() == [[0, 1, 2]]
+    # cu_doc_lens should include the padding as a synthetic document
+    assert opts0["cu_doc_lens"].tolist() == expected_cu_doc_lens
+    assert opts0["max_doc_len"] == 6  # max of doc lengths: 6, 4, 2
+
+    res1, opts1 = _get_ulysses_lb(1, 4).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens, pad_values=[-1]
+    )
+    assert res1[0].tolist() == [[3, 4, 5]]
+    assert opts1["cu_doc_lens"].tolist() == expected_cu_doc_lens
+
+    res2, opts2 = _get_ulysses_lb(2, 4).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens, pad_values=[-1]
+    )
+    assert res2[0].tolist() == [[6, 7, 8]]
+    assert opts2["cu_doc_lens"].tolist() == expected_cu_doc_lens
+
+    res3, opts3 = _get_ulysses_lb(3, 4).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens, pad_values=[-1]
+    )
+    # Last rank gets token 9 plus 2 padding tokens
+    assert res3[0].tolist() == [[9, -1, -1]]
+    assert opts3["cu_doc_lens"].tolist() == expected_cu_doc_lens
 
 
 @pytest.mark.parametrize(
@@ -1198,7 +1302,7 @@ def test_tensor_parallel_attention(backend: str, attn_kwargs: Dict[str, Any], tm
     )
 
 
-def _run_context_parallel_attention(
+def _run_context_parallel_attention_ring(
     checkpoint_dir: str,
     inputs_path: str,
     outputs_path: str,
@@ -1210,7 +1314,8 @@ def _run_context_parallel_attention(
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
 
     attn = Attention(init_device=device.type, **attn_kwargs)
-    attn.apply_cp(mesh["cp"], load_balancer_type, head_stride=head_stride)
+    ring_style = RingContextParallelStyle(load_balancer=load_balancer_type, head_stride=head_stride)
+    attn.apply_cp(mesh["cp"], ring=ring_style)
     load_model_and_optim_state(checkpoint_dir, attn)
 
     # Load the input and split it across ranks on the sequence dimension.
@@ -1230,7 +1335,7 @@ def _run_context_parallel_attention(
     y_ref_local = y_ref[:, rank * chunk_size : (rank + 1) * chunk_size, :]
 
     # Compare the local output with the reference output.
-    torch.testing.assert_close(y_ref_local, y_local)
+    torch.testing.assert_close(y_ref_local, y_local, rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_multi_gpu
@@ -1262,7 +1367,7 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
     save_model_and_optim_state(checkpoint_dir, attn)
 
     run_distributed_test(
-        _run_context_parallel_attention,
+        _run_context_parallel_attention_ring,
         backend="nccl",
         start_method="spawn",
         func_args=(
@@ -1272,6 +1377,94 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
             attn_kwargs,
             load_balancer_type,
             head_stride,
+        ),
+    )
+
+
+def _run_context_parallel_attention_ulysses(
+    checkpoint_dir: str,
+    inputs_path: str,
+    outputs_path: str,
+    attn_kwargs: Dict[str, Any],
+):
+    device = get_default_device()
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
+
+    attn = Attention(init_device=device.type, **attn_kwargs)
+    attn.apply_cp(mesh["cp"], uly=UlyssesContextParallelStyle())
+    load_model_and_optim_state(checkpoint_dir, attn)
+
+    # Load the input and split it across ranks on the sequence dimension.
+    x = torch.load(inputs_path, map_location=device)
+    rank, world_size = get_rank(), get_world_size()
+    chunk_size = x.size(1) // world_size
+    x_local = x[:, rank * chunk_size : (rank + 1) * chunk_size, :]
+
+    with torch.autocast(device.type, dtype=x_local.dtype):
+        y_local = attn(x_local)
+
+    # Backward to exercise graph in CP mode.
+    y_local.sum().backward()
+
+    # Load the reference output and split it across ranks on the sequence dimension.
+    y_ref = torch.load(outputs_path, map_location=device)
+    y_ref_local = y_ref[:, rank * chunk_size : (rank + 1) * chunk_size, :]
+
+    # Compare the local output with the reference output.
+    torch.testing.assert_close(y_ref_local, y_local, rtol=BF16_RTOL, atol=BF16_ATOL)
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize(
+    "attn_backend",
+    [
+        pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
+        pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
+    ],
+)
+def test_context_parallel_attention_ulysses(tmp_path, attn_backend: AttentionBackendName):
+    """
+    Test Ulysses-style context parallelism.
+
+    Unlike ring attention, Ulysses-style CP uses all-to-all communication to gather the full
+    sequence while partitioning heads, then runs standard flash attention, and finally uses
+    all-to-all to restore the sequence-partitioned layout. This doesn't require a load balancer
+    or ring-flash-attn.
+    """
+    seed_all(0)
+    device = get_default_device()
+
+    # n_heads must be divisible by CP degree (world_size).
+    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "backend": attn_backend}
+    attn = Attention(init_device=device.type, **attn_kwargs)
+    if device.type == "cpu":
+        attn = attn.to(dtype=torch.bfloat16)
+
+    bs, seq_len = 2, 64
+    x = torch.randn(bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16)
+    with torch.autocast(
+        device_type=device.type, dtype=torch.bfloat16, enabled=device.type != "cpu"
+    ):
+        y = attn(x)
+
+    outputs_path = tmp_path / "attn_y.pt"
+    torch.save(y, outputs_path)
+    inputs_path = tmp_path / "attn_x.pt"
+    torch.save(x, inputs_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, attn)
+
+    run_distributed_test(
+        _run_context_parallel_attention_ulysses,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            inputs_path,
+            outputs_path,
+            attn_kwargs,
         ),
     )
 

@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for MXFP8 Linear layers via torchao.
 - Added support for tracking total flops.
 - Added support for Muon and Dion optimizers.
+- Added support for Ulysses-style context parallelism.
 
 ### Fixed
 

@@ -43,7 +43,6 @@ __all__ = [
     "PipelineScheduleType",
     "PipelineSplitStyle",
     "PipelineSchedule",
-    "ContextParallelConfig",
 ]
 
 log = logging.getLogger(__name__)

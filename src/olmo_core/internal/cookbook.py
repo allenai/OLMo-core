@@ -153,5 +153,4 @@ def configure_default_callbacks(
         cancel_check_interval=20,
         enabled=True,
     )
-
     return callbacks
