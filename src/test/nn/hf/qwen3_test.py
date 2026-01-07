@@ -94,6 +94,14 @@ def test_qwen3_matches_huggingface():
     olmo_model.load_state_dict(converted_state)
     olmo_model.eval()
 
+    hf_q_ptr = hf_model.model.layers[0].self_attn.q_proj.weight.data_ptr()
+    olmo_q_ptr = olmo_model.blocks["0"].attention.w_q.weight.data_ptr()
+    print(f"HF q_proj data_ptr: {hf_q_ptr}")
+    print(f"OLMo w_q data_ptr: {olmo_q_ptr}")
+    print(f"Weights aliased: {hf_q_ptr == olmo_q_ptr}")
+    print(f"HF model id: {id(hf_model)}")
+    print(f"OLMo model id: {id(olmo_model)}")
+
     prompt = "Hello, Qwen3! This is a test. Please generate 64 tokens."
     input_ids = tokenizer.encode(prompt, return_tensors="pt")
 
@@ -114,5 +122,16 @@ def test_qwen3_matches_huggingface():
 
     diff = (hf_logits - olmo_logits).abs()
     print(f"Logits diff mean: {diff.mean().item():.2e}, std: {diff.std().item():.2e}")
+
+    max_diff_per_pos = diff.max(dim=-1).values
+    print(f"Max diff per position (first 10): {max_diff_per_pos[0, :10].tolist()}")
+
+    with torch.no_grad():
+        original_weight = olmo_model.blocks["0"].attention.w_q.weight.clone()
+        olmo_model.blocks["0"].attention.w_q.weight.add_(1e-6)
+        perturbed_logits = olmo_model(generated)
+        olmo_model.blocks["0"].attention.w_q.weight.copy_(original_weight)
+    perturbed_diff = (hf_logits - perturbed_logits).abs().mean()
+    print(f"Perturbed logits diff: {perturbed_diff:.2e}")
 
     torch.testing.assert_close(hf_logits, olmo_logits, rtol=1e-6, atol=1e-6)
