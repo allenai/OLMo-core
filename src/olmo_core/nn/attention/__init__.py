@@ -394,10 +394,18 @@ class Attention(AttentionBase):
             self.head_dim = head_dim
         else:
             self.head_dim = d_model // n_heads
-        self.w_q = nn.Linear(d_model, n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device)
-        self.w_k = nn.Linear(d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device)
-        self.w_v = nn.Linear(d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device)
-        self.w_out = nn.Linear(n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w_q = nn.Linear(
+            d_model, n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_k = nn.Linear(
+            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_v = nn.Linear(
+            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_out = nn.Linear(
+            n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device
+        )
 
         self.gate = gate
         self.w_g: Optional[nn.Linear] = None
