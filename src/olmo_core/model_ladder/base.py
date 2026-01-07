@@ -1,6 +1,7 @@
 import concurrent.futures
 import json
 import logging
+import math
 import typing
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
@@ -34,6 +35,7 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.train_module import TrainModule
+from olmo_core.utils import warn_once
 
 from .utils import format_count, format_tokens
 
@@ -209,6 +211,11 @@ class ModelLadder(Config):
     """A name to assign to the ladder."""
     dir: str
     """A unique directory where ladder run results and intermediate checkpoints should be saved."""
+    project: str | None = None
+    """
+    An optional project name to associate with the ladder runs. Defaults to :data:`name`.
+    This is used by some logging backends (e.g. Weights & Biases).
+    """
     sizes: list[str]
     """A list of model size specs to run as part of the ladder."""
     max_devices: int
@@ -514,13 +521,13 @@ class ModelLadder(Config):
         self, size_spec: str, num_params: int
     ) -> tuple[int, int, int, int]:
         # Configure global batch size and device micro-batch size.
-        global_batch_size = self.run_configurator.configure_target_batch_size(num_params)
+        target_global_batch_size = self.run_configurator.configure_target_batch_size(num_params)
         rank_microbatch_size = self.model_configurator.configure_rank_microbatch_size(
             size_spec=size_spec,
             sequence_length=self.sequence_length,
             device_type=self.device_type,
         )
-        rank_microbatch_size = min(rank_microbatch_size, global_batch_size)
+        rank_microbatch_size = min(rank_microbatch_size, target_global_batch_size)
 
         # Configure minimal device mesh spec, i.e. the minimum number of devices needed and the
         # corresponding minimum data parallel world size.
@@ -549,7 +556,7 @@ class ModelLadder(Config):
         # And from that we adjust the global batch size to be a multiple of
         # `rank_microbatch_size x min_dp_world_size`.
         gbz_factor = rank_microbatch_size * min_dp_world_size
-        global_batch_size = max(1, round(global_batch_size / gbz_factor)) * gbz_factor
+        global_batch_size = max(1, round(target_global_batch_size / gbz_factor)) * gbz_factor
 
         # Then we can determine the actual number of devices to allocate to the run. In particular
         # we can expand `min_world_size` up to the number of devices available (`self.max_devices`)
@@ -563,6 +570,27 @@ class ModelLadder(Config):
         # Finally we ensure `global_batch_size` is divisible by the micro-batch size.
         microbatch_size = rank_microbatch_size * dp_world_size
         global_batch_size = max(1, round(global_batch_size / microbatch_size)) * microbatch_size
+
+        # Warn if final global batch size is more than 10% different from target.
+        if (
+            pct_diff := (
+                math.fabs(global_batch_size - target_global_batch_size) / target_global_batch_size
+            )
+        ) > 0.1:
+            msg = (
+                f"Global batch size to use ({format_tokens(global_batch_size)}) "
+                f"differs from target global batch size ({format_tokens(target_global_batch_size)}) "
+                f"by ~{100 * pct_diff:.1f}%."
+            )
+            # In most cases the discrepancy is due to the rank micro-batch size being too large.
+            # So we can suggest making it smaller if the micro-batch size per rank is more than one
+            # instance.
+            if rank_microbatch_size // self.sequence_length > 1:
+                msg += (
+                    f"\nConsider decreasing the configured rank micro-batch size, which is set by the "
+                    f"method {self.model_configurator.__class__.__name__}.configure_rank_microbatch_size()."
+                )
+            warn_once(msg, UserWarning)
 
         return global_batch_size, rank_microbatch_size, num_devices, dp_world_size
 
@@ -607,8 +635,8 @@ class ModelLadder(Config):
                 "beaker": callbacks.BeakerCallback(),
                 "wandb": callbacks.WandBCallback(
                     name=run_name,
-                    group=run_name,
-                    project=self.name,
+                    group=self.name,
+                    project=self.project or self.name,
                     cancel_check_interval=50,
                     enabled=not for_benchmarking,
                 ),

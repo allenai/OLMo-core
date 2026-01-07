@@ -14,6 +14,7 @@ has_flash_attn_3 = False
 has_torchao = False
 has_grouped_gemm = False
 has_te = False
+has_dion = False
 
 try:
     import flash_attn  # type: ignore
@@ -54,6 +55,14 @@ try:
 
     has_te = True
     del transformer_engine
+except ImportError:
+    pass
+
+try:
+    import dion  # type: ignore
+
+    has_dion = True
+    del dion
 except ImportError:
     pass
 
@@ -133,6 +142,18 @@ TE_MARKS = (
 
 def requires_te(func):
     for mark in TE_MARKS:
+        func = mark(func)
+    return func
+
+
+DION_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_dion, reason="Requires Dion"),
+)
+
+
+def requires_dion(func):
+    for mark in DION_MARKS:
         func = mark(func)
     return func
 

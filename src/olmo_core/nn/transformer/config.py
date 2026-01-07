@@ -293,6 +293,7 @@ class TransformerConfig(ModelConfig):
     n_layers: int
     block: TransformerBlockConfig
     lm_head: LMHeadConfig
+    embedding_norm: Optional[LayerNormConfig] = None
     name: TransformerType = TransformerType.default
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
@@ -325,6 +326,7 @@ class TransformerConfig(ModelConfig):
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
                 block=self.block,
+                embedding_norm=self.embedding_norm,
                 lm_head=self.lm_head,
                 dtype=self.dtype.as_pt(),
                 init_method=self.init_method,
@@ -334,6 +336,7 @@ class TransformerConfig(ModelConfig):
                 block_overrides=self.block_overrides,
             )
         elif self.name == TransformerType.normalized:
+            assert self.embedding_norm is None
             model = NormalizedTransformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
@@ -353,6 +356,7 @@ class TransformerConfig(ModelConfig):
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
                 block=self.block,
+                embedding_norm=self.embedding_norm,
                 lm_head=self.lm_head,
                 dtype=self.dtype.as_pt(),
                 init_method=self.init_method,
@@ -393,6 +397,8 @@ class TransformerConfig(ModelConfig):
 
         # Embedding params.
         num_params += self.d_model * self.vocab_size
+        if self.embedding_norm is not None:
+            num_params += self.embedding_norm.num_params(self.d_model)
 
         # All block params.
         num_block_params = self.block.num_params(self.d_model)
@@ -419,6 +425,8 @@ class TransformerConfig(ModelConfig):
 
         # Embedding params.
         num_active_params += self.d_model * self.vocab_size
+        if self.embedding_norm is not None:
+            num_active_params += self.embedding_norm.num_params(self.d_model)
 
         # All block active params.
         num_active_block_params = self.block.num_active_params(self.d_model)
@@ -451,10 +459,40 @@ class TransformerConfig(ModelConfig):
         return self.num_active_params - self.d_model * self.vocab_size
 
     @classmethod
+    def olmo2_1M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=12,
+            hidden_size_multiplier=1.0,
+            n_layers=kwargs.pop("n_layers", 4),
+            n_heads=kwargs.pop("n_heads", 4),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
     def olmo2_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=256,
             n_layers=kwargs.pop("n_layers", 4),
+            n_heads=kwargs.pop("n_heads", 8),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_60M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=384,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 8),
             n_heads=kwargs.pop("n_heads", 8),
             vocab_size=vocab_size,
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
@@ -625,6 +663,57 @@ class TransformerConfig(ModelConfig):
             layer_norm_eps=1e-6,
             **kwargs,
         )
+
+    @classmethod
+    def olmo3_1M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        config = cls.olmo2_1M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        config = cls.olmo2_30M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_60M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        config = cls.olmo2_60M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
 
     @classmethod
     def olmo3_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
