@@ -202,7 +202,7 @@ class AttentionConfig(ModuleConfig):
         """
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads or n_heads
-        head_dim = self.head_dim if self.head_dim is not None else d_model // n_heads
+        head_dim = self.head_dim or d_model // n_heads
         bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
 
         params = 0
