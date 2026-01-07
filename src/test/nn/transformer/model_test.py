@@ -1,6 +1,5 @@
 import logging
 from dataclasses import replace
-from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
 
 import pytest
@@ -55,6 +54,7 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 
 log = logging.getLogger(__name__)
 
@@ -284,6 +284,7 @@ def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architec
 @pytest.mark.parametrize("architecture", ["olmo2"])
 @pytest.mark.skip("known precision issues with ring-flash-attn")
 def test_context_parallel_transformer_ring(architecture: str, tmp_path):
+    seed_all(0)
     device = torch.device("cuda")
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.use_flash = True
@@ -350,6 +351,7 @@ def run_context_parallel_transformer_ulysses(
 def test_context_parallel_transformer_ulysses(
     architecture: str, backend_name: AttentionBackendName, tmp_path
 ):
+    seed_all(0)
     device = torch.device("cuda")
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.backend = backend_name
