@@ -160,6 +160,9 @@ class GAPMonitorCallback(Callback):
             if local_tensor.numel() > 0:
                 local_max = local_tensor.abs().max()
             else:
+                # Use 0.0 as sentinel value for empty tensors in max reduction.
+                # Since we're taking abs(), all actual values are >= 0, so 0.0
+                # won't affect the max reduction when other processes have non-empty tensors.
                 local_max = torch.zeros([], device=tensor.device, dtype=tensor.dtype)
             if self._dry_run_complete:
                 self.trainer.record_metric(
