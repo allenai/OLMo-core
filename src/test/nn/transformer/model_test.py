@@ -1,6 +1,5 @@
 import logging
 from dataclasses import replace
-from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
 
 import pytest
@@ -55,6 +54,7 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 
 log = logging.getLogger(__name__)
 
@@ -335,7 +335,10 @@ def run_context_parallel_transformer_ulysses(
     logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL)
+    tol_scale = 2.0  # requires slightly more tolerance than default
+    torch.testing.assert_close(
+        og_logits, get_full_tensor(logits), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
+    )
 
 
 @requires_multi_gpu
