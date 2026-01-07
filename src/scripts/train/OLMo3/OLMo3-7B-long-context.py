@@ -30,7 +30,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     root_dir = get_root_dir(cli_context.cluster)
     work_dir = get_work_dir(root_dir)
-    save_dir = f"{root_dir}/checkpoints/{run_name_with_ts}"
+    save_dir = f"{root_dir}/checkpoints/{cli_context.run_name}"
 
     beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
         name=cli_context.run_name,
