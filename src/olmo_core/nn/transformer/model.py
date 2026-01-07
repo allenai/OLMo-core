@@ -27,14 +27,13 @@ from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
+from olmo_core.nn.attention.ring import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import (
-    Attention,
-    FusedAttention,
-    RingAttentionLoadBalancer,
-    RingAttentionLoadBalancerType,
-)
+from ..attention import Attention, FusedAttention, RingAttentionLoadBalancer
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
@@ -368,6 +367,7 @@ class Transformer(nn.Module):
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
             for block_idx, rope_buffers in self.get_rope_buffers(S, torch.device("cpu")).items():
                 if rope_buffers is not None:
+                    # Also shard RoPE buffers based on the context parallelism load balancer.
                     if rope_buffers.pos_sin is not None:
                         inputs.append(rope_buffers.pos_sin)
                         seq_dims.append(0)
@@ -596,22 +596,25 @@ class Transformer(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         """
         Prepare the model for context-parallelism (CP).
 
         :param cp_mesh: The CP device mesh.
-        :param load_balancer: The load balancing method.
+        :param ring: The ring context parallel style.
+        :param uly: The ulysses context parallel style.
         """
-        self._cp_load_balancer = load_balancer.build(cp_mesh)
+        if ring is not None:
+            self._cp_load_balancer = ring.load_balancer.build(cp_mesh)
+        elif uly is not None:
+            self._cp_load_balancer = uly.load_balancer.build(cp_mesh)
+
         for block in self.blocks.values():
-            cast(TransformerBlockBase, block).apply_cp(
-                cp_mesh, load_balancer, head_stride=head_stride
-            )
+            cast(TransformerBlockBase, block).apply_cp(cp_mesh, ring=ring, uly=uly)
         if self.lm_head is not None:
-            self.lm_head.apply_cp(cp_mesh, load_balancer)
+            self.lm_head.apply_cp(cp_mesh)
 
     def apply_activation_checkpointing(
         self,
