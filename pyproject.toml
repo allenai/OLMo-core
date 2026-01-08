@@ -60,12 +60,13 @@ dev = [
 ]
 beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
+dion = ["dion @ git+https://github.com/microsoft/dion.git@b17a7699f1398b9cba69d760a52c79bc0ee0e420 ; sys_platform == 'linux'"]
 eval = ["ai2-olmo-eval==0.8.5"]
 quack = ["quack-kernels @ git+https://github.com/Dao-AILab/quack.git@9a8b58cadf6adcf770e284401799f89b67325735 ; sys_platform == 'linux'"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers"]
 wandb = ["wandb"]
-all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb]"]
+all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,torchao,transformers,wandb]"]
 
 
 [tool.setuptools]
@@ -141,8 +142,15 @@ exclude = [
 reportPrivateImportUsage = false
 
 [tool.ty.rules]
-possibly-unbound-attribute = "ignore"
-possibly-unbound-import = "ignore"
+possibly-missing-attribute = "ignore"
+possibly-missing-import = "ignore"
+unresolved-attribute = "warn"
+
+[[tool.ty.overrides]]
+include = ["src/olmo_core/nn/**"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
 
 [tool.mypy]
 ignore_missing_imports = true

@@ -8,9 +8,9 @@ from typing import Callable, Type
 import rich
 
 import olmo_core.io as io
+from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.internal.common import build_launch_config
 from olmo_core.launch.beaker import (
     BeakerLaunchConfig,
     BeakerPriority,
@@ -19,6 +19,8 @@ from olmo_core.launch.beaker import (
 )
 from olmo_core.model_ladder import *
 from olmo_core.utils import prepare_cli_environment
+
+from .common import build_launch_config, get_gpu_type, get_root_dir
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +72,13 @@ def parse_args(
             help="A name to assign to the ladder experiment.",
         )
         parser.add_argument(
+            "--project",
+            type=str,
+            default=None,
+            help="""A project name to associate with the ladder runs.
+            Used by the W&B logger, for example.""",
+        )
+        parser.add_argument(
             "--sequence-length",
             type=int,
             default=8 * 1024,
@@ -80,6 +89,12 @@ def parse_args(
             type=float,
             default=4.0,
             help="The Chinchilla multiple to use for the ladder.",
+        )
+        parser.add_argument(
+            "--lr-multiplier",
+            type=float,
+            default=1.0,
+            help="A multiplier to apply to the default learning rate.",
         )
         parser.add_argument(
             "--cluster",
@@ -93,6 +108,12 @@ def parse_args(
             type=int,
             default=64,
             help="The maximum number of GPUs to use for the ladder.",
+        )
+        parser.add_argument(
+            "--rank-mbz",
+            type=int,
+            default=None,
+            help="Override the rank micro-batch size, in instances.",
         )
 
     def add_launch_args(parser: argparse.ArgumentParser):
@@ -267,12 +288,68 @@ def parse_args(
         return base_parser.parse_args()
 
 
+def get_default_ladder_factory(
+    configure_model: Callable[[argparse.Namespace], ModelConfigurator],
+    configure_run: Callable[[argparse.Namespace], RunConfigurator] | None = None,
+) -> Callable[[argparse.Namespace], ModelLadder]:
+    def factory(args: argparse.Namespace) -> ModelLadder:
+        tokenizer = TokenizerConfig.dolma2()
+        instance_sources: list[InstanceSourceConfig] = [
+            ConcatAndChunkInstanceSourceConfig(
+                sources=[
+                    NumpyDocumentSourceMixConfig(
+                        tokenizer=tokenizer,
+                        mix=DataMix.OLMo_mix_0925,
+                        mix_base_dir="gs://ai2-llm/",
+                    )
+                ],
+                sequence_length=args.sequence_length,
+            ),
+        ]
+        ladder = ModelLadder(
+            name=args.name,
+            project=args.project,
+            dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
+            sizes=list(TransformerSize),
+            max_devices=args.max_gpus,
+            device_type=get_gpu_type(args.cluster),
+            model_configurator=configure_model(args),
+            run_configurator=configure_run(args)
+            if configure_run is not None
+            else WSDSChinchillaRunConfigurator(
+                chinchilla_multiple=args.chinchilla_multiple,
+                lr_multiplier=args.lr_multiplier,
+            ),
+            sequence_length=args.sequence_length,
+            tokenizer=tokenizer,
+            instance_sources=instance_sources,
+            data_loader=ComposableDataLoaderConfig(
+                num_workers=8, instance_filter_config=InstanceFilterConfig()
+            ),
+        )
+        return ladder
+
+    return factory
+
+
 def main(
-    configure_ladder: Callable[[argparse.Namespace], ModelLadder],
-    *,
+    configure_ladder: Callable[[argparse.Namespace], ModelLadder] | None | None = None,
+    configure_model: Callable[[argparse.Namespace], ModelConfigurator] | None = None,
+    configure_run: Callable[[argparse.Namespace], RunConfigurator] | None = None,
     size_enum: Type[TransformerSize] = TransformerSize,
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
+    if configure_ladder is None:
+        assert (
+            configure_model is not None
+        ), "configure_model is required if configure_ladder is unspecified"
+
+        configure_ladder = get_default_ladder_factory(configure_model, configure_run)
+    else:
+        assert (
+            configure_model is None and configure_run is None
+        ), "configure_model / configure_run and mutually exclusive with configure_ladder"
+
     args = parse_args(
         configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
     )

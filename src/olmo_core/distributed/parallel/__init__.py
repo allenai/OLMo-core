@@ -43,7 +43,6 @@ __all__ = [
     "PipelineScheduleType",
     "PipelineSplitStyle",
     "PipelineSchedule",
-    "ContextParallelConfig",
 ]
 
 log = logging.getLogger(__name__)
@@ -448,6 +447,36 @@ def get_dp_process_group(device_mesh: DeviceMesh) -> ProcessGroup:
         return dp_mesh._flatten(mesh_dim_name=MeshDimName.dp).get_group()
     else:
         return dp_mesh.get_group()
+
+
+def get_dp_shard_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
+    """
+    Get the data parallel shard sub-mesh associated with a ``DeviceMesh``
+    created from :func:`build_world_mesh()`.
+    :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
+    """
+    device_mesh, dim_names = _get_model_mesh(device_mesh)
+    if MeshDimName.dp_shard in dim_names:
+        return device_mesh[MeshDimName.dp_shard]
+    else:
+        raise RuntimeError(
+            f"could not determine data parallel shard sub-mesh from mesh with dimensions {dim_names}"
+        )
+
+
+def get_dp_replicate_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
+    """
+    Get the data parallel replicate sub-mesh associated with a ``DeviceMesh``
+    created from :func:`build_world_mesh()`.
+    :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
+    """
+    device_mesh, dim_names = _get_model_mesh(device_mesh)
+    if MeshDimName.dp_replicate in dim_names:
+        return device_mesh[MeshDimName.dp_replicate]
+    else:
+        raise RuntimeError(
+            f"could not determine data parallel replicate sub-mesh from mesh with dimensions {dim_names}"
+        )
 
 
 def get_ep_mesh(device_mesh: DeviceMesh) -> DeviceMesh:

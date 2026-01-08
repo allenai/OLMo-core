@@ -35,6 +35,8 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     """The duration of each decay as a fraction of the period. Must be at least 10%."""
     tokens_per_param: int = 20
     """The number of tokens per parameter to use for Chinchilla calculations."""
+    lr_multiplier: float = 1.0
+    """A multiplier to apply to the learning rate calculated from Chinchilla scaling laws."""
 
     def __post_init__(self):
         if self.chinchilla_multiple < 0.5 or not math.log(self.chinchilla_multiple, 2).is_integer():
@@ -61,9 +63,13 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepAdamWConfig:
         del batch_size  # unused
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
-        # but divide by 2 for WSD schedule (seems to work emperically).
+        # but divide by 2 for WSD schedule, which empirically seems to be a good value, at least (seems to work empirically).
+        # for 4xChinchilla runs.
+        # TODO: this should be adapted to the length of the run. See this report
+        # https://wandb.ai/ai2-llm/olmo3-ladder-tune-lr/reports/Olmo-3-ladder-LR-sweep--VmlldzoxNTUxNzE4Nw
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
         lr /= 2.0
+        lr *= self.lr_multiplier
         return SkipStepAdamWConfig(
             lr=lr,
             weight_decay=0.1,

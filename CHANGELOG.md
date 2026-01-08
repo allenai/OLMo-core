@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for no-global-rope ("GNoPE").
 - Added support for MXFP8 Linear layers via torchao.
 - Added support for tracking total flops.
+- Added support for Muon and Dion optimizers.
+- Added support for Ulysses-style context parallelism.
 
 ### Fixed
 
@@ -34,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix overflow when too many global flops are computed.
 - Ladder lmevaluator typo.
 - Made some functions involved in data loading preprocessing more robust to race conditions.
+- GAPMonitorCallback would raise an error if a local tensor shard had 0 elements.
 
 ### Changed
 

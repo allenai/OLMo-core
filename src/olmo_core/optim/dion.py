@@ -1,9 +1,7 @@
 import logging
 import math
-from collections import OrderedDict
-from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Tuple, Type, Union, cast
+from typing import Tuple
 
 import torch
 from torch.distributed.device_mesh import DeviceMesh
@@ -17,98 +15,88 @@ from olmo_core.distributed.parallel import (
     get_world_mesh,
 )
 from olmo_core.nn.transformer import Transformer
-from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD
-from olmo_core.optim.config import OptimConfig, OptimGroupOverride
-from olmo_core.utils import move_to_device
+from olmo_core.optim.config import MatrixAwareOptimConfig, OptimGroupOverride
 
 log = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    from dion import Dion
+
+def _import_dion():
+    """Import and return Dion from dion, raising a helpful error if not installed."""
+    try:
+        from dion import Dion  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "The 'dion' package is required for the Dion optimizer. "
+            "Install it with: pip install git+https://github.com/microsoft/dion.git"
+        ) from e
+    return Dion
 
 
 @dataclass
-class DionConfig(OptimConfig):
-    lr: float = 0.01  # Shared lr for Dion and AdamW
-    mu: float = 0.95  # momentum for Dion
-    betas: Tuple[float, float] = (0.9, 0.95)  # betas for AdamW
+class DionConfig(MatrixAwareOptimConfig):
+    """
+    Configuration class for building a :class:`Dion` optimizer.
+
+    Dion is a Muon-like optimizer that is designed to be scalable for DP-replicated, DP-sharded,
+    and TP-sharded models. See https://arxiv.org/abs/2504.05295 for more details.
+
+    Dion supports FSDP, HSDP, and TP parallelism strategies. Flattened mesh dimensions (eg. "dp_ep"
+    and "dp_cp") can be supported but are currently not implemented.
+    """
+
+    lr: float = 0.01
+    """
+    Base learning rate. For Dion, this will be scaled based on the matrix dimensions. For AdamW,
+    this is the actual learning rate and no additional scaling is done.
+    """
+
+    mu: float = 0.95
+    """Momentum for Dion"""
+
+    betas: Tuple[float, float] = (0.9, 0.95)
+    """Betas for AdamW"""
+
     weight_decay: float = 0.1
+    """Weight decay for non-embedding parameters"""
+
     rank_fraction: float = 1.0
+    """Rank fraction for Dion. Set to 1.0 for full-rank optimization."""
+
+    rank_multiple_of: int = 1
+    """
+    Round up the low-rank dimension to a multiple of this number.
+    This may be useful to ensure even sharding.
+    """
 
     @classmethod
-    def optimizer(cls) -> Type["Dion"]:
-        from dion import Dion
-
-        return Dion
+    def optimizer(cls) -> type:
+        return _import_dion()
 
     def default_group_overrides(self, model: torch.nn.Module) -> list[OptimGroupOverride]:
         """
-        Split the model parameters into Adam and Muon groups.
-        Only >=2d, internal parameters are meant to be optimized with Muon.
+        Apply Dion's parameter grouping rules.
         """
         assert isinstance(model, Transformer)
-        embed_params = [f"embeddings.{n}" for n, p in model.embeddings.named_parameters()]
-        matrix_params = [f"blocks.{n}" for n, p in model.blocks.named_parameters() if p.ndim >= 2]
-        vector_params = [f"blocks.{n}" for n, p in model.blocks.named_parameters() if p.ndim < 2]
-        vector_params += [f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim < 2]
-        lm_head_params = [
-            f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim >= 2
-        ]
+        params = self.categorize_parameters(model)
 
         lm_head_out: torch.nn.Linear = model.lm_head.w_out
         model_dim = lm_head_out.weight.shape[1]
 
-        matrix_override = OptimGroupOverride(params=matrix_params, opts=dict(algorithm="dion"))
-        vector_override = OptimGroupOverride(params=vector_params, opts=dict(algorithm="adamw"))
+        # Matrix parameters are optimized with Dion.
+        matrix_override = OptimGroupOverride(params=params["matrix"], opts=dict(algorithm="dion"))
+
+        # Vector, embedding, and lm_head parameters are optimized with AdamW.
         embed_override = OptimGroupOverride(
-            params=embed_params, opts=dict(algorithm="adamw", weight_decay=0)
+            params=params["embed"], opts=dict(algorithm="adamw", weight_decay=0.0)
         )
+        vector_override = OptimGroupOverride(params=params["vector"], opts=dict(algorithm="adamw"))
         lm_head_override = OptimGroupOverride(
-            params=lm_head_params, opts=dict(algorithm="adamw", lr=self.lr / math.sqrt(model_dim))
+            params=params["lm_head"],
+            # lr scaled by sqrt(model_dim) for lm_head as suggested in the paper
+            opts=dict(algorithm="adamw", lr=self.lr / math.sqrt(model_dim)),
         )
 
         return [matrix_override, vector_override, embed_override, lm_head_override]
-
-    def build_groups(
-        self, model: torch.nn.Module, strict: bool = True
-    ) -> Union[Iterable[torch.Tensor], list[dict[str, Any]]]:
-        """
-        Build parameters groups.
-
-        :param model: The model to optimize.
-        :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
-            match any parameter.
-        """
-        all_params: dict[str, torch.Tensor] = OrderedDict()
-        frozen_params: set = set()
-        for n, p in model.named_parameters():
-            if p.requires_grad:
-                all_params[n] = p
-            else:
-                frozen_params.add(n)
-
-        if self.group_overrides is not None:
-            raise RuntimeError("group_overrides are not supported for Dion")
-
-        self.group_overrides = self.default_group_overrides(model)
-
-        group_overrides = [
-            self._expand_param_globs(go, all_params, frozen_params, g_idx, strict=strict)
-            for g_idx, go in enumerate(self.group_overrides or [])
-        ]
-
-        # Treat no overrides as its own override group
-        overridden_param_names = {name for go in group_overrides for name in go.params}
-        default_override = OptimGroupOverride(
-            [name for name in all_params.keys() if name not in overridden_param_names], {}
-        )
-        group_overrides.append(default_override)
-
-        return [
-            {"params": [all_params[param_name] for param_name in go.params], **go.opts}
-            for go in group_overrides
-            if len(go.params) > 0
-        ]
 
     def build_parallelism_config(self) -> dict[str, DeviceMesh | None]:
         """
@@ -116,7 +104,6 @@ class DionConfig(OptimConfig):
 
         Supports:
         - Single-device: All meshes are None
-        - DDP (not supported, would be): replicate_mesh = DP mesh, outer_shard_mesh = None
         - FSDP: outer_shard_mesh = DP mesh, replicate_mesh = None
         - HSDP: replicate_mesh = DP replicate mesh, outer_shard_mesh = DP shard mesh
         - TP: inner_shard_mesh = TP mesh (can be combined with FSDP or HSDP)
@@ -129,12 +116,10 @@ class DionConfig(OptimConfig):
             "outer_shard_mesh": None,  # parameter sharding mesh, replicated during orthogonalization
             "inner_shard_mesh": None,  # parameter sharding mesh, remains sharded during orthogonalization
         }
-
         if world_mesh is None:
             return meshes
+
         dim_names = world_mesh.mesh_dim_names
-        log.info(f"World mesh dimensions: {dim_names}")
-        log.info(f"World mesh shape: {world_mesh.shape}")
         if dim_names is None:
             raise RuntimeError("world mesh has no dimension names")
 
@@ -148,82 +133,30 @@ class DionConfig(OptimConfig):
             meshes["outer_shard_mesh"] = get_dp_shard_mesh(world_mesh)
         elif MeshDimName.dp in dim_names or any(d.startswith("dp") for d in dim_names):
             # FSDP configuration
+            log.warning("Cannot determine if model is FSDP or DDP, assuming FSDP.")
             meshes["outer_shard_mesh"] = get_dp_model_mesh(world_mesh)
         if MeshDimName.tp in dim_names:
             # TP configuration
             meshes["inner_shard_mesh"] = get_tp_mesh(world_mesh)
 
-        log.info(f"Dion Meshes: {meshes}")
-
+        log.info(f"Dion parallelism_config: {meshes}")
         return meshes
 
-    def build(self, model: torch.nn.Module, strict: bool = True) -> "Dion":
-        """
-        Build the optimizer.
-
-        :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
-            match any parameter.
-        """
-        from dion import Dion
-
-        kwargs = self.as_dict(exclude_private_fields=True)
-        kwargs.pop("group_overrides")
-        kwargs.pop("compile")
-        kwargs.pop("fixed_fields")
-
-        torch._dynamo.config.recompile_limit = 16
+    def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs):
+        # When using Dion, we need to set the recompile limit to 16 to avoid triggering an error
+        # due to too many recompile requests. Typically, on the second recompilation, torch attempts
+        # to compile a dynamic version of the op, unless dynamic=False is marked. Too many different
+        # shapes passed to a compiled op with dynamic=False will trigger this error. Since we have
+        # grad matrices with many different shapes, we need to set the recompile limit higher than
+        # the default of 8.
+        # https://docs.pytorch.org/docs/stable/compile/programming_model.recompilation.html
+        torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 16)
 
         parallelism_config = self.build_parallelism_config()
-        optim: Dion = self.optimizer()(
+        optim = self.optimizer()(
             self.build_groups(model, strict=strict),
             replicate_mesh_grad_sync=False,  # HSDP / FSDP / DDP will handle gradient sync internally
             **parallelism_config,
             **kwargs,
         )
-
-        # Set 'lr' and 'initial_lr' in each group if needed.
-        fixed_fields_per_group: list[dict[str, Any]] = [{} for _ in optim.param_groups]
-        for fixed_fields, group in zip(fixed_fields_per_group, optim.param_groups):
-            lr: float | None = None
-            if LR_FIELD in group:
-                lr = group[LR_FIELD]
-            elif hasattr(self, LR_FIELD):
-                lr = getattr(self, LR_FIELD)
-
-            if lr is not None:
-                if self.compile:
-                    # 'lr' should be a tensor.
-                    group[LR_FIELD] = move_to_device(torch.tensor(lr), self.device)
-                else:
-                    group[LR_FIELD] = lr
-                group.setdefault(INITIAL_LR_FIELD, lr)
-
-            for k in self.fixed_fields:
-                if k in group:
-                    fixed_fields[k] = group[k]
-
-        log.info(
-            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param group(s)..."
-        )
-        for g_idx, group in enumerate(optim.param_groups):
-            group_fields_list = "\n - ".join(
-                [f"{k}: {v}" for k, v in optim.param_groups[g_idx].items() if k != "params"]
-            )
-            if group_fields_list:
-                log.info(
-                    f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {group_fields_list}"
-                )
-            else:
-                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
-
-        if self.compile:
-            raise NotImplementedError("Compiling optimizer step is not supported for Dion")
-
-        # Register hook to reset fixed fields after loading a checkpoint.
-        def reset_fixed_fields(opt: torch.optim.Optimizer):
-            for fixed_fields, group in zip(fixed_fields_per_group, opt.param_groups):
-                group.update(fixed_fields)
-
-        optim.register_load_state_dict_post_hook(reset_fixed_fields)
-
-        return cast(Dion, optim)
+        return optim

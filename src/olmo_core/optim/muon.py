@@ -2,11 +2,12 @@ import logging
 from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Tuple, Type, Union
+from typing import Any, Tuple, Union
 
 import torch
 from torch.distributed.device_mesh import DeviceMesh
 
+from olmo_core.config import StrEnum
 from olmo_core.distributed.parallel import (
     MeshDimName,
     get_dp_model_mesh,
@@ -14,30 +15,80 @@ from olmo_core.distributed.parallel import (
     get_world_mesh,
 )
 from olmo_core.nn.transformer import Transformer
-from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD
-from olmo_core.optim.config import OptimConfig, OptimGroupOverride
-from olmo_core.utils import move_to_device
+from olmo_core.optim.config import MatrixAwareOptimConfig, OptimGroupOverride
 
 log = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    from dion import Muon
+
+def _import_dion():
+    try:
+        from dion import Muon, NorMuon  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "The 'dion' package is required for Muon/NorMuon optimizers. "
+            "Install it with: pip install git+https://github.com/microsoft/dion.git"
+        ) from e
+    return Muon, NorMuon
+
+
+class MuonAdjustLRStrategy(StrEnum):
+    spectral_norm = "spectral_norm"
+    """Adjust based on spectral norm, for learning rate transfer across model scale."""
+
+    rms_norm = "rms_norm"
+    """Adjust based on RMS norm, for learning rate compatibility with Adam/AdamW (Kimi/Moonlight style: https://arxiv.org/abs/2502.16982)"""
 
 
 @dataclass
-class MuonConfig(OptimConfig):
-    lr: float = 0.01  # Shared lr for Muon and AdamW
-    mu: float = 0.95  # momentum for Muon
-    betas: Tuple[float, float] = (0.9, 0.95)  # betas for AdamW
+class MuonConfig(MatrixAwareOptimConfig):
+    """
+    Configuration class for building a :class:`Muon` optimizer.
+
+    Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
+    processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
+    matrix.
+
+    Muon is only used for hidden weight layers. The input embedding, final output layer,
+    and any internal gains or biases are optimized using AdamW.
+
+    Muon supports FSDP and HSDP parallelism strategies. Flattened mesh dimensions (eg. "dp_ep"
+    and "dp_cp") can be supported but are currently not implemented.
+    """
+
+    lr: float = 0.01
+    """
+    Base learning rate. For Muon, this will be scaled based on the matrix dimensions. For AdamW,
+    this is the actual learning rate and no additional scaling is done.
+    """
+
+    mu: float = 0.95
+    """Momentum for Muon"""
+
+    betas: Tuple[float, float] = (0.9, 0.95)
+    """Betas for AdamW"""
+
     weight_decay: float = 0.1
+    """Weight decay factor for non-embedding parameters"""
+
+    cautious_wd: bool = False
+    """Whether to apply weight decay only where update and parameter signs align."""
+
     nesterov: bool = False
-    adjust_lr: Literal["spectral_norm", "rms_norm"] | None = "rms_norm"
+    """Whether to use Nesterov momentum."""
+
+    adjust_lr: MuonAdjustLRStrategy | None = MuonAdjustLRStrategy.rms_norm
+    """How to adjust the learning rate for Muon updates."""
+
     use_triton: bool = False
+    """
+    Whether to use optimized Triton kernels for Newton-Schulz iteration. Becauser the result of X@X.t
+    is symmetric, we can avoid computing the upper triangular part of the matrix output.
+    See: https://www.lakernewhouse.com/assets/writing/faster-symmul-with-thunderkittens.pdf
+    """
 
     @classmethod
-    def optimizer(cls) -> Type["Muon"]:
-        from dion import Muon
-
+    def optimizer(cls) -> type:
+        Muon, _ = _import_dion()
         return Muon
 
     def default_group_overrides(self, model: torch.nn.Module) -> list[OptimGroupOverride]:
@@ -46,26 +97,19 @@ class MuonConfig(OptimConfig):
         Only >=2d, internal parameters are meant to be optimized with Muon.
         """
         assert isinstance(model, Transformer)
-        embed_params = [f"embeddings.{n}" for n, p in model.embeddings.named_parameters()]
-        matrix_params = [f"blocks.{n}" for n, p in model.blocks.named_parameters() if p.ndim >= 2]
-        vector_params = [f"blocks.{n}" for n, p in model.blocks.named_parameters() if p.ndim < 2]
-        vector_params += [f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim < 2]
-        lm_head_params = [
-            f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim >= 2
-        ]
+        params = self.categorize_parameters(model)
 
-        lm_head_out: torch.nn.Linear = model.lm_head.w_out
-        model_dim = lm_head_out.weight.shape[1]
+        # Matrix parameters are optimized with Muon.
+        matrix_override = OptimGroupOverride(params=params["matrix"], opts=dict())
 
-        matrix_override = OptimGroupOverride(params=matrix_params, opts=dict())
-        vector_override = OptimGroupOverride(params=vector_params, opts=dict(algorithm="adamw"))
+        # Vector, embedding, and lm_head parameters are optimized with AdamW.
         embed_override = OptimGroupOverride(
-            params=embed_params, opts=dict(algorithm="adamw", weight_decay=0)
+            params=params["embed"], opts=dict(algorithm="adamw", weight_decay=0.0)
         )
-        # lm_head_override = OptimGroupOverride(
-        #     params=lm_head_params, opts=dict(algorithm="adamw", lr=self.lr / math.sqrt(model_dim))
-        # )
-        lm_head_override = OptimGroupOverride(params=lm_head_params, opts=dict(algorithm="adamw"))
+        vector_override = OptimGroupOverride(params=params["vector"], opts=dict(algorithm="adamw"))
+        lm_head_override = OptimGroupOverride(
+            params=params["lm_head"], opts=dict(algorithm="adamw")
+        )
 
         return [matrix_override, vector_override, embed_override, lm_head_override]
 
@@ -125,13 +169,10 @@ class MuonConfig(OptimConfig):
         :returns: 1D DeviceMesh for distributed Muon, or None for single-device.
         """
         world_mesh = get_world_mesh()
-
         if world_mesh is None:
             return {"distributed_mesh": None}
 
         dim_names = world_mesh.mesh_dim_names
-        log.info(f"World mesh dimensions: {dim_names}")
-        log.info(f"World mesh shape: {world_mesh.shape}")
         if dim_names is None:
             raise RuntimeError("world mesh has no dimension names")
 
@@ -154,20 +195,15 @@ class MuonConfig(OptimConfig):
         log.info(f"Muon parallelism_config: {parallelism_config}")
         return parallelism_config
 
-    def build(self, model: torch.nn.Module, strict: bool = True) -> "Opt":
-        """
-        Build the optimizer.
-
-        :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
-            match any parameter.
-        """
-
-        kwargs = self.as_dict(exclude_private_fields=True)
-        kwargs.pop("group_overrides")
-        kwargs.pop("compile")
-        kwargs.pop("fixed_fields")
-
-        torch._dynamo.config.recompile_limit = 16
+    def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs):
+        # When using Muon, we need to set the recompile limit to 16 to avoid triggering an error
+        # due to too many recompile requests. Typically, on the second recompilation, torch attempts
+        # to compile a dynamic version of the op, unless dynamic=False is marked. Too many different
+        # shapes passed to a compiled op with dynamic=False will trigger this error. Since we have
+        # grad matrices with many different shapes, we need to set the recompile limit higher than
+        # the default of 8.
+        # https://docs.pytorch.org/docs/stable/compile/programming_model.recompilation.html
+        torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 16)
 
         parallelism_config = self.build_parallelism_config()
         optim = self.optimizer()(
@@ -175,60 +211,21 @@ class MuonConfig(OptimConfig):
             **parallelism_config,
             **kwargs,
         )
-
-        # Set 'lr' and 'initial_lr' in each group if needed.
-        fixed_fields_per_group: list[dict[str, Any]] = [{} for _ in optim.param_groups]
-        for fixed_fields, group in zip(fixed_fields_per_group, optim.param_groups):
-            lr: float | None = None
-            if LR_FIELD in group:
-                lr = group[LR_FIELD]
-            elif hasattr(self, LR_FIELD):
-                lr = getattr(self, LR_FIELD)
-
-            if lr is not None:
-                if self.compile:
-                    # 'lr' should be a tensor.
-                    group[LR_FIELD] = move_to_device(torch.tensor(lr), self.device)
-                else:
-                    group[LR_FIELD] = lr
-                group.setdefault(INITIAL_LR_FIELD, lr)
-
-            for k in self.fixed_fields:
-                if k in group:
-                    fixed_fields[k] = group[k]
-
-        log.info(
-            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param group(s)..."
-        )
-        for g_idx, group in enumerate(optim.param_groups):
-            group_fields_list = "\n - ".join(
-                [f"{k}: {v}" for k, v in optim.param_groups[g_idx].items() if k != "params"]
-            )
-            if group_fields_list:
-                log.info(
-                    f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {group_fields_list}"
-                )
-            else:
-                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
-
-        if self.compile:
-            raise NotImplementedError("Compiling optimizer step is not supported for Muon")
-
-        # Register hook to reset fixed fields after loading a checkpoint.
-        def reset_fixed_fields(opt: torch.optim.Optimizer):
-            for fixed_fields, group in zip(fixed_fields_per_group, opt.param_groups):
-                group.update(fixed_fields)
-
-        optim.register_load_state_dict_post_hook(reset_fixed_fields)
-
         return optim
 
 
 class NorMuonConfig(MuonConfig):
+    """
+    Configuration class for building a :class:`NorMuon` optimizer.
+
+    NorMuon is a variant of Muon that adds neuron-wise adaptive learning rates.
+    https://arxiv.org/abs/2510.05491
+    """
+
     muon_beta2: float = 0.95
+    """Beta2 for Muon"""
 
     @classmethod
-    def optimizer(cls) -> Type["NorMuon"]:
-        from dion import NorMuon
-
+    def optimizer(cls) -> type:
+        _, NorMuon = _import_dion()
         return NorMuon

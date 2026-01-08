@@ -1,6 +1,12 @@
 from .adam import AdamConfig
 from .adamw import AdamWConfig, SkipStepAdamW, SkipStepAdamWConfig
-from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig, OptimGroupOverride
+from .config import (
+    INITIAL_LR_FIELD,
+    LR_FIELD,
+    MatrixAwareOptimConfig,
+    OptimConfig,
+    OptimGroupOverride,
+)
 from .dion import DionConfig
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
 from .muon import MuonConfig, NorMuonConfig
@@ -24,6 +30,7 @@ from .skip_step_optimizer import SkipStepOptimizer
 
 __all__ = [
     "OptimConfig",
+    "MatrixAwareOptimConfig",
     "OptimGroupOverride",
     "SkipStepOptimizer",
     "AdamWConfig",
@@ -32,6 +39,8 @@ __all__ = [
     "AdamConfig",
     "LionConfig",
     "Lion",
+    "MuonConfig",
+    "NorMuonConfig",
     "DionConfig",
     "SkipStepLionConfig",
     "SkipStepLion",
