@@ -18,7 +18,7 @@ from ..attention import (
 )
 from ..buffer_cache import BufferCache
 from ..config import ModelConfig, ModuleConfig
-from ..feed_forward import FeedForwardConfig, FeedForwardType
+from ..feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
@@ -1500,7 +1500,7 @@ class TransformerConfig(ModelConfig):
                 hidden_size=hidden_size,
                 bias=False,
                 dtype=dtype,
-                activation="gelu_tanh",
+                activation=ActivationFunction.gelu_tanh,
             ),
             layer_norm=layer_norm,
         )

@@ -9,7 +9,7 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.nn.feed_forward import FeedForward
+from olmo_core.nn.feed_forward import ActivationFunction, FeedForward
 from olmo_core.testing import BACKENDS, run_distributed_test
 from olmo_core.utils import get_default_device, record_flops, seed_all
 
@@ -96,8 +96,8 @@ def test_feed_forward_num_flops_per_token():
     )
 
 
-@pytest.mark.parametrize("activation", ["silu", "gelu_tanh"])
-def test_feed_forward_activations(activation: str):
+@pytest.mark.parametrize("activation", [ActivationFunction.silu, ActivationFunction.gelu_tanh])
+def test_feed_forward_activations(activation: ActivationFunction):
     seed_all(0)
     d_model = 128
     hidden_size = 4 * d_model

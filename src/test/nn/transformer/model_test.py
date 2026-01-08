@@ -30,7 +30,7 @@ from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )
-from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
@@ -580,7 +580,7 @@ def test_gemma3_1B_config_builds():
     assert config.num_params == model.num_params
 
     assert config.block.feed_forward is not None
-    assert config.block.feed_forward.activation == "gelu_tanh"
+    assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
 
     assert config.block.attention.qk_norm is not None
     assert config.block.attention.rope is not None

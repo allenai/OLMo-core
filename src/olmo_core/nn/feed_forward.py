@@ -1,7 +1,7 @@
 import functools
 import math
 from dataclasses import dataclass
-from typing import Callable, Optional, Union
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -41,7 +41,7 @@ class ActivationFunction(StrEnum):
     GELU with tanh approximation, used for GeGLU.
     """
 
-    def get_fn(self) -> Callable[[torch.Tensor], torch.Tensor]:
+    def build(self) -> Callable[[torch.Tensor], torch.Tensor]:
         if self == ActivationFunction.silu:
             return F.silu
         elif self == ActivationFunction.gelu_tanh:
@@ -152,15 +152,13 @@ class FeedForward(nn.Module):
         bias: bool = True,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
-        activation: Union[str, ActivationFunction] = ActivationFunction.silu,
+        activation: ActivationFunction = ActivationFunction.silu,
     ):
         super().__init__()
         self.d_model = d_model
         self.hidden_size = hidden_size
-        if isinstance(activation, str):
-            activation = ActivationFunction(activation)
         self.activation = activation
-        self.activation_fn = activation.get_fn()
+        self.activation_fn = activation.build()
         self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
