@@ -51,9 +51,7 @@ def get_layer_mapping(model_type: str, n_layers: int) -> List[Tuple[str, str]]:
     return mapping
 
 
-def capture_activations(
-    model, layer_patterns: List[str]
-) -> Tuple[Dict[str, torch.Tensor], List]:
+def capture_activations(model, layer_patterns: List[str]) -> Tuple[Dict[str, torch.Tensor], List]:
     activations = {}
     hooks = []
 
@@ -148,7 +146,7 @@ def debug_gemma3_layer_diff():
         "model.layers.0.mlp",
         "model.layers.0.post_feedforward_layernorm",
         "model.layers.0",
-        f"model.layers.{n_layers-1}",
+        f"model.layers.{n_layers - 1}",
         "model.norm",
     ]
 
@@ -160,7 +158,7 @@ def debug_gemma3_layer_diff():
         "blocks.0.feed_forward",
         "blocks.0.post_feed_forward_norm",
         "blocks.0",
-        f"blocks.{n_layers-1}",
+        f"blocks.{n_layers - 1}",
         "lm_head.norm",
     ]
 
@@ -172,7 +170,7 @@ def debug_gemma3_layer_diff():
         ("model.layers.0.mlp", "blocks.0.feed_forward"),
         ("model.layers.0.post_feedforward_layernorm", "blocks.0.post_feed_forward_norm"),
         ("model.layers.0", "blocks.0"),
-        (f"model.layers.{n_layers-1}", f"blocks.{n_layers-1}"),
+        (f"model.layers.{n_layers - 1}", f"blocks.{n_layers - 1}"),
         ("model.norm", "lm_head.norm"),
     ]
 
