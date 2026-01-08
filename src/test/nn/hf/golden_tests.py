@@ -30,8 +30,6 @@ def _get_gemma3_config(hf_config) -> TransformerConfig:
 
 
 MODEL_CONFIGS = [
-    # Add more models here as support is merged:
-    # pytest.param("Qwen/Qwen3-0.6B", "qwen3", _get_qwen3_config, id="qwen3-0.6B"),
     pytest.param("google/gemma-3-270m", "gemma3_text", _get_gemma3_config, id="gemma3-270m"),
 ]
 

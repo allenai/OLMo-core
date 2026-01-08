@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import pytest
@@ -13,12 +12,7 @@ from transformers import (
 
 from olmo_core.nn.hf.checkpoint import load_hf_model, save_hf_model
 from olmo_core.nn.transformer.config import TransformerConfig
-
-HF_TOKEN = os.environ.get("HF_TOKEN")
-requires_hf_token = pytest.mark.skipif(
-    HF_TOKEN is None,
-    reason="HF_TOKEN environment variable not set - required for accessing gated models",
-)
+from olmo_core.testing.utils import HF_TOKEN, requires_hf_token
 
 
 def test_load_hf_model(tmp_path: Path):

@@ -1,6 +1,7 @@
+import functools
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -16,7 +17,37 @@ from .config import ModuleConfig
 from .functional import l2_normalize
 from .utils import get_tp_wrappers
 
-__all__ = ["FeedForwardType", "FeedForwardConfig", "FeedForward", "NormalizedFeedForward"]
+__all__ = [
+    "ActivationFunction",
+    "FeedForwardType",
+    "FeedForwardConfig",
+    "FeedForward",
+    "NormalizedFeedForward",
+]
+
+
+class ActivationFunction(StrEnum):
+    """
+    An enumeration of the supported activation functions for feed-forward modules.
+    """
+
+    silu = "silu"
+    """
+    SiLU/Swish activation function, used for SwiGLU.
+    """
+
+    gelu_tanh = "gelu_tanh"
+    """
+    GELU with tanh approximation, used for GeGLU.
+    """
+
+    def get_fn(self) -> Callable[[torch.Tensor], torch.Tensor]:
+        if self == ActivationFunction.silu:
+            return F.silu
+        elif self == ActivationFunction.gelu_tanh:
+            return functools.partial(F.gelu, approximate="tanh")
+        else:
+            raise NotImplementedError(self)
 
 
 class FeedForwardType(StrEnum):
@@ -48,9 +79,9 @@ class FeedForwardConfig(ModuleConfig):
     """
     bias: Optional[bool] = None
     dtype: Optional[DType] = None
-    activation: str = "silu"
+    activation: ActivationFunction = ActivationFunction.silu
     """
-    The activation function to use. Options: "silu" (default, for SwiGLU) or "gelu_tanh" (for GeGLU).
+    The activation function to use. See :class:`ActivationFunction` for options.
     """
 
     def num_params(self, d_model: int) -> int:
@@ -94,7 +125,11 @@ class FeedForwardConfig(ModuleConfig):
             if self.name == FeedForwardType.default:
                 return FeedForward(**kwargs)
             elif self.name == FeedForwardType.normalized:
-                kwargs.pop("activation", None)
+                activation = kwargs.pop("activation", ActivationFunction.silu)
+                if activation != ActivationFunction.silu:
+                    raise OLMoConfigurationError(
+                        f"NormalizedFeedForward only supports 'silu' activation, got '{activation}'"
+                    )
                 return NormalizedFeedForward(**kwargs)
             else:
                 raise NotImplementedError(self.name)
@@ -117,12 +152,15 @@ class FeedForward(nn.Module):
         bias: bool = True,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
-        activation: str = "silu",
+        activation: Union[str, ActivationFunction] = ActivationFunction.silu,
     ):
         super().__init__()
         self.d_model = d_model
         self.hidden_size = hidden_size
+        if isinstance(activation, str):
+            activation = ActivationFunction(activation)
         self.activation = activation
+        self.activation_fn = activation.get_fn()
         self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
@@ -133,9 +171,7 @@ class FeedForward(nn.Module):
 
         :param x: The input of shape ``(*, d_model)``.
         """
-        if self.activation == "gelu_tanh":
-            return self.w2(F.gelu(self.w1(x), approximate="tanh") * self.w3(x))
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        return self.w2(self.activation_fn(self.w1(x)) * self.w3(x))
 
     def apply_tp(
         self,

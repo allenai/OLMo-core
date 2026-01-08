@@ -1,9 +1,12 @@
 import logging
+import os
 
 import pytest
 import torch
 
 log = logging.getLogger(__name__)
+
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 has_cuda = torch.cuda.is_available()
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
@@ -144,6 +147,12 @@ def requires_mps(func):
     for mark in MPS_MARKS:
         func = mark(func)
     return func
+
+
+requires_hf_token = pytest.mark.skipif(
+    HF_TOKEN is None,
+    reason="HF_TOKEN environment variable not set - required for accessing gated models",
+)
 
 
 INIT_DEVICES = [
