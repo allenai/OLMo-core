@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for no-global-rope ("GNoPE").
 - Added support for MXFP8 Linear layers via torchao.
 - Added support for tracking total flops.
-- Added support for Qwen3 models.
+- Added support for Gemma 3 models.
 
 ### Fixed
 
