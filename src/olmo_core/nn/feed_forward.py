@@ -125,7 +125,7 @@ class FeedForwardConfig(ModuleConfig):
             if self.name == FeedForwardType.default:
                 return FeedForward(**kwargs)
             elif self.name == FeedForwardType.normalized:
-                activation = kwargs.pop("activation", ActivationFunction.silu)
+                activation = kwargs.get("activation", ActivationFunction.silu)
                 if activation != ActivationFunction.silu:
                     raise OLMoConfigurationError(
                         f"NormalizedFeedForward only supports 'silu' activation, got '{activation}'"
@@ -157,7 +157,6 @@ class FeedForward(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.hidden_size = hidden_size
-        self.activation = activation
         self.activation_fn = activation.build()
         self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
@@ -223,13 +222,19 @@ class NormalizedFeedForward(FeedForward):
         hidden_size: int,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        activation: ActivationFunction = ActivationFunction.silu,
     ):
+        if activation != ActivationFunction.silu:
+            raise OLMoConfigurationError(
+                f"NormalizedFeedForward only supports 'silu' activation, got '{activation}'"
+            )
         super().__init__(
             d_model=d_model,
             hidden_size=hidden_size,
             dtype=dtype,
             init_device=init_device,
             bias=False,
+            activation=activation,
         )
         self.sw_init_value = 1.0
         self.sw_init_scaling = 1.0

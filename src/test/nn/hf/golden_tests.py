@@ -29,14 +29,23 @@ def _get_gemma3_config(hf_config) -> TransformerConfig:
     )
 
 
+def _get_qwen3_config(hf_config) -> TransformerConfig:
+    return TransformerConfig.qwen3_0_6B(vocab_size=hf_config.vocab_size)
+
+
 MODEL_CONFIGS = [
-    pytest.param("google/gemma-3-270m", "gemma3_text", _get_gemma3_config, id="gemma3-270m"),
+    pytest.param(
+        "google/gemma-3-270m", "gemma3_text", _get_gemma3_config, 5e-5, 5e-5, id="gemma3-270m"
+    ),
+    pytest.param("Qwen/Qwen3-0.6B", "qwen3", _get_qwen3_config, 1e-6, 1e-6, id="qwen3-0.6B"),
 ]
 
 
 @pytest.mark.skipif(not HF_TOKEN, reason="HF_TOKEN not set")
-@pytest.mark.parametrize("model_id,model_type,config_fn", MODEL_CONFIGS)
-def test_generation_logits_match(model_id: str, model_type: str, config_fn):
+@pytest.mark.parametrize("model_id,model_type,config_fn,rtol,atol", MODEL_CONFIGS)
+def test_generation_logits_match(
+    model_id: str, model_type: str, config_fn, rtol: float, atol: float
+):
     hf_model = transformers.AutoModelForCausalLM.from_pretrained(
         model_id, token=HF_TOKEN, torch_dtype=torch.float32, attn_implementation="eager"
     )
@@ -68,4 +77,4 @@ def test_generation_logits_match(model_id: str, model_type: str, config_fn):
     diff = (hf_logits - olmo_logits).abs()
     print(f"Logits diff mean: {diff.mean().item():.2e}, std: {diff.std().item():.2e}")
 
-    torch.testing.assert_close(hf_logits, olmo_logits, rtol=5e-5, atol=5e-5)
+    torch.testing.assert_close(hf_logits, olmo_logits, rtol=rtol, atol=atol)

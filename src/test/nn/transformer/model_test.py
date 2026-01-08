@@ -571,13 +571,19 @@ def test_transformer_num_flops_per_token():
     assert bigger_window > base
 
 
-def test_gemma3_1B_config_builds():
-    config = TransformerConfig.gemma3_1B(n_layers=6)
-    model = config.build(init_device="cpu")
-
-    assert config.d_model == 2304
+@pytest.mark.parametrize(
+    "config_builder,expected_d_model,expected_n_layers",
+    [
+        pytest.param(TransformerConfig.gemma3_1B, 2304, 26, id="gemma3_1B"),
+        pytest.param(TransformerConfig.gemma3_4B, 2560, 34, id="gemma3_4B"),
+        pytest.param(TransformerConfig.gemma3_12B, 3840, 48, id="gemma3_12B"),
+        pytest.param(TransformerConfig.gemma3_27B, 5376, 62, id="gemma3_27B"),
+    ],
+)
+def test_gemma3_builder_configs(config_builder, expected_d_model, expected_n_layers):
+    config = config_builder(n_layers=6)
+    assert config.d_model == expected_d_model
     assert config.n_layers == 6
-    assert config.num_params == model.num_params
 
     assert config.block.feed_forward is not None
     assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
@@ -585,6 +591,13 @@ def test_gemma3_1B_config_builds():
     assert config.block.attention.qk_norm is not None
     assert config.block.attention.rope is not None
     assert config.block.attention.rope.theta == 10_000
+
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"))
+
+    num_actual_params = sum(p.numel() for p in model.parameters())
+    assert config.num_params == num_actual_params
+    assert model.num_params == num_actual_params
 
 
 def test_gemma3_block_overrides_rope_theta():
@@ -618,6 +631,8 @@ def test_gemma3_sliding_window_pattern():
     assert swa.pattern == [1024, 1024, 1024, 1024, 1024, -1]
     assert swa.force_full_attention_on_first_layer is False
     assert swa.force_full_attention_on_last_layer is False
+
+
 @pytest.mark.parametrize(
     "config_builder,expected_d_model,expected_n_layers",
     [

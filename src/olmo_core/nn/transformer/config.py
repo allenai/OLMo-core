@@ -1168,9 +1168,10 @@ class TransformerConfig(ModelConfig):
             n_heads=kwargs.pop("n_heads", 8),
             n_kv_heads=kwargs.pop("n_kv_heads", 4),
             hidden_size=kwargs.pop("hidden_size", 9216),
-                      **kwargs,
+            **kwargs,
         )
 
+    @classmethod
     def qwen3_0_6B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=1024,
@@ -1203,8 +1204,8 @@ class TransformerConfig(ModelConfig):
             hidden_size=kwargs.pop("hidden_size", 10240),
             **kwargs,
         )
-          
-          
+
+    @classmethod
     def qwen3_1_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=2048,
@@ -1235,9 +1236,10 @@ class TransformerConfig(ModelConfig):
             n_heads=kwargs.pop("n_heads", 24),
             n_kv_heads=kwargs.pop("n_kv_heads", 8),
             hidden_size=kwargs.pop("hidden_size", 15360),
-                      **kwargs,
+            **kwargs,
         )
 
+    @classmethod
     def qwen3_4B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=2560,
@@ -1268,9 +1270,10 @@ class TransformerConfig(ModelConfig):
             n_heads=kwargs.pop("n_heads", 32),
             n_kv_heads=kwargs.pop("n_kv_heads", 16),
             hidden_size=kwargs.pop("hidden_size", 21504),
-                      **kwargs,
+            **kwargs,
         )
 
+    @classmethod
     def qwen3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=4096,
