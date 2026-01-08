@@ -71,7 +71,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     source_list = SourceMixtureList.from_yaml(
-        "src/olmo_core/data/source_mixtures/midtrain-memo-auto.yaml"
+        "src/olmo_core/data/source_mixtures/midtrain-memo-10B-4tier-local.yaml"
     )
     source_list.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
