@@ -37,6 +37,12 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     """The number of tokens per parameter to use for Chinchilla calculations."""
     lr_multiplier: float = 1.0
     """A multiplier to apply to the learning rate calculated from Chinchilla scaling laws."""
+    stepped_schedule: bool = False
+    """
+    If ``True``, use a stepped schedule for the peak learning rate instead of a constant one,
+    where the peak learning rate will be scaled down by ``1 / sqrt(D)`` during each stage, where
+    ``D`` is the target chinchilla multiple of the stage.
+    """
 
     def __post_init__(self):
         if self.chinchilla_multiple < 0.5 or not math.log(self.chinchilla_multiple, 2).is_integer():
@@ -99,8 +105,12 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     def configure_lr_scheduler(self, num_params: int, batch_size: int) -> Scheduler:
         warmup, chinchilla_periods = self.configure_chinchilla_periods(num_params)
         period_lengths = []
+        period_lr_multipliers = [] if self.stepped_schedule else None
         for pidx, c in enumerate(chinchilla_periods):
             period = self._chinchilla_duration(num_params, batch_size, c).value
+            if self.stepped_schedule:
+                assert period_lr_multipliers is not None
+                period_lr_multipliers.append(1 / math.sqrt(max(c, 1.0)))
             if pidx == 0:
                 period_lengths.append(period)
             else:
@@ -116,6 +126,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             warmup=warmup,
             decay_fraction=self.decay_fraction,
             period_lengths=period_lengths,
+            period_lr_multipliers=period_lr_multipliers,
         )
 
     def configure_checkpoint_intervals(

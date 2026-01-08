@@ -97,6 +97,12 @@ def parse_args(
             help="A multiplier to apply to the default learning rate.",
         )
         parser.add_argument(
+            "--stepped-schedule",
+            action="store_true",
+            default=False,
+            help="Use the stepped WSDS schedule when using the chinchilla run configurator.",
+        )
+        parser.add_argument(
             "--cluster",
             type=str,
             choices=["ai2/augusta", "ai2/jupiter", "ai2/titan"],
@@ -319,6 +325,7 @@ def get_default_ladder_factory(
             else WSDSChinchillaRunConfigurator(
                 chinchilla_multiple=args.chinchilla_multiple,
                 lr_multiplier=args.lr_multiplier,
+                stepped_schedule=args.stepped_schedule,
             ),
             sequence_length=args.sequence_length,
             tokenizer=tokenizer,
