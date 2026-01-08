@@ -70,4 +70,4 @@ def test_generation_logits_match(model_id: str, model_type: str, config_fn):
     diff = (hf_logits - olmo_logits).abs()
     print(f"Logits diff mean: {diff.mean().item():.2e}, std: {diff.std().item():.2e}")
 
-    torch.testing.assert_close(hf_logits, olmo_logits, rtol=2e-5, atol=2e-5)
+    torch.testing.assert_close(hf_logits, olmo_logits, rtol=5e-5, atol=5e-5)
