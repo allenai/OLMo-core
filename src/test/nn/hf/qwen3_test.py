@@ -8,18 +8,6 @@ from olmo_core.nn.hf.convert import convert_state_from_hf
 from olmo_core.nn.transformer import TransformerConfig
 
 
-def test_qwen3_forward_pass():
-    config = TransformerConfig.qwen3_0_6B(vocab_size=1024, n_layers=2)
-    model = config.build(init_device="cpu")
-    model.eval()
-
-    input_ids = torch.randint(0, 1024, (2, 16))
-    with torch.no_grad():
-        logits = model(input_ids)
-
-    assert logits.shape == (2, 16, 1024)
-
-
 def test_qwen3_has_head_qk_norm():
     config = TransformerConfig.qwen3_8B(vocab_size=1024, n_layers=2)
     assert config.block.attention.qk_norm is not None

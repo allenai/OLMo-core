@@ -1154,7 +1154,7 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
-    def qwen3_0_6B(cls, vocab_size: int = 151936, **kwargs) -> "TransformerConfig":
+    def qwen3_0_6B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=1024,
             vocab_size=vocab_size,
@@ -1171,7 +1171,7 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
-    def qwen3_1_7B(cls, vocab_size: int = 151936, **kwargs) -> "TransformerConfig":
+    def qwen3_1_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=2048,
             vocab_size=vocab_size,
@@ -1188,7 +1188,7 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
-    def qwen3_4B(cls, vocab_size: int = 151936, **kwargs) -> "TransformerConfig":
+    def qwen3_4B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=2560,
             vocab_size=vocab_size,
@@ -1205,7 +1205,7 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
-    def qwen3_8B(cls, vocab_size: int = 151936, **kwargs) -> "TransformerConfig":
+    def qwen3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=4096,
             vocab_size=vocab_size,
@@ -1222,7 +1222,7 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
-    def qwen3_14B(cls, vocab_size: int = 151936, **kwargs) -> "TransformerConfig":
+    def qwen3_14B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=5120,
             vocab_size=vocab_size,
@@ -1239,7 +1239,7 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
-    def qwen3_32B(cls, vocab_size: int = 151936, **kwargs) -> "TransformerConfig":
+    def qwen3_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=5120,
             vocab_size=vocab_size,
