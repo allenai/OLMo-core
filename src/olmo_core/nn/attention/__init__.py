@@ -199,31 +199,28 @@ class AttentionConfig(ModuleConfig):
         head_dim = self.head_dim if self.head_dim is not None else d_model // n_heads
         bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
 
-        q_out_dim = n_heads * head_dim
-        kv_out_dim = n_kv_heads * head_dim
-
         params = 0
 
         # Block attention Q projection.
-        params += d_model * q_out_dim
+        params += d_model * n_heads * head_dim
         if bias:
-            params += q_out_dim
+            params += n_heads * head_dim
 
         # Block attention KV projections.
-        params += 2 * d_model * kv_out_dim
+        params += 2 * d_model * n_kv_heads * head_dim
         if bias:
-            params += 2 * kv_out_dim
+            params += 2 * n_kv_heads * head_dim
 
         # Block attention QK norm.
         if self.qk_norm is not None:
             if self.use_head_qk_norm:
                 params += 2 * self.qk_norm.num_params(head_dim)
             else:
-                params += self.qk_norm.num_params(q_out_dim)  # q_norm
-                params += self.qk_norm.num_params(kv_out_dim)  # k_norm
+                params += self.qk_norm.num_params(n_heads * head_dim)  # q_norm
+                params += self.qk_norm.num_params(n_kv_heads * head_dim)  # k_norm
 
         # Block attention out.
-        params += q_out_dim * d_model
+        params += n_heads * head_dim * d_model
         if bias:
             params += d_model
 
@@ -390,15 +387,20 @@ class Attention(AttentionBase):
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
-        self.head_dim = head_dim if head_dim is not None else d_model // n_heads
+        self.head_dim = head_dim or d_model // n_heads
 
-        q_out_dim = self.n_heads * self.head_dim
-        kv_out_dim = self.n_kv_heads * self.head_dim
-
-        self.w_q = nn.Linear(d_model, q_out_dim, bias=bias, dtype=dtype, device=init_device)
-        self.w_k = nn.Linear(d_model, kv_out_dim, bias=bias, dtype=dtype, device=init_device)
-        self.w_v = nn.Linear(d_model, kv_out_dim, bias=bias, dtype=dtype, device=init_device)
-        self.w_out = nn.Linear(q_out_dim, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w_q = nn.Linear(
+            d_model, self.n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_k = nn.Linear(
+            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_v = nn.Linear(
+            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+        self.w_out = nn.Linear(
+            self.n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device
+        )
 
         self.gate = gate
         self.w_g: Optional[nn.Linear] = None
@@ -420,8 +422,12 @@ class Attention(AttentionBase):
                 self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
                 self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
             else:
-                self.q_norm = qk_norm.build(size=q_out_dim, init_device=init_device)
-                self.k_norm = qk_norm.build(size=kv_out_dim, init_device=init_device)
+                self.q_norm = qk_norm.build(
+                    size=self.n_heads * self.head_dim, init_device=init_device
+                )
+                self.k_norm = qk_norm.build(
+                    size=self.n_kv_heads * self.head_dim, init_device=init_device
+                )
 
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:

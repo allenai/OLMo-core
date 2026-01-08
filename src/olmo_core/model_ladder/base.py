@@ -373,9 +373,9 @@ class ModelLadder(Config):
             "data_loader": self.data_loader.as_config_dict(),
             "instance_sources": [s.as_config_dict() for s in self.instance_sources],
         }
-        typing.cast(
-            callbacks.ConfigSaverCallback, trainer.callbacks["config_saver"]
-        ).config = config_dict
+        typing.cast(callbacks.ConfigSaverCallback, trainer.callbacks["config_saver"]).config = (
+            config_dict
+        )
 
         # Train.
         trainer.fit()
