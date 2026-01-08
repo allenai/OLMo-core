@@ -19,7 +19,11 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
-from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
+from torch.distributed.tensor.parallel import (
+    RowwiseParallel,
+    SequenceParallel,
+    parallelize_module,
+)
 
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
@@ -27,16 +31,16 @@ from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
+from olmo_core.nn.attention.ring import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import (
-    Attention,
-    FusedAttention,
-    RingAttentionLoadBalancer,
-    RingAttentionLoadBalancerType,
-)
+from ..attention import Attention, FusedAttention, RingAttentionLoadBalancer
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
+from ..layer_norm import LayerNormConfig
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
@@ -91,6 +95,7 @@ class Transformer(nn.Module):
         n_layers: int,
         block: TransformerBlockConfig,
         lm_head: LMHeadConfig,
+        embedding_norm: Optional[LayerNormConfig] = None,
         dtype: torch.dtype = torch.float32,
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
@@ -111,6 +116,14 @@ class Transformer(nn.Module):
         self.embed_scale = embed_scale
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
+        self.embedding_norm = (
+            None
+            if embedding_norm is None
+            else embedding_norm.build(
+                d_model,
+                init_device=init_device,
+            )
+        )
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
             block_config = block
@@ -370,6 +383,7 @@ class Transformer(nn.Module):
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
             for block_idx, rope_buffers in self.get_rope_buffers(S, torch.device("cpu")).items():
                 if rope_buffers is not None:
+                    # Also shard RoPE buffers based on the context parallelism load balancer.
                     if rope_buffers.pos_sin is not None:
                         inputs.append(rope_buffers.pos_sin)
                         seq_dims.append(0)
@@ -507,6 +521,8 @@ class Transformer(nn.Module):
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
         if self.embed_scale is not None:
             h = h * self.embed_scale
+        if self.embedding_norm is not None:
+            h = self.embedding_norm(h)
 
         # Run each block.
         for block_key, block in self.blocks.items():
@@ -585,6 +601,10 @@ class Transformer(nn.Module):
                     use_local_output=False,
                 ),
             )
+        if self.embedding_norm is not None:
+            parallelize_module(
+                self.embedding_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            )
 
         # Apply tensor/sequence parallelism to every transformer block.
         for block in self.blocks.values():
@@ -600,22 +620,25 @@ class Transformer(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         """
         Prepare the model for context-parallelism (CP).
 
         :param cp_mesh: The CP device mesh.
-        :param load_balancer: The load balancing method.
+        :param ring: The ring context parallel style.
+        :param uly: The ulysses context parallel style.
         """
-        self._cp_load_balancer = load_balancer.build(cp_mesh)
+        if ring is not None:
+            self._cp_load_balancer = ring.load_balancer.build(cp_mesh)
+        elif uly is not None:
+            self._cp_load_balancer = uly.load_balancer.build(cp_mesh)
+
         for block in self.blocks.values():
-            cast(TransformerBlockBase, block).apply_cp(
-                cp_mesh, load_balancer, head_stride=head_stride
-            )
+            cast(TransformerBlockBase, block).apply_cp(cp_mesh, ring=ring, uly=uly)
         if self.lm_head is not None:
-            self.lm_head.apply_cp(cp_mesh, load_balancer)
+            self.lm_head.apply_cp(cp_mesh)
 
     def apply_activation_checkpointing(
         self,
@@ -785,11 +808,11 @@ class Transformer(nn.Module):
             # Embedding params are not needed for backwards computation.
             cast(FSDPModule, self.embeddings).set_unshard_in_backward(False)
 
-        if (
-            wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks
-            and self.lm_head is not None
-        ):
-            fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
+        if wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks:
+            if self.embedding_norm is not None:
+                fully_shard(self.embedding_norm, **fsdp_config)
+            if self.lm_head is not None:
+                fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)
         # Some inputs need to be on CPU initially, but FSDP will move everything to model's

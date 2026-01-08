@@ -76,6 +76,12 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
     Generic model configurator for transformer models.
     """
 
+    rank_microbatch_size: int | None = None
+    """
+    Optional fixed rank micro-batch size. If set, this value is used directly instead of
+    computing it based on model size and device type.
+    """
+
     def configure_rank_microbatch_size(
         self,
         *,
@@ -83,6 +89,11 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
         sequence_length: int,
         device_type: str,
     ) -> int:
+        if self.rank_microbatch_size is not None:
+            assert self.rank_microbatch_size > 0
+            assert self.rank_microbatch_size % sequence_length == 0
+            return self.rank_microbatch_size
+
         # TODO: configure context-parallelism if needed.
         device_type = device_type.lower()
         assert "h100" in device_type or "b200" in device_type
