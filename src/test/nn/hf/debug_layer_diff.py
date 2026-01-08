@@ -139,17 +139,49 @@ def debug_gemma3_layer_diff():
     olmo_model.eval()
 
     n_layers = hf_model.config.num_hidden_layers
-    mapping = get_layer_mapping(model_type, n_layers)
 
-    hf_layers = list(set(hf for hf, _ in mapping))
-    olmo_layers = list(set(olmo for _, olmo in mapping))
+    hf_layers_to_hook = [
+        "model.layers.0.input_layernorm",
+        "model.layers.0.self_attn",
+        "model.layers.0.post_attention_layernorm",
+        "model.layers.0.pre_feedforward_layernorm",
+        "model.layers.0.mlp",
+        "model.layers.0.post_feedforward_layernorm",
+        "model.layers.0",
+        f"model.layers.{n_layers-1}",
+        "model.norm",
+    ]
+
+    olmo_layers_to_hook = [
+        "blocks.0.attention_norm",
+        "blocks.0.attention",
+        "blocks.0.post_attention_norm",
+        "blocks.0.feed_forward_norm",
+        "blocks.0.feed_forward",
+        "blocks.0.post_feed_forward_norm",
+        "blocks.0",
+        f"blocks.{n_layers-1}",
+        "lm_head.norm",
+    ]
+
+    block_mapping = [
+        ("model.layers.0.input_layernorm", "blocks.0.attention_norm"),
+        ("model.layers.0.self_attn", "blocks.0.attention"),
+        ("model.layers.0.post_attention_layernorm", "blocks.0.post_attention_norm"),
+        ("model.layers.0.pre_feedforward_layernorm", "blocks.0.feed_forward_norm"),
+        ("model.layers.0.mlp", "blocks.0.feed_forward"),
+        ("model.layers.0.post_feedforward_layernorm", "blocks.0.post_feed_forward_norm"),
+        ("model.layers.0", "blocks.0"),
+        (f"model.layers.{n_layers-1}", f"blocks.{n_layers-1}"),
+        ("model.norm", "lm_head.norm"),
+    ]
 
     prompt = "Hello!"
     input_ids = tokenizer.encode(prompt, return_tensors="pt")
     print(f"Input: '{prompt}' -> {input_ids.shape}")
 
-    hf_acts, hf_hooks = capture_activations(hf_model, hf_layers)
-    olmo_acts, olmo_hooks = capture_activations(olmo_model, olmo_layers)
+    hf_acts, hf_hooks = capture_activations(hf_model, hf_layers_to_hook)
+    olmo_acts, olmo_hooks = capture_activations(olmo_model, olmo_layers_to_hook)
 
     with torch.no_grad():
         hf_logits = hf_model(input_ids).logits
@@ -158,7 +190,7 @@ def debug_gemma3_layer_diff():
     remove_hooks(hf_hooks)
     remove_hooks(olmo_hooks)
 
-    compare_activations(hf_acts, olmo_acts, mapping)
+    compare_activations(hf_acts, olmo_acts, block_mapping)
 
     print("\n" + "=" * 80)
     print("FINAL LOGITS")
