@@ -108,3 +108,9 @@ uv run src/scripts/train/ladder/2026Q1/muon_ladder.py launch-all --max-size 1B -
 ```bash
 uv run src/scripts/train/ladder/2026Q1/muon_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-muon-2xBS" --preemptible --chinchilla-multiple 8.0 --priority high
 ```
+
+## Gated + Gnope
+
+```bash
+uv run src/scripts/train/ladder/2026Q1/gated_attn_gnope_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-gatedattn-gnope" --preemptible --chinchilla-multiple 8.0 --priority high
+```
