@@ -1166,7 +1166,9 @@ class TransformerConfig(ModelConfig):
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=3072, bias=False),
+            feed_forward=FeedForwardConfig(
+                hidden_size=3072, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
             **kwargs,
         )
 
@@ -1183,7 +1185,9 @@ class TransformerConfig(ModelConfig):
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=6144, bias=False),
+            feed_forward=FeedForwardConfig(
+                hidden_size=6144, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
             **kwargs,
         )
 
@@ -1200,7 +1204,9 @@ class TransformerConfig(ModelConfig):
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=9728, bias=False),
+            feed_forward=FeedForwardConfig(
+                hidden_size=9728, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
             **kwargs,
         )
 
@@ -1217,7 +1223,9 @@ class TransformerConfig(ModelConfig):
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=12288, bias=False),
+            feed_forward=FeedForwardConfig(
+                hidden_size=12288, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
             **kwargs,
         )
 
@@ -1234,7 +1242,9 @@ class TransformerConfig(ModelConfig):
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=17408, bias=False),
+            feed_forward=FeedForwardConfig(
+                hidden_size=17408, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
             **kwargs,
         )
 
@@ -1251,7 +1261,9 @@ class TransformerConfig(ModelConfig):
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
-            feed_forward=FeedForwardConfig(hidden_size=25600, bias=False),
+            feed_forward=FeedForwardConfig(
+                hidden_size=25600, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
             **kwargs,
         )
 

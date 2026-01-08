@@ -415,7 +415,9 @@ class Attention(AttentionBase):
                     d_model, self.n_heads, bias=bias, dtype=dtype, device=init_device
                 )
             elif gate.granularity == GateGranularity.elementwise:
-                self.w_g = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+                self.w_g = nn.Linear(
+                    d_model, n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+                )
 
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
