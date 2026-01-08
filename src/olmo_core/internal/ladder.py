@@ -24,6 +24,13 @@ from .common import build_launch_config, get_gpu_type, get_root_dir
 
 log = logging.getLogger(__name__)
 
+# Alternative root directories for local access (outside of cluster).
+# These are tried in order when --local is specified.
+LOCAL_ACCESS_ROOTS = [
+    "weka://oe-training-default/ai2-llm",  # Requires WEKA_ENDPOINT_URL env var
+    "gs://ai2-llm",
+]
+
 
 def parse_args(
     configure_ladder: Callable[[argparse.Namespace], ModelLadder],
@@ -257,6 +264,17 @@ def parse_args(
                 type=Path,
                 default=Path("~/Downloads").expanduser(),
                 help="""A local directory to store artifacts in like metrics or the LR schedule plot.""",
+            )
+
+        if cmd in {"metrics", "metrics-all"}:
+            parser.add_argument(
+                "--local",
+                action="store_true",
+                default=False,
+                help="""When running on a local machine (outside the cluster), try accessing
+                checkpoints via weka:// (requires WEKA_ENDPOINT_URL and WEKA_PROFILE env vars)
+                or gs://. Also discovers metrics by scanning for existing files rather than
+                relying on computed checkpoint intervals.""",
             )
 
         if cmd == "dry-run":
@@ -532,9 +550,19 @@ def status(args: argparse.Namespace):
 def metrics(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
-    df = ladder.get_metrics(args.size)
+
+    # When --local is specified, use discover_metrics which scans for existing files
+    # rather than relying on computed checkpoint intervals, and tries alternative
+    # remote paths for each size
+    if getattr(args, "local", False):
+        df = ladder.discover_metrics(args.size, alternative_roots=LOCAL_ACCESS_ROOTS)
+    else:
+        df = ladder.get_metrics(args.size)
+
     if df is not None:
-        path = io.join_path(args.output_dir, f"metrics_{args.size}.pkl")
+        output_dir = Path(args.output_dir) / args.name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"metrics_{args.size}.pkl"
         df.to_pickle(path)
         rich.get_console().print(
             f"[b green]✔[/] Metrics for size [green]{args.size}[/] saved to [u blue]{path}[/]\n"
@@ -561,10 +589,19 @@ def metrics_all(args: argparse.Namespace):
     saved_paths: list[str] = []
     missing_sizes: list[str] = []
 
+    # When --local is specified, use discover_metrics which scans for existing files
+    # and tries alternative remote paths for each size
+    use_local = getattr(args, "local", False)
+
     for size in sizes:
-        df = ladder.get_metrics(size)
+        if use_local:
+            df = ladder.discover_metrics(size, alternative_roots=LOCAL_ACCESS_ROOTS)
+        else:
+            df = ladder.get_metrics(size)
         if df is not None:
-            path = io.join_path(args.output_dir, f"metrics_{size}.pkl")
+            output_dir = Path(args.output_dir) / args.name
+            output_dir.mkdir(parents=True, exist_ok=True)
+            path = output_dir / f"metrics_{size}.pkl"
             df.to_pickle(path)
             rich.get_console().print(
                 f"[b green]✔[/] Metrics for size [green]{size}[/] saved to [u blue]{path}[/]",

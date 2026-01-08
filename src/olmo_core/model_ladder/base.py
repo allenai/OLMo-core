@@ -2,6 +2,7 @@ import concurrent.futures
 import json
 import logging
 import math
+import re
 import typing
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
@@ -490,7 +491,6 @@ class ModelLadder(Config):
                         metrics = {k: v for k, v in metrics.items() if k.startswith(prefix)}
                     metrics["name"] = checkpoint.name
                     metrics["step"] = checkpoint.step
-                    metrics["tokens"] = checkpoint.tokens
                     metrics["size"] = size_spec
                     metrics["num_params"] = num_params
                     all_metrics.append(metrics)
@@ -499,6 +499,88 @@ class ModelLadder(Config):
             return df
         else:
             return None
+
+    def discover_metrics(
+        self,
+        size_spec: str,
+        prefix: str | None = None,
+        alternative_roots: list[str] | None = None,
+    ) -> "DataFrame | None":
+        """
+        Discover and load metrics files by scanning the save folder for any existing
+        ``metrics_step*.json`` files. Unlike :meth:`get_metrics`, this does not rely on the
+        :class:`RunConfigurator` to determine checkpoint intervals, so it can find metrics
+        from runs that were configured differently.
+
+        This is useful when accessing historical runs with potentially different configurations.
+
+        :param size_spec: The model size spec to get metrics for.
+        :param prefix: Optional prefix to filter metrics keys by.
+        :param alternative_roots: Optional list of alternative root directories to try if the
+            primary save folder doesn't exist or has no metrics. Each root should be a path like
+            ``gs://ai2-llm`` or ``weka://oe-training-default/ai2-llm``. The method will construct
+            the full path as ``{root}/model-ladders/{ladder_name}/{size_spec}``.
+        """
+        import pandas as pd
+
+        # Build list of folders to try: primary first, then alternatives
+        folders_to_try = [self.get_save_folder(size_spec)]
+        if alternative_roots:
+            for root in alternative_roots:
+                alt_folder = str(io.join_path(root, "model-ladders", self.name, size_spec))
+                folders_to_try.append(alt_folder)
+
+        metrics_pattern = re.compile(r"metrics_step(\d+)\.json$")
+
+        for save_folder in folders_to_try:
+            try:
+                io.init_client(save_folder)
+                files = list(io.list_directory(save_folder))
+            except Exception as e:
+                log.debug(f"Could not access {save_folder}: {e}")
+                continue
+
+            # Find all metrics_step*.json files
+            metrics_files: list[tuple[int, str]] = []
+            for f in files:
+                match = metrics_pattern.search(f)
+                if match:
+                    step = int(match.group(1))
+                    metrics_files.append((step, f))
+
+            if not metrics_files:
+                continue
+
+            # Found metrics in this folder
+            log.info(f"Found metrics for size {size_spec} in {save_folder}")
+
+            # Sort by step
+            metrics_files.sort(key=lambda x: x[0])
+
+            # Compute derived values
+            num_params = self.get_num_params(size_spec)
+
+            # Load the metrics
+            all_metrics = []
+            for step, metrics_path in metrics_files:
+                try:
+                    local_path = cached_path(metrics_path, quiet=True)
+                    with open(local_path, "r") as f:
+                        metrics = json.load(f)
+                        if prefix is not None:
+                            metrics = {k: v for k, v in metrics.items() if k.startswith(prefix)}
+                        metrics["step"] = step
+                        metrics["size"] = size_spec
+                        metrics["num_params"] = num_params
+                        all_metrics.append(metrics)
+                except Exception as e:
+                    log.warning(f"Failed to load metrics from {metrics_path}: {e}")
+                    continue
+
+            if all_metrics:
+                return pd.DataFrame(all_metrics)
+
+        return None
 
     def _get_checkpoint_intervals(self, *, num_params: int, global_batch_size: int) -> list[int]:
         return [
