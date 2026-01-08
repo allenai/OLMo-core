@@ -1,7 +1,6 @@
 """
 Tests for the reshard_core_checkpoint.py script.
 """
-
 import gc
 import json
 import shutil

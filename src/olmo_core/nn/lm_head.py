@@ -20,7 +20,6 @@ from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 
-from .attention import RingAttentionLoadBalancerType
 from .config import ModuleConfig
 from .functional import (
     cross_entropy_loss,
@@ -306,16 +305,14 @@ class LMHead(nn.Module):
                 loss_div_factor=loss_div_factor,
                 reduce_across_tp_group=False,
             ),
-            z_loss=(
-                None
-                if z_loss is None
-                else self._finalize_loss(
-                    z_loss.detach(),
-                    B,
-                    loss_reduction=loss_reduction,
-                    loss_div_factor=loss_div_factor,
-                    reduce_across_tp_group=False,
-                )
+            z_loss=None
+            if z_loss is None
+            else self._finalize_loss(
+                z_loss.detach(),
+                B,
+                loss_reduction=loss_reduction,
+                loss_div_factor=loss_div_factor,
+                reduce_across_tp_group=False,
             ),
         )
 
@@ -382,14 +379,12 @@ class LMHead(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=PrepareModuleInput(
                 input_layouts=None if input_layouts is None else input_layouts[0],
-                desired_input_layouts=(
-                    Shard(1)
-                    if (
-                        self.loss_implementation == LMLossImplementation.fused_linear
-                        or self.norm is not None
-                    )
-                    else Replicate()
-                ),
+                desired_input_layouts=Shard(1)
+                if (
+                    self.loss_implementation == LMLossImplementation.fused_linear
+                    or self.norm is not None
+                )
+                else Replicate(),
                 input_kwarg_layouts=None if input_layouts is None else {"labels": input_layouts[1]},
                 desired_input_kwarg_layouts={"labels": Shard(1)},
             ),
@@ -421,8 +416,7 @@ class LMHead(nn.Module):
 
         self._tp_mesh = tp_mesh
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        del load_balancer
+    def apply_cp(self, cp_mesh: DeviceMesh):
         self._cp_mesh = cp_mesh
 
     def num_flops_per_token(self, seq_len: int) -> int:
@@ -540,16 +534,14 @@ class NormalizedLMHead(LMHead):
                 loss_div_factor=loss_div_factor,
                 reduce_across_tp_group=False,
             ),
-            z_loss=(
-                None
-                if z_loss is None
-                else self._finalize_loss(
-                    z_loss.detach(),
-                    B,
-                    loss_reduction=loss_reduction,
-                    loss_div_factor=loss_div_factor,
-                    reduce_across_tp_group=False,
-                )
+            z_loss=None
+            if z_loss is None
+            else self._finalize_loss(
+                z_loss.detach(),
+                B,
+                loss_reduction=loss_reduction,
+                loss_div_factor=loss_div_factor,
+                reduce_across_tp_group=False,
             ),
         )
 
