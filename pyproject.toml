@@ -24,7 +24,6 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
-    "dion @ git+https://github.com/microsoft/dion.git ; sys_platform == 'linux'",
     "torchvision>=0.24.1",
 ]
 
