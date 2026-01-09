@@ -152,6 +152,15 @@ class ConstantWithWarmup(Scheduler):
         return initial_lr
 
 
+class DecayShape(StrEnum):
+    """
+    The shape of the decay function, monotonically decreasing from 1 to some final value in [0, 1].
+    """
+
+    linear = "linear"  # 1 - x
+    square_root = "square_root"  # 1 - sqrt(x)
+
+
 @dataclass
 class WSD(Scheduler):
     """
@@ -164,6 +173,7 @@ class WSD(Scheduler):
     decay: Optional[int] = None
     decay_steps: Optional[int] = None  # deprecated, use 'decay' instead.
     decay_fraction: Optional[float] = 0.1
+    decay_shape: DecayShape = DecayShape.linear
     warmup_min_lr: float = 0.0
     decay_min_lr: float = 0.0
 
@@ -200,6 +210,16 @@ class WSD(Scheduler):
         if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
             raise OLMoConfigurationError("decay_fraction must be between 0 and 1.")
 
+    def _apply_decay(
+        self, initial_lr: Union[float, torch.Tensor], step_from_end: int, decay: int
+    ) -> Union[float, torch.Tensor]:
+        if self.decay_shape == DecayShape.linear:
+            return _linear_decay(initial_lr, step_from_end, decay, self.decay_min_lr)
+        elif self.decay_shape == DecayShape.square_root:
+            return _sqrt_decay(initial_lr, step_from_end, decay, self.decay_min_lr)
+        else:
+            raise NotImplementedError(self.decay_shape)
+
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
@@ -219,7 +239,7 @@ class WSD(Scheduler):
             decay = self.decay
 
         if current >= t_max - decay:
-            return _linear_decay(initial_lr, t_max - current, decay, self.decay_min_lr)
+            return self._apply_decay(initial_lr, t_max - current, decay)
 
         return initial_lr
 
@@ -493,6 +513,23 @@ def _linear_decay(
     return decay_min_lr + (initial_lr - decay_min_lr) * min(step_from_end, decay) / decay
 
 
+def _sqrt_decay(
+    initial_lr: Union[float, torch.Tensor],
+    step_from_end: int,
+    decay: int,
+    decay_min_lr: float = 0.0,
+) -> Union[float, torch.Tensor]:
+    """
+    Square root decay: decays faster initially and slows down near the end.
+    Uses the formula: lr = decay_min_lr + (initial_lr - decay_min_lr) * sqrt(step_from_end / decay)
+    """
+    if isinstance(initial_lr, float):  # not worth the potential host-device sync if it's a tensor
+        assert 0 <= decay_min_lr < initial_lr
+
+    progress = min(step_from_end, decay) / decay
+    return decay_min_lr + (initial_lr - decay_min_lr) * sqrt(progress)
+
+
 @dataclass
 class SequentialScheduler(Scheduler):
     """
@@ -569,6 +606,7 @@ class WSDS(Scheduler):
 
     decay: Optional[int] = None
     decay_fraction: Optional[float] = None
+    decay_shape: DecayShape = DecayShape.linear
 
     warmup_min_lr: float = 0.0
     decay_min_lr: float = 0.0
@@ -644,6 +682,16 @@ class WSDS(Scheduler):
                 return idx
         return len(self._cum_period_end) - 1
 
+    def _apply_decay(
+        self, initial_lr: Union[float, torch.Tensor], step_from_end: int, decay: int
+    ) -> Union[float, torch.Tensor]:
+        if self.decay_shape == DecayShape.linear:
+            return _linear_decay(initial_lr, step_from_end, decay, self.decay_min_lr)
+        elif self.decay_shape == DecayShape.square_root:
+            return _sqrt_decay(initial_lr, step_from_end, decay, self.decay_min_lr)
+        else:
+            raise NotImplementedError(self.decay_shape)
+
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
@@ -669,7 +717,7 @@ class WSDS(Scheduler):
             return initial_lr
         else:
             t = pos - S
-            return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
+            return self._apply_decay(initial_lr, D - t, D)
 
 
 @dataclass
