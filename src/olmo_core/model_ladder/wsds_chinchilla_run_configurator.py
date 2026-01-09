@@ -61,7 +61,6 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         )
 
     def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepAdamWConfig:
-        del batch_size  # unused
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
         # but divide by 2 for WSD schedule, which empirically seems to be a good value, at least (seems to work empirically).
         # for 4xChinchilla runs.
@@ -70,13 +69,12 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
         lr /= 2.0
         lr *= self.lr_multiplier
+        # NOTE: paper above suggest using larger beta2 (~0.99) for small batch sizes (Table 4)
+        beta2 = 0.95 if batch_size >= 524_288 else 0.99
         return SkipStepAdamWConfig(
             lr=lr,
             weight_decay=0.1,
-            betas=(
-                0.9,
-                0.95,  # NOTE: paper above suggest using larger beta2 (~0.99) for small batch sizes.
-            ),
+            betas=(0.9, beta2),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
@@ -140,8 +138,8 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             pre_decay = dataclasses.replace(
                 period, value=period.value - round(period_length * self.decay_fraction)
             )
-            checkpoints.append((pre_decay, f"period {pidx+1}, {c}xC pre-decay"))
-            checkpoints.append((period, f"period {pidx+1}, {c}xC post-decay"))
+            checkpoints.append((pre_decay, f"period {pidx + 1}, {c}xC pre-decay"))
+            checkpoints.append((period, f"period {pidx + 1}, {c}xC post-decay"))
         return checkpoints
 
     def plot_lr_schedule(
