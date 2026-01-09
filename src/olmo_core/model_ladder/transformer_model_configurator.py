@@ -22,6 +22,8 @@ from .utils import format_count
 
 
 class TransformerSize(StrEnum):
+    size_60M = "60M"
+    size_100M = "100M"
     size_190M = "190M"
     size_370M = "370M"
     size_600M = "600M"
@@ -224,7 +226,11 @@ class Olmo3ModelConfigurator(TransformerModelConfigurator):
         kwargs = dict(attn_backend=attn_backend)
 
         model: TransformerConfig
-        if size_spec == TransformerSize.size_190M:
+        if size_spec == TransformerSize.size_60M:
+            model = TransformerConfig.olmo3_60M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_100M:
+            model = TransformerConfig.olmo3_100M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_190M:
             model = TransformerConfig.olmo3_190M(vocab_size, **kwargs)
         elif size_spec == TransformerSize.size_370M:
             model = TransformerConfig.olmo3_370M(vocab_size, **kwargs)
