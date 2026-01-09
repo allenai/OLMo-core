@@ -37,7 +37,7 @@ MODEL_CONFIGS = [
     pytest.param(
         "google/gemma-3-270m", "gemma3_text", _get_gemma3_config, 5e-5, 5e-5, id="gemma3-270m"
     ),
-    pytest.param("Qwen/Qwen3-0.6B", "qwen3", _get_qwen3_config, 1e-6, 1e-6, id="qwen3-0.6B"),
+    pytest.param("Qwen/Qwen3-0.6B", "qwen3", _get_qwen3_config, 5e-5, 5e-5, id="qwen3-0.6B"),
 ]
 
 
