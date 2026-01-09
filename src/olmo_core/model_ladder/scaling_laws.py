@@ -5,10 +5,236 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
+from scipy import stats
 from scipy.optimize import minimize
 
 from olmo_core.data.composable.utils import format_token_count
 from olmo_core.model_ladder.utils import format_count
+
+
+@dataclass
+class ResidualDiagnostics:
+    """
+    Comprehensive residual diagnostics for validating scaling law fits.
+
+    A well-specified model should have:
+    - Normal residuals (shapiro_p > alpha)
+    - Homoscedastic residuals (constant variance across N and D)
+    - No systematic patterns (residuals uncorrelated with log(N), log(D), and predictions)
+    """
+
+    # Basic statistics
+    n_observations: int
+    """Number of observations used in diagnostics."""
+    rmse: float
+    """Root mean squared error."""
+    mae: float
+    """Mean absolute error."""
+    mean_residual: float
+    """Mean of residuals (should be ~0 for unbiased fit)."""
+    std_residual: float
+    """Standard deviation of residuals."""
+    r_squared: Optional[float]
+    """R-squared from the fit."""
+
+    # Normality test (Shapiro-Wilk)
+    shapiro_stat: Optional[float] = None
+    """Shapiro-Wilk test statistic."""
+    shapiro_p: Optional[float] = None
+    """Shapiro-Wilk p-value (p > alpha means normal)."""
+    normality_ok: Optional[bool] = None
+    """True if residuals appear normally distributed."""
+
+    # Homoscedasticity tests (constant variance)
+    corr_abs_residual_N: Optional[float] = None
+    """Spearman correlation of |residuals| with log(N)."""
+    p_abs_residual_N: Optional[float] = None
+    """P-value for correlation of |residuals| with log(N)."""
+    homoscedastic_N: Optional[bool] = None
+    """True if variance is constant across N."""
+
+    corr_abs_residual_D: Optional[float] = None
+    """Spearman correlation of |residuals| with log(D)."""
+    p_abs_residual_D: Optional[float] = None
+    """P-value for correlation of |residuals| with log(D)."""
+    homoscedastic_D: Optional[bool] = None
+    """True if variance is constant across D."""
+
+    # Systematic pattern tests
+    corr_residual_N: Optional[float] = None
+    """Spearman correlation of residuals with log(N)."""
+    p_residual_N: Optional[float] = None
+    """P-value for correlation of residuals with log(N)."""
+    no_pattern_N: Optional[bool] = None
+    """True if no systematic pattern with N."""
+
+    corr_residual_D: Optional[float] = None
+    """Spearman correlation of residuals with log(D)."""
+    p_residual_D: Optional[float] = None
+    """P-value for correlation of residuals with log(D)."""
+    no_pattern_D: Optional[bool] = None
+    """True if no systematic pattern with D."""
+
+    corr_residual_pred: Optional[float] = None
+    """Spearman correlation of residuals with predictions."""
+    p_residual_pred: Optional[float] = None
+    """P-value for correlation of residuals with predictions."""
+    no_pattern_pred: Optional[bool] = None
+    """True if no systematic pattern with predictions."""
+
+    alpha: float = 0.05
+    """Significance level used for tests."""
+
+    @property
+    def all_tests_pass(self) -> bool:
+        """True if all diagnostic tests pass."""
+        tests = [
+            self.normality_ok,
+            self.homoscedastic_N,
+            self.homoscedastic_D,
+            self.no_pattern_N,
+            self.no_pattern_D,
+            self.no_pattern_pred,
+        ]
+        return all(t is True for t in tests if t is not None)
+
+    @property
+    def n_tests_passed(self) -> tuple[int, int]:
+        """Returns (passed, total) count of diagnostic tests."""
+        tests = [
+            self.normality_ok,
+            self.homoscedastic_N,
+            self.homoscedastic_D,
+            self.no_pattern_N,
+            self.no_pattern_D,
+            self.no_pattern_pred,
+        ]
+        valid_tests = [t for t in tests if t is not None]
+        passed = sum(1 for t in valid_tests if t is True)
+        return passed, len(valid_tests)
+
+    def report(self) -> str:
+        """Generate a human-readable diagnostic report."""
+        lines = []
+        passed, total = self.n_tests_passed
+
+        lines.append("=" * 70)
+        lines.append("RESIDUAL DIAGNOSTICS REPORT")
+        lines.append("=" * 70)
+
+        # Summary
+        status = "✓ PASS" if self.all_tests_pass else "⚠ ISSUES DETECTED"
+        lines.append(f"\nOverall: {status} ({passed}/{total} tests passed)")
+
+        # Basic statistics
+        lines.append("\nFIT QUALITY")
+        lines.append("-" * 40)
+        r2_str = f"{self.r_squared:.4f}" if self.r_squared else "N/A"
+        lines.append(f"  R²:               {r2_str}")
+        lines.append(f"  RMSE:             {self.rmse:.6f}")
+        lines.append(f"  MAE:              {self.mae:.6f}")
+        lines.append(f"  Mean residual:    {self.mean_residual:.6f}")
+        lines.append(f"  Std residual:     {self.std_residual:.6f}")
+        lines.append(f"  N observations:   {self.n_observations}")
+
+        # Normality
+        lines.append("\nNORMALITY (Shapiro-Wilk test)")
+        lines.append("-" * 40)
+        if self.shapiro_p is not None:
+            status = "✓ PASS" if self.normality_ok else "✗ FAIL"
+            lines.append(f"  {status}: p={self.shapiro_p:.4f} (α={self.alpha})")
+            if not self.normality_ok:
+                lines.append("  → Residuals are NOT normally distributed")
+                lines.append("  → Consider: outliers, model misspecification, or heavy tails")
+        else:
+            lines.append("  Could not compute (insufficient data)")
+
+        # Homoscedasticity
+        lines.append("\nHOMOSCEDASTICITY (constant variance)")
+        lines.append("-" * 40)
+
+        if self.p_abs_residual_N is not None:
+            status = "✓ PASS" if self.homoscedastic_N else "✗ FAIL"
+            lines.append(
+                f"  vs log(N): {status} (ρ={self.corr_abs_residual_N:.3f}, p={self.p_abs_residual_N:.4f})"
+            )
+            if not self.homoscedastic_N:
+                if self.corr_abs_residual_N and self.corr_abs_residual_N > 0:
+                    lines.append("  → Variance INCREASES with model size")
+                else:
+                    lines.append("  → Variance DECREASES with model size")
+
+        if self.p_abs_residual_D is not None:
+            status = "✓ PASS" if self.homoscedastic_D else "✗ FAIL"
+            lines.append(
+                f"  vs log(D): {status} (ρ={self.corr_abs_residual_D:.3f}, p={self.p_abs_residual_D:.4f})"
+            )
+            if not self.homoscedastic_D:
+                if self.corr_abs_residual_D and self.corr_abs_residual_D > 0:
+                    lines.append("  → Variance INCREASES with token count")
+                else:
+                    lines.append("  → Variance DECREASES with token count")
+
+        # Systematic patterns
+        lines.append("\nSYSTEMATIC PATTERNS (should be uncorrelated)")
+        lines.append("-" * 40)
+
+        if self.p_residual_N is not None:
+            status = "✓ PASS" if self.no_pattern_N else "✗ FAIL"
+            lines.append(
+                f"  Residuals vs log(N): {status} (ρ={self.corr_residual_N:.3f}, p={self.p_residual_N:.4f})"
+            )
+            if not self.no_pattern_N:
+                if self.corr_residual_N and self.corr_residual_N > 0:
+                    lines.append("  → Model UNDERPREDICTS at large N")
+                else:
+                    lines.append("  → Model OVERPREDICTS at large N")
+
+        if self.p_residual_D is not None:
+            status = "✓ PASS" if self.no_pattern_D else "✗ FAIL"
+            lines.append(
+                f"  Residuals vs log(D): {status} (ρ={self.corr_residual_D:.3f}, p={self.p_residual_D:.4f})"
+            )
+            if not self.no_pattern_D:
+                if self.corr_residual_D and self.corr_residual_D > 0:
+                    lines.append("  → Model UNDERPREDICTS at large D")
+                else:
+                    lines.append("  → Model OVERPREDICTS at large D")
+
+        if self.p_residual_pred is not None:
+            status = "✓ PASS" if self.no_pattern_pred else "✗ FAIL"
+            lines.append(
+                f"  Residuals vs Predicted: {status} (ρ={self.corr_residual_pred:.3f}, p={self.p_residual_pred:.4f})"
+            )
+            if not self.no_pattern_pred:
+                lines.append("  → Systematic bias in predictions")
+
+        # Recommendations
+        if not self.all_tests_pass:
+            lines.append("\nRECOMMENDATIONS")
+            lines.append("-" * 40)
+
+            if self.normality_ok is False:
+                lines.append("  • Check for outliers in training data")
+                lines.append("  • Consider robust regression or outlier removal")
+
+            if self.homoscedastic_N is False or self.homoscedastic_D is False:
+                lines.append(
+                    "  • Variance changes with scale - predictions less reliable at extremes"
+                )
+                lines.append("  • Consider weighted regression or log-space fitting")
+
+            if self.no_pattern_N is False or self.no_pattern_D is False:
+                lines.append("  • Systematic bias detected - model may be misspecified")
+                lines.append("  • Consider adding interaction terms or different functional form")
+
+        lines.append("=" * 70)
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        passed, total = self.n_tests_passed
+        status = "PASS" if self.all_tests_pass else "ISSUES"
+        return f"ResidualDiagnostics({status}, {passed}/{total} tests, RMSE={self.rmse:.4f})"
 
 
 def print_missing_ladder_points(
@@ -893,8 +1119,21 @@ class ChinchillaParametricFit:
         self, other: "ChinchillaParametricFit", tol: float = 0.01
     ) -> float:
         """
-        How much more data-efficient is this model vs another when beta is constant?
-        Returns k such that this model with D tokens matches other with k*D tokens.
+        Compute the MARGINAL data scaling efficiency ratio (B/D^β term only).
+
+        Returns k such that self's data term equals other's data term with k× more tokens:
+            B_self / D^β = B_other / (k*D)^β
+
+        WARNING: This IGNORES the entropy floor E and parameter term A/N^α!
+        If E_self ≠ E_other, the actual losses will NOT be equal even with this multiplier.
+        Use predict_loss() for true loss comparisons.
+
+        Args:
+            other: The baseline model to compare against.
+            tol: Tolerance for beta difference (raises if too different).
+
+        Returns:
+            k > 1 means self is more data-efficient (lower B coefficient).
         """
         if abs(self.beta - other.beta) < tol:
             return (other.B / self.B) ** (1 / self.beta)
@@ -902,10 +1141,21 @@ class ChinchillaParametricFit:
 
     def effective_data_multiplier(self, other: "ChinchillaParametricFit", D: float) -> float:
         """
-        At training size D, how much more data-efficient is this model vs another?
-        Returns k such that this model with D tokens matches other with k*D tokens.
+        Compute the MARGINAL data scaling efficiency ratio at a given D (B/D^β term only).
 
-        When beta values are similar, k is constant. When they differ, k depends on D.
+        Returns k representing how the data terms compare. When β values differ,
+        the ratio depends on D.
+
+        WARNING: This IGNORES the entropy floor E and parameter term A/N^α!
+        If E_self ≠ E_other, the actual losses will NOT be equal.
+        Use predict_loss() for true loss comparisons.
+
+        Args:
+            other: The baseline model to compare against.
+            D: Token count at which to evaluate.
+
+        Returns:
+            k > 1 means self is more data-efficient at this scale.
         """
         return (other.B / self.B) ** (1 / other.beta) * D ** ((self.beta - other.beta) / other.beta)
 
@@ -913,8 +1163,21 @@ class ChinchillaParametricFit:
         self, other: "ChinchillaParametricFit", tol: float = 0.01
     ) -> float:
         """
-        How much more parameter-efficient is this model vs another when alpha is constant?
-        Returns k such that this model with N params matches other with k*N params.
+        Compute the MARGINAL parameter scaling efficiency ratio (A/N^α term only).
+
+        Returns k such that self's param term equals other's param term with k× more params:
+            A_self / N^α = A_other / (k*N)^α
+
+        WARNING: This IGNORES the entropy floor E and data term B/D^β!
+        If E_self ≠ E_other, the actual losses will NOT be equal even with this multiplier.
+        Use predict_loss() for true loss comparisons.
+
+        Args:
+            other: The baseline model to compare against.
+            tol: Tolerance for alpha difference (raises if too different).
+
+        Returns:
+            k > 1 means self is more parameter-efficient (lower A coefficient).
         """
         if abs(self.alpha - other.alpha) < tol:
             return (other.A / self.A) ** (1 / self.alpha)
@@ -922,11 +1185,218 @@ class ChinchillaParametricFit:
 
     def effective_param_multiplier(self, other: "ChinchillaParametricFit", N: float) -> float:
         """
-        At training size N, how much more parameter-efficient is this model vs another?
-        Returns k such that this model with N params matches other with k*N params.
+        Compute the MARGINAL parameter scaling efficiency ratio at a given N (A/N^α term only).
+
+        Returns k representing how the parameter terms compare. When α values differ,
+        the ratio depends on N.
+
+        WARNING: This IGNORES the entropy floor E and data term B/D^β!
+        If E_self ≠ E_other, the actual losses will NOT be equal.
+        Use predict_loss() for true loss comparisons.
+
+        Args:
+            other: The baseline model to compare against.
+            N: Parameter count at which to evaluate.
+
+        Returns:
+            k > 1 means self is more parameter-efficient at this scale.
         """
         return (other.A / self.A) ** (1 / other.alpha) * N ** (
             (self.alpha - other.alpha) / other.alpha
+        )
+
+    def loss_advantage(
+        self,
+        other: "ChinchillaParametricFit",
+        N: float,
+        D: float,
+        compact: bool = False,
+        efficiency_context: Optional[tuple[float, float]] = None,
+    ) -> tuple[float, float, str]:
+        """
+        Compute the ACTUAL loss advantage of this model vs another at a given (N, D) scale.
+
+        Unlike effective_data_multiplier and effective_param_multiplier which only compare
+        marginal scaling terms, this compares the full predicted losses including E.
+
+        Args:
+            other: The baseline model to compare against.
+            N: Parameter count.
+            D: Token count.
+            compact: If True, return a short interpretation suitable for tables.
+            efficiency_context: Optional (data_mult, param_mult) to include in interpretation.
+                If provided and compact=True, will flag when efficiency disagrees with loss.
+
+        Returns:
+            Tuple of (loss_self, loss_other, interpretation) where:
+            - loss_self: Predicted loss for this model
+            - loss_other: Predicted loss for the baseline
+            - interpretation: Human-readable comparison string
+        """
+        L_self = self.predict_loss(np.array([N]), np.array([D]))[0]
+        L_other = other.predict_loss(np.array([N]), np.array([D]))[0]
+        diff = L_other - L_self  # positive = self is better
+
+        if compact:
+            # Short format for tables
+            has_eff_advantage = False
+            if efficiency_context is not None:
+                data_mult, param_mult = efficiency_context
+                has_eff_advantage = data_mult > 1.0 or param_mult > 1.0
+
+            if diff > 0.005:
+                if has_eff_advantage:
+                    interp = f"✓ Wins ({100 * diff / L_other:.1f}%)"
+                else:
+                    interp = f"✓ Lower L ({100 * diff / L_other:.1f}%)"
+            elif diff < -0.005:
+                if has_eff_advantage:
+                    interp = f"⚠ Eff but +{100 * -diff / L_self:.1f}%"
+                else:
+                    interp = f"✗ Higher L (+{100 * -diff / L_self:.1f}%)"
+            else:
+                interp = "≈ Similar"
+        else:
+            # Verbose format
+            if diff > 0.01:
+                interp = f"This model wins by {diff:.4f} ({100 * diff / L_other:.1f}% lower loss)"
+            elif diff < -0.01:
+                interp = f"Baseline wins by {-diff:.4f} ({100 * -diff / L_self:.1f}% lower loss)"
+            else:
+                interp = f"Approximately equal (Δ={diff:.4f})"
+
+        return L_self, L_other, interp
+
+    def residual_diagnostics(
+        self,
+        N: ArrayLike,
+        D: ArrayLike,
+        loss: ArrayLike,
+        alpha: float = 0.05,
+    ) -> "ResidualDiagnostics":
+        """
+        Compute comprehensive residual diagnostics to validate the scaling law fit.
+
+        Tests for:
+        1. Normality (Shapiro-Wilk test)
+        2. Homoscedasticity (constant variance across N and D)
+        3. Systematic patterns (residuals correlated with log(N) or log(D))
+        4. Overall fit quality metrics
+
+        Args:
+            N: Array of parameter counts used in fitting.
+            D: Array of token counts used in fitting.
+            loss: Array of observed loss values.
+            alpha: Significance level for statistical tests (default 0.05).
+
+        Returns:
+            ResidualDiagnostics object with test results and interpretation.
+        """
+        N = np.asarray(N)
+        D = np.asarray(D)
+        loss = np.asarray(loss)
+
+        # Compute predictions and residuals
+        L_pred = self.predict_loss(N, D)
+        residuals = loss - L_pred
+        log_N = np.log(N)
+        log_D = np.log(D)
+
+        n = len(residuals)
+
+        # Basic statistics
+        rmse = float(np.sqrt(np.mean(residuals**2)))
+        mae = float(np.mean(np.abs(residuals)))
+        mean_residual = float(np.mean(residuals))
+        std_residual = float(np.std(residuals, ddof=1))
+
+        # 1. Normality test (Shapiro-Wilk)
+        # Note: Shapiro-Wilk works best for n < 5000
+        if n >= 3:
+            shapiro_result = stats.shapiro(residuals)
+            shapiro_stat = float(shapiro_result.statistic)
+            shapiro_p = float(shapiro_result.pvalue)
+        else:
+            shapiro_stat, shapiro_p = float("nan"), float("nan")
+        normality_ok = shapiro_p > alpha if not np.isnan(shapiro_p) else None
+
+        # 2. Homoscedasticity tests
+        # Test if |residuals| correlate with log(N) or log(D) (Breusch-Pagan-like)
+        abs_residuals = np.abs(residuals)
+
+        # Helper to extract correlation and p-value from spearmanr result
+        def spearman_corr(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+            result = stats.spearmanr(x, y)
+            # Access correlation and pvalue - result is SpearmanrResult namedtuple
+            corr: float = float(getattr(result, "statistic", result[0]))  # type: ignore[arg-type]
+            pval: float = float(getattr(result, "pvalue", result[1]))  # type: ignore[arg-type]
+            return corr, pval
+
+        # Correlation of |residuals| with log(N)
+        if n >= 3:
+            corr_abs_N, p_abs_N = spearman_corr(log_N, abs_residuals)
+        else:
+            corr_abs_N, p_abs_N = float("nan"), float("nan")
+        homoscedastic_N = p_abs_N > alpha if not np.isnan(p_abs_N) else None
+
+        # Correlation of |residuals| with log(D)
+        if n >= 3:
+            corr_abs_D, p_abs_D = spearman_corr(log_D, abs_residuals)
+        else:
+            corr_abs_D, p_abs_D = float("nan"), float("nan")
+        homoscedastic_D = p_abs_D > alpha if not np.isnan(p_abs_D) else None
+
+        # 3. Systematic pattern tests (residuals should not correlate with predictors)
+        # Correlation of residuals with log(N)
+        if n >= 3:
+            corr_N, p_corr_N = spearman_corr(log_N, residuals)
+        else:
+            corr_N, p_corr_N = float("nan"), float("nan")
+        no_pattern_N = p_corr_N > alpha if not np.isnan(p_corr_N) else None
+
+        # Correlation of residuals with log(D)
+        if n >= 3:
+            corr_D, p_corr_D = spearman_corr(log_D, residuals)
+        else:
+            corr_D, p_corr_D = float("nan"), float("nan")
+        no_pattern_D = p_corr_D > alpha if not np.isnan(p_corr_D) else None
+
+        # 4. Additional: test residuals vs predicted (should be uncorrelated)
+        if n >= 3:
+            corr_pred, p_corr_pred = spearman_corr(L_pred, residuals)
+        else:
+            corr_pred, p_corr_pred = float("nan"), float("nan")
+        no_pattern_pred = p_corr_pred > alpha if not np.isnan(p_corr_pred) else None
+
+        return ResidualDiagnostics(
+            n_observations=n,
+            rmse=rmse,
+            mae=mae,
+            mean_residual=mean_residual,
+            std_residual=std_residual,
+            r_squared=self.r_squared,
+            # Normality
+            shapiro_stat=float(shapiro_stat) if not np.isnan(shapiro_stat) else None,
+            shapiro_p=float(shapiro_p) if not np.isnan(shapiro_p) else None,
+            normality_ok=normality_ok,
+            # Homoscedasticity
+            corr_abs_residual_N=float(corr_abs_N) if not np.isnan(corr_abs_N) else None,
+            p_abs_residual_N=float(p_abs_N) if not np.isnan(p_abs_N) else None,
+            homoscedastic_N=homoscedastic_N,
+            corr_abs_residual_D=float(corr_abs_D) if not np.isnan(corr_abs_D) else None,
+            p_abs_residual_D=float(p_abs_D) if not np.isnan(p_abs_D) else None,
+            homoscedastic_D=homoscedastic_D,
+            # Systematic patterns
+            corr_residual_N=float(corr_N) if not np.isnan(corr_N) else None,
+            p_residual_N=float(p_corr_N) if not np.isnan(p_corr_N) else None,
+            no_pattern_N=no_pattern_N,
+            corr_residual_D=float(corr_D) if not np.isnan(corr_D) else None,
+            p_residual_D=float(p_corr_D) if not np.isnan(p_corr_D) else None,
+            no_pattern_D=no_pattern_D,
+            corr_residual_pred=float(corr_pred) if not np.isnan(corr_pred) else None,
+            p_residual_pred=float(p_corr_pred) if not np.isnan(p_corr_pred) else None,
+            no_pattern_pred=no_pattern_pred,
+            alpha=alpha,
         )
 
     def compare_to(
@@ -1605,187 +2075,457 @@ class ChinchillaParametricFit:
             else ""
         )
 
+    @classmethod
+    def rank_multiple(
+        cls,
+        fits: dict[str, "ChinchillaParametricFit"],
+        model_sizes: Optional[list[float]] = None,
+        token_counts: Optional[list[float]] = None,
+        baseline_name: Optional[str] = None,
+    ) -> str:
+        """
+        Compare and rank multiple ChinchillaParametricFit models across various criteria.
 
-def fit_chinchilla_parametric_from_df(
-    df: pd.DataFrame,
-    N_col: str = "num_params",
-    D_col: str = "throughput/total tokens",
-    loss_col: str = "eval/lm/pile-validation/CE loss",
-    **kwargs,
-) -> ChinchillaParametricFit:
-    """Fit Chinchilla scaling law from DataFrame."""
-    return ChinchillaParametricFit.fit(
-        df[N_col].values, df[D_col].values, df[loss_col].values, **kwargs
-    )
+        Generates a comprehensive report including:
+        - Parameter comparison table
+        - Rankings by different criteria (entropy floor, scaling exponents, efficiency)
+        - Loss predictions at various scales
+        - Efficiency multipliers relative to a baseline
+        - Pareto frontier identification
 
+        Args:
+            fits: Dictionary mapping model names to their ChinchillaParametricFit objects.
+            model_sizes: Model sizes (N) at which to compute comparisons.
+                Defaults to [190M, 1B, 7B, 70B].
+            token_counts: Token counts (D) at which to compute comparisons.
+                Defaults to [100B, 1T, 5T, 15T].
+            baseline_name: Name of the baseline model for efficiency comparisons.
+                If None, uses the first model in the dictionary.
 
-def fit_chinchilla_isoparam_from_df(
-    df: pd.DataFrame,
-    N_col: str = "num_params",
-    D_col: str = "throughput/total tokens",
-    C_col: str = "throughput/total petaflops",
-    loss_col: str = "eval/lm/pile-validation/CE loss",
-    **kwargs,
-) -> ChinchillaIsoParamFit:
-    """
-    Convenience function to fit Chinchilla Approach 1 scaling law from a DataFrame.
+        Returns:
+            Formatted comparison and ranking report string.
+        """
+        if len(fits) < 2:
+            raise ValueError("Need at least 2 fits to compare")
 
-    Args:
-        df: DataFrame containing N, D, C, and loss columns
-        N_col: Name of the parameter count column
-        D_col: Name of the token count column
-        C_col: Name of the compute column
-        loss_col: Name of the loss column
-        **kwargs: Additional arguments passed to ChinchillaIsoParamFit.fit
+        if model_sizes is None:
+            model_sizes = [190e6, 1e9, 7e9, 70e9]
+        if token_counts is None:
+            token_counts = [100e9, 1e12, 5e12, 15e12]
 
-    Returns:
-        ChinchillaIsoParamFit with fitted parameters
-    """
-    return ChinchillaIsoParamFit.fit(
-        N=df[N_col].values,
-        D=df[D_col].values,
-        C=df[C_col].values,
-        loss=df[loss_col].values,
-        **kwargs,
-    )
+        names = list(fits.keys())
+        if baseline_name is None:
+            baseline_name = names[0]
+        if baseline_name not in fits:
+            raise ValueError(f"Baseline '{baseline_name}' not found in fits")
 
+        baseline = fits[baseline_name]
 
-def find_crossover_compute(
-    fit1: ChinchillaIsoParamFit,
-    fit2: ChinchillaIsoParamFit,
-    C_min: float = 1e-3,
-    C_max: float = 1e12,
-) -> Optional[float]:
-    """
-    Find the compute value where two scaling laws cross over (give equal loss).
+        # Determine max name length for formatting (used throughout)
+        max_name_len = max(len(name) for name in names)
+        name_width = max(max_name_len, 12)
 
-    Returns the compute C where fit1.predict(C) == fit2.predict(C), or None if
-    they don't cross in the given range.
+        # Calculate box width based on content
+        # Parameter table: name + E(8) + A(10) + α(7) + B(10) + β(7) + a_opt(7) + b_opt(7) + R²(7) + separators
+        box_width = name_width + 2 + 10 + 12 + 9 + 12 + 9 + 9 + 9 + 9 + 1
+        box_width = max(box_width, 100)  # Minimum width for readability
 
-    Args:
-        fit1: First scaling law fit
-        fit2: Second scaling law fit
-        C_min: Minimum compute to search
-        C_max: Maximum compute to search
+        lines = []
+        lines.append("=" * box_width)
+        lines.append("MODEL LADDER SCALING LAW COMPARISON & RANKING")
+        lines.append(f"Comparing {len(fits)} configurations | Baseline: {baseline_name}")
+        lines.append("=" * box_width)
 
-    Returns:
-        Crossover compute value, or None if no crossover exists in range
-    """
-    from scipy.optimize import brentq
+        # ──────────────────────────────────────────────────────────────────────
+        # Parameter Comparison Table
+        # ──────────────────────────────────────────────────────────────────────
+        lines.append("\nPARAMETER COMPARISON")
+        lines.append("-" * box_width)
 
-    def loss_diff(log_C):
-        C = 10**log_C
-        return fit1.predict_loss(np.array([C]))[0] - fit2.predict_loss(np.array([C]))[0]
+        # Header
+        header = (
+            f"  {'Model':<{name_width}}  {'E':>8}  {'A':>10}  {'α':>7}  "
+            f"{'B':>10}  {'β':>7}  {'a_opt':>7}  {'b_opt':>7}  {'R²':>7}"
+        )
+        lines.append(header)
+        lines.append("-" * box_width)
 
-    # Check if there's a sign change (crossover exists)
-    log_C_min, log_C_max = np.log10(C_min), np.log10(C_max)
+        for name, fit in fits.items():
+            r2_str = f"{fit.r_squared:.4f}" if fit.r_squared else "N/A"
+            row = (
+                f"  {name:<{name_width}}  {fit.E:>8.4f}  {fit.A:>10.2f}  {fit.alpha:>7.4f}  "
+                f"{fit.B:>10.2f}  {fit.beta:>7.4f}  {fit.a_opt:>7.3f}  {fit.b_opt:>7.3f}  {r2_str:>7}"
+            )
+            lines.append(row)
 
-    try:
-        diff_min = loss_diff(log_C_min)
-        diff_max = loss_diff(log_C_max)
+        # ──────────────────────────────────────────────────────────────────────
+        # Rankings by Different Criteria
+        # ──────────────────────────────────────────────────────────────────────
+        lines.append("\nRANKINGS BY CRITERIA (Best → Worst)")
+        lines.append("-" * box_width)
 
-        # If same sign at both ends, no crossover in range
-        if diff_min * diff_max > 0:
-            return None
+        def rank_by(
+            key_func, description: str, higher_is_better: bool = True
+        ) -> list[tuple[str, float]]:
+            ranked = sorted(fits.items(), key=lambda x: key_func(x[1]), reverse=higher_is_better)
+            return [(name, key_func(fit)) for name, fit in ranked]
 
-        # Find the crossover point
-        log_C_cross = brentq(loss_diff, log_C_min, log_C_max)
-        return 10**log_C_cross
-    except (ValueError, RuntimeError):
-        return None
+        def format_ranking(
+            label: str, ranked: list[tuple[str, float]], fmt: str = ".4f"
+        ) -> list[str]:
+            """Format a ranking as multiple lines if needed."""
+            result = [f"  {label}:"]
+            items = [f"{name} ({val:{fmt}})" for name, val in ranked]
+            # Join with arrows, wrap if too long
+            ranking_line = "    " + " → ".join(items)
+            if len(ranking_line) <= box_width:
+                result.append(ranking_line)
+            else:
+                # Split into multiple lines
+                current_line = "    "
+                for i, item in enumerate(items):
+                    addition = item if i == 0 else " → " + item
+                    if len(current_line) + len(addition) > box_width - 4:
+                        result.append(current_line)
+                        current_line = "      → " + item
+                    else:
+                        current_line += addition
+                if current_line.strip():
+                    result.append(current_line)
+            return result
 
+        # Entropy floor (lower is better)
+        ranked_E = rank_by(lambda f: f.E, "E", higher_is_better=False)
+        lines.extend(format_ranking("Entropy Floor (E) ↓", ranked_E))
 
-def find_crossover_parameter_count_at_constant_D(
-    fit1: ChinchillaParametricFit,
-    fit2: ChinchillaParametricFit,
-    D: float,
-    N_min: float = 1e6,
-    N_max: float = 1e12,
-) -> Optional[float]:
-    """
-    Find the parameter count where two scaling laws cross over (give equal loss) at a fixed data size.
+        # Parameter scaling (alpha, higher is better)
+        ranked_alpha = rank_by(lambda f: f.alpha, "α", higher_is_better=True)
+        lines.extend(format_ranking("Param Exponent (α) ↑", ranked_alpha))
 
-    For L(N, D) = E + A/N^α + B/D^β, finds N where fit1 and fit2 give equal loss.
+        # Data scaling (beta, higher is better)
+        ranked_beta = rank_by(lambda f: f.beta, "β", higher_is_better=True)
+        lines.extend(format_ranking("Data Exponent (β) ↑", ranked_beta))
 
-    Args:
-        fit1: First scaling law fit
-        fit2: Second scaling law fit
-        D: Data size (number of tokens)
-        N_min: Minimum parameter count to search
-        N_max: Maximum parameter count to search
+        # Param coefficient (A, lower is better)
+        ranked_A = rank_by(lambda f: f.A, "A", higher_is_better=False)
+        lines.extend(format_ranking("Param Coeff (A) ↓", ranked_A, fmt=".2f"))
 
-    Returns:
-        Crossover parameter count, or None if no crossover exists in range
-    """
-    from scipy.optimize import brentq
+        # Data coefficient (B, lower is better)
+        ranked_B = rank_by(lambda f: f.B, "B", higher_is_better=False)
+        lines.extend(format_ranking("Data Coeff (B) ↓", ranked_B, fmt=".2f"))
 
-    D_arr = np.array([D])
+        # Combined scaling (alpha + beta, higher is better)
+        ranked_combined = rank_by(lambda f: f.alpha + f.beta, "α+β", higher_is_better=True)
+        lines.extend(format_ranking("Combined Scaling (α+β) ↑", ranked_combined))
 
-    def loss_diff(log_N: float) -> float:
-        N = 10**log_N
-        N_arr = np.array([N])
-        return fit1.predict_loss(N_arr, D_arr)[0] - fit2.predict_loss(N_arr, D_arr)[0]
+        # Fit quality (R², higher is better)
+        ranked_r2 = rank_by(
+            lambda f: f.r_squared if f.r_squared else 0.0, "R²", higher_is_better=True
+        )
+        lines.extend(format_ranking("Fit Quality (R²) ↑", ranked_r2))
 
-    log_N_min, log_N_max = np.log10(N_min), np.log10(N_max)
+        # ──────────────────────────────────────────────────────────────────────
+        # Loss Predictions at Key Scales
+        # ──────────────────────────────────────────────────────────────────────
+        lines.append("\nPREDICTED LOSS AT KEY SCALES")
+        lines.append("-" * box_width)
 
-    try:
-        diff_min = loss_diff(log_N_min)
-        diff_max = loss_diff(log_N_max)
+        # Create header with token counts
+        header = f"  {'Model':<{name_width}}  {'N':>8}"
+        for D in token_counts:
+            header += f"  {format_token_count(int(D)):>10}"
+        lines.append(header)
+        lines.append("-" * box_width)
 
-        # If same sign at both ends, no crossover in range
-        if diff_min * diff_max > 0:
-            return None
+        for N in model_sizes:
+            N_label = format_count(int(N))
+            for name in names:
+                fit = fits[name]
+                row = f"  {name:<{name_width}}  {N_label:>8}"
+                for D in token_counts:
+                    L_pred = fit.predict_loss(np.array([N]), np.array([D]))[0]
+                    row += f"  {L_pred:>10.4f}"
+                lines.append(row)
+            lines.append("")  # Blank line between model sizes
 
-        # Find the crossover point
-        log_N_cross = brentq(loss_diff, log_N_min, log_N_max)
-        return 10**log_N_cross
-    except (ValueError, RuntimeError):
-        return None
+        # ──────────────────────────────────────────────────────────────────────
+        # Efficiency Multipliers vs Baseline
+        # ──────────────────────────────────────────────────────────────────────
+        lines.append(f"EFFICIENCY MULTIPLIERS vs BASELINE ({baseline_name})")
+        lines.append("-" * box_width)
+        lines.append("  Data eff:  k>1 means better B/D^β scaling (ignores E)")
+        lines.append("  Param eff: k>1 means better A/N^α scaling (ignores E)")
+        lines.append("  Result:    Based on ACTUAL predicted loss comparison (includes E)")
+        lines.append("-" * box_width)
 
+        # Header
+        header = (
+            f"  {'Model':<{name_width}}  {'Scale':>15}  "
+            f"{'Data Eff':>10}  {'Param Eff':>10}  {'Actual Result':>18}"
+        )
+        lines.append(header)
+        lines.append("-" * box_width)
 
-def find_crossover_token_count_at_constant_N(
-    fit1: ChinchillaParametricFit,
-    fit2: ChinchillaParametricFit,
-    N: float,
-    D_min: float = 1e9,
-    D_max: float = 1e15,
-) -> Optional[float]:
-    """
-    Find the token count where two scaling laws cross over (give equal loss) at a fixed parameter count.
+        for name, fit in fits.items():
+            if name == baseline_name:
+                continue
 
-    For L(N, D) = E + A/N^α + B/D^β, finds D where fit1 and fit2 give equal loss.
+            for i, (N, D) in enumerate(zip(model_sizes, token_counts)):
+                N_label = format_count(int(N))
+                D_label = format_token_count(int(D))
+                scale_label = f"{N_label}/{D_label}"
 
-    Args:
-        fit1: First scaling law fit
-        fit2: Second scaling law fit
-        N: Parameter count
-        D_min: Minimum token count to search
-        D_max: Maximum token count to search
+                # Marginal efficiency multipliers (ignore E)
+                data_mult = fit.effective_data_multiplier(baseline, D)
+                param_mult = fit.effective_param_multiplier(baseline, N)
 
-    Returns:
-        Crossover token count, or None if no crossover exists in range
-    """
-    from scipy.optimize import brentq
+                # Actual loss comparison (includes E) with efficiency context
+                _, _, interp = fit.loss_advantage(
+                    baseline, N, D, compact=True, efficiency_context=(data_mult, param_mult)
+                )
 
-    N_arr = np.array([N])
+                # Only show model name on first row
+                model_col = name if i == 0 else ""
+                row = (
+                    f"  {model_col:<{name_width}}  {scale_label:>15}  "
+                    f"{data_mult:>9.2f}x  {param_mult:>9.2f}x  {interp:>18}"
+                )
+                lines.append(row)
 
-    def loss_diff(log_D: float) -> float:
-        D = 10**log_D
-        D_arr = np.array([D])
-        return fit1.predict_loss(N_arr, D_arr)[0] - fit2.predict_loss(N_arr, D_arr)[0]
+            lines.append("")  # Blank line between models
 
-    log_D_min, log_D_max = np.log10(D_min), np.log10(D_max)
+        # ──────────────────────────────────────────────────────────────────────
+        # Pareto Analysis: Which models are Pareto-optimal?
+        # ──────────────────────────────────────────────────────────────────────
+        lines.append("PARETO FRONTIER ANALYSIS")
+        lines.append("-" * box_width)
+        lines.append("  Metrics: E↓, A↓, α↑, B↓, β↑ (lower E/A/B better, higher α/β better)")
+        lines.append("-" * box_width)
 
-    try:
-        diff_min = loss_diff(log_D_min)
-        diff_max = loss_diff(log_D_max)
+        # Check Pareto optimality based on all 5 parameters: E, A, alpha, B, beta
+        # Lower E, A, B is better; higher alpha, beta is better
+        def is_dominated(fit1: "ChinchillaParametricFit", fit2: "ChinchillaParametricFit") -> bool:
+            """Returns True if fit1 is dominated by fit2 (fit2 is better on all metrics)."""
+            # For each metric, check if fit2 is better or equal
+            better_or_equal_E = fit2.E <= fit1.E
+            better_or_equal_A = fit2.A <= fit1.A
+            better_or_equal_alpha = fit2.alpha >= fit1.alpha
+            better_or_equal_B = fit2.B <= fit1.B
+            better_or_equal_beta = fit2.beta >= fit1.beta
 
-        # If same sign at both ends, no crossover in range
-        if diff_min * diff_max > 0:
-            return None
+            # Check if strictly better on at least one
+            strictly_better_E = fit2.E < fit1.E - 1e-6
+            strictly_better_A = fit2.A < fit1.A - 1e-6
+            strictly_better_alpha = fit2.alpha > fit1.alpha + 1e-6
+            strictly_better_B = fit2.B < fit1.B - 1e-6
+            strictly_better_beta = fit2.beta > fit1.beta + 1e-6
 
-        # Find the crossover point
-        log_D_cross = brentq(loss_diff, log_D_min, log_D_max)
-        return 10**log_D_cross
-    except (ValueError, RuntimeError):
-        return None
+            # Dominated if fit2 is better or equal on all, and strictly better on at least one
+            all_better_or_equal = (
+                better_or_equal_E
+                and better_or_equal_A
+                and better_or_equal_alpha
+                and better_or_equal_B
+                and better_or_equal_beta
+            )
+            at_least_one_strictly_better = (
+                strictly_better_E
+                or strictly_better_A
+                or strictly_better_alpha
+                or strictly_better_B
+                or strictly_better_beta
+            )
+
+            return all_better_or_equal and at_least_one_strictly_better
+
+        pareto_optimal = []
+        dominated = []
+
+        for name1, fit1 in fits.items():
+            is_pareto = True
+            dominated_by = []
+            for name2, fit2 in fits.items():
+                if name1 != name2 and is_dominated(fit1, fit2):
+                    is_pareto = False
+                    dominated_by.append(name2)
+
+            if is_pareto:
+                pareto_optimal.append(name1)
+            else:
+                dominated.append((name1, dominated_by))
+
+        lines.append("  Pareto-optimal (no model strictly dominates on all 5 metrics):")
+        for name in pareto_optimal:
+            fit = fits[name]
+            lines.append(
+                f"    ✓ {name}: E={fit.E:.4f}, A={fit.A:.1f}, α={fit.alpha:.3f}, "
+                f"B={fit.B:.1f}, β={fit.beta:.3f}"
+            )
+
+        if dominated:
+            lines.append("")
+            lines.append("  Dominated models:")
+            for name, dominated_by in dominated:
+                dom_str = ", ".join(dominated_by[:3])
+                if len(dominated_by) > 3:
+                    dom_str += "..."
+                lines.append(f"    ✗ {name} (dominated by: {dom_str})")
+
+        # ──────────────────────────────────────────────────────────────────────
+        # Crossover Point Estimation
+        # ──────────────────────────────────────────────────────────────────────
+        lines.append("\nCROSSOVER POINT ANALYSIS")
+        lines.append("-" * box_width)
+        lines.append("  Where models with better coefficients (A,B) lose to better exponents (α,β)")
+        lines.append("-" * box_width)
+
+        # Find crossover points between baseline and other models
+        # We search for N where L_baseline(N, r*N) ≈ L_other(N, r*N)
+        # Using a fixed tokens-per-param ratio (e.g., 20 tokens/param as typical)
+        tokens_per_param_ratio = 20.0
+
+        def find_crossover_N(
+            fit1: "ChinchillaParametricFit",
+            fit2: "ChinchillaParametricFit",
+            ratio: float,
+            N_min: float = 1e6,
+            N_max: float = 1e12,
+        ) -> Optional[float]:
+            """Find N where fit1 and fit2 have equal loss at D = ratio * N."""
+            # Sample loss difference across log-spaced N values
+            N_samples = np.logspace(np.log10(N_min), np.log10(N_max), 200)
+            D_samples = ratio * N_samples
+
+            L1 = fit1.predict_loss(N_samples, D_samples)
+            L2 = fit2.predict_loss(N_samples, D_samples)
+            diff = L1 - L2
+
+            # Look for sign changes (crossover points)
+            sign_changes = np.where(np.diff(np.sign(diff)))[0]
+
+            if len(sign_changes) == 0:
+                return None
+
+            # Return the first crossover point (linear interpolation)
+            idx = sign_changes[0]
+            # Interpolate to find more precise crossover
+            N_cross = N_samples[idx] + (N_samples[idx + 1] - N_samples[idx]) * (
+                -diff[idx] / (diff[idx + 1] - diff[idx])
+            )
+            return float(N_cross)
+
+        crossover_found = False
+        for name, fit in fits.items():
+            if name == baseline_name:
+                continue
+
+            # Check if there's a potential crossover (different tradeoffs)
+            # Better coefficients but worse exponents, or vice versa
+            coeff_better = (fit.A < baseline.A * 0.95) or (fit.B < baseline.B * 0.95)
+            coeff_worse = (fit.A > baseline.A * 1.05) or (fit.B > baseline.B * 1.05)
+            exp_better = (fit.alpha > baseline.alpha * 1.02) or (fit.beta > baseline.beta * 1.02)
+            exp_worse = (fit.alpha < baseline.alpha * 0.98) or (fit.beta < baseline.beta * 0.98)
+
+            potential_crossover = (coeff_better and exp_worse) or (coeff_worse and exp_better)
+
+            if potential_crossover:
+                crossover_N = find_crossover_N(baseline, fit, tokens_per_param_ratio)
+
+                if crossover_N is not None:
+                    crossover_found = True
+                    crossover_D = crossover_N * tokens_per_param_ratio
+                    crossover_C = 6 * crossover_N * crossover_D  # Approximate FLOPs
+
+                    # Determine which model wins at small vs large scale
+                    small_N, small_D = 100e6, 100e6 * tokens_per_param_ratio
+                    L_baseline_small = baseline.predict_loss(
+                        np.array([small_N]), np.array([small_D])
+                    )[0]
+                    L_fit_small = fit.predict_loss(np.array([small_N]), np.array([small_D]))[0]
+
+                    if L_fit_small < L_baseline_small:
+                        winner_small, winner_large = name, baseline_name
+                    else:
+                        winner_small, winner_large = baseline_name, name
+
+                    # Format compute in petaFLOPs
+                    crossover_pflops = crossover_C / 1e15
+
+                    lines.append(f"  {name} vs {baseline_name}:")
+                    lines.append(
+                        f"    Crossover at N≈{format_count(int(crossover_N))}, "
+                        f"D≈{format_token_count(int(crossover_D))} (~{crossover_pflops:.1e} PFLOPs)"
+                    )
+                    lines.append(f"    → {winner_small} wins below, {winner_large} wins above")
+                    lines.append("")
+
+        if not crossover_found:
+            lines.append("  No significant crossovers detected (models maintain relative ordering)")
+
+        # ──────────────────────────────────────────────────────────────────────
+        # Summary & Recommendations
+        # ──────────────────────────────────────────────────────────────────────
+        lines.append("\nSUMMARY & RECOMMENDATIONS")
+        lines.append("=" * box_width)
+
+        # Best for large scale (highest combined scaling)
+        best_scaling_name = ranked_combined[0][0]
+        best_scaling_fit = fits[best_scaling_name]
+        lines.append(
+            f"  📈 Best for Scale:    {best_scaling_name} "
+            f"(α+β={best_scaling_fit.alpha + best_scaling_fit.beta:.4f})"
+        )
+
+        # Best entropy floor
+        best_E_name = ranked_E[0][0]
+        best_E_fit = fits[best_E_name]
+        lines.append(f"  🎯 Lowest E:          {best_E_name} (E={best_E_fit.E:.4f})")
+
+        # Best coefficients (most efficient at small scale)
+        best_A_name = ranked_A[0][0]
+        best_A_fit = fits[best_A_name]
+        best_B_name = ranked_B[0][0]
+        best_B_fit = fits[best_B_name]
+        lines.append(f"  ⚡ Best Param Coeff:  {best_A_name} (A={best_A_fit.A:.2f})")
+        lines.append(f"  ⚡ Best Data Coeff:   {best_B_name} (B={best_B_fit.B:.2f})")
+
+        # Warnings
+        lines.append("")
+
+        # Check for models with poor fit quality
+        poor_fits = [
+            (name, fit) for name, fit in fits.items() if fit.r_squared and fit.r_squared < 0.95
+        ]
+        if poor_fits:
+            lines.append("  ⚠ Low R² Warning: Some fits have R² < 0.95:")
+            for name, fit in poor_fits:
+                lines.append(f"    • {name}: R²={fit.r_squared:.4f}")
+
+        # Check for crossover behavior (including A/B vs α/β tradeoffs)
+        crossovers = []
+        for name, fit in fits.items():
+            if name == baseline_name:
+                continue
+            # Check if better coefficients (A, B) but worse exponents (α, β)
+            better_coeffs = (fit.A < baseline.A * 0.95) or (fit.B < baseline.B * 0.95)
+            worse_exponents = (fit.alpha < baseline.alpha * 0.98) or (
+                fit.beta < baseline.beta * 0.98
+            )
+            if better_coeffs and worse_exponents:
+                crossovers.append((name, "better A/B but worse α/β → wins small, loses large"))
+            # Check if worse coefficients but better exponents
+            worse_coeffs = (fit.A > baseline.A * 1.05) or (fit.B > baseline.B * 1.05)
+            better_exponents = (fit.alpha > baseline.alpha * 1.02) or (
+                fit.beta > baseline.beta * 1.02
+            )
+            if worse_coeffs and better_exponents:
+                crossovers.append((name, "worse A/B but better α/β → loses small, wins large"))
+
+        if crossovers:
+            lines.append("  ⚠ Crossover Risk: Models may trade off at different scales:")
+            for name, reason in crossovers:
+                lines.append(f"    • {name}: {reason}")
+
+        lines.append("=" * box_width)
+
+        return "\n".join(lines)
