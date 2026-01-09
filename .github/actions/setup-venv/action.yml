@@ -1,5 +1,5 @@
 name: Python virtualenv
-description: Set up a Python virtual environment with caching
+description: Set up a Python virtual environment with uv
 inputs:
   python-version:
     description: The Python version to use
@@ -8,64 +8,27 @@ inputs:
     description: Update this to invalidate the cache
     required: true
     default: v0
-  torch-version:
-    description: The PyTorch version to install
-    required: false
-    default: '2.7.0'
-  torchao-version:
-    description: The torchao version to install
-    required: false
-    default: '0.9.0'
-  channel:
-    description: The channel to install from
-    required: false
-    default: 'whl/cpu'
+
 runs:
   using: composite
   steps:
-    - name: Setup Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
       with:
         python-version: ${{ inputs.python-version }}
 
-    - shell: bash
-      run: |
-        # Install prerequisites.
-        pip install --upgrade pip setuptools build wheel virtualenv
-
-    - shell: bash
-      run: |
-        # Get the exact Python version to use in the cache key.
-        echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
-
-    - uses: actions/cache@v4
-      id: virtualenv-cache
+    - name: Cache uv
+      uses: actions/cache@v4
       with:
-        path: .venv
-        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}-${{ inputs.torchao-version }}-${{ inputs.channel }}-${{ hashFiles('*requirements.txt', '*pyproject.toml') }}
-        restore-keys: |
-          ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ inputs.torch-version }}-${{ inputs.torchao-version }}-${{ inputs.channel }}
+        path: ~/.cache/uv
+        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-uv-${{ inputs.python-version }}-${{ hashFiles('uv.lock') }}
 
-    - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
+    - name: Install dependencies
+      shell: bash
+      run: uv sync --frozen --extra dev
+
+    - name: Show environment info
       shell: bash
       run: |
-        # Set up virtual environment without cache hit.
-        test -d .venv || virtualenv -p $(which python) --copies --reset-app-data .venv
-        . .venv/bin/activate
-        pip install torch==${{ inputs.torch-version }} torchao==${{ inputs.torchao-version}} --index-url https://download.pytorch.org/${{ inputs.channel }}
-        pip install -e .[all]
-
-    - if: steps.virtualenv-cache.outputs.cache-hit == 'true'
-      shell: bash
-      run: |
-        # Set up virtual environment from cache hit.
-        . .venv/bin/activate
-        pip install --no-deps -e .[all]
-
-    - shell: bash
-      run: |
-        # Show environment info.
-        . .venv/bin/activate
-        echo "✓ Installed $(python --version) virtual environment to $(which python)"
-        echo "========= Python packages ==========="
-        pip freeze
+        echo "Installed $(uv run python --version)"
+        uv run pip list

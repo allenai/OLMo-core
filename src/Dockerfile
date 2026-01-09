@@ -28,6 +28,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         git && \
     rm -rf /var/lib/apt/lists/*
 
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 # Install miniconda, Python, and Python build dependencies.
 ARG TARGET_PLATFORM
 ARG PYTHON_VERSION
@@ -41,7 +44,7 @@ RUN chmod +x ~/miniconda.sh && \
     /opt/conda/bin/python -m pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja && \
     /opt/conda/bin/conda clean -ya
 
-# Install PyTorch core ecosystem.
+# Install PyTorch core ecosystem (needed first for GPU package builds).
 ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.9.1
 ARG INSTALL_CHANNEL=whl
@@ -86,11 +89,17 @@ RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLAS
 ARG LIGER_KERNEL_VERSION=0.6.4
 RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
-# Install direct dependencies, but not source code.
-COPY pyproject.toml .
+# Install direct dependencies using uv sync with torch override.
+COPY pyproject.toml uv.lock ./
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
-RUN pip install --no-cache-dir '.[all]' && \
+
+# Create torch override file to match the installed torch version
+RUN echo "torch==${TORCH_VERSION}" > /tmp/torch-override.txt
+
+# Sync dependencies (torch already installed, override ensures version match)
+ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/
+RUN UV_OVERRIDE=/tmp/torch-override.txt uv sync --frozen --extra all && \
     pip uninstall -y ai2-olmo-core && \
     rm -rf *
 
@@ -127,6 +136,9 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda
+
+# Copy uv for convenience
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 ENV PATH=/opt/conda/bin:$PATH
 ENV NVIDIA_VISIBLE_DEVICES=all

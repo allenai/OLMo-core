@@ -160,6 +160,12 @@ disable_error_code = "has-type"
 module = "tests.*"
 strict_optional = false
 
+[tool.uv]
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+]
+
 [tool.pytest.ini_options]
 testpaths = "src/test/"
 python_classes = ["Test*", "*Test"]
