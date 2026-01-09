@@ -96,7 +96,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     trainer_config = cookbook.configure_trainer(
         # load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step656000",
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/stego32-highlr-filter3/step656000",
+        load_path="weka://oe-training-default/ai2-llm/checkpoints/stego32-highlr-filter3/step656000",
         load_trainer_state=False,
         load_optim_state=True,
         max_duration=Duration.tokens(MAX_TOKENS),
