@@ -36,10 +36,6 @@ class OLMoThreadError(OLMoError):
     pass
 
 
-class BeakerExperimentFailedError(OLMoError):
-    pass
-
-
 class BeakerInsufficientResourcesError(OLMoError):
     pass
 

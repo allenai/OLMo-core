@@ -46,10 +46,10 @@ if __name__ == "__main__":
     sep_index = sys.argv.index("--")
     overrides = sys.argv[1:sep_index]
     entrypoint = sys.argv[sep_index + 1]
-    command = sys.argv[sep_index + 2 :]
+    command = sys.argv[sep_index + 1 :]
 
     prepare_cli_environment()
 
     config = build_config(command, overrides)
     print(config)
-    config.launch(follow=True, torchrun=False, entrypoint=entrypoint)
+    config.launch(follow=True, torchrun=False)
