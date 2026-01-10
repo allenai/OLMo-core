@@ -358,6 +358,59 @@ def _extract_pareto_frontier(
     return N[idx], D[idx], C[idx], L[idx]
 
 
+def _extract_pareto_frontier_dominance(
+    N: np.ndarray,
+    D: np.ndarray,
+    C: np.ndarray,
+    L: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Extract the true Pareto frontier based on dominance in the (C, L) space.
+
+    A point is on the Pareto frontier if no other point has both lower compute
+    AND lower loss. This is more principled than binning because it doesn't
+    require choosing arbitrary bin sizes and naturally adapts to the data density.
+
+    Args:
+        N: Array of parameter counts
+        D: Array of token counts
+        C: Array of compute values
+        L: Array of loss values
+
+    Returns:
+        Tuple of (N_frontier, D_frontier, C_frontier, L_frontier) arrays containing
+        only the Pareto-optimal points (not dominated by any other point)
+    """
+    n = len(C)
+    if n == 0:
+        raise ValueError("Empty input arrays")
+
+    # A point i is dominated if there exists j such that C[j] <= C[i] and L[j] <= L[i]
+    # with at least one strict inequality
+    is_dominated = np.zeros(n, dtype=bool)
+
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            # j dominates i if j is at least as good in both dimensions and strictly better in at least one
+            if C[j] <= C[i] and L[j] <= L[i] and (C[j] < C[i] or L[j] < L[i]):
+                is_dominated[i] = True
+                break
+
+    frontier_mask = ~is_dominated
+
+    if not frontier_mask.any():
+        raise ValueError("No Pareto-optimal points found")
+
+    # Sort frontier by compute for consistency
+    frontier_indices = np.where(frontier_mask)[0]
+    sort_order = np.argsort(C[frontier_indices])
+    idx = frontier_indices[sort_order]
+
+    return N[idx], D[idx], C[idx], L[idx]
+
+
 def chinchilla_parametric_scaling_law(
     N: np.ndarray, D: np.ndarray, E: float, A: float, alpha: float, B: float, beta: float
 ) -> np.ndarray:
@@ -376,14 +429,15 @@ class ChinchillaIsoParamFit:
         N_opt(C) = G * C^a               (optimal parameters as function of compute)
         D_opt(C) = H * C^b               (optimal tokens as function of compute)
 
-    Method (Chinchilla Approach 1):
+    Method (Chinchilla Approach 1 with Pareto dominance):
     1. For each parameter count N, train models to different amounts of data D
-    2. Bin observations by compute C (log-spaced)
-    3. For each compute bin, find the observation with MINIMUM loss (the Pareto frontier)
-    4. Fit power laws for L(C), N_opt(C), and D_opt(C) on these frontier points only
+    2. Extract the Pareto frontier: points where no other point has both lower
+       compute AND lower loss (dominance-based, not binning)
+    3. Fit power laws for L(C), N_opt(C), and D_opt(C) on these frontier points only
 
-    This matches the Chinchilla paper: "for each FLOP count, we determine which run
-    achieves the lowest loss" and then fit on those optimal (N, D) configurations.
+    This is inspired by the Chinchilla paper's approach of finding optimal (N, D)
+    configurations, but uses true Pareto dominance instead of compute binning.
+    This avoids arbitrary bin size choices and naturally adapts to data density.
 
     Where:
         N = number of parameters
@@ -457,25 +511,24 @@ class ChinchillaIsoParamFit:
         C: ArrayLike,
         loss: ArrayLike,
         huber_delta: float = 1e-3,
-        n_bins: int = 20,
         bootstrap: bool = False,
         n_bootstrap: int = 100,
         bootstrap_frac: float = 0.8,
     ) -> "ChinchillaIsoParamFit":
         """
-        Fit the IsoParam scaling laws using Chinchilla Approach 1.
+        Fit the IsoParam scaling laws using Chinchilla Approach 1 with Pareto dominance.
 
-        This method first extracts the Pareto frontier (minimum loss for each compute bin),
-        then fits power laws on those optimal points:
+        This method first extracts the true Pareto frontier (points not dominated by any
+        other point in compute-loss space), then fits power laws on those optimal points:
 
-        1. Bin observations by compute (log-spaced)
-        2. For each bin, find the observation with minimum loss (the optimal N, D for that compute)
-        3. Fit L(C) = E + A / C^alpha on frontier (C, L) pairs (Huber loss in log space)
-        4. Fit N_opt(C) = G * C^a on frontier (C, N) pairs (linear regression in log-log space)
-        5. Fit D_opt(C) = H * C^b on frontier (C, D) pairs (linear regression in log-log space)
+        1. Extract Pareto frontier: points where no other point has both lower compute
+           AND lower loss
+        2. Fit L(C) = E + A / C^alpha on frontier (C, L) pairs (Huber loss in log space)
+        3. Fit N_opt(C) = G * C^a on frontier (C, N) pairs (linear regression in log-log space)
+        4. Fit D_opt(C) = H * C^b on frontier (C, D) pairs (linear regression in log-log space)
 
-        This matches the Chinchilla paper's Approach 1: "for each FLOP count, we determine
-        which run achieves the lowest loss."
+        This is inspired by the Chinchilla paper's Approach 1 but uses true Pareto dominance
+        instead of compute binning, avoiding arbitrary bin size choices.
 
         Args:
             N: Array of parameter counts (one per observation)
@@ -483,7 +536,6 @@ class ChinchillaIsoParamFit:
             C: Array of compute values (one per observation, e.g., FLOPs or petaFLOPs)
             loss: Array of loss values (one per observation)
             huber_delta: Delta parameter for Huber loss in L(C) fitting
-            n_bins: Number of log-spaced bins for grouping compute values (default 20)
             bootstrap: If True, compute bootstrap confidence intervals
             n_bootstrap: Number of bootstrap samples (default 100)
             bootstrap_frac: Fraction of data to sample per bootstrap (default 0.8)
@@ -512,16 +564,16 @@ class ChinchillaIsoParamFit:
         if len(N_valid) < 3:
             raise ValueError(f"Need at least 3 valid data points, got {len(N_valid)}")
 
-        # Extract Pareto frontier: minimum loss for each compute bin
-        # This is the key step of Chinchilla Approach 1
-        N_frontier, D_frontier, C_frontier, L_frontier = _extract_pareto_frontier(
-            N_valid, D_valid, C_valid, L_valid, n_bins=n_bins
+        # Extract Pareto frontier using dominance: points where no other point
+        # has both lower compute AND lower loss
+        N_frontier, D_frontier, C_frontier, L_frontier = _extract_pareto_frontier_dominance(
+            N_valid, D_valid, C_valid, L_valid
         )
 
         if len(N_frontier) < 3:
             raise ValueError(
                 f"Need at least 3 frontier points, got {len(N_frontier)}. "
-                "Try reducing n_bins or adding more data."
+                "Add more data with varied compute-loss trade-offs."
             )
 
         log_C = np.log(C_frontier)
@@ -632,7 +684,6 @@ class ChinchillaIsoParamFit:
                         C=C_boot,
                         loss=L_boot,
                         huber_delta=huber_delta,
-                        n_bins=n_bins,
                         bootstrap=False,
                     )
                     bootstrap_params["E"].append(boot_fit.E)
@@ -783,7 +834,6 @@ class ChinchillaIsoParamFit:
         loss: ArrayLike,
         N: Optional[ArrayLike] = None,
         D: Optional[ArrayLike] = None,
-        n_bins: int = 20,
         title: Optional[str] = None,
         figsize: tuple[int, int] = (14, 10),
     ) -> plt.Figure:
@@ -797,7 +847,7 @@ class ChinchillaIsoParamFit:
         - Bottom right: Loss residuals
 
         All observations are shown as lighter points, while the Pareto frontier
-        points (minimum loss per compute bin, used for fitting) are highlighted.
+        points (not dominated by any other point in compute-loss space) are highlighted.
 
         If N and D are not provided, falls back to a simple 2-panel loss plot.
 
@@ -806,7 +856,6 @@ class ChinchillaIsoParamFit:
             loss: Array of actual loss values
             N: Optional array of parameter counts (for N_opt fit plot)
             D: Optional array of token counts (for D_opt fit plot)
-            n_bins: Number of bins for frontier extraction (should match fitting)
             title: Optional title for the plot
             figsize: Figure size (width, height)
 
@@ -825,9 +874,9 @@ class ChinchillaIsoParamFit:
             N = np.asarray(N)
             D = np.asarray(D)
 
-            # Extract frontier for highlighting
-            N_frontier, D_frontier, C_frontier, L_frontier = _extract_pareto_frontier(
-                N, D, C, loss, n_bins=n_bins
+            # Extract frontier for highlighting (using Pareto dominance)
+            N_frontier, D_frontier, C_frontier, L_frontier = _extract_pareto_frontier_dominance(
+                N, D, C, loss
             )
 
             N_pred_smooth = self.predict_optimal_N(C_smooth)
