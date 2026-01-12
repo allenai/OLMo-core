@@ -15,7 +15,7 @@ inputs:
   torchao-version:
     description: The torchao version to install
     required: false
-    default: '0.9.0'
+    default: '0.15.0'
   channel:
     description: The channel to install from
     required: false
