@@ -195,6 +195,7 @@ flash-attn-3 = { git = "https://github.com/Dao-AILab/flash-attention.git", subdi
 [[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.pytest.ini_options]
 testpaths = "src/test/"
