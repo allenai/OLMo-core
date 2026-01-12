@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Now, Olmo-core uses `uv` for dependency management.
 - Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
 - Updated stable torch version to 2.9.1, updated versions of underlying libraries in Beaker Images.
 - `olmo_core.io.join_path()` now accepts an arbitrary number of components to join.
