@@ -21,10 +21,15 @@ from beaker.exceptions import BeakerImageNotFound, BeakerSecretNotFound
 from gantry.api import GitRepoState
 from gantry.api import Recipe as GantryRecipe
 from gantry.callbacks import Callback as GantryCallback
+from gantry.exceptions import ExperimentFailedError
 
 from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
-from ..exceptions import OLMoConfigurationError, OLMoEnvironmentError
+from ..exceptions import (
+    OLMoBeakerExperimentFailedError,
+    OLMoConfigurationError,
+    OLMoEnvironmentError,
+)
 from ..train.callbacks.beaker import BEAKER_RESULT_DIR
 from ..utils import (
     LOG_FILTER_TYPE_ENV_VAR,
@@ -515,8 +520,12 @@ class BeakerLaunchConfig(Config):
         if not follow and step_soft_timeout is not None:
             raise OLMoConfigurationError("Step soft timeout requires 'follow=True'")
 
+        command = self.cmd
+        if command[0].endswith(".py"):
+            command = ["python"] + command
+
         recipe = GantryRecipe(
-            self.cmd,
+            command,
             name=self.name,
             task_name=self.task_name,
             description=self.description,
@@ -569,12 +578,15 @@ class BeakerLaunchConfig(Config):
             ],
         )
 
-        return recipe.launch(
-            show_logs=follow,
-            start_timeout=launch_timeout,
-            inactive_timeout=step_timeout,
-            inactive_soft_timeout=step_soft_timeout,
-        )
+        try:
+            return recipe.launch(
+                show_logs=follow,
+                start_timeout=launch_timeout,
+                inactive_timeout=step_timeout,
+                inactive_soft_timeout=step_soft_timeout,
+            )
+        except ExperimentFailedError as exc:
+            raise OLMoBeakerExperimentFailedError(str(exc))
 
 
 # Regex for detecting training (and eval) steps in logs.
