@@ -65,7 +65,7 @@ transformers = ["transformers"]
 wandb = ["wandb"]
 gpu = [
     "flash-attn>=2.8.2; platform_system != 'Darwin'",
-    "flashattn-hopper; platform_system != 'Darwin'",
+    "flash-attn-3; platform_system != 'Darwin'",
     "grouped-gemm; platform_system != 'Darwin'",
     "transformer-engine[pytorch]>=2.9; platform_system != 'Darwin'",
     "ring-flash-attn>=0.1.8; platform_system != 'Darwin'",
@@ -176,7 +176,7 @@ environments = [
 
 [tool.uv.extra-build-dependencies]
 flash-attn = [{ requirement = "torch", match-runtime = true }]
-flashattn-hopper = [{ requirement = "torch", match-runtime = true }]
+flash-attn-3 = [{ requirement = "torch", match-runtime = true }, "packaging", "wheel"]
 grouped-gemm = [{ requirement = "torch", match-runtime = true }]
 transformer-engine = [{ requirement = "torch", match-runtime = true }]
 ring-flash-attn = [{ requirement = "torch", match-runtime = true }]
@@ -184,12 +184,13 @@ liger-kernel = [{ requirement = "torch", match-runtime = true }]
 
 [tool.uv.extra-build-variables]
 flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
-flashattn-hopper = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
+flash-attn-3 = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
 grouped-gemm = { GROUPED_GEMM_CUTLASS = "1" }
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "platform_system != 'Darwin'" }]
 grouped-gemm = { git = "https://github.com/tgale96/grouped_gemm.git", branch = "main" }
+flash-attn-3 = { git = "https://github.com/Dao-AILab/flash-attention.git", subdirectory = "hopper" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
