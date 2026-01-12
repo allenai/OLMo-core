@@ -40,6 +40,7 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "ai2-olmo-eval", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "beaker-gantry", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "beaker-py", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "black", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "boto3", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -79,6 +80,7 @@ all = [
     { name = "wheel", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 beaker = [
+    { name = "beaker-gantry", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "beaker-py", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "gitpython", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "google-cloud-compute", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -139,7 +141,8 @@ wandb = [
 requires-dist = [
     { name = "ai2-olmo-core", extras = ["beaker", "comet", "dev", "dion", "eval", "gpu", "torchao", "transformers", "wandb"], marker = "extra == 'all'" },
     { name = "ai2-olmo-eval", marker = "extra == 'eval'", specifier = "==0.8.5" },
-    { name = "beaker-py", marker = "extra == 'beaker'", specifier = ">=1.37.0,<2.0" },
+    { name = "beaker-gantry", marker = "extra == 'beaker'", specifier = ">=3.4.0,<4.0" },
+    { name = "beaker-py", marker = "extra == 'beaker'", specifier = ">=2.5.3,<3.0" },
     { name = "bettermap" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.1,<24.0" },
     { name = "boto3", marker = "extra == 'dev'" },
@@ -415,22 +418,43 @@ wheels = [
 ]
 
 [[package]]
-name = "beaker-py"
-version = "1.38.1"
+name = "beaker-gantry"
+version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "docker", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "grpcio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "beaker-py", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "click-help-colors", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "click-option-group", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "dataclass-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "gitpython", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "protobuf", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "petname", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "rich", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "tomli", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/43/6dc8d7952f6ab47b076b6af6f0611b4e9b383fba061e0d050de598590f75/beaker_py-1.38.1.tar.gz", hash = "sha256:39b0216ff42c64d832051df5f38eea93e05b2138a3e170aba830ef65c9898a3b", size = 118879, upload-time = "2025-10-14T19:31:14.329Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/bd/5a1727644c1dab40e569d182e0eebbd4a6b32ec839919b394ddf0d253b62/beaker_gantry-3.4.0.tar.gz", hash = "sha256:c62348c75d1994697564fc9b864cdecfe03b34a041aea9f087781ce1a9925ced", size = 60925, upload-time = "2026-01-09T22:46:37.911Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/a5/9df7d4677078c6fd4d7d930eea0c1a576a275cb73de1799f42c8b9550af0/beaker_py-1.38.1-py3-none-any.whl", hash = "sha256:7c27051c36be65ffe3790fa6aa3bd5ff9ab22aeea0739d951861c153a80c017a", size = 132763, upload-time = "2025-10-14T19:31:12.715Z" },
+    { url = "https://files.pythonhosted.org/packages/00/1a/4b6dc4a21c7b9159dde94b94597a5e818e1cacea8341ab71337b91befdef/beaker_gantry-3.4.0-py3-none-any.whl", hash = "sha256:543e46eb9fc26d00a1409fe25ef98e6e1a0044afd9655ce42b5fc4e7d3ae15a5", size = 69683, upload-time = "2026-01-09T22:46:36.372Z" },
+]
+
+[[package]]
+name = "beaker-py"
+version = "2.5.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-crc32c", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "grpcio", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "protobuf", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/69/ee96d86746aa0916ceebfd6b03d2f6ede60995897ae98bca12f7fca3da99/beaker_py-2.5.3.tar.gz", hash = "sha256:724a24b18b6e0e195186d0444a388a9009855f46dab437798ea69a9aa77f8a7f", size = 95816, upload-time = "2025-11-25T18:48:31.067Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/79/ac369a3766717fd5cad66133a3034f6b7e7015b36f78ee8b9ef183b94ff0/beaker_py-2.5.3-py3-none-any.whl", hash = "sha256:09bd4ef661368b05c588e7b11e9bda7fd6d6e6a97de32aa3c4f0755b1a1d6d14", size = 106929, upload-time = "2025-11-25T18:48:29.819Z" },
 ]
 
 [[package]]
@@ -692,6 +716,30 @@ wheels = [
 ]
 
 [[package]]
+name = "click-help-colors"
+version = "0.9.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6f/50/76f51d9c7fcd72a12da466801f7c1fa3884424c947787333c74327b4fcf3/click-help-colors-0.9.4.tar.gz", hash = "sha256:f4cabe52cf550299b8888f4f2ee4c5f359ac27e33bcfe4d61db47785a5cc936c", size = 8048, upload-time = "2023-11-18T11:55:15.554Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/f8/8768f803151714640cb6f06fd9de490ce7db632d351da05f42f77330d2fd/click_help_colors-0.9.4-py3-none-any.whl", hash = "sha256:b33c5803eeaeb084393b1ab5899dc5476c7196b87a18713045afe76f840b42db", size = 6437, upload-time = "2023-11-18T11:55:09.775Z" },
+]
+
+[[package]]
+name = "click-option-group"
+version = "0.5.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ef/ff/d291d66595b30b83d1cb9e314b2c9be7cfc7327d4a0d40a15da2416ea97b/click_option_group-0.5.9.tar.gz", hash = "sha256:f94ed2bc4cf69052e0f29592bd1e771a1789bd7bfc482dd0bc482134aff95823", size = 22222, upload-time = "2025-10-09T09:38:01.474Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/45/54bb2d8d4138964a94bef6e9afe48b0be4705ba66ac442ae7d8a8dc4ffef/click_option_group-0.5.9-py3-none-any.whl", hash = "sha256:ad2599248bd373e2e19bec5407967c3eec1d0d4fc4a5e77b08a0481e75991080", size = 11553, upload-time = "2025-10-09T09:38:00.066Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -926,6 +974,15 @@ wheels = [
 ]
 
 [[package]]
+name = "dataclass-extensions"
+version = "0.2.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/cb/c0e36406d7c96a5851bc6bfc12cbfebdb80cc8c7c5ed40af1563df9d1834/dataclass_extensions-0.2.4.tar.gz", hash = "sha256:0d44b33381e756088892bdf1a3d110360c2bf28f36da74db93ad3ef69781805a", size = 16270, upload-time = "2025-10-27T22:31:30.945Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/94/65084672157c2c23412101d7e84835b4cbbbb8266cadfe10c68c98f81d90/dataclass_extensions-0.2.4-py3-none-any.whl", hash = "sha256:b28261fa1641c745c16f1f8ab1235152410cb66500c0ad22efe62c5b58c070d6", size = 16229, upload-time = "2025-10-27T22:31:29.815Z" },
+]
+
+[[package]]
 name = "datasets"
 version = "2.14.4"
 source = { registry = "https://pypi.org/simple" }
@@ -968,19 +1025,6 @@ dependencies = [
     { name = "numpy", version = "2.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and sys_platform == 'linux'" },
     { name = "torch", version = "2.9.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux'" },
     { name = "triton", marker = "sys_platform == 'linux'" },
-]
-
-[[package]]
-name = "docker"
-version = "7.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "urllib3", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/91/9b/4a2ea29aeba62471211598dac5d96825bb49348fa07e906ea930394a83ce/docker-7.1.0.tar.gz", hash = "sha256:ad8c70e6e3f8926cb8a92619b832b4ea5299e2831c14284663184e200546fa6c", size = 117834, upload-time = "2024-05-23T11:13:57.216Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl", hash = "sha256:c96b93b7f0a746f9e77d325bcfb87422a3d8bd4f03136ae8a85b37f1898d5fc0", size = 147774, upload-time = "2024-05-23T11:13:55.01Z" },
 ]
 
 [[package]]
@@ -2801,6 +2845,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/4c/b2/bb8e495d5262bfec4
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/2b/121e912bd60eebd623f873fd090de0e84f322972ab25a7f9044c056804ed/pathspec-1.0.3-py3-none-any.whl", hash = "sha256:e80767021c1cc524aa3fb14bedda9c34406591343cc42797b386ce7b9354fb6c", size = 55021, upload-time = "2026-01-09T15:46:44.652Z" },
 ]
+
+[[package]]
+name = "petname"
+version = "2.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8e/a5/348c90b3fb09d7bd76f7dacf1b92e251d75bfbe715006cb9b84eb23be1b1/petname-2.6.tar.gz", hash = "sha256:981c31ef772356a373640d1bb7c67c102e0159eda14578c67a1c99d5b34c9e4c", size = 8357, upload-time = "2019-06-13T20:35:21.021Z" }
 
 [[package]]
 name = "pillow"
