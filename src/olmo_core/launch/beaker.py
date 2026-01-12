@@ -131,12 +131,12 @@ class OLMoCoreBeakerImage(StrEnum):
     """
     Built with torch 2.7.1 and CUDA 12.8.
     """
-    tch270_cu128 = "olmo-core-tch270cu128-2025-05-16"
+    tch270_cu128 = "petew/olmo-core-tch270cu128-2025-05-16"
     """
     Built with torch 2.7.0 and CUDA 12.8.
     Battle tested when training Olmo3 7B and 32B. No TransformerEngine or flash-attention-3.
     """
-    tch271_cu126 = "olmo-core-tch271cu126-2025-09-15"
+    tch271_cu126 = "petew/olmo-core-tch271cu126-2025-09-15"
     """
     Built with torch 2.7.1 and CUDA 12.6. No TransformerEngine or flash-attention-3.
     """
