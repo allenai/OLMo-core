@@ -536,6 +536,7 @@ class BeakerLaunchConfig(Config):
             results=self.result_dir,
             # Python settings.
             system_python=self.system_python,
+            torchrun=torchrun,
             # Git settings.
             git_repo=self.git,
             allow_dirty=self.allow_dirty,
