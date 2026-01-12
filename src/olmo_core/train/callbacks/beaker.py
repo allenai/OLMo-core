@@ -51,7 +51,7 @@ class BeakerCallback(Callback):
 
     @property
     def client(self) -> "Beaker":
-        if self._client is not None:
+        if self._client is None:
             from beaker import Beaker
 
             self._client = Beaker.from_env(check_for_upgrades=False)
