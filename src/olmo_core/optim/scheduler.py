@@ -521,13 +521,14 @@ def _sqrt_decay(
 ) -> Union[float, torch.Tensor]:
     """
     Square root decay: decays faster initially and slows down near the end.
-    Uses the formula: lr = decay_min_lr + (initial_lr - decay_min_lr) * sqrt(step_from_end / decay)
+    Uses the formula: lr = decay_min_lr + (initial_lr - decay_min_lr) * (1 - sqrt(1 - progress))
+    where progress = step_from_end / decay.
     """
     if isinstance(initial_lr, float):  # not worth the potential host-device sync if it's a tensor
         assert 0 <= decay_min_lr < initial_lr
 
     progress = min(step_from_end, decay) / decay
-    return decay_min_lr + (initial_lr - decay_min_lr) * sqrt(progress)
+    return decay_min_lr + (initial_lr - decay_min_lr) * (1 - sqrt(1 - progress))
 
 
 @dataclass
