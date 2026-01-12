@@ -46,7 +46,7 @@ runs:
       env:
         UV_EXTRA_INDEX_URL: https://download.pytorch.org/${{ inputs.channel }}
         UV_OVERRIDE: /tmp/torch-override.txt
-      run: uv sync --frozen --extra dev
+      run: uv sync --frozen --extra dev --extra beaker --extra torchao --extra transformers
 
     - name: Show environment info
       shell: bash
