@@ -90,6 +90,7 @@ def build_launch_config(
         raise RuntimeError(
             "Environment not configured correctly for Beaker, you may be missing the BEAKER_TOKEN env var."
         )
+    beaker_user = beaker_user.upper()
 
     env_secrets = [
         BeakerEnvSecret(
