@@ -14,7 +14,6 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.launch.beaker import (
     BeakerLaunchConfig,
     OLMoCoreBeakerImage,
-    close_beaker_client,
     is_running_in_beaker_batch_job,
 )
 from olmo_core.model_ladder import *
@@ -353,10 +352,7 @@ def main(
     args = parse_args(
         configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
     )
-    try:
-        args.func(args)
-    finally:
-        close_beaker_client()
+    args.func(args)
 
 
 def configure_launcher(

@@ -47,12 +47,15 @@ class BeakerCallback(Callback):
 
     _url: str | None = dataclasses.field(repr=False, default=None)
     _last_update: float | None = dataclasses.field(repr=False, default=None)
+    _client = None
 
     @property
     def client(self) -> "Beaker":
-        from olmo_core.launch.beaker import get_beaker_client
+        if self._client is not None:
+            from beaker import Beaker
 
-        return get_beaker_client()
+            self._client = Beaker.from_env(check_for_upgrades=False)
+        return self._client  # type: ignore
 
     def post_attach(self):
         if self.enabled is None:
@@ -147,3 +150,11 @@ class BeakerCallback(Callback):
             update_workload_description(description.strip(), client=self.client)
         except (RequestException, BeakerError, HTTPError, RpcError) as e:
             log.warning(f"Failed to update Beaker experiment description: {e}")
+
+    def close(self):
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+
+    def __del__(self):
+        self.close()

@@ -18,11 +18,7 @@ from olmo_core.data import (
 )
 from olmo_core.data.numpy_dataset import NumpyFSLDatasetConfig
 from olmo_core.distributed.utils import get_local_rank
-from olmo_core.launch.beaker import (
-    BeakerLaunchConfig,
-    OLMoCoreBeakerImage,
-    close_beaker_client,
-)
+from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.train import (
     TrainerConfig,
@@ -335,7 +331,7 @@ def build_config(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
-    use_hostname_constraints: bool = False,
+    #  use_hostname_constraints: bool = False,
     flight_recorder: bool = False,
     num_execution_units: Optional[int] = None,
     include_default_evals: bool = False,
@@ -366,7 +362,6 @@ def build_config(
     :param beaker_image: The Beaker image to use for the experiment.
     :param num_nodes: Number of nodes to use for training.
     :param beaker_workspace: The Beaker workspace to use.
-    :param use_hostname_constraints: Whether to use hostname constraints in Beaker.
     :param num_execution_units: Number of execution units for Beaker.
     :param include_default_evals: Whether to include default evaluation callbacks.
     :param data_kwargs: Additional keyword arguments to pass to the data config builder.
@@ -381,7 +376,7 @@ def build_config(
         beaker_image=beaker_image,
         num_nodes=num_nodes,
         beaker_workspace=beaker_workspace,
-        use_hostname_constraints=use_hostname_constraints,
+        #  use_hostname_constraints=use_hostname_constraints,
         flight_recorder=flight_recorder,
         num_execution_units=num_execution_units,
     )
@@ -528,9 +523,6 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/neptune --launch.num_nodes=2
     cmd = SubCmd(cmd)
     cli_context = CliContext(script, cmd, run_name, cluster, overrides)
 
-    try:
-        config: ExperimentConfig = config_builder(cli_context)
-        cmd.prepare_environment(config)
-        cmd.run(config)
-    finally:
-        close_beaker_client()
+    config: ExperimentConfig = config_builder(cli_context)
+    cmd.prepare_environment(config)
+    cmd.run(config)

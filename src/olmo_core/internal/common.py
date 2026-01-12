@@ -4,10 +4,9 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 import torch
-from beaker import Beaker, BeakerGpuType
-from beaker.exceptions import BeakerError, BeakerSecretNotFound
+from beaker import BeakerGpuType
+from beaker.exceptions import BeakerError
 
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
     BeakerEnvSecret,
@@ -16,7 +15,6 @@ from olmo_core.launch.beaker import (
     BeakerWekaBucket,
     OLMoCoreBeakerImage,
     get_beaker_client,
-    is_running_in_beaker_batch_job,
 )
 from olmo_core.train.callbacks.beaker import BEAKER_RESULT_DIR
 from olmo_core.utils import generate_uuid
@@ -28,61 +26,24 @@ GOOGLE_CLUSTERS = [
 ]
 
 
-def maybe_get_beaker_client(workspace: str | None = None) -> Optional[Beaker]:
-    try:
-        return get_beaker_client(workspace=workspace)
-    except BeakerError:
-        return None
-
-
 @lru_cache()
 def get_beaker_username() -> Optional[str]:
-    beaker = maybe_get_beaker_client()
-    if beaker is not None:
-        return beaker.user_name
-    else:
-        return None
-
-
-def beaker_secret_exists(secret: str, workspace: Optional[str] = None) -> bool:
-    beaker = maybe_get_beaker_client(workspace=workspace)
-    if beaker is None:
-        raise RuntimeError(
-            "Environment not configured correctly for Beaker, you may be missing the BEAKER_TOKEN env var."
-        )
-
     try:
-        beaker.secret.get(secret)
-        return True
-    except BeakerSecretNotFound:
-        return False
-
-
-def _to_beaker_env_secret(
-    name: str, secret: str, *, workspace: Optional[str] = None, required: bool = True
-) -> Optional[BeakerEnvSecret]:
-    # Assume beaker secret exists if we are running in a batch job (e.g., during a training job)
-    # so that we don't DOS beaker.
-    if is_running_in_beaker_batch_job() or beaker_secret_exists(secret, workspace=workspace):
-        return BeakerEnvSecret(name=name, secret=secret)
-    elif required:
-        raise OLMoConfigurationError(
-            f"Secret {secret} not configured in beaker workspace {workspace}"
-        )
-    else:
-        log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
+        with get_beaker_client() as beaker:
+            return beaker.user_name
+    except BeakerError:
         return None
 
 
 def get_root_dir(cluster: str) -> str:
     if cluster.startswith("ai2/"):
-        beaker = get_beaker_client()
-        cl = beaker.cluster.get(cluster)
-        tags = set(cl.tags)
-        if "storage:weka" in tags:
-            return "/weka/oe-training-default/ai2-llm"
-        else:
-            return "gs://ai2-llm"
+        with get_beaker_client() as beaker:
+            cl = beaker.cluster.get(cluster)
+            tags = set(cl.tags)
+            if "storage:weka" in tags:
+                return "/weka/oe-training-default/ai2-llm"
+            else:
+                return "gs://ai2-llm"
     else:
         return "gs://ai2-llm"
 
@@ -131,35 +92,35 @@ def build_launch_config(
         )
 
     env_secrets = [
-        _to_beaker_env_secret(
-            name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN", workspace=workspace
+        BeakerEnvSecret(
+            name="BEAKER_TOKEN",
+            secret=f"{beaker_user}_BEAKER_TOKEN",
+            required=True,
         ),
-        _to_beaker_env_secret(
+        BeakerEnvSecret(
             name="WANDB_API_KEY",
             secret=f"{beaker_user}_WANDB_API_KEY",
             required=True,
-            workspace=workspace,
         ),
-        _to_beaker_env_secret(
+        BeakerEnvSecret(
             name="COMET_API_KEY",
             secret=f"{beaker_user}_COMET_API_KEY",
             required=False,
-            workspace=workspace,
         ),
-        _to_beaker_env_secret(
-            name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL", required=False, workspace=workspace
+        BeakerEnvSecret(
+            name="R2_ENDPOINT_URL",
+            secret="R2_ENDPOINT_URL",
+            required=False,
         ),
-        _to_beaker_env_secret(
+        BeakerEnvSecret(
             name="WEKA_ENDPOINT_URL",
             secret="WEKA_ENDPOINT_URL",
             required=False,
-            workspace=workspace,
         ),
-        _to_beaker_env_secret(
+        BeakerEnvSecret(
             name="SLACK_WEBHOOK_URL",
             secret="SLACK_WEBHOOK_URL",
             required=False,
-            workspace=workspace,
         ),
     ]
 
@@ -192,7 +153,7 @@ def build_launch_config(
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
         env_vars=env_vars,
-        env_secrets=[env_secret for env_secret in env_secrets if env_secret is not None],
+        env_secrets=env_secrets,
         google_credentials_secret="GOOGLE_CREDENTIALS" if root_dir.startswith("gs://") else None,
         aws_config_secret=f"{beaker_user}_AWS_CONFIG",
         aws_credentials_secret=f"{beaker_user}_AWS_CREDENTIALS",
@@ -213,13 +174,13 @@ def get_gpu_type(cluster: str) -> str:
     if cluster in CLUSTER_TO_GPU_TYPE:
         return CLUSTER_TO_GPU_TYPE[cluster]
     elif cluster.startswith("ai2/"):
-        beaker = get_beaker_client()
-        cl = beaker.cluster.get(cluster)
-        for node in beaker.node.list(cluster=cl, limit=1):
-            if (gpu_type := node.node_resources.gpu_type) > 0:
-                return BeakerGpuType(gpu_type).name.replace("_", " ")
-        else:
-            raise RuntimeError(f"Could not determine GPU type for cluster '{cluster}'")
+        with get_beaker_client() as beaker:
+            cl = beaker.cluster.get(cluster)
+            for node in beaker.node.list(cluster=cl, limit=1):
+                if (gpu_type := node.node_resources.gpu_type) > 0:
+                    return BeakerGpuType(gpu_type).name.replace("_", " ")
+            else:
+                raise RuntimeError(f"Could not determine GPU type for cluster '{cluster}'")
     elif cluster == "local":
         return torch.get_default_device().type
     else:

@@ -82,43 +82,44 @@ def get_occupied_beaker_hosts(
 ) -> set[str]:
     from .beaker import get_beaker_client
 
-    beaker = get_beaker_client()
+    with get_beaker_client() as beaker:
+        occupied_hosts = set()
 
-    occupied_hosts = set()
+        cluster = beaker.cluster.get(beaker_cluster)
+        nodes = beaker.node.list(cluster=cluster)
+        missing_metadata_count = 0
 
-    cluster = beaker.cluster.get(beaker_cluster)
-    nodes = beaker.node.list(cluster=cluster)
-    missing_metadata_count = 0
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = []
+            for node in sorted(nodes, key=lambda node: node.hostname):
+                host = node.hostname
+                assert (
+                    host not in occupied_hosts
+                ), f"Host {host} is somehow already in occupied hosts"
+                if host not in hosts_metadata:
+                    log.warning(f"No metadata found for beaker host {host}")
+                    missing_metadata_count += 1
+                    continue
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = []
-        for node in sorted(nodes, key=lambda node: node.hostname):
-            host = node.hostname
-            assert host not in occupied_hosts, f"Host {host} is somehow already in occupied hosts"
-            if host not in hosts_metadata:
-                log.warning(f"No metadata found for beaker host {host}")
-                missing_metadata_count += 1
-                continue
+                if node.cordon_details.HasField("cordoned"):
+                    # Treat cordoned node as occupied since it might be uncordoned later.
+                    occupied_hosts.add(host)
+                    continue
 
-            if node.cordon_details.HasField("cordoned"):
-                # Treat cordoned node as occupied since it might be uncordoned later.
-                occupied_hosts.add(host)
-                continue
+                futures.append(executor.submit(node_is_occupied, beaker, node, beaker_priority))
 
-            futures.append(executor.submit(node_is_occupied, beaker, node, beaker_priority))
+            for future in concurrent.futures.as_completed(futures):
+                node, is_occupied = future.result()
+                if is_occupied:
+                    occupied_hosts.add(node.hostname)
 
-        for future in concurrent.futures.as_completed(futures):
-            node, is_occupied = future.result()
-            if is_occupied:
-                occupied_hosts.add(node.hostname)
+        if missing_metadata_count > 1:
+            log.warning(
+                f"Could not find metadata for {missing_metadata_count} hosts; "
+                "these hosts will be ignored when selecting hosts."
+            )
 
-    if missing_metadata_count > 1:
-        log.warning(
-            f"Could not find metadata for {missing_metadata_count} hosts; "
-            "these hosts will be ignored when selecting hosts."
-        )
-
-    return occupied_hosts
+        return occupied_hosts
 
 
 def _is_job_preemptible(job: BeakerJob, desired_priority: BeakerJobPriority) -> bool:

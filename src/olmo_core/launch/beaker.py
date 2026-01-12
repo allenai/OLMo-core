@@ -10,13 +10,14 @@ import re
 import sys
 import textwrap
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Generator
 
 import requests
 import rich
 from beaker import Beaker, BeakerDataset, BeakerJob, BeakerWorkload
-from beaker.exceptions import BeakerImageNotFound
+from beaker.exceptions import BeakerImageNotFound, BeakerSecretNotFound
 from gantry.api import GitRepoState
 from gantry.api import Recipe as GantryRecipe
 from gantry.callbacks import Callback as GantryCallback
@@ -45,7 +46,7 @@ __all__ = [
 ]
 
 
-_BEAKER_CLIENT: Beaker | None = None
+_BEAKER_CLIENT: dict[str | None, Beaker] = {}
 _DEFAULT_TORCH = "2.9.1".replace(".", "")
 _DEFAULT_CUDA = "12.8".replace(".", "")
 
@@ -76,27 +77,23 @@ def get_beaker_experiment_id() -> str | None:
         return None
 
 
+@contextmanager
 def get_beaker_client(
     workspace: str | None = None, check_for_upgrades: bool | None = None
-) -> Beaker:
+) -> Generator[Beaker, None, None]:
     global _BEAKER_CLIENT
-    if _BEAKER_CLIENT is None:
-        defaults = {}
-        if workspace is not None:
-            defaults["default_workspace"] = workspace
+    if workspace in _BEAKER_CLIENT:
+        yield _BEAKER_CLIENT[workspace]
+    else:
         if check_for_upgrades is None:
             check_for_upgrades = not is_running_in_beaker()
-        _BEAKER_CLIENT = Beaker.from_env(check_for_upgrades=check_for_upgrades, **defaults)
-    elif workspace is not None:
-        _BEAKER_CLIENT.config.default_workspace = workspace
-    return _BEAKER_CLIENT
-
-
-def close_beaker_client():
-    global _BEAKER_CLIENT
-    if _BEAKER_CLIENT is not None:
-        _BEAKER_CLIENT.close()
-        _BEAKER_CLIENT = None
+        beaker = Beaker.from_env(check_for_upgrades=check_for_upgrades, default_workspace=workspace)
+        _BEAKER_CLIENT[workspace] = beaker
+        try:
+            yield beaker
+        finally:
+            _BEAKER_CLIENT.pop(workspace)
+            beaker.close()
 
 
 class OLMoCoreBeakerImage(StrEnum):
@@ -152,6 +149,7 @@ class BeakerEnvVar(Config):
 class BeakerEnvSecret(Config):
     name: str
     secret: str
+    required: bool = True
 
 
 @dataclass
@@ -343,6 +341,8 @@ class BeakerLaunchConfig(Config):
     If a step isn't detected in a time warning will be issued.
     """
 
+    _beaker = None
+
     @property
     def default_env_vars(self) -> list[tuple[str, str]]:
         """
@@ -370,7 +370,20 @@ class BeakerLaunchConfig(Config):
         """
         The Beaker client.
         """
-        return get_beaker_client(workspace=self.workspace)
+        if self._beaker is None:
+            self._beaker = Beaker.from_env(
+                check_for_upgrades=not is_running_in_beaker(),
+                default_workspace=self.workspace,
+            )
+        return self._beaker
+
+    def close(self) -> None:
+        if self._beaker is not None:
+            self._beaker.close()
+            self._beaker = None
+
+    def __del__(self) -> None:
+        self.close()
 
     def _get_env_vars(self) -> list[tuple[str, str]]:
         env_vars: list[tuple[str, str]] = []
@@ -382,6 +395,30 @@ class BeakerLaunchConfig(Config):
             if name not in env_var_names:
                 env_vars.append((name, val))
         return env_vars
+
+    def _get_env_secrets(self) -> list[tuple[str, str]]:
+        env_secrets: list[tuple[str, str]] = []
+        for secret in self.env_secrets:
+            # Assume beaker secret exists if we are running in a batch job (e.g., during a training job)
+            # so that we don't DOS beaker.
+            if is_running_in_beaker_batch_job() or self._secret_exists(secret):
+                env_secrets.append((secret.name, secret.secret))
+            elif secret.required:
+                raise OLMoConfigurationError(
+                    f"Secret '{secret.secret}' not configured in beaker workspace {self.workspace}"
+                )
+            else:
+                log.warning(
+                    f"Secret '{secret.secret}' not configured in beaker workspace {self.workspace}"
+                )
+        return env_secrets
+
+    def _secret_exists(self, secret: BeakerEnvSecret) -> bool:
+        try:
+            self.beaker.secret.get(secret.secret)
+            return True
+        except BeakerSecretNotFound:
+            return False
 
     def _resolve_beaker_image(self) -> str:
         image = self.beaker_image
@@ -490,7 +527,7 @@ class BeakerLaunchConfig(Config):
             # Inputs.
             beaker_image=self._resolve_beaker_image(),
             env_vars=self._get_env_vars(),
-            env_secrets=[(s.name, s.secret) for s in self.env_secrets],
+            env_secrets=self._get_env_secrets(),
             google_credentials_secret=self.google_credentials_secret,
             aws_config_secret=self.aws_config_secret,
             aws_credentials_secret=self.aws_credentials_secret,
@@ -898,14 +935,11 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
 def main():
     opts, command = _parse_args()
     prepare_cli_environment()
-    try:
-        config = _build_config(opts, command)
-        if opts.dry_run:
-            rich.print(config)
-        else:
-            config.launch(follow=True)
-    finally:
-        close_beaker_client()
+    config = _build_config(opts, command)
+    if opts.dry_run:
+        rich.print(config)
+    else:
+        config.launch(follow=True)
 
 
 if __name__ == "__main__":
