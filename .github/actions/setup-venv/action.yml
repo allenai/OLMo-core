@@ -8,6 +8,18 @@ inputs:
     description: Update this to invalidate the cache
     required: true
     default: v0
+  torch-version:
+    description: The PyTorch version to install
+    required: false
+    default: '2.7.0'
+  torchao-version:
+    description: The torchao version to install
+    required: false
+    default: '0.9.0'
+  channel:
+    description: The channel to install from
+    required: false
+    default: 'whl/cpu'
 
 runs:
   using: composite
@@ -21,10 +33,19 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.cache/uv
-        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-uv-${{ inputs.python-version }}-${{ hashFiles('uv.lock') }}
+        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-uv-${{ inputs.python-version }}-${{ inputs.torch-version }}-${{ inputs.torchao-version }}-${{ hashFiles('uv.lock') }}
+
+    - name: Create torch override
+      shell: bash
+      run: |
+        echo "torch==${{ inputs.torch-version }}" > /tmp/torch-override.txt
+        echo "torchao==${{ inputs.torchao-version }}" >> /tmp/torch-override.txt
 
     - name: Install dependencies
       shell: bash
+      env:
+        UV_EXTRA_INDEX_URL: https://download.pytorch.org/${{ inputs.channel }}
+        UV_OVERRIDE: /tmp/torch-override.txt
       run: uv sync --frozen --extra dev
 
     - name: Show environment info

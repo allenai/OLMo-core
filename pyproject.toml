@@ -63,7 +63,15 @@ eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers"]
 wandb = ["wandb"]
-all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,torchao,transformers,wandb]"]
+gpu = [
+    "flash-attn>=2.8.2; platform_system != 'Darwin'",
+    "flashattn-hopper; platform_system != 'Darwin'",
+    "grouped-gemm; platform_system != 'Darwin'",
+    "transformer-engine[pytorch]>=2.9; platform_system != 'Darwin'",
+    "ring-flash-attn>=0.1.8; platform_system != 'Darwin'",
+    "liger-kernel>=0.6.4; platform_system != 'Darwin'",
+]
+all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,torchao,transformers,wandb,gpu]"]
 
 
 [tool.setuptools]
@@ -165,6 +173,27 @@ environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
 ]
+
+[tool.uv.extra-build-dependencies]
+flash-attn = [{ requirement = "torch", match-runtime = true }]
+flashattn-hopper = [{ requirement = "torch", match-runtime = true }]
+grouped-gemm = [{ requirement = "torch", match-runtime = true }]
+transformer-engine = [{ requirement = "torch", match-runtime = true }]
+ring-flash-attn = [{ requirement = "torch", match-runtime = true }]
+liger-kernel = [{ requirement = "torch", match-runtime = true }]
+
+[tool.uv.extra-build-variables]
+flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
+flashattn-hopper = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
+grouped-gemm = { GROUPED_GEMM_CUTLASS = "1" }
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "platform_system != 'Darwin'" }]
+grouped-gemm = { git = "https://github.com/tgale96/grouped_gemm.git", branch = "main" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 
 [tool.pytest.ini_options]
 testpaths = "src/test/"
