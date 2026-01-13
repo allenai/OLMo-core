@@ -13,7 +13,6 @@ from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.launch.beaker import (
     BeakerLaunchConfig,
-    BeakerPriority,
     OLMoCoreBeakerImage,
     is_running_in_beaker_batch_job,
 )
@@ -137,8 +136,8 @@ def parse_args(
         )
         parser.add_argument(
             "--priority",
-            choices=[p.value for p in BeakerPriority],
-            default=BeakerPriority.normal,
+            choices=["low", "normal", "high", "urgent"],
+            default="normal",
             help="The priority level.",
         )
         parser.add_argument(
@@ -383,7 +382,7 @@ def configure_launcher(
     )
     if num_gpus < 8:
         launch_config.num_gpus = num_gpus
-    launch_config.priority = BeakerPriority(args.priority)
+    launch_config.priority = args.priority
     if args.preemptible is not None:
         launch_config.preemptible = args.preemptible
     launch_config.allow_dirty = args.allow_dirty

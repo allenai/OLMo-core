@@ -7,7 +7,11 @@ from typing import List
 
 from rich import print
 
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import (
+    BeakerEnvSecret,
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+)
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
@@ -28,6 +32,10 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
         num_gpus=2,
         shared_filesystem=True,
         #  host_networking=False,
+        torchrun=False,
+        env_secrets=[
+            BeakerEnvSecret(name="HF_TOKEN", secret="HF_TOKEN"),
+        ],
     ).merge(overrides)
 
 
@@ -38,11 +46,10 @@ if __name__ == "__main__":
 
     sep_index = sys.argv.index("--")
     overrides = sys.argv[1:sep_index]
-    entrypoint = sys.argv[sep_index + 1]
-    command = sys.argv[sep_index + 2 :]
+    command = sys.argv[sep_index + 1 :]
 
     prepare_cli_environment()
 
     config = build_config(command, overrides)
     print(config)
-    config.launch(follow=True, torchrun=False, entrypoint=entrypoint)
+    config.launch(follow=True, torchrun=False)
