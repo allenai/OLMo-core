@@ -103,11 +103,12 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
         size_spec = TransformerSize(size_spec)
 
         num_params = size_spec.approx_num_params
-        # Note mbz * dp_world_size constrains the smallest global batch size we can use.
-        # for small models this means that we need to use a smaller mbz than is optimal for
-        # throughput / the hardware. But since the models are so small we can get away with it.
         mbz: int
         if num_params <= 100e6:
+            # mbz * dp_world_size constrains the smallest global batch size we can use.
+            # for small models this means that we need to use a smaller mbz than is optimal for
+            # throughput / the hardware so that we can get a roughly optimal global batch size.
+            # but since the models are so small we can get away with it.
             mbz = 4 * 4096
         elif num_params <= 190e6:
             mbz = 16 * 4096
@@ -125,7 +126,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
             mbz = 2 * 4096
 
         if "b200" in device_type:
-            mbz = mbz * 2
+            mbz = mbz * 2  # warning: this can affect the smallest global batch size we can use
 
         return mbz
 
