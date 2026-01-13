@@ -721,8 +721,10 @@ class Trainer:
             log.error(f"Training failed due to:\n{type(exc).__name__}: {exc}")
             for callback in self._iter_callbacks():
                 callback.on_error(exc)
-            for callback in self._iter_callbacks():
-                callback.close()
+            # Shutdown ungracefully, i.e. without waiting on bookkeeping ops to finish and without
+            # issuing additional distributed collectives because those could result in a deadlock
+            # considering we're already in a bad/inconsistent state across ranks.
+            self._shutdown(gracefully=False)
             raise
         finally:
             # Restore original signal handlers.
@@ -736,20 +738,25 @@ class Trainer:
         self._shutdown()
         log.info("Training complete")
 
-    def _shutdown(self):
-        self._log_metrics()
-        if self._multi_thread_pool is not None:
-            self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
-            self._multi_thread_pool = None
-        if self._single_thread_pool is not None:
-            self._single_thread_pool.shutdown(wait=True, cancel_futures=False)
-            self._single_thread_pool = None
+    def _shutdown(self, gracefully: bool = True):
+        if gracefully:
+            self._log_metrics()
+            if self._multi_thread_pool is not None:
+                self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
+                self._multi_thread_pool = None
+            if self._single_thread_pool is not None:
+                self._single_thread_pool.shutdown(wait=True, cancel_futures=False)
+                self._single_thread_pool = None
+
         # NOTE: '.close' must be called after shutting down thread pools to ensure bookkeeping ops
         # have finished first. See https://github.com/allenai/OLMo-core/pull/546.
         for callback in self._iter_callbacks():
             callback.close()
+
+        if gracefully:
+            barrier()
+
         gc_cuda()
-        barrier()
 
     def state_dict(self) -> TrainerStateDict:
         """
