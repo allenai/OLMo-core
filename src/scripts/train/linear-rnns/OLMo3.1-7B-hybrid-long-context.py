@@ -180,7 +180,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
-            load_path=f"{common.root_dir}/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-midtrain-deux-soup/step23842/",
+            load_path="gs://ai2-llm/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-midtrain-deux-soup/step23842/",
             save_folder=f"{common.root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
