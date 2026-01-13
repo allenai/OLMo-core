@@ -21,9 +21,7 @@ def _test_cp2hp_scatter():
     B, T, H, D = 2, 8, 4, 16
     t_local = T // world_size
 
-    input_tensor = torch.full(
-        (B, t_local, H, D), float(rank), device=device, dtype=torch.float32
-    )
+    input_tensor = torch.full((B, t_local, H, D), float(rank), device=device, dtype=torch.float32)
 
     output = all_to_all_cp2hp(input_tensor, group)
 
@@ -64,9 +62,7 @@ def _test_hp2cp_gather():
     h_local = H // world_size
     t_local = T // world_size
 
-    input_tensor = torch.full(
-        (B, T, h_local, D), float(rank), device=device, dtype=torch.float32
-    )
+    input_tensor = torch.full((B, T, h_local, D), float(rank), device=device, dtype=torch.float32)
 
     output = all_to_all_hp2cp(input_tensor, group)
 
@@ -112,27 +108,21 @@ def _test_roundtrip():
     hp = all_to_all_cp2hp(original, group)
     recovered = all_to_all_hp2cp(hp, group)
 
-    assert torch.allclose(original, recovered), (
-        f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
-    )
+    assert torch.allclose(
+        original, recovered
+    ), f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_cp2hp_scatter(backend: str):
-    run_distributed_test(
-        _test_cp2hp_scatter, backend=backend, start_method="spawn", world_size=2
-    )
+    run_distributed_test(_test_cp2hp_scatter, backend=backend, start_method="spawn", world_size=2)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_hp2cp_gather(backend: str):
-    run_distributed_test(
-        _test_hp2cp_gather, backend=backend, start_method="spawn", world_size=2
-    )
+    run_distributed_test(_test_hp2cp_gather, backend=backend, start_method="spawn", world_size=2)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_roundtrip(backend: str):
-    run_distributed_test(
-        _test_roundtrip, backend=backend, start_method="spawn", world_size=2
-    )
+    run_distributed_test(_test_roundtrip, backend=backend, start_method="spawn", world_size=2)

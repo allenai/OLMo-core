@@ -10,10 +10,6 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.distributed.parallel import (
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
-)
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
@@ -30,11 +26,7 @@ from olmo_core.nn.attention import (
     SlidingWindowAttentionConfig,
     UlyssesLoadBalancer,
 )
-from olmo_core.nn.attention.ring import (
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
-    UlyssesLoadBalancer,
-)
+from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
@@ -145,9 +137,7 @@ def test_attention_backend(
         pytest.param({"rope": RoPEConfig()}, id="rope"),
         pytest.param({"rope": RoPEConfig(name=RoPEType.complex)}, id="complex-rope"),
         pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
-        pytest.param(
-            {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"
-        ),
+        pytest.param({"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"),
     ],
 )
 def test_attention(
@@ -214,12 +204,8 @@ def test_attention(
 @pytest.mark.parametrize(
     "backend_name",
     [
-        pytest.param(
-            AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS
-        ),
-        pytest.param(
-            AttentionBackendName.flash_3, id="flash-attn-2", marks=FLASH_3_MARKS
-        ),
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_3, id="flash-attn-2", marks=FLASH_3_MARKS),
         pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
         pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
     ],
@@ -264,9 +250,7 @@ def test_sdpa(
     batch_size = 2
     n_heads = 8
     if intra_doc_masking:
-        doc_lens = torch.tensor(
-            [[0, 4, 16, 12], [8, 8, 8, 8]], dtype=torch.int32, device=device
-        )
+        doc_lens = torch.tensor([[0, 4, 16, 12], [8, 8, 8, 8]], dtype=torch.int32, device=device)
         max_doc_len = int(torch.max(doc_lens))
         cu_doc_lens = torch.cumsum(doc_lens.flatten(), dim=0, dtype=torch.int32)
         assert int(cu_doc_lens[-1]) == batch_size * seq_len
@@ -284,21 +268,13 @@ def test_sdpa(
 
     attention = Attention(backend=backend_name, **kwargs)
 
-    q = torch.randn(
-        batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device
-    )
-    k = torch.randn(
-        batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device
-    )
-    v = torch.randn(
-        batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device
-    )
+    q = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+    k = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+    v = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
 
     with torch.no_grad():
         mask_len = batch_size * seq_len if intra_doc_masking else seq_len
-        attn_mask = torch.ones(
-            mask_len, mask_len, dtype=torch.bool, device=device
-        ).tril(diagonal=0)
+        attn_mask = torch.ones(mask_len, mask_len, dtype=torch.bool, device=device).tril(diagonal=0)
         is_causal = False
 
         if window_size is not None:
@@ -314,9 +290,7 @@ def test_sdpa(
                 attn_mask,
                 torch.block_diag(
                     *[
-                        torch.ones(
-                            int(doc_len), int(doc_len), dtype=torch.bool, device=device
-                        )
+                        torch.ones(int(doc_len), int(doc_len), dtype=torch.bool, device=device)
                         for doc_len in doc_lens.flatten()
                     ]
                 ),
@@ -329,15 +303,9 @@ def test_sdpa(
         # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
         y1 = (
             F.scaled_dot_product_attention(
-                q.view(
-                    q.shape[0] * q.shape[1] // mask_len, mask_len, *q.shape[2:]
-                ).transpose(1, 2),
-                k.view(
-                    k.shape[0] * k.shape[1] // mask_len, mask_len, *k.shape[2:]
-                ).transpose(1, 2),
-                v.view(
-                    v.shape[0] * v.shape[1] // mask_len, mask_len, *v.shape[2:]
-                ).transpose(1, 2),
+                q.view(q.shape[0] * q.shape[1] // mask_len, mask_len, *q.shape[2:]).transpose(1, 2),
+                k.view(k.shape[0] * k.shape[1] // mask_len, mask_len, *k.shape[2:]).transpose(1, 2),
+                v.view(v.shape[0] * v.shape[1] // mask_len, mask_len, *v.shape[2:]).transpose(1, 2),
                 attn_mask=attn_mask,
                 is_causal=is_causal,
             )
@@ -386,9 +354,7 @@ def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
     with torch.no_grad():
         fused_att.w_out.load_state_dict(attention.w_out.state_dict())
         fused_att.w_qkv.weight.copy_(
-            torch.cat(
-                [attention.w_q.weight, attention.w_k.weight, attention.w_v.weight]
-            )
+            torch.cat([attention.w_q.weight, attention.w_k.weight, attention.w_v.weight])
         )
         fused_att.w_qkv.bias.copy_(
             torch.cat([attention.w_q.bias, attention.w_k.bias, attention.w_v.bias])
@@ -441,18 +407,14 @@ def test_attention_with_intra_document_masking():
     d_model = 128
     seq_len = 32
 
-    attention = Attention(
-        d_model=d_model, n_heads=8, init_device="cuda", use_flash=True
-    )
+    attention = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flash=True)
     fused_att = FusedAttention(d_model=d_model, n_heads=8, init_device="cuda")
 
     # Make sure weights match.
     with torch.no_grad():
         fused_att.w_out.load_state_dict(attention.w_out.state_dict())
         fused_att.w_qkv.weight.copy_(
-            torch.cat(
-                [attention.w_q.weight, attention.w_k.weight, attention.w_v.weight]
-            )
+            torch.cat([attention.w_q.weight, attention.w_k.weight, attention.w_v.weight])
         )
         fused_att.w_qkv.bias.copy_(
             torch.cat([attention.w_q.bias, attention.w_k.bias, attention.w_v.bias])
@@ -465,18 +427,14 @@ def test_attention_with_intra_document_masking():
         y2 = attention(
             x.clone(),
             max_doc_len=seq_len,
-            cu_doc_lens=torch.tensor(
-                [0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"
-            ),
+            cu_doc_lens=torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"),
         )
 
         y1_fused = fused_att(x.clone())
         y2_fused = fused_att(
             x.clone(),
             max_doc_len=seq_len,
-            cu_doc_lens=torch.tensor(
-                [0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"
-            ),
+            cu_doc_lens=torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"),
         )
 
     torch.testing.assert_close(y1, y2)
@@ -487,9 +445,7 @@ def test_attention_with_intra_document_masking():
 
 @requires_gpu
 @requires_flash_attn_2
-@requires_compute_capability(
-    min_cc=9
-)  # flash-attn bf16 precision is worse on A100s (cc=8)
+@requires_compute_capability(min_cc=9)  # flash-attn bf16 precision is worse on A100s (cc=8)
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize(
     "n_kv_heads",
@@ -499,9 +455,7 @@ def test_attention_with_intra_document_masking():
     "use_rope",
     [pytest.param(True, id="rope"), pytest.param(False, id="no-rope")],
 )
-def test_attention_kv_caching(
-    batch_size: int, n_kv_heads: Optional[int], use_rope: bool
-):
+def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], use_rope: bool):
     seed_all(0)
 
     d_model = 512
@@ -533,9 +487,7 @@ def test_attention_kv_caching(
     # 2. Prefill + multiple decode steps with KV cache
     attention.init_kv_cache_manager(batch_size, max_seq_len)
     x_prefill = x[:, :prefill_len, :]
-    attention_mask = torch.ones(
-        batch_size, prefill_len, dtype=torch.bool, device="cuda"
-    )
+    attention_mask = torch.ones(batch_size, prefill_len, dtype=torch.bool, device="cuda")
     cache_leftpad = attention_mask_to_cache_leftpad(attention_mask)
 
     # First pass with allocated KV cache - this will populate the cache
@@ -600,12 +552,8 @@ def test_attention_kv_cache_update():
     assert attention.kv_cache_manager is not None
 
     # Manually set cache contents as if we just did a prefill.
-    prefill_input = torch.randn(
-        batch_size, prefill_len, d_model, dtype=dtype, device="cuda"
-    )
-    attention_mask = torch.ones(
-        batch_size, prefill_len, dtype=torch.bool, device="cuda"
-    )
+    prefill_input = torch.randn(batch_size, prefill_len, d_model, dtype=dtype, device="cuda")
+    attention_mask = torch.ones(batch_size, prefill_len, dtype=torch.bool, device="cuda")
     cache_leftpad = attention_mask_to_cache_leftpad(attention_mask)
 
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
@@ -689,9 +637,7 @@ def test_attention_prefill_forward_pass(batch_size: int):
     max_seq_len = 128
     seq_len = 124
     dtype = torch.bfloat16
-    attention = Attention(
-        d_model=d_model, n_heads=n_heads, use_flash=True, init_device="cuda"
-    )
+    attention = Attention(d_model=d_model, n_heads=n_heads, use_flash=True, init_device="cuda")
 
     x = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device="cuda")
 
@@ -796,24 +742,16 @@ def test_attention_kv_cache_write_position():
 
         # Regions before the write position should be unchanged
         if write_pos > 0:
-            torch.testing.assert_close(
-                k_cache_before[i, :write_pos], k_cache_new[:write_pos]
-            )
-            torch.testing.assert_close(
-                v_cache_before[i, :write_pos], v_cache_new[:write_pos]
-            )
+            torch.testing.assert_close(k_cache_before[i, :write_pos], k_cache_new[:write_pos])
+            torch.testing.assert_close(v_cache_before[i, :write_pos], v_cache_new[:write_pos])
 
         # The write position must now be non-zero
         assert not torch.all(k_cache_new[write_pos] == 0)
         assert not torch.all(v_cache_new[write_pos] == 0)
 
         # Region after the write position should remain zeros (unchanged)
-        torch.testing.assert_close(
-            k_cache_before[i, write_pos + 1 :], k_cache_new[write_pos + 1 :]
-        )
-        torch.testing.assert_close(
-            v_cache_before[i, write_pos + 1 :], v_cache_new[write_pos + 1 :]
-        )
+        torch.testing.assert_close(k_cache_before[i, write_pos + 1 :], k_cache_new[write_pos + 1 :])
+        torch.testing.assert_close(v_cache_before[i, write_pos + 1 :], v_cache_new[write_pos + 1 :])
 
 
 @requires_gpu
@@ -839,15 +777,11 @@ def test_attention_leftpad_shift_equivalence(use_rope):
 
     # Build masks to derive correct cache_leftpad and seq_lens
     max_len_a = pad_a + len_content
-    mask_a = torch.tensor(
-        [[0] * pad_a + [1] * len_content], dtype=torch.bool, device="cuda"
-    )
+    mask_a = torch.tensor([[0] * pad_a + [1] * len_content], dtype=torch.bool, device="cuda")
     cache_leftpad_a = attention_mask_to_cache_leftpad(mask_a)
 
     max_len_b = pad_b + len_content
-    mask_b = torch.tensor(
-        [[0] * pad_b + [1] * len_content], dtype=torch.bool, device="cuda"
-    )
+    mask_b = torch.tensor([[0] * pad_b + [1] * len_content], dtype=torch.bool, device="cuda")
     cache_leftpad_b = attention_mask_to_cache_leftpad(mask_b)
 
     # Build left-padded inputs so padding tokens are present and must be ignored by the kernel
@@ -899,9 +833,7 @@ def test_attention_leftpad_shift_equivalence(use_rope):
     "attn_config",
     [
         AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=1, bias=True),
-        AttentionConfig(
-            name=AttentionType.default, n_heads=8, n_kv_heads=1, bias=False
-        ),
+        AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=1, bias=False),
         AttentionConfig(
             name=AttentionType.default, n_heads=8, bias=False, qk_norm=LayerNormConfig()
         ),
@@ -975,9 +907,7 @@ def test_no_global_rope_on_global_layers(
     """Test that no_global_rope controls RoPE on global (non-SWA) layers."""
     d_model = 128
     rope_config = (
-        RoPEConfig(no_global_rope=no_global_rope)
-        if no_global_rope is not None
-        else RoPEConfig()
+        RoPEConfig(no_global_rope=no_global_rope) if no_global_rope is not None else RoPEConfig()
     )
     attn_config = AttentionConfig(
         name=AttentionType.default,
@@ -1148,18 +1078,10 @@ def test_ulysses_load_balancer_padding():
 def test_ulysses_load_balancer_shard():
     x = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7]).unsqueeze(0)
     # Ulysses uses contiguous sharding, so each rank gets a contiguous chunk
-    assert _get_ulysses_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
-        [0, 1]
-    ]
-    assert _get_ulysses_lb(1, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
-        [2, 3]
-    ]
-    assert _get_ulysses_lb(2, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
-        [4, 5]
-    ]
-    assert _get_ulysses_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [
-        [6, 7]
-    ]
+    assert _get_ulysses_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[0, 1]]
+    assert _get_ulysses_lb(1, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[2, 3]]
+    assert _get_ulysses_lb(2, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[4, 5]]
+    assert _get_ulysses_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[6, 7]]
 
 
 def test_ulysses_load_balancer_shard_with_padding():
@@ -1328,9 +1250,7 @@ def test_attention_gating(
         init_device=device.type,
     )
 
-    x = torch.randn(
-        batch_size, seq_len, d_model, dtype=dtype, device=device, requires_grad=True
-    )
+    x = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device=device, requires_grad=True)
 
     with torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
         y = attention(x)
@@ -1378,9 +1298,7 @@ def _run_tensor_parallel_attention(
         pytest.param({}, id="default"),
         pytest.param({"rope": RoPEConfig()}, id="rope"),
         pytest.param({"qk_norm": LayerNormConfig()}, id="qk-layernorm"),
-        pytest.param(
-            {"qk_norm": LayerNormConfig(), "rope": RoPEConfig()}, id="qk-layernorm-rope"
-        ),
+        pytest.param({"qk_norm": LayerNormConfig(), "rope": RoPEConfig()}, id="qk-layernorm-rope"),
         pytest.param(
             {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True},
             id="headwise-qk-layernorm",
@@ -1437,9 +1355,7 @@ def _run_context_parallel_attention_ring(
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
 
     attn = Attention(init_device=device.type, **attn_kwargs)
-    ring_style = RingContextParallelStyle(
-        load_balancer=load_balancer_type, head_stride=head_stride
-    )
+    ring_style = RingContextParallelStyle(load_balancer=load_balancer_type, head_stride=head_stride)
     attn.apply_cp(mesh["cp"], ring=ring_style)
     load_model_and_optim_state(checkpoint_dir, attn)
 
@@ -1479,9 +1395,7 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
     attn = Attention(init_device=device.type, **attn_kwargs)
 
     bs, seq_len = 2, 64
-    x = torch.randn(
-        bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16
-    )
+    x = torch.randn(bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16)
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         y = attn(x)
 
@@ -1545,18 +1459,12 @@ def _run_context_parallel_attention_ulysses(
     "attn_backend",
     [
         pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
-        pytest.param(
-            AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS
-        ),
-        pytest.param(
-            AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS
-        ),
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
         pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
     ],
 )
-def test_context_parallel_attention_ulysses(
-    tmp_path, attn_backend: AttentionBackendName
-):
+def test_context_parallel_attention_ulysses(tmp_path, attn_backend: AttentionBackendName):
     """
     Test Ulysses-style context parallelism.
 
@@ -1579,9 +1487,7 @@ def test_context_parallel_attention_ulysses(
         attn = attn.to(dtype=torch.bfloat16)
 
     bs, seq_len = 2, 64
-    x = torch.randn(
-        bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16
-    )
+    x = torch.randn(bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16)
     with torch.autocast(
         device_type=device.type, dtype=torch.bfloat16, enabled=device.type != "cpu"
     ):

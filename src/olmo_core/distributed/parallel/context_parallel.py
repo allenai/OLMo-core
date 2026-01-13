@@ -33,26 +33,20 @@ def all_to_all_cp2hp(
     :returns: The output tensor with shape ``[B, T, H/CP, D]``, partitioned along
         the head dimension.
     """
-    assert input_.dim() == 4, (
-        "all_to_all_cp2hp expects 4-d input shape [B, T/CP, H, D]."
-    )
+    assert input_.dim() == 4, "all_to_all_cp2hp expects 4-d input shape [B, T/CP, H, D]."
     world_size = get_world_size(cp_group)
 
     B, t_local, h_in, d_in = input_.shape
     h_out = h_in // world_size
 
     # [B, T/CP, H, D] -> [B, T/CP, CP, H/CP, D] -> [CP, B, T/CP, H/CP, D]
-    input_split = input_.view(B, t_local, world_size, h_out, d_in).permute(
-        2, 0, 1, 3, 4
-    )
+    input_split = input_.view(B, t_local, world_size, h_out, d_in).permute(2, 0, 1, 3, 4)
     input_split = input_split.flatten(0, 3)
 
     exchanged = all_to_all_single(cp_group, input_split)
 
     # [CP, B, T/CP, H/CP, D] -> [B, CP, T/CP, H/CP, D] -> [B, T, H/CP, D]
-    exchanged = exchanged.view(world_size, B, t_local, h_out, d_in).permute(
-        1, 0, 2, 3, 4
-    )
+    exchanged = exchanged.view(world_size, B, t_local, h_out, d_in).permute(1, 0, 2, 3, 4)
     exchanged = exchanged.reshape(B, t_local * world_size, h_out, d_in)
     return exchanged
 
@@ -71,9 +65,7 @@ def all_to_all_hp2cp(
     :returns: The output tensor with shape ``[B, T/CP, H, D]``, partitioned along
         the sequence dimension but with full head dimension.
     """
-    assert input_.dim() == 4, (
-        "all_to_all_hp2cp expects 4-d input shape [B, T, H/CP, D]."
-    )
+    assert input_.dim() == 4, "all_to_all_hp2cp expects 4-d input shape [B, T, H/CP, D]."
     world_size = get_world_size(cp_group)
 
     B, t_full, h_in, d_in = input_.shape
@@ -103,9 +95,9 @@ def all_to_all_cp2hp_qkvpacked(
     :returns: The output tensor with shape ``[B, T, 3, H/CP, D]``, partitioned along
         the head dimension.
     """
-    assert input_.dim() == 5, (
-        "all_to_all_cp2hp_qkvpacked expects 5-d input shape [B, T/CP, 3, H, D]."
-    )
+    assert (
+        input_.dim() == 5
+    ), "all_to_all_cp2hp_qkvpacked expects 5-d input shape [B, T/CP, 3, H, D]."
     world_size = get_world_size(cp_group)
 
     B, t_local, three, h_in, d_in = input_.shape
@@ -113,17 +105,13 @@ def all_to_all_cp2hp_qkvpacked(
     h_out = h_in // world_size
 
     # [B, T/CP, 3, H, D] -> [B, T/CP, 3, CP, H/CP, D] -> [CP, B, T/CP, 3, H/CP, D]
-    input_split = input_.view(B, t_local, three, world_size, h_out, d_in).permute(
-        3, 0, 1, 2, 4, 5
-    )
+    input_split = input_.view(B, t_local, three, world_size, h_out, d_in).permute(3, 0, 1, 2, 4, 5)
     input_split = input_split.flatten(0, 4)
 
     exchanged = all_to_all_single(cp_group, input_split)
 
     # [CP, B, T/CP, 3, H/CP, D] -> [B, CP, T/CP, 3, H/CP, D] -> [B, T, 3, H/CP, D]
-    exchanged = exchanged.view(world_size, B, t_local, three, h_out, d_in).permute(
-        1, 0, 2, 3, 4, 5
-    )
+    exchanged = exchanged.view(world_size, B, t_local, three, h_out, d_in).permute(1, 0, 2, 3, 4, 5)
     exchanged = exchanged.reshape(B, t_local * world_size, three, h_out, d_in)
     return exchanged
 
@@ -140,9 +128,9 @@ def all_to_all_hp2cp_qkvpacked(
     :returns: The output tensor with shape ``[B, T/CP, 3, H, D]``, partitioned along
         the sequence dimension but with full head dimension.
     """
-    assert input_.dim() == 5, (
-        "all_to_all_hp2cp_qkvpacked expects 5-d input shape [B, T, 3, H/CP, D]."
-    )
+    assert (
+        input_.dim() == 5
+    ), "all_to_all_hp2cp_qkvpacked expects 5-d input shape [B, T, 3, H/CP, D]."
     world_size = get_world_size(cp_group)
 
     B, t_full, three, h_in, d_in = input_.shape
@@ -150,16 +138,12 @@ def all_to_all_hp2cp_qkvpacked(
     t_out = t_full // world_size
 
     # [B, T, 3, H/CP, D] -> [B, CP, T/CP, 3, H/CP, D] -> [CP, B, T/CP, 3, H/CP, D]
-    input_split = input_.view(B, world_size, t_out, three, h_in, d_in).permute(
-        1, 0, 2, 3, 4, 5
-    )
+    input_split = input_.view(B, world_size, t_out, three, h_in, d_in).permute(1, 0, 2, 3, 4, 5)
     input_split = input_split.flatten(0, 4)
 
     exchanged = all_to_all_single(cp_group, input_split)
 
     # [CP, B, T/CP, 3, H/CP, D] -> [B, T/CP, CP, 3, H/CP, D] -> [B, T/CP, 3, H, D]
-    exchanged = exchanged.view(world_size, B, t_out, three, h_in, d_in).permute(
-        1, 2, 0, 3, 4, 5
-    )
+    exchanged = exchanged.view(world_size, B, t_out, three, h_in, d_in).permute(1, 2, 0, 3, 4, 5)
     exchanged = exchanged.reshape(B, t_out, three, h_in * world_size, d_in)
     return exchanged

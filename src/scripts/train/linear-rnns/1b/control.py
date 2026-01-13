@@ -7,7 +7,7 @@ from functools import partial
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE, get_root_dir
+from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import (
     CommonComponents,
     ExperimentConfig,
@@ -22,7 +22,6 @@ from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
     CheckpointerCallback,
-    CometCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (

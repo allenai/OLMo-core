@@ -297,16 +297,12 @@ class TorchAttentionBackend(AttentionBackend):
         del local_k_slice
 
         if isinstance(qkv, torch.Tensor):
-            raise RuntimeError(
-                f"'{self.__class__.__name__}' doesn't support packed QKV"
-            )
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
 
         q, k, v = qkv
 
         if kv_cache_manager is not None:
-            raise RuntimeError(
-                f"'{self.__class__.__name__}' doesn't support KV caching"
-            )
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
 
         attn_mask: Optional[torch.Tensor] = None
         if self.window_size != (-1, -1):
@@ -411,9 +407,7 @@ class TorchAttentionBackend(AttentionBackend):
         device: torch.device,
         window_size: Tuple[int, int],
     ) -> torch.Tensor:
-        causal_mask = torch.tril(
-            torch.ones(seq_len_q, seq_len_kv, device=device, dtype=torch.bool)
-        )
+        causal_mask = torch.tril(torch.ones(seq_len_q, seq_len_kv, device=device, dtype=torch.bool))
 
         if window_size != (-1, -1):
             sliding_window_left_mask = torch.ones_like(
@@ -873,9 +867,7 @@ class TEAttentionBackend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_te_attn():
-            raise RuntimeError(
-                f"'{cls.__name__}' requires NVIDIA's TransformerEngine package."
-            )
+            raise RuntimeError(f"'{cls.__name__}' requires NVIDIA's TransformerEngine package.")
 
     @classmethod
     def assert_supports_swa(cls):
@@ -941,14 +933,10 @@ class TEAttentionBackend(AttentionBackend):
         del local_k_slice
 
         if kv_cache_manager is not None:
-            raise RuntimeError(
-                f"'{self.__class__.__name__}' doesn't support KV caching"
-            )
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
 
         if isinstance(qkv, torch.Tensor):
-            raise RuntimeError(
-                f"'{self.__class__.__name__}' doesn't support packed QKV"
-            )
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
 
         if any(
             opt is not None

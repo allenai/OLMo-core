@@ -14,13 +14,20 @@ import torch.nn as nn
 from einops import rearrange, repeat
 from fla.layers.utils import get_unpad_data, index_first_axis, pad_input
 from fla.modules import FusedRMSNormGated, RMSNorm  # , ShortConvolution
-from fla.modules.convolution import causal_conv1d, causal_conv1d_update, causal_conv1d_update_cuda
+from fla.modules.convolution import (
+    causal_conv1d,
+    causal_conv1d_update,
+    causal_conv1d_update_cuda,
+)
 
 try:
     from causal_conv1d import causal_conv1d_fn
 except ImportError:
     causal_conv1d_fn = None
-from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
+from fla.ops.gated_delta_rule import (
+    chunk_gated_delta_rule,
+    fused_recurrent_gated_delta_rule,
+)
 from torch.distributed.device_mesh import DeviceMesh
 from torch.nn import functional as F
 

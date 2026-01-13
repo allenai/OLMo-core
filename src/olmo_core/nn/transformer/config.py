@@ -2,10 +2,8 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
-from transformers import AutoModelForCausalLM
-from transformers.configuration_utils import PretrainedConfig
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.doc_utils import beta_feature

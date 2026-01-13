@@ -20,7 +20,11 @@ from olmo_core.nn.transformer.block import (
     TransformerBlock,
     TransformerBlockBase,
 )
-from olmo_core.testing import BACKENDS, GPU_MARKS, requires_multi_gpu, run_distributed_test
+from olmo_core.testing import (
+    BACKENDS,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 from olmo_core.utils import get_default_device, seed_all
 
 
@@ -194,9 +198,7 @@ def _run_context_parallel_block(checkpoint_dir, inputs_path, outputs_path, d_mod
 
 
 @requires_multi_gpu
-@pytest.mark.parametrize(
-    "backend", ["nccl"], ids=["ulysses-cp"]
-)  # ring CP still tested elsewhere
+@pytest.mark.parametrize("backend", ["nccl"], ids=["ulysses-cp"])  # ring CP still tested elsewhere
 def test_context_parallel_block(backend: str, tmp_path):
     device = torch.device("cuda")
     seed_all(0)

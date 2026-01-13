@@ -16,8 +16,6 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.distributed.parallel import (
     DataParallelConfig,
     DataParallelType,
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
     build_world_mesh,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
@@ -292,9 +290,7 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
     )
 
 
-def run_context_parallel_transformer_ring(
-    checkpoint_dir, outputs_path, architecture: str
-):
+def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.use_flash = True
@@ -306,9 +302,7 @@ def run_context_parallel_transformer_ring(
     )
 
     model = config.build()
-    ring_style = RingContextParallelStyle(
-        load_balancer=RingAttentionLoadBalancerType.zig_zag
-    )
+    ring_style = RingContextParallelStyle(load_balancer=RingAttentionLoadBalancerType.zig_zag)
     model.apply_cp(mesh["cp"], ring=ring_style)
     model.init_weights(device=device, max_seq_len=512)
     load_model_and_optim_state(checkpoint_dir, model)
@@ -318,9 +312,7 @@ def run_context_parallel_transformer_ring(
     logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(
-        og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL
-    )
+    torch.testing.assert_close(og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_multi_gpu
@@ -378,9 +370,7 @@ def run_context_parallel_transformer_ulysses(
     logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(
-        og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL
-    )
+    torch.testing.assert_close(og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_multi_gpu
@@ -388,12 +378,8 @@ def run_context_parallel_transformer_ulysses(
 @pytest.mark.parametrize(
     "backend_name",
     [
-        pytest.param(
-            AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS
-        ),
-        pytest.param(
-            AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS
-        ),
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
         pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
     ],
 )
@@ -431,9 +417,7 @@ def test_context_parallel_transformer_ulysses(
 def run_init_with_hsdp():
     assert dist.get_world_size() == 4
     mesh = build_world_mesh(
-        dp=DataParallelConfig(
-            name=DataParallelType.hsdp, shard_degree=2, num_replicas=2
-        )
+        dp=DataParallelConfig(name=DataParallelType.hsdp, shard_degree=2, num_replicas=2)
     )
     config = get_transformer_config("olmo2")
     model = config.build(init_device="meta")
@@ -509,9 +493,7 @@ def run_moe_hybrid_combined_forward(
         model.apply_ep(mesh["ep"])
 
     input_ids = get_transformer_inputs().to(device)
-    model.init_weights(
-        device=device, max_seq_len=512, max_local_microbatch_size=input_ids.numel()
-    )
+    model.init_weights(device=device, max_seq_len=512, max_local_microbatch_size=input_ids.numel())
 
     for block in model.blocks.values():
         cast(MoEHybridTransformerBlockBase, block).use_combined_forward = False
@@ -537,9 +519,7 @@ def run_moe_hybrid_combined_forward(
     "reordered_norm",
     [pytest.param(True, id="reordered-norm"), pytest.param(False, id="default-block")],
 )
-@pytest.mark.parametrize(
-    "tp", [pytest.param(True, id="TP"), pytest.param(False, id="EP")]
-)
+@pytest.mark.parametrize("tp", [pytest.param(True, id="TP"), pytest.param(False, id="EP")])
 def test_moe_hybrid_combined_forward(
     dropless: bool, shared_experts: bool, reordered_norm: bool, tp: bool
 ):
@@ -577,9 +557,7 @@ def test_build_with_block_overrides():
         feed_forward=FeedForwardConfig(hidden_size=d_model * 2, bias=False),
     )
     assert config.block.feed_forward_moe is not None
-    moe_config = replace(
-        config.block.feed_forward_moe, shared_mlp=config.block.feed_forward
-    )
+    moe_config = replace(config.block.feed_forward_moe, shared_mlp=config.block.feed_forward)
     config.block_overrides = {
         0: replace(
             config.block,
