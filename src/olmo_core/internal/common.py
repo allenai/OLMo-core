@@ -155,7 +155,7 @@ def build_launch_config(
         allow_dirty=False,
         env_vars=env_vars,
         env_secrets=env_secrets,
-        google_credentials_secret="GOOGLE_CREDENTIALS" if root_dir.startswith("gs://") else None,
+        google_credentials_secret="GOOGLE_CREDENTIALS",
         aws_config_secret=f"{beaker_user}_AWS_CONFIG",
         aws_credentials_secret=f"{beaker_user}_AWS_CREDENTIALS",
     )
