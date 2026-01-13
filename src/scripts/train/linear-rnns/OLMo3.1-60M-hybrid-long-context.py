@@ -175,7 +175,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            load_strategy=LoadStrategy.always,
+            load_strategy=LoadStrategy.if_available,
             load_trainer_state=False,
             load_optim_state=True,
             # load_path=f"{common.root_dir}/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-midtrain-deux-soup/step23842/",
