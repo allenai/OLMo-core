@@ -137,7 +137,6 @@ class Checkpointer:
             torch.cuda.synchronize()
         dir = normalize_path(dir)
 
-        barrier()
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
             self._save_train_state(dir, wd, train_state)
