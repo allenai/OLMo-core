@@ -104,7 +104,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     def configure_lr_scheduler(self, num_params: int, batch_size: int) -> Scheduler:
         warmup, chinchilla_periods = self.configure_chinchilla_periods(num_params)
         period_lengths = []
-        period_lr_multipliers = [] if self.stepped_schedule else None
+        period_lr_multipliers: list[float] | None = [] if self.stepped_schedule else None
         for pidx, c in enumerate(chinchilla_periods):
             period = self._chinchilla_duration(num_params, batch_size, c).value
             if self.stepped_schedule:
