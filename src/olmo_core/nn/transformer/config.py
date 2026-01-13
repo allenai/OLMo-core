@@ -503,6 +503,24 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
+    def olmo2_100M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 100M OLMo2 model config.
+        """
+        return cls.llama_like(
+            d_model=512,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 12),
+            n_heads=kwargs.pop("n_heads", 8),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
     def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=768,
@@ -701,6 +719,26 @@ class TransformerConfig(ModelConfig):
     @classmethod
     def olmo3_60M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         config = cls.olmo2_60M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_100M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 100M OLMo3 model config.
+        """
+        config = cls.olmo2_100M(
             vocab_size=vocab_size,
             sliding_window=kwargs.pop(
                 "sliding_window",
