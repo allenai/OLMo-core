@@ -359,38 +359,6 @@ def get_dp_model_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     return device_mesh[dp_dim_names]
 
 
-def get_dp_shard_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
-    """
-    Get the data parallel shard sub-mesh associated with a ``DeviceMesh``
-    created from :func:`build_world_mesh()`.
-
-    :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
-    """
-    device_mesh, dim_names = _get_model_mesh(device_mesh)
-    if MeshDimName.dp_shard in dim_names:
-        return device_mesh[MeshDimName.dp_shard]
-    else:
-        raise RuntimeError(
-            f"could not determine data parallel shard sub-mesh from mesh with dimensions {dim_names}"
-        )
-
-
-def get_dp_replicate_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
-    """
-    Get the data parallel replicate sub-mesh associated with a ``DeviceMesh``
-    created from :func:`build_world_mesh()`.
-
-    :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
-    """
-    device_mesh, dim_names = _get_model_mesh(device_mesh)
-    if MeshDimName.dp_replicate in dim_names:
-        return device_mesh[MeshDimName.dp_replicate]
-    else:
-        raise RuntimeError(
-            f"could not determine data parallel replicate sub-mesh from mesh with dimensions {dim_names}"
-        )
-
-
 def get_dp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
     Get the data parallel sub-mesh associated from a ``DeviceMesh`` created by :func:`build_world_mesh()`.

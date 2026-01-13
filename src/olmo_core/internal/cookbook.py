@@ -70,10 +70,10 @@ def configure_train_module(
         max_grad_norm=1.0,
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            # shard_degree=dp_shard_degree,
+            shard_degree=dp_shard_degree,
         ),
         cp_config=(
             TransformerContextParallelConfig.llama3(degree=cp_degree, head_stride=4)
