@@ -426,7 +426,11 @@ def apply_run_num_to_ladder(ladder: ModelLadder, run_num: int) -> None:
     Modifies the ladder in-place to:
     - Append '-run{N}' suffix to the ladder name and directory
     - Offset the seed by run_num for reproducible variation across runs
+    - Preserve the original project name so all runs log to the same W&B project
     """
+    # Preserve original name for W&B project/group if not explicitly set
+    if ladder.project is None:
+        ladder.project = ladder.name
     ladder.name = f"{ladder.name}-run{run_num}"
     ladder.dir = f"{ladder.dir}-run{run_num}"
     ladder.seed = ladder.seed + run_num
