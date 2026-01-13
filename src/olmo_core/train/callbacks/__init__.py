@@ -9,6 +9,7 @@ from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
+from .data_mixture_monitor import DataMixtureMonitorCallback
 from .evaluator_callback import (
     DownstreamEvaluatorCallbackConfig,
     EvaluatorCallback,
@@ -52,6 +53,7 @@ __all__ = [
     "MonkeyPatcherCallback",
     "MetricSaverCallback",
     "ListCheckpointerCallback",
+    "DataMixtureMonitorCallback",
 ]
 
 __doc__ += "\n"

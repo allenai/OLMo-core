@@ -2573,22 +2573,41 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
             mixture = self.source_mixture_config.build(
                 npdtype=self.get_dtype(), sequence_length=self.sequence_length
             )
+
+            paths = mixture.to_paths() #paths in stable order
+            
+            #metadata aligned with paths order
+            metadata = []
+            for outcome in mixture.sources:             # SourceMixtureOutcome
+                for pt in outcome.path_tokens:          # SourcePathTokens
+                    metadata.append(
+                        {
+                            "source": outcome.name,
+                            "source_tokens": pt.tokens,
+                            "source_max_tokens": pt.max_tokens,
+                        }
+                    )
+
+            # 3. Sanity: paths and metadata lengths must match.
+            assert len(paths) == len(metadata), "paths and metadata must align for mixture"
+
             dataset = NumpyFSLDatasetMixture(
-                *mixture.to_paths(),
-                seed=self.source_mixture_config.seed,
-                path_offset_index=mixture.to_index(),
-                sequence_length=self.sequence_length,
-                max_target_sequence_length=self.max_target_sequence_length,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
-                vocab_size=self.tokenizer.vocab_size,
-                dtype=self.get_dtype(),
-                metadata=self.metadata,
-                include_instance_metadata=self.include_instance_metadata,
-                generate_doc_lengths=self.generate_doc_lengths,
-                bos_token_id=self.tokenizer.bos_token_id,
-                instance_filter_config=self.instance_filter_config,
-            )
+                    *paths,
+                    seed=self.source_mixture_config.seed,
+                    path_offset_index=mixture.to_index(),
+                    sequence_length=self.sequence_length,
+                    max_target_sequence_length=self.max_target_sequence_length,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    vocab_size=self.tokenizer.vocab_size,
+                    dtype=self.get_dtype(),
+                    metadata=metadata,  # <— key line
+                    # include_instance_metadata=None (so base class turns it on automatically)
+                    generate_doc_lengths=self.generate_doc_lengths,
+                    bos_token_id=self.tokenizer.bos_token_id,
+                    instance_filter_config=self.instance_filter_config,
+                    label_mask_paths=None,   # mixture doesn’t support label masks right now
+                )
             return self._finalize(dataset)
 
         paths, metadata, label_masks = self._resolve_paths_metadata(
