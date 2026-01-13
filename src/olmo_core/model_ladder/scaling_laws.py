@@ -305,26 +305,6 @@ class ResidualDiagnostics:
         return f"ResidualDiagnostics({status}, {passed}/{total} tests, RMSE={self.rmse:.4f})"
 
 
-def _silverman_bandwidth(x: np.ndarray) -> float:
-    """
-    Compute Silverman's rule-of-thumb bandwidth for kernel density estimation.
-
-    This bandwidth is used for smoothed bootstrap, where we add Gaussian noise
-    to resampled data points to reduce discreteness artifacts.
-
-    Args:
-        x: Array of data values
-
-    Returns:
-        Bandwidth h for Gaussian kernel
-    """
-    n = len(x)
-    sd = np.std(x, ddof=1)
-    if sd < 1e-10 or n < 2:
-        return 0.0
-    return 1.06 * sd * n ** (-1 / 5)
-
-
 def _extract_pareto_frontier_dominance(
     N: np.ndarray,
     D: np.ndarray,
@@ -439,22 +419,6 @@ class ChinchillaIsoParamFit:
     r_squared_D: Optional[float] = None
     """R-squared of the D_opt(C) fit"""
 
-    # Bootstrap confidence intervals (10th, 90th percentiles)
-    E_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for E"""
-    A_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for A"""
-    alpha_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for alpha"""
-    G_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for G"""
-    a_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for a"""
-    H_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for H"""
-    b_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for b"""
-
     # Stored data from fitting (set by fit())
     _N: Optional[np.ndarray] = None
     """Parameter counts used in fitting (stored automatically by fit())"""
@@ -488,9 +452,6 @@ class ChinchillaIsoParamFit:
         C: ArrayLike,
         loss: ArrayLike,
         huber_delta: float = 1e-3,
-        bootstrap: bool = False,
-        n_bootstrap: int = 100,
-        bootstrap_frac: float = 0.8,
     ) -> "ChinchillaIsoParamFit":
         """
         Fit the IsoParam scaling laws using Chinchilla Approach 1 with Pareto dominance.
@@ -513,12 +474,9 @@ class ChinchillaIsoParamFit:
             C: Array of compute values (one per observation, e.g., FLOPs or petaFLOPs)
             loss: Array of loss values (one per observation)
             huber_delta: Delta parameter for Huber loss in L(C) fitting
-            bootstrap: If True, compute bootstrap confidence intervals
-            n_bootstrap: Number of bootstrap samples (default 100)
-            bootstrap_frac: Fraction of data to sample per bootstrap (default 0.8)
 
         Returns:
-            ChinchillaIsoParamFit with fitted parameters (and bootstrap CIs if requested)
+            ChinchillaIsoParamFit with fitted parameters
         """
         N = np.asarray(N)
         D = np.asarray(D)
@@ -611,76 +569,6 @@ class ChinchillaIsoParamFit:
         ss_tot_D = np.sum((log_D - log_D.mean()) ** 2)
         r2_D = 1 - ss_res_D / ss_tot_D if ss_tot_D > 0 else 0.0
 
-        # Bootstrap confidence intervals
-        bootstrap_cis: dict[str, Optional[tuple[float, float]]] = {
-            "E_ci": None,
-            "A_ci": None,
-            "alpha_ci": None,
-            "G_ci": None,
-            "a_ci": None,
-            "H_ci": None,
-            "b_ci": None,
-        }
-
-        if bootstrap:
-            # Smoothed bootstrap: resample with replacement and add Gaussian noise
-            # to loss values. This is more principled than smoothing parameter estimates.
-            n_samples = len(N_valid)
-            sample_size = int(n_samples * bootstrap_frac)
-            bootstrap_params: dict[str, list[float]] = {
-                "E": [],
-                "A": [],
-                "alpha": [],
-                "G": [],
-                "a": [],
-                "H": [],
-                "b": [],
-            }
-
-            rng = np.random.default_rng(42)
-
-            # Compute bandwidth for loss smoothing using Silverman's rule
-            loss_bandwidth = _silverman_bandwidth(L_valid)
-
-            for _ in range(n_bootstrap):
-                # Sample with replacement from all valid observations
-                indices = rng.choice(n_samples, size=sample_size, replace=True)
-                N_boot = N_valid[indices]
-                D_boot = D_valid[indices]
-                C_boot = C_valid[indices]
-                # Smoothed bootstrap: add Gaussian noise to loss values
-                L_boot = L_valid[indices] + rng.normal(0.0, loss_bandwidth, size=sample_size)
-                # Ensure loss stays positive
-                L_boot = np.maximum(L_boot, 1e-10)
-
-                try:
-                    # Fit on smoothed bootstrap sample
-                    boot_fit = cls.fit(
-                        N=N_boot,
-                        D=D_boot,
-                        C=C_boot,
-                        loss=L_boot,
-                        huber_delta=huber_delta,
-                        bootstrap=False,
-                    )
-                    bootstrap_params["E"].append(boot_fit.E)
-                    bootstrap_params["A"].append(boot_fit.A)
-                    bootstrap_params["alpha"].append(boot_fit.alpha)
-                    bootstrap_params["G"].append(boot_fit.G)
-                    bootstrap_params["a"].append(boot_fit.a)
-                    bootstrap_params["H"].append(boot_fit.H)
-                    bootstrap_params["b"].append(boot_fit.b)
-                except (ValueError, RuntimeError):
-                    # Skip failed fits
-                    continue
-
-            # Compute 10th and 90th percentiles
-            for param_name in bootstrap_params:
-                if len(bootstrap_params[param_name]) >= 10:
-                    p10 = float(np.percentile(bootstrap_params[param_name], 10))
-                    p90 = float(np.percentile(bootstrap_params[param_name], 90))
-                    bootstrap_cis[f"{param_name}_ci"] = (p10, p90)
-
         return cls(
             E=E_fit,
             A=A,
@@ -696,7 +584,6 @@ class ChinchillaIsoParamFit:
             _D=D_valid,
             _C=C_valid,
             _loss=L_valid,
-            **bootstrap_cis,
         )
 
     def report(self, compute_examples: Optional[list[float]] = None) -> str:
@@ -730,31 +617,13 @@ class ChinchillaIsoParamFit:
 
         # Key insights
         lines.append("-" * 40)
-        E_ci_str = f"  [{self.E_ci[0]:.4f}, {self.E_ci[1]:.4f}]" if self.E_ci else ""
-        lines.append(f"  Entropy floor (E):     {self.E:.4f}{E_ci_str}")
-        a_ci_str = f"  [{self.a_ci[0]:.4f}, {self.a_ci[1]:.4f}]" if self.a_ci else ""
+        lines.append(f"  Entropy floor (E):     {self.E:.4f}")
         lines.append(
-            f"  Param exponent (a):    {self.a:.4f}{a_ci_str}  {'← Chinchilla: ~0.50' if abs(self.a - 0.5) < 0.1 else ''}"
+            f"  Param exponent (a):    {self.a:.4f}  {'← Chinchilla: ~0.50' if abs(self.a - 0.5) < 0.1 else ''}"
         )
-        b_ci_str = f"  [{self.b_ci[0]:.4f}, {self.b_ci[1]:.4f}]" if self.b_ci else ""
         lines.append(
-            f"  Token exponent (b):    {self.b:.4f}{b_ci_str}  {'← Chinchilla: ~0.50' if abs(self.b - 0.5) < 0.1 else ''}"
+            f"  Token exponent (b):    {self.b:.4f}  {'← Chinchilla: ~0.50' if abs(self.b - 0.5) < 0.1 else ''}"
         )
-
-        # Show additional bootstrap CIs if available
-        if any([self.A_ci, self.alpha_ci, self.G_ci, self.H_ci]):
-            lines.append("-" * 40)
-            lines.append("  Bootstrap 90% CIs (10th-90th percentile):")
-            if self.A_ci:
-                lines.append(f"    A:     {self.A:.4f}  [{self.A_ci[0]:.4f}, {self.A_ci[1]:.4f}]")
-            if self.alpha_ci:
-                lines.append(
-                    f"    α:     {self.alpha:.4f}  [{self.alpha_ci[0]:.4f}, {self.alpha_ci[1]:.4f}]"
-                )
-            if self.G_ci:
-                lines.append(f"    G:     {self.G:.4e}  [{self.G_ci[0]:.4e}, {self.G_ci[1]:.4e}]")
-            if self.H_ci:
-                lines.append(f"    H:     {self.H:.4e}  [{self.H_ci[0]:.4e}, {self.H_ci[1]:.4e}]")
 
         # Compute-optimal ratio
         # If both a and b are ~0.5, then N and D scale equally with compute
@@ -855,22 +724,6 @@ class ChinchillaParametricFit:
     """R-squared of the fit (computed on log scale to match optimization objective)"""
     huber_loss: Optional[float] = None
     """Huber loss of the fit (computed on log scale to match optimization objective)"""
-
-    # Bootstrap confidence intervals (10th, 90th percentiles)
-    E_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for E"""
-    A_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for A"""
-    alpha_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for alpha"""
-    B_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for B"""
-    beta_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for beta"""
-    a_opt_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for a_opt = β/(α+β) (N_opt exponent)"""
-    b_opt_ci: Optional[tuple[float, float]] = None
-    """Bootstrap 10th/90th percentile for b_opt = α/(α+β) (D_opt exponent)"""
 
     # Stored data from fitting (set by fit())
     _N: Optional[np.ndarray] = None
@@ -1384,7 +1237,8 @@ class ChinchillaParametricFit:
 
         if parallel:
             n_workers = os.cpu_count() or 1
-            with multiprocessing.Pool(n_workers) as pool:
+            ctx = multiprocessing.get_context("fork")
+            with ctx.Pool(n_workers) as pool:
                 for res in tqdm(
                     pool.imap_unordered(optimize_fn, grid),
                     total=len(grid),
@@ -1413,9 +1267,6 @@ class ChinchillaParametricFit:
         D: ArrayLike,
         loss: ArrayLike,
         huber_delta: float = 1e-3,
-        bootstrap: bool = False,
-        n_bootstrap: int = 100,
-        bootstrap_frac: float = 0.8,
     ) -> "ChinchillaParametricFit":
         """
         Fit the full Chinchilla scaling law: L = E + A/N^alpha + B/D^beta
@@ -1427,12 +1278,9 @@ class ChinchillaParametricFit:
             D: Array of token counts
             loss: Array of loss values
             huber_delta: Delta parameter for Huber loss
-            bootstrap: If True, compute bootstrap confidence intervals
-            n_bootstrap: Number of bootstrap samples (default 100)
-            bootstrap_frac: Fraction of data to sample per bootstrap (default 0.8)
 
         Returns:
-            ChinchillaParametricFit with fitted parameters (and bootstrap CIs if requested)
+            ChinchillaParametricFit with fitted parameters
         """
         N = np.asarray(N)
         D = np.asarray(D)
@@ -1456,75 +1304,6 @@ class ChinchillaParametricFit:
         ss_tot = np.sum((log_L - log_L.mean()) ** 2)
         r_squared = 1 - (ss_res / ss_tot)
 
-        # Bootstrap confidence intervals
-        bootstrap_cis: dict[str, Optional[tuple[float, float]]] = {
-            "E_ci": None,
-            "A_ci": None,
-            "alpha_ci": None,
-            "B_ci": None,
-            "beta_ci": None,
-            "a_opt_ci": None,
-            "b_opt_ci": None,
-        }
-
-        if bootstrap:
-            # Smoothed bootstrap: resample with replacement and add Gaussian noise
-            # to loss values. This is more principled than smoothing parameter estimates.
-            n_samples = len(N)
-            sample_size = int(n_samples * bootstrap_frac)
-            bootstrap_params: dict[str, list[float]] = {
-                "E": [],
-                "A": [],
-                "alpha": [],
-                "B": [],
-                "beta": [],
-                "a_opt": [],
-                "b_opt": [],
-            }
-
-            rng = np.random.default_rng(42)
-
-            # Compute bandwidth for loss smoothing using Silverman's rule
-            loss_bandwidth = _silverman_bandwidth(L)
-
-            for _ in range(n_bootstrap):
-                # Sample with replacement
-                indices = rng.choice(n_samples, size=sample_size, replace=True)
-                N_boot = N[indices]
-                D_boot = D[indices]
-                # Smoothed bootstrap: add Gaussian noise to loss values
-                L_boot = L[indices] + rng.normal(0.0, loss_bandwidth, size=sample_size)
-                # Ensure loss stays positive
-                L_boot = np.maximum(L_boot, 1e-10)
-
-                try:
-                    # Fit on smoothed bootstrap sample
-                    boot_fit = cls.fit(
-                        N=N_boot,
-                        D=D_boot,
-                        loss=L_boot,
-                        huber_delta=huber_delta,
-                        bootstrap=False,
-                    )
-                    bootstrap_params["E"].append(boot_fit.E)
-                    bootstrap_params["A"].append(boot_fit.A)
-                    bootstrap_params["alpha"].append(boot_fit.alpha)
-                    bootstrap_params["B"].append(boot_fit.B)
-                    bootstrap_params["beta"].append(boot_fit.beta)
-                    # Compute derived optimal exponents
-                    bootstrap_params["a_opt"].append(boot_fit.a_opt)
-                    bootstrap_params["b_opt"].append(boot_fit.b_opt)
-                except (ValueError, RuntimeError):
-                    # Skip failed fits
-                    continue
-
-            # Compute 10th and 90th percentiles
-            for param_name in bootstrap_params:
-                if len(bootstrap_params[param_name]) >= 10:
-                    p10 = float(np.percentile(bootstrap_params[param_name], 10))
-                    p90 = float(np.percentile(bootstrap_params[param_name], 90))
-                    bootstrap_cis[f"{param_name}_ci"] = (p10, p90)
-
         return cls(
             E=E_fit,
             A=A,
@@ -1532,13 +1311,6 @@ class ChinchillaParametricFit:
             B=B,
             beta=beta,
             r_squared=r_squared,
-            E_ci=bootstrap_cis.get("E_ci"),
-            A_ci=bootstrap_cis.get("A_ci"),
-            alpha_ci=bootstrap_cis.get("alpha_ci"),
-            B_ci=bootstrap_cis.get("B_ci"),
-            beta_ci=bootstrap_cis.get("beta_ci"),
-            a_opt_ci=bootstrap_cis.get("a_opt_ci"),
-            b_opt_ci=bootstrap_cis.get("b_opt_ci"),
             _N=N,
             _D=D,
             _loss=L,
@@ -1563,7 +1335,7 @@ class ChinchillaParametricFit:
         if model_sizes is None:
             model_sizes = [190e6, 1e9, 7e9, 70e9]  # 190M, 1B, 7B, 70B
         if token_counts is None:
-            token_counts = [100e9, 1e12, 5e12, 15e12]  # 100B, 1T, 5T, 15T
+            token_counts = [100e9, 1e12, 5e12, 6e12, 15e12]  # 100B, 1T, 5T, 15T
 
         lines = []
         lines.append("=" * 70)
@@ -1580,35 +1352,22 @@ class ChinchillaParametricFit:
 
         # Key parameters
         lines.append("-" * 40)
-        E_ci_str = f"  [{self.E_ci[0]:.4f}, {self.E_ci[1]:.4f}]" if self.E_ci else ""
-        lines.append(f"  Entropy floor (E):     {self.E:.4f}{E_ci_str}")
-        A_ci_str = f"  [{self.A_ci[0]:.4f}, {self.A_ci[1]:.4f}]" if self.A_ci else ""
-        lines.append(f"  Param coefficient (A): {self.A:.4f}{A_ci_str}")
-        alpha_ci_str = (
-            f"  [{self.alpha_ci[0]:.4f}, {self.alpha_ci[1]:.4f}]" if self.alpha_ci else ""
-        )
+        lines.append(f"  Entropy floor (E):     {self.E:.4f}")
+        lines.append(f"  Param coefficient (A): {self.A:.4f}")
         lines.append(
-            f"  Param exponent (α):    {self.alpha:.4f}{alpha_ci_str}  {'← Chinchilla: ~0.34' if abs(self.alpha - 0.34) < 0.05 else ''}"
+            f"  Param exponent (α):    {self.alpha:.4f}  {'← Chinchilla: ~0.34' if abs(self.alpha - 0.34) < 0.05 else ''}"
         )
-        B_ci_str = f"  [{self.B_ci[0]:.4f}, {self.B_ci[1]:.4f}]" if self.B_ci else ""
-        lines.append(f"  Data coefficient (B):  {self.B:.4f}{B_ci_str}")
-        beta_ci_str = f"  [{self.beta_ci[0]:.4f}, {self.beta_ci[1]:.4f}]" if self.beta_ci else ""
+        lines.append(f"  Data coefficient (B):  {self.B:.4f}")
         lines.append(
-            f"  Data exponent (β):     {self.beta:.4f}{beta_ci_str}  {'← Chinchilla: ~0.28' if abs(self.beta - 0.28) < 0.05 else ''}"
+            f"  Data exponent (β):     {self.beta:.4f}  {'← Chinchilla: ~0.28' if abs(self.beta - 0.28) < 0.05 else ''}"
         )
 
         # Compute-optimal allocation (theoretical)
         # For L = E + A/N^α + B/D^β, optimal allocation: N ∝ C^(β/(α+β)), D ∝ C^(α/(α+β))
         lines.append("-" * 40)
         lines.append("  Compute-optimal allocation (theoretical):")
-        a_opt_ci_str = (
-            f"  [{self.a_opt_ci[0]:.3f}, {self.a_opt_ci[1]:.3f}]" if self.a_opt_ci else ""
-        )
-        lines.append(f"    N_opt ∝ C^{self.a_opt:.3f}{a_opt_ci_str}  ← Chinchilla: 0.46")
-        b_opt_ci_str = (
-            f"  [{self.b_opt_ci[0]:.3f}, {self.b_opt_ci[1]:.3f}]" if self.b_opt_ci else ""
-        )
-        lines.append(f"    D_opt ∝ C^{self.b_opt:.3f}{b_opt_ci_str}  ← Chinchilla: 0.54")
+        lines.append(f"    N_opt ∝ C^{self.a_opt:.3f}  ← Chinchilla: 0.46")
+        lines.append(f"    D_opt ∝ C^{self.b_opt:.3f}  ← Chinchilla: 0.54")
         if abs(self.a_opt - 0.5) < 0.05 and abs(self.b_opt - 0.5) < 0.05:
             lines.append("    ✓ Near equal scaling (~0.5 each) matches Chinchilla")
             # Optimal D/N = (βB/(αA))^(1/β) × N^((α-β)/β)
