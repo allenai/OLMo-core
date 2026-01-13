@@ -130,8 +130,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         cp_config=TransformerContextParallelConfig.ulysses(degree=2),
         # tp_config=TransformerTensorParallelConfig(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.1,
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=[f"blocks.{i}.feed_forward" for i in range(64)],  # not the GDN layers
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
