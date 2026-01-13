@@ -64,11 +64,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
 
     # Remove heads (and scale down d_model) to compensate for extra params.
-    config.d_model -= (  # Lets not do this anymore, 32 heads is easier to work with
-        REMOVE_HEADS * 128
-    )
-    config.block.attention.n_heads -= REMOVE_HEADS
-    assert config.d_model / config.block.attention.n_heads == 128
+    # config.d_model -= (  # Lets not do this anymore, 32 heads is easier to work with
+    #     REMOVE_HEADS * 128
+    # )
+    # config.block.attention.n_heads -= REMOVE_HEADS
+    # assert config.d_model / config.block.attention.n_heads == 128
 
     ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
 
