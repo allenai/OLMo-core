@@ -25,20 +25,23 @@ class ModelMergeCallback(Callback):
 
     .. important::
         This callback is not added automatically. You must explicitly add it to your
-        trainer and set ``merge_step`` to enable merging.
+        trainer to enable merging.
 
     Example usage::
 
-        # Start averaging 100 steps before step 10000
+        # Merge at the last step (default), averaging the last 100 steps
+        callback = ModelMergeCallback()
+
+        # Or specify a custom merge step (averages steps 9901-10000)
         callback = ModelMergeCallback(
-            merge_step=10000,          # Save merged model at step 10000
-            merge_last_n_steps=100,     # Start averaging at step 9900
+            merge_step=10000,
+            merge_last_n_steps=100,
         )
     """
 
     merge_step: Optional[int] = None
     """
-    The step at which to save the merged checkpoint. If None, merging is disabled.
+    The step at which to save the merged checkpoint. Defaults to the last step of training.
     """
 
     merge_last_n_steps: int = 100
@@ -53,20 +56,35 @@ class ModelMergeCallback(Callback):
     """
 
     enabled: bool = True
-    """
-    Whether this callback is enabled.
-    """
-
     _accumulator: Optional[Dict[str, torch.Tensor]] = field(default=None, repr=False)
     _n_accumulated: int = field(default=0, repr=False)
     _merge_completed: bool = field(default=False, repr=False)
+
+    def pre_train(self):
+        """
+        Resolve merge_step to max_steps if not explicitly set.
+        """
+        if not self.enabled:
+            return
+
+        if self.merge_step is None:
+            if self.trainer.max_steps is None:
+                log.warning(
+                    "ModelMergeCallback: merge_step not set and trainer has no max_steps. "
+                    "Disabling merging."
+                )
+                self.enabled = False
+                return
+            self.merge_step = self.trainer.max_steps
+            log.info(f"ModelMergeCallback: merge_step set to {self.merge_step} (last step)")
 
     @property
     def _start_step(self) -> int:
         """The step at which to start accumulating."""
         if self.merge_step is None:
             return -1
-        return max(0, self.merge_step - self.merge_last_n_steps)
+        # +1 so that merge_last_n_steps=100 gives exactly 100 steps (e.g., 901-1000 inclusive)
+        return max(0, self.merge_step - self.merge_last_n_steps + 1)
 
     @property
     def _is_accumulating(self) -> bool:
