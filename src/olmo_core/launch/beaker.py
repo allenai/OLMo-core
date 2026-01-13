@@ -440,6 +440,29 @@ class BeakerLaunchConfig(Config):
             except BeakerImageNotFound:
                 raise exc
 
+    def dry_run(
+        self,
+        follow: bool | None = None,
+        slack_notifications: bool | None = None,
+        launch_timeout: int | None = None,
+        step_timeout: int | None = None,
+        step_soft_timeout: int | None = None,
+        torchrun: bool | None = None,
+    ) -> None:
+        """
+        Do a dry-run without actually launching the experiment.
+        Arguments are the same as :meth:`launch()`.
+        """
+        recipe = self._build_recipe(
+            follow=follow,
+            slack_notifications=slack_notifications,
+            launch_timeout=launch_timeout,
+            step_timeout=step_timeout,
+            step_soft_timeout=step_soft_timeout,
+            torchrun=torchrun,
+        )
+        recipe.dry_run()
+
     def launch(
         self,
         follow: bool | None = None,
@@ -452,10 +475,6 @@ class BeakerLaunchConfig(Config):
         """
         Launch a Beaker experiment using this config.
 
-        .. tip::
-            You can preview what the Beaker experiment spec would like using
-            :meth:`build_experiment_spec()`.
-
         :param follow: Stream the logs and follow the experiment until completion.
         :param torchrun: Launch the target command with ``torchrun``. This will default to ``True``
             if ``num_gpus > 1`` and ``False`` otherwise.
@@ -466,8 +485,36 @@ class BeakerLaunchConfig(Config):
         :param launch_timeout: A timeout in seconds to wait for the job to start after submitting it.
             If the job doesn't start in time a timeout error will be raised.
 
-        :returns: The Beaker experiment.
+        :returns: The Beaker workload.
         """
+        recipe = self._build_recipe(
+            follow=follow,
+            slack_notifications=slack_notifications,
+            launch_timeout=launch_timeout,
+            step_timeout=step_timeout,
+            step_soft_timeout=step_soft_timeout,
+            torchrun=torchrun,
+        )
+
+        try:
+            return recipe.launch(
+                show_logs=follow,
+                start_timeout=launch_timeout,
+                inactive_timeout=step_timeout,
+                inactive_soft_timeout=step_soft_timeout,
+            )
+        except ExperimentFailedError as exc:
+            raise OLMoBeakerExperimentFailedError(str(exc))
+
+    def _build_recipe(
+        self,
+        follow: bool | None = None,
+        slack_notifications: bool | None = None,
+        launch_timeout: int | None = None,
+        step_timeout: int | None = None,
+        step_soft_timeout: int | None = None,
+        torchrun: bool | None = None,
+    ) -> GantryRecipe:
         follow = follow if follow is not None else self.follow
         slack_notifications = (
             slack_notifications if slack_notifications is not None else self.slack_notifications
@@ -577,16 +624,7 @@ class BeakerLaunchConfig(Config):
                 )
             ],
         )
-
-        try:
-            return recipe.launch(
-                show_logs=follow,
-                start_timeout=launch_timeout,
-                inactive_timeout=step_timeout,
-                inactive_soft_timeout=step_soft_timeout,
-            )
-        except ExperimentFailedError as exc:
-            raise OLMoBeakerExperimentFailedError(str(exc))
+        return recipe
 
 
 # Regex for detecting training (and eval) steps in logs.

@@ -166,7 +166,7 @@ def parse_args(
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Print the launch config without launching the run.",
+            help="Do a dry-run of the launch.",
             default=False,
         )
 
@@ -449,7 +449,7 @@ def _launch_run(
     if dry_run:
         log.info(f"Launch dry run for size {size}...")
         log.info(f"Results would be saved to {ladder.get_save_folder(size)}")
-        rich.get_console().print(launcher)
+        launcher.dry_run(follow=follow, slack_notifications=slack_notifications)
     else:
         log.info(f"Launching ladder run for size {size}...")
         log.info(f"Results will be saved to {ladder.get_save_folder(size)}")
