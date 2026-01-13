@@ -465,6 +465,27 @@ class SFTRouterConfig(Config):
                 rank_microbatch_size=4096
             else:
                 rank_microbatch_size=2048
+        elif model_name == "olmoe-4x7b-2-active":
+            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=4,
+                top_k=2,  # Override default of 1
+                lb_loss_weight=0.0,
+                z_loss_weight=0.001,
+                use_flash=True,
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
+                ],
+            )
+            ep_degree=4
+            if num_nodes == 8:
+                rank_microbatch_size=4096
+            else:
+                rank_microbatch_size=2048
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
