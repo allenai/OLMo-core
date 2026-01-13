@@ -217,7 +217,6 @@ class CometCallback(Callback):
                     f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
                     status="completed successfully",
                 )
-            self.finalize()
 
     def on_error(self, exc: BaseException):
         del exc
@@ -233,7 +232,9 @@ class CometCallback(Callback):
                     f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
                     status="failed",
                 )
-            self.finalize()
+
+    def close(self):
+        self.finalize()
 
     def check_if_canceled(self):
         if self.enabled and not self.finalized and self.cancel_tags:

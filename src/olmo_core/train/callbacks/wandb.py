@@ -86,6 +86,7 @@ class WandBCallback(Callback):
 
     _wandb = None
     _run_path = None
+    _finalized: bool = False
 
     @property
     def wandb(self):
@@ -102,6 +103,19 @@ class WandBCallback(Callback):
     @property
     def run_path(self):
         return self._run_path
+
+    @property
+    def finalized(self) -> bool:
+        return self._finalized
+
+    def finalize(self, exit_code: int = 0):
+        if not self.finalized:
+            if exit_code > 0:
+                log.warning("Finalizing failed W&B run...")
+            else:
+                log.info("Finalizing successful W&B run...")
+            self.wandb.finish(exit_code=exit_code, quiet=True)
+            self._finalized = True
 
     def pre_train(self):
         if self.enabled and get_rank() == 0:
@@ -136,16 +150,13 @@ class WandBCallback(Callback):
                 distributed=False,
             )
 
-    def post_train(self):
-        if self.enabled and get_rank() == 0 and self.run is not None:
-            log.info("Finalizing successful W&B run...")
-            self.wandb.finish(exit_code=0, quiet=True)
-
     def on_error(self, exc: BaseException):
         del exc
         if self.enabled and get_rank() == 0 and self.run is not None:
-            log.warning("Finalizing failed W&B run...")
-            self.wandb.finish(exit_code=1, quiet=True)
+            self.finalize(exit_code=1)
+
+    def close(self):
+        self.finalize()
 
     def check_if_canceled(self):
         if self.enabled and self.cancel_tags:
