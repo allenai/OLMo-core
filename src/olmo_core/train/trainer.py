@@ -681,12 +681,6 @@ class Trainer:
 
         barrier()
 
-        # It's possible that we tried restarting a run that had already finished.
-        if self.training_complete:
-            log.warning("Training already complete, ending run now")
-            self._shutdown()
-            return
-
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
             log.info(f"  - Callback {i + 1}: {callback_name}")
@@ -710,8 +704,9 @@ class Trainer:
                 self._shutdown()
                 return
 
-            # Do a dry-run for compiling and catch OOMs.
-            self._dry_run_batch()
+            # Do a dry-run for compiling and catching OOMs early.
+            if not self.training_complete:
+                self._dry_run_batch()
 
             # Iterate over epochs until done.
             while not self.training_complete:
