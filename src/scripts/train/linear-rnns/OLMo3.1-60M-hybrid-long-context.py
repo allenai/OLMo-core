@@ -221,7 +221,7 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
         include_instance_filter=INSTANCE_FILTER,
-        beaker_workspace="ai2/long-contexts",
+        beaker_workspace="ai2/linear-rnns",
         num_execution_units=1,
     )
     main(config_builder=config_builder)
