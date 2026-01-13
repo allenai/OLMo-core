@@ -1,15 +1,83 @@
+import multiprocessing
+import os
 from dataclasses import dataclass
+from functools import partial
+from itertools import product
 from typing import Optional
 
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from numpy.typing import ArrayLike
 from scipy import stats
 from scipy.optimize import minimize
+from tqdm import tqdm
 
 from olmo_core.data.composable.utils import format_token_count
 from olmo_core.model_ladder.utils import format_count
+
+
+def _optimize_single_init(
+    init_params: tuple[float, float, float, float, float],
+    N: np.ndarray,
+    D: np.ndarray,
+    log_L: np.ndarray,
+    L_min: float,
+    huber_delta: float,
+    scipy_bounds: list[tuple[float, float]],
+) -> tuple[float, tuple[float, float, float, float, float]] | None:
+    """
+    Run a single optimization from given initial parameters.
+
+    This is a module-level function to enable pickling for multiprocessing.
+
+    Returns:
+        Tuple of (loss, params) if successful, None otherwise.
+    """
+    alpha_init, beta_init, e_init, A_init, B_init = init_params
+
+    # Map e ∈ [-1, 1] to E ∈ [0, L.min()]
+    E_init = float(L_min * (e_init + 1) / 2)
+    # Clamp alpha/beta init to be within bounds (avoid 0 which is at boundary)
+    alpha_init_clamped = max(0.01, min(float(alpha_init), 2.0))
+    beta_init_clamped = max(0.01, min(float(beta_init), 2.0))
+    # Clamp A and B to be positive
+    A_init_clamped = max(1e-10, float(A_init))
+    B_init_clamped = max(1e-10, float(B_init))
+
+    p0 = (
+        E_init,
+        A_init_clamped,
+        alpha_init_clamped,
+        B_init_clamped,
+        beta_init_clamped,
+    )
+
+    def huber_loss_fn(residuals: np.ndarray, delta: float) -> np.ndarray:
+        abs_r = np.abs(residuals)
+        quadratic = 0.5 * residuals**2
+        linear = delta * (abs_r - 0.5 * delta)
+        return np.where(abs_r <= delta, quadratic, linear)
+
+    def objective(params: np.ndarray) -> float:
+        E_param, A, alpha, B, beta = params
+        L_pred = chinchilla_parametric_scaling_law(N, D, E_param, A, alpha, B, beta)
+        L_pred = np.maximum(L_pred, 1e-10)
+        log_residuals = log_L - np.log(L_pred)
+        # Note: sum rather than mean is important to avoid over-early stopping of optimization
+        return np.sum(huber_loss_fn(log_residuals, huber_delta))
+
+    try:
+        result = minimize(
+            objective,
+            p0,
+            method="L-BFGS-B",
+            bounds=scipy_bounds,
+            options={"maxiter": 50000, "ftol": 1e-12},
+        )
+        if np.isfinite(result.fun):
+            return (result.fun, tuple(result.x))
+    except Exception:
+        pass
+    return None
 
 
 @dataclass
@@ -237,58 +305,6 @@ class ResidualDiagnostics:
         return f"ResidualDiagnostics({status}, {passed}/{total} tests, RMSE={self.rmse:.4f})"
 
 
-def print_missing_ladder_points(
-    df: pd.DataFrame,
-    *,
-    ladder_col: str = "ladder",
-    size_col: str = "size",
-    xC_col: str = "xC",
-    expected_xC: list[float] | None = None,
-    expected_sizes: list[str] | None = None,
-) -> pd.DataFrame:
-    """
-    Print missing (xC, Model_size) data points for each ladder.
-
-    Args:
-        df: DataFrame with ladder data
-        ladder_col: Column name for ladder identifier
-        size_col: Column name for model size
-        xC_col: Column name for Chinchilla multiple
-        expected_xC: Expected xC values. Defaults to [0.5, 1, 2, 4, 8]
-        expected_sizes: Expected model sizes. Defaults to unique sizes in df
-
-    Returns:
-        DataFrame with missing combinations
-    """
-    if expected_xC is None:
-        expected_xC = [0.5, 1.0, 2.0, 4.0, 8.0]
-    if expected_sizes is None:
-        expected_sizes = sorted(
-            df[size_col].unique(), key=lambda x: float(x.replace("M", "e6").replace("B", "e9"))
-        )
-
-    # Build full expected grid
-    expected = set((xc, size) for xc in expected_xC for size in expected_sizes)
-
-    missing_rows = []
-    for ladder_name in sorted(df[ladder_col].unique()):
-        ladder_df = df[df[ladder_col] == ladder_name]
-        observed = set(zip(ladder_df[xC_col], ladder_df[size_col]))
-        missing = expected - observed
-
-        if missing:
-            print(f"\n{ladder_name}:")
-            # Sort by size then xC
-            missing_sorted = sorted(missing, key=lambda x: (expected_sizes.index(x[1]), x[0]))
-            for xc, size in missing_sorted:
-                print(f"  Missing: {xc}xC @ {size}")
-                missing_rows.append({ladder_col: ladder_name, xC_col: xc, size_col: size})
-        else:
-            print(f"\n{ladder_name}: ✓ Complete")
-
-    return pd.DataFrame(missing_rows)
-
-
 def _silverman_bandwidth(x: np.ndarray) -> float:
     """
     Compute Silverman's rule-of-thumb bandwidth for kernel density estimation.
@@ -307,55 +323,6 @@ def _silverman_bandwidth(x: np.ndarray) -> float:
     if sd < 1e-10 or n < 2:
         return 0.0
     return 1.06 * sd * n ** (-1 / 5)
-
-
-def _extract_pareto_frontier(
-    N: np.ndarray,
-    D: np.ndarray,
-    C: np.ndarray,
-    L: np.ndarray,
-    n_bins: int = 20,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Extract the Pareto frontier: for each compute bin, find the observation with minimum loss.
-
-    This implements the key step of Chinchilla Approach 1: at each compute level, identify
-    which (N, D) configuration achieves the lowest loss. Only these optimal points should
-    be used for fitting the scaling laws N_opt(C), D_opt(C), and L(C).
-
-    Args:
-        N: Array of parameter counts
-        D: Array of token counts
-        C: Array of compute values
-        L: Array of loss values
-        n_bins: Number of log-spaced bins to group compute values
-
-    Returns:
-        Tuple of (N_frontier, D_frontier, C_frontier, L_frontier) arrays containing
-        only the Pareto-optimal points (minimum loss per compute bin)
-    """
-    log_C = np.log(C)
-    log_C_edges = np.linspace(log_C.min(), log_C.max(), n_bins + 1)
-
-    optimal_indices = []
-    for i in range(n_bins):
-        # Include right edge in last bin
-        if i == n_bins - 1:
-            bin_mask = (log_C >= log_C_edges[i]) & (log_C <= log_C_edges[i + 1])
-        else:
-            bin_mask = (log_C >= log_C_edges[i]) & (log_C < log_C_edges[i + 1])
-
-        if bin_mask.any():
-            bin_indices = np.where(bin_mask)[0]
-            # Find the index with minimum loss in this bin
-            best_idx = bin_indices[np.argmin(L[bin_mask])]
-            optimal_indices.append(best_idx)
-
-    if len(optimal_indices) == 0:
-        raise ValueError("No valid bins found - check data range")
-
-    idx = np.array(optimal_indices)
-    return N[idx], D[idx], C[idx], L[idx]
 
 
 def _extract_pareto_frontier_dominance(
@@ -487,6 +454,16 @@ class ChinchillaIsoParamFit:
     """Bootstrap 10th/90th percentile for H"""
     b_ci: Optional[tuple[float, float]] = None
     """Bootstrap 10th/90th percentile for b"""
+
+    # Stored data from fitting (set by fit())
+    _N: Optional[np.ndarray] = None
+    """Parameter counts used in fitting (stored automatically by fit())"""
+    _D: Optional[np.ndarray] = None
+    """Token counts used in fitting (stored automatically by fit())"""
+    _C: Optional[np.ndarray] = None
+    """Compute values used in fitting (stored automatically by fit())"""
+    _loss: Optional[np.ndarray] = None
+    """Loss values used in fitting (stored automatically by fit())"""
 
     def predict_loss(self, C: ArrayLike) -> np.ndarray:
         """Predict loss for given compute values using L(C) = E + A / C^alpha."""
@@ -715,6 +692,10 @@ class ChinchillaIsoParamFit:
             r_squared_loss=r2_loss,
             r_squared_N=r2_N,
             r_squared_D=r2_D,
+            _N=N_valid,
+            _D=D_valid,
+            _C=C_valid,
+            _loss=L_valid,
             **bootstrap_cis,
         )
 
@@ -828,266 +809,6 @@ class ChinchillaIsoParamFit:
         lines.append("=" * 70)
         return "\n".join(lines)
 
-    def plot(
-        self,
-        C: ArrayLike,
-        loss: ArrayLike,
-        N: Optional[ArrayLike] = None,
-        D: Optional[ArrayLike] = None,
-        title: Optional[str] = None,
-        figsize: tuple[int, int] = (14, 10),
-    ) -> plt.Figure:
-        """
-        Plot the scaling law fits against actual data with residuals.
-
-        Creates a 2x2 grid when N and D are provided:
-        - Top left: Loss vs Compute
-        - Top right: N vs Compute
-        - Bottom left: D vs Compute
-        - Bottom right: Loss residuals
-
-        All observations are shown as lighter points, while the Pareto frontier
-        points (not dominated by any other point in compute-loss space) are highlighted.
-
-        If N and D are not provided, falls back to a simple 2-panel loss plot.
-
-        Args:
-            C: Array of compute values (same units used in fitting)
-            loss: Array of actual loss values
-            N: Optional array of parameter counts (for N_opt fit plot)
-            D: Optional array of token counts (for D_opt fit plot)
-            title: Optional title for the plot
-            figsize: Figure size (width, height)
-
-        Returns:
-            matplotlib Figure object
-        """
-        C = np.asarray(C)
-        loss = np.asarray(loss)
-
-        # Generate smooth curve for the fit
-        C_smooth = np.logspace(np.log10(C.min()), np.log10(C.max()), 200)
-        L_pred_smooth = self.predict_loss(C_smooth)
-
-        # If N and D provided, create 2x2 grid
-        if N is not None and D is not None:
-            N = np.asarray(N)
-            D = np.asarray(D)
-
-            # Extract frontier for highlighting (using Pareto dominance)
-            N_frontier, D_frontier, C_frontier, L_frontier = _extract_pareto_frontier_dominance(
-                N, D, C, loss
-            )
-
-            N_pred_smooth = self.predict_optimal_N(C_smooth)
-            D_pred_smooth = self.predict_optimal_D(C_smooth)
-
-            # Compute residuals on frontier points only (what was actually fit)
-            L_pred_frontier = self.predict_loss(C_frontier)
-            loss_residuals_frontier = L_frontier - L_pred_frontier
-
-            fig, axes = plt.subplots(2, 2, figsize=figsize)
-
-            # Top left: Loss vs Compute
-            ax = axes[0, 0]
-            # All observations (lighter, smaller)
-            ax.scatter(
-                C,
-                loss,
-                alpha=0.3,
-                s=30,
-                c="gray",
-                label="All runs",
-                zorder=3,
-            )
-            # Frontier points (highlighted)
-            ax.scatter(
-                C_frontier,
-                L_frontier,
-                alpha=0.9,
-                s=70,
-                c="tab:blue",
-                label="Frontier (used for fit)",
-                zorder=5,
-                edgecolors="black",
-                linewidths=0.5,
-            )
-            ax.plot(
-                C_smooth,
-                L_pred_smooth,
-                "r-",
-                linewidth=2,
-                label=f"L(C) = {self.E:.3f} + {self.A:.3f}/C^{self.alpha:.3f}",
-            )
-            ax.set_xscale("log")
-            ax.set_xlabel("Compute (petaFLOPs)", fontsize=11)
-            ax.set_ylabel("Loss", fontsize=11)
-            r2_str = f" (R²={self.r_squared_loss:.4f})" if self.r_squared_loss else ""
-            ax.set_title(f"Loss vs Compute{r2_str}", fontsize=12, fontweight="bold")
-            ax.legend(loc="upper right", fontsize=9)
-            ax.grid(True, alpha=0.3, which="both")
-
-            # Top right: N vs Compute
-            ax = axes[0, 1]
-            # All observations (lighter)
-            ax.scatter(C, N, alpha=0.3, s=30, c="gray", label="All runs", zorder=3)
-            # Frontier points (highlighted)
-            ax.scatter(
-                C_frontier,
-                N_frontier,
-                alpha=0.9,
-                s=70,
-                c="forestgreen",
-                label="Frontier (optimal N)",
-                zorder=5,
-                edgecolors="black",
-                linewidths=0.5,
-            )
-            ax.plot(
-                C_smooth,
-                N_pred_smooth,
-                "r-",
-                linewidth=2,
-                label=f"N_opt(C) = {self.G:.2e} × C^{self.a:.3f}",
-            )
-            ax.set_xscale("log")
-            ax.set_yscale("log")
-            ax.set_xlabel("Compute (petaFLOPs)", fontsize=11)
-            ax.set_ylabel("Parameters (N)", fontsize=11)
-            r2_str = f" (R²={self.r_squared_N:.4f})" if self.r_squared_N else ""
-            ax.set_title(f"Optimal N vs Compute{r2_str}", fontsize=12, fontweight="bold")
-            ax.legend(loc="lower right", fontsize=9)
-            ax.grid(True, alpha=0.3, which="both")
-
-            # Bottom left: D vs Compute
-            ax = axes[1, 0]
-            # All observations (lighter)
-            ax.scatter(C, D, alpha=0.3, s=30, c="gray", label="All runs", zorder=3)
-            # Frontier points (highlighted)
-            ax.scatter(
-                C_frontier,
-                D_frontier,
-                alpha=0.9,
-                s=70,
-                c="steelblue",
-                label="Frontier (optimal D)",
-                zorder=5,
-                edgecolors="black",
-                linewidths=0.5,
-            )
-            ax.plot(
-                C_smooth,
-                D_pred_smooth,
-                "r-",
-                linewidth=2,
-                label=f"D_opt(C) = {self.H:.2e} × C^{self.b:.3f}",
-            )
-            ax.set_xscale("log")
-            ax.set_yscale("log")
-            ax.set_xlabel("Compute (petaFLOPs)", fontsize=11)
-            ax.set_ylabel("Tokens (D)", fontsize=11)
-            r2_str = f" (R²={self.r_squared_D:.4f})" if self.r_squared_D else ""
-            ax.set_title(f"Optimal D vs Compute{r2_str}", fontsize=12, fontweight="bold")
-            ax.legend(loc="lower right", fontsize=9)
-            ax.grid(True, alpha=0.3, which="both")
-
-            # Bottom right: Loss Residuals (on frontier points only)
-            ax = axes[1, 1]
-            ax.scatter(
-                C_frontier,
-                loss_residuals_frontier,
-                alpha=0.9,
-                s=70,
-                c="coral",
-                edgecolors="black",
-                linewidths=0.5,
-            )
-            ax.axhline(y=0, color="r", linestyle="--", linewidth=1.5)
-            ax.set_xscale("log")
-            ax.set_xlabel("Compute (petaFLOPs)", fontsize=11)
-            ax.set_ylabel("Loss Residual", fontsize=11)
-            ax.set_title("Loss Residuals (frontier points)", fontsize=12, fontweight="bold")
-            ax.grid(True, alpha=0.3, which="both")
-            rmse = np.sqrt(np.mean(loss_residuals_frontier**2))
-            ax.text(
-                0.05,
-                0.95,
-                f"RMSE: {rmse:.4f}\nn={len(C_frontier)} frontier points",
-                transform=ax.transAxes,
-                fontsize=10,
-                verticalalignment="top",
-            )
-
-            # Overall title
-            if title:
-                fig.suptitle(title, fontsize=14, fontweight="bold", y=1.02)
-            else:
-                fig.suptitle(
-                    "Chinchilla Approach 1 Scaling Law Fits", fontsize=14, fontweight="bold"
-                )
-
-            plt.tight_layout()
-            return fig
-
-        # Fallback: simple 2-panel loss plot when N and D not provided
-        # Extract frontier for loss only (need dummy N, D)
-        # In this case, just show all points since we can't extract frontier
-        L_pred = self.predict_loss(C)
-        loss_residuals = loss - L_pred
-
-        fig, (ax1, ax2) = plt.subplots(
-            2, 1, figsize=(figsize[0], figsize[1] * 0.8), height_ratios=[3, 1], sharex=True
-        )
-        fig.subplots_adjust(hspace=0.05)
-
-        # Main plot: Loss vs Compute
-        ax1.scatter(
-            C, loss, alpha=0.7, s=50, label="Observed", zorder=5, edgecolors="black", linewidths=0.5
-        )
-        ax1.plot(
-            C_smooth,
-            L_pred_smooth,
-            "r-",
-            linewidth=2,
-            label=f"Fit: L(C) = {self.E:.3f} + {self.A:.3f}/C^{self.alpha:.3f}",
-        )
-        ax1.set_xscale("log")
-        ax1.set_ylabel("Loss", fontsize=12)
-        ax1.legend(loc="upper right", fontsize=10)
-        ax1.grid(True, alpha=0.3, which="both")
-
-        if title:
-            ax1.set_title(title, fontsize=14, fontweight="bold")
-        else:
-            r2_str = f" (R²={self.r_squared_loss:.4f})" if self.r_squared_loss else ""
-            ax1.set_title(
-                f"Chinchilla IsoParam Scaling Law{r2_str}", fontsize=14, fontweight="bold"
-            )
-
-        # Residual plot
-        ax2.scatter(
-            C, loss_residuals, alpha=0.7, s=40, c="steelblue", edgecolors="black", linewidths=0.5
-        )
-        ax2.axhline(y=0, color="r", linestyle="--", linewidth=1.5)
-        ax2.set_xscale("log")
-        ax2.set_xlabel("Compute (petaFLOPs)", fontsize=12)
-        ax2.set_ylabel("Residual", fontsize=12)
-        ax2.grid(True, alpha=0.3, which="both")
-
-        # Add residual stats
-        rmse = np.sqrt(np.mean(loss_residuals**2))
-        ax2.text(
-            0.02,
-            0.95,
-            f"RMSE: {rmse:.4f}",
-            transform=ax2.transAxes,
-            fontsize=9,
-            verticalalignment="top",
-        )
-
-        plt.tight_layout()
-        return fig
-
     def __repr__(self) -> str:
         parts = [
             f"L(C) = {self.E:.4f} + {self.A:.4f}/C^{self.alpha:.4f}",
@@ -1129,8 +850,11 @@ class ChinchillaParametricFit:
     beta: float
     """Data scaling exponent"""
 
+    # Goodness of fit metrics
     r_squared: Optional[float] = None
-    """R-squared of the fit"""
+    """R-squared of the fit (computed on log scale to match optimization objective)"""
+    huber_loss: Optional[float] = None
+    """Huber loss of the fit (computed on log scale to match optimization objective)"""
 
     # Bootstrap confidence intervals (10th, 90th percentiles)
     E_ci: Optional[tuple[float, float]] = None
@@ -1148,6 +872,16 @@ class ChinchillaParametricFit:
     b_opt_ci: Optional[tuple[float, float]] = None
     """Bootstrap 10th/90th percentile for b_opt = α/(α+β) (D_opt exponent)"""
 
+    # Stored data from fitting (set by fit())
+    _N: Optional[np.ndarray] = None
+    """Parameter counts used in fitting (stored automatically by fit())"""
+    _D: Optional[np.ndarray] = None
+    """Token counts used in fitting (stored automatically by fit())"""
+    _loss: Optional[np.ndarray] = None
+    """Loss values used in fitting (stored automatically by fit())"""
+    _C: Optional[np.ndarray] = None
+    """Compute values (stored automatically by fit(), computed as 6*N*D)"""
+
     @property
     def a_opt(self) -> float:
         """Compute-optimal N exponent: N_opt ∝ C^a_opt where a_opt = β/(α+β)"""
@@ -1163,30 +897,6 @@ class ChinchillaParametricFit:
         return chinchilla_parametric_scaling_law(
             N, D, E=self.E, A=self.A, alpha=self.alpha, B=self.B, beta=self.beta
         )
-
-    def effective_data_multiplier_at_constant_beta(
-        self, other: "ChinchillaParametricFit", tol: float = 0.01
-    ) -> float:
-        """
-        Compute the MARGINAL data scaling efficiency ratio (B/D^β term only).
-
-        Returns k such that self's data term equals other's data term with k× more tokens:
-            B_self / D^β = B_other / (k*D)^β
-
-        WARNING: This IGNORES the entropy floor E and parameter term A/N^α!
-        If E_self ≠ E_other, the actual losses will NOT be equal even with this multiplier.
-        Use predict_loss() for true loss comparisons.
-
-        Args:
-            other: The baseline model to compare against.
-            tol: Tolerance for beta difference (raises if too different).
-
-        Returns:
-            k > 1 means self is more data-efficient (lower B coefficient).
-        """
-        if abs(self.beta - other.beta) < tol:
-            return (other.B / self.B) ** (1 / self.beta)
-        raise ValueError(f"Beta values are too different: {self.beta} vs {other.beta}")
 
     def effective_data_multiplier(self, other: "ChinchillaParametricFit", D: float) -> float:
         """
@@ -1207,30 +917,6 @@ class ChinchillaParametricFit:
             k > 1 means self is more data-efficient at this scale.
         """
         return (other.B / self.B) ** (1 / other.beta) * D ** ((self.beta - other.beta) / other.beta)
-
-    def effective_param_multiplier_at_constant_alpha(
-        self, other: "ChinchillaParametricFit", tol: float = 0.01
-    ) -> float:
-        """
-        Compute the MARGINAL parameter scaling efficiency ratio (A/N^α term only).
-
-        Returns k such that self's param term equals other's param term with k× more params:
-            A_self / N^α = A_other / (k*N)^α
-
-        WARNING: This IGNORES the entropy floor E and data term B/D^β!
-        If E_self ≠ E_other, the actual losses will NOT be equal even with this multiplier.
-        Use predict_loss() for true loss comparisons.
-
-        Args:
-            other: The baseline model to compare against.
-            tol: Tolerance for alpha difference (raises if too different).
-
-        Returns:
-            k > 1 means self is more parameter-efficient (lower A coefficient).
-        """
-        if abs(self.alpha - other.alpha) < tol:
-            return (other.A / self.A) ** (1 / self.alpha)
-        raise ValueError(f"Alpha values are too different: {self.alpha} vs {other.alpha}")
 
     def effective_param_multiplier(self, other: "ChinchillaParametricFit", N: float) -> float:
         """
@@ -1255,76 +941,70 @@ class ChinchillaParametricFit:
         )
 
     def loss_advantage(
-        self,
-        other: "ChinchillaParametricFit",
-        N: float,
-        D: float,
-        compact: bool = False,
-        efficiency_context: Optional[tuple[float, float]] = None,
-    ) -> tuple[float, float, str]:
+        self, other: "ChinchillaParametricFit", N: float, D: float, ppl_threshold: float = 1.005
+    ) -> tuple[float, float, float, str]:
         """
         Compute the ACTUAL loss advantage of this model vs another at a given (N, D) scale.
 
         Unlike effective_data_multiplier and effective_param_multiplier which only compare
         marginal scaling terms, this compares the full predicted losses including E.
 
+        Since CE loss is in log-space, we express differences as perplexity ratios:
+        - ppl_ratio = exp(L_other) / exp(L_self) = exp(L_other - L_self)
+        - ppl_ratio > 1 means self has lower perplexity (better)
+        - ppl_ratio of 1.05 means baseline has 5% higher perplexity
+
         Args:
             other: The baseline model to compare against.
             N: Parameter count.
             D: Token count.
-            compact: If True, return a short interpretation suitable for tables.
-            efficiency_context: Optional (data_mult, param_mult) to include in interpretation.
-                If provided and compact=True, will flag when efficiency disagrees with loss.
+            ppl_threshold: Perplexity ratio threshold for significance (default 1.005 = 0.5%).
 
         Returns:
-            Tuple of (loss_self, loss_other, interpretation) where:
-            - loss_self: Predicted loss for this model
-            - loss_other: Predicted loss for the baseline
+            Tuple of (loss_self, loss_other, ppl_ratio, interpretation) where:
+            - loss_self: Predicted CE loss for this model
+            - loss_other: Predicted CE loss for the baseline
+            - ppl_ratio: exp(L_other - L_self), >1 means self is better
             - interpretation: Human-readable comparison string
         """
         L_self = self.predict_loss(np.array([N]), np.array([D]))[0]
         L_other = other.predict_loss(np.array([N]), np.array([D]))[0]
         diff = L_other - L_self  # positive = self is better
+        ppl_ratio = np.exp(diff)  # >1 means self has lower perplexity
+        ppl_pct = (ppl_ratio - 1) * 100  # percentage difference in perplexity
 
-        if compact:
-            # Short format for tables
-            has_eff_advantage = False
-            if efficiency_context is not None:
-                data_mult, param_mult = efficiency_context
-                has_eff_advantage = data_mult > 1.0 or param_mult > 1.0
-
-            if diff > 0.005:
-                if has_eff_advantage:
-                    interp = f"✓ Wins ({100 * diff / L_other:.1f}%)"
-                else:
-                    interp = f"✓ Lower L ({100 * diff / L_other:.1f}%)"
-            elif diff < -0.005:
-                if has_eff_advantage:
-                    interp = f"⚠ Eff but +{100 * -diff / L_self:.1f}%"
-                else:
-                    interp = f"✗ Higher L (+{100 * -diff / L_self:.1f}%)"
-            else:
-                interp = "≈ Similar"
+        if ppl_ratio > ppl_threshold:
+            interp = f"This model wins: {ppl_pct:+.2f}% ppl (ΔCE={diff:.4f})"
+        elif ppl_ratio < 1 / ppl_threshold:
+            interp = f"Baseline wins: {-ppl_pct:+.2f}% ppl (ΔCE={-diff:.4f})"
         else:
-            # Verbose format
-            if diff > 0.01:
-                interp = f"This model wins by {diff:.4f} ({100 * diff / L_other:.1f}% lower loss)"
-            elif diff < -0.01:
-                interp = f"Baseline wins by {-diff:.4f} ({100 * -diff / L_self:.1f}% lower loss)"
-            else:
-                interp = f"Approximately equal (Δ={diff:.4f})"
+            interp = f"Approximately equal ({ppl_pct:+.2f}% ppl)"
 
-        return L_self, L_other, interp
+        return L_self, L_other, ppl_ratio, interp
 
     def residual_diagnostics(
         self,
-        N: ArrayLike,
-        D: ArrayLike,
-        loss: ArrayLike,
+        N: Optional[ArrayLike] = None,
+        D: Optional[ArrayLike] = None,
+        loss: Optional[ArrayLike] = None,
         alpha: float = 0.05,
-    ) -> "ResidualDiagnostics":
+    ) -> ResidualDiagnostics:
         """
-        Compute comprehensive residual diagnostics to validate the scaling law fit.
+        Compute comprehensive residual diagnostics to validate the scaling law fit. We fit our
+        scaling law model using "best-effort" training runs and then examine the residuals. In practice,
+        we can expect to observe some paterns in the residuals:
+
+        1. One-sidedness (Positive Bias) - negative residuals exist but are rare and small in magnitude.
+            this is because the model is implicitly a best-achievable frontier, and training inefficiency
+            can only make losses worse.
+        2. Heteroscedasticity with scale - larger models are more prone to instability and partial divergence.
+            smaller models can be more sensitve to certain hparams, like warmup steps and optimizer hparams.
+        3. Correlated residuals across runs - training inefficiency is systematic, not random.
+        4. Regime-dependent bias - residuals are not flat across (N, D). It is typical to see underprediction
+            in small-N/large-D corner, overprediction in large-N/small-D corner.
+        5. "Good" vs "Bad" runs - you are likely to see a dense band of small residuals and a sparse set of large,
+            positive outliers. This is because most runs converge normally, but a minority will suffer from
+            partial divergence, subcritical batch / lr scaling.
 
         Tests for:
         1. Normality (Shapiro-Wilk test)
@@ -1333,14 +1013,28 @@ class ChinchillaParametricFit:
         4. Overall fit quality metrics
 
         Args:
-            N: Array of parameter counts used in fitting.
-            D: Array of token counts used in fitting.
-            loss: Array of observed loss values.
+            N: Array of parameter counts. If None, uses stored values from fit().
+            D: Array of token counts. If None, uses stored values from fit().
+            loss: Array of observed loss values. If None, uses stored values from fit().
             alpha: Significance level for statistical tests (default 0.05).
 
         Returns:
             ResidualDiagnostics object with test results and interpretation.
         """
+        # Use stored values if not provided
+        if N is None:
+            if self._N is None:
+                raise ValueError("N not provided and no stored values from fit()")
+            N = self._N
+        if D is None:
+            if self._D is None:
+                raise ValueError("D not provided and no stored values from fit()")
+            D = self._D
+        if loss is None:
+            if self._loss is None:
+                raise ValueError("loss not provided and no stored values from fit()")
+            loss = self._loss
+
         N = np.asarray(N)
         D = np.asarray(D)
         loss = np.asarray(loss)
@@ -1631,6 +1325,87 @@ class ChinchillaParametricFit:
         lines.append("=" * 70)
         return "\n".join(lines)
 
+    @staticmethod
+    def _fit_with_grid_search(
+        N: np.ndarray,
+        D: np.ndarray,
+        L: np.ndarray,
+        huber_delta: float,
+        parallel: bool = True,
+    ) -> tuple[float, float, float, float, float]:
+        """
+        Fit Chinchilla scaling law parameters using grid search over initializations.
+
+        Uses a grid of initializations and returns the fit with the lowest Huber loss:
+        α ∈ {0, 0.5, ..., 2}, β ∈ {0, 0.5, ..., 2}, e ∈ {-1, -0.5, ..., 1},
+        a ∈ {0, 5, ..., 25}, b ∈ {0, 5, ..., 25}
+
+        Args:
+            N: Array of parameter counts (cleaned)
+            D: Array of token counts (cleaned)
+            L: Array of loss values (cleaned)
+            huber_delta: Delta parameter for Huber loss
+            parallel: If True, use multiprocessing for parallel optimization
+
+        Returns:
+            Tuple of (E, A, alpha, B, beta) fitted parameters
+        """
+        log_L = np.log(L)
+        L_min = float(L.min())
+        scipy_bounds = [(0.0, L_min), (1e-10, 1e20), (0.01, 2.0), (1e-10, 1e20), (0.01, 2.0)]
+
+        # Grid of initializations to find the best fit
+        # α ∈ {0, 0.5, ..., 2}, β ∈ {0, 0.5, ..., 2}, e ∈ {-1, -0.5, ..., 1},
+        # a ∈ {0, 5, ..., 25}, b ∈ {0, 5, ..., 25}
+
+        alpha_grid = np.arange(0, 2.5, 0.5)  # [0, 0.5, 1.0, 1.5, 2.0]
+        beta_grid = np.arange(0, 2.5, 0.5)  # [0, 0.5, 1.0, 1.5, 2.0]
+        e_grid = np.arange(-1.0, 1.0, 0.5)  # [-1.0, -0.5, 0, 0.5, 1.0]
+        a_grid = np.arange(0, 30, 5)  # [0, 5, 10, 15, 20, 25]
+        b_grid = np.arange(0, 30, 5)  # [0, 5, 10, 15, 20, 25]
+
+        grid: list[tuple[float, float, float, float, float]] = [
+            (float(a), float(b), float(e), float(A), float(B))
+            for a, b, e, A, B in product(alpha_grid, beta_grid, e_grid, a_grid, b_grid)
+        ]
+
+        # Create partial function with fixed parameters for multiprocessing
+        optimize_fn = partial(
+            _optimize_single_init,
+            N=N,
+            D=D,
+            log_L=log_L,
+            L_min=L_min,
+            huber_delta=huber_delta,
+            scipy_bounds=scipy_bounds,
+        )
+
+        results: list[tuple[float, tuple[float, float, float, float, float]]] = []
+
+        if parallel:
+            n_workers = os.cpu_count() or 1
+            with multiprocessing.Pool(n_workers) as pool:
+                for res in tqdm(
+                    pool.imap_unordered(optimize_fn, grid),
+                    total=len(grid),
+                    desc="Grid search (parallel)",
+                ):
+                    if res is not None:
+                        results.append(res)
+        else:
+            for init_params in tqdm(grid, desc="Grid search"):
+                res = optimize_fn(init_params)
+                if res is not None:
+                    results.append(res)
+
+        if not results:
+            raise ValueError("All optimization attempts failed")
+
+        # Find the result with the lowest loss
+        best_loss, best_params = min(results, key=lambda x: x[0])
+        E_fit, A, alpha, B, beta = best_params
+        return float(E_fit), float(A), float(alpha), float(B), float(beta)
+
     @classmethod
     def fit(
         cls,
@@ -1672,41 +1447,7 @@ class ChinchillaParametricFit:
 
         log_L = np.log(L)
 
-        def huber_loss(residuals: np.ndarray, delta: float) -> np.ndarray:
-            abs_r = np.abs(residuals)
-            quadratic = 0.5 * residuals**2
-            linear = delta * (abs_r - 0.5 * delta)
-            return np.where(abs_r <= delta, quadratic, linear)
-
-        # Data-driven initialization for A and B
-        # The loss contribution from each term should be roughly (L - E) / 2
-        # So A / N^alpha ≈ (L - E) / 2, giving A ≈ (L - E) / 2 * N^alpha
-        E_init = L.min() * 0.8
-        alpha_init, beta_init = 0.34, 0.28  # Chinchilla paper values
-        N_median, D_median = np.median(N), np.median(D)
-        loss_headroom = L.mean() - E_init
-        A_init = (loss_headroom / 2) * np.power(N_median, alpha_init)
-        B_init = (loss_headroom / 2) * np.power(D_median, beta_init)
-
-        # Fit all parameters including E
-        def objective(params: np.ndarray) -> float:
-            E_param, A, alpha, B, beta = params
-            L_pred = chinchilla_parametric_scaling_law(N, D, E_param, A, alpha, B, beta)
-            L_pred = np.maximum(L_pred, 1e-10)
-            log_residuals = log_L - np.log(L_pred)
-            return np.sum(huber_loss(log_residuals, huber_delta))
-
-        p0 = (E_init, A_init, alpha_init, B_init, beta_init)
-        scipy_bounds = [(0.0, L.min()), (1e-10, 1e20), (0.01, 2.0), (1e-10, 1e20), (0.01, 2.0)]
-
-        result = minimize(
-            objective,
-            p0,
-            method="L-BFGS-B",
-            bounds=scipy_bounds,
-            options={"maxiter": 50000, "ftol": 1e-12},
-        )
-        E_fit, A, alpha, B, beta = result.x
+        E_fit, A, alpha, B, beta = cls._fit_with_grid_search(N, D, L, huber_delta)
 
         # R-squared (computed on log scale to match optimization objective)
         L_pred = chinchilla_parametric_scaling_law(N, D, E_fit, A, alpha, B, beta)
@@ -1784,7 +1525,25 @@ class ChinchillaParametricFit:
                     p90 = float(np.percentile(bootstrap_params[param_name], 90))
                     bootstrap_cis[f"{param_name}_ci"] = (p10, p90)
 
-        return cls(E=E_fit, A=A, alpha=alpha, B=B, beta=beta, r_squared=r_squared, **bootstrap_cis)
+        return cls(
+            E=E_fit,
+            A=A,
+            alpha=alpha,
+            B=B,
+            beta=beta,
+            r_squared=r_squared,
+            E_ci=bootstrap_cis.get("E_ci"),
+            A_ci=bootstrap_cis.get("A_ci"),
+            alpha_ci=bootstrap_cis.get("alpha_ci"),
+            B_ci=bootstrap_cis.get("B_ci"),
+            beta_ci=bootstrap_cis.get("beta_ci"),
+            a_opt_ci=bootstrap_cis.get("a_opt_ci"),
+            b_opt_ci=bootstrap_cis.get("b_opt_ci"),
+            _N=N,
+            _D=D,
+            _loss=L,
+            _C=6 * N * D,
+        )
 
     def report(
         self,
@@ -1901,220 +1660,6 @@ class ChinchillaParametricFit:
 
         lines.append("=" * 70)
         return "\n".join(lines)
-
-    def plot(
-        self,
-        N: ArrayLike,
-        D: ArrayLike,
-        loss: ArrayLike,
-        C: Optional[ArrayLike] = None,
-        title: Optional[str] = None,
-        figsize: tuple[int, int] = (16, 10),
-    ) -> plt.Figure:
-        """
-        Plot the parametric scaling law fit with comprehensive diagnostics.
-
-        Creates a 2x3 grid:
-        - Top left: Observed vs Predicted loss (calibration)
-        - Top middle: Residuals vs Parameters (log scale)
-        - Top right: Residuals vs Tokens (log scale)
-        - Bottom left: Residual map in N-D space (color = residual)
-        - Bottom middle: Fitted loss surface contours with data overlay and Pareto frontier
-        - Bottom right: Residual histogram
-
-        Args:
-            N: Array of parameter counts
-            D: Array of token counts
-            loss: Array of actual loss values
-            C: Optional array of compute values. If not provided, uses C = 6*N*D.
-            title: Optional title for the plot
-            figsize: Figure size (width, height)
-
-        Returns:
-            matplotlib Figure object
-        """
-        N = np.asarray(N)
-        D = np.asarray(D)
-        loss = np.asarray(loss)
-        if C is None:
-            C = 6 * N * D
-        else:
-            C = np.asarray(C)
-
-        L_pred = self.predict_loss(N, D)
-        residuals = loss - L_pred
-        rmse = np.sqrt(np.mean(residuals**2))
-
-        fig, axes = plt.subplots(2, 3, figsize=figsize)
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Top left: Calibration (Observed vs Predicted)
-        # ──────────────────────────────────────────────────────────────────────
-        ax = axes[0, 0]
-        ax.scatter(L_pred, loss, alpha=0.7, s=50, edgecolors="black", linewidths=0.5)
-        min_val, max_val = min(L_pred.min(), loss.min()), max(L_pred.max(), loss.max())
-        ax.plot([min_val, max_val], [min_val, max_val], "r--", linewidth=2, label="Perfect fit")
-        ax.set_xlabel("Predicted Loss", fontsize=11)
-        ax.set_ylabel("Observed Loss", fontsize=11)
-        ax.set_title("Calibration", fontsize=12, fontweight="bold")
-        ax.legend(loc="lower right", fontsize=9)
-        ax.grid(True, alpha=0.3)
-        stats_text = f"R² = {self.r_squared:.4f}\nRMSE = {rmse:.4f}" if self.r_squared else ""
-        ax.text(
-            0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=10, verticalalignment="top"
-        )
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Top middle: Residuals vs N (log scale)
-        # ──────────────────────────────────────────────────────────────────────
-        ax = axes[0, 1]
-        ax.scatter(N, residuals, alpha=0.7, s=50, c="steelblue", edgecolors="black", linewidths=0.5)
-        ax.axhline(y=0, color="r", linestyle="--", linewidth=1.5)
-        ax.set_xscale("log")
-        ax.set_xlabel("Parameters (N)", fontsize=11)
-        ax.set_ylabel("Residual (Obs - Pred)", fontsize=11)
-        ax.set_title("Residuals vs Parameters", fontsize=12, fontweight="bold")
-        ax.grid(True, alpha=0.3, which="both")
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Top right: Residuals vs D (log scale)
-        # ──────────────────────────────────────────────────────────────────────
-        ax = axes[0, 2]
-        ax.scatter(
-            D, residuals, alpha=0.7, s=50, c="forestgreen", edgecolors="black", linewidths=0.5
-        )
-        ax.axhline(y=0, color="r", linestyle="--", linewidth=1.5)
-        ax.set_xscale("log")
-        ax.set_xlabel("Tokens (D)", fontsize=11)
-        ax.set_ylabel("Residual (Obs - Pred)", fontsize=11)
-        ax.set_title("Residuals vs Tokens", fontsize=12, fontweight="bold")
-        ax.grid(True, alpha=0.3, which="both")
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Bottom left: Residual map in N-D space
-        # ──────────────────────────────────────────────────────────────────────
-        ax = axes[1, 0]
-        # Use diverging colormap centered at 0
-        abs_max = max(abs(residuals.min()), abs(residuals.max()))
-        scatter = ax.scatter(
-            N,
-            D,
-            c=residuals,
-            cmap="RdBu_r",
-            vmin=-abs_max,
-            vmax=abs_max,
-            s=60,
-            edgecolors="black",
-            linewidths=0.5,
-            alpha=0.8,
-        )
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.set_xlabel("Parameters (N)", fontsize=11)
-        ax.set_ylabel("Tokens (D)", fontsize=11)
-        ax.set_title("Residual Map (N-D Space)", fontsize=12, fontweight="bold")
-        ax.grid(True, alpha=0.3, which="both")
-        cbar = plt.colorbar(scatter, ax=ax)
-        cbar.set_label("Residual", fontsize=10)
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Bottom middle: Loss surface contours with data overlay
-        # ──────────────────────────────────────────────────────────────────────
-        ax = axes[1, 1]
-        # Create grid for contour plot
-        N_grid = np.logspace(np.log10(N.min()), np.log10(N.max()), 50)
-        D_grid = np.logspace(np.log10(D.min()), np.log10(D.max()), 50)
-        N_mesh, D_mesh = np.meshgrid(N_grid, D_grid)
-        L_mesh = self.predict_loss(N_mesh.ravel(), D_mesh.ravel()).reshape(N_mesh.shape)
-
-        # Plot contours (in log space for visualization)
-        contour = ax.contourf(
-            np.log10(N_mesh),
-            np.log10(D_mesh),
-            L_mesh,
-            levels=20,
-            cmap="viridis",
-            alpha=0.8,
-        )
-        ax.contour(
-            np.log10(N_mesh),
-            np.log10(D_mesh),
-            L_mesh,
-            levels=10,
-            colors="white",
-            linewidths=0.5,
-            alpha=0.5,
-        )
-        # Overlay actual data points, colored by observed loss
-        scatter = ax.scatter(
-            np.log10(N),
-            np.log10(D),
-            c=loss,
-            cmap="viridis",
-            s=60,
-            edgecolors="white",
-            linewidths=1.5,
-            vmin=L_mesh.min(),
-            vmax=L_mesh.max(),
-        )
-        # Plot empirical Pareto frontier (compute-optimal points from data)
-        try:
-            N_frontier, D_frontier, _, _ = _extract_pareto_frontier(N, D, C, loss, n_bins=15)
-            # Sort by N for clean line plotting
-            sort_idx = np.argsort(N_frontier)
-            ax.plot(
-                np.log10(N_frontier[sort_idx]),
-                np.log10(D_frontier[sort_idx]),
-                "r-",
-                linewidth=2.5,
-                marker="o",
-                markersize=6,
-                markerfacecolor="white",
-                markeredgecolor="red",
-                markeredgewidth=1.5,
-                label="Pareto frontier",
-            )
-            ax.legend(loc="lower right", fontsize=9)
-        except ValueError:
-            pass  # Not enough data for Pareto frontier
-        ax.set_xlabel("log₁₀(Parameters)", fontsize=11)
-        ax.set_ylabel("log₁₀(Tokens)", fontsize=11)
-        ax.set_title("Fitted Loss Surface", fontsize=12, fontweight="bold")
-        cbar = plt.colorbar(contour, ax=ax)
-        cbar.set_label("Loss", fontsize=10)
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Bottom right: Residual histogram
-        # ──────────────────────────────────────────────────────────────────────
-        ax = axes[1, 2]
-        n_bins = min(30, max(10, len(residuals) // 5))
-        ax.hist(residuals, bins=n_bins, color="coral", edgecolor="black", alpha=0.7, density=True)
-        ax.axvline(x=0, color="r", linestyle="--", linewidth=1.5)
-        ax.set_xlabel("Residual (Obs - Pred)", fontsize=11)
-        ax.set_ylabel("Density", fontsize=11)
-        ax.set_title("Residual Distribution", fontsize=12, fontweight="bold")
-        ax.grid(True, alpha=0.3)
-        # Add normal fit for reference
-        mu, std = np.mean(residuals), np.std(residuals)
-        x_norm = np.linspace(residuals.min(), residuals.max(), 100)
-        y_norm = (1 / (std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_norm - mu) / std) ** 2)
-        ax.plot(x_norm, y_norm, "b-", linewidth=2, label=f"Normal(μ={mu:.3f}, σ={std:.3f})")
-        ax.legend(fontsize=9)
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Overall title
-        # ──────────────────────────────────────────────────────────────────────
-        if title:
-            fig.suptitle(title, fontsize=14, fontweight="bold", y=1.02)
-        else:
-            fig.suptitle(
-                f"L(N,D) = {self.E:.3f} + {self.A:.3f}/N^{self.alpha:.3f} + {self.B:.3f}/D^{self.beta:.3f}",
-                fontsize=12,
-                y=1.02,
-            )
-
-        plt.tight_layout()
-        return fig
 
     def __repr__(self) -> str:
         return (
@@ -2328,10 +1873,24 @@ class ChinchillaParametricFit:
                 data_mult = fit.effective_data_multiplier(baseline, D)
                 param_mult = fit.effective_param_multiplier(baseline, N)
 
-                # Actual loss comparison (includes E) with efficiency context
-                _, _, interp = fit.loss_advantage(
-                    baseline, N, D, compact=True, efficiency_context=(data_mult, param_mult)
-                )
+                # Actual loss comparison (includes E) - ppl_ratio > 1 means fit is better
+                _, _, ppl_ratio, _ = fit.loss_advantage(baseline, N, D)
+                ppl_pct = (ppl_ratio - 1) * 100  # percentage difference in perplexity
+
+                # Compact interpretation for table display
+                has_eff_advantage = data_mult > 1.0 or param_mult > 1.0
+                if ppl_ratio > 1.0025:  # ~0.25% better perplexity
+                    if has_eff_advantage:
+                        interp = f"✓ Wins ({ppl_pct:+.1f}% ppl)"
+                    else:
+                        interp = f"✓ Lower ppl ({ppl_pct:+.1f}%)"
+                elif ppl_ratio < 1 / 1.0025:  # ~0.25% worse perplexity
+                    if has_eff_advantage:
+                        interp = f"⚠ Eff but {ppl_pct:+.1f}% ppl"
+                    else:
+                        interp = f"✗ Higher ppl ({ppl_pct:+.1f}%)"
+                else:
+                    interp = "≈ Similar"
 
                 # Only show model name on first row
                 model_col = name if i == 0 else ""
