@@ -31,11 +31,12 @@ python src/scripts/train/sft/OLMo-sft.py launch \
 # BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/code-base
 # BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/code-anneal-no-expert-bias-5B/step9537
 # BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-5B/step9537
-BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-20B/step38147
+# BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-20B/step38147
 # BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-50B/step95368
+BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-frozen-router-5B/step9537
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/code-general-mix
 sudo uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-2x7b-code-sft-mixed-on-olmo3-code-anneal-no-eb-20B \
+    flexolmo-2x7b-5b-code-frozen-router-mixed-sft-router \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -49,7 +50,7 @@ sudo uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --num_nodes=8 \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
-    --model_name olmoe-2x7b \
+    --model_name olmoe-2x7b-only-router \
     --dataset_path $SFT_DATASET
 
 
@@ -72,7 +73,7 @@ sudo uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --launch.priority=urgent \
     --seq_len=4096 \
     --launch.num_gpus=8 \
-    --num_nodes=8 \
+    --num_nodes=4 \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
     --model_name olmoe-2x7b-only-router \
