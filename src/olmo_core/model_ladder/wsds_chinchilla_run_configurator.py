@@ -40,8 +40,9 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     stepped_schedule: bool = False
     """
     If ``True``, use a stepped schedule for the peak learning rate instead of a constant one,
-    where the peak learning rate will be scaled down by ``1 / sqrt(D)`` during each stage, where
+    where the peak learning rate will be scaled by ``1 / sqrt(D)`` during each stage, where
     ``D`` is the target chinchilla multiple of the stage.
+    This assumes that the base learning rate is optimal for 1xC.
     """
 
     def __post_init__(self):
@@ -67,13 +68,13 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         )
 
     def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepAdamWConfig:
-        # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
-        # but divide by 2 for WSD schedule, which empirically seems to be a good value, at least (seems to work empirically).
-        # for 4xChinchilla runs.
-        # TODO: this should be adapted to the length of the run. See this report
-        # https://wandb.ai/ai2-llm/olmo3-ladder-tune-lr/reports/Olmo-3-ladder-LR-sweep--VmlldzoxNTUxNzE4Nw
+        # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838,
+        # which is optimal for 1xC.
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
-        lr /= 2.0
+        # If we're not using the stepped schedule we divide by 2, which which empirically seems
+        # to be a good value that's near optimal for 4xC runs.
+        if not self.stepped_schedule:
+            lr /= 2.0
         lr *= self.lr_multiplier
         # NOTE: paper above suggest using larger beta2 (~0.99) for small batch sizes (Table 4)
         beta2 = 0.95 if batch_size >= 524_288 else 0.99
@@ -108,7 +109,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             period = self._chinchilla_duration(num_params, batch_size, c).value
             if self.stepped_schedule:
                 assert period_lr_multipliers is not None
-                period_lr_multipliers.append(1 / math.sqrt(max(c, 1.0)))
+                period_lr_multipliers.append(1 / math.sqrt(c))
             if pidx == 0:
                 period_lengths.append(period)
             else:
@@ -218,7 +219,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         )
 
         caption = (
-            f"peak LR={optim.lr:.6f}, batch size={format_tokens(batch_size)}\n"
+            f"peak LR={df['LR'].max():.6f}, batch size={format_tokens(batch_size)}\n"
             f"warmup={format_tokens(warmup)} / {warmup // batch_size:,d} steps, "
             f"duration={format_tokens(t_max)} / {t_max // batch_size:,d} steps"
         )
