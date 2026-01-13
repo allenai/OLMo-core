@@ -5,7 +5,7 @@
 
 REPO_DIR=/data/ai2/$USERNAME/OLMo-core
 VENV_DIR=/data/ai2/uv/OLMo-core-$USERNAME
-# DATA_DIR=/data/caia-mltrain/data/
+DATA_DIR=/data/caia-mltrain/data/
 
 node_0_only log_info "Starting setup..."
 

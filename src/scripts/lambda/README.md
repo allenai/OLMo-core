@@ -68,7 +68,6 @@ The second is a name to assign to the run.
 The third is how many nodes to use.
 This will print out the job ID, wait for it to start, and then stream the logs.
 
-
 ## Running your own script
 
 Copy the test sbatch script `slurm-test-job.sbatch` and modifying to your needs.
