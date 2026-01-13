@@ -738,14 +738,16 @@ class Trainer:
 
     def _shutdown(self):
         self._log_metrics()
-        for callback in self._iter_callbacks():
-            callback.close()
         if self._multi_thread_pool is not None:
             self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
             self._multi_thread_pool = None
         if self._single_thread_pool is not None:
             self._single_thread_pool.shutdown(wait=True, cancel_futures=False)
             self._single_thread_pool = None
+        # NOTE: '.close' must be called after shutting down thread pools to ensure bookkeeping ops
+        # have finished first. See https://github.com/allenai/OLMo-core/pull/546.
+        for callback in self._iter_callbacks():
+            callback.close()
         gc_cuda()
         barrier()
 
