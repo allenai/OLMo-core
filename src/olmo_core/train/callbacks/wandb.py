@@ -156,7 +156,8 @@ class WandBCallback(Callback):
             self.finalize(exit_code=1)
 
     def close(self):
-        self.finalize()
+        if self.enabled and get_rank() == 0 and self.run is not None:
+            self.finalize()
 
     def check_if_canceled(self):
         if self.enabled and self.cancel_tags:

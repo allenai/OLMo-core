@@ -234,7 +234,8 @@ class CometCallback(Callback):
                 )
 
     def close(self):
-        self.finalize()
+        if self.enabled and get_rank() == 0:
+            self.finalize()
 
     def check_if_canceled(self):
         if self.enabled and not self.finalized and self.cancel_tags:
