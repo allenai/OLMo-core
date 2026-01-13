@@ -61,7 +61,7 @@ dev = [
     "twine>=1.11.0",
     "wheel",
 ]
-beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
+beaker = ["beaker-py>=2.5.3,<3.0", "beaker-gantry>=3.4.0,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 eval = ["ai2-olmo-eval @ git+https://github.com/allenai/OLMo-in-loop-evals.git@962c2e25268469fdc1ed253158af2e04a41a5297"]
 torchao = ["torchao==0.15.0"]

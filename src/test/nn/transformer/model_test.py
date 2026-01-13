@@ -627,3 +627,29 @@ def test_transformer_num_flops_per_token():
     # Relative checks: increasing sliding window size should increase FLOPs/token.
     bigger_window = _flops_per_token(n_layers=4, swa_pattern=[128, 128, 128, 128])
     assert bigger_window > base
+
+
+@pytest.mark.parametrize(
+    "config_builder,expected_d_model,expected_n_layers",
+    [
+        pytest.param(TransformerConfig.qwen3_0_6B, 1024, 28, id="qwen3_0_6B"),
+        pytest.param(TransformerConfig.qwen3_1_7B, 2048, 28, id="qwen3_1_7B"),
+        pytest.param(TransformerConfig.qwen3_4B, 2560, 36, id="qwen3_4B"),
+        pytest.param(TransformerConfig.qwen3_8B, 4096, 36, id="qwen3_8B"),
+        pytest.param(TransformerConfig.qwen3_14B, 5120, 48, id="qwen3_14B"),
+        pytest.param(TransformerConfig.qwen3_32B, 5120, 64, id="qwen3_32B"),
+    ],
+)
+def test_qwen3_builder_configs(config_builder, expected_d_model, expected_n_layers):
+    config = config_builder(vocab_size=151936, n_layers=2)
+    assert config.d_model == expected_d_model
+    assert config.n_layers == 2
+    assert config.block.attention.n_kv_heads == 8
+    assert config.block.attention.rope.theta == 1_000_000
+
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"))
+
+    num_actual_params = sum(p.numel() for p in model.parameters())
+    assert config.num_params == num_actual_params
+    assert model.num_params == num_actual_params
