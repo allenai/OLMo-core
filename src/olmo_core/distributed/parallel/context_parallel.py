@@ -95,9 +95,9 @@ def all_to_all_cp2hp_qkvpacked(
     :returns: The output tensor with shape ``[B, T, 3, H/CP, D]``, partitioned along
         the head dimension.
     """
-    assert (
-        input_.dim() == 5
-    ), "all_to_all_cp2hp_qkvpacked expects 5-d input shape [B, T/CP, 3, H, D]."
+    assert input_.dim() == 5, (
+        "all_to_all_cp2hp_qkvpacked expects 5-d input shape [B, T/CP, 3, H, D]."
+    )
     world_size = get_world_size(cp_group)
 
     B, t_local, three, h_in, d_in = input_.shape
@@ -128,9 +128,9 @@ def all_to_all_hp2cp_qkvpacked(
     :returns: The output tensor with shape ``[B, T/CP, 3, H, D]``, partitioned along
         the sequence dimension but with full head dimension.
     """
-    assert (
-        input_.dim() == 5
-    ), "all_to_all_hp2cp_qkvpacked expects 5-d input shape [B, T, 3, H/CP, D]."
+    assert input_.dim() == 5, (
+        "all_to_all_hp2cp_qkvpacked expects 5-d input shape [B, T, 3, H/CP, D]."
+    )
     world_size = get_world_size(cp_group)
 
     B, t_full, three, h_in, d_in = input_.shape
