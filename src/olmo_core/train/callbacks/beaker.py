@@ -79,12 +79,20 @@ class BeakerCallback(Callback):
             for callback in self.trainer.callbacks.values():
                 if isinstance(callback, WandBCallback):
                     if callback.enabled and callback.run is not None:
-                        callback.run.config.update({"beaker_experiment_url": beaker_url})
+                        callback.run.config.update(
+                            {
+                                "beaker_experiment_url": beaker_url,
+                                "beaker_experiment_id": self.experiment_id,
+                            }
+                        )
                         log.info(f"Added beaker_experiment_url to W&B config: {beaker_url}")
+                        log.info(f"Added beaker_experiment_id to W&B config: {self.experiment_id}")
                 elif isinstance(callback, CometCallback):
                     if callback.enabled and callback.exp is not None:
                         callback.exp.log_parameter("beaker_experiment_url", beaker_url)
+                        callback.exp.log_parameter("beaker_experiment_id", self.experiment_id)
                         log.info(f"Added beaker_experiment_url to Comet: {beaker_url}")
+                        log.info(f"Added beaker_experiment_id to Comet: {self.experiment_id}")
 
             # Ensure result dataset directory exists.
             result_dir = Path(self.result_dir) / "olmo-core"
