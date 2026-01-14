@@ -9,7 +9,9 @@ import os
 import re
 import sys
 import textwrap
+import threading
 import time
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Generator
@@ -48,10 +50,13 @@ __all__ = [
     "BeakerEnvVar",
     "BeakerEnvSecret",
     "BeakerWekaBucket",
+    "is_running_in_beaker",
+    "is_running_in_beaker_batch_job",
+    "get_beaker_experiment_id",
+    "get_beaker_client",
 ]
 
-
-_BEAKER_CLIENT: dict[str | None, Beaker] = {}
+_LOCAL = threading.local()
 _DEFAULT_TORCH = "2.9.1".replace(".", "")
 _DEFAULT_CUDA = "12.8".replace(".", "")
 
@@ -86,18 +91,38 @@ def get_beaker_experiment_id() -> str | None:
 def get_beaker_client(
     workspace: str | None = None, check_for_upgrades: bool | None = None
 ) -> Generator[Beaker, None, None]:
-    global _BEAKER_CLIENT
-    if workspace in _BEAKER_CLIENT:
-        yield _BEAKER_CLIENT[workspace]
+    # NOTE: beaker clients themselves are thread-safe but caching them globally like this is not,
+    # so we use a thread-local cache (a mapping of workspace to beaker client).
+    _BEAKER_CLIENTS: dict[str | None, Beaker] = _LOCAL.__dict__.setdefault(
+        "_BEAKER_CLIENTS", OrderedDict()
+    )
+
+    if workspace in _BEAKER_CLIENTS:
+        yield _BEAKER_CLIENTS[workspace]
+    elif workspace is None and _BEAKER_CLIENTS:
+        # Default to last used workspace.
+        workspace_to_use = list(_BEAKER_CLIENTS.keys())[-1]
+        yield _BEAKER_CLIENTS[workspace_to_use]
+    elif (
+        workspace is not None
+        and None in _BEAKER_CLIENTS
+        and _BEAKER_CLIENTS[None].config.default_workspace in (None, workspace)
+    ):
+        # NOTE: it's safe to set the default workspace when it's currently unset (None).
+        _BEAKER_CLIENTS[None].config.default_workspace = workspace
+        yield _BEAKER_CLIENTS[None]
     else:
-        if check_for_upgrades is None:
-            check_for_upgrades = not is_running_in_beaker()
-        beaker = Beaker.from_env(check_for_upgrades=check_for_upgrades, default_workspace=workspace)
-        _BEAKER_CLIENT[workspace] = beaker
+        beaker = Beaker.from_env(
+            check_for_upgrades=check_for_upgrades
+            if check_for_upgrades is not None
+            else not is_running_in_beaker(),
+            default_workspace=workspace,
+        )
+        _BEAKER_CLIENTS[workspace] = beaker
         try:
             yield beaker
         finally:
-            _BEAKER_CLIENT.pop(workspace)
+            _BEAKER_CLIENTS.pop(workspace)
             beaker.close()
 
 
@@ -370,26 +395,6 @@ class BeakerLaunchConfig(Config):
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
         return env_vars
 
-    @property
-    def beaker(self) -> Beaker:
-        """
-        The Beaker client.
-        """
-        if self._beaker is None:
-            self._beaker = Beaker.from_env(
-                check_for_upgrades=not is_running_in_beaker(),
-                default_workspace=self.workspace,
-            )
-        return self._beaker
-
-    def close(self) -> None:
-        if self._beaker is not None:
-            self._beaker.close()
-            self._beaker = None
-
-    def __del__(self) -> None:
-        self.close()
-
     def _get_env_vars(self) -> list[tuple[str, str]]:
         env_vars: list[tuple[str, str]] = []
         env_var_names: set[str] = set()
@@ -420,25 +425,27 @@ class BeakerLaunchConfig(Config):
 
     def _secret_exists(self, secret: BeakerEnvSecret) -> bool:
         try:
-            self.beaker.secret.get(secret.secret)
+            with get_beaker_client(workspace=self.workspace, check_for_upgrades=False) as beaker:
+                beaker.secret.get(secret.secret)
             return True
         except BeakerSecretNotFound:
             return False
 
     def _resolve_beaker_image(self) -> str:
         image = self.beaker_image
-        try:
-            return self.beaker.image.get(image).id
-        except BeakerImageNotFound as exc:
-            # Image name was already a full name, so it probably doesn't exist.
-            if "/" in image:
-                raise
-
-            # Try pre-pending 'petew', since that's the account that we usually build the images from.
+        with get_beaker_client(workspace=self.workspace, check_for_upgrades=False) as beaker:
             try:
-                return self.beaker.image.get(f"petew/{image}").id
-            except BeakerImageNotFound:
-                raise exc
+                return beaker.image.get(image).id
+            except BeakerImageNotFound as exc:
+                # Image name was already a full name, so it probably doesn't exist.
+                if "/" in image:
+                    raise
+
+                # Try pre-pending 'petew', since that's the account that we usually build the images from.
+                try:
+                    return beaker.image.get(f"petew/{image}").id
+                except BeakerImageNotFound:
+                    raise exc
 
     def dry_run(
         self,
@@ -453,15 +460,17 @@ class BeakerLaunchConfig(Config):
         Do a dry-run without actually launching the experiment.
         Arguments are the same as :meth:`launch()`.
         """
-        recipe = self._build_recipe(
-            follow=follow,
-            slack_notifications=slack_notifications,
-            launch_timeout=launch_timeout,
-            step_timeout=step_timeout,
-            step_soft_timeout=step_soft_timeout,
-            torchrun=torchrun,
-        )
-        recipe.dry_run()
+        with get_beaker_client(workspace=self.workspace) as beaker:
+            recipe = self._build_recipe(
+                beaker,
+                follow=follow,
+                slack_notifications=slack_notifications,
+                launch_timeout=launch_timeout,
+                step_timeout=step_timeout,
+                step_soft_timeout=step_soft_timeout,
+                torchrun=torchrun,
+            )
+            recipe.dry_run(client=beaker)
 
     def launch(
         self,
@@ -487,27 +496,31 @@ class BeakerLaunchConfig(Config):
 
         :returns: The Beaker workload.
         """
-        recipe = self._build_recipe(
-            follow=follow,
-            slack_notifications=slack_notifications,
-            launch_timeout=launch_timeout,
-            step_timeout=step_timeout,
-            step_soft_timeout=step_soft_timeout,
-            torchrun=torchrun,
-        )
-
-        try:
-            return recipe.launch(
-                show_logs=follow,
-                start_timeout=launch_timeout,
-                inactive_timeout=step_timeout,
-                inactive_soft_timeout=step_soft_timeout,
+        with get_beaker_client(workspace=self.workspace) as beaker:
+            recipe = self._build_recipe(
+                beaker,
+                follow=follow,
+                slack_notifications=slack_notifications,
+                launch_timeout=launch_timeout,
+                step_timeout=step_timeout,
+                step_soft_timeout=step_soft_timeout,
+                torchrun=torchrun,
             )
-        except ExperimentFailedError as exc:
-            raise OLMoBeakerExperimentFailedError(str(exc))
+
+            try:
+                return recipe.launch(
+                    show_logs=follow,
+                    start_timeout=launch_timeout,
+                    inactive_timeout=step_timeout,
+                    inactive_soft_timeout=step_soft_timeout,
+                    client=beaker,
+                )
+            except ExperimentFailedError as exc:
+                raise OLMoBeakerExperimentFailedError(str(exc))
 
     def _build_recipe(
         self,
+        beaker: Beaker,
         follow: bool | None = None,
         slack_notifications: bool | None = None,
         launch_timeout: int | None = None,
@@ -549,8 +562,8 @@ class BeakerLaunchConfig(Config):
                 # Pull from secret if available.
                 for env_secret in self.env_secrets:
                     if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR:
-                        secret = self.beaker.secret.get(env_secret.secret)
-                        slack_webhook_url = self.beaker.secret.read(secret)
+                        secret = beaker.secret.get(env_secret.secret)
+                        slack_webhook_url = beaker.secret.read(secret)
                         break
 
             if slack_notifications is None:
@@ -624,6 +637,7 @@ class BeakerLaunchConfig(Config):
                 )
             ],
         )
+
         return recipe
 
 

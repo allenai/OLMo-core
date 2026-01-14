@@ -56,7 +56,7 @@ dev = [
     "twine>=1.11.0",
     "wheel",
 ]
-beaker = ["beaker-py>=2.5.3,<3.0", "beaker-gantry>=3.4.0,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
+beaker = ["beaker-py>=2.5.4,<3.0", "beaker-gantry>=3.4.3,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 dion = ["dion @ git+https://github.com/microsoft/dion.git@b17a7699f1398b9cba69d760a52c79bc0ee0e420 ; sys_platform == 'linux'"]
 eval = ["ai2-olmo-eval==0.8.5"]
@@ -172,6 +172,7 @@ filterwarnings = [
     'ignore::FutureWarning:huggingface_hub\.file_download',
     'ignore::DeprecationWarning:pkg_resources',
     'ignore::DeprecationWarning:google\.rpc',
+    'ignore::DeprecationWarning:torchao\.dtypes.*',
     'ignore::FutureWarning:torch\.distributed\.checkpoint\.default_planner',
     'ignore::UserWarning:torch\.distributed\.checkpoint\.state_dict_saver',
     'ignore::UserWarning:torch\.distributed\.checkpoint\.state_dict_loader',

@@ -6,7 +6,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 
 from olmo_core.distributed.utils import get_rank
 
@@ -14,9 +14,6 @@ from ..common import TrainingProgress
 from .callback import Callback
 from .comet import CometCallback
 from .wandb import WandBCallback
-
-if TYPE_CHECKING:
-    from beaker import Beaker
 
 log = logging.getLogger(__name__)
 
@@ -47,15 +44,6 @@ class BeakerCallback(Callback):
 
     _url: str | None = dataclasses.field(repr=False, default=None)
     _last_update: float | None = dataclasses.field(repr=False, default=None)
-    _client = None
-
-    @property
-    def client(self) -> "Beaker":
-        if self._client is None:
-            from beaker import Beaker
-
-            self._client = Beaker.from_env(check_for_upgrades=False)
-        return self._client  # type: ignore
 
     def post_attach(self):
         if self.enabled is None:
@@ -65,14 +53,17 @@ class BeakerCallback(Callback):
 
     def pre_train(self):
         if self.enabled and get_rank() == 0:
+            from olmo_core.launch.beaker import get_beaker_client
+
             if self.experiment_id is None:
                 from olmo_core.launch.beaker import get_beaker_experiment_id
 
                 self.experiment_id = get_beaker_experiment_id()
 
             assert self.experiment_id is not None
-            workload = self.client.workload.get(self.experiment_id)
-            log.info(f"Running in Beaker workload {self.client.workload.url(workload)}")
+            with get_beaker_client() as beaker:
+                workload = beaker.workload.get(self.experiment_id)
+                log.info(f"Running in Beaker workload {beaker.workload.url(workload)}")
 
             # Ensure result dataset directory exists.
             result_dir = Path(self.result_dir) / "olmo-core"
@@ -138,6 +129,8 @@ class BeakerCallback(Callback):
         from beaker.exceptions import BeakerError, HTTPError, RequestException, RpcError
         from gantry.api import update_workload_description
 
+        from olmo_core.launch.beaker import get_beaker_client
+
         description = f"[{progress}] "
 
         if self.description is not None:
@@ -147,14 +140,7 @@ class BeakerCallback(Callback):
             description = f"{description}{self._url} "
 
         try:
-            update_workload_description(description.strip(), client=self.client)
+            with get_beaker_client() as beaker:
+                update_workload_description(description.strip(), client=beaker)
         except (RequestException, BeakerError, HTTPError, RpcError) as e:
             log.warning(f"Failed to update Beaker experiment description: {e}")
-
-    def close(self):
-        if self._client is not None:
-            self._client.close()
-            self._client = None
-
-    def __del__(self):
-        self.close()
