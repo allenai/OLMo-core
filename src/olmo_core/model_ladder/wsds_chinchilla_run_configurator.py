@@ -71,8 +71,8 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838,
         # which is optimal for 1xC.
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
-        # If we're not using the stepped schedule we divide by 2, which which empirically seems
-        # to be a good value that's near optimal for 4xC runs.
+        # If we're not using the stepped schedule we divide by 2, which empirically seems
+        # to be near optimal, at least for longer runs out to 4xC or 8xC.
         if not self.stepped_schedule:
             lr /= 2.0
         lr *= self.lr_multiplier
