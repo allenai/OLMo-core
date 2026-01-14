@@ -18,7 +18,7 @@ def test_get_beaker_client_caching():
             assert beaker1 is not beaker2
 
     with get_beaker_client(workspace=None) as beaker1:
-        # Should get the same client, but now it's default workspace is set.
+        # Should get the same client, but now its default workspace is set.
         with get_beaker_client(workspace="ai2/OLMo-core") as beaker2:
             assert beaker1 is beaker2
             assert beaker1.config.default_workspace == "ai2/OLMo-core"

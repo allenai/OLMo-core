@@ -49,6 +49,10 @@ __all__ = [
     "BeakerEnvVar",
     "BeakerEnvSecret",
     "BeakerWekaBucket",
+    "is_running_in_beaker",
+    "is_running_in_beaker_batch_job",
+    "get_beaker_experiment_id",
+    "get_beaker_client",
 ]
 
 
