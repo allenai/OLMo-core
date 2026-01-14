@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import textwrap
+import threading
 import time
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -55,8 +56,7 @@ __all__ = [
     "get_beaker_client",
 ]
 
-
-_BEAKER_CLIENTS: dict[str | None, Beaker] = OrderedDict()  # maps workspace to beaker client
+_LOCAL = threading.local()
 _DEFAULT_TORCH = "2.9.1".replace(".", "")
 _DEFAULT_CUDA = "12.8".replace(".", "")
 
@@ -91,7 +91,12 @@ def get_beaker_experiment_id() -> str | None:
 def get_beaker_client(
     workspace: str | None = None, check_for_upgrades: bool | None = None
 ) -> Generator[Beaker, None, None]:
-    global _BEAKER_CLIENTS
+    # NOTE: beaker clients themselves are thread-safe but caching them globally like this is not,
+    # so we use a thread-local cache (a mapping of workspace to beaker client).
+    _BEAKER_CLIENTS: dict[str | None, Beaker] = _LOCAL.__dict__.setdefault(
+        "_BEAKER_CLIENTS", OrderedDict()
+    )
+
     if workspace in _BEAKER_CLIENTS:
         yield _BEAKER_CLIENTS[workspace]
     elif workspace is None and _BEAKER_CLIENTS:
