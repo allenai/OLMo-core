@@ -10,6 +10,7 @@ import re
 import sys
 import textwrap
 import time
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Generator
@@ -51,7 +52,7 @@ __all__ = [
 ]
 
 
-_BEAKER_CLIENT: dict[str | None, Beaker] = {}
+_BEAKER_CLIENTS: dict[str | None, Beaker] = OrderedDict()  # maps workspace to beaker client
 _DEFAULT_TORCH = "2.9.1".replace(".", "")
 _DEFAULT_CUDA = "12.8".replace(".", "")
 
@@ -86,18 +87,33 @@ def get_beaker_experiment_id() -> str | None:
 def get_beaker_client(
     workspace: str | None = None, check_for_upgrades: bool | None = None
 ) -> Generator[Beaker, None, None]:
-    global _BEAKER_CLIENT
-    if workspace in _BEAKER_CLIENT:
-        yield _BEAKER_CLIENT[workspace]
+    global _BEAKER_CLIENTS
+    if workspace in _BEAKER_CLIENTS:
+        yield _BEAKER_CLIENTS[workspace]
+    elif workspace is None and _BEAKER_CLIENTS:
+        # Default to last used workspace.
+        workspace_to_use = list(_BEAKER_CLIENTS.keys())[-1]
+        yield _BEAKER_CLIENTS[workspace_to_use]
+    elif (
+        workspace is not None
+        and None in _BEAKER_CLIENTS
+        and _BEAKER_CLIENTS[None].config.default_workspace in (None, workspace)
+    ):
+        # NOTE: it's safe to set the default workspace when it's currently unset (None).
+        _BEAKER_CLIENTS[None].config.default_workspace = workspace
+        yield _BEAKER_CLIENTS[None]
     else:
-        if check_for_upgrades is None:
-            check_for_upgrades = not is_running_in_beaker()
-        beaker = Beaker.from_env(check_for_upgrades=check_for_upgrades, default_workspace=workspace)
-        _BEAKER_CLIENT[workspace] = beaker
+        beaker = Beaker.from_env(
+            check_for_upgrades=check_for_upgrades
+            if check_for_upgrades is not None
+            else not is_running_in_beaker(),
+            default_workspace=workspace,
+        )
+        _BEAKER_CLIENTS[workspace] = beaker
         try:
             yield beaker
         finally:
-            _BEAKER_CLIENT.pop(workspace)
+            _BEAKER_CLIENTS.pop(workspace)
             beaker.close()
 
 
@@ -370,26 +386,6 @@ class BeakerLaunchConfig(Config):
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
         return env_vars
 
-    @property
-    def beaker(self) -> Beaker:
-        """
-        The Beaker client.
-        """
-        if self._beaker is None:
-            self._beaker = Beaker.from_env(
-                check_for_upgrades=not is_running_in_beaker(),
-                default_workspace=self.workspace,
-            )
-        return self._beaker
-
-    def close(self) -> None:
-        if self._beaker is not None:
-            self._beaker.close()
-            self._beaker = None
-
-    def __del__(self) -> None:
-        self.close()
-
     def _get_env_vars(self) -> list[tuple[str, str]]:
         env_vars: list[tuple[str, str]] = []
         env_var_names: set[str] = set()
@@ -420,25 +416,27 @@ class BeakerLaunchConfig(Config):
 
     def _secret_exists(self, secret: BeakerEnvSecret) -> bool:
         try:
-            self.beaker.secret.get(secret.secret)
+            with get_beaker_client(workspace=self.workspace, check_for_upgrades=False) as beaker:
+                beaker.secret.get(secret.secret)
             return True
         except BeakerSecretNotFound:
             return False
 
     def _resolve_beaker_image(self) -> str:
         image = self.beaker_image
-        try:
-            return self.beaker.image.get(image).id
-        except BeakerImageNotFound as exc:
-            # Image name was already a full name, so it probably doesn't exist.
-            if "/" in image:
-                raise
-
-            # Try pre-pending 'petew', since that's the account that we usually build the images from.
+        with get_beaker_client(workspace=self.workspace, check_for_upgrades=False) as beaker:
             try:
-                return self.beaker.image.get(f"petew/{image}").id
-            except BeakerImageNotFound:
-                raise exc
+                return beaker.image.get(image).id
+            except BeakerImageNotFound as exc:
+                # Image name was already a full name, so it probably doesn't exist.
+                if "/" in image:
+                    raise
+
+                # Try pre-pending 'petew', since that's the account that we usually build the images from.
+                try:
+                    return beaker.image.get(f"petew/{image}").id
+                except BeakerImageNotFound:
+                    raise exc
 
     def launch(
         self,
@@ -468,125 +466,127 @@ class BeakerLaunchConfig(Config):
 
         :returns: The Beaker experiment.
         """
-        follow = follow if follow is not None else self.follow
-        slack_notifications = (
-            slack_notifications if slack_notifications is not None else self.slack_notifications
-        )
-        launch_timeout = launch_timeout if launch_timeout is not None else self.launch_timeout
-        step_timeout = step_timeout if step_timeout is not None else self.step_timeout
-        step_soft_timeout = (
-            step_soft_timeout if step_soft_timeout is not None else self.step_soft_timeout
-        )
-        torchrun = torchrun if torchrun is not None else self.torchrun
-        if torchrun is None:
-            if self.num_gpus > 1 or (self.num_gpus >= 1 and self.num_nodes > 1):
-                torchrun = True
-            else:
-                torchrun = False
-
-        if self.git.is_dirty and not self.allow_dirty:
-            raise RuntimeError(
-                "You have uncommitted changes! Set 'allow_dirty=True' in your launch config to force."
+        with get_beaker_client(workspace=self.workspace) as beaker:
+            follow = follow if follow is not None else self.follow
+            slack_notifications = (
+                slack_notifications if slack_notifications is not None else self.slack_notifications
             )
-
-        # Check for webhook URL env var if needed.
-        slack_webhook_url: str | None = None
-        if follow and slack_notifications is not False:
-            from olmo_core.train.callbacks.slack_notifier import (
-                SLACK_WEBHOOK_URL_ENV_VAR,
+            launch_timeout = launch_timeout if launch_timeout is not None else self.launch_timeout
+            step_timeout = step_timeout if step_timeout is not None else self.step_timeout
+            step_soft_timeout = (
+                step_soft_timeout if step_soft_timeout is not None else self.step_soft_timeout
             )
+            torchrun = torchrun if torchrun is not None else self.torchrun
+            if torchrun is None:
+                if self.num_gpus > 1 or (self.num_gpus >= 1 and self.num_nodes > 1):
+                    torchrun = True
+                else:
+                    torchrun = False
 
-            if SLACK_WEBHOOK_URL_ENV_VAR in os.environ:
-                slack_webhook_url = os.environ[SLACK_WEBHOOK_URL_ENV_VAR]
-            else:
-                # Pull from secret if available.
-                for env_secret in self.env_secrets:
-                    if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR:
-                        secret = self.beaker.secret.get(env_secret.secret)
-                        slack_webhook_url = self.beaker.secret.read(secret)
-                        break
-
-            if slack_notifications is None:
-                slack_notifications = slack_webhook_url is not None
-            elif slack_notifications and slack_webhook_url is None:
-                raise OLMoEnvironmentError(
-                    f"Missing env var / secret '{SLACK_WEBHOOK_URL_ENV_VAR}' for Slack notifications"
+            if self.git.is_dirty and not self.allow_dirty:
+                raise RuntimeError(
+                    "You have uncommitted changes! Set 'allow_dirty=True' in your launch config to force."
                 )
 
-        if not follow and slack_notifications:
-            raise OLMoConfigurationError("Slack notifications require 'follow=True'")
-        if not follow and step_timeout is not None:
-            raise OLMoConfigurationError("Step timeout requires 'follow=True'")
-        if not follow and step_soft_timeout is not None:
-            raise OLMoConfigurationError("Step soft timeout requires 'follow=True'")
-
-        command = self.cmd
-        if command[0].endswith(".py"):
-            command = ["python"] + command
-
-        recipe = GantryRecipe(
-            command,
-            name=self.name,
-            task_name=self.task_name,
-            description=self.description,
-            workspace=self.workspace,
-            budget=self.budget,
-            priority=self.priority,
-            preemptible=self.preemptible,
-            # Inputs.
-            beaker_image=self._resolve_beaker_image(),
-            env_vars=self._get_env_vars(),
-            env_secrets=self._get_env_secrets(),
-            google_credentials_secret=self.google_credentials_secret,
-            aws_config_secret=self.aws_config_secret,
-            aws_credentials_secret=self.aws_credentials_secret,
-            weka=[(b.bucket, b.mount) for b in self.weka_buckets],
-            # Outputs.
-            results=self.result_dir,
-            # Python settings.
-            system_python=self.system_python,
-            torchrun=torchrun,
-            # Git settings.
-            git_repo=self.git,
-            allow_dirty=self.allow_dirty,
-            # Resources.
-            gpus=self.num_gpus,
-            shared_memory=self.shared_memory,
-            # Placement.
-            clusters=self.clusters,
-            hostnames=self.hostnames,
-            gpu_types=self.gpu_types,
-            tags=self.tags,
-            # Multi-node settings.
-            replicas=self.num_nodes if self.num_nodes > 1 else None,
-            leader_selection=self.num_nodes > 1,
-            host_networking=self.host_networking
-            if self.host_networking is not None
-            else self.num_nodes > 1,
-            propagate_failure=True if self.num_nodes > 1 else None,
-            propagate_preemption=True if self.num_nodes > 1 else None,
-            synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
-            # Retry settings.
-            retries=self.retries,
-            # Callbacks.
-            callbacks=[
-                GantryMonitorCallback(
-                    slack_webhook_url=slack_webhook_url if slack_notifications else None,
-                    step_timeout=step_timeout,
-                    step_soft_timeout=step_soft_timeout,
+            # Check for webhook URL env var if needed.
+            slack_webhook_url: str | None = None
+            if follow and slack_notifications is not False:
+                from olmo_core.train.callbacks.slack_notifier import (
+                    SLACK_WEBHOOK_URL_ENV_VAR,
                 )
-            ],
-        )
 
-        try:
-            return recipe.launch(
-                show_logs=follow,
-                start_timeout=launch_timeout,
-                inactive_timeout=step_timeout,
-                inactive_soft_timeout=step_soft_timeout,
+                if SLACK_WEBHOOK_URL_ENV_VAR in os.environ:
+                    slack_webhook_url = os.environ[SLACK_WEBHOOK_URL_ENV_VAR]
+                else:
+                    # Pull from secret if available.
+                    for env_secret in self.env_secrets:
+                        if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR:
+                            secret = beaker.secret.get(env_secret.secret)
+                            slack_webhook_url = beaker.secret.read(secret)
+                            break
+
+                if slack_notifications is None:
+                    slack_notifications = slack_webhook_url is not None
+                elif slack_notifications and slack_webhook_url is None:
+                    raise OLMoEnvironmentError(
+                        f"Missing env var / secret '{SLACK_WEBHOOK_URL_ENV_VAR}' for Slack notifications"
+                    )
+
+            if not follow and slack_notifications:
+                raise OLMoConfigurationError("Slack notifications require 'follow=True'")
+            if not follow and step_timeout is not None:
+                raise OLMoConfigurationError("Step timeout requires 'follow=True'")
+            if not follow and step_soft_timeout is not None:
+                raise OLMoConfigurationError("Step soft timeout requires 'follow=True'")
+
+            command = self.cmd
+            if command[0].endswith(".py"):
+                command = ["python"] + command
+
+            recipe = GantryRecipe(
+                command,
+                name=self.name,
+                task_name=self.task_name,
+                description=self.description,
+                workspace=self.workspace,
+                budget=self.budget,
+                priority=self.priority,
+                preemptible=self.preemptible,
+                # Inputs.
+                beaker_image=self._resolve_beaker_image(),
+                env_vars=self._get_env_vars(),
+                env_secrets=self._get_env_secrets(),
+                google_credentials_secret=self.google_credentials_secret,
+                aws_config_secret=self.aws_config_secret,
+                aws_credentials_secret=self.aws_credentials_secret,
+                weka=[(b.bucket, b.mount) for b in self.weka_buckets],
+                # Outputs.
+                results=self.result_dir,
+                # Python settings.
+                system_python=self.system_python,
+                torchrun=torchrun,
+                # Git settings.
+                git_repo=self.git,
+                allow_dirty=self.allow_dirty,
+                # Resources.
+                gpus=self.num_gpus,
+                shared_memory=self.shared_memory,
+                # Placement.
+                clusters=self.clusters,
+                hostnames=self.hostnames,
+                gpu_types=self.gpu_types,
+                tags=self.tags,
+                # Multi-node settings.
+                replicas=self.num_nodes if self.num_nodes > 1 else None,
+                leader_selection=self.num_nodes > 1,
+                host_networking=self.host_networking
+                if self.host_networking is not None
+                else self.num_nodes > 1,
+                propagate_failure=True if self.num_nodes > 1 else None,
+                propagate_preemption=True if self.num_nodes > 1 else None,
+                synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
+                # Retry settings.
+                retries=self.retries,
+                # Callbacks.
+                callbacks=[
+                    GantryMonitorCallback(
+                        slack_webhook_url=slack_webhook_url if slack_notifications else None,
+                        step_timeout=step_timeout,
+                        step_soft_timeout=step_soft_timeout,
+                    )
+                ],
             )
-        except ExperimentFailedError as exc:
-            raise OLMoBeakerExperimentFailedError(str(exc))
+
+            try:
+                return recipe.launch(
+                    show_logs=follow,
+                    start_timeout=launch_timeout,
+                    inactive_timeout=step_timeout,
+                    inactive_soft_timeout=step_soft_timeout,
+                    client=beaker,
+                )
+            except ExperimentFailedError as exc:
+                raise OLMoBeakerExperimentFailedError(str(exc))
 
 
 # Regex for detecting training (and eval) steps in logs.
