@@ -75,20 +75,16 @@ class BeakerCallback(Callback):
             beaker_url = self.client.workload.url(workload)
             log.info(f"Running in Beaker workload {beaker_url}")
 
-            # Add Beaker URL to W&B/Comet config if available.
+            # Add Beaker URL to W&B and Comet config if available.
             for callback in self.trainer.callbacks.values():
                 if isinstance(callback, WandBCallback):
-                    log.info(f"Found WandBCallback: enabled={callback.enabled}, run={callback.run}")
                     if callback.enabled and callback.run is not None:
                         callback.run.config.update({"beaker_experiment_url": beaker_url})
                         log.info(f"Added beaker_experiment_url to W&B config: {beaker_url}")
-                        break
                 elif isinstance(callback, CometCallback):
-                    log.info(f"Found CometCallback: enabled={callback.enabled}, exp={callback.exp}")
                     if callback.enabled and callback.exp is not None:
                         callback.exp.log_parameter("beaker_experiment_url", beaker_url)
                         log.info(f"Added beaker_experiment_url to Comet: {beaker_url}")
-                        break
 
             # Ensure result dataset directory exists.
             result_dir = Path(self.result_dir) / "olmo-core"
