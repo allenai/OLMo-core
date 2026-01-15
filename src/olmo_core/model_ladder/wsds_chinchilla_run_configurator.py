@@ -71,10 +71,11 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838,
         # which is optimal for 1xC.
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
-        # If we're not using the stepped schedule we divide by 2, which empirically seems
-        # to be near optimal, at least for longer runs out to 4xC or 8xC.
-        if not self.stepped_schedule:
-            lr /= 2.0
+        # But divide that by 2, which empirically seems to be near optimal, at least for Olmo models
+        # and especially with the stepped schedule. See
+        # https://wandb.ai/ai2-llm/olmo3-baseline-ladder/reports/Stepped-Ladder-Overlay--VmlldzoxNTYxNzEyOQ
+        lr /= 2.0
+        # Apply user-specified LR multiplier.
         lr *= self.lr_multiplier
         # NOTE: paper above suggest using larger beta2 (~0.99) for small batch sizes (Table 4)
         beta2 = 0.95 if batch_size >= 524_288 else 0.99
