@@ -18,8 +18,9 @@ from typing import Any, Generator
 
 import requests
 import rich
-from beaker import Beaker, BeakerDataset, BeakerJob, BeakerWorkload
+from beaker import Beaker
 from beaker.exceptions import BeakerImageNotFound, BeakerSecretNotFound
+from beaker.types import BeakerDataset, BeakerJob, BeakerWorkload
 from gantry.api import GitRepoState
 from gantry.api import Recipe as GantryRecipe
 from gantry.callbacks import Callback as GantryCallback
