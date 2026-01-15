@@ -195,7 +195,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=1000,
                 ephemeral_save_interval=500,
                 save_async=True,
-                fixed_steps=[960],
+                fixed_steps=[960, 2380],
             ),
         )
         .with_callback(
