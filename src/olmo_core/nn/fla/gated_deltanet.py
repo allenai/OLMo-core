@@ -409,51 +409,49 @@ class GatedDeltaNet(nn.Module):
             g = all_to_all_cp2hp(g.unsqueeze(-1), self._cp_group).squeeze(-1)
             beta = all_to_all_cp2hp(beta.unsqueeze(-1), self._cp_group).squeeze(-1)
 
-            # # Debugging: ensure lengths match expected padded full sequence (log every time)
-            # world_size = dist.get_world_size(self._cp_group)
-            # expected_full = q_len * world_size
-            # cu_last = int(cu_seqlens[-1]) if cu_seqlens is not None else None
-            # seq_len_after_a2a = q.shape[1]
-            # n_docs = (cu_seqlens.numel() - 1) if cu_seqlens is not None else None
-            # if cu_seqlens is not None:
-            #     doc_lens = (cu_seqlens[1:] - cu_seqlens[:-1]).to(torch.int32)
-            #     max_doc = int(doc_lens.max())
-            #     min_doc = int(doc_lens.min())
-            #     mean_doc = float(doc_lens.float().mean())
-            # else:
-            #     max_doc = min_doc = mean_doc = None
-            # if cu_last is None:
-            #     logging.warning(
-            #         "[GatedDeltaNet CP] cu_seqlens is None; expected_full=%s, seq_len_after_a2a=%s",
-            #         expected_full,
-            #         seq_len_after_a2a,
-            #     )
-            # elif cu_last != expected_full or cu_last != seq_len_after_a2a:
-            #     logging.warning(
-            #         "[GatedDeltaNet CP] Length mismatch before kernel: cu_seqlens[-1]=%s, "
-            #         "expected_full=%s, seq_len_after_a2a=%s",
-            #         cu_last,
-            #         expected_full,
-            #         seq_len_after_a2a,
-            #     )
-            # logging.warning(
-            #     "[GatedDeltaNet CP] Shapes before kernel (rank=%s): "
-            #     "q=%s k=%s v=%s g=%s beta=%s cu_last=%s expected_full=%s seq_after_a2a=%s "
-            #     "n_docs=%s doc_len[min/mean/max]=%s/%s/%s",
-            #     dist.get_rank(self._cp_group) if dist.is_initialized() else "n/a",
-            #     tuple(q.shape),
-            #     tuple(k.shape),
-            #     tuple(v.shape),
-            #     tuple(g.shape),
-            #     tuple(beta.shape),
-            #     cu_last,
-            #     expected_full,
-            #     seq_len_after_a2a,
-            #     n_docs,
-            #     min_doc,
-            #     mean_doc,
-            #     max_doc,
-            # )
+            # Debugging: ensure lengths match expected padded full sequence
+            world_size = dist.get_world_size(self._cp_group)
+            expected_full = q_len * world_size
+            cu_last = int(cu_seqlens[-1]) if cu_seqlens is not None else None
+            seq_len_after_a2a = q.shape[1]
+            n_docs = (cu_seqlens.numel() - 1) if cu_seqlens is not None else None
+            if cu_seqlens is not None:
+                doc_lens_from_cu = (cu_seqlens[1:] - cu_seqlens[:-1]).to(torch.int32)
+                max_doc = int(doc_lens_from_cu.max())
+                min_doc = int(doc_lens_from_cu.min())
+                mean_doc = float(doc_lens_from_cu.float().mean())
+            else:
+                max_doc = min_doc = mean_doc = None
+
+            # Always log for debugging
+            logging.warning(
+                "[GatedDeltaNet CP DEBUG] Shapes before kernel (rank=%s): "
+                "q=%s k=%s v=%s g=%s beta=%s cu_seqlens=%s "
+                "cu_last=%s expected_full=%s seq_after_a2a=%s "
+                "n_docs=%s doc_len[min/mean/max]=%s/%s/%s",
+                dist.get_rank(self._cp_group) if dist.is_initialized() else "n/a",
+                tuple(q.shape),
+                tuple(k.shape),
+                tuple(v.shape),
+                tuple(g.shape),
+                tuple(beta.shape),
+                cu_seqlens.tolist() if cu_seqlens is not None else None,
+                cu_last,
+                expected_full,
+                seq_len_after_a2a,
+                n_docs,
+                min_doc,
+                mean_doc,
+                max_doc,
+            )
+
+            if cu_last is not None and cu_last != seq_len_after_a2a:
+                logging.error(
+                    "[GatedDeltaNet CP] CRITICAL MISMATCH: cu_seqlens[-1]=%s but tensor seq_len=%s! "
+                    "This will cause kernel crash!",
+                    cu_last,
+                    seq_len_after_a2a,
+                )
 
             o, recurrent_state = chunk_gated_delta_rule(
                 q=q,
