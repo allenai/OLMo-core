@@ -22,6 +22,8 @@ from .utils import format_count
 
 
 class TransformerSize(StrEnum):
+    size_60M = "60M"
+    size_100M = "100M"
     size_190M = "190M"
     size_370M = "370M"
     size_600M = "600M"
@@ -102,7 +104,13 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
 
         num_params = size_spec.approx_num_params
         mbz: int
-        if num_params <= 190e6:
+        if num_params <= 100e6:
+            # mbz * dp_world_size constrains the smallest global batch size we can use.
+            # for small models this means that we need to use a smaller mbz than is optimal for
+            # throughput / the hardware so that we can get a roughly optimal global batch size.
+            # but since the models are so small we can get away with it.
+            mbz = 4 * 4096
+        elif num_params <= 190e6:
             mbz = 16 * 4096
         elif num_params <= 370e6:
             mbz = 12 * 4096
@@ -118,7 +126,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
             mbz = 2 * 4096
 
         if "b200" in device_type:
-            mbz = mbz * 2
+            mbz = mbz * 2  # warning: this can affect the smallest global batch size we can use
 
         return mbz
 
@@ -224,7 +232,11 @@ class Olmo3ModelConfigurator(TransformerModelConfigurator):
         kwargs = dict(attn_backend=attn_backend)
 
         model: TransformerConfig
-        if size_spec == TransformerSize.size_190M:
+        if size_spec == TransformerSize.size_60M:
+            model = TransformerConfig.olmo3_60M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_100M:
+            model = TransformerConfig.olmo3_100M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_190M:
             model = TransformerConfig.olmo3_190M(vocab_size, **kwargs)
         elif size_spec == TransformerSize.size_370M:
             model = TransformerConfig.olmo3_370M(vocab_size, **kwargs)
