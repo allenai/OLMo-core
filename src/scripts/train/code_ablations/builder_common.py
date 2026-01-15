@@ -1,5 +1,6 @@
+import sys
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Callable, ParamSpec, Concatenate, TypeAlias
 
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
 from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
@@ -19,6 +20,10 @@ PRIORITY = "high"
 BUDGET = "ai2/oe-base"
 
 
+P = ParamSpec("P")
+ConfigBuilderFn: TypeAlias = Callable[Concatenate[CliContext, P], ExperimentConfig]
+
+
 def common_build_experiment_config(
     cli_context: CliContext,
     seq_length: int,
@@ -28,11 +33,16 @@ def common_build_experiment_config(
     source_list: SourceMixtureList,
     tokenizer_config: TokenizerConfig,
     model_config: TransformerConfig,
-    load_path: Optional[str] = None,
+    num_nodes: int,
+    load_path: str | None,
     seed: int = 1337,
     workspace: str = WORKSPACE,
     priority: str = PRIORITY,
+    run_name: str | None = None,
 ) -> ExperimentConfig:
+
+    cli_context.run_name = run_name or cli_context.run_name
+
     run_name_with_ts = (
         f"{cli_context.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
     )
@@ -46,7 +56,7 @@ def common_build_experiment_config(
         cluster=cli_context.cluster,
         root_dir=root_dir,
         workspace=workspace,
-        num_nodes=16,
+        num_nodes=num_nodes,
         nccl_debug=True,
     )
     beaker_launch_config.priority = priority
@@ -103,3 +113,18 @@ def common_build_experiment_config(
     )
     experiment_config = experiment_config.merge(cli_context.overrides)
     return experiment_config
+
+
+def common_main(config_builder: ConfigBuilderFn, default_run_name: str):
+    # TWO CASES:
+    # 1. len(sys.argv) < 4: definitely i have to add the run name here
+    # 2. len(sys.argv) >= 4: depends on whether the first 4 all start NOT
+    #                        with --: if they do, then i already have the
+    #                        run name. but if any of the first 4 start
+    #                        with --, then it means that some are already
+    #                        overrides, so i need to add the run name in.
+    if len(sys.argv) < 4 or any(arg.startswith("--") for arg in sys.argv[:4]):
+        sys.argv.insert(2, default_run_name)
+
+    # now i can just call the main function
+    return main(config_builder=config_builder)

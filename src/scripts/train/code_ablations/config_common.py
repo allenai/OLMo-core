@@ -4,12 +4,13 @@ from olmo_core.nn.transformer import TransformerConfig
 
 
 S3_PREFIX = "s3://ai2-llm"
+GS_PREFIX = "gs://ai2-llm"
 
 OLMO_3_SEQUENCE_LENGTH = 8192
 OLMO_3_MICROANNEAL_BATCH_SIZE = 2**21  # ~2M tokens
 OLMO_3_MICROANNEAL_START_LR = 0.00020712352850360292
 OLMO_3_MICROANNEAL_MAX_TOKENS = 10_000_000_000  # 10B tokens, microanneal
-OLMO_3_MICROANNEAL_LOAD_PATH = "gs://ai2-llm/checkpoints/OLMo3/step1413814"
+OLMO_3_MICROANNEAL_LOAD_PATH = f"{S3_PREFIX}/checkpoints/OLMo25/step1413814"
 
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
 

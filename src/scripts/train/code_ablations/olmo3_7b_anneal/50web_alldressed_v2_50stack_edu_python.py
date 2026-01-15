@@ -1,6 +1,6 @@
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 
-from ..builder_common import common_build_experiment_config
+from ..builder_common import common_build_experiment_config, common_main
 from ..config_common import (
     TOKENIZER_CONFIG,
     OLMO_3_7B_MODEL_CONFIG,
@@ -8,6 +8,7 @@ from ..config_common import (
     OLMO_3_MICROANNEAL_BATCH_SIZE,
     OLMO_3_MICROANNEAL_START_LR,
     OLMO_3_MICROANNEAL_MAX_TOKENS,
+    OLMO_3_MICROANNEAL_LOAD_PATH,
     WEB_50PCT_STACK_EDU_PYTHON_50PCT_BASELINE_CONFIG,
 )
 
@@ -22,6 +23,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         source_list=WEB_50PCT_STACK_EDU_PYTHON_50PCT_BASELINE_CONFIG,
         tokenizer_config=TOKENIZER_CONFIG,
         model_config=OLMO_3_7B_MODEL_CONFIG,
+        num_nodes=4,
+        load_path=OLMO_3_MICROANNEAL_LOAD_PATH,
     )
 
 
@@ -30,13 +33,9 @@ if __name__ == "__main__":
     Invoke this script directly to access the internal experiment CLI, which
     supports launch, train, dry_run, and other subcommands.
 
-    Examples:
-        To render the config and exit:
-            python src/scripts/train/OLMo3/OLMo3-7B-midtraining.py dry_run debug_run ai2/augusta
-
-        To launch a training run on Augusta w/ 8 nodes:
-        python src/scripts/train/OLMo3/OLMo3-7B-midtraining.py launch my_run ai2/augusta \
-            --launch.num_nodes=8 \
-            --launch.priority=high
+     uv run python \
+        -d src.scripts.train.code_ablations.olmo3_7b_anneal.50web_alldressed_v2_50stack_edu_python \
+        launch \
+        my_run ai2/neptune --launch.num_nodes=8
     """
-    main(config_builder=build_experiment_config)
+    common_main(config_builder=build_experiment_config, default_run_name=__name__)
