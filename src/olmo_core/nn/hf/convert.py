@@ -148,6 +148,48 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 }
 
 
+#: Map of Hugging Face keys to OLMo Core keys. This map captures overrides of the standard
+#: mappings in :data:`HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS`, in case a given HF key can refer to
+#: different OLMo Core states depending on the HF model. You may configure this to change how HF
+#: state maps to OLMo Core state.
+MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[
+    str, Dict[str, StateMappingTemplate]
+] = {
+    "flex_olmo": {
+        # FlexOlmo uses fused gate_up_proj and stacks all experts in single tensors.
+        # Split gate_up_proj into w1 (gate) and w3 (up):
+        # - gate_up_proj: (num_experts, 2 * hidden_size, d_model)
+        # - w1: (num_experts * d_model, hidden_size)
+        # - w3: (num_experts * d_model, hidden_size)
+        f"model.layers.{LAYER}.mlp.experts.gate_up_proj": StateMappingTemplate(
+            f"model.layers.{LAYER}.mlp.experts.gate_up_proj",
+            (
+                f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
+                f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3",
+            ),
+            unflatten_dim=(1, (2, -1)),  # (num_experts, 2, hidden_size, d_model)
+            dims_permutation=(1, 0, 3, 2),  # (2, num_experts, d_model, hidden_size)
+            flatten_dims=(0, 2),  # (2 * num_experts * d_model, hidden_size)
+            dest_chunk_dim=0,  # chunk into w1 and w3
+        ),
+        # Convert down_proj to w2:
+        # - down_proj: (num_experts, d_model, hidden_size)
+        # - w2: (num_experts * hidden_size, d_model)
+        f"model.layers.{LAYER}.mlp.experts.down_proj": StateMappingTemplate(
+            f"model.layers.{LAYER}.mlp.experts.down_proj",
+            f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2",
+            dims_permutation=(0, 2, 1),  # (num_experts, hidden_size, d_model)
+            flatten_dims=(0, 1),  # (num_experts * hidden_size, d_model)
+        ),
+        f"model.layers.{LAYER}.mlp.gate.weight": StateMappingTemplate(
+            f"model.layers.{LAYER}.mlp.gate.weight",
+            f"blocks.{LAYER}.feed_forward_moe.router.weight",
+            flatten_dims=(0, 1),
+        ),
+    }
+}
+
+
 #: Map of OLMo Core weight keys to Hugging Face weight keys, that is used to determine how OLMo Core state
 #: maps to HF state. You may configure this to change how OLMo Core state maps to HF state.
 #:
@@ -258,30 +300,38 @@ OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 #: :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`, in case a given OLMo Core key can refer to
 #: different HF states depending on the HF model. You may configure this to change how OLMo Core
 #: state maps to HF state.
+# FlexOlmo uses fused gate_up_proj and stacks all experts in single tensors.
+# This mapping combines w1 (gate) and w3 (up) into fused gate_up_proj:
+# - w1: (num_experts * d_model, hidden_size)
+# - w3: (num_experts * d_model, hidden_size)
+# - gate_up_proj: (num_experts, 2 * hidden_size, d_model)
+_FLEX_OLMO_GATE_UP_PROJ_MAPPING = StateMappingTemplate(
+    (
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3",
+    ),
+    f"model.layers.{LAYER}.mlp.experts.gate_up_proj",
+    source_concat_dim=0,  # concat to (2 * num_experts * d_model, hidden_size)
+    unflatten_dim=(0, (2, TemplatePlaceholder.EXPERT, -1)),  # (2, num_experts, d_model, hidden_size)
+    dims_permutation=(1, 0, 3, 2),  # (num_experts, 2, hidden_size, d_model)
+    flatten_dims=(1, 2),  # (num_experts, 2 * hidden_size, d_model)
+)
+
 MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
     str, Dict[str, StateMappingTemplate]
 ] = {
     "flex_olmo": {
-        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": StateMappingTemplate(
-            f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
-            f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
-            dest_key_per_placeholder=TemplatePlaceholder.EXPERT,
-            dims_permutation=(1, 0),
-            dest_chunk_dim=1,
-        ),
+        # Both w1 and w3 entries point to the same combined mapping to override default per-expert mappings
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": _FLEX_OLMO_GATE_UP_PROJ_MAPPING,
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3": _FLEX_OLMO_GATE_UP_PROJ_MAPPING,
+        # Convert w2 (down) to down_proj:
+        # - w2: (num_experts * hidden_size, d_model)
+        # - down_proj: (num_experts, d_model, hidden_size)
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2": StateMappingTemplate(
             f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2",
-            f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight",
-            dest_key_per_placeholder=TemplatePlaceholder.EXPERT,
-            dims_permutation=(1, 0),
-            dest_chunk_dim=1,
-        ),
-        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3": StateMappingTemplate(
-            f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3",
-            f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight",
-            dest_key_per_placeholder=TemplatePlaceholder.EXPERT,
-            dims_permutation=(1, 0),
-            dest_chunk_dim=1,
+            f"model.layers.{LAYER}.mlp.experts.down_proj",
+            unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),  # (num_experts, hidden_size, d_model)
+            dims_permutation=(0, 2, 1),  # (num_experts, d_model, hidden_size)
         ),
         f"blocks.{LAYER}.feed_forward_moe.router.weight": StateMappingTemplate(
             f"blocks.{LAYER}.feed_forward_moe.router.weight",
@@ -328,7 +378,15 @@ def _get_hf_model_to_olmo_core_one_to_one_templates(
 
 def _get_converter_from_hf(model_type: str | None = None) -> StateConverter:
     mapping_templates = _get_hf_model_to_olmo_core_one_to_one_templates(model_type)
-    mapping_templates += list(HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS.values())
+
+    # Use model-type-specific template mappings if available, otherwise use default
+    if model_type and model_type in MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS:
+        mapping_templates += list(
+            MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS[model_type].values()
+        )
+    else:
+        mapping_templates += list(HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS.values())
+
     return StateConverter(mapping_templates)
 
 
