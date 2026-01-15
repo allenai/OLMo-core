@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import logging
 import math
 import warnings
 from typing import TYPE_CHECKING, Optional
@@ -331,66 +330,25 @@ class GatedDeltaNet(nn.Module):
                 q_proj = _to_channel_parallel(q_proj, self._cp_group)
                 k_proj = _to_channel_parallel(k_proj, self._cp_group)
                 v_proj = _to_channel_parallel(v_proj, self._cp_group)
-                # Log before conv for single-doc debugging with contiguity info
-                if cu_seqlens is not None and cu_seqlens.numel() == 2:
-                    # Single-doc full-sequence: all chunks contend for same locks in backward
-                    # With BT=64, this creates 1024 chunks all writing to N=1 document
-                    n_chunks = (q_proj.shape[1] + 63) // 64  # BT=64 in FLA conv
-                    n_locks = (q_proj.shape[2] + 127) // 128  # ~ND locks per doc
-                    logging.warning(
-                        "[GatedDeltaNet layer=%s] SINGLE DOC CONV: "
-                        "q_proj=%s (contig=%s) cu_seqlens=%s "
-                        "chunks=%d locks=%d (contention=%dx)",
-                        self.layer_idx,
-                        tuple(q_proj.shape),
-                        q_proj.is_contiguous(),
-                        cu_seqlens.tolist(),
-                        n_chunks,
-                        n_locks,
-                        n_chunks // n_locks if n_locks > 0 else 0,
-                    )
 
-            try:
-                q, conv_state_q = self.q_conv1d(
-                    x=q_proj,
-                    cache=conv_state_q,
-                    output_final_state=use_cache,
-                    cu_seqlens=cu_seqlens,
-                )
-                k, conv_state_k = self.k_conv1d(
-                    x=k_proj,
-                    cache=conv_state_k,
-                    output_final_state=use_cache,
-                    cu_seqlens=cu_seqlens,
-                )
-                v, conv_state_v = self.v_conv1d(
-                    x=v_proj,
-                    cache=conv_state_v,
-                    output_final_state=use_cache,
-                    cu_seqlens=cu_seqlens,
-                )
-            except Exception as e:
-                logging.error(
-                    "[GatedDeltaNet layer=%s] CONV CRASH (rank=%s): %s\n"
-                    "q_proj=%s (contig=%s) k_proj=%s v_proj=%s\n"
-                    "cu_seqlens=%s (len=%s, last=%s, dtype=%s)\n"
-                    "backends: q=%s k=%s v=%s",
-                    self.layer_idx,
-                    dist.get_rank(self._cp_group) if dist.is_initialized() else "n/a",
-                    e,
-                    tuple(q_proj.shape),
-                    q_proj.is_contiguous(),
-                    tuple(k_proj.shape),
-                    tuple(v_proj.shape),
-                    cu_seqlens.tolist() if cu_seqlens is not None else None,
-                    cu_seqlens.numel() if cu_seqlens is not None else 0,
-                    int(cu_seqlens[-1]) if cu_seqlens is not None else None,
-                    cu_seqlens.dtype if cu_seqlens is not None else None,
-                    getattr(self.q_conv1d, "backend", "unknown"),
-                    getattr(self.k_conv1d, "backend", "unknown"),
-                    getattr(self.v_conv1d, "backend", "unknown"),
-                )
-                raise
+            q, conv_state_q = self.q_conv1d(
+                x=q_proj,
+                cache=conv_state_q,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+            )
+            k, conv_state_k = self.k_conv1d(
+                x=k_proj,
+                cache=conv_state_k,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+            )
+            v, conv_state_v = self.v_conv1d(
+                x=v_proj,
+                cache=conv_state_v,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+            )
 
             if self.cp_enabled and self.uly is not None:
                 assert self._cp_group is not None
@@ -421,14 +379,6 @@ class GatedDeltaNet(nn.Module):
         )
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
-        if not self.cp_enabled:
-            logging.warning(
-                "[GatedDeltaNet] Running without CP (cp_enabled=%s, uly=%s, mode=%s, q_len=%s)",
-                self.cp_enabled,
-                self.uly is not None,
-                mode,
-                q_len,
-            )
         if self.cp_enabled and self.uly is not None:
             assert self._cp_group is not None
 
@@ -440,74 +390,17 @@ class GatedDeltaNet(nn.Module):
             g = all_to_all_cp2hp(g.unsqueeze(-1), self._cp_group).squeeze(-1)
             beta = all_to_all_cp2hp(beta.unsqueeze(-1), self._cp_group).squeeze(-1)
 
-            # Verify g and beta have correct shape after squeeze
-            assert g.dim() == 3, f"g should be 3D after squeeze, got {g.dim()}D: {g.shape}"
-            assert beta.dim() == 3, (
-                f"beta should be 3D after squeeze, got {beta.dim()}D: {beta.shape}"
+            o, recurrent_state = chunk_gated_delta_rule(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=beta,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+                use_qk_l2norm_in_kernel=True,
             )
-
-            # Debug: detect single-doc full-sequence case (pattern from failing batches)
-            seq_len_after_a2a = q.shape[1]
-            if cu_seqlens is not None:
-                n_docs = cu_seqlens.numel() - 1
-                cu_last = int(cu_seqlens[-1])
-                # Check for the problematic pattern: single doc spanning full sequence
-                is_single_full_doc = n_docs == 1 and cu_last == seq_len_after_a2a
-                if is_single_full_doc:
-                    # This pattern (N=1 doc spanning full sequence) triggers edge case
-                    # in chunk_gated_delta_rule_fwd_kernel_h where grid Y = N*H = H,
-                    # forcing each thread block to iterate over all 1024 chunks.
-                    n_chunks = (seq_len_after_a2a + 63) // 64  # chunk_size=64 in FLA
-                    logging.error(
-                        "[GatedDeltaNet layer=%s] SINGLE FULL DOC WARNING (rank=%s): "
-                        "This pattern may crash chunk_gated_delta_rule kernel! "
-                        "N=1 doc, T=%d, chunks=%d, q=%s v=%s",
-                        self.layer_idx,
-                        dist.get_rank(self._cp_group) if dist.is_initialized() else "n/a",
-                        seq_len_after_a2a,
-                        n_chunks,
-                        tuple(q.shape),
-                        tuple(v.shape),
-                    )
-                # Validate cu_seqlens matches tensor size
-                if cu_last != seq_len_after_a2a:
-                    logging.error(
-                        "[GatedDeltaNet CP] CRITICAL MISMATCH layer=%s: "
-                        "cu_seqlens[-1]=%s but tensor seq_len=%s!",
-                        self.layer_idx,
-                        cu_last,
-                        seq_len_after_a2a,
-                    )
-
-            try:
-                o, recurrent_state = chunk_gated_delta_rule(
-                    q=q,
-                    k=k,
-                    v=v,
-                    g=g,
-                    beta=beta,
-                    initial_state=recurrent_state,
-                    output_final_state=use_cache,
-                    cu_seqlens=cu_seqlens,
-                    use_qk_l2norm_in_kernel=True,
-                )
-            except Exception as e:
-                logging.error(
-                    "[GatedDeltaNet layer=%s] KERNEL CRASH (rank=%s): %s\n"
-                    "q=%s k=%s v=%s g=%s beta=%s\n"
-                    "cu_seqlens=%s (len=%s)",
-                    self.layer_idx,
-                    dist.get_rank(self._cp_group) if dist.is_initialized() else "n/a",
-                    e,
-                    tuple(q.shape),
-                    tuple(k.shape),
-                    tuple(v.shape),
-                    tuple(g.shape),
-                    tuple(beta.shape),
-                    cu_seqlens.tolist() if cu_seqlens is not None else None,
-                    cu_seqlens.numel() if cu_seqlens is not None else 0,
-                )
-                raise
 
             # Transform back from head-parallel to context-parallel partitioning
             # [B, T, H/CP, D] -> [B, T/CP, H, D]
