@@ -1,6 +1,7 @@
+import functools
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -16,7 +17,37 @@ from .config import ModuleConfig
 from .functional import l2_normalize
 from .utils import get_tp_wrappers
 
-__all__ = ["FeedForwardType", "FeedForwardConfig", "FeedForward", "NormalizedFeedForward"]
+__all__ = [
+    "ActivationFunction",
+    "FeedForwardType",
+    "FeedForwardConfig",
+    "FeedForward",
+    "NormalizedFeedForward",
+]
+
+
+class ActivationFunction(StrEnum):
+    """
+    An enumeration of the supported activation functions for feed-forward modules.
+    """
+
+    silu = "silu"
+    """
+    SiLU/Swish activation function, used for SwiGLU.
+    """
+
+    gelu_tanh = "gelu_tanh"
+    """
+    GELU with tanh approximation, used for GeGLU.
+    """
+
+    def build(self) -> Callable[[torch.Tensor], torch.Tensor]:
+        if self == ActivationFunction.silu:
+            return F.silu
+        elif self == ActivationFunction.gelu_tanh:
+            return functools.partial(F.gelu, approximate="tanh")
+        else:
+            raise NotImplementedError(self)
 
 
 class FeedForwardType(StrEnum):
@@ -48,6 +79,10 @@ class FeedForwardConfig(ModuleConfig):
     """
     bias: Optional[bool] = None
     dtype: Optional[DType] = None
+    activation: ActivationFunction = ActivationFunction.silu
+    """
+    The activation function to use. See :class:`ActivationFunction` for options.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -90,6 +125,11 @@ class FeedForwardConfig(ModuleConfig):
             if self.name == FeedForwardType.default:
                 return FeedForward(**kwargs)
             elif self.name == FeedForwardType.normalized:
+                activation = kwargs.get("activation", ActivationFunction.silu)
+                if activation != ActivationFunction.silu:
+                    raise OLMoConfigurationError(
+                        f"NormalizedFeedForward only supports 'silu' activation, got '{activation}'"
+                    )
                 return NormalizedFeedForward(**kwargs)
             else:
                 raise NotImplementedError(self.name)
@@ -101,7 +141,7 @@ class FeedForwardConfig(ModuleConfig):
 
 class FeedForward(nn.Module):
     """
-    Basic feed-forward module with SwiGLU activation.
+    Basic feed-forward module with gated activation (SwiGLU or GeGLU).
     """
 
     def __init__(
@@ -112,10 +152,12 @@ class FeedForward(nn.Module):
         bias: bool = True,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        activation: ActivationFunction = ActivationFunction.silu,
     ):
         super().__init__()
         self.d_model = d_model
         self.hidden_size = hidden_size
+        self.activation_fn = activation.build()
         self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
@@ -126,7 +168,7 @@ class FeedForward(nn.Module):
 
         :param x: The input of shape ``(*, d_model)``.
         """
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        return self.w2(self.activation_fn(self.w1(x)) * self.w3(x))
 
     def apply_tp(
         self,
@@ -180,13 +222,19 @@ class NormalizedFeedForward(FeedForward):
         hidden_size: int,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        activation: ActivationFunction = ActivationFunction.silu,
     ):
+        if activation != ActivationFunction.silu:
+            raise OLMoConfigurationError(
+                f"NormalizedFeedForward only supports 'silu' activation, got '{activation}'"
+            )
         super().__init__(
             d_model=d_model,
             hidden_size=hidden_size,
             dtype=dtype,
             init_device=init_device,
             bias=False,
+            activation=activation,
         )
         self.sw_init_value = 1.0
         self.sw_init_scaling = 1.0
