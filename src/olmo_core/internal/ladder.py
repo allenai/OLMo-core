@@ -289,7 +289,7 @@ def parse_args(
                 default=False,
             )
 
-        if cmd in {"run", "launch"}:
+        if cmd in {"run", "launch", "status", "metrics"}:
             parser.add_argument(
                 "--run-num",
                 type=int,
@@ -298,12 +298,12 @@ def parse_args(
                 ladder name and adjusts the seed for reproducible variation across runs.""",
             )
 
-        if cmd == "launch-all":
+        if cmd in {"launch-all", "metrics-all", "status"}:
             parser.add_argument(
                 "--num-runs",
                 type=int,
                 default=1,
-                help="Number of runs to launch for each model size (each with a different seed).",
+                help="Number of runs per model size (each with a different seed).",
             )
 
         if "launch" in cmd:
@@ -563,19 +563,8 @@ def launch_all(args: argparse.Namespace):
             )
 
 
-def status(args: argparse.Namespace):
-    # for weka checkpoints, needs to be run on a beaker node with weka access
-    prepare_cli_environment()
-    ladder = args.configure_ladder(args)
-
-    sizes: list[str]
-    if args.size:
-        sizes = [args.size_enum(args.size)]
-    else:
-        sizes = [args.size_enum(s) for s in ladder.sizes]
-        if args.max_size:
-            sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
-
+def _status_for_ladder(ladder: ModelLadder, sizes: list[str], size_enum) -> None:
+    """Print status for a single ladder configuration."""
     for size in sizes:
         print()
         checkpoints = ladder.get_checkpoints(size)
@@ -605,9 +594,51 @@ def status(args: argparse.Namespace):
         )
 
 
+def status(args: argparse.Namespace):
+    # for weka checkpoints, needs to be run on a beaker node with weka access
+    prepare_cli_environment()
+
+    sizes: list[str]
+    # Determine sizes from a fresh ladder configuration
+    base_ladder = args.configure_ladder(args)
+    if args.size:
+        sizes = [args.size_enum(args.size)]
+    else:
+        sizes = [args.size_enum(s) for s in base_ladder.sizes]
+        if args.max_size:
+            sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
+
+    # Determine which runs to check
+    run_num = getattr(args, "run_num", None)
+    num_runs = getattr(args, "num_runs", 1)
+
+    if run_num is not None:
+        # Single specific run requested
+        ladder = args.configure_ladder(args)
+        apply_run_num_to_ladder(ladder, run_num)
+        rich.get_console().print(f"\n[b]Status for {ladder.name}:[/]", highlight=False)
+        _status_for_ladder(ladder, sizes, args.size_enum)
+    elif num_runs > 1:
+        # Multiple runs requested
+        for run_idx in range(1, num_runs + 1):
+            ladder = args.configure_ladder(args)
+            apply_run_num_to_ladder(ladder, run_idx)
+            rich.get_console().print(f"\n[b]Status for {ladder.name}:[/]", highlight=False)
+            _status_for_ladder(ladder, sizes, args.size_enum)
+    else:
+        # Default: single run without run number suffix
+        ladder = args.configure_ladder(args)
+        _status_for_ladder(ladder, sizes, args.size_enum)
+
+
 def metrics(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
+
+    # Apply run number if specified
+    run_num = getattr(args, "run_num", None)
+    if run_num is not None:
+        apply_run_num_to_ladder(ladder, run_num)
 
     # When --local is specified, use discover_metrics which scans for existing files
     # rather than relying on computed checkpoint intervals, and tries alternative
@@ -615,10 +646,10 @@ def metrics(args: argparse.Namespace):
     if getattr(args, "local", False):
         df = ladder.discover_metrics(args.size, alternative_roots=LOCAL_ACCESS_ROOTS)
     else:
-    df = ladder.get_metrics(args.size)
+        df = ladder.get_metrics(args.size)
 
     if df is not None:
-        output_dir = Path(args.output_dir) / args.name
+        output_dir = Path(args.output_dir) / ladder.name
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / f"metrics_{args.size}.pkl"
         df.to_pickle(path)
@@ -637,19 +668,18 @@ def metrics(args: argparse.Namespace):
         sys.exit(1)
 
 
-def metrics_all(args: argparse.Namespace):
-    prepare_cli_environment()
-    ladder = args.configure_ladder(args)
-    sizes = [args.size_enum(s) for s in ladder.sizes]
-    if args.max_size:
-        sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
-
+def _metrics_all_for_ladder(
+    ladder: ModelLadder,
+    sizes: list[str],
+    output_dir: Path,
+    use_local: bool,
+) -> tuple[list[str], list[str]]:
+    """
+    Download metrics for all sizes of a single ladder configuration.
+    Returns (saved_paths, missing_sizes).
+    """
     saved_paths: list[str] = []
     missing_sizes: list[str] = []
-
-    # When --local is specified, use discover_metrics which scans for existing files
-    # and tries alternative remote paths for each size
-    use_local = getattr(args, "local", False)
 
     for size in sizes:
         if use_local:
@@ -657,9 +687,9 @@ def metrics_all(args: argparse.Namespace):
         else:
             df = ladder.get_metrics(size)
         if df is not None:
-            output_dir = Path(args.output_dir) / args.name
-            output_dir.mkdir(parents=True, exist_ok=True)
-            path = output_dir / f"metrics_{size}.pkl"
+            ladder_output_dir = output_dir / ladder.name
+            ladder_output_dir.mkdir(parents=True, exist_ok=True)
+            path = ladder_output_dir / f"metrics_{size}.pkl"
             df.to_pickle(path)
             rich.get_console().print(
                 f"[b green]✔[/] Metrics for size [green]{size}[/] saved to [u blue]{path}[/]",
@@ -673,14 +703,53 @@ def metrics_all(args: argparse.Namespace):
             )
             missing_sizes.append(str(size))
 
+    return saved_paths, missing_sizes
+
+
+def metrics_all(args: argparse.Namespace):
+    prepare_cli_environment()
+
+    # Determine sizes from a fresh ladder configuration
+    base_ladder = args.configure_ladder(args)
+    sizes = [args.size_enum(s) for s in base_ladder.sizes]
+    if args.max_size:
+        sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
+
+    # When --local is specified, use discover_metrics which scans for existing files
+    # and tries alternative remote paths for each size
+    use_local = getattr(args, "local", False)
+    output_dir = Path(args.output_dir)
+    num_runs = getattr(args, "num_runs", 1)
+
+    all_saved_paths: list[str] = []
+    all_missing_sizes: list[str] = []
+
+    if num_runs > 1:
+        # Multiple runs requested
+        for run_num in range(1, num_runs + 1):
+            ladder = args.configure_ladder(args)
+            apply_run_num_to_ladder(ladder, run_num)
+            rich.get_console().print(
+                f"\n[b]Downloading metrics for {ladder.name}:[/]", highlight=False
+            )
+            saved, missing = _metrics_all_for_ladder(ladder, sizes, output_dir, use_local)
+            all_saved_paths.extend(saved)
+            all_missing_sizes.extend(missing)
+    else:
+        # Default: single run without run number suffix
+        ladder = args.configure_ladder(args)
+        saved, missing = _metrics_all_for_ladder(ladder, sizes, output_dir, use_local)
+        all_saved_paths.extend(saved)
+        all_missing_sizes.extend(missing)
+
     print()
-    if saved_paths:
+    if all_saved_paths:
         rich.get_console().print(
             f"Use pandas to load and analyze the metrics, e.g.:\n\n"
             f"    import pandas as pd\n"
-            f"    df = pd.read_pickle('{saved_paths[0]}')\n",
+            f"    df = pd.read_pickle('{all_saved_paths[0]}')\n",
             highlight=False,
         )
 
-    if missing_sizes and not saved_paths:
+    if all_missing_sizes and not all_saved_paths:
         sys.exit(1)

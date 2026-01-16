@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 from functools import partial
 from itertools import product
-from typing import Optional
+from typing import Literal, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -14,56 +14,89 @@ from tqdm import tqdm
 from olmo_core.data.composable.utils import format_token_count
 from olmo_core.model_ladder.utils import format_count
 
+# Type alias for supported loss functions
+LossFunctionType = Literal["log_huber", "asymmetric_mae"]
+
+
+def _huber_loss(residuals: np.ndarray, delta: float) -> np.ndarray:
+    """Huber loss function applied to residuals."""
+    abs_r = np.abs(residuals)
+    quadratic = 0.5 * residuals**2
+    linear = delta * (abs_r - 0.5 * delta)
+    return np.where(abs_r <= delta, quadratic, linear)
+
+
+def _asymmetric_mae_loss(residuals: np.ndarray, w: float = 10.0) -> np.ndarray:
+    """
+    Asymmetric Mean Absolute Error loss function.
+
+    Penalizes overprediction (negative residuals) more heavily than underprediction.
+    """
+    # residuals = y_true - y_pred
+    # If residual < 0: y_pred > y_true (overprediction) → penalize more
+    loss = np.abs(residuals).copy()
+    overprediction_mask = residuals < 0
+    loss[overprediction_mask] *= w
+    return loss
+
 
 def _optimize_single_init(
     init_params: tuple[float, float, float, float, float],
     N: np.ndarray,
     D: np.ndarray,
-    log_L: np.ndarray,
-    L_min: float,
-    huber_delta: float,
+    L: np.ndarray,
+    loss_fn: LossFunctionType,
+    loss_param: float,
     scipy_bounds: list[tuple[float, float]],
+    weights: Optional[np.ndarray] = None,
 ) -> tuple[float, tuple[float, float, float, float, float]] | None:
     """
     Run a single optimization from given initial parameters.
 
     This is a module-level function to enable pickling for multiprocessing.
 
+    Args:
+        init_params: Tuple of (E, A, alpha, B, beta) initial values
+        N: Parameter counts
+        D: Token counts
+        L: Loss values (raw, not log-transformed)
+        loss_fn: Loss function type ("log_huber" or "asymmetric_mae")
+        loss_param: Parameter for loss function (delta for huber, w for asymmetric_mae)
+        scipy_bounds: Bounds for optimization in same order (E, A, alpha, B, beta)
+        weights: Optional weights for each observation (applied to loss function)
+
     Returns:
-        Tuple of (loss, params) if successful, None otherwise.
+        Tuple of (loss, (E, A, alpha, B, beta)) if successful, None otherwise.
     """
-    alpha_init, beta_init, e_init, A_init, B_init = init_params
+    # All parameters in consistent order: (E, A, alpha, B, beta)
+    p0 = tuple(float(x) for x in init_params)
 
-    # Map e ∈ [-1, 1] to E ∈ [0, L.min()]
-    E_init = float(L_min * (e_init + 1) / 2)
-    # Clamp alpha/beta init to be within bounds (avoid 0 which is at boundary)
-    alpha_init_clamped = max(0.01, min(float(alpha_init), 2.0))
-    beta_init_clamped = max(0.01, min(float(beta_init), 2.0))
-    # Clamp A and B to be positive
-    A_init_clamped = max(1e-10, float(A_init))
-    B_init_clamped = max(1e-10, float(B_init))
+    # Default to uniform weights if not provided
+    if weights is None:
+        weights = np.ones_like(L)
 
-    p0 = (
-        E_init,
-        A_init_clamped,
-        alpha_init_clamped,
-        B_init_clamped,
-        beta_init_clamped,
-    )
+    if loss_fn == "log_huber":
+        log_L = np.log(L)
 
-    def huber_loss_fn(residuals: np.ndarray, delta: float) -> np.ndarray:
-        abs_r = np.abs(residuals)
-        quadratic = 0.5 * residuals**2
-        linear = delta * (abs_r - 0.5 * delta)
-        return np.where(abs_r <= delta, quadratic, linear)
+        def objective(params: np.ndarray) -> float:
+            E_param, A, alpha, B, beta = params
+            L_pred = chinchilla_parametric_scaling_law(N, D, E_param, A, alpha, B, beta)
+            L_pred = np.maximum(L_pred, 1e-10)
+            log_residuals = log_L - np.log(L_pred)
+            # Weighted sum of losses
+            return np.sum(weights * _huber_loss(log_residuals, loss_param))
 
-    def objective(params: np.ndarray) -> float:
-        E_param, A, alpha, B, beta = params
-        L_pred = chinchilla_parametric_scaling_law(N, D, E_param, A, alpha, B, beta)
-        L_pred = np.maximum(L_pred, 1e-10)
-        log_residuals = log_L - np.log(L_pred)
-        # Note: sum rather than mean is important to avoid over-early stopping of optimization
-        return np.sum(huber_loss_fn(log_residuals, huber_delta))
+    elif loss_fn == "asymmetric_mae":
+
+        def objective(params: np.ndarray) -> float:
+            E_param, A, alpha, B, beta = params
+            L_pred = chinchilla_parametric_scaling_law(N, D, E_param, A, alpha, B, beta)
+            L_pred = np.maximum(L_pred, 1e-10)
+            residuals = L - L_pred
+            return np.sum(weights * _asymmetric_mae_loss(residuals, loss_param))
+
+    else:
+        raise ValueError(f"Unknown loss function: {loss_fn}")
 
     try:
         result = minimize(
@@ -71,7 +104,7 @@ def _optimize_single_init(
             p0,
             method="L-BFGS-B",
             bounds=scipy_bounds,
-            options={"maxiter": 50000, "ftol": 1e-12},
+            options={"maxiter": 10000},
         )
         if np.isfinite(result.fun):
             return (result.fun, tuple(result.x))
@@ -361,8 +394,19 @@ def _extract_pareto_frontier_dominance(
 def chinchilla_parametric_scaling_law(
     N: np.ndarray, D: np.ndarray, E: float, A: float, alpha: float, B: float, beta: float
 ) -> np.ndarray:
-    """Compute loss for given parameter count and token count using the Chinchilla scaling law."""
-    return E + A / np.power(N, alpha) + B / np.power(D, beta)
+    """
+    Compute loss for given parameter count and token count using the Chinchilla scaling law.
+
+    L(N, D) = E + A / N^α + B / D^β
+
+    Uses logarithmic transformation for numerical stability with large N, D values:
+        A / N^α  →  exp(log(A) - α*log(N))
+        B / D^β  →  exp(log(B) - β*log(D))
+    """
+    # Use log-space computation to avoid underflow/overflow with large N, D
+    param_term = np.exp(np.log(A) - alpha * np.log(N))
+    data_term = np.exp(np.log(B) - beta * np.log(D))
+    return E + param_term + data_term
 
 
 @dataclass
@@ -432,7 +476,8 @@ class ChinchillaIsoParamFit:
     def predict_loss(self, C: ArrayLike) -> np.ndarray:
         """Predict loss for given compute values using L(C) = E + A / C^alpha."""
         C = np.asarray(C)
-        return self.E + self.A / np.power(C, self.alpha)
+        # Use log-space for numerical stability: A/C^α → exp(log(A) - α*log(C))
+        return self.E + np.exp(np.log(self.A) - self.alpha * np.log(C))
 
     def predict_optimal_N(self, C: ArrayLike) -> np.ndarray:
         """Predict optimal parameter count for given compute using N_opt(C) = G * C^a."""
@@ -521,7 +566,8 @@ class ChinchillaIsoParamFit:
         # Fit L(C) = E + A / C^alpha on frontier points
         def loss_objective(params: np.ndarray) -> float:
             E_param, A, alpha = params
-            L_pred = E_param + A / np.power(C_frontier, alpha)
+            # Use log-space for numerical stability: A/C^α → exp(log(A) - α*log(C))
+            L_pred = E_param + np.exp(np.log(A) - alpha * log_C)
             L_pred = np.maximum(L_pred, 1e-10)
             log_residuals = log_L - np.log(L_pred)
             return np.sum(huber_loss(log_residuals, huber_delta))
@@ -539,7 +585,7 @@ class ChinchillaIsoParamFit:
         E_fit, A, alpha = loss_result.x
 
         # R-squared for loss fit (on frontier points)
-        L_pred = E_fit + A / np.power(C_frontier, alpha)
+        L_pred = E_fit + np.exp(np.log(A) - alpha * log_C)
         log_L_pred = np.log(np.maximum(L_pred, 1e-10))
         ss_res_L = np.sum((log_L - log_L_pred) ** 2)
         ss_tot_L = np.sum((log_L - log_L.mean()) ** 2)
@@ -1183,43 +1229,49 @@ class ChinchillaParametricFit:
         N: np.ndarray,
         D: np.ndarray,
         L: np.ndarray,
-        huber_delta: float,
+        loss_fn: LossFunctionType,
+        loss_param: float,
         parallel: bool = True,
+        weights: Optional[np.ndarray] = None,
     ) -> tuple[float, float, float, float, float]:
         """
         Fit Chinchilla scaling law parameters using grid search over initializations.
 
-        Uses a grid of initializations and returns the fit with the lowest Huber loss:
-        α ∈ {0, 0.5, ..., 2}, β ∈ {0, 0.5, ..., 2}, e ∈ {-1, -0.5, ..., 1},
-        a ∈ {0, 5, ..., 25}, b ∈ {0, 5, ..., 25}
+        Uses a grid of initializations and returns the fit with the lowest loss.
 
         Args:
             N: Array of parameter counts (cleaned)
             D: Array of token counts (cleaned)
             L: Array of loss values (cleaned)
-            huber_delta: Delta parameter for Huber loss
+            loss_fn: Loss function to use ("log_huber" or "asymmetric_mae")
+            loss_param: Parameter for loss function:
+                - For "log_huber": delta parameter (default 1e-3)
+                - For "asymmetric_mae": overprediction weight w (default 10.0)
             parallel: If True, use multiprocessing for parallel optimization
+            weights: Optional weights for each observation (applied to loss function)
 
         Returns:
             Tuple of (E, A, alpha, B, beta) fitted parameters
         """
-        log_L = np.log(L)
+        # E (entropy floor) must be <= minimum observed loss
         L_min = float(L.min())
+
+        # Bounds in order: (E, A, alpha, B, beta)
+        # E in [0, L_min], A in [1e-10, 1e20], alpha in [0.01, 2], B in [1e-10, 1e20], beta in [0.01, 2]
         scipy_bounds = [(0.0, L_min), (1e-10, 1e20), (0.01, 2.0), (1e-10, 1e20), (0.01, 2.0)]
 
         # Grid of initializations to find the best fit
-        # α ∈ {0, 0.5, ..., 2}, β ∈ {0, 0.5, ..., 2}, e ∈ {-1, -0.5, ..., 1},
-        # a ∈ {0, 5, ..., 25}, b ∈ {0, 5, ..., 25}
-
-        alpha_grid = np.arange(0, 2.5, 0.5)  # [0, 0.5, 1.0, 1.5, 2.0]
-        beta_grid = np.arange(0, 2.5, 0.5)  # [0, 0.5, 1.0, 1.5, 2.0]
-        e_grid = np.arange(-1.0, 1.0, 0.5)  # [-1.0, -0.5, 0, 0.5, 1.0]
-        a_grid = np.arange(0, 30, 5)  # [0, 5, 10, 15, 20, 25]
-        b_grid = np.arange(0, 30, 5)  # [0, 5, 10, 15, 20, 25]
+        # Order: (E, A, alpha, B, beta)
+        num_slices = 4
+        E_grid = np.linspace(0.0, L_min, num_slices)
+        A_grid = np.linspace(1, 20, num_slices)
+        alpha_grid = np.linspace(0.2, 0.8, num_slices)
+        B_grid = np.linspace(1, 20, num_slices)
+        beta_grid = np.linspace(0.2, 0.8, num_slices)
 
         grid: list[tuple[float, float, float, float, float]] = [
-            (float(a), float(b), float(e), float(A), float(B))
-            for a, b, e, A, B in product(alpha_grid, beta_grid, e_grid, a_grid, b_grid)
+            (float(E), float(A), float(alpha), float(B), float(beta))
+            for E, A, alpha, B, beta in product(E_grid, A_grid, alpha_grid, B_grid, beta_grid)
         ]
 
         # Create partial function with fixed parameters for multiprocessing
@@ -1227,10 +1279,11 @@ class ChinchillaParametricFit:
             _optimize_single_init,
             N=N,
             D=D,
-            log_L=log_L,
-            L_min=L_min,
-            huber_delta=huber_delta,
+            L=L,
+            loss_fn=loss_fn,
+            loss_param=loss_param,
             scipy_bounds=scipy_bounds,
+            weights=weights,
         )
 
         results: list[tuple[float, tuple[float, float, float, float, float]]] = []
@@ -1239,15 +1292,11 @@ class ChinchillaParametricFit:
             n_workers = os.cpu_count() or 1
             ctx = multiprocessing.get_context("fork")
             with ctx.Pool(n_workers) as pool:
-                for res in tqdm(
-                    pool.imap_unordered(optimize_fn, grid),
-                    total=len(grid),
-                    desc="Grid search (parallel)",
-                ):
+                for res in pool.imap_unordered(optimize_fn, grid):
                     if res is not None:
                         results.append(res)
         else:
-            for init_params in tqdm(grid, desc="Grid search"):
+            for init_params in grid:
                 res = optimize_fn(init_params)
                 if res is not None:
                     results.append(res)
@@ -1266,22 +1315,38 @@ class ChinchillaParametricFit:
         N: ArrayLike,
         D: ArrayLike,
         loss: ArrayLike,
-        huber_delta: float = 1e-3,
+        loss_fn: LossFunctionType = "asymmetric_mae",
+        loss_param: Optional[float] = None,
+        parallel: bool = True,
+        weights: Optional[ArrayLike] = None,
     ) -> "ChinchillaParametricFit":
         """
         Fit the full Chinchilla scaling law: L = E + A/N^alpha + B/D^beta
-
-        Minimizes Huber loss on log(L) using L-BFGS-B, matching the Chinchilla paper methodology.
 
         Args:
             N: Array of parameter counts
             D: Array of token counts
             loss: Array of loss values
-            huber_delta: Delta parameter for Huber loss
+            loss_fn: Loss function to use:
+                - "log_huber": Huber loss on log(L) (Chinchilla paper methodology)
+                - "asymmetric_mae": Asymmetric MAE that penalizes overprediction more
+            loss_param: Parameter for loss function:
+                - For "log_huber": delta parameter (default 1e-3)
+                - For "asymmetric_mae": overprediction weight w (default 10.0)
+            parallel: If True, use multiprocessing for grid search optimization
+            weights: Optional weights for each observation. Higher weights give more
+                importance to those points during fitting. Common choices:
+                - np.sqrt(6 * N * D): Weight by sqrt(compute) to emphasize large-scale points
+                - N * D: Weight by compute (stronger emphasis on large scale)
+                - None: Uniform weights (default)
 
         Returns:
             ChinchillaParametricFit with fitted parameters
         """
+        # Set default loss_param based on loss function
+        if loss_param is None:
+            loss_param = 1e-3 if loss_fn == "log_huber" else 10.0
+
         N = np.asarray(N)
         D = np.asarray(D)
         loss = np.asarray(loss)
@@ -1290,14 +1355,29 @@ class ChinchillaParametricFit:
         mask = np.isfinite(N) & np.isfinite(D) & np.isfinite(loss) & (N > 0) & (D > 0) & (loss > 0)
         N, D, L = N[mask], D[mask], loss[mask]
 
+        # Apply mask to weights if provided
+        weights_clean: Optional[np.ndarray] = None
+        if weights is not None:
+            weights = np.asarray(weights)
+            weights_clean = weights[mask]
+            # Normalize weights to sum to len(N) to preserve scale of loss function
+            weights_clean = weights_clean * len(N) / weights_clean.sum()
+
         if len(N) < 5:
             raise ValueError(f"Need at least 5 valid data points, got {len(N)}")
 
+        E_fit, A, alpha, B, beta = cls._fit_with_grid_search(
+            N,
+            D,
+            L,
+            loss_fn=loss_fn,
+            loss_param=loss_param,
+            parallel=parallel,
+            weights=weights_clean,
+        )
+
+        # R-squared (computed on log scale for consistency)
         log_L = np.log(L)
-
-        E_fit, A, alpha, B, beta = cls._fit_with_grid_search(N, D, L, huber_delta)
-
-        # R-squared (computed on log scale to match optimization objective)
         L_pred = chinchilla_parametric_scaling_law(N, D, E_fit, A, alpha, B, beta)
         log_L_pred = np.log(np.maximum(L_pred, 1e-10))
         ss_res = np.sum((log_L - log_L_pred) ** 2)
@@ -1896,3 +1976,2266 @@ class ChinchillaParametricFit:
         lines.append("=" * box_width)
 
         return "\n".join(lines)
+
+
+@dataclass
+class ChinchillaParametricBootstrapFit:
+    """
+    Bootstrap ensemble of ChinchillaParametricFit models for uncertainty quantification.
+
+    This class enables principled handling of noisy data with multiple observations per (N, D).
+    By fitting scaling laws to bootstrap-resampled data, we obtain:
+    - A distribution of parameter estimates (E, A, α, B, β)
+    - Confidence intervals on loss predictions
+    - Robust point estimates (median parameters)
+
+    The bootstrap approach is particularly valuable when:
+    - Multiple training runs exist at similar (N, D) scales
+    - There is noise from hyperparameter variation, random seeds, or training instabilities
+    - Uncertainty quantification is needed for downstream decisions
+
+    Example:
+        >>> # Fit with 100 bootstrap samples
+        >>> boot_fit = ChinchillaParametricBootstrapFit.fit(N, D, loss, n_bootstrap=100)
+        >>> # Get 90% confidence interval on predictions
+        >>> mean, lower, upper = boot_fit.predict_loss_interval(N_new, D_new, confidence=0.90)
+        >>> # Access parameter distributions
+        >>> print(f"α = {boot_fit.alpha_mean:.3f} ± {boot_fit.alpha_std:.3f}")
+    """
+
+    fits: list[ChinchillaParametricFit]
+    """List of bootstrap-fitted scaling laws."""
+
+    point_estimate: Optional[ChinchillaParametricFit] = None
+    """Single fit on full data (used as reference and for warm-starting bootstrap fits)."""
+
+    # Original data used for fitting
+    _N: Optional[np.ndarray] = None
+    """Parameter counts used in fitting."""
+    _D: Optional[np.ndarray] = None
+    """Token counts used in fitting."""
+    _loss: Optional[np.ndarray] = None
+    """Loss values used in fitting."""
+
+    @property
+    def n_bootstrap(self) -> int:
+        """Number of bootstrap samples."""
+        return len(self.fits)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Parameter Distributions
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @property
+    def E_distribution(self) -> np.ndarray:
+        """Distribution of entropy floor (E) across bootstrap samples."""
+        return np.array([f.E for f in self.fits])
+
+    @property
+    def A_distribution(self) -> np.ndarray:
+        """Distribution of parameter coefficient (A) across bootstrap samples."""
+        return np.array([f.A for f in self.fits])
+
+    @property
+    def alpha_distribution(self) -> np.ndarray:
+        """Distribution of parameter exponent (α) across bootstrap samples."""
+        return np.array([f.alpha for f in self.fits])
+
+    @property
+    def B_distribution(self) -> np.ndarray:
+        """Distribution of data coefficient (B) across bootstrap samples."""
+        return np.array([f.B for f in self.fits])
+
+    @property
+    def beta_distribution(self) -> np.ndarray:
+        """Distribution of data exponent (β) across bootstrap samples."""
+        return np.array([f.beta for f in self.fits])
+
+    @property
+    def r_squared_distribution(self) -> np.ndarray:
+        """Distribution of R² across bootstrap samples."""
+        return np.array([f.r_squared if f.r_squared else np.nan for f in self.fits])
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Summary Statistics
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @property
+    def E_mean(self) -> float:
+        """Mean entropy floor across bootstrap samples."""
+        return float(np.mean(self.E_distribution))
+
+    @property
+    def E_std(self) -> float:
+        """Standard deviation of entropy floor across bootstrap samples."""
+        return float(np.std(self.E_distribution))
+
+    @property
+    def A_mean(self) -> float:
+        """Mean parameter coefficient across bootstrap samples."""
+        return float(np.mean(self.A_distribution))
+
+    @property
+    def A_std(self) -> float:
+        """Standard deviation of parameter coefficient across bootstrap samples."""
+        return float(np.std(self.A_distribution))
+
+    @property
+    def alpha_mean(self) -> float:
+        """Mean parameter exponent across bootstrap samples."""
+        return float(np.mean(self.alpha_distribution))
+
+    @property
+    def alpha_std(self) -> float:
+        """Standard deviation of parameter exponent across bootstrap samples."""
+        return float(np.std(self.alpha_distribution))
+
+    @property
+    def B_mean(self) -> float:
+        """Mean data coefficient across bootstrap samples."""
+        return float(np.mean(self.B_distribution))
+
+    @property
+    def B_std(self) -> float:
+        """Standard deviation of data coefficient across bootstrap samples."""
+        return float(np.std(self.B_distribution))
+
+    @property
+    def beta_mean(self) -> float:
+        """Mean data exponent across bootstrap samples."""
+        return float(np.mean(self.beta_distribution))
+
+    @property
+    def beta_std(self) -> float:
+        """Standard deviation of data exponent across bootstrap samples."""
+        return float(np.std(self.beta_distribution))
+
+    def parameter_summary(self) -> dict[str, dict[str, float]]:
+        """
+        Get comprehensive summary statistics for all parameters.
+
+        Returns:
+            Dictionary mapping parameter names to their summary statistics:
+            - mean, std: Central tendency and spread
+            - p5, p25, p50, p75, p95: Percentiles for understanding the distribution
+        """
+
+        def summarize(arr: np.ndarray) -> dict[str, float]:
+            return {
+                "mean": float(np.mean(arr)),
+                "std": float(np.std(arr)),
+                "p5": float(np.percentile(arr, 5)),
+                "p25": float(np.percentile(arr, 25)),
+                "p50": float(np.percentile(arr, 50)),
+                "p75": float(np.percentile(arr, 75)),
+                "p95": float(np.percentile(arr, 95)),
+            }
+
+        return {
+            "E": summarize(self.E_distribution),
+            "A": summarize(self.A_distribution),
+            "alpha": summarize(self.alpha_distribution),
+            "B": summarize(self.B_distribution),
+            "beta": summarize(self.beta_distribution),
+            "r_squared": summarize(self.r_squared_distribution),
+        }
+
+    def parameter_interval(
+        self, param: str, confidence: float = 0.90
+    ) -> tuple[float, float, float]:
+        """
+        Get confidence interval for a specific parameter.
+
+        Args:
+            param: Parameter name ('E', 'A', 'alpha', 'B', 'beta')
+            confidence: Confidence level (default 0.90 for 90% CI)
+
+        Returns:
+            Tuple of (median, lower_bound, upper_bound)
+        """
+        dist_map = {
+            "E": self.E_distribution,
+            "A": self.A_distribution,
+            "alpha": self.alpha_distribution,
+            "B": self.B_distribution,
+            "beta": self.beta_distribution,
+        }
+        if param not in dist_map:
+            raise ValueError(f"Unknown parameter: {param}. Expected one of {list(dist_map.keys())}")
+
+        dist = dist_map[param]
+        lower_pct = (1 - confidence) / 2 * 100
+        upper_pct = (1 + confidence) / 2 * 100
+
+        return (
+            float(np.median(dist)),
+            float(np.percentile(dist, lower_pct)),
+            float(np.percentile(dist, upper_pct)),
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Prediction Methods
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        """
+        Predict mean loss across bootstrap samples.
+
+        This is the expected loss under the bootstrap distribution of parameters.
+
+        Args:
+            N: Parameter counts
+            D: Token counts
+
+        Returns:
+            Mean predicted loss at each (N, D) point.
+        """
+        N = np.asarray(N)
+        D = np.asarray(D)
+        predictions = np.array([f.predict_loss(N, D) for f in self.fits])
+        return np.mean(predictions, axis=0)
+
+    def predict_loss_distribution(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        """
+        Get full distribution of loss predictions across bootstrap samples.
+
+        This enables custom analysis of prediction uncertainty beyond simple
+        confidence intervals.
+
+        Args:
+            N: Parameter counts
+            D: Token counts
+
+        Returns:
+            Array of shape (n_bootstrap, len(N)) with all predictions.
+        """
+        N = np.asarray(N)
+        D = np.asarray(D)
+        return np.array([f.predict_loss(N, D) for f in self.fits])
+
+    def predict_loss_interval(
+        self,
+        N: ArrayLike,
+        D: ArrayLike,
+        confidence: float = 0.90,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Predict loss with confidence intervals.
+
+        This is the primary method for uncertainty-aware predictions. The intervals
+        reflect uncertainty from the training data, not irreducible noise.
+
+        Args:
+            N: Parameter counts
+            D: Token counts
+            confidence: Confidence level (default 0.90 for 90% CI)
+
+        Returns:
+            Tuple of (mean, lower_bound, upper_bound) arrays.
+            - mean: Expected loss under bootstrap distribution
+            - lower_bound: Lower percentile of predictions
+            - upper_bound: Upper percentile of predictions
+        """
+        predictions = self.predict_loss_distribution(N, D)
+        mean = np.mean(predictions, axis=0)
+        lower_pct = (1 - confidence) / 2 * 100
+        upper_pct = (1 + confidence) / 2 * 100
+        lower = np.percentile(predictions, lower_pct, axis=0)
+        upper = np.percentile(predictions, upper_pct, axis=0)
+        return mean, lower, upper
+
+    def predict_loss_std(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        """
+        Get standard deviation of loss predictions across bootstrap samples.
+
+        This is useful for understanding prediction uncertainty at specific scales.
+
+        Args:
+            N: Parameter counts
+            D: Token counts
+
+        Returns:
+            Standard deviation of predicted loss at each (N, D) point.
+        """
+        predictions = self.predict_loss_distribution(N, D)
+        return np.std(predictions, axis=0)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Fitting
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def fit(
+        cls,
+        N: ArrayLike,
+        D: ArrayLike,
+        loss: ArrayLike,
+        n_bootstrap: int = 100,
+        loss_fn: LossFunctionType = "asymmetric_mae",
+        loss_param: Optional[float] = None,
+        random_state: Optional[int] = None,
+        parallel: bool = True,
+        min_success_rate: float = 0.5,
+    ) -> "ChinchillaParametricBootstrapFit":
+        """
+        Fit scaling laws using bootstrap resampling for uncertainty quantification.
+
+        Each bootstrap sample is fitted using the full grid search procedure,
+        ensuring each fit is independent and properly optimized. Bootstrap samples
+        are processed sequentially, but the grid search within each sample is
+        parallelized when parallel=True.
+
+        Args:
+            N: Array of parameter counts
+            D: Array of token counts
+            loss: Array of loss values
+            n_bootstrap: Number of bootstrap samples (default 100).
+                More samples give more precise uncertainty estimates but take longer.
+                Note: Each bootstrap sample runs full grid search optimization.
+            loss_fn: Loss function to use:
+                - "log_huber": Huber loss on log(L) (Chinchilla paper methodology)
+                - "asymmetric_mae": Asymmetric MAE that penalizes overprediction more
+            loss_param: Parameter for loss function:
+                - For "log_huber": delta parameter (default 1e-3)
+                - For "asymmetric_mae": overprediction weight w (default 10.0)
+            random_state: Random seed for reproducibility
+            parallel: If True, use multiprocessing for grid search within each
+                bootstrap sample (recommended for speed)
+            min_success_rate: Minimum fraction of bootstrap fits that must succeed
+                (default 0.5). Raises ValueError if too many fits fail.
+
+        Returns:
+            ChinchillaParametricBootstrapFit with n_bootstrap fitted models.
+
+        Raises:
+            ValueError: If insufficient data or too many bootstrap fits fail.
+
+        Example:
+            >>> boot_fit = ChinchillaParametricBootstrapFit.fit(N, D, loss, n_bootstrap=100)
+            >>> mean, lo, hi = boot_fit.predict_loss_interval([7e9], [5e12], confidence=0.90)
+            >>> print(f"7B @ 5T: {mean[0]:.4f} [{lo[0]:.4f}, {hi[0]:.4f}]")
+        """
+        N = np.asarray(N)
+        D = np.asarray(D)
+        loss = np.asarray(loss)
+
+        # Clean data
+        mask = np.isfinite(N) & np.isfinite(D) & np.isfinite(loss) & (N > 0) & (D > 0) & (loss > 0)
+        N_clean, D_clean, L_clean = N[mask], D[mask], loss[mask]
+
+        if len(N_clean) < 5:
+            raise ValueError(f"Need at least 5 valid data points, got {len(N_clean)}")
+
+        # Fit point estimate on full data
+        point_estimate = ChinchillaParametricFit.fit(
+            N_clean, D_clean, L_clean, loss_fn=loss_fn, loss_param=loss_param, parallel=parallel
+        )
+
+        # Bootstrap fitting - sequential over samples, parallel within each grid search
+        rng = np.random.default_rng(random_state)
+        n_samples = len(N_clean)
+
+        fits: list[ChinchillaParametricFit] = []
+
+        for i in tqdm(range(n_bootstrap), desc="Bootstrap fitting"):
+            # Resample with replacement
+            indices = rng.choice(n_samples, size=n_samples, replace=True)
+            N_boot = N_clean[indices]
+            D_boot = D_clean[indices]
+            L_boot = L_clean[indices]
+
+            try:
+                # Full fit with parallel grid search
+                fit = ChinchillaParametricFit.fit(
+                    N_boot,
+                    D_boot,
+                    L_boot,
+                    loss_fn=loss_fn,
+                    loss_param=loss_param,
+                    parallel=parallel,
+                )
+                fits.append(fit)
+            except Exception:
+                # Skip failed fits (e.g., degenerate bootstrap samples)
+                continue
+
+        # Check success rate
+        success_rate = len(fits) / n_bootstrap
+        if success_rate < min_success_rate:
+            raise ValueError(
+                f"Too many bootstrap fits failed: {len(fits)}/{n_bootstrap} succeeded "
+                f"({success_rate:.1%} < {min_success_rate:.1%} required). "
+                "This may indicate poor data quality or ill-conditioning."
+            )
+
+        return cls(
+            fits=fits,
+            point_estimate=point_estimate,
+            _N=N_clean,
+            _D=D_clean,
+            _loss=L_clean,
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Reporting
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def report(
+        self,
+        model_sizes: Optional[list[float]] = None,
+        token_counts: Optional[list[float]] = None,
+        confidence: float = 0.90,
+    ) -> str:
+        """
+        Generate a comprehensive report with uncertainty estimates.
+
+        Args:
+            model_sizes: Model sizes to show predictions for (default: 190M, 1B, 7B, 70B)
+            token_counts: Token counts to show predictions for (default: 100B, 1T, 5T, 15T)
+            confidence: Confidence level for intervals (default 0.90)
+
+        Returns:
+            Formatted report string.
+        """
+        if model_sizes is None:
+            model_sizes = [190e6, 1e9, 7e9, 70e9]
+        if token_counts is None:
+            token_counts = [100e9, 1e12, 5e12, 15e12]
+
+        summary = self.parameter_summary()
+        ci_pct = int(confidence * 100)
+
+        lines = []
+        lines.append("=" * 80)
+        lines.append("CHINCHILLA PARAMETRIC SCALING LAW (BOOTSTRAP ENSEMBLE)")
+        lines.append(f"Based on {self.n_bootstrap} bootstrap samples")
+        lines.append("=" * 80)
+
+        # Point estimate (if available)
+        if self.point_estimate:
+            lines.append("\nPOINT ESTIMATE (Full Data)")
+            lines.append("-" * 50)
+            r2_str = (
+                f" (R²={self.point_estimate.r_squared:.4f})"
+                if self.point_estimate.r_squared
+                else ""
+            )
+            lines.append(
+                f"  L(N, D) = {self.point_estimate.E:.4f} + "
+                f"{self.point_estimate.A:.4f}/N^{self.point_estimate.alpha:.4f} + "
+                f"{self.point_estimate.B:.4f}/D^{self.point_estimate.beta:.4f}{r2_str}"
+            )
+
+        # Parameter distributions
+        lines.append(f"\nPARAMETER ESTIMATES (median [{ci_pct}% CI])")
+        lines.append("-" * 50)
+        lines.append(
+            f"  {'Parameter':<12} {'Median':>10} {'Mean':>10} {'Std':>10} "
+            f"{'[{0}% CI]'.format(ci_pct):>20}"
+        )
+        lines.append("-" * 50)
+
+        for param_name in ["E", "A", "alpha", "B", "beta"]:
+            stats = summary[param_name]
+            lower_pct = (1 - confidence) / 2 * 100
+            upper_pct = (1 + confidence) / 2 * 100
+            lower = float(np.percentile(getattr(self, f"{param_name}_distribution"), lower_pct))
+            upper = float(np.percentile(getattr(self, f"{param_name}_distribution"), upper_pct))
+
+            # Format based on magnitude
+            if param_name in ["E", "alpha", "beta"]:
+                lines.append(
+                    f"  {param_name:<12} {stats['p50']:>10.4f} {stats['mean']:>10.4f} "
+                    f"{stats['std']:>10.4f} [{lower:.4f}, {upper:.4f}]"
+                )
+            else:
+                lines.append(
+                    f"  {param_name:<12} {stats['p50']:>10.2f} {stats['mean']:>10.2f} "
+                    f"{stats['std']:>10.2f} [{lower:.2f}, {upper:.2f}]"
+                )
+
+        # Derived quantities
+        lines.append("\nDERIVED QUANTITIES")
+        lines.append("-" * 50)
+        a_opt = self.beta_distribution / (self.alpha_distribution + self.beta_distribution)
+        b_opt = self.alpha_distribution / (self.alpha_distribution + self.beta_distribution)
+        lines.append(
+            f"  a_opt (N∝C^a):  {np.median(a_opt):.3f} [{np.percentile(a_opt, 5):.3f}, "
+            f"{np.percentile(a_opt, 95):.3f}]"
+        )
+        lines.append(
+            f"  b_opt (D∝C^b):  {np.median(b_opt):.3f} [{np.percentile(b_opt, 5):.3f}, "
+            f"{np.percentile(b_opt, 95):.3f}]"
+        )
+
+        # Prediction table with uncertainties
+        lines.append(f"\nPREDICTED LOSS WITH {ci_pct}% CONFIDENCE INTERVALS")
+        lines.append("-" * 80)
+
+        # Header row
+        n_d_label = "N \\ D"
+        header = f"  {n_d_label:<10}"
+        for D in token_counts:
+            header += f"  {format_token_count(int(D)):>18}"
+        lines.append(header)
+        lines.append("-" * 80)
+
+        # Data rows
+        for N in model_sizes:
+            row = f"  {format_count(int(N)):>10}"
+            for D in token_counts:
+                mean, lower, upper = self.predict_loss_interval(
+                    np.array([N]), np.array([D]), confidence=confidence
+                )
+                # Format as "mean [lo, hi]"
+                row += f"  {mean[0]:.4f} [{lower[0]:.4f},{upper[0]:.4f}]"
+            lines.append(row)
+
+        # Uncertainty assessment
+        lines.append("\nUNCERTAINTY ASSESSMENT")
+        lines.append("-" * 50)
+
+        # Check coefficient of variation for parameters
+        cv_alpha = self.alpha_std / self.alpha_mean * 100
+        cv_beta = self.beta_std / self.beta_mean * 100
+
+        if cv_alpha < 5 and cv_beta < 5:
+            lines.append("  ✓ Low parameter uncertainty (CV < 5% for α, β)")
+            lines.append("    → Predictions are well-constrained")
+        elif cv_alpha < 15 and cv_beta < 15:
+            lines.append("  ⚠ Moderate parameter uncertainty (5% < CV < 15%)")
+            lines.append("    → Consider adding more data or reducing noise")
+        else:
+            lines.append("  ✗ High parameter uncertainty (CV > 15%)")
+            lines.append("    → Predictions have wide confidence intervals")
+            lines.append("    → Add more training runs or filter noisy observations")
+
+        # Check for multimodality (rough heuristic)
+        alpha_iqr = summary["alpha"]["p75"] - summary["alpha"]["p25"]
+        alpha_range = summary["alpha"]["p95"] - summary["alpha"]["p5"]
+        if alpha_range > 3 * alpha_iqr:
+            lines.append("  ⚠ Possible multimodality in α distribution")
+            lines.append("    → Examine bootstrap distribution for multiple modes")
+
+        lines.append("=" * 80)
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return (
+            f"ChinchillaParametricBootstrapFit(n_bootstrap={self.n_bootstrap}, "
+            f"α={self.alpha_mean:.3f}±{self.alpha_std:.3f}, "
+            f"β={self.beta_mean:.3f}±{self.beta_std:.3f})"
+        )
+
+
+@dataclass
+class ChinchillaParametricWildClusterBootstrapFit:
+    """
+    Wild cluster bootstrap for scaling law uncertainty with hierarchical data.
+
+    This addresses two key issues with naive bootstrap on scaling law data:
+
+    1. **Non-IID data**: Observations are clustered by (ladder, model_size). Points within
+       a cluster share hyperparameters, architecture, and training trajectory. Naive bootstrap
+       breaks this correlation structure.
+
+    2. **Heteroscedasticity**: Variance typically decreases with model scale. Wild bootstrap
+       handles non-constant variance by perturbing residuals rather than resampling.
+
+    The wild cluster bootstrap works by:
+    1. Fitting a point estimate to get residuals
+    2. For each bootstrap iteration:
+       - Assign a random weight (+1 or -1) to each *cluster*
+       - All observations in a cluster get the same weight
+       - Multiply residuals by cluster weights
+       - Add perturbed residuals to fitted values
+       - Refit the scaling law
+
+    This preserves within-cluster correlation while properly estimating uncertainty.
+
+    References:
+        - Cameron, Gelbach, Miller (2008): Bootstrap-Based Improvements for Inference
+          with Clustered Errors
+        - Webb (2023): Reworking Wild Bootstrap Based Inference for Clustered Errors
+
+    Example:
+        >>> # Create cluster labels from ladder and model size
+        >>> clusters = [f"{ladder}_{size}" for ladder, size in zip(ladders, sizes)]
+        >>> fit = ChinchillaParametricWildClusterBootstrapFit.fit(
+        ...     N, D, loss, clusters, n_bootstrap=200
+        ... )
+        >>> mean, lo, hi = fit.predict_loss_interval([7e9], [5e12])
+    """
+
+    fits: list[ChinchillaParametricFit]
+    """List of wild bootstrap-fitted scaling laws."""
+
+    point_estimate: ChinchillaParametricFit
+    """Single fit on full data (used as base for residual perturbation)."""
+
+    cluster_labels: np.ndarray
+    """Cluster labels for each observation."""
+
+    n_clusters: int
+    """Number of unique clusters."""
+
+    # Original data used for fitting
+    _N: Optional[np.ndarray] = None
+    """Parameter counts used in fitting."""
+    _D: Optional[np.ndarray] = None
+    """Token counts used in fitting."""
+    _loss: Optional[np.ndarray] = None
+    """Loss values used in fitting."""
+    _residuals: Optional[np.ndarray] = None
+    """Residuals from point estimate (loss - predicted)."""
+
+    @property
+    def n_bootstrap(self) -> int:
+        """Number of bootstrap samples."""
+        return len(self.fits)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Parameter Distributions (same interface as ChinchillaParametricBootstrapFit)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @property
+    def E_distribution(self) -> np.ndarray:
+        """Distribution of entropy floor (E) across bootstrap samples."""
+        return np.array([f.E for f in self.fits])
+
+    @property
+    def A_distribution(self) -> np.ndarray:
+        """Distribution of parameter coefficient (A) across bootstrap samples."""
+        return np.array([f.A for f in self.fits])
+
+    @property
+    def alpha_distribution(self) -> np.ndarray:
+        """Distribution of parameter exponent (α) across bootstrap samples."""
+        return np.array([f.alpha for f in self.fits])
+
+    @property
+    def B_distribution(self) -> np.ndarray:
+        """Distribution of data coefficient (B) across bootstrap samples."""
+        return np.array([f.B for f in self.fits])
+
+    @property
+    def beta_distribution(self) -> np.ndarray:
+        """Distribution of data exponent (β) across bootstrap samples."""
+        return np.array([f.beta for f in self.fits])
+
+    @property
+    def r_squared_distribution(self) -> np.ndarray:
+        """Distribution of R² across bootstrap samples."""
+        return np.array([f.r_squared if f.r_squared else np.nan for f in self.fits])
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Summary Statistics
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @property
+    def E_mean(self) -> float:
+        """Mean entropy floor across bootstrap samples."""
+        return float(np.mean(self.E_distribution))
+
+    @property
+    def E_std(self) -> float:
+        """Standard deviation of entropy floor across bootstrap samples."""
+        return float(np.std(self.E_distribution))
+
+    @property
+    def A_mean(self) -> float:
+        """Mean parameter coefficient across bootstrap samples."""
+        return float(np.mean(self.A_distribution))
+
+    @property
+    def A_std(self) -> float:
+        """Standard deviation of parameter coefficient across bootstrap samples."""
+        return float(np.std(self.A_distribution))
+
+    @property
+    def alpha_mean(self) -> float:
+        """Mean parameter exponent across bootstrap samples."""
+        return float(np.mean(self.alpha_distribution))
+
+    @property
+    def alpha_std(self) -> float:
+        """Standard deviation of parameter exponent across bootstrap samples."""
+        return float(np.std(self.alpha_distribution))
+
+    @property
+    def B_mean(self) -> float:
+        """Mean data coefficient across bootstrap samples."""
+        return float(np.mean(self.B_distribution))
+
+    @property
+    def B_std(self) -> float:
+        """Standard deviation of data coefficient across bootstrap samples."""
+        return float(np.std(self.B_distribution))
+
+    @property
+    def beta_mean(self) -> float:
+        """Mean data exponent across bootstrap samples."""
+        return float(np.mean(self.beta_distribution))
+
+    @property
+    def beta_std(self) -> float:
+        """Standard deviation of data exponent across bootstrap samples."""
+        return float(np.std(self.beta_distribution))
+
+    def parameter_summary(self) -> dict[str, dict[str, float]]:
+        """Get comprehensive summary statistics for all parameters."""
+
+        def summarize(arr: np.ndarray) -> dict[str, float]:
+            return {
+                "mean": float(np.mean(arr)),
+                "std": float(np.std(arr)),
+                "p5": float(np.percentile(arr, 5)),
+                "p25": float(np.percentile(arr, 25)),
+                "p50": float(np.percentile(arr, 50)),
+                "p75": float(np.percentile(arr, 75)),
+                "p95": float(np.percentile(arr, 95)),
+            }
+
+        return {
+            "E": summarize(self.E_distribution),
+            "A": summarize(self.A_distribution),
+            "alpha": summarize(self.alpha_distribution),
+            "B": summarize(self.B_distribution),
+            "beta": summarize(self.beta_distribution),
+            "r_squared": summarize(self.r_squared_distribution),
+        }
+
+    def parameter_interval(
+        self, param: str, confidence: float = 0.90
+    ) -> tuple[float, float, float]:
+        """Get confidence interval for a specific parameter."""
+        dist_map = {
+            "E": self.E_distribution,
+            "A": self.A_distribution,
+            "alpha": self.alpha_distribution,
+            "B": self.B_distribution,
+            "beta": self.beta_distribution,
+        }
+        if param not in dist_map:
+            raise ValueError(f"Unknown parameter: {param}. Expected one of {list(dist_map.keys())}")
+
+        dist = dist_map[param]
+        lower_pct = (1 - confidence) / 2 * 100
+        upper_pct = (1 + confidence) / 2 * 100
+
+        return (
+            float(np.median(dist)),
+            float(np.percentile(dist, lower_pct)),
+            float(np.percentile(dist, upper_pct)),
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Prediction Methods
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        """Predict mean loss across bootstrap samples."""
+        N = np.asarray(N)
+        D = np.asarray(D)
+        predictions = np.array([f.predict_loss(N, D) for f in self.fits])
+        return np.mean(predictions, axis=0)
+
+    def predict_loss_distribution(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        """Get full distribution of loss predictions across bootstrap samples."""
+        N = np.asarray(N)
+        D = np.asarray(D)
+        return np.array([f.predict_loss(N, D) for f in self.fits])
+
+    def predict_loss_interval(
+        self,
+        N: ArrayLike,
+        D: ArrayLike,
+        confidence: float = 0.90,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Predict loss with confidence intervals."""
+        predictions = self.predict_loss_distribution(N, D)
+        mean = np.mean(predictions, axis=0)
+        lower_pct = (1 - confidence) / 2 * 100
+        upper_pct = (1 + confidence) / 2 * 100
+        lower = np.percentile(predictions, lower_pct, axis=0)
+        upper = np.percentile(predictions, upper_pct, axis=0)
+        return mean, lower, upper
+
+    def predict_loss_std(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        """Get standard deviation of loss predictions across bootstrap samples."""
+        predictions = self.predict_loss_distribution(N, D)
+        return np.std(predictions, axis=0)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Wild Bootstrap Weight Distributions
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _rademacher_weights(rng: np.random.Generator, n: int) -> np.ndarray:
+        """Rademacher distribution: {-1, +1} with equal probability."""
+        return rng.choice([-1.0, 1.0], size=n)
+
+    @staticmethod
+    def _webb_six_point_weights(rng: np.random.Generator, n: int) -> np.ndarray:
+        """
+        Webb's six-point distribution for few clusters.
+
+        Better finite-sample properties when number of clusters is small (< 10).
+        Values: ±sqrt(3/2), ±sqrt(1/2), ±1 with equal probability.
+        """
+        sqrt_3_2 = np.sqrt(1.5)
+        sqrt_1_2 = np.sqrt(0.5)
+        values = np.array([-sqrt_3_2, -1.0, -sqrt_1_2, sqrt_1_2, 1.0, sqrt_3_2])
+        return rng.choice(values, size=n)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Fitting
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def fit(
+        cls,
+        N: ArrayLike,
+        D: ArrayLike,
+        loss: ArrayLike,
+        clusters: ArrayLike,
+        n_bootstrap: int = 200,
+        loss_fn: LossFunctionType = "asymmetric_mae",
+        loss_param: Optional[float] = None,
+        random_state: Optional[int] = None,
+        parallel: bool = True,
+        weight_distribution: Literal["auto", "rademacher", "webb"] = "auto",
+        weights: Optional[ArrayLike] = None,
+    ) -> "ChinchillaParametricWildClusterBootstrapFit":
+        """
+        Fit scaling law with wild cluster bootstrap for uncertainty quantification.
+
+        This method is appropriate when:
+        - Data has hierarchical/clustered structure (e.g., by ladder and model size)
+        - Observations within clusters are correlated
+        - Variance may differ across scales (heteroscedasticity)
+
+        The wild cluster bootstrap preserves within-cluster correlation by assigning
+        the same random weight to all observations in each cluster.
+
+        Args:
+            N: Array of parameter counts
+            D: Array of token counts
+            loss: Array of loss values
+            clusters: Array of cluster labels (e.g., "ladder_modelsize" strings).
+                All observations with the same label are treated as a cluster.
+            n_bootstrap: Number of bootstrap iterations (default 200).
+                More samples give more precise estimates. Wild bootstrap is faster
+                than naive bootstrap since we don't rerun full grid search.
+            loss_fn: Loss function for fitting ("log_huber" or "asymmetric_mae")
+            loss_param: Parameter for loss function
+            random_state: Random seed for reproducibility
+            parallel: If True, use parallel grid search for point estimate
+            weight_distribution: Weight distribution for wild bootstrap:
+                - "auto": Use Webb for < 10 clusters, Rademacher otherwise
+                - "rademacher": Always use {-1, +1} weights
+                - "webb": Always use Webb's 6-point distribution
+            weights: Optional weights for each observation. Higher weights give more
+                importance to those points during fitting. Common choices:
+                - np.sqrt(6 * N * D): Weight by sqrt(compute) to emphasize large-scale points
+                - N * D: Weight by compute (stronger emphasis on large scale)
+                - None: Uniform weights (default)
+
+        Returns:
+            ChinchillaParametricWildClusterBootstrapFit with fitted models.
+
+        Example:
+            >>> # Create cluster labels from your data
+            >>> clusters = [f"{row['ladder']}_{row['size']}" for _, row in df.iterrows()]
+            >>> fit = ChinchillaParametricWildClusterBootstrapFit.fit(
+            ...     N=df["num_params"].values,
+            ...     D=df["throughput/total tokens"].values,
+            ...     loss=df["train/CE loss"].values,
+            ...     clusters=clusters,
+            ...     n_bootstrap=200,
+            ...     weights=np.sqrt(6 * df["num_params"].values * df["throughput/total tokens"].values),
+            ... )
+            >>> print(fit.report())
+        """
+        N = np.asarray(N)
+        D = np.asarray(D)
+        loss = np.asarray(loss)
+        clusters = np.asarray(clusters)
+
+        # Asymmetric MAE creates systematic bias - not appropriate for bootstrap uncertainty
+        if loss_fn == "asymmetric_mae":
+            raise ValueError(
+                "asymmetric_mae loss is not recommended for bootstrap uncertainty estimation. "
+                "This loss function penalizes overprediction more heavily, creating systematic "
+                "downward bias in predictions. Use loss_fn='log_huber' for unbiased uncertainty "
+                "estimates. If you specifically need asymmetric loss, use ChinchillaParametricFit "
+                "directly for point estimation."
+            )
+
+        # Clean data
+        mask = np.isfinite(N) & np.isfinite(D) & np.isfinite(loss) & (N > 0) & (D > 0) & (loss > 0)
+        N_clean = N[mask]
+        D_clean = D[mask]
+        L_clean = loss[mask]
+        clusters_clean = clusters[mask]
+
+        # Apply mask to weights if provided
+        weights_clean: Optional[np.ndarray] = None
+        if weights is not None:
+            weights_arr = np.asarray(weights)
+            weights_masked = weights_arr[mask]
+            # Normalize weights to sum to len(N_clean) to preserve scale of loss function
+            weights_clean = weights_masked * len(N_clean) / weights_masked.sum()
+            print(
+                f"Using observation weights (range: {weights_masked.min():.2f} to {weights_masked.max():.2f})"
+            )
+
+        if len(N_clean) < 5:
+            raise ValueError(f"Need at least 5 valid data points, got {len(N_clean)}")
+
+        # Get unique clusters and create mapping
+        unique_clusters = np.unique(clusters_clean)
+        n_clusters = len(unique_clusters)
+        cluster_to_idx = {c: i for i, c in enumerate(unique_clusters)}
+        cluster_indices = np.array([cluster_to_idx[c] for c in clusters_clean])
+
+        print(f"Wild cluster bootstrap with {n_clusters} clusters:")
+        for c in unique_clusters:
+            n_obs = np.sum(clusters_clean == c)
+            print(f"  {c}: {n_obs} observations")
+
+        # Select weight distribution
+        if weight_distribution == "auto":
+            if n_clusters < 10:
+                print("Using Webb's 6-point weights (recommended for < 10 clusters)")
+                weight_fn = cls._webb_six_point_weights
+            else:
+                print("Using Rademacher weights")
+                weight_fn = cls._rademacher_weights
+        elif weight_distribution == "webb":
+            weight_fn = cls._webb_six_point_weights
+        else:
+            weight_fn = cls._rademacher_weights
+
+        # Fit point estimate on full data
+        print("Fitting point estimate...")
+        point_estimate = ChinchillaParametricFit.fit(
+            N_clean,
+            D_clean,
+            L_clean,
+            loss_fn=loss_fn,
+            loss_param=loss_param,
+            parallel=parallel,
+            weights=weights_clean,
+        )
+
+        # Compute residuals
+        L_predicted = point_estimate.predict_loss(N_clean, D_clean)
+        residuals = L_clean - L_predicted
+
+        # Wild cluster bootstrap
+        rng = np.random.default_rng(random_state)
+        fits: list[ChinchillaParametricFit] = []
+
+        for _ in tqdm(range(n_bootstrap), desc="Wild cluster bootstrap"):
+            # Generate one weight per cluster
+            cluster_weights = weight_fn(rng, n_clusters)
+
+            # Map cluster weights to observations
+            obs_weights = cluster_weights[cluster_indices]
+
+            # Perturb residuals and create bootstrap loss values
+            L_boot = L_predicted + residuals * obs_weights
+
+            # Ensure positive losses (can happen with large negative weights)
+            L_boot = np.maximum(L_boot, 1e-6)
+
+            try:
+                # Fit on perturbed data
+                # Note: We use the same N, D - only loss values change
+                fit = ChinchillaParametricFit.fit(
+                    N_clean,
+                    D_clean,
+                    L_boot,
+                    loss_fn=loss_fn,
+                    loss_param=loss_param,
+                    parallel=parallel,
+                    weights=weights_clean,
+                )
+                fits.append(fit)
+            except Exception as e:
+                # Skip failed fits
+                print(f"Warning: Bootstrap iteration failed: {e}")
+                continue
+
+        if len(fits) < n_bootstrap * 0.5:
+            raise ValueError(
+                f"Too many bootstrap fits failed: {len(fits)}/{n_bootstrap} succeeded. "
+                "This may indicate ill-conditioning or extreme residuals."
+            )
+
+        return cls(
+            fits=fits,
+            point_estimate=point_estimate,
+            cluster_labels=clusters_clean,
+            n_clusters=n_clusters,
+            _N=N_clean,
+            _D=D_clean,
+            _loss=L_clean,
+            _residuals=residuals,
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Reporting
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def report(
+        self,
+        model_sizes: Optional[list[float]] = None,
+        token_counts: Optional[list[float]] = None,
+        confidence: float = 0.90,
+    ) -> str:
+        """Generate a comprehensive report with uncertainty estimates."""
+        if model_sizes is None:
+            model_sizes = [190e6, 1e9, 7e9, 70e9]
+        if token_counts is None:
+            token_counts = [100e9, 1e12, 5e12, 15e12]
+
+        summary = self.parameter_summary()
+        ci_pct = int(confidence * 100)
+
+        lines = []
+        lines.append("=" * 80)
+        lines.append("CHINCHILLA SCALING LAW (WILD CLUSTER BOOTSTRAP)")
+        lines.append(
+            f"Based on {self.n_bootstrap} bootstrap samples across {self.n_clusters} clusters"
+        )
+        lines.append("=" * 80)
+
+        # Point estimate
+        lines.append("\nPOINT ESTIMATE (Full Data)")
+        lines.append("-" * 50)
+        r2_str = (
+            f" (R²={self.point_estimate.r_squared:.4f})" if self.point_estimate.r_squared else ""
+        )
+        lines.append(
+            f"  L(N, D) = {self.point_estimate.E:.4f} + "
+            f"{self.point_estimate.A:.4f}/N^{self.point_estimate.alpha:.4f} + "
+            f"{self.point_estimate.B:.4f}/D^{self.point_estimate.beta:.4f}{r2_str}"
+        )
+
+        # Parameter distributions
+        lines.append(f"\nPARAMETER ESTIMATES (median [{ci_pct}% CI])")
+        lines.append("-" * 50)
+        lines.append(
+            f"  {'Parameter':<12} {'Median':>10} {'Mean':>10} {'Std':>10} "
+            f"{'[{0}% CI]'.format(ci_pct):>20}"
+        )
+        lines.append("-" * 50)
+
+        for param_name in ["E", "A", "alpha", "B", "beta"]:
+            stats = summary[param_name]
+            lower_pct = (1 - confidence) / 2 * 100
+            upper_pct = (1 + confidence) / 2 * 100
+            lower = float(np.percentile(getattr(self, f"{param_name}_distribution"), lower_pct))
+            upper = float(np.percentile(getattr(self, f"{param_name}_distribution"), upper_pct))
+
+            if param_name in ["E", "alpha", "beta"]:
+                lines.append(
+                    f"  {param_name:<12} {stats['p50']:>10.4f} {stats['mean']:>10.4f} "
+                    f"{stats['std']:>10.4f} [{lower:.4f}, {upper:.4f}]"
+                )
+            else:
+                lines.append(
+                    f"  {param_name:<12} {stats['p50']:>10.2f} {stats['mean']:>10.2f} "
+                    f"{stats['std']:>10.2f} [{lower:.2f}, {upper:.2f}]"
+                )
+
+        # Derived quantities
+        lines.append("\nDERIVED QUANTITIES")
+        lines.append("-" * 50)
+        a_opt = self.beta_distribution / (self.alpha_distribution + self.beta_distribution)
+        b_opt = self.alpha_distribution / (self.alpha_distribution + self.beta_distribution)
+        lines.append(
+            f"  a_opt (N∝C^a):  {np.median(a_opt):.3f} [{np.percentile(a_opt, 5):.3f}, "
+            f"{np.percentile(a_opt, 95):.3f}]"
+        )
+        lines.append(
+            f"  b_opt (D∝C^b):  {np.median(b_opt):.3f} [{np.percentile(b_opt, 5):.3f}, "
+            f"{np.percentile(b_opt, 95):.3f}]"
+        )
+
+        # Cluster info
+        lines.append("\nCLUSTER INFORMATION")
+        lines.append("-" * 50)
+        unique_clusters, counts = np.unique(self.cluster_labels, return_counts=True)
+        lines.append(f"  Number of clusters: {self.n_clusters}")
+        lines.append(
+            f"  Observations per cluster: min={counts.min()}, max={counts.max()}, "
+            f"mean={counts.mean():.1f}"
+        )
+
+        # Prediction table
+        lines.append(f"\nPREDICTED LOSS WITH {ci_pct}% CONFIDENCE INTERVALS")
+        lines.append("-" * 80)
+
+        n_d_label = "N \\ D"
+        header = f"  {n_d_label:<10}"
+        for D in token_counts:
+            header += f"  {format_token_count(int(D)):>18}"
+        lines.append(header)
+        lines.append("-" * 80)
+
+        for N in model_sizes:
+            row = f"  {format_count(int(N)):>10}"
+            for D in token_counts:
+                mean, lower, upper = self.predict_loss_interval(
+                    np.array([N]), np.array([D]), confidence=confidence
+                )
+                row += f"  {mean[0]:.4f} [{lower[0]:.4f},{upper[0]:.4f}]"
+            lines.append(row)
+
+        # Uncertainty assessment
+        lines.append("\nUNCERTAINTY ASSESSMENT")
+        lines.append("-" * 50)
+
+        cv_alpha = self.alpha_std / self.alpha_mean * 100
+        cv_beta = self.beta_std / self.beta_mean * 100
+
+        if cv_alpha < 5 and cv_beta < 5:
+            lines.append("  ✓ Low parameter uncertainty (CV < 5% for α, β)")
+            lines.append("    → Predictions are well-constrained")
+        elif cv_alpha < 15 and cv_beta < 15:
+            lines.append("  ⚠ Moderate parameter uncertainty (5% < CV < 15%)")
+            lines.append("    → Consider adding more clusters or data")
+        else:
+            lines.append("  ✗ High parameter uncertainty (CV > 15%)")
+            lines.append("    → Wide confidence intervals")
+            lines.append("    → May need more clusters or cleaner data")
+
+        if self.n_clusters < 10:
+            lines.append(f"\n  ⚠ Few clusters ({self.n_clusters}): Using Webb's 6-point weights")
+            lines.append("    → CIs may be conservative with < 10 clusters")
+
+        lines.append("=" * 80)
+        return "\n".join(lines)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Ranking and Comparison Methods
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def rank_fits(
+        fits: dict[str, "ChinchillaParametricWildClusterBootstrapFit"],
+        N_values: Optional[ArrayLike] = None,
+        D_values: Optional[ArrayLike] = None,
+        confidence: float = 0.90,
+    ) -> str:
+        """
+        Rank multiple bootstrap fits by predicted loss at various scales.
+
+        For each scale, models are ranked from best (lowest loss) to worst.
+        Statistical significance is indicated when the confidence interval
+        for the difference between adjacent ranks excludes zero.
+
+        Args:
+            fits: Dictionary mapping names to bootstrap fits.
+            N_values: Parameter counts to evaluate at. Default: [1B, 7B, 32B, 70B].
+            D_values: Token counts to evaluate at. Default: 20*N (20 tokens per param).
+                If scalar, uses same D for all N values.
+            confidence: Confidence level for significance tests (default 0.90).
+
+        Returns:
+            Formatted ranking report string.
+
+        Example:
+            >>> report = ChinchillaParametricWildClusterBootstrapFit.rank_fits(
+            ...     fits={"baseline": bl, "muon": muon, "gnope": gnope},
+            ... )
+            >>> print(report)
+        """
+        if N_values is None:
+            N_values = np.array([1e9, 7e9, 32e9, 70e9])
+        else:
+            N_values = np.asarray(N_values)
+
+        if D_values is None:
+            D_values = np.array([100e9, 1e12, 5e12, 10e12])
+        else:
+            D_values = np.asarray(D_values)
+            if D_values.ndim == 0:
+                D_values = np.full_like(N_values, float(D_values))
+
+        ci_pct = int(confidence * 100)
+        names = list(fits.keys())
+        n_fits = len(fits)
+        n_scales = len(N_values)
+
+        # Compute predictions for all fits at all scales
+        # predictions[fit_name][bootstrap_sample, scale_idx]
+        n_samples = min(f.n_bootstrap for f in fits.values())
+        predictions: dict[str, np.ndarray] = {}
+        for name, fit in fits.items():
+            predictions[name] = np.array(
+                [fit.fits[i].predict_loss(N_values, D_values) for i in range(n_samples)]
+            )
+
+        # Mean predictions
+        mean_preds = {name: np.mean(preds, axis=0) for name, preds in predictions.items()}
+
+        lines = []
+        lines.append("=" * 100)
+        lines.append("BOOTSTRAP FIT RANKINGS")
+        lines.append(
+            f"Comparing {n_fits} models at {n_scales} scales | {ci_pct}% CI for significance"
+        )
+        lines.append("=" * 100)
+
+        # Create scale labels
+        scale_labels = []
+        for N, D in zip(N_values, D_values):
+            N_str = format_count(int(N))
+            D_str = format_token_count(int(D))
+            scale_labels.append(f"{N_str}/{D_str}")
+
+        # Table: rows = models, cols = scales
+        lines.append(f"\nPREDICTED LOSS BY SCALE (mean [{ci_pct}% CI])")
+        lines.append("-" * 100)
+
+        header = f"{'Model':<25}"
+        for label in scale_labels:
+            header += f" {label:>17}"
+        lines.append(header)
+        lines.append("-" * 100)
+
+        for name in sorted(names):
+            row = f"{name:<25}"
+            preds = predictions[name]
+            for i in range(n_scales):
+                mean = np.mean(preds[:, i])
+                lower = np.percentile(preds[:, i], (1 - confidence) / 2 * 100)
+                upper = np.percentile(preds[:, i], (1 + confidence) / 2 * 100)
+                row += f" {mean:.4f}[{lower:.4f},{upper:.4f}]"
+            lines.append(row)
+
+        # Rankings with significance
+        lines.append("\nRANKINGS BY SCALE (Best → Worst)")
+        lines.append("-" * 100)
+        lines.append("Significance: '>>' means significantly better than next rank")
+        lines.append("              '>'  means better but not statistically significant")
+        lines.append("-" * 100)
+
+        for scale_idx, label in enumerate(scale_labels):
+            # Sort models by mean prediction (ascending = best first)
+            sorted_names = sorted(names, key=lambda n: mean_preds[n][scale_idx])
+
+            # Build ranking string with significance markers
+            ranking_parts = []
+            for rank, name in enumerate(sorted_names):
+                if rank < len(sorted_names) - 1:
+                    next_name = sorted_names[rank + 1]
+
+                    # Pairwise test: is this model significantly better than next?
+                    diff = predictions[next_name][:, scale_idx] - predictions[name][:, scale_idx]
+                    lower = np.percentile(diff, (1 - confidence) / 2 * 100)
+                    upper = np.percentile(diff, (1 + confidence) / 2 * 100)
+
+                    # Significant if CI for (next - current) excludes 0 on the positive side
+                    # i.e., next is significantly worse
+                    if lower > 0:
+                        sep = " >> "  # Significantly better
+                    else:
+                        sep = " > "  # Better but not significant
+
+                    ranking_parts.append(f"{name}{sep}")
+                else:
+                    ranking_parts.append(name)
+
+            lines.append(f"\n  {label}:")
+            lines.append(f"    {''.join(ranking_parts)}")
+
+        # Summary: how often each model is ranked #1, #2, etc.
+        lines.append("\n" + "=" * 100)
+        lines.append("RANK SUMMARY (how often each model places at each rank)")
+        lines.append("-" * 100)
+
+        # Count ranks across scales
+        rank_counts: dict[str, list[int]] = {name: [0] * n_fits for name in names}
+        for scale_idx in range(n_scales):
+            sorted_names = sorted(names, key=lambda n: mean_preds[n][scale_idx])
+            for rank, name in enumerate(sorted_names):
+                rank_counts[name][rank] += 1
+
+        header = f"{'Model':<25}"
+        for r in range(min(n_fits, 5)):  # Show top 5 ranks
+            header += f" {'#' + str(r + 1):>6}"
+        header += "  Avg Rank"
+        lines.append(header)
+        lines.append("-" * 100)
+
+        # Compute average rank
+        avg_ranks = {}
+        for name in names:
+            avg_rank = sum((r + 1) * count for r, count in enumerate(rank_counts[name])) / n_scales
+            avg_ranks[name] = avg_rank
+
+        for name in sorted(names, key=lambda n: avg_ranks[n]):
+            row = f"{name:<25}"
+            for r in range(min(n_fits, 5)):
+                row += f" {rank_counts[name][r]:>6}"
+            row += f"  {avg_ranks[name]:>8.2f}"
+            lines.append(row)
+
+        # Pairwise significance matrix
+        lines.append("\n" + "=" * 100)
+        lines.append("PAIRWISE SIGNIFICANCE (at largest scale)")
+        lines.append(f"Cell shows: P(row < col) | '**' if {ci_pct}% significant")
+        lines.append("-" * 100)
+
+        # Use largest scale for pairwise comparison
+        largest_scale = n_scales - 1
+
+        # Header row
+        header = f"{'':15}"
+        for name in sorted(names):
+            header += f" {name[:12]:>12}"
+        lines.append(header)
+
+        for name_a in sorted(names):
+            row = f"{name_a[:15]:<15}"
+            for name_b in sorted(names):
+                if name_a == name_b:
+                    row += f" {'---':>12}"
+                else:
+                    # P(A < B) = P(B - A > 0)
+                    diff = (
+                        predictions[name_b][:, largest_scale]
+                        - predictions[name_a][:, largest_scale]
+                    )
+                    prob_a_better = np.mean(diff > 0)
+                    lower = np.percentile(diff, (1 - confidence) / 2 * 100)
+
+                    sig = "**" if lower > 0 else ""
+                    row += f" {prob_a_better:>5.0%}{sig:>5}"
+            lines.append(row)
+
+        lines.append("\n" + "=" * 100)
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return (
+            f"ChinchillaParametricWildClusterBootstrapFit("
+            f"n_bootstrap={self.n_bootstrap}, n_clusters={self.n_clusters}, "
+            f"α={self.alpha_mean:.3f}±{self.alpha_std:.3f}, "
+            f"β={self.beta_mean:.3f}±{self.beta_std:.3f})"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Extrapolation Validation
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _compute_ndcg(predicted_ranking: list[str], actual_ranking: list[str]) -> float:
+    """
+    Compute NDCG (Normalized Discounted Cumulative Gain) for ranking evaluation.
+
+    We assign relevance scores based on actual ranking:
+    - Best ladder (rank 1) gets relevance = n
+    - Worst ladder (rank n) gets relevance = 1
+
+    NDCG measures if the predicted ranking puts high-relevance items at the top.
+
+    Args:
+        predicted_ranking: Ladders sorted by predicted loss (best first)
+        actual_ranking: Ladders sorted by actual loss (best first)
+
+    Returns:
+        NDCG score in [0, 1], where 1 means perfect ranking match.
+    """
+    n = len(actual_ranking)
+    if n == 0:
+        return 1.0
+    if n == 1:
+        return 1.0  # Trivial case
+
+    # Assign relevance scores: best ladder gets n, worst gets 1
+    relevance = {ladder: n - rank for rank, ladder in enumerate(actual_ranking)}
+
+    # DCG: sum of relevance / log2(position + 1)
+    dcg = 0.0
+    for pos, ladder in enumerate(predicted_ranking):
+        rel = relevance.get(ladder, 0)
+        dcg += rel / np.log2(pos + 2)  # +2 because positions are 0-indexed
+
+    # Ideal DCG: best possible ordering (sorted by relevance)
+    ideal_relevances = sorted(relevance.values(), reverse=True)
+    idcg = sum(rel / np.log2(pos + 2) for pos, rel in enumerate(ideal_relevances))
+
+    if idcg == 0:
+        return 1.0
+
+    return dcg / idcg
+
+
+def _compute_kendall_tau(predicted_ranking: list[str], actual_ranking: list[str]) -> float:
+    """
+    Compute Kendall's tau rank correlation coefficient.
+
+    Args:
+        predicted_ranking: Ladders sorted by predicted loss (best first)
+        actual_ranking: Ladders sorted by actual loss (best first)
+
+    Returns:
+        Kendall's tau in [-1, 1], where 1 means perfect agreement.
+    """
+    if len(predicted_ranking) < 2:
+        return 1.0
+
+    # Convert rankings to numeric ranks
+    pred_rank = {ladder: i for i, ladder in enumerate(predicted_ranking)}
+    actual_rank = {ladder: i for i, ladder in enumerate(actual_ranking)}
+
+    # Get common ladders in consistent order
+    common = [ldr for ldr in predicted_ranking if ldr in actual_rank]
+    if len(common) < 2:
+        return 1.0
+
+    pred_ranks = [pred_rank[ldr] for ldr in common]
+    actual_ranks = [actual_rank[ldr] for ldr in common]
+
+    result = stats.kendalltau(pred_ranks, actual_ranks)
+    # Handle both old and new scipy API - use getattr to avoid type errors
+    tau = float(getattr(result, "statistic", getattr(result, "correlation", 0.0)))
+    return tau if np.isfinite(tau) else 0.0
+
+
+def _compute_spearman(predicted_ranking: list[str], actual_ranking: list[str]) -> float:
+    """
+    Compute Spearman's rank correlation coefficient.
+
+    Args:
+        predicted_ranking: Ladders sorted by predicted loss (best first)
+        actual_ranking: Ladders sorted by actual loss (best first)
+
+    Returns:
+        Spearman's rho in [-1, 1], where 1 means perfect agreement.
+    """
+    if len(predicted_ranking) < 2:
+        return 1.0
+
+    # Convert rankings to numeric ranks
+    pred_rank = {ladder: i for i, ladder in enumerate(predicted_ranking)}
+    actual_rank = {ladder: i for i, ladder in enumerate(actual_ranking)}
+
+    # Get common ladders in consistent order
+    common = [ldr for ldr in predicted_ranking if ldr in actual_rank]
+    if len(common) < 2:
+        return 1.0
+
+    pred_ranks = [pred_rank[ldr] for ldr in common]
+    actual_ranks = [actual_rank[ldr] for ldr in common]
+
+    result = stats.spearmanr(pred_ranks, actual_ranks)
+    # Handle both old and new scipy API - use getattr to avoid type errors
+    rho = float(getattr(result, "statistic", getattr(result, "correlation", 0.0)))
+    return rho if np.isfinite(rho) else 0.0
+
+
+@dataclass
+class ExtrapolationPointResult:
+    """Result for a single target compute level within a fold."""
+
+    target_compute: float
+    """Target compute value for this evaluation."""
+
+    target_N: float
+    """Target parameter count (representative, may vary by ladder)."""
+
+    target_D: float
+    """Target token count (representative, may vary by ladder)."""
+
+    extrapolation_ratio: float
+    """Ratio of target_compute / max_train_compute. Values > 1 indicate extrapolation."""
+
+    log_extrapolation_distance: float
+    """log10(target_compute / max_train_compute). Larger = further extrapolation."""
+
+    predicted_losses: dict[str, float]
+    """Ladder name -> predicted loss at target."""
+
+    actual_losses: dict[str, float]
+    """Ladder name -> actual loss at target."""
+
+    predicted_ranking: list[str]
+    """Ladders sorted by predicted loss (best/lowest first)."""
+
+    actual_ranking: list[str]
+    """Ladders sorted by actual loss (best/lowest first)."""
+
+    ndcg: float
+    """NDCG score at this target."""
+
+    kendall_tau: float
+    """Kendall's tau at this target."""
+
+    spearman: float
+    """Spearman's rho at this target."""
+
+    n_ladders_evaluated: int
+    """Number of ladders that had data at this target."""
+
+    @property
+    def top1_correct(self) -> bool:
+        """Whether the top-1 prediction matches ground truth."""
+        if not self.predicted_ranking or not self.actual_ranking:
+            return False
+        return self.predicted_ranking[0] == self.actual_ranking[0]
+
+    @property
+    def top2_correct(self) -> bool:
+        """Whether the top-2 predictions match ground truth (order-insensitive)."""
+        if len(self.predicted_ranking) < 2 or len(self.actual_ranking) < 2:
+            return self.top1_correct
+        return set(self.predicted_ranking[:2]) == set(self.actual_ranking[:2])
+
+
+@dataclass
+class ExtrapolationFoldResult:
+    """Result for a single validation fold, with predictions at ALL higher compute levels."""
+
+    fold_idx: int
+    """Fold index (0-based)."""
+
+    cutoff_compute: float
+    """Compute threshold for this fold (training uses points below this)."""
+
+    max_train_compute: float
+    """Maximum compute in the training set for this fold."""
+
+    point_results: list[ExtrapolationPointResult]
+    """Results for each target compute level above the cutoff."""
+
+    n_ladders_evaluated: int
+    """Number of ladders that had enough training data for this fold."""
+
+    ladders_skipped: list[str]
+    """Ladders that were skipped (insufficient training data)."""
+
+    ladder_fits: dict[str, ChinchillaParametricFit]
+    """Fitted scaling laws for each ladder (for inspection/debugging)."""
+
+    @property
+    def n_target_points(self) -> int:
+        """Number of target compute levels evaluated."""
+        return len(self.point_results)
+
+    @property
+    def mean_ndcg(self) -> float:
+        """Mean NDCG across all target points."""
+        if not self.point_results:
+            return 0.0
+        return float(np.mean([pr.ndcg for pr in self.point_results]))
+
+    @property
+    def mean_kendall_tau(self) -> float:
+        """Mean Kendall's tau across all target points."""
+        if not self.point_results:
+            return 0.0
+        return float(np.mean([pr.kendall_tau for pr in self.point_results]))
+
+    @property
+    def mean_spearman(self) -> float:
+        """Mean Spearman's rho across all target points."""
+        if not self.point_results:
+            return 0.0
+        return float(np.mean([pr.spearman for pr in self.point_results]))
+
+    @property
+    def top1_accuracy(self) -> float:
+        """Fraction of target points where top-1 prediction was correct."""
+        if not self.point_results:
+            return 0.0
+        return sum(1 for pr in self.point_results if pr.top1_correct) / len(self.point_results)
+
+    def report(self) -> str:
+        """Generate a report for this fold."""
+        lines = []
+        lines.append(f"Fold {self.fold_idx}: Cutoff C={self.cutoff_compute:.2e}")
+        lines.append(f"  Max train compute: {self.max_train_compute:.2e}")
+        lines.append(f"  Ladders evaluated: {self.n_ladders_evaluated}")
+        lines.append(f"  Target points: {self.n_target_points}")
+        if self.ladders_skipped:
+            lines.append(f"  Skipped: {', '.join(self.ladders_skipped)}")
+
+        lines.append(f"\n  Overall: NDCG={self.mean_ndcg:.4f}, τ={self.mean_kendall_tau:.4f}")
+        lines.append(f"  Top-1 accuracy: {self.top1_accuracy:.1%}")
+
+        # Show metrics by extrapolation distance
+        lines.append("\n  By extrapolation distance:")
+        lines.append(f"    {'log₁₀(ratio)':>12} {'NDCG':>8} {'τ':>8} {'Top1':>6}")
+        lines.append(f"    {'-' * 12} {'-' * 8} {'-' * 8} {'-' * 6}")
+        for pr in self.point_results:
+            top1 = "✓" if pr.top1_correct else "✗"
+            lines.append(
+                f"    {pr.log_extrapolation_distance:>12.2f} "
+                f"{pr.ndcg:>8.4f} {pr.kendall_tau:>8.4f} {top1:>6}"
+            )
+
+        return "\n".join(lines)
+
+
+@dataclass
+class ExtrapolationValidationResult:
+    """
+    Results from scaling law extrapolation validation.
+
+    This uses an expanding-window approach similar to time-series cross-validation:
+    for each training cutoff, we fit scaling laws on data below the cutoff,
+    then predict at ALL higher compute levels and compare rankings.
+
+    Key insight: we track how accuracy degrades with extrapolation distance,
+    measured as log10(target_compute / max_train_compute).
+    """
+
+    fold_results: list[ExtrapolationFoldResult]
+    """Results for each validation fold."""
+
+    n_folds: int
+    """Total number of validation folds."""
+
+    n_ladders: int
+    """Total number of unique ladders in the dataset."""
+
+    ladder_names: list[str]
+    """Names of all ladders."""
+
+    def _get_all_point_results(self) -> list[ExtrapolationPointResult]:
+        """Get all point results across all folds."""
+        return [pr for fr in self.fold_results for pr in fr.point_results]
+
+    @property
+    def total_evaluations(self) -> int:
+        """Total number of (fold, target) evaluations."""
+        return sum(fr.n_target_points for fr in self.fold_results)
+
+    @property
+    def mean_ndcg(self) -> float:
+        """Mean NDCG across all evaluations."""
+        all_points = self._get_all_point_results()
+        return float(np.mean([pr.ndcg for pr in all_points])) if all_points else 0.0
+
+    @property
+    def std_ndcg(self) -> float:
+        """Std of NDCG across all evaluations."""
+        all_points = self._get_all_point_results()
+        return float(np.std([pr.ndcg for pr in all_points])) if all_points else 0.0
+
+    @property
+    def mean_kendall_tau(self) -> float:
+        """Mean Kendall's tau across all evaluations."""
+        all_points = self._get_all_point_results()
+        return float(np.mean([pr.kendall_tau for pr in all_points])) if all_points else 0.0
+
+    @property
+    def std_kendall_tau(self) -> float:
+        """Std of Kendall's tau across all evaluations."""
+        all_points = self._get_all_point_results()
+        return float(np.std([pr.kendall_tau for pr in all_points])) if all_points else 0.0
+
+    @property
+    def mean_spearman(self) -> float:
+        """Mean Spearman's rho across all evaluations."""
+        all_points = self._get_all_point_results()
+        return float(np.mean([pr.spearman for pr in all_points])) if all_points else 0.0
+
+    @property
+    def std_spearman(self) -> float:
+        """Std of Spearman's rho across all evaluations."""
+        all_points = self._get_all_point_results()
+        return float(np.std([pr.spearman for pr in all_points])) if all_points else 0.0
+
+    @property
+    def top1_accuracy(self) -> float:
+        """Fraction of evaluations where top-1 prediction was correct."""
+        all_points = self._get_all_point_results()
+        if not all_points:
+            return 0.0
+        return sum(1 for pr in all_points if pr.top1_correct) / len(all_points)
+
+    @property
+    def top2_accuracy(self) -> float:
+        """Fraction of evaluations where top-2 prediction was correct."""
+        all_points = self._get_all_point_results()
+        if not all_points:
+            return 0.0
+        return sum(1 for pr in all_points if pr.top2_correct) / len(all_points)
+
+    def metrics_by_extrapolation_distance(self, n_bins: int = 5) -> list[dict[str, float]]:
+        """
+        Compute metrics binned by extrapolation distance.
+
+        This is the key analysis: how does ranking accuracy degrade as we
+        extrapolate further from the training data?
+
+        Args:
+            n_bins: Number of bins for log extrapolation distance.
+
+        Returns:
+            List of dicts with keys: log_dist_min, log_dist_max, log_dist_mid,
+            n_samples, ndcg, kendall_tau, spearman, top1_accuracy.
+        """
+        all_points = self._get_all_point_results()
+        if not all_points:
+            return []
+
+        log_dists = np.array([pr.log_extrapolation_distance for pr in all_points])
+        min_dist, max_dist = log_dists.min(), log_dists.max()
+
+        if min_dist >= max_dist:
+            # All same distance, return single bin
+            return [
+                {
+                    "log_dist_min": float(min_dist),
+                    "log_dist_max": float(max_dist),
+                    "log_dist_mid": float(min_dist),
+                    "n_samples": len(all_points),
+                    "ndcg": float(np.mean([pr.ndcg for pr in all_points])),
+                    "kendall_tau": float(np.mean([pr.kendall_tau for pr in all_points])),
+                    "spearman": float(np.mean([pr.spearman for pr in all_points])),
+                    "top1_accuracy": sum(1 for pr in all_points if pr.top1_correct)
+                    / len(all_points),
+                }
+            ]
+
+        bin_edges = np.linspace(min_dist, max_dist + 1e-9, n_bins + 1)
+        results = []
+
+        for i in range(n_bins):
+            bin_min, bin_max = bin_edges[i], bin_edges[i + 1]
+            bin_points = [
+                pr for pr in all_points if bin_min <= pr.log_extrapolation_distance < bin_max
+            ]
+
+            if not bin_points:
+                continue
+
+            results.append(
+                {
+                    "log_dist_min": float(bin_min),
+                    "log_dist_max": float(bin_max),
+                    "log_dist_mid": float((bin_min + bin_max) / 2),
+                    "n_samples": len(bin_points),
+                    "ndcg": float(np.mean([pr.ndcg for pr in bin_points])),
+                    "kendall_tau": float(np.mean([pr.kendall_tau for pr in bin_points])),
+                    "spearman": float(np.mean([pr.spearman for pr in bin_points])),
+                    "top1_accuracy": sum(1 for pr in bin_points if pr.top1_correct)
+                    / len(bin_points),
+                }
+            )
+
+        return results
+
+    def report(self) -> str:
+        """Generate a comprehensive validation report."""
+        lines = []
+        lines.append("=" * 90)
+        lines.append("SCALING LAW EXTRAPOLATION VALIDATION REPORT")
+        lines.append("=" * 90)
+
+        lines.append(f"\nDataset: {self.n_ladders} ladders, {self.n_folds} training folds")
+        lines.append(f"Total evaluations: {self.total_evaluations} (fold × target combinations)")
+        lines.append(f"Ladders: {', '.join(self.ladder_names)}")
+
+        # Overall metrics
+        lines.append("\n" + "=" * 90)
+        lines.append("OVERALL METRICS (across all extrapolation distances)")
+        lines.append("-" * 50)
+
+        lines.append(f"  {'Metric':<20} {'Mean':>10} {'Std':>10}")
+        lines.append(f"  {'-' * 20} {'-' * 10} {'-' * 10}")
+        lines.append(f"  {'NDCG':<20} {self.mean_ndcg:>10.4f} {self.std_ndcg:>10.4f}")
+        lines.append(
+            f"  {'Kendall τ':<20} {self.mean_kendall_tau:>10.4f} {self.std_kendall_tau:>10.4f}"
+        )
+        lines.append(f"  {'Spearman ρ':<20} {self.mean_spearman:>10.4f} {self.std_spearman:>10.4f}")
+
+        lines.append(f"\n  Top-1 Accuracy: {self.top1_accuracy:.1%}")
+        lines.append(f"  Top-2 Accuracy: {self.top2_accuracy:.1%}")
+
+        # KEY: Metrics by extrapolation distance
+        lines.append("\n" + "=" * 90)
+        lines.append("METRICS BY EXTRAPOLATION DISTANCE")
+        lines.append("(log₁₀(target_compute / max_train_compute))")
+        lines.append("-" * 90)
+
+        dist_metrics = self.metrics_by_extrapolation_distance(n_bins=6)
+        if dist_metrics:
+            header = f"  {'Distance Range':>20} {'N':>6} {'NDCG':>8} {'τ':>8} {'ρ':>8} {'Top1':>8}"
+            lines.append(header)
+            lines.append("-" * 90)
+
+            for dm in dist_metrics:
+                dist_range = f"[{dm['log_dist_min']:.2f}, {dm['log_dist_max']:.2f})"
+                lines.append(
+                    f"  {dist_range:>20} {dm['n_samples']:>6} "
+                    f"{dm['ndcg']:>8.4f} {dm['kendall_tau']:>8.4f} "
+                    f"{dm['spearman']:>8.4f} {dm['top1_accuracy']:>7.1%}"
+                )
+
+            # Interpretation
+            lines.append("\n" + "-" * 50)
+            if len(dist_metrics) >= 2:
+                first_ndcg = dist_metrics[0]["ndcg"]
+                last_ndcg = dist_metrics[-1]["ndcg"]
+                degradation = first_ndcg - last_ndcg
+
+                if degradation < 0.05:
+                    lines.append("  ✓ Excellent: Ranking accuracy stable across distances")
+                elif degradation < 0.15:
+                    lines.append("  ○ Good: Moderate degradation with distance")
+                else:
+                    lines.append("  ⚠ Warning: Significant degradation at large distances")
+                    lines.append(f"     NDCG drops from {first_ndcg:.3f} to {last_ndcg:.3f}")
+
+        # Per-fold summary
+        lines.append("\n" + "=" * 90)
+        lines.append("PER-FOLD SUMMARY")
+        lines.append("-" * 90)
+
+        header = f"  {'Fold':>5} {'Cutoff C':>12} {'#Targets':>10} {'NDCG':>8} {'τ':>8} {'Top1':>8}"
+        lines.append(header)
+        lines.append("-" * 90)
+
+        for fr in self.fold_results:
+            row = (
+                f"  {fr.fold_idx:>5} {fr.cutoff_compute:>12.2e} {fr.n_target_points:>10} "
+                f"{fr.mean_ndcg:>8.4f} {fr.mean_kendall_tau:>8.4f} {fr.top1_accuracy:>7.1%}"
+            )
+            lines.append(row)
+
+        # Detailed fold results (abbreviated)
+        lines.append("\n" + "=" * 90)
+        lines.append("DETAILED FOLD RESULTS")
+        lines.append("=" * 90)
+
+        for fr in self.fold_results:
+            lines.append("\n" + fr.report())
+
+        lines.append("\n" + "=" * 90)
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return (
+            f"ExtrapolationValidationResult("
+            f"n_folds={self.n_folds}, total_evals={self.total_evaluations}, "
+            f"NDCG={self.mean_ndcg:.3f}±{self.std_ndcg:.3f}, "
+            f"τ={self.mean_kendall_tau:.3f}±{self.std_kendall_tau:.3f}, "
+            f"top1_acc={self.top1_accuracy:.1%})"
+        )
+
+
+@dataclass
+class ScalingLawExtrapolationValidator:
+    """
+    Validates scaling law extrapolation using expanding-window cross-validation.
+
+    This validator assesses how well scaling laws fitted on smaller-scale data
+    can predict relative performance (rankings) at larger scales. This is crucial
+    for model ladder experiments where we want to know if early training signals
+    reliably predict which configuration will be best at full scale.
+
+    Key feature: For each training fold, we predict at ALL higher compute levels,
+    not just the next one. This allows analysis of how ranking accuracy degrades
+    with extrapolation distance (measured as log10(target_compute / max_train_compute)).
+
+    The validation procedure:
+    1. Sort all observations by compute (C = 6*N*D)
+    2. Define validation folds based on compute thresholds
+    3. For each fold:
+       a. Fit a separate scaling law for each ladder using data below threshold
+       b. Predict loss at ALL compute levels above threshold for each ladder
+       c. At each target level, rank ladders by predicted loss
+       d. Compare to actual ranking using NDCG, Kendall's tau, Spearman's rho
+       e. Track metrics by extrapolation distance
+
+    Output includes:
+    - Overall metrics across all (fold, target) combinations
+    - Metrics binned by extrapolation distance (to see degradation)
+    - Per-fold details with all target points
+
+    Example:
+        >>> # Prepare data
+        >>> ladders = np.array(["baseline", "baseline", "muon", "muon", ...])
+        >>> N = np.array([190e6, 190e6, 190e6, 190e6, ...])
+        >>> D = np.array([1e9, 10e9, 1e9, 10e9, ...])
+        >>> loss = np.array([3.5, 3.0, 3.4, 2.9, ...])
+        >>>
+        >>> # Validate extrapolation
+        >>> result = ScalingLawExtrapolationValidator.validate(
+        ...     ladders=ladders,
+        ...     N=N,
+        ...     D=D,
+        ...     loss=loss,
+        ...     min_train_points=5,
+        ... )
+        >>> print(result.report())
+        >>>
+        >>> # Analyze by extrapolation distance
+        >>> for bucket in result.metrics_by_extrapolation_distance():
+        ...     print(f"Distance {bucket['log_dist_mid']:.2f}: NDCG={bucket['ndcg']:.3f}")
+    """
+
+    @staticmethod
+    def validate(
+        ladders: ArrayLike,
+        N: ArrayLike,
+        D: ArrayLike,
+        loss: ArrayLike,
+        min_train_points: int = 5,
+        min_ladders_per_fold: int = 2,
+        loss_fn: LossFunctionType = "log_huber",
+        loss_param: Optional[float] = None,
+        parallel: bool = True,
+        validation_points: Optional[ArrayLike] = None,
+        extrapolation_dim: Literal["C", "N", "D"] = "C",
+        target_multiple: Optional[float] = None,
+        verbose: bool = True,
+    ) -> ExtrapolationValidationResult:
+        """
+        Validate scaling law extrapolation using expanding-window cross-validation.
+
+        Args:
+            ladders: Array of ladder names/identifiers for each observation.
+            N: Array of parameter counts.
+            D: Array of token counts.
+            loss: Array of loss values.
+            min_train_points: Minimum number of training points required per ladder
+                to fit a scaling law (default 5).
+            min_ladders_per_fold: Minimum number of ladders required per fold
+                for meaningful ranking comparison (default 2).
+            loss_fn: Loss function for fitting scaling laws.
+                Use "log_huber" (default) for validation to avoid systematic bias.
+            loss_param: Parameter for loss function.
+            parallel: If True, use parallel optimization for fitting.
+            validation_points: Optional array of values (in the chosen dimension) to use
+                as validation cutoffs. If None, automatically determines folds based on data.
+            extrapolation_dim: Dimension to use for defining extrapolation distance:
+                - "C": Compute (6*N*D) - extrapolate based on total compute (default)
+                - "N": Parameters - extrapolate based on model size
+                - "D": Tokens - extrapolate based on training data amount
+            target_multiple: If set, only predict at points that are approximately this
+                multiple of the max training scale. For example, target_multiple=8.0 means
+                predict at ~8x the max training compute/N/D. This standardizes the
+                extrapolation distance across folds. If None, predict at all points
+                above the cutoff.
+            verbose: If True, print progress information.
+
+        Returns:
+            ExtrapolationValidationResult with comprehensive metrics.
+
+        Raises:
+            ValueError: If insufficient data for validation.
+        """
+        # Convert to numpy arrays
+        ladders = np.asarray(ladders)
+        N = np.asarray(N)
+        D = np.asarray(D)
+        loss = np.asarray(loss)
+
+        # Compute values (approximate FLOPs)
+        C = 6 * N * D
+
+        # Clean data
+        mask = np.isfinite(N) & np.isfinite(D) & np.isfinite(loss) & (N > 0) & (D > 0) & (loss > 0)
+        ladders = ladders[mask]
+        N = N[mask]
+        D = D[mask]
+        loss = loss[mask]
+        C = C[mask]
+
+        # Select the dimension for extrapolation
+        dim_map = {"C": C, "N": N, "D": D}
+        dim_names = {"C": "Compute (6ND)", "N": "Parameters (N)", "D": "Tokens (D)"}
+        if extrapolation_dim not in dim_map:
+            raise ValueError(f"extrapolation_dim must be 'C', 'N', or 'D', got {extrapolation_dim}")
+        scale_dim = dim_map[extrapolation_dim]
+
+        if len(N) < min_train_points + 1:
+            raise ValueError(
+                f"Need at least {min_train_points + 1} valid data points, got {len(N)}"
+            )
+
+        # Get unique ladders
+        unique_ladders = np.unique(ladders)
+        n_ladders = len(unique_ladders)
+
+        if n_ladders < min_ladders_per_fold:
+            raise ValueError(
+                f"Need at least {min_ladders_per_fold} ladders for ranking, got {n_ladders}"
+            )
+
+        if verbose:
+            print(f"Validating extrapolation for {n_ladders} ladders:")
+            print(f"Extrapolation dimension: {dim_names[extrapolation_dim]}")
+            if target_multiple is not None:
+                print(f"Target multiple: {target_multiple}x (fixed extrapolation distance)")
+            else:
+                print("Target multiple: None (all points above cutoff)")
+            for ladder in unique_ladders:
+                n_points = np.sum(ladders == ladder)
+                print(f"  {ladder}: {n_points} observations")
+
+        # Determine validation points (thresholds in the chosen dimension)
+        if validation_points is None:
+            # Automatic: use unique values as potential validation points
+            unique_vals = np.sort(np.unique(scale_dim))
+
+            # We need at least min_train_points below each threshold
+            # and at least 1 point at or above for validation
+            valid_thresholds = []
+            for val in unique_vals:
+                # Points below this value
+                n_below = np.sum(scale_dim < val)
+                # Check if most ladders have enough training data
+                ladders_with_enough = 0
+                for ladder in unique_ladders:
+                    ladder_mask = ladders == ladder
+                    n_train = np.sum((scale_dim < val) & ladder_mask)
+                    if n_train >= min_train_points:
+                        ladders_with_enough += 1
+
+                if ladders_with_enough >= min_ladders_per_fold and n_below >= min_train_points:
+                    valid_thresholds.append(val)
+
+            validation_points = np.array(valid_thresholds)
+
+        else:
+            validation_points = np.asarray(validation_points)
+
+        if len(validation_points) == 0:
+            raise ValueError(
+                "No valid validation points found. "
+                f"Need at least {min_train_points} training points per ladder. "
+                "Consider reducing min_train_points or adding more data."
+            )
+
+        if verbose:
+            print(f"\nUsing {len(validation_points)} validation folds")
+
+        # Run validation for each fold
+        fold_results: list[ExtrapolationFoldResult] = []
+
+        for fold_idx, cutoff_val in enumerate(
+            tqdm(validation_points, desc="Validation folds", disable=not verbose)
+        ):
+            fold_result = ScalingLawExtrapolationValidator._evaluate_fold(
+                fold_idx=fold_idx,
+                cutoff_val=cutoff_val,
+                ladders=ladders,
+                N=N,
+                D=D,
+                loss=loss,
+                scale_dim=scale_dim,
+                unique_ladders=unique_ladders,
+                min_train_points=min_train_points,
+                min_ladders_per_fold=min_ladders_per_fold,
+                loss_fn=loss_fn,
+                loss_param=loss_param,
+                parallel=parallel,
+                target_multiple=target_multiple,
+            )
+
+            if fold_result is not None:
+                fold_results.append(fold_result)
+
+        if len(fold_results) == 0:
+            raise ValueError(
+                "No valid folds produced. Check that ladders have sufficient "
+                "data across multiple compute scales."
+            )
+
+        return ExtrapolationValidationResult(
+            fold_results=fold_results,
+            n_folds=len(fold_results),
+            n_ladders=n_ladders,
+            ladder_names=list(unique_ladders),
+        )
+
+    @staticmethod
+    def _evaluate_fold(
+        fold_idx: int,
+        cutoff_val: float,
+        ladders: np.ndarray,
+        N: np.ndarray,
+        D: np.ndarray,
+        loss: np.ndarray,
+        scale_dim: np.ndarray,
+        unique_ladders: np.ndarray,
+        min_train_points: int,
+        min_ladders_per_fold: int,
+        loss_fn: LossFunctionType,
+        loss_param: Optional[float],
+        parallel: bool,
+        target_multiple: Optional[float] = None,
+    ) -> Optional[ExtrapolationFoldResult]:
+        """
+        Evaluate a single validation fold.
+
+        For each fold:
+        1. Fit scaling law per ladder using training data (scale_dim < cutoff)
+        2. For target scale levels above cutoff (or at specific multiple if set):
+           - Predict loss for each ladder
+           - Compare predicted vs actual rankings
+        3. Track metrics by extrapolation distance
+
+        Args:
+            target_multiple: If set, only evaluate at the target closest to
+                max_train_scale * target_multiple. Otherwise, evaluate at all
+                points above the cutoff.
+        """
+        ladders_skipped: list[str] = []
+        ladder_fits: dict[str, ChinchillaParametricFit] = {}
+
+        # Compute max training scale for extrapolation distance calculation
+        train_mask_all = scale_dim < cutoff_val
+        if not np.any(train_mask_all):
+            return None
+        max_train_scale = float(np.max(scale_dim[train_mask_all]))
+
+        # Step 1: Fit scaling law for each ladder
+        for ladder in unique_ladders:
+            ladder_mask = ladders == ladder
+            train_mask = (scale_dim < cutoff_val) & ladder_mask
+            n_train = np.sum(train_mask)
+
+            if n_train < min_train_points:
+                ladders_skipped.append(str(ladder))
+                continue
+
+            try:
+                fit = ChinchillaParametricFit.fit(
+                    N=N[train_mask],
+                    D=D[train_mask],
+                    loss=loss[train_mask],
+                    loss_fn=loss_fn,
+                    loss_param=loss_param,
+                    parallel=parallel,
+                )
+                ladder_fits[str(ladder)] = fit
+            except Exception:
+                ladders_skipped.append(str(ladder))
+                continue
+
+        # Check if we have enough ladders
+        if len(ladder_fits) < min_ladders_per_fold:
+            return None
+
+        # Step 2: Get target scale levels
+        # Use strict inequality (>) to ensure we're always extrapolating beyond training
+        target_mask = scale_dim > max_train_scale
+        if not np.any(target_mask):
+            return None
+
+        # Get unique target scale values, sorted
+        unique_target_vals = np.sort(np.unique(scale_dim[target_mask]))
+
+        # If target_multiple is set, filter to only the closest target
+        if target_multiple is not None:
+            desired_target = max_train_scale * target_multiple
+            # Find the closest actual data point to the desired target
+            closest_idx = np.argmin(np.abs(unique_target_vals - desired_target))
+            closest_val = unique_target_vals[closest_idx]
+            # Check if it's reasonably close (within 50% of the desired multiple)
+            actual_multiple = closest_val / max_train_scale
+            if actual_multiple < target_multiple * 0.5 or actual_multiple > target_multiple * 2.0:
+                # No suitable target at this multiple
+                return None
+            unique_target_vals = np.array([closest_val])
+
+        # Step 3: Evaluate at each target scale level
+        point_results: list[ExtrapolationPointResult] = []
+
+        for target_val in unique_target_vals:
+            predicted_losses: dict[str, float] = {}
+            actual_losses: dict[str, float] = {}
+
+            # For each fitted ladder, find if it has data at this target scale
+            # and make predictions
+            target_N_rep = 0.0
+            target_D_rep = 0.0
+
+            for ladder_name, fit in ladder_fits.items():
+                ladder_mask = ladders == ladder_name
+
+                # Find points for this ladder at exactly this target scale value
+                val_mask = (scale_dim == target_val) & ladder_mask
+
+                if not np.any(val_mask):
+                    continue
+
+                # If multiple points at same scale, use the first one
+                val_idx = np.where(val_mask)[0][0]
+                val_N = N[val_idx]
+                val_D = D[val_idx]
+                val_loss = loss[val_idx]
+
+                # Update representative N, D
+                if target_N_rep == 0.0:
+                    target_N_rep = float(val_N)
+                    target_D_rep = float(val_D)
+
+                # Predict
+                pred_loss = fit.predict_loss(np.array([val_N]), np.array([val_D]))[0]
+                predicted_losses[ladder_name] = float(pred_loss)
+                actual_losses[ladder_name] = float(val_loss)
+
+            # Need enough ladders at this target for meaningful ranking
+            if len(predicted_losses) < min_ladders_per_fold:
+                continue
+
+            # Compute rankings
+            predicted_ranking = sorted(
+                predicted_losses.keys(), key=lambda ldr: predicted_losses[ldr]
+            )
+            actual_ranking = sorted(actual_losses.keys(), key=lambda ldr: actual_losses[ldr])
+
+            # Compute metrics
+            ndcg = _compute_ndcg(predicted_ranking, actual_ranking)
+            kendall_tau = _compute_kendall_tau(predicted_ranking, actual_ranking)
+            spearman = _compute_spearman(predicted_ranking, actual_ranking)
+
+            # Extrapolation distance (in the chosen dimension)
+            extrapolation_ratio = float(target_val) / max_train_scale
+            log_extrapolation_distance = float(np.log10(extrapolation_ratio))
+
+            point_results.append(
+                ExtrapolationPointResult(
+                    target_compute=float(target_val),  # Generic "scale" value
+                    target_N=target_N_rep,
+                    target_D=target_D_rep,
+                    extrapolation_ratio=extrapolation_ratio,
+                    log_extrapolation_distance=log_extrapolation_distance,
+                    predicted_losses=predicted_losses,
+                    actual_losses=actual_losses,
+                    predicted_ranking=predicted_ranking,
+                    actual_ranking=actual_ranking,
+                    ndcg=ndcg,
+                    kendall_tau=kendall_tau,
+                    spearman=spearman,
+                    n_ladders_evaluated=len(predicted_losses),
+                )
+            )
+
+        if not point_results:
+            return None
+
+        return ExtrapolationFoldResult(
+            fold_idx=fold_idx,
+            cutoff_compute=float(cutoff_val),  # Cutoff in chosen dimension
+            max_train_compute=max_train_scale,  # Max training value in chosen dimension
+            point_results=point_results,
+            n_ladders_evaluated=len(ladder_fits),
+            ladders_skipped=ladders_skipped,
+            ladder_fits=ladder_fits,
+        )
