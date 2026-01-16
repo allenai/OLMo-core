@@ -83,9 +83,9 @@ class MuonLadder(ModelLadder):
         expansion_factor = min(self.max_devices // min_world_size, max_num_grad_accum_steps)
         num_devices = min_world_size * expansion_factor
 
-        # TODO: work on this
         # Ensure num_devices is a power of 2 by rounding down to the nearest power of 2
         num_devices = 2 ** (num_devices.bit_length() - 1) if num_devices > 0 else 1
+        expansion_factor = num_devices // min_world_size
         dp_world_size = min_dp_world_size * expansion_factor
 
         # Finally we ensure `global_batch_size` is divisible by the micro-batch size.
