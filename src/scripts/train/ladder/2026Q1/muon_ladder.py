@@ -49,8 +49,8 @@ class MuonWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
 
     def configure_target_batch_size(self, num_params: int) -> int:
         bs = super().configure_target_batch_size(num_params)
-        bs *= self.batch_size_multiplier
-        return int(bs)
+        bs = int(bs * self.batch_size_multiplier)
+        return bs
 
 
 class MuonLadder(ModelLadder):

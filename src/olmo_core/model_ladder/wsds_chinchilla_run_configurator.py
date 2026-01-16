@@ -181,6 +181,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         lrs = []
         while tokens_seen <= t_max:
             tokens_seen += batch_size
+            assert isinstance(optim, SkipStepAdamWConfig)
             lr = float(scheduler.get_lr(optim.lr, tokens_seen, t_max))
             tokens.append(tokens_seen)
             lrs.append(lr)
@@ -209,6 +210,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             batch_size * (d.value // batch_size)
             for d, _ in self.configure_checkpoint_intervals(num_params, batch_size)
         ]
+        assert isinstance(optim, SkipStepAdamWConfig)
         plt.scatter(
             checkpoint_intervals,
             [float(scheduler.get_lr(optim.lr, t, t_max)) for t in checkpoint_intervals],
