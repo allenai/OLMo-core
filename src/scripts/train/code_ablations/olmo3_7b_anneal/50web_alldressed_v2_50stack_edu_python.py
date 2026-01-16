@@ -38,4 +38,4 @@ if __name__ == "__main__":
         launch \
         my_run ai2/neptune --launch.num_nodes=8
     """
-    common_main(config_builder=build_experiment_config, default_run_name=__name__)
+    common_main(config_builder=build_experiment_config, default_run_name=__file__)

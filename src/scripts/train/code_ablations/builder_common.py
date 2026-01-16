@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 from datetime import datetime
 from typing import Optional, Callable, ParamSpec, Concatenate, TypeAlias
@@ -114,6 +115,13 @@ def common_build_experiment_config(
 
 
 def common_main(config_builder: ConfigBuilderFn, default_run_name: str):
+    if (config_file_path := Path(default_run_name)).exists():
+        # common case where user specifies script path as the run name;
+        # we only keep the path relative to this script, removing the
+        # extension and replacing slashes with dashes
+        relative_path = config_file_path.relative_to(Path(__file__).parent)
+        default_run_name = "-".join(relative_path.parent.parts + (relative_path.stem,))
+
     # TWO CASES:
     # 1. len(sys.argv) < 4: definitely i have to add the run name here
     # 2. len(sys.argv) >= 4: depends on whether the first 4 all start NOT
