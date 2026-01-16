@@ -27,7 +27,6 @@ from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 # Change these to match the config you want to use
 SEQ_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
 CHINCHILLA_MULTIPLE = 5
 SEED = 1337
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
@@ -105,7 +104,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         src_mix=SourceMixtureDatasetConfig(
             source_list=DATASET_CONFIG,
             requested_tokens=max_duration.value,
-            global_batch_size=GLOBAL_BATCH_SIZE,
+            global_batch_size=batch_size,
             processes=16,
             seed=SEED,
         ),
@@ -115,7 +114,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=4
+        global_batch_size=batch_size, seed=SEED, num_workers=4
     )
 
     optim = chinchilla_config.configure_optimizer(
