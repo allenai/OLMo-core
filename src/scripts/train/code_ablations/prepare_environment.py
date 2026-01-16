@@ -87,7 +87,7 @@ class EnvironmentVariables:
             workspace = client.workspace.get(workspace_name)
 
             for field in dt.fields(cls):
-                secret_name = f"{client.user_name}_{field.name.upper()}"
+                secret_name = f"{client.user_name.upper()}_{field.name.upper()}"
                 try:
                     secret_object = client.secret.get(secret_name, workspace=workspace)
                 except BeakerSecretNotFound as e:
@@ -136,7 +136,7 @@ class EnvironmentVariables:
         with Beaker.from_env() as client:
             workspace = client.workspace.get(workspace_name)
             for field in dt.fields(self):
-                secret_name = f"{client.user_name}_{field.name.upper()}"
+                secret_name = f"{client.user_name.upper()}_{field.name.upper()}"
 
                 try:
                     client.secret.get(secret_name, workspace=workspace)
