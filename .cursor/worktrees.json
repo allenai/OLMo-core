@@ -1,5 +1,0 @@
-{
-  "setup-worktree": [
-    "uv sync --all-extras"
-  ]
-}
