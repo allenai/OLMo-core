@@ -127,9 +127,7 @@ jobs:
             mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
 
       - name: ${{ matrix.task.name }}
-        run: |
-          . .venv/bin/activate
-          ${{ matrix.task.run }}
+        run: uv run ${{ matrix.task.run }}
 
       - name: Upload package distribution files
         if: matrix.task.name == 'Build'
@@ -140,9 +138,7 @@ jobs:
 
       - name: Clean up
         if: always()
-        run: |
-          . .venv/bin/activate
-          pip uninstall -y ai2-olmo-core
+        run: uv run pip uninstall -y ai2-olmo-core
 
   gpu_checks:
     name: ${{ matrix.task.name }}
@@ -279,14 +275,10 @@ jobs:
           path: dist
 
       - name: Generate release notes
-        run: |
-          . .venv/bin/activate
-          python src/scripts/release/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
+        run: uv run python src/scripts/release/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
 
       - name: Publish package to PyPI
-        run: |
-          . .venv/bin/activate
-          twine upload -u __token__ -p '${{ secrets.PYPI_TOKEN }}' dist/*
+        run: uv run twine upload -u __token__ -p '${{ secrets.PYPI_TOKEN }}' dist/*
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -307,6 +299,4 @@ jobs:
 
       - name: Send Slack notifications about release
         continue-on-error: true
-        run: |
-          . .venv/bin/activate
-          python ./src/scripts/release/slack_notification.py '${{ secrets.SLACK_WEBHOOK_URL}}'
+        run: uv run python ./src/scripts/release/slack_notification.py '${{ secrets.SLACK_WEBHOOK_URL}}'
