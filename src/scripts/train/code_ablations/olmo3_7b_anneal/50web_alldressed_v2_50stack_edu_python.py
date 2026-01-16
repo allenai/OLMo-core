@@ -134,7 +134,7 @@ def main():
     #                        with --, then it means that some are already
     #                        overrides, so i need to add the run name in.
     if len(sys.argv) < 4 or any(arg.startswith("--") for arg in sys.argv[:4]):
-        sys.argv.insert(2, Path(__file__).name)
+        sys.argv.insert(2, Path(__file__).stem)
 
     # now i can just call the main function
     return olmo_core_main(config_builder=build_experiment_config)
