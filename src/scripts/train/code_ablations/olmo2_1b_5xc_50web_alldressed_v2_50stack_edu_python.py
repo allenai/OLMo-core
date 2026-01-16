@@ -53,6 +53,7 @@ DATASET_CONFIG = SourceMixtureList(
         SourceMixtureConfig(
             source_name="stack-edu-python-v0.1-150b",
             target_ratio=0.5,
+            max_repetition_ratio=5,
             paths=[
                 f"s3://ai2-llm/preprocessed/stack-edu/{TOKENIZER_CONFIG.identifier}/Python/*.npy"
             ],
