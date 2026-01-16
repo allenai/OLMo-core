@@ -1,4 +1,5 @@
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
@@ -17,7 +18,7 @@ from ..attention import (
 )
 from ..buffer_cache import BufferCache
 from ..config import ModelConfig, ModuleConfig
-from ..feed_forward import FeedForwardConfig, FeedForwardType
+from ..feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
@@ -301,6 +302,7 @@ class TransformerConfig(ModelConfig):
     init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    embed_scale: Optional[float] = None
 
     def build(
         self,
@@ -334,6 +336,7 @@ class TransformerConfig(ModelConfig):
                 init_seed=self.init_seed,
                 init_std=self.init_std,
                 block_overrides=self.block_overrides,
+                embed_scale=self.embed_scale,
             )
         elif self.name == TransformerType.normalized:
             assert self.embedding_norm is None
@@ -459,10 +462,72 @@ class TransformerConfig(ModelConfig):
         return self.num_active_params - self.d_model * self.vocab_size
 
     @classmethod
+    def olmo2_1M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=12,
+            hidden_size_multiplier=1.0,
+            n_layers=kwargs.pop("n_layers", 4),
+            n_heads=kwargs.pop("n_heads", 4),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_14M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=128,
+            n_layers=kwargs.pop("n_layers", 4),
+            n_heads=kwargs.pop("n_heads", 8),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
     def olmo2_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=256,
             n_layers=kwargs.pop("n_layers", 4),
+            n_heads=kwargs.pop("n_heads", 8),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_60M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=384,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 8),
+            n_heads=kwargs.pop("n_heads", 8),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_100M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 100M OLMo2 model config.
+        """
+        return cls.llama_like(
+            d_model=512,
+            hidden_size_multiplier=1.5,
+            n_layers=kwargs.pop("n_layers", 12),
             n_heads=kwargs.pop("n_heads", 8),
             vocab_size=vocab_size,
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
@@ -633,6 +698,94 @@ class TransformerConfig(ModelConfig):
             layer_norm_eps=1e-6,
             **kwargs,
         )
+
+    @classmethod
+    def olmo3_1M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        config = cls.olmo2_1M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_14M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        config = cls.olmo2_14M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        config = cls.olmo2_30M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_60M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        config = cls.olmo2_60M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_100M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 100M OLMo3 model config.
+        """
+        config = cls.olmo2_100M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
 
     @classmethod
     def olmo3_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
@@ -1073,6 +1226,180 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
+    def gemma3_1B(cls, vocab_size: int = 262208, **kwargs) -> "TransformerConfig":
+        """
+        Gemma 3 1B model config.
+        """
+        return cls.gemma3_like(
+            d_model=2304,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 26),
+            n_heads=kwargs.pop("n_heads", 8),
+            n_kv_heads=kwargs.pop("n_kv_heads", 4),
+            hidden_size=kwargs.pop("hidden_size", 9216),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_0_6B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=1024,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 28),
+            n_heads=kwargs.pop("n_heads", 16),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            layer_norm_eps=1e-6,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=3072, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def gemma3_4B(cls, vocab_size: int = 262208, **kwargs) -> "TransformerConfig":
+        """
+        Gemma 3 4B model config.
+        """
+        return cls.gemma3_like(
+            d_model=2560,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 34),
+            n_heads=kwargs.pop("n_heads", 16),
+            n_kv_heads=kwargs.pop("n_kv_heads", 4),
+            hidden_size=kwargs.pop("hidden_size", 10240),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_1_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=2048,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 28),
+            n_heads=kwargs.pop("n_heads", 16),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            layer_norm_eps=1e-6,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=6144, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def gemma3_12B(cls, vocab_size: int = 262208, **kwargs) -> "TransformerConfig":
+        """
+        Gemma 3 12B model config.
+        """
+        return cls.gemma3_like(
+            d_model=3840,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 48),
+            n_heads=kwargs.pop("n_heads", 24),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            hidden_size=kwargs.pop("hidden_size", 15360),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_4B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=2560,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 36),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            layer_norm_eps=1e-6,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=9728, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def gemma3_27B(cls, vocab_size: int = 262208, **kwargs) -> "TransformerConfig":
+        """
+        Gemma 3 27B model config.
+        """
+        return cls.gemma3_like(
+            d_model=5376,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 62),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 16),
+            hidden_size=kwargs.pop("hidden_size", 21504),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=4096,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 36),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            layer_norm_eps=1e-6,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=12288, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_14B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=5120,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 48),
+            n_heads=kwargs.pop("n_heads", 40),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            layer_norm_eps=1e-6,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=17408, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=5120,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 64),
+            n_heads=kwargs.pop("n_heads", 40),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            layer_norm_eps=1e-6,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=25600, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
     def llama_like(
         cls,
         *,
@@ -1081,7 +1408,9 @@ class TransformerConfig(ModelConfig):
         n_layers: int,
         n_heads: int,
         n_kv_heads: Optional[int] = None,
+        head_dim: Optional[int] = None,
         qk_norm: bool = False,
+        use_head_qk_norm: bool = False,
         layer_norm_eps: float = 1e-5,
         rope_theta: int = 500_000,
         rope_type: Optional[RoPEType] = None,
@@ -1143,9 +1472,11 @@ class TransformerConfig(ModelConfig):
                 name=att_type,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
+                head_dim=head_dim,
                 bias=False,
                 rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
                 qk_norm=layer_norm if qk_norm else None,
+                use_head_qk_norm=use_head_qk_norm if qk_norm else None,
                 use_flash=use_flash,
                 backend=attn_backend,
                 sliding_window=sliding_window,
@@ -1281,6 +1612,105 @@ class TransformerConfig(ModelConfig):
             lm_head=LMHeadConfig(name=LMHeadType.normalized, dtype=dtype),
             dtype=dtype,
             init_method=InitMethod.normalized,
+            **kwargs,
+        )
+
+    @classmethod
+    def gemma3_like(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        n_kv_heads: int,
+        hidden_size: int,
+        head_dim: Optional[int] = None,
+        local_window_size: int = 1024,
+        local_rope_theta: int = 10_000,
+        global_rope_theta: int = 1_000_000,
+        global_layer_interval: int = 6,
+        layer_norm_eps: float = 1e-6,
+        fused_ops: bool = False,
+        use_flash: Optional[bool] = None,
+        attn_backend: Optional[AttentionBackendName] = None,
+        dtype: DType = DType.float32,
+        **kwargs,
+    ) -> "TransformerConfig":
+        """
+        Create a Gemma 3-like model configuration.
+
+        Gemma 3 features:
+        - Hybrid local/global attention: 5 local layers with sliding window, then 1 global layer
+        - Dual RoPE frequencies: local layers use 10K, global layers use 1M
+        - QK-norm for attention score stabilization
+        - GeGLU activation (GELU with tanh approximation)
+
+        :param local_window_size: Sliding window size for local attention layers.
+        :param local_rope_theta: RoPE base frequency for local attention layers.
+        :param global_rope_theta: RoPE base frequency for global attention layers.
+        :param global_layer_interval: Number of layers per pattern cycle (default 6 = 5 local + 1 global).
+        """
+        layer_norm = LayerNormConfig(
+            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
+            eps=layer_norm_eps,
+            bias=False,
+            dtype=dtype,
+        )
+
+        pattern = [local_window_size] * (global_layer_interval - 1) + [-1]
+        sliding_window = SlidingWindowAttentionConfig(
+            pattern=pattern,
+            force_full_attention_on_first_layer=False,
+            force_full_attention_on_last_layer=False,
+        )
+
+        block = TransformerBlockConfig(
+            name=TransformerBlockType.peri_norm,
+            attention=AttentionConfig(
+                name=AttentionType.default,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                head_dim=head_dim,
+                bias=False,
+                rope=RoPEConfig(name=RoPEType.default, theta=local_rope_theta),
+                qk_norm=layer_norm,
+                use_head_qk_norm=True,
+                use_flash=use_flash,
+                backend=attn_backend,
+                sliding_window=sliding_window,
+                dtype=dtype,
+            ),
+            feed_forward=FeedForwardConfig(
+                hidden_size=hidden_size,
+                bias=False,
+                dtype=dtype,
+                activation=ActivationFunction.gelu_tanh,
+            ),
+            layer_norm=layer_norm,
+        )
+
+        block_overrides: Dict[int, TransformerBlockConfig] = {}
+        for layer_idx in range(n_layers):
+            if not sliding_window.should_use_swa(layer_idx, n_layers):
+                global_block = block.copy()
+                global_block.attention = block.attention.copy()
+                global_block.attention.rope = RoPEConfig(
+                    name=RoPEType.default,
+                    theta=global_rope_theta,
+                )
+                global_block.attention.sliding_window = None
+                block_overrides[layer_idx] = global_block
+
+        return cls(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block=block,
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            dtype=dtype,
+            block_overrides=block_overrides if block_overrides else None,
+            embed_scale=math.sqrt(d_model),
             **kwargs,
         )
 

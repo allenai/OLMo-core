@@ -37,6 +37,13 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     """The number of tokens per parameter to use for Chinchilla calculations."""
     lr_multiplier: float = 1.0
     """A multiplier to apply to the learning rate calculated from Chinchilla scaling laws."""
+    stepped_schedule: bool = False
+    """
+    If ``True``, use a stepped schedule for the peak learning rate instead of a constant one,
+    where the peak learning rate will be scaled by ``1 / sqrt(D)`` during each stage, where
+    ``D`` is the target chinchilla multiple of the stage.
+    This assumes that the base learning rate is optimal for 1xC.
+    """
 
     def __post_init__(self):
         if self.chinchilla_multiple < 0.5 or not math.log(self.chinchilla_multiple, 2).is_integer():
@@ -61,22 +68,21 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         )
 
     def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepAdamWConfig:
-        del batch_size  # unused
-        # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
-        # but divide by 2 for WSD schedule, which empirically seems to be a good value, at least (seems to work empirically).
-        # for 4xChinchilla runs.
-        # TODO: this should be adapted to the length of the run. See this report
-        # https://wandb.ai/ai2-llm/olmo3-ladder-tune-lr/reports/Olmo-3-ladder-LR-sweep--VmlldzoxNTUxNzE4Nw
+        # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838,
+        # which is optimal for 1xC.
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
+        # But divide that by 2, which empirically seems to be near optimal, at least for Olmo models
+        # and especially with the stepped schedule. See
+        # https://wandb.ai/ai2-llm/olmo3-baseline-ladder/reports/Stepped-Ladder-Overlay--VmlldzoxNTYxNzEyOQ
         lr /= 2.0
+        # Apply user-specified LR multiplier.
         lr *= self.lr_multiplier
+        # NOTE: paper above suggest using larger beta2 (~0.99) for small batch sizes (Table 4)
+        beta2 = 0.95 if batch_size >= 524_288 else 0.99
         return SkipStepAdamWConfig(
             lr=lr,
             weight_decay=0.1,
-            betas=(
-                0.9,
-                0.95,  # NOTE: paper above suggest using larger beta2 (~0.99) for small batch sizes.
-            ),
+            betas=(0.9, beta2),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
@@ -99,8 +105,12 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     def configure_lr_scheduler(self, num_params: int, batch_size: int) -> Scheduler:
         warmup, chinchilla_periods = self.configure_chinchilla_periods(num_params)
         period_lengths = []
+        period_lr_multipliers: list[float] | None = [] if self.stepped_schedule else None
         for pidx, c in enumerate(chinchilla_periods):
             period = self._chinchilla_duration(num_params, batch_size, c).value
+            if self.stepped_schedule:
+                assert period_lr_multipliers is not None
+                period_lr_multipliers.append(1 / math.sqrt(c))
             if pidx == 0:
                 period_lengths.append(period)
             else:
@@ -116,6 +126,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             warmup=warmup,
             decay_fraction=self.decay_fraction,
             period_lengths=period_lengths,
+            period_lr_multipliers=period_lr_multipliers,
         )
 
     def configure_checkpoint_intervals(
@@ -140,8 +151,8 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             pre_decay = dataclasses.replace(
                 period, value=period.value - round(period_length * self.decay_fraction)
             )
-            checkpoints.append((pre_decay, f"period {pidx+1}, {c}xC pre-decay"))
-            checkpoints.append((period, f"period {pidx+1}, {c}xC post-decay"))
+            checkpoints.append((pre_decay, f"period {pidx + 1}, {c}xC pre-decay"))
+            checkpoints.append((period, f"period {pidx + 1}, {c}xC post-decay"))
         return checkpoints
 
     def plot_lr_schedule(
@@ -209,7 +220,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         )
 
         caption = (
-            f"peak LR={optim.lr:.6f}, batch size={format_tokens(batch_size)}\n"
+            f"peak LR={df['LR'].max():.6f}, batch size={format_tokens(batch_size)}\n"
             f"warmup={format_tokens(warmup)} / {warmup // batch_size:,d} steps, "
             f"duration={format_tokens(t_max)} / {t_max // batch_size:,d} steps"
         )

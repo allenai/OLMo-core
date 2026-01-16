@@ -9,7 +9,7 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.nn.feed_forward import FeedForward
+from olmo_core.nn.feed_forward import ActivationFunction, FeedForward
 from olmo_core.testing import BACKENDS, run_distributed_test
 from olmo_core.utils import get_default_device, record_flops, seed_all
 
@@ -94,3 +94,26 @@ def test_feed_forward_num_flops_per_token():
         f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
         f"{relative_error=:.2%}, {tolerance=:.2%}"
     )
+
+
+@pytest.mark.parametrize("activation", [ActivationFunction.silu, ActivationFunction.gelu_tanh])
+def test_feed_forward_activations(activation: ActivationFunction):
+    seed_all(0)
+    d_model = 128
+    hidden_size = 4 * d_model
+    batch_size = 2
+    seq_len = 32
+
+    ff = FeedForward(
+        d_model=d_model, hidden_size=hidden_size, init_device="cpu", activation=activation
+    )
+
+    x = torch.randn(batch_size, seq_len, d_model)
+    y = ff(x)
+
+    assert y.shape == (batch_size, seq_len, d_model)
+    assert not torch.isnan(y).any()
+    assert not torch.isinf(y).any()
+
+    y.sum().backward()
+    assert ff.w1.weight.grad is not None

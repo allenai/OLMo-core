@@ -13,7 +13,6 @@ from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.launch.beaker import (
     BeakerLaunchConfig,
-    BeakerPriority,
     OLMoCoreBeakerImage,
     is_running_in_beaker_batch_job,
 )
@@ -97,6 +96,12 @@ def parse_args(
             help="A multiplier to apply to the default learning rate.",
         )
         parser.add_argument(
+            "--stepped-schedule",
+            action="store_true",
+            default=False,
+            help="Use the stepped WSDS schedule when using the chinchilla run configurator.",
+        )
+        parser.add_argument(
             "--cluster",
             type=str,
             choices=["ai2/augusta", "ai2/jupiter", "ai2/titan"],
@@ -137,8 +142,8 @@ def parse_args(
         )
         parser.add_argument(
             "--priority",
-            choices=[p.value for p in BeakerPriority],
-            default=BeakerPriority.normal,
+            choices=["low", "normal", "high", "urgent"],
+            default="normal",
             help="The priority level.",
         )
         parser.add_argument(
@@ -161,7 +166,7 @@ def parse_args(
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Print the launch config without launching the run.",
+            help="Do a dry-run of the launch.",
             default=False,
         )
 
@@ -319,6 +324,7 @@ def get_default_ladder_factory(
             else WSDSChinchillaRunConfigurator(
                 chinchilla_multiple=args.chinchilla_multiple,
                 lr_multiplier=args.lr_multiplier,
+                stepped_schedule=args.stepped_schedule,
             ),
             sequence_length=args.sequence_length,
             tokenizer=tokenizer,
@@ -383,7 +389,7 @@ def configure_launcher(
     )
     if num_gpus < 8:
         launch_config.num_gpus = num_gpus
-    launch_config.priority = BeakerPriority(args.priority)
+    launch_config.priority = args.priority
     if args.preemptible is not None:
         launch_config.preemptible = args.preemptible
     launch_config.allow_dirty = args.allow_dirty
@@ -443,7 +449,7 @@ def _launch_run(
     if dry_run:
         log.info(f"Launch dry run for size {size}...")
         log.info(f"Results would be saved to {ladder.get_save_folder(size)}")
-        rich.get_console().print(launcher)
+        launcher.dry_run(follow=follow, slack_notifications=slack_notifications)
     else:
         log.info(f"Launching ladder run for size {size}...")
         log.info(f"Results will be saved to {ladder.get_save_folder(size)}")
