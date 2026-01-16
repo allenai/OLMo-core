@@ -21,11 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for no-global-rope ("GNoPE").
 - Added support for MXFP8 Linear layers via torchao.
 - Added support for tracking total flops.
+- Added support for Gemma 3 models.
 - Added support for Qwen3 models.
 - Added support for Muon and Dion optimizers.
 - Added support for Ulysses-style context parallelism.
 - Added 60M and 1M model sizes.
 - Added Beaker URL to Wandb logging.
+- `SpeedMonitorCallback` will log Chinchilla multiple number of tokens during training with a `TransformerTrainModule`.
 
 ### Fixed
 
@@ -40,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ladder lmevaluator typo.
 - Made some functions involved in data loading preprocessing more robust to race conditions.
 - GAPMonitorCallback would raise an error if a local tensor shard had 0 elements.
+- Fixed a bug where final metrics might not get logged.
 
 ### Changed
 
