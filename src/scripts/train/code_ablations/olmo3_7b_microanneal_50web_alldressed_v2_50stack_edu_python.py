@@ -111,7 +111,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         work_dir=work_dir,
     ).with_callbacks(
         cookbook.configure_default_callbacks(
-            run_name=run_name_with_ts, wandb_group_name=cli_context.run_name
+            run_name=run_name_with_ts,
+            wandb_group_name=cli_context.run_name,
+            checkpoint_save_interval=None,
+            ephemeral_checkpoint_save_interval=250,
         )
     )
 
