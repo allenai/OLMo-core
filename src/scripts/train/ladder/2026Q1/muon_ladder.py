@@ -10,7 +10,9 @@ from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import ModelLadder, Olmo3ModelConfigurator
 from olmo_core.model_ladder.transformer_model_configurator import TransformerSize
-from olmo_core.model_ladder.wsds_chinchilla_run_configurator import WSDSChinchillaRunConfigurator
+from olmo_core.model_ladder.wsds_chinchilla_run_configurator import (
+    WSDSChinchillaRunConfigurator,
+)
 from olmo_core.optim.muon import MuonAdjustLRStrategy, MuonConfig
 
 log = logging.getLogger(__name__)
