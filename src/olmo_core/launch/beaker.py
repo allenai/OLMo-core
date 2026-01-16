@@ -514,6 +514,7 @@ class BeakerLaunchConfig(Config):
                     start_timeout=launch_timeout,
                     inactive_timeout=step_timeout,
                     inactive_soft_timeout=step_soft_timeout,
+                    client=beaker,
                 )
             except ExperimentFailedError as exc:
                 raise OLMoBeakerExperimentFailedError(str(exc))
