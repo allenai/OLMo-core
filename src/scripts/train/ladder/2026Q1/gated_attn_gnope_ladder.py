@@ -8,6 +8,10 @@ from olmo_core.nn.attention import GateConfig, GateGranularity
 log = logging.getLogger(__name__)
 
 
+# This ladder has been run under the name "olmo3-gatedattn-gnope"
+# https://wandb.ai/ai2-llm/olmo3-gatedattn-gnope
+
+
 def configure_model(args: argparse.Namespace) -> TransformerModelConfigurator:
     return Olmo3ModelConfigurator(
         rank_microbatch_size=None

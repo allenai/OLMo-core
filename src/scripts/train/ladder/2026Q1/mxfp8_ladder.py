@@ -19,6 +19,9 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+# This ladder has been run under the name "olmo3-mxfp8-all-linear"
+# https://wandb.ai/ai2-llm/olmo3-mxfp8-all-linear
+
 log = logging.getLogger(__name__)
 
 

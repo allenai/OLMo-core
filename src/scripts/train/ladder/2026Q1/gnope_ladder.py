@@ -7,6 +7,10 @@ from olmo_core.model_ladder import Olmo3ModelConfigurator, TransformerModelConfi
 log = logging.getLogger(__name__)
 
 
+# This ladder has been run under the name "olmo3-gnope"
+# https://wandb.ai/ai2-llm/olmo3-gnope
+
+
 def configure_model(args: argparse.Namespace) -> TransformerModelConfigurator:
     return Olmo3ModelConfigurator(
         rank_microbatch_size=None

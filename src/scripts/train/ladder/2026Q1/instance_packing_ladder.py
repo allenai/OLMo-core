@@ -10,6 +10,9 @@ from olmo_core.model_ladder import *
 
 log = logging.getLogger(__name__)
 
+# This ladder has been run under the name "olmo3-instance-packing"
+# https://wandb.ai/ai2-llm/olmo3-instance-packing
+
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()

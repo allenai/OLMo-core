@@ -9,6 +9,9 @@ from olmo_core.nn.transformer import TransformerBlockType
 
 log = logging.getLogger(__name__)
 
+# This ladder has been run under the name "olmo3-peri-ln"
+# https://wandb.ai/ai2-llm/olmo3-peri-ln
+
 
 def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
     del cmd

@@ -15,6 +15,10 @@ from olmo_core.optim.muon import MuonAdjustLRStrategy, MuonConfig
 
 log = logging.getLogger(__name__)
 
+# This ladder has been run under the names:
+# "olmo3-muon": https://wandb.ai/ai2-llm/olmo3-muon
+# "olmo3-muon-2xBS": https://wandb.ai/ai2-llm/olmo3-muon-2xBS
+
 
 def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
     del cmd
