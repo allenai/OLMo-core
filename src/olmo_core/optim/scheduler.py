@@ -211,12 +211,16 @@ class WSD(Scheduler):
             raise OLMoConfigurationError("decay_fraction must be between 0 and 1.")
 
     def _apply_decay(
-        self, initial_lr: Union[float, torch.Tensor], step_from_end: int, decay: int
+        self,
+        initial_lr: Union[float, torch.Tensor],
+        step_from_end: int,
+        decay: int,
+        decay_min_lr: float = 0.0,
     ) -> Union[float, torch.Tensor]:
         if self.decay_shape == DecayShape.linear:
-            return _linear_decay(initial_lr, step_from_end, decay, self.decay_min_lr)
+            return _linear_decay(initial_lr, step_from_end, decay, decay_min_lr)
         elif self.decay_shape == DecayShape.square_root:
-            return _sqrt_decay(initial_lr, step_from_end, decay, self.decay_min_lr)
+            return _sqrt_decay(initial_lr, step_from_end, decay, decay_min_lr)
         else:
             raise NotImplementedError(self.decay_shape)
 
@@ -601,6 +605,7 @@ class WSDS(Scheduler):
     """
 
     period_lengths: List[int] = field(default_factory=list)
+    period_lr_multipliers: Optional[List[float]] = None
 
     warmup: Optional[int] = None
     warmup_fraction: Optional[float] = None
@@ -621,6 +626,13 @@ class WSDS(Scheduler):
             raise OLMoConfigurationError("'period_lengths' must be provided and non-empty.")
         if any(p <= 0 for p in self.period_lengths):
             raise OLMoConfigurationError("All entries in 'period_lengths' must be > 0.")
+        if self.period_lr_multipliers is not None:
+            if len(self.period_lr_multipliers) != len(self.period_lengths):
+                raise OLMoConfigurationError(
+                    "'period_lr_multipliers' length must match 'period_lengths' length."
+                )
+            if any(m <= 0.0 for m in self.period_lr_multipliers):
+                raise OLMoConfigurationError("All entries in 'period_lr_multipliers' must be > 0.")
 
         # warmup validation
         if (self.warmup is None) == (self.warmup_fraction is None):
@@ -684,21 +696,35 @@ class WSDS(Scheduler):
         return len(self._cum_period_end) - 1
 
     def _apply_decay(
-        self, initial_lr: Union[float, torch.Tensor], step_from_end: int, decay: int
+        self,
+        initial_lr: Union[float, torch.Tensor],
+        step_from_end: int,
+        decay: int,
+        decay_min_lr: float = 0.0,
     ) -> Union[float, torch.Tensor]:
         if self.decay_shape == DecayShape.linear:
-            return _linear_decay(initial_lr, step_from_end, decay, self.decay_min_lr)
+            return _linear_decay(initial_lr, step_from_end, decay, decay_min_lr)
         elif self.decay_shape == DecayShape.square_root:
-            return _sqrt_decay(initial_lr, step_from_end, decay, self.decay_min_lr)
+            return _sqrt_decay(initial_lr, step_from_end, decay, decay_min_lr)
         else:
             raise NotImplementedError(self.decay_shape)
+
+    def _get_peak_lr(
+        self, initial_lr: Union[float, torch.Tensor], pidx: int
+    ) -> Union[float, torch.Tensor]:
+        if self.period_lr_multipliers is None:
+            return initial_lr
+        else:
+            return initial_lr * self.period_lr_multipliers[pidx]
 
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
         del t_max
         if current < self._warmup_steps:
-            return _linear_warmup(initial_lr, current, self._warmup_steps, self.warmup_min_lr)
+            return _linear_warmup(
+                self._get_peak_lr(initial_lr, 0), current, self._warmup_steps, self.warmup_min_lr
+            )
 
         adjusted_current = current - self._warmup_steps
 
@@ -715,10 +741,12 @@ class WSDS(Scheduler):
         S = Li - D
 
         if pos < S:
-            return initial_lr
+            return self._get_peak_lr(initial_lr, pidx)
         else:
             t = pos - S
-            return self._apply_decay(initial_lr, D - t, D)
+            return self._apply_decay(
+                self._get_peak_lr(initial_lr, pidx), D - t, D, self.decay_min_lr
+            )
 
 
 @dataclass
