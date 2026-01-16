@@ -12,7 +12,7 @@ from olmo_core.data.source_mixture import (
 )
 from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
-from olmo_core.internal.experiment import CliContext, ExperimentConfig, main as olmo_core_main
+from olmo_core.internal.experiment import CliContext, ExperimentConfig, main as olmo_core_main, get_beaker_username
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
@@ -32,7 +32,7 @@ WORKSPACE = "ai2/olmo4"
 BUDGET = "ai2/oe-base"
 NUM_NODES = 4
 LOAD_PATH = "gs://ai2-llm/checkpoints/OLMo25/step1413814"
-BASE_SAVE_DIR = f"s3://ai2-llm/checkpoints/{getuser()}"
+BASE_SAVE_DIR = "s3://ai2-llm/checkpoints"
 
 
 MODEL_CONFIG = TransformerConfig.olmo3_7B(vocab_size=TOKENIZER_CONFIG.padded_vocab_size())
@@ -63,7 +63,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     root_dir = get_root_dir(cli_context.cluster)
     work_dir = get_work_dir(root_dir)
-    save_dir = f"{BASE_SAVE_DIR}/{cli_context.run_name}"
+    save_dir = f"{BASE_SAVE_DIR}/{get_beaker_username()}/{cli_context.run_name}"
 
     beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
         name=cli_context.run_name,
