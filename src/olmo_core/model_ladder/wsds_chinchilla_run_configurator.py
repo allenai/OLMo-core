@@ -6,6 +6,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.optim import (
     WSDS,
+    OptimConfig,
     OptimGroupOverride,
     Scheduler,
     SchedulerUnits,
@@ -67,7 +68,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             self.chinchilla_multiple,
         )
 
-    def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepAdamWConfig:
+    def configure_optimizer(self, num_params: int, batch_size: int) -> OptimConfig:
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838,
         # which is optimal for 1xC.
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
