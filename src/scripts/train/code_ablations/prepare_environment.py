@@ -81,7 +81,6 @@ class EnvironmentVariables:
 
     @classmethod
     def from_workspace(cls, workspace_name: str) -> Self:
-
         env_vars: dict[str, str] = {}
 
         with Beaker.from_env() as client:
@@ -93,9 +92,13 @@ class EnvironmentVariables:
                     secret_object = client.secret.get(secret_name, workspace=workspace)
                 except BeakerSecretNotFound as e:
                     if field.default is not dt.MISSING or field.default_factory is not dt.MISSING:
-                        raise ValueError(f"Secret {secret_name} not found in workspace {workspace.name}") from e
+                        raise ValueError(
+                            f"Secret {secret_name} not found in workspace {workspace.name}"
+                        ) from e
                     else:
-                        print(f"Secret {secret_name} not found in workspace {workspace.name}; skipping...")
+                        print(
+                            f"Secret {secret_name} not found in workspace {workspace.name}; skipping..."
+                        )
                         continue
 
                 secret_value = client.secret.read(secret_object, workspace=workspace)
@@ -103,9 +106,10 @@ class EnvironmentVariables:
 
         return cls(**env_vars)
 
-
     @classmethod
-    def from_environment(cls,) -> Self:
+    def from_environment(
+        cls,
+    ) -> Self:
         env_vars: dict[str, str] = {}
 
         if (wandb_api_key := os.getenv("WANDB_API_KEY")) is not None:
@@ -146,14 +150,30 @@ class EnvironmentVariables:
                     print(f"Skipping {secret_name} because I did not find it...")
                     continue
 
-                print(f"Pushing {secret_name} to workspace {workspace.name} with value {secret_value[:6]}***...")
+                print(
+                    f"Pushing {secret_name} to workspace {workspace.name} with value {secret_value[:6]}***..."
+                )
                 client.secret.write(name=secret_name, value=secret_value, workspace=workspace)
+
 
 def prepare_environment():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-f", "--from-workspace", type=str, default=None, help="Beaker workspace to read secrets from; if not provided, secrets will be read from the environment.")
-    parser.add_argument("-w", "--workspace", type=str, required=True, help="Beaker workspace to push secrets to.")
-    parser.add_argument("-o", "--overwrite", action="store_true", help="Overwrite existing secrets in the workspace.")
+    parser.add_argument(
+        "-f",
+        "--from-workspace",
+        type=str,
+        default=None,
+        help="Beaker workspace to read secrets from; if not provided, secrets will be read from the environment.",
+    )
+    parser.add_argument(
+        "-w", "--workspace", type=str, required=True, help="Beaker workspace to push secrets to."
+    )
+    parser.add_argument(
+        "-o",
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing secrets in the workspace.",
+    )
     args = parser.parse_args()
 
     env_vars = (

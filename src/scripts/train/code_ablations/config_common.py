@@ -17,7 +17,9 @@ TOKENIZER_CONFIG = TokenizerConfig.dolma2()
 ALL_DRESSED_50PCT_CONFIG = SourceMixtureConfig(
     source_name="all-dressed-snazzy2-v0.1-150b-50pct",
     target_ratio=0.5,
-    paths=[f"{S3_PREFIX}/preprocessed/dolma2-0625/v0.1-150b/{TOKENIZER_CONFIG.identifier}/all-dressed-snazzy2/*/*.npy"],
+    paths=[
+        f"{S3_PREFIX}/preprocessed/dolma2-0625/v0.1-150b/{TOKENIZER_CONFIG.identifier}/all-dressed-snazzy2/*/*.npy"
+    ],
 )
 
 

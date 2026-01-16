@@ -40,7 +40,6 @@ def common_build_experiment_config(
     priority: str = PRIORITY,
     run_name: str | None = None,
 ) -> ExperimentConfig:
-
     cli_context.run_name = run_name or cli_context.run_name
 
     run_name_with_ts = (
@@ -96,8 +95,7 @@ def common_build_experiment_config(
         work_dir=work_dir,
     ).with_callbacks(
         cookbook.configure_default_callbacks(
-            run_name=run_name_with_ts,
-            wandb_group_name=cli_context.run_name
+            run_name=run_name_with_ts, wandb_group_name=cli_context.run_name
         )
     )
 
