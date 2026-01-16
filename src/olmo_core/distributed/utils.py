@@ -37,6 +37,11 @@ def init_distributed(
     Initialize the distributed process group with the given backend(s) and check/set the
     relevant environment variables.
     This also calls :func:`torch.cuda.set_device()` for backends that support CUDA.
+
+    If the process group is already initialized, this function will skip the initialization
+    but still set the environment variables and CUDA device. This allows callers to
+    pre-initialize torch.distributed (e.g., without device_id to avoid NCCL hangs when
+    multiple process groups exist) before calling this function.
     """
     # To mitigate the memory issue that collectives using async_op=True hold memory longer
     # than they should such as those in tensor parallelism.
@@ -118,8 +123,11 @@ def init_distributed(
         device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
         torch.cuda.set_device(device)
 
-    log_or_print(log, f"Initializing process group with {timeout=}...")
-    dist.init_process_group(backend, timeout=timeout, **kwargs)
+    if dist.is_initialized():
+        log_or_print(log, "Process group already initialized, skipping init_process_group")
+    else:
+        log_or_print(log, f"Initializing process group with {timeout=}...")
+        dist.init_process_group(backend, timeout=timeout, **kwargs)
 
     validate_env_vars()
 
