@@ -111,7 +111,7 @@ sources:
     target_ratio: 0.004596570853
     paths:
       - gs://ai2-llm/preprocessed/midtraining-reasoning/code-meta-reasoning-cleaned-latex-delim-randomly-cleaned-with-id-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
-  
+
 
   # PDF 0.05
   - source_name: pdf-quality-art_design

@@ -39,7 +39,7 @@ DATASET_CONFIG = SourceMixtureList(
             source_name="all-dressed-snazzy2-v0.1-150b",
             target_ratio=0.5,
             paths=[
-                f"s3://ai2-llm/preprocessed/dolma2-0625/v0.1-150b/{TOKENIZER_CONFIG.identifier}/all-dressed-snazzy2/*/*.npy"
+                f"s3://ai2-llm/preprocessed/dolma2-0625/v0.1-150b/{TOKENIZER_CONFIG.identifier}/all-dressed-snazzy2/**/*.npy"
             ],
         ),
         SourceMixtureConfig(
