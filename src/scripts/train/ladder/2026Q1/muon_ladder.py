@@ -8,14 +8,28 @@ from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
-from olmo_core.model_ladder import *
+from olmo_core.model_ladder import ModelLadder, Olmo3ModelConfigurator
+from olmo_core.model_ladder.transformer_model_configurator import TransformerSize
+from olmo_core.model_ladder.wsds_chinchilla_run_configurator import WSDSChinchillaRunConfigurator
 from olmo_core.optim.muon import MuonAdjustLRStrategy, MuonConfig
 
 log = logging.getLogger(__name__)
 
 
+def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
+    del cmd
+    parser.add_argument(
+        "--batch-size-multiplier",
+        type=float,
+        default=1.0,
+        help="Multiplier to apply to the batch size.",
+    )
+
+
 @dataclass(kw_only=True)
 class MuonWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
+    batch_size_multiplier: float
+
     def configure_optimizer(self, num_params: int, batch_size: int) -> MuonConfig:
         del batch_size  # unused
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
@@ -29,8 +43,8 @@ class MuonWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
 
     def configure_target_batch_size(self, num_params: int) -> int:
         bs = super().configure_target_batch_size(num_params)
-        bs *= 2  # double the batch size
-        return bs
+        bs *= self.batch_size_multiplier
+        return int(bs)
 
 
 class MuonLadder(ModelLadder):
@@ -123,7 +137,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             else args.rank_mbz * args.sequence_length,
         ),
         run_configurator=MuonWSDSChinchillaRunConfigurator(
-            chinchilla_multiple=args.chinchilla_multiple
+            chinchilla_multiple=args.chinchilla_multiple,
+            batch_size_multiplier=args.batch_size_multiplier,
         ),
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,

@@ -6,7 +6,8 @@ from olmo_core.data.composable import *
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOMXLinearConfig, Float8Config
 from olmo_core.internal.ladder import main
-from olmo_core.model_ladder import *
+from olmo_core.model_ladder import Olmo3ModelConfigurator, TransformerModelConfigurator
+from olmo_core.model_ladder.transformer_model_configurator import TransformerSize
 from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerDataParallelWrappingStrategy,
