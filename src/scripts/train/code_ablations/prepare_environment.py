@@ -8,6 +8,7 @@
 # ///
 
 import argparse
+from contextlib import ExitStack
 import dataclasses as dt
 from typing import Self, Literal
 import os
@@ -63,8 +64,11 @@ def get_aws_config_file(file_type: Literal["config", "credentials"]) -> str | No
     return None
 
 
-def get_beaker_token() -> str:
-    with Beaker.from_env() as client:
+def get_beaker_token(client: Beaker | None = None) -> str:
+    with ExitStack() as stack:
+        client = stack.enter_context(Beaker.from_env() if client is None else client)
+        assert client is not None, "Client shouldn't be None here"
+
         return client.config.user_token
 
 
@@ -74,10 +78,22 @@ class EnvironmentVariables:
     aws_config: str
     aws_credentials: str
     hugging_face_hub_token: str
-    beaker_token: str = dt.field(default_factory=get_beaker_token)
+    google_credentials: str
+    beaker_token: str
     comet_api_key: str | None = None
     r2_endpoint_url: str | None = None
     weka_endpoint_url: str | None = None
+
+    @staticmethod
+    def get_secret_name(field: dt.Field, client: Beaker | None = None) -> str:
+        with ExitStack() as stack:
+            client = stack.enter_context(Beaker.from_env() if client is None else client)
+            assert client is not None, "Client shouldn't be None here"
+
+            if field.name != "google_credentials":
+                return f"{client.user_name.upper()}_{field.name.upper()}"
+            else:
+                return "GOOGLE_CREDENTIALS"
 
     @classmethod
     def from_workspace(cls, workspace_name: str) -> Self:
@@ -87,7 +103,7 @@ class EnvironmentVariables:
             workspace = client.workspace.get(workspace_name)
 
             for field in dt.fields(cls):
-                secret_name = f"{client.user_name.upper()}_{field.name.upper()}"
+                secret_name = cls.get_secret_name(field, client)
                 try:
                     secret_object = client.secret.get(secret_name, workspace=workspace)
                 except BeakerSecretNotFound as e:
@@ -103,6 +119,9 @@ class EnvironmentVariables:
 
                 secret_value = client.secret.read(secret_object, workspace=workspace)
                 env_vars[field.name] = secret_value
+
+            # in case it's missing
+            env_vars.setdefault("beaker_token", get_beaker_token(client))
 
         return cls(**env_vars)
 
@@ -130,13 +149,18 @@ class EnvironmentVariables:
         if (hugging_face_hub_token := get_hugging_face_hub_token()) is not None:
             env_vars["hugging_face_hub_token"] = hugging_face_hub_token
 
+        if (google_credentials := os.getenv("GOOGLE_CREDENTIALS")) is not None:
+            env_vars["google_credentials"] = google_credentials
+
+        env_vars.setdefault("beaker_token", get_beaker_token())
+
         return cls(**env_vars)
 
     def push_to_workspace(self, workspace_name: str, overwrite: bool = False) -> None:
         with Beaker.from_env() as client:
             workspace = client.workspace.get(workspace_name)
             for field in dt.fields(self):
-                secret_name = f"{client.user_name.upper()}_{field.name.upper()}"
+                secret_name = self.get_secret_name(field, client)
 
                 try:
                     client.secret.get(secret_name, workspace=workspace)
