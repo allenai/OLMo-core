@@ -346,15 +346,15 @@ def main(
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
     if configure_ladder is None:
-        assert configure_model is not None, (
-            "configure_model is required if configure_ladder is unspecified"
-        )
+        assert (
+            configure_model is not None
+        ), "configure_model is required if configure_ladder is unspecified"
 
         configure_ladder = get_default_ladder_factory(configure_model, configure_run)
     else:
-        assert configure_model is None and configure_run is None, (
-            "configure_model / configure_run and mutually exclusive with configure_ladder"
-        )
+        assert (
+            configure_model is None and configure_run is None
+        ), "configure_model / configure_run and mutually exclusive with configure_ladder"
 
     args = parse_args(
         configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
