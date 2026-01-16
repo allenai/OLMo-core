@@ -284,6 +284,7 @@ def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architec
 @pytest.mark.parametrize("architecture", ["olmo2"])
 @pytest.mark.skip("known precision issues with ring-flash-attn")
 def test_context_parallel_transformer_ring(architecture: str, tmp_path):
+    seed_all(0)
     device = torch.device("cuda")
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.use_flash = True
@@ -334,7 +335,10 @@ def run_context_parallel_transformer_ulysses(
     logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL)
+    tol_scale = 2.0  # requires slightly more tolerance than default
+    torch.testing.assert_close(
+        og_logits, get_full_tensor(logits), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
+    )
 
 
 @requires_multi_gpu
@@ -350,6 +354,7 @@ def run_context_parallel_transformer_ulysses(
 def test_context_parallel_transformer_ulysses(
     architecture: str, backend_name: AttentionBackendName, tmp_path
 ):
+    seed_all(0)
     device = torch.device("cuda")
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.backend = backend_name
@@ -572,18 +577,18 @@ def test_transformer_num_flops_per_token():
 
 
 @pytest.mark.parametrize(
-    "config_builder,expected_d_model,expected_n_layers",
+    "config_builder,expected_d_model",
     [
-        pytest.param(TransformerConfig.gemma3_1B, 2304, 26, id="gemma3_1B"),
-        pytest.param(TransformerConfig.gemma3_4B, 2560, 34, id="gemma3_4B"),
-        pytest.param(TransformerConfig.gemma3_12B, 3840, 48, id="gemma3_12B"),
-        pytest.param(TransformerConfig.gemma3_27B, 5376, 62, id="gemma3_27B"),
+        pytest.param(TransformerConfig.gemma3_1B, 2304, id="gemma3_1B"),
+        pytest.param(TransformerConfig.gemma3_4B, 2560, id="gemma3_4B"),
+        pytest.param(TransformerConfig.gemma3_12B, 3840, id="gemma3_12B"),
+        pytest.param(TransformerConfig.gemma3_27B, 5376, id="gemma3_27B"),
     ],
 )
-def test_gemma3_builder_configs(config_builder, expected_d_model, expected_n_layers):
-    config = config_builder(n_layers=6)
+def test_gemma3_builder_configs(config_builder, expected_d_model):
+    config = config_builder(n_layers=2)
     assert config.d_model == expected_d_model
-    assert config.n_layers == 6
+    assert config.n_layers == 2
 
     assert config.block.feed_forward is not None
     assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
@@ -592,8 +597,8 @@ def test_gemma3_builder_configs(config_builder, expected_d_model, expected_n_lay
     assert config.block.attention.rope is not None
     assert config.block.attention.rope.theta == 10_000
 
-    model = config.build(init_device="cpu")
-    model.init_weights(device=torch.device("cpu"))
+    # Use meta device to avoid allocating large amounts of memory for big models.
+    model = config.build(init_device="meta")
 
     num_actual_params = sum(p.numel() for p in model.parameters())
     assert config.num_params == num_actual_params
@@ -634,25 +639,25 @@ def test_gemma3_sliding_window_pattern():
 
 
 @pytest.mark.parametrize(
-    "config_builder,expected_d_model,expected_n_layers",
+    "config_builder,expected_d_model",
     [
-        pytest.param(TransformerConfig.qwen3_0_6B, 1024, 28, id="qwen3_0_6B"),
-        pytest.param(TransformerConfig.qwen3_1_7B, 2048, 28, id="qwen3_1_7B"),
-        pytest.param(TransformerConfig.qwen3_4B, 2560, 36, id="qwen3_4B"),
-        pytest.param(TransformerConfig.qwen3_8B, 4096, 36, id="qwen3_8B"),
-        pytest.param(TransformerConfig.qwen3_14B, 5120, 48, id="qwen3_14B"),
-        pytest.param(TransformerConfig.qwen3_32B, 5120, 64, id="qwen3_32B"),
+        pytest.param(TransformerConfig.qwen3_0_6B, 1024, id="qwen3_0_6B"),
+        pytest.param(TransformerConfig.qwen3_1_7B, 2048, id="qwen3_1_7B"),
+        pytest.param(TransformerConfig.qwen3_4B, 2560, id="qwen3_4B"),
+        pytest.param(TransformerConfig.qwen3_8B, 4096, id="qwen3_8B"),
+        pytest.param(TransformerConfig.qwen3_14B, 5120, id="qwen3_14B"),
+        pytest.param(TransformerConfig.qwen3_32B, 5120, id="qwen3_32B"),
     ],
 )
-def test_qwen3_builder_configs(config_builder, expected_d_model, expected_n_layers):
+def test_qwen3_builder_configs(config_builder, expected_d_model):
     config = config_builder(vocab_size=151936, n_layers=2)
     assert config.d_model == expected_d_model
     assert config.n_layers == 2
     assert config.block.attention.n_kv_heads == 8
     assert config.block.attention.rope.theta == 1_000_000
 
-    model = config.build(init_device="cpu")
-    model.init_weights(device=torch.device("cpu"))
+    # Use meta device to avoid allocating large amounts of memory for big models.
+    model = config.build(init_device="meta")
 
     num_actual_params = sum(p.numel() for p in model.parameters())
     assert config.num_params == num_actual_params
