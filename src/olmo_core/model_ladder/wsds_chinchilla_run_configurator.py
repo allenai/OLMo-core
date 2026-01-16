@@ -219,8 +219,10 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             f"Learning rate schedule for a {format_count(num_params)} model out to {self.chinchilla_multiple}xC"
         )
 
+        one_x_c_tokens = self._chinchilla_duration(num_params, batch_size, 1.0).value
         caption = (
-            f"peak LR={df['LR'].max():.6f}, batch size={format_tokens(batch_size)}\n"
+            f"peak LR={df['LR'].max():.6f}, batch size={format_tokens(batch_size)}, "
+            f"1xC={format_tokens(one_x_c_tokens)}\n"
             f"warmup={format_tokens(warmup)} / {warmup // batch_size:,d} steps, "
             f"duration={format_tokens(t_max)} / {t_max // batch_size:,d} steps"
         )
