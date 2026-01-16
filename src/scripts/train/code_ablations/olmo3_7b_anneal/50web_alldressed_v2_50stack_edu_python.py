@@ -29,6 +29,7 @@ TOKENIZER_CONFIG = TokenizerConfig.dolma2()
 PRIORITY = "high"
 WORKSPACE = "ai2/olmo4"
 BUDGET = "ai2/oe-base"
+NUM_NODES = 4
 
 MODEL_CONFIG = TransformerConfig.olmo3_7B(vocab_size=TOKENIZER_CONFIG.padded_vocab_size())
 
@@ -65,11 +66,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,
         root_dir=root_dir,
-        workspace="ai2/olmo-3-microanneals",
-        num_nodes=16,
+        workspace=WORKSPACE,
+        num_nodes=NUM_NODES,
         nccl_debug=True,
-        # override priority from the CLI eg `--launch.priority=high`
     )
+    beaker_launch_config.priority = PRIORITY
 
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
