@@ -1,4 +1,5 @@
 from datetime import datetime
+from getpass import getuser
 import sys
 from pathlib import Path
 from typing import Optional
@@ -23,13 +24,16 @@ from olmo_core.train.train_module import TransformerTrainModuleConfig
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
 MAX_TOKENS = 10_000_000_000  # 10B
-LR = 0.00020712352850360292
+LR = 0.00020712352850360292 / 2 # halfing the LR
 SEED = 1337
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
 PRIORITY = "high"
 WORKSPACE = "ai2/olmo4"
 BUDGET = "ai2/oe-base"
 NUM_NODES = 4
+LOAD_PATH = "gs://ai2-llm/checkpoints/OLMo25/step1413814"
+BASE_SAVE_DIR = f"s3://ai2-llm/checkpoints/{getuser()}"
+
 
 MODEL_CONFIG = TransformerConfig.olmo3_7B(vocab_size=TOKENIZER_CONFIG.padded_vocab_size())
 
@@ -59,7 +63,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     root_dir = get_root_dir(cli_context.cluster)
     work_dir = get_work_dir(root_dir)
-    save_dir = f"{root_dir}/checkpoints/{cli_context.run_name}"
+    save_dir = f"{BASE_SAVE_DIR}/{cli_context.run_name}"
 
     beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
         name=cli_context.run_name,
@@ -76,7 +80,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         max_sequence_length=SEQ_LENGTH,
         rank_microbatch_size=SEQ_LENGTH * 2,
         learning_rate=LR,
-        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=0, alpha_f=0.0),
+        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=200, alpha_f=0.0),
         activation_memory_budget=0.5,
     )
 
@@ -99,7 +103,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="gs://ai2-llm/checkpoints/OLMo25/step1413814",
+        load_path=LOAD_PATH,
         load_trainer_state=False,
         load_optim_state=True,
         max_duration=Duration.tokens(MAX_TOKENS),
