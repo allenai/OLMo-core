@@ -53,8 +53,9 @@ def chinchilla_parametric_scaling_law(
     """
     assert np.all(N > 0), "N must be positive"
     assert np.all(D > 0), "D must be positive"
-    tiny = np.finfo(np.float64).tiny
-    max_exp = np.log(np.finfo(np.float64).max)  # ~709.78
+    dtype = np.result_type(N, D, np.float64)
+    tiny = np.finfo(dtype).tiny
+    max_exp = np.log(np.finfo(dtype).max)  # Limit for exp() to avoid overflow
 
     # Clip A, B to avoid log(0) = -inf
     A_safe = np.maximum(A, tiny)
