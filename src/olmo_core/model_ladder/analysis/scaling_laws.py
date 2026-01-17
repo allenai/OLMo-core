@@ -49,6 +49,7 @@ def chinchilla_parametric_scaling_law(
     Uses logarithmic transformation with clipping for numerical stability:
     - Inputs are clipped to avoid log(0) = -inf
     - Exponents are clipped to avoid overflow in exp()
+    Details: https://github.com/kyo-takano/chinchilla/blob/master/docs/math.md#numerical-stability
     """
     assert np.all(N > 0), "N must be positive"
     assert np.all(D > 0), "D must be positive"
