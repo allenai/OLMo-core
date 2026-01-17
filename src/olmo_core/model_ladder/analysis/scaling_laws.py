@@ -87,7 +87,6 @@ class ChinchillaParametricFit:
     """
 
     fitted_params: ChinchillaParams
-    """Fitted parameters."""
 
     huber_loss: Optional[float] = None
     """Huber loss of the fit (computed on log scale to match optimization objective)."""
@@ -108,6 +107,7 @@ class ChinchillaParametricFit:
         D: np.ndarray,
         L: np.ndarray,
         weights: Optional[np.ndarray] = None,
+        overestimate_penalty: float = 1.0,
     ) -> tuple[float, ChinchillaParams] | None:
         """
         Run a single optimization from given initial parameters.
@@ -118,6 +118,8 @@ class ChinchillaParametricFit:
         :param D: Token counts.
         :param L: Loss values (raw, not log-transformed).
         :param weights: Optional weights for each observation (applied to loss function).
+        :param overestimate_penalty: Multiplier for overestimate errors (predicted > actual).
+            Values > 1.0 penalize overestimates more than underestimates.
         :returns: Tuple of (loss, ChinchillaParams) if successful, None otherwise.
         """
         try:
@@ -130,12 +132,24 @@ class ChinchillaParametricFit:
 
         log_L = np.log(L)
 
-        def _huber_loss(residuals: np.ndarray, delta: float = 1e-3) -> np.ndarray:
-            """Apply Huber loss function to residuals."""
+        def _huber_loss(
+            residuals: np.ndarray, delta: float = 1e-3, asymmetry: float = 1.0
+        ) -> np.ndarray:
+            """
+            Apply Huber loss function to residuals with optional asymmetry.
+
+            :param residuals: Array of residuals (actual - predicted in log space).
+            :param delta: Threshold for switching between quadratic and linear loss.
+            :param asymmetry: Multiplier for negative residuals (overestimates).
+                Values > 1.0 penalize overestimates more than underestimates.
+            """
             abs_r = np.abs(residuals)
             quadratic = 0.5 * residuals**2
             linear = delta * (abs_r - 0.5 * delta)
-            return np.where(abs_r <= delta, quadratic, linear)
+            base_loss = np.where(abs_r <= delta, quadratic, linear)
+            # Apply asymmetric penalty: negative residuals = overestimates
+            asymmetric_weight = np.where(residuals < 0, asymmetry, 1.0)
+            return base_loss * asymmetric_weight
 
         def objective(params: np.ndarray) -> float:
             E_param, A, alpha, B, beta = params
@@ -143,7 +157,7 @@ class ChinchillaParametricFit:
             L_pred = np.maximum(L_pred, 1e-10)
             log_residuals = log_L - np.log(L_pred)
             # Weighted sum of losses
-            return np.sum(weights * _huber_loss(log_residuals))
+            return np.sum(weights * _huber_loss(log_residuals, asymmetry=overestimate_penalty))
 
         try:
             result = minimize(
@@ -167,6 +181,7 @@ class ChinchillaParametricFit:
         loss: ArrayLike,
         parallel: bool = True,
         weights: Optional[ArrayLike] = None,
+        overestimate_penalty: float = 1.0,
         num_slices: int = 4,
     ) -> "ChinchillaParametricFit":
         """
@@ -179,8 +194,14 @@ class ChinchillaParametricFit:
         :param weights: Optional weights for each observation. Higher weights give more
             importance to those points during fitting. Common choices:
             - np.sqrt(6 * N * D): Weight by sqrt(compute) to emphasize large-scale points
-            - N * D: Weight by compute (stronger emphasis on large scale)
             - None: Uniform weights (default)
+        :param overestimate_penalty: Multiplier for overestimate errors in the Huber loss.
+            When > 1.0, the loss function penalizes overestimates (predicted > actual)
+            more heavily than underestimates. This pushes the fit toward lower loss
+            predictions, useful since the parametric scaling law is typically used to capture
+            the lower-bound of achievable loss with a given (N, D) allocation. A good choice if
+            the goal is to capture the lower-bound of achievable loss is to set this to 10.0.
+            Default is 1.0 (symmetric loss).
         :param num_slices: Number of slices to use for grid search along each dimension.
         :returns: :class:`ChinchillaParametricFit` with fitted parameters.
         """
@@ -228,6 +249,7 @@ class ChinchillaParametricFit:
             D=D,
             L=L,
             weights=weights_clean,
+            overestimate_penalty=overestimate_penalty,
         )
 
         results: list[tuple[float, ChinchillaParams]] = []
