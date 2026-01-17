@@ -29,6 +29,8 @@ uv run gantry run \
     --workspace ai2/olmo4 \
     --budget ai2/oe-base \
     --priority high \
+    --description "Converting ${MODEL_PATH} to HuggingFace format" \
+    --cluster 'ai2/*-cirrascale' \
     --gpus 0 \
     --yes \
     --allow-dirty \
