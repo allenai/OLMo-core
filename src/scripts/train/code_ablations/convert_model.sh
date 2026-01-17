@@ -22,6 +22,8 @@ MODEL_PATH="${MODEL_PATH%/}"
 # Compute output path by appending -hf
 OUTPUT_PATH="${MODEL_PATH}-hf"
 
+BEAKER_USERNAME=$(uv run beaker account whoami --format json | jq -r '.[0].name | ascii_upcase' -r)
+
 echo "Converting checkpoint: ${MODEL_PATH}"
 echo "Output will be saved to: ${OUTPUT_PATH}"
 
@@ -36,27 +38,30 @@ uv run gantry run \
     --allow-dirty \
     --timeout -1 \
     --show-logs \
-    -- bash -c "
-        set -eo pipefail
-        TMP_INPUT=\$(mktemp -d)
-        TMP_OUTPUT=\$(mktemp -d)
+    --aws-config-secret "${BEAKER_USERNAME}_AWS_CONFIG" \
+    --aws-credentials-secret "${BEAKER_USERNAME}_AWS_CREDENTIALS" \
+    --exec-method bash \
+    -- '
+        set -exuo pipefail
+        TMP_INPUT=$(mktemp -d)
+        TMP_OUTPUT=$(mktemp -d)
 
-        echo 'Downloading checkpoint from ${MODEL_PATH} to \${TMP_INPUT}...'
-        aws s3 cp --recursive '${MODEL_PATH}' \"\${TMP_INPUT}\"
+        echo "Downloading checkpoint from '"${MODEL_PATH}"' to ${TMP_INPUT}..."
+        aws s3 cp --recursive "'"${MODEL_PATH}"'" "${TMP_INPUT}"
 
-        echo 'Converting checkpoint...'
+        echo "Converting checkpoint..."
         uv run src/examples/huggingface/convert_checkpoint_to_hf.py \
-            -i \"\${TMP_INPUT}\" \
-            -o \"\${TMP_OUTPUT}\" \
+            -i "${TMP_INPUT}" \
+            -o "${TMP_OUTPUT}" \
             -s 8192 \
             -t allenai/dolma2-tokenizer \
             --skip-validation
 
-        echo 'Uploading converted model to ${OUTPUT_PATH}...'
-        aws s3 cp --recursive \"\${TMP_OUTPUT}\" '${OUTPUT_PATH}'
+        echo "Uploading converted model to '"${OUTPUT_PATH}"'..."
+        aws s3 cp --recursive "${TMP_OUTPUT}" "'"${OUTPUT_PATH}"'"
 
-        echo 'Cleaning up...'
-        rm -rf \"\${TMP_INPUT}\" \"\${TMP_OUTPUT}\"
+        echo "Cleaning up..."
+        rm -rf "${TMP_INPUT}" "${TMP_OUTPUT}"
 
-        echo 'Done!'
-    "
+        echo "Done!"
+    '
