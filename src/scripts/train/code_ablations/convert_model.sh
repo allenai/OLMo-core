@@ -31,6 +31,7 @@ uv run gantry run \
     --priority high \
     --gpus 0 \
     --yes \
+    --allow-dirty \
     --timeout -1 \
     --show-logs \
     -- bash -c "
