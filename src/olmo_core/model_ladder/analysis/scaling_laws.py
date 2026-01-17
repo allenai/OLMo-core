@@ -7,39 +7,11 @@ from typing import NamedTuple, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
-
-
-class ChinchillaParams(NamedTuple):
-    E: float
-    A: float
-    alpha: float
-    B: float
-    beta: float
-
-    @property
-    def a_opt(self) -> float:
-        """Compute-optimal N exponent: N_opt ∝ C^a_opt where a_opt = β/(α+β)."""
-        return self.beta / (self.alpha + self.beta)
-
-    @property
-    def b_opt(self) -> float:
-        """Compute-optimal D exponent: D_opt ∝ C^b_opt where b_opt = α/(α+β)."""
-        return self.alpha / (self.alpha + self.beta)
-
-    def predict_loss(self, N: np.ndarray, D: np.ndarray) -> np.ndarray:
-        return chinchilla_parametric_scaling_law(
-            N, D, self.E, self.A, self.alpha, self.B, self.beta
-        )
-
-    def __repr__(self) -> str:
-        return (
-            f"ChinchillaParams(L(N,D) = {self.E:.6f} + {self.A:.6e}/N^{self.alpha:.4f} + "
-            f"{self.B:.6e}/D^{self.beta:.4f}, a_opt={self.a_opt:.4f}, b_opt={self.b_opt:.4f})"
-        )
+from tqdm import tqdm
 
 
 def chinchilla_parametric_scaling_law(
-    N: np.ndarray, D: np.ndarray, E: float, A: float, alpha: float, B: float, beta: float
+    N: ArrayLike, D: ArrayLike, E: float, A: float, alpha: float, B: float, beta: float
 ) -> np.ndarray:
     """
     Compute loss for given parameter count and token count using the Chinchilla scaling law.
@@ -51,6 +23,8 @@ def chinchilla_parametric_scaling_law(
     - Exponents are clipped to avoid overflow in exp()
     Details: https://github.com/kyo-takano/chinchilla/blob/master/docs/math.md#numerical-stability
     """
+    N = np.asarray(N)
+    D = np.asarray(D)
     assert np.all(N > 0), "N must be positive"
     assert np.all(D > 0), "D must be positive"
     dtype = np.result_type(N, D, np.float64)
@@ -72,6 +46,35 @@ def chinchilla_parametric_scaling_law(
     param_term = np.exp(log_param_term)
     data_term = np.exp(log_data_term)
     return E + param_term + data_term
+
+
+class ChinchillaParams(NamedTuple):
+    E: float
+    A: float
+    alpha: float
+    B: float
+    beta: float
+
+    @property
+    def a_opt(self) -> float:
+        """Compute-optimal N exponent: N_opt ∝ C^a_opt where a_opt = β/(α+β)."""
+        return self.beta / (self.alpha + self.beta)
+
+    @property
+    def b_opt(self) -> float:
+        """Compute-optimal D exponent: D_opt ∝ C^b_opt where b_opt = α/(α+β)."""
+        return self.alpha / (self.alpha + self.beta)
+
+    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        return chinchilla_parametric_scaling_law(
+            N, D, self.E, self.A, self.alpha, self.B, self.beta
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"ChinchillaParams(L(N,D) = {self.E:.6f} + {self.A:.6e}/N^{self.alpha:.4f} + "
+            f"{self.B:.6e}/D^{self.beta:.4f}, a_opt={self.a_opt:.4f}, b_opt={self.b_opt:.4f})"
+        )
 
 
 @dataclass
@@ -96,8 +99,16 @@ class ChinchillaParametricFit:
     _D: Optional[np.ndarray] = None
     _loss: Optional[np.ndarray] = None
 
-    def predict_loss(self, N: np.ndarray, D: np.ndarray) -> np.ndarray:
+    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        """Predict the loss for a given (N, D) allocation."""
         return self.fitted_params.predict_loss(N, D)
+
+    @property
+    def residuals(self) -> Optional[np.ndarray]:
+        """Residuals (log scale) from the fit on the original data."""
+        if self._loss is None or self._N is None or self._D is None:
+            return None
+        return np.log(self._loss) - np.log(self.predict_loss(self._N, self._D))
 
     @staticmethod
     def _optimize_single_init(
@@ -274,3 +285,132 @@ class ChinchillaParametricFit:
         huber_loss, params = best
 
         return cls(fitted_params=params, huber_loss=huber_loss, _N=N, _D=D, _loss=L)
+
+
+@dataclass
+class ChinchillaParametricBootstrappedFit:
+    """
+    Results from bootstrapping the parametric Chinchilla scaling law.
+
+    Provides uncertainty estimates for fitted parameters by resampling the
+    original data with replacement and refitting.
+    """
+
+    point_estimate: ChinchillaParametricFit
+    """The point estimate of the fit from the original data."""
+
+    fits: list[ChinchillaParametricFit]
+    """List of fits from bootstrap samples."""
+
+    def predict_loss_distribution(
+        self, N: ArrayLike, D: ArrayLike, include_observation_noise: bool = True
+    ) -> np.ndarray:
+        """
+        Predict the distribution of loss values for a given (N, D) allocation.
+
+        :param N: Parameter counts.
+        :param D: Token counts.
+        :param include_observation_noise: If True, adds sampled residuals to the predictions
+            to estimate the distribution of future observations (prediction interval).
+            If False, returns only the distribution of the mean curve (confidence interval).
+        """
+        N = np.asarray(N)
+        D = np.asarray(D)
+
+        # 1. Get distribution of the mean (parameter uncertainty)
+        # Shape: (num_bootstraps, num_points)
+        mean_predictions = np.array([fit.predict_loss(N, D) for fit in self.fits])
+
+        if not include_observation_noise:
+            return mean_predictions
+
+        # 2. Add observation noise (aleatoric uncertainty)
+        residuals = self.point_estimate.residuals
+        if residuals is None:
+            # Fallback if fit() was called before this field existed or residuals weren't stored
+            return mean_predictions
+
+        # Sample residuals with replacement to match the shape of predictions
+        # NOTE: assumes the residuals are homoscedastic.
+        rng = np.random.default_rng()
+        sampled_log_residuals = rng.choice(residuals, size=mean_predictions.shape, replace=True)
+
+        # The residuals in fit() are calculated as log(L_true) - log(L_pred).
+        # So L_observed = L_pred * exp(residual)
+        return mean_predictions * np.exp(sampled_log_residuals)
+
+    @classmethod
+    def fit(
+        cls,
+        N: ArrayLike,
+        D: ArrayLike,
+        loss: ArrayLike,
+        num_bootstraps: int = 100,
+        parallel: bool = True,
+        weights: Optional[ArrayLike] = None,
+        overestimate_penalty: float = 1.0,
+        num_slices: int = 4,
+        seed: Optional[int] = None,
+        progress_bar: bool = True,
+    ) -> "ChinchillaParametricBootstrappedFit":
+        """
+        Fit the Chinchilla scaling law with bootstrap uncertainty estimation.
+
+        :param N: Array of parameter counts.
+        :param D: Array of token counts.
+        :param loss: Array of loss values.
+        :param num_bootstraps: Number of bootstrap samples to generate.
+        :param parallel: If True, use multiprocessing for grid search optimization.
+        :param weights: Optional weights for each observation.
+        :param overestimate_penalty: Multiplier for overestimate errors in the Huber loss.
+        :param num_slices: Number of slices to use for grid search along each dimension.
+        :param seed: Random seed for reproducibility.
+        :param progress_bar: If True, show a progress bar for the bootstrap fits.
+        :returns: A ChinchillaParametricBootstrappedFit with point estimate and bootstrap fits.
+        """
+        N = np.asarray(N)
+        D = np.asarray(D)
+        loss = np.asarray(loss)
+        n_points = len(N)
+
+        # Fit point estimate on original data
+        point_estimate = ChinchillaParametricFit.fit(
+            N,
+            D,
+            loss,
+            parallel=parallel,
+            weights=weights,
+            overestimate_penalty=overestimate_penalty,
+            num_slices=num_slices,
+        )
+
+        rng = np.random.default_rng(seed)
+        bootstrap_fits: list[ChinchillaParametricFit] = []
+        for _ in tqdm(range(num_bootstraps), disable=not progress_bar, desc="Bootstrapping"):
+            # Resample indices with replacement
+            indices = rng.choice(n_points, size=n_points, replace=True)
+
+            N_boot = N[indices]
+            D_boot = D[indices]
+            loss_boot = loss[indices]
+            weights_boot = None if weights is None else np.asarray(weights)[indices]
+
+            try:
+                boot_fit = ChinchillaParametricFit.fit(
+                    N_boot,
+                    D_boot,
+                    loss_boot,
+                    parallel=parallel,
+                    weights=weights_boot,
+                    overestimate_penalty=overestimate_penalty,
+                    num_slices=num_slices,
+                )
+                bootstrap_fits.append(boot_fit)
+            except ValueError:
+                # Skip failed fits (can happen with unlucky resampling)
+                continue
+
+        if not bootstrap_fits:
+            raise ValueError("All bootstrap fits failed")
+
+        return cls(point_estimate=point_estimate, fits=bootstrap_fits)
