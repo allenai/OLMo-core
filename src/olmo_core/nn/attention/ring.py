@@ -139,7 +139,10 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
 
             x_chunks = x.chunk(2 * self.cp_world_size, dim=seq_dim)
             local_value = torch.cat(
-                [x_chunks[self.cp_rank], x_chunks[2 * self.cp_world_size - self.cp_rank - 1]],
+                [
+                    x_chunks[self.cp_rank],
+                    x_chunks[2 * self.cp_world_size - self.cp_rank - 1],
+                ],
                 dim=seq_dim,
             )
             out.append(local_value.contiguous())
@@ -224,7 +227,10 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
         local_cu_doc_lens = cu_doc_lens // self.cp_world_size
         if final_padding is not None:
             local_cu_doc_lens = torch.cat(
-                [local_cu_doc_lens, (local_cu_doc_lens[-1] + final_padding).unsqueeze(0)]
+                [
+                    local_cu_doc_lens,
+                    (local_cu_doc_lens[-1] + final_padding).unsqueeze(0),
+                ]
             )
 
         local_max_doc_len = (local_cu_doc_lens[1:] - local_cu_doc_lens[:-1]).max().item()

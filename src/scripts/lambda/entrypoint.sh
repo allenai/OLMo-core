@@ -40,6 +40,10 @@ node_0_only log_info "MASTER_PORT: $MASTER_PORT"
 ulimit -n 65536
 node_0_only log_info "Open File Limit (ulimit -n): $(ulimit -n)"
 
+# Increase open file limit
+ulimit -n 65536
+node_0_only echo "Open File Limit (ulimit -n): $(ulimit -n)"
+
 # Ensure port is available.
 # if ! nc -vz "$MASTER_ADDR" $MASTER_PORT; then
 #     echo "Error: Master port $MASTER_PORT on $MASTER_ADDR is not available."

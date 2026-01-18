@@ -53,8 +53,8 @@ def cross_entropy_loss(
 _fused_linear_cross_entropy_loss: Optional[Callable] = None
 
 try:
-    from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
-        LigerFusedLinearCrossEntropyFunction,
+    from liger_kernel.ops.fused_linear_cross_entropy import (
+        LigerFusedLinearCrossEntropyFunction,  # type: ignore
     )
 
     _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply

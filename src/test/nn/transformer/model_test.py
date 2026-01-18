@@ -31,6 +31,7 @@ from olmo_core.nn.attention.ring import (
     UlyssesContextParallelStyle,
 )
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
+from olmo_core.nn.fla import FLAConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
@@ -201,6 +202,41 @@ def get_transformer_inputs() -> torch.Tensor:
     return torch.arange(0, 128).unsqueeze(0)
 
 
+def _fla_available():
+    try:
+        import fla  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def get_fla_transformer_config(dtype: torch.dtype = torch.float32) -> TransformerConfig:
+    """Get a transformer config with FLA blocks."""
+    config = TransformerConfig.olmo2_190M(
+        vocab_size=16_000,
+        n_layers=2,
+        fused_ops=False,
+        use_flash=False,
+        dtype=DType.from_pt(dtype),
+    )
+
+    # Update the config to use FLA blocks
+    config.block.name = TransformerBlockType.fla
+    config.block.attention = AttentionConfig(n_heads=4)  # n_heads needed for FLA
+    config.block.fla = FLAConfig(
+        name="GatedDeltaNet",
+        dtype=DType.from_pt(dtype),
+        fla_layer_kwargs={
+            "head_dim": int(config.d_model / config.block.attention.n_heads),
+            "use_gate": True,
+            "allow_neg_eigval": False,
+        },
+    )
+
+    return config
+
+
 def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
     config = get_transformer_config(architecture)
@@ -337,7 +373,10 @@ def run_context_parallel_transformer_ulysses(
     og_logits = torch.load(outputs_path, map_location=device)
     tol_scale = 2.0  # requires slightly more tolerance than default
     torch.testing.assert_close(
-        og_logits, get_full_tensor(logits), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
+        og_logits,
+        get_full_tensor(logits),
+        rtol=BF16_RTOL * tol_scale,
+        atol=BF16_ATOL * tol_scale,
     )
 
 
@@ -479,10 +518,12 @@ def run_moe_hybrid_combined_forward(
 
 @requires_multi_gpu
 @pytest.mark.parametrize(
-    "dropless", [pytest.param(True, id="dropless"), pytest.param(False, id="default-router")]
+    "dropless",
+    [pytest.param(True, id="dropless"), pytest.param(False, id="default-router")],
 )
 @pytest.mark.parametrize(
-    "shared_experts", [pytest.param(True, id="shared-experts"), pytest.param(False, id="no-shared")]
+    "shared_experts",
+    [pytest.param(True, id="shared-experts"), pytest.param(False, id="no-shared")],
 )
 @pytest.mark.parametrize(
     "reordered_norm",
