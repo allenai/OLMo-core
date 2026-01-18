@@ -8,26 +8,48 @@ from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
-from olmo_core.model_ladder import *
-from olmo_core.model_ladder.utils import get_mix_base_dir
-from olmo_core.optim.muon import MuonConfig
+from olmo_core.model_ladder import ModelLadder, Olmo3ModelConfigurator
+from olmo_core.model_ladder.transformer_model_configurator import TransformerSize
+from olmo_core.model_ladder.wsds_chinchilla_run_configurator import (
+    WSDSChinchillaRunConfigurator,
+)
+from olmo_core.optim.muon import MuonAdjustLRStrategy, MuonConfig
 
 log = logging.getLogger(__name__)
+
+# This ladder has been run under the names:
+# "olmo3-muon": https://wandb.ai/ai2-llm/olmo3-muon
+# "olmo3-muon-2xBS": https://wandb.ai/ai2-llm/olmo3-muon-2xBS
+
+
+def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
+    del cmd
+    parser.add_argument(
+        "--batch-size-multiplier",
+        type=float,
+        default=1.0,
+        help="Multiplier to apply to the batch size.",
+    )
 
 
 @dataclass(kw_only=True)
 class MuonWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
+    batch_size_multiplier: float
+
     def configure_optimizer(self, num_params: int, batch_size: int) -> MuonConfig:
         del batch_size  # unused
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
         # but divide by 2 for WSD schedule (seems to work emperically).
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
         lr /= 2.0
-        return MuonConfig(lr=lr, weight_decay=0.1, adjust_lr="rms_norm", use_triton=True)
+        # TODO: if rerunning this ladder, incorporate the improvements made to the adamw configurator
+        return MuonConfig(
+            lr=lr, weight_decay=0.1, adjust_lr=MuonAdjustLRStrategy.rms_norm, use_triton=True
+        )
 
     def configure_target_batch_size(self, num_params: int) -> int:
         bs = super().configure_target_batch_size(num_params)
-        bs *= 2  # try doubling batch size
+        bs = int(bs * self.batch_size_multiplier)
         return bs
 
 
@@ -80,8 +102,12 @@ class MuonLadder(ModelLadder):
         max_num_grad_accum_steps = global_batch_size // gbz_factor
         expansion_factor = min(self.max_devices // min_world_size, max_num_grad_accum_steps)
         num_devices = min_world_size * expansion_factor
-        # Ensure num_devices is a power of 2 by rounding down to the nearest power of 2
+
+        # Ensure num_devices is a power of 2 by rounding down to the nearest power of 2,
+        # but don't go below min_world_size.
         num_devices = 2 ** (num_devices.bit_length() - 1) if num_devices > 0 else 1
+        num_devices = max(num_devices, min_world_size)
+        expansion_factor = num_devices // min_world_size
         dp_world_size = min_dp_world_size * expansion_factor
 
         # Finally we ensure `global_batch_size` is divisible by the micro-batch size.
@@ -98,10 +124,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925_official
-                    if args.cluster == "lambda"
-                    else DataMix.OLMo_mix_0925,
-                    mix_base_dir=get_mix_base_dir(args.cluster),
+                    mix=DataMix.OLMo_mix_0925,
+                    mix_base_dir="gs://ai2-llm/",
                 )
             ],
             sequence_length=args.sequence_length,
@@ -113,9 +137,14 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=TransformerModelConfigurator(),
+        model_configurator=Olmo3ModelConfigurator(
+            rank_microbatch_size=None
+            if args.rank_mbz is None
+            else args.rank_mbz * args.sequence_length,
+        ),
         run_configurator=MuonWSDSChinchillaRunConfigurator(
-            chinchilla_multiple=args.chinchilla_multiple
+            chinchilla_multiple=args.chinchilla_multiple,
+            batch_size_multiplier=args.batch_size_multiplier,
         ),
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,

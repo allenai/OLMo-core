@@ -59,7 +59,7 @@ dev = [
 ]
 beaker = ["beaker-py>=2.5.4,<3.0", "beaker-gantry>=3.4.3,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
-dion = ["dion @ git+https://github.com/microsoft/dion.git@b17a7699f1398b9cba69d760a52c79bc0ee0e420 ; sys_platform == 'linux'"]
+dion = ["dion @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb2535239b ; sys_platform == 'linux'"]
 eval = ["ai2-olmo-eval==0.8.5"]
 quack = ["quack-kernels @ git+https://github.com/Dao-AILab/quack.git@9a8b58cadf6adcf770e284401799f89b67325735 ; sys_platform == 'linux'"]
 torchao = ["torchao==0.15.0"]
