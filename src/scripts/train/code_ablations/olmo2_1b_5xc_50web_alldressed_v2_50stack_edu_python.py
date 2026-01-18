@@ -36,6 +36,7 @@ BUDGET = "ai2/oe-base"
 NUM_NODES = 4
 LOAD_PATH = "gs://ai2-llm/checkpoints/OLMo25/step1413814"
 BASE_SAVE_DIR = "s3://ai2-llm/checkpoints"
+GLOBAL_BATCH_SIZE = 2**21  # 2M
 
 
 MODEL_CONFIG = TransformerConfig.olmo2_1B_v2(vocab_size=TOKENIZER_CONFIG.padded_vocab_size())
@@ -104,7 +105,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         src_mix=SourceMixtureDatasetConfig(
             source_list=DATASET_CONFIG,
             requested_tokens=max_duration.value,
-            global_batch_size=batch_size,
+            global_batch_size=GLOBAL_BATCH_SIZE,
             processes=16,
             seed=SEED,
         ),
@@ -114,7 +115,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=batch_size, seed=SEED, num_workers=4
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=4
     )
 
     optim = chinchilla_config.configure_optimizer(
