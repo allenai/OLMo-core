@@ -1,3 +1,4 @@
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -36,7 +37,6 @@ BUDGET = "ai2/oe-base"
 NUM_NODES = 4
 LOAD_PATH = "gs://ai2-llm/checkpoints/OLMo25/step1413814"
 BASE_SAVE_DIR = "s3://ai2-llm/checkpoints"
-GLOBAL_BATCH_SIZE = 2**21  # 2M
 
 
 MODEL_CONFIG = TransformerConfig.olmo2_1B_v2(vocab_size=TOKENIZER_CONFIG.padded_vocab_size())
@@ -93,21 +93,23 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     model_num_params = MODEL_CONFIG.num_non_embedding_params
     chinchilla_config = AnyChinchillaRunConfigurator(chinchilla_multiple=CHINCHILLA_MULTIPLE)
-    batch_size = chinchilla_config.configure_target_batch_size(model_num_params)
+    chinchilla_global_batch_size = chinchilla_config.configure_target_batch_size(model_num_params)
+
+    # adjust global batch size to closest power of 2
+    rounded_global_batch_size = 2 ** math.ceil(math.log2(chinchilla_global_batch_size))
+
     max_duration = chinchilla_config.configure_duration(
         num_params=model_num_params,
-        batch_size=batch_size,
+        batch_size=chinchilla_global_batch_size,
     )
     assert max_duration.unit == DurationUnit.tokens, "Duration unit should be tokens!"
-
-    breakpoint()
 
     DATASET_CONFIG.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
         src_mix=SourceMixtureDatasetConfig(
             source_list=DATASET_CONFIG,
             requested_tokens=max_duration.value,
-            global_batch_size=GLOBAL_BATCH_SIZE,
+            global_batch_size=rounded_global_batch_size,
             processes=16,
             seed=SEED,
         ),
@@ -117,18 +119,18 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=4
+        global_batch_size=rounded_global_batch_size, seed=SEED, num_workers=4
     )
 
     optim = chinchilla_config.configure_optimizer(
-        num_params=model_num_params, batch_size=batch_size
+        num_params=model_num_params, batch_size=chinchilla_global_batch_size
     )
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
         rank_microbatch_size=SEQ_LENGTH * 2,
         learning_rate=optim.lr,
         scheduler=chinchilla_config.configure_lr_scheduler(
-            num_params=model_num_params, batch_size=batch_size
+            num_params=model_num_params, batch_size=chinchilla_global_batch_size
         ),
         activation_memory_budget=0.5,
     )
