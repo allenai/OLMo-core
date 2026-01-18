@@ -248,9 +248,9 @@ class AttentionConfig(ModuleConfig):
                 if bias:
                     params += n_heads
             elif self.gate.granularity == GateGranularity.elementwise:
-                params += d_model * d_model
+                params += d_model * (n_heads * head_dim)
                 if bias:
-                    params += d_model
+                    params += n_heads * head_dim
 
         # Block QK scaling factors.
         if self.name == AttentionType.normalized:
@@ -436,7 +436,11 @@ class Attention(AttentionBase):
                 )
             elif gate.granularity == GateGranularity.elementwise:
                 self.w_g = nn.Linear(
-                    d_model, n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+                    d_model,
+                    self.n_heads * self.head_dim,
+                    bias=bias,
+                    dtype=dtype,
+                    device=init_device,
                 )
 
         self.clip_qkv = clip_qkv

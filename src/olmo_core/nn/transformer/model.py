@@ -105,6 +105,7 @@ class Transformer(nn.Module):
         init_seed: int = 0,
         init_std: float = 0.02,
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+        embed_scale: Optional[float] = None,
     ):
         super().__init__()
 
@@ -115,6 +116,7 @@ class Transformer(nn.Module):
         self.n_layers = n_layers
         self.n_attn_heads = block.attention.n_heads
         self.dtype = dtype
+        self.embed_scale = embed_scale
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -530,6 +532,8 @@ class Transformer(nn.Module):
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+        if self.embeddings is not None and self.embed_scale is not None:
+            h = h * self.embed_scale
         if self.embedding_norm is not None:
             h = self.embedding_norm(h)
 

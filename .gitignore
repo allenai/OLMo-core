@@ -16,6 +16,7 @@ tmp/
 .idea
 .venv/
 .vscode/
+.cursor/
 /*.iml
 pyrightconfig.json
 .ruff.toml
