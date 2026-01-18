@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -1116,6 +1116,15 @@ class NumpyDataLoaderConfig(Config):
     This is useful when labels were generated for a subset of sequences using source_mixture_config.
     The file should contain a 1D array of int64 indices.
     """
+    
+    soft_domain_priors: Optional[Dict[str, List[float]]] = None
+    """
+    Optional dict mapping domain types ("math", "code", "general") to probability distributions
+    over experts [math_expert, general_expert, code_expert, unused].
+    Example: {"math": [0.5, 0.5, 0.0, 0.0], "code": [0.0, 0.5, 0.5, 0.0], "general": [0.0, 1.0, 0.0, 0.0]}
+    If provided, domain-based labels will be soft probability distributions instead of one-hot.
+    Use DEFAULT_SOFT_DOMAIN_PRIORS from collator module for default soft priors.
+    """
 
     def build(
         self,
@@ -1148,6 +1157,7 @@ class NumpyDataLoaderConfig(Config):
                 pad_token_id=dataset.pad_token_id,
                 expert_labels_file=self.expert_labels_file,
                 expert_labels_dir=self.expert_labels_dir,
+                soft_domain_priors=self.soft_domain_priors,
             )
 
         data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(

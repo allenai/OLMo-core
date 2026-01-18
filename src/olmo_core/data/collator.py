@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -12,15 +12,36 @@ import torch.nn.functional as F
 
 from ..config import StrEnum
 
-__all__ = ["DataCollator"]
+__all__ = ["DataCollator", "DEFAULT_SOFT_DOMAIN_PRIORS"]
 
 log = logging.getLogger(__name__)
 
 
-def _domain_to_expert_label(source_name: str) -> torch.Tensor:
+# Default soft domain priors: maps domain type to probability distribution [math, general, code, unused]
+# These are the default soft priors when use_soft_domain_labels=True
+DEFAULT_SOFT_DOMAIN_PRIORS: Dict[str, List[float]] = {
+    "math": [0.5, 0.5, 0.0, 0.0],      # Math: 50% math expert, 50% general expert
+    "code": [0.0, 0.5, 0.5, 0.0],      # Code: 50% general expert, 50% code expert
+    "general": [0.0, 1.0, 0.0, 0.0],   # General: 100% general expert
+}
+
+
+def _domain_to_expert_label(
+    source_name: str,
+    soft_priors: Optional[Dict[str, List[float]]] = None,
+) -> torch.Tensor:
     """
-    Default domain-based expert label mapping.
+    Domain-based expert label mapping.
     
+    Args:
+        source_name: The source/domain name (e.g., "starcoder", "mj_finemath4plus")
+        soft_priors: Optional dict mapping domain type ("math", "code", "general") to
+            probability distributions over experts. If None, returns hard one-hot labels.
+            Example: {"math": [0.5, 0.5, 0.0, 0.0], "code": [0.0, 0.5, 0.5, 0.0]}
+    
+    Returns:
+        Tensor of shape (4,) representing expert label distribution.
+        
     Mapping for 3-expert setup (Expert 3 is masked/duplicate of Expert 1):
     - Expert 0 (Math): mj_finemath4plus, mj_finemath
     - Expert 1 (General): everything else (academic, technical, web content)
@@ -29,13 +50,26 @@ def _domain_to_expert_label(source_name: str) -> torch.Tensor:
     """
     source_lower = source_name.lower().strip()
     
+    # Determine domain type
     if source_lower.startswith("mj_finemath4plus") or source_lower.startswith("mj_finemath"):
+        domain_type = "math"
+    elif source_lower.startswith("starcoder") or "code" in source_lower:
+        domain_type = "code"
+    else:
+        domain_type = "general"
+    
+    # Return soft priors if provided
+    if soft_priors is not None and domain_type in soft_priors:
+        priors = soft_priors[domain_type]
+        return torch.tensor(priors, dtype=torch.float32)
+    
+    # Default hard one-hot labels
+    if domain_type == "math":
         return torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32)
-    
-    if source_lower.startswith("starcoder") or "code" in source_lower:
+    elif domain_type == "code":
         return torch.tensor([0.0, 0.0, 1.0, 0.0], dtype=torch.float32)
-    
-    return torch.tensor([0.0, 1.0, 0.0, 0.0], dtype=torch.float32)
+    else:
+        return torch.tensor([0.0, 1.0, 0.0, 0.0], dtype=torch.float32)
 
 
 class PaddingDirection(StrEnum):
@@ -56,12 +90,18 @@ class DataCollator:
             (per-sequence). If provided, labels are looked up by sequence index.
         expert_labels_dir: Optional path to a directory containing per-token expert labels
             (one .npz file per sequence). Takes precedence over expert_labels_file if both provided.
+        soft_domain_priors: Optional dict mapping domain types ("math", "code", "general") to
+            probability distributions over experts [math_expert, general_expert, code_expert, unused].
+            Example: {"math": [0.5, 0.5, 0.0, 0.0], "code": [0.0, 0.5, 0.5, 0.0]}
+            If provided, domain-based labels will be soft distributions instead of one-hot.
+            Set to DEFAULT_SOFT_DOMAIN_PRIORS for the default soft priors.
     """
 
     pad_token_id: int
     pad_direction: PaddingDirection = PaddingDirection.right
     expert_labels_file: Optional[str] = None
     expert_labels_dir: Optional[str] = None
+    soft_domain_priors: Optional[Dict[str, List[float]]] = None
     
     # Internal state (not part of dataclass fields for serialization)
     _expert_labels_cache: Optional[Dict[str, Any]] = field(default=None, repr=False, compare=False)
@@ -125,13 +165,14 @@ class DataCollator:
 
     def _get_expert_label(self, source_name: str, sequence_index: int) -> torch.Tensor:
         """
-        Get expert label for a sequence (per-sequence, one-hot encoded).
+        Get expert label for a sequence (per-sequence).
         
         Uses pre-computed optimal labels if available, otherwise falls back to domain-based labeling.
+        If soft_domain_priors is set, returns soft probability distributions instead of one-hot.
         """
         labels = self._load_expert_labels()
         
-        # Try optimal label lookup
+        # Try optimal label lookup (always returns hard labels from file)
         if labels and sequence_index >= 0:
             str_index = str(sequence_index)
             if str_index in labels:
@@ -140,8 +181,8 @@ class DataCollator:
                 one_hot[expert_id] = 1.0
                 return one_hot
         
-        # Fall back to domain-based labeling
-        return _domain_to_expert_label(source_name)
+        # Fall back to domain-based labeling (soft or hard depending on soft_domain_priors)
+        return _domain_to_expert_label(source_name, soft_priors=self.soft_domain_priors)
 
     def __call__(
         self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
@@ -156,6 +197,8 @@ class DataCollator:
                 log.info(f"DataCollator: {len(items)} items, keys={list(items[0].keys())}")
                 if self.expert_labels_file:
                     log.info(f"  Using optimal labels from: {self.expert_labels_file}")
+                if self.soft_domain_priors:
+                    log.info(f"  Using soft domain priors: {self.soft_domain_priors}")
         
         max_len = max((len(x["input_ids"] if isinstance(x, dict) else x) for x in items))
         all_input_ids = []
@@ -239,7 +282,7 @@ class DataCollator:
             metadata = x.get("metadata") if isinstance(x, dict) else None
             if metadata is not None:
                 all_metadata.append(metadata)
-
+            
             # Expert labels (for supervised router training)
             # Priority: 1) per-token from dir, 2) per-sequence from file, 3) domain-based
             expert_labels = x.get("expert_labels") if isinstance(x, dict) else None
@@ -253,9 +296,9 @@ class DataCollator:
                         expert_labels = per_token_labels  # Shape: (seq_len-1,)
                 
                 # Fall back to per-sequence labels
-                if expert_labels is None and metadata is not None:
-                    source_name = metadata.get("source_name") if isinstance(metadata, dict) else None
-                    if source_name:
+            if expert_labels is None and metadata is not None:
+                source_name = metadata.get("source_name") if isinstance(metadata, dict) else None
+                if source_name:
                         expert_labels = self._get_expert_label(source_name, sequence_index)
             
             if expert_labels is not None:
