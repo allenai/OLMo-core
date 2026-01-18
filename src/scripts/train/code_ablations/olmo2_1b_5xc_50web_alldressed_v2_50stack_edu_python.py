@@ -100,6 +100,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     assert max_duration.unit == DurationUnit.tokens, "Duration unit should be tokens!"
 
+    breakpoint()
+
     DATASET_CONFIG.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
         src_mix=SourceMixtureDatasetConfig(
