@@ -7,6 +7,7 @@ from olmo_core.config import DType
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
@@ -56,7 +57,11 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
         kwargs = dict(attn_backend=AttentionBackendName.flash_2)
 
         model: TransformerConfig
-        if size_spec == TransformerSize.size_190M:
+        if size_spec == TransformerSize.size_60M:
+            model = TransformerConfig.olmo3_60M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_100M:
+            model = TransformerConfig.olmo3_100M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_190M:
             model = TransformerConfig.olmo3_190M(vocab_size, **kwargs)
         elif size_spec == TransformerSize.size_370M:
             model = TransformerConfig.olmo3_370M(vocab_size, **kwargs)
