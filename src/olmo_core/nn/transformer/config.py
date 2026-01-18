@@ -492,9 +492,7 @@ class TransformerConfig(ModelConfig):
         else:
             for idx in range(self.n_layers):
                 if idx in self.block_overrides:
-                    num_active_params += self.block_overrides[idx].num_active_params(
-                        self.d_model
-                    )
+                    num_active_params += self.block_overrides[idx].num_active_params(self.d_model)
                 else:
                     num_active_params += num_active_block_params
 
@@ -750,9 +748,7 @@ class TransformerConfig(ModelConfig):
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             hidden_size_multiple_of=kwargs.pop("hidden_size_multiple_of", 512),
-            hidden_size_multiplier=kwargs.pop(
-                "hidden_size_multiplier", 27648 / (8 * d_model / 3)
-            ),
+            hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 27648 / (8 * d_model / 3)),
             layer_norm_eps=1e-6,
             **kwargs,
         )
@@ -1035,9 +1031,7 @@ class TransformerConfig(ModelConfig):
             n_layers=kwargs.pop("n_layers", 12),
             n_heads=kwargs.pop("n_heads", 12),
             name=kwargs.pop("name", TransformerType.moe),
-            block_name=kwargs.pop(
-                "block_name", TransformerBlockType.moe_reordered_norm
-            ),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
@@ -1061,9 +1055,7 @@ class TransformerConfig(ModelConfig):
             n_layers=kwargs.pop("n_layers", 12),
             n_heads=kwargs.pop("n_heads", 12),
             name=kwargs.pop("name", TransformerType.moe),
-            block_name=kwargs.pop(
-                "block_name", TransformerBlockType.moe_hybrid_reordered_norm
-            ),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_hybrid_reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
@@ -1087,9 +1079,7 @@ class TransformerConfig(ModelConfig):
             n_layers=kwargs.pop("n_layers", 16),
             n_heads=kwargs.pop("n_heads", 16),
             name=kwargs.pop("name", TransformerType.moe),
-            block_name=kwargs.pop(
-                "block_name", TransformerBlockType.moe_reordered_norm
-            ),
+            block_name=kwargs.pop("block_name", TransformerBlockType.moe_reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
@@ -1521,17 +1511,13 @@ class TransformerConfig(ModelConfig):
         att_type = AttentionType.default
         if rope_type is None:
             rope_type = RoPEType.default
-            if (
-                fused_ops and n_kv_heads is None
-            ):  # fused attention not compatible with MQA/GQA.
+            if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
-            feed_forward = FeedForwardConfig(
-                hidden_size=hidden_size, bias=False, dtype=dtype
-            )
+            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
 
         # Configure blocks.
         block = TransformerBlockConfig(
@@ -1604,9 +1590,7 @@ class TransformerConfig(ModelConfig):
                 else TransformerBlockType.moe_reordered_norm
             )
         else:
-            block_name = (
-                TransformerBlockType.moe_hybrid if hybrid else TransformerBlockType.moe
-            )
+            block_name = TransformerBlockType.moe_hybrid if hybrid else TransformerBlockType.moe
         return cls.llama_like(
             d_model=d_model,
             vocab_size=vocab_size,
@@ -1624,9 +1608,7 @@ class TransformerConfig(ModelConfig):
                 shared_mlp=(
                     None
                     if shared_expert_hidden_size is None
-                    else FeedForwardConfig(
-                        hidden_size=shared_expert_hidden_size, bias=False
-                    )
+                    else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False)
                 ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
@@ -1667,9 +1649,7 @@ class TransformerConfig(ModelConfig):
                 name=AttentionType.normalized,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
-                qk_norm=None
-                if not qk_norm
-                else LayerNormConfig(name=LayerNormType.l2_norm),
+                qk_norm=None if not qk_norm else LayerNormConfig(name=LayerNormType.l2_norm),
                 rope=RoPEConfig(name=RoPEType.default, theta=rope_theta),
                 use_flash=use_flash,
                 dtype=dtype,
@@ -1812,9 +1792,7 @@ class TransformerConfig(ModelConfig):
         if new_config.block.attention.rope is None:
             raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
         if new_config.block_overrides:
-            raise ValueError(
-                "Cannot apply RoPE scaling when block_overrides are already set."
-            )
+            raise ValueError("Cannot apply RoPE scaling when block_overrides are already set.")
 
         def apply_scaling(block_config: TransformerBlockConfig) -> None:
             rope_config = block_config.attention.rope
@@ -1833,9 +1811,7 @@ class TransformerConfig(ModelConfig):
         overrides: Dict[int, TransformerBlockConfig] = {}
         for i in range(new_config.n_layers):
             sliding_window_cfg = new_config.block.attention.sliding_window
-            if sliding_window_cfg and sliding_window_cfg.should_use_swa(
-                i, new_config.n_layers
-            ):
+            if sliding_window_cfg and sliding_window_cfg.should_use_swa(i, new_config.n_layers):
                 continue
             block_copy = new_config.block.copy()
             apply_scaling(block_copy)

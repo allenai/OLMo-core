@@ -26,7 +26,10 @@ from olmo_core.nn.attention import (
     SlidingWindowAttentionConfig,
     UlyssesLoadBalancer,
 )
-from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
+from olmo_core.nn.attention.ring import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (

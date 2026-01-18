@@ -19,9 +19,7 @@ from olmo_core.internal.experiment import (
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.fla.layer import FLAConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import (
-    TransformerConfig,
-)
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
 from olmo_core.optim import (
     LinearWithWarmup,
