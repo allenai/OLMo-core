@@ -52,6 +52,7 @@ DATASET_CONFIG = SourceMixtureList(
         SourceMixtureConfig(
             source_name="spring2code-countup_criteria_v2-python",
             target_ratio=0.5,
+            max_repetition_ratio=5,
             paths=[
                 f"s3://ai2-llm/preprocessed/the-stack-v2/spring2code_v2/minhash_v2_annotated_reshard_qc_tagged_filtered/Python/{TOKENIZER_CONFIG.identifier}/*.npy"
             ],
