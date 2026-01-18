@@ -754,7 +754,5 @@ class ModelLadder(Config):
     def _get_mix_base_dir(self) -> str:
         if self.dir.startswith("/weka/"):
             return "/weka/oe-training-default/ai2-llm"
-        elif self.dir.startswith("/data/ai2/"):  # lambda cluster
-            return "/data/caia-mltrain/data/"
         else:
             return "gs://ai2-llm"

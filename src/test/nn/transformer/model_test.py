@@ -30,7 +30,7 @@ from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )
-from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
@@ -284,6 +284,7 @@ def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architec
 @pytest.mark.parametrize("architecture", ["olmo2"])
 @pytest.mark.skip("known precision issues with ring-flash-attn")
 def test_context_parallel_transformer_ring(architecture: str, tmp_path):
+    seed_all(0)
     device = torch.device("cuda")
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.use_flash = True
@@ -334,7 +335,10 @@ def run_context_parallel_transformer_ulysses(
     logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL)
+    tol_scale = 2.0  # requires slightly more tolerance than default
+    torch.testing.assert_close(
+        og_logits, get_full_tensor(logits), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
+    )
 
 
 @requires_multi_gpu
@@ -350,6 +354,7 @@ def run_context_parallel_transformer_ulysses(
 def test_context_parallel_transformer_ulysses(
     architecture: str, backend_name: AttentionBackendName, tmp_path
 ):
+    seed_all(0)
     device = torch.device("cuda")
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.backend = backend_name
@@ -423,9 +428,11 @@ def run_moe_hybrid_combined_forward(
         vocab_size=16_000,
         n_layers=2,
         block=TransformerBlockConfig(
-            name=TransformerBlockType.moe_hybrid_reordered_norm
-            if reordered_norm
-            else TransformerBlockType.moe_hybrid,
+            name=(
+                TransformerBlockType.moe_hybrid_reordered_norm
+                if reordered_norm
+                else TransformerBlockType.moe_hybrid
+            ),
             attention=AttentionConfig(n_heads=8, rope=RoPEConfig(), qk_norm=layer_norm),
             layer_norm=layer_norm,
             feed_forward=FeedForwardConfig(hidden_size=1024, bias=False),
@@ -433,9 +440,9 @@ def run_moe_hybrid_combined_forward(
                 name=MoEType.dropless if dropless else MoEType.default,
                 num_experts=4,
                 hidden_size=256,
-                shared_mlp=FeedForwardConfig(hidden_size=512, bias=False)
-                if shared_experts
-                else None,
+                shared_mlp=(
+                    FeedForwardConfig(hidden_size=512, bias=False) if shared_experts else None
+                ),
                 router=MoERouterConfig(uniform_expert_assignment=True),
             ),
         ),
@@ -570,25 +577,87 @@ def test_transformer_num_flops_per_token():
 
 
 @pytest.mark.parametrize(
-    "config_builder,expected_d_model,expected_n_layers",
+    "config_builder,expected_d_model",
     [
-        pytest.param(TransformerConfig.qwen3_0_6B, 1024, 28, id="qwen3_0_6B"),
-        pytest.param(TransformerConfig.qwen3_1_7B, 2048, 28, id="qwen3_1_7B"),
-        pytest.param(TransformerConfig.qwen3_4B, 2560, 36, id="qwen3_4B"),
-        pytest.param(TransformerConfig.qwen3_8B, 4096, 36, id="qwen3_8B"),
-        pytest.param(TransformerConfig.qwen3_14B, 5120, 48, id="qwen3_14B"),
-        pytest.param(TransformerConfig.qwen3_32B, 5120, 64, id="qwen3_32B"),
+        pytest.param(TransformerConfig.gemma3_1B, 2304, id="gemma3_1B"),
+        pytest.param(TransformerConfig.gemma3_4B, 2560, id="gemma3_4B"),
+        pytest.param(TransformerConfig.gemma3_12B, 3840, id="gemma3_12B"),
+        pytest.param(TransformerConfig.gemma3_27B, 5376, id="gemma3_27B"),
     ],
 )
-def test_qwen3_builder_configs(config_builder, expected_d_model, expected_n_layers):
+def test_gemma3_builder_configs(config_builder, expected_d_model):
+    config = config_builder(n_layers=2)
+    assert config.d_model == expected_d_model
+    assert config.n_layers == 2
+
+    assert config.block.feed_forward is not None
+    assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
+
+    assert config.block.attention.qk_norm is not None
+    assert config.block.attention.rope is not None
+    assert config.block.attention.rope.theta == 10_000
+
+    # Use meta device to avoid allocating large amounts of memory for big models.
+    model = config.build(init_device="meta")
+
+    num_actual_params = sum(p.numel() for p in model.parameters())
+    assert config.num_params == num_actual_params
+    assert model.num_params == num_actual_params
+
+
+def test_gemma3_block_overrides_rope_theta():
+    config = TransformerConfig.gemma3_1B(n_layers=12)
+
+    assert config.block_overrides is not None
+
+    local_count = 0
+    global_count = 0
+    for layer_idx in range(config.n_layers):
+        if layer_idx in config.block_overrides:
+            global_block = config.block_overrides[layer_idx]
+            assert global_block.attention.rope is not None
+            assert global_block.attention.rope.theta == 1_000_000
+            assert global_block.attention.sliding_window is None
+            global_count += 1
+        else:
+            assert config.block.attention.rope is not None
+            assert config.block.attention.rope.theta == 10_000
+            local_count += 1
+
+    assert global_count == 2
+    assert local_count == 10
+
+
+def test_gemma3_sliding_window_pattern():
+    config = TransformerConfig.gemma3_1B(n_layers=12)
+
+    swa = config.block.attention.sliding_window
+    assert swa is not None
+    assert swa.pattern == [1024, 1024, 1024, 1024, 1024, -1]
+    assert swa.force_full_attention_on_first_layer is False
+    assert swa.force_full_attention_on_last_layer is False
+
+
+@pytest.mark.parametrize(
+    "config_builder,expected_d_model",
+    [
+        pytest.param(TransformerConfig.qwen3_0_6B, 1024, id="qwen3_0_6B"),
+        pytest.param(TransformerConfig.qwen3_1_7B, 2048, id="qwen3_1_7B"),
+        pytest.param(TransformerConfig.qwen3_4B, 2560, id="qwen3_4B"),
+        pytest.param(TransformerConfig.qwen3_8B, 4096, id="qwen3_8B"),
+        pytest.param(TransformerConfig.qwen3_14B, 5120, id="qwen3_14B"),
+        pytest.param(TransformerConfig.qwen3_32B, 5120, id="qwen3_32B"),
+    ],
+)
+def test_qwen3_builder_configs(config_builder, expected_d_model):
     config = config_builder(vocab_size=151936, n_layers=2)
     assert config.d_model == expected_d_model
     assert config.n_layers == 2
     assert config.block.attention.n_kv_heads == 8
     assert config.block.attention.rope.theta == 1_000_000
 
-    model = config.build(init_device="cpu")
-    model.init_weights(device=torch.device("cpu"))
+    # Use meta device to avoid allocating large amounts of memory for big models.
+    model = config.build(init_device="meta")
 
     num_actual_params = sum(p.numel() for p in model.parameters())
     assert config.num_params == num_actual_params

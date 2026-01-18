@@ -28,6 +28,7 @@ class SpeedMonitorCallback(Callback):
     priority: ClassVar[int] = -2
 
     num_flops_per_token: Optional[int] = None
+    num_params: Optional[int] = None
     device_peak_flops_per_second: Optional[int] = None
 
     _total_steps: int = 0
@@ -67,6 +68,11 @@ class SpeedMonitorCallback(Callback):
             self._parallel_degree = get_world_size() // get_world_size(
                 self.trainer.dp_process_group
             )
+
+        if self.num_params is None and isinstance(
+            self.trainer.train_module, TransformerTrainModule
+        ):
+            self.num_params = self.trainer.train_module.model.num_non_embedding_params
 
         if (
             self.device_peak_flops_per_second is None
@@ -154,6 +160,11 @@ class SpeedMonitorCallback(Callback):
             self.trainer.record_metric(
                 "throughput/total tokens", self.trainer.global_train_tokens_seen
             )
+            if self.num_params is not None:
+                self.trainer.record_metric(
+                    "throughput/chinchilla multiple",
+                    self.trainer.global_train_tokens_seen / (20 * self.num_params),
+                )
 
         flops_ps: Optional[float] = None
         flops_ps_avg: Optional[float] = None
