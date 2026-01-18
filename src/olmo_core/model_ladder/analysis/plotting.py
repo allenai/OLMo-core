@@ -441,3 +441,338 @@ def plot_scaling_law_3d(
         fig.write_html(str(save_path))
 
     return fig
+
+
+def plot_scaling_law_3d_comparison(
+    exp_a: tuple[str, list[RolloutSplit]],
+    exp_b: tuple[str, list[RolloutSplit]],
+    *,
+    subtitle: Optional[str] = None,
+    save_path: Optional[Union[str, Path]] = None,
+    width: int = 1200,
+    height: int = 900,
+    surface_opacity: float = 0.3,
+    grid_resolution: int = 30,
+    camera_eye: Optional[dict] = None,
+):
+    """
+    Compare two scaling laws side-by-side with a cutoff slider.
+
+    Creates an interactive 3D visualization comparing two experiments' fitted
+    scaling law surfaces. A slider lets you move through training cutoffs.
+
+    :param exp_a: Tuple of (name, splits) for the first experiment.
+    :param exp_b: Tuple of (name, splits) for the second experiment.
+    :param subtitle: Subtitle shown below the main title.
+    :param save_path: If provided, saves the plot as an HTML file to this path.
+    :param width: Plot width in pixels.
+    :param height: Plot height in pixels.
+    :param surface_opacity: Opacity of the fitted surfaces (0-1).
+    :param grid_resolution: Number of points along each axis for the surface grid.
+    :param camera_eye: Camera position as dict with x, y, z keys.
+    :returns: A plotly Figure object.
+
+    Example::
+
+        from olmo_core.model_ladder.analysis import (
+            ChinchillaParametricBootstrappedFit,
+            ScalingLawRollout,
+            plot_scaling_law_3d_comparison,
+        )
+
+        baseline_splits = ScalingLawRollout(N=N, D=D, loss=baseline_loss).evaluate(...)
+        intervention_splits = ScalingLawRollout(N=N, D=D, loss=interv_loss).evaluate(...)
+
+        fig = plot_scaling_law_3d_comparison(
+            ("Baseline", baseline_splits),
+            ("Intervention", intervention_splits),
+            subtitle="Effect of intervention on scaling"
+        )
+        fig.show()
+    """
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        raise ImportError("plotly is required for plotting. Install with: pip install plotly")
+
+    name_a, splits_a = exp_a
+    name_b, splits_b = exp_b
+
+    # Map cutoff (in millions) to split
+    def get_cutoffs(splits: list[RolloutSplit]) -> dict[int, RolloutSplit]:
+        return {int(s.cutoff_value / 1e6): s for s in splits}
+
+    cutoff_map_a = get_cutoffs(splits_a)
+    cutoff_map_b = get_cutoffs(splits_b)
+
+    # Use cutoffs present in both experiments
+    common_cutoffs = sorted(set(cutoff_map_a.keys()) & set(cutoff_map_b.keys()))
+    if not common_cutoffs:
+        raise ValueError(
+            f"No common cutoffs between experiments. "
+            f"{name_a} has: {sorted(cutoff_map_a.keys())}, "
+            f"{name_b} has: {sorted(cutoff_map_b.keys())}"
+        )
+
+    # Compute global axis ranges
+    all_splits = splits_a + splits_b
+    all_N = np.concatenate(
+        [np.atleast_1d(s.train_N) for s in all_splits]
+        + [np.atleast_1d(s.test_N) for s in all_splits]
+    )
+    all_D = np.concatenate(
+        [np.atleast_1d(s.train_D) for s in all_splits]
+        + [np.atleast_1d(s.test_D) for s in all_splits]
+    )
+    all_loss = np.concatenate(
+        [np.atleast_1d(s.train_loss) for s in all_splits]
+        + [np.atleast_1d(s.test_loss) for s in all_splits]
+    )
+    N_min, N_max = all_N.min(), all_N.max()
+    D_min, D_max = all_D.min(), all_D.max()
+
+    # Get E values for loss axis
+    e_values: list[float] = []
+    for s in all_splits:
+        model = s.model
+        if isinstance(model, ChinchillaParametricBootstrappedFit):
+            e_values.append(model.point_estimate.fitted_params.E)
+        elif isinstance(model, ChinchillaParametricFit):
+            e_values.append(model.fitted_params.E)
+    loss_min = min(e_values) if e_values else all_loss.min()
+    loss_max = all_loss.max()
+    loss_padding = (loss_max - loss_min) * 0.05
+    loss_max += loss_padding
+
+    # Create grid
+    log_N_grid = np.linspace(np.log10(N_min * 0.8), np.log10(N_max * 1.2), grid_resolution)
+    log_D_grid = np.linspace(np.log10(D_min * 0.8), np.log10(D_max * 1.2), grid_resolution)
+    log_N_mesh, log_D_mesh = np.meshgrid(log_N_grid, log_D_grid)
+    N_mesh = 10**log_N_mesh
+    D_mesh = 10**log_D_mesh
+
+    # Colors for the two experiments
+    colors = [
+        ("rgba(0,119,187,{a})", "rgb(0,119,187)"),  # Blue
+        ("rgba(238,119,51,{a})", "rgb(238,119,51)"),  # Orange
+    ]
+
+    fig = go.Figure()
+
+    # Track traces per cutoff for visibility toggling
+    traces_per_cutoff: list[int] = []
+
+    # Add traces for each cutoff
+    for cutoff_idx, cutoff in enumerate(common_cutoffs):
+        visible = cutoff_idx == 0
+        trace_count = 0
+
+        for exp_idx, (exp_name, cutoff_map) in enumerate(
+            [(name_a, cutoff_map_a), (name_b, cutoff_map_b)]
+        ):
+            split = cutoff_map[cutoff]
+            color_template, solid_color = colors[exp_idx]
+            model = split.model
+
+            # Compute surface
+            if isinstance(model, ChinchillaParametricBootstrappedFit):
+                grid_mean = model.point_estimate.predict_loss(
+                    N_mesh.ravel(), D_mesh.ravel()
+                ).reshape(N_mesh.shape)
+            else:
+                grid_mean = model.predict_loss(N_mesh.ravel(), D_mesh.ravel()).reshape(N_mesh.shape)
+
+            # Surface
+            fig.add_trace(
+                go.Surface(
+                    x=log_N_mesh,
+                    y=log_D_mesh,
+                    z=grid_mean,
+                    colorscale=[
+                        [0, color_template.format(a=0.6)],
+                        [1, color_template.format(a=0.9)],
+                    ],
+                    showscale=False,
+                    opacity=surface_opacity,
+                    name=exp_name,
+                    legendgroup=exp_name,
+                    hovertemplate=(
+                        f"<b>{exp_name}</b><br>"
+                        "N: %{customdata[0]:.1f}M<br>"
+                        "D: %{customdata[1]:.2f}B<br>"
+                        "Loss: %{z:.4f}<extra></extra>"
+                    ),
+                    customdata=np.stack([N_mesh / 1e6, D_mesh / 1e9], axis=-1),
+                    visible=visible,
+                )
+            )
+            trace_count += 1
+
+            # Training points (squares)
+            train_N = np.atleast_1d(split.train_N)
+            train_D = np.atleast_1d(split.train_D)
+            train_loss = np.atleast_1d(split.train_loss)
+
+            fig.add_trace(
+                go.Scatter3d(
+                    x=np.log10(train_N),
+                    y=np.log10(train_D),
+                    z=train_loss,
+                    mode="markers",
+                    marker=dict(
+                        size=4,
+                        color=solid_color,
+                        symbol="square",
+                        opacity=0.7,
+                        line=dict(width=1, color="rgba(0,0,0,0.3)"),
+                    ),
+                    name=f"{exp_name} Train",
+                    legendgroup=exp_name,
+                    customdata=np.stack([train_N / 1e6, train_D / 1e9, train_loss], axis=-1),
+                    hovertemplate=(
+                        f"<b>{exp_name} Train</b><br>"
+                        "N: %{customdata[0]:.1f}M<br>"
+                        "D: %{customdata[1]:.2f}B<br>"
+                        "Loss: %{customdata[2]:.4f}<extra></extra>"
+                    ),
+                    visible=visible,
+                )
+            )
+            trace_count += 1
+
+            # Test points (circles)
+            test_N = np.atleast_1d(split.test_N)
+            test_D = np.atleast_1d(split.test_D)
+            test_loss = np.atleast_1d(split.test_loss)
+
+            fig.add_trace(
+                go.Scatter3d(
+                    x=np.log10(test_N),
+                    y=np.log10(test_D),
+                    z=test_loss,
+                    mode="markers",
+                    marker=dict(size=5, color=solid_color, symbol="circle"),
+                    name=f"{exp_name} Test",
+                    legendgroup=exp_name,
+                    customdata=np.stack([test_N / 1e6, test_D / 1e9, test_loss], axis=-1),
+                    hovertemplate=(
+                        f"<b>{exp_name} Test</b><br>"
+                        "N: %{customdata[0]:.1f}M<br>"
+                        "D: %{customdata[1]:.2f}B<br>"
+                        "Loss: %{customdata[2]:.4f}<extra></extra>"
+                    ),
+                    visible=visible,
+                )
+            )
+            trace_count += 1
+
+        traces_per_cutoff.append(trace_count)
+
+    # Build slider steps
+    total_traces = sum(traces_per_cutoff)
+    slider_steps = []
+    for cutoff_idx, cutoff in enumerate(common_cutoffs):
+        visibility = [False] * total_traces
+        trace_start = sum(traces_per_cutoff[:cutoff_idx])
+        for i in range(trace_start, trace_start + traces_per_cutoff[cutoff_idx]):
+            visibility[i] = True
+
+        slider_steps.append(
+            dict(
+                label=f"{cutoff}M",
+                method="update",
+                args=[
+                    {"visible": visibility},
+                    {"title.text": _build_comparison_title(name_a, name_b, cutoff, subtitle)},
+                ],
+            )
+        )
+
+    if camera_eye is None:
+        camera_eye = dict(x=1.8, y=1.8, z=1.0)
+
+    # Axis ticks
+    n_tick_vals = [
+        np.log10(v)
+        for v in [60e6, 100e6, 200e6, 400e6, 800e6, 1e9, 3e9, 7e9]
+        if N_min * 0.8 <= v <= N_max * 1.2
+    ]
+    n_tick_text = [
+        f"{10**v / 1e6:.0f}M" if 10**v < 1e9 else f"{10**v / 1e9:.0f}B" for v in n_tick_vals
+    ]
+    d_tick_vals = [
+        np.log10(v)
+        for v in [1e9, 2e9, 5e9, 10e9, 20e9, 50e9, 100e9, 200e9, 500e9, 1e12]
+        if D_min * 0.8 <= v <= D_max * 1.2
+    ]
+    d_tick_text = [
+        f"{10**v / 1e9:.0f}B" if 10**v < 1e12 else f"{10**v / 1e12:.0f}T" for v in d_tick_vals
+    ]
+
+    fig.update_layout(
+        title=dict(
+            text=_build_comparison_title(name_a, name_b, common_cutoffs[0], subtitle),
+            x=0.5,
+            font=dict(size=16),
+        ),
+        sliders=[
+            dict(
+                active=0,
+                currentvalue=dict(prefix="Cutoff: N ≤ ", visible=True, xanchor="center"),
+                pad=dict(t=50, b=10),
+                len=0.9,
+                x=0.05,
+                xanchor="left",
+                steps=slider_steps,
+            )
+        ],
+        scene=dict(
+            xaxis=dict(
+                title="N (parameters)",
+                tickvals=n_tick_vals,
+                ticktext=n_tick_text,
+                showgrid=True,
+                gridcolor="rgba(0,0,0,0.1)",
+            ),
+            yaxis=dict(
+                title="D (tokens)",
+                tickvals=d_tick_vals,
+                ticktext=d_tick_text,
+                showgrid=True,
+                gridcolor="rgba(0,0,0,0.1)",
+            ),
+            zaxis=dict(
+                title="Loss",
+                showgrid=True,
+                gridcolor="rgba(0,0,0,0.1)",
+                range=[loss_min, loss_max],
+            ),
+            camera=dict(eye=camera_eye),
+            aspectmode="cube",
+        ),
+        width=width,
+        height=height,
+        showlegend=True,
+        legend=dict(
+            x=0.98,
+            y=0.98,
+            xanchor="right",
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="rgba(0,0,0,0.3)",
+            borderwidth=1,
+        ),
+        margin=dict(l=0, r=0, t=60, b=60),
+    )
+
+    if save_path is not None:
+        fig.write_html(str(save_path))
+
+    return fig
+
+
+def _build_comparison_title(exp_a: str, exp_b: str, cutoff: int, subtitle: Optional[str]) -> str:
+    """Build title for comparison plot."""
+    title = f"<b>{exp_a} vs {exp_b}</b> (Cutoff: N ≤ {cutoff}M)"
+    if subtitle:
+        title = f"{title}<br><sub>{subtitle}</sub>"
+    return title

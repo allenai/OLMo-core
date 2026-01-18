@@ -6,7 +6,7 @@ from .eval import (
     perplexity_ratio,
     perplexity_ratio_error,
 )
-from .plotting import plot_scaling_law_3d
+from .plotting import plot_scaling_law_3d, plot_scaling_law_3d_comparison
 from .scaling_laws import (
     ChinchillaParametricBootstrappedFit,
     ChinchillaParametricFit,
@@ -26,6 +26,7 @@ __all__ = [
     "SplitEvaluation",
     # Plotting
     "plot_scaling_law_3d",
+    "plot_scaling_law_3d_comparison",
     # Scaling laws
     "chinchilla_parametric_scaling_law",
     "ChinchillaParams",
