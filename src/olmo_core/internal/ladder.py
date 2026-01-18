@@ -295,23 +295,6 @@ def parse_args(
                 default=False,
             )
 
-        if cmd in {"run", "launch", "status", "metrics"}:
-            parser.add_argument(
-                "--run-num",
-                type=int,
-                default=None,
-                help="""Run number for this experiment. When set, appends '-run{N}' to the
-                ladder name and adjusts the seed for reproducible variation across runs.""",
-            )
-
-        if cmd in {"launch-all", "metrics-all", "status"}:
-            parser.add_argument(
-                "--num-runs",
-                type=int,
-                default=1,
-                help="Number of runs per model size (each with a different seed).",
-            )
-
         if "launch" in cmd:
             add_launch_args(parser)
 
@@ -407,7 +390,6 @@ def configure_launcher(
     ladder: ModelLadder,
     cmd: str,
     size: str | None = None,
-    run_num: int | None = None,
 ) -> BeakerLaunchConfig:
     cmd_to_run = [sys.argv[0], cmd] + sys.argv[2:]
 
@@ -418,17 +400,10 @@ def configure_launcher(
         size = args.size
     assert size is not None
 
-    # Pass run_num through to the launched command if specified
-    if run_num is not None:
-        cmd_to_run += ["--run-num", str(run_num)]
-
     num_gpus = ladder.get_num_devices(size)
     assert (num_gpus % 8 == 0) or num_gpus < 8
 
-    # Include run number in the job name if specified
     job_name = f"{args.name}-{size}"
-    if run_num is not None:
-        job_name = f"{args.name}-run{run_num}-{size}"
 
     launch_config = build_launch_config(
         cmd=cmd_to_run,
@@ -447,23 +422,6 @@ def configure_launcher(
         launch_config.preemptible = args.preemptible
     launch_config.allow_dirty = args.allow_dirty
     return launch_config
-
-
-def apply_run_num_to_ladder(ladder: ModelLadder, run_num: int) -> None:
-    """
-    Apply run number settings to a ladder configuration.
-
-    Modifies the ladder in-place to:
-    - Append '-run{N}' suffix to the ladder name and directory
-    - Offset the seed by run_num for reproducible variation across runs
-    - Preserve the original project name so all runs log to the same W&B project
-    """
-    # Preserve original name for W&B project/group if not explicitly set
-    if ladder.project is None:
-        ladder.project = ladder.name
-    ladder.name = f"{ladder.name}-run{run_num}"
-    ladder.dir = f"{ladder.dir}-run{run_num}"
-    ladder.seed = ladder.seed + run_num
 
 
 def dry_run(args: argparse.Namespace):
@@ -493,8 +451,6 @@ def launch_benchmark(args: argparse.Namespace):
 
 def run(args: argparse.Namespace):
     ladder = args.configure_ladder(args)
-    if args.run_num is not None:
-        apply_run_num_to_ladder(ladder, args.run_num)
     ladder.run(args.size)
 
 
@@ -531,9 +487,7 @@ def _launch_run(
 def launch(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
-    if args.run_num is not None:
-        apply_run_num_to_ladder(ladder, args.run_num)
-    launcher = configure_launcher(args, ladder, "run", run_num=args.run_num)
+    launcher = configure_launcher(args, ladder, "run")
     _launch_run(
         ladder,
         launcher,
@@ -551,23 +505,16 @@ def launch_all(args: argparse.Namespace):
     if args.max_size:
         sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
 
-    for run_num in range(1, args.num_runs + 1):
-        # Reconfigure ladder for each run to get a fresh copy
-        ladder = args.configure_ladder(args)
-        run_num_to_use = run_num if args.num_runs > 1 else None
-        if run_num_to_use is not None:
-            apply_run_num_to_ladder(ladder, run_num_to_use)
-
-        for size in sizes:
-            launcher = configure_launcher(args, ladder, "run", size=size, run_num=run_num_to_use)
-            _launch_run(
-                ladder,
-                launcher,
-                size,
-                follow=False,
-                slack_notifications=args.slack_notifications,
-                dry_run=args.dry_run,
-            )
+    for size in sizes:
+        launcher = configure_launcher(args, ladder, "run", size=size)
+        _launch_run(
+            ladder,
+            launcher,
+            size,
+            follow=False,
+            slack_notifications=args.slack_notifications,
+            dry_run=args.dry_run,
+        )
 
 
 def _status_for_ladder(ladder: ModelLadder, sizes: list[str], size_enum) -> None:
@@ -607,45 +554,20 @@ def status(args: argparse.Namespace):
 
     sizes: list[str]
     # Determine sizes from a fresh ladder configuration
-    base_ladder = args.configure_ladder(args)
+    ladder = args.configure_ladder(args)
     if args.size:
         sizes = [args.size_enum(args.size)]
     else:
-        sizes = [args.size_enum(s) for s in base_ladder.sizes]
+        sizes = [args.size_enum(s) for s in ladder.sizes]
         if args.max_size:
             sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
 
-    # Determine which runs to check
-    run_num = getattr(args, "run_num", None)
-    num_runs = getattr(args, "num_runs", 1)
-
-    if run_num is not None:
-        # Single specific run requested
-        ladder = args.configure_ladder(args)
-        apply_run_num_to_ladder(ladder, run_num)
-        rich.get_console().print(f"\n[b]Status for {ladder.name}:[/]", highlight=False)
-        _status_for_ladder(ladder, sizes, args.size_enum)
-    elif num_runs > 1:
-        # Multiple runs requested
-        for run_idx in range(1, num_runs + 1):
-            ladder = args.configure_ladder(args)
-            apply_run_num_to_ladder(ladder, run_idx)
-            rich.get_console().print(f"\n[b]Status for {ladder.name}:[/]", highlight=False)
-            _status_for_ladder(ladder, sizes, args.size_enum)
-    else:
-        # Default: single run without run number suffix
-        ladder = args.configure_ladder(args)
-        _status_for_ladder(ladder, sizes, args.size_enum)
+    _status_for_ladder(ladder, sizes, args.size_enum)
 
 
 def metrics(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
-
-    # Apply run number if specified
-    run_num = getattr(args, "run_num", None)
-    if run_num is not None:
-        apply_run_num_to_ladder(ladder, run_num)
 
     # When --local is specified, use discover_metrics which scans for existing files
     # rather than relying on computed checkpoint intervals, and tries alternative
@@ -717,8 +639,8 @@ def metrics_all(args: argparse.Namespace):
     prepare_cli_environment()
 
     # Determine sizes from a fresh ladder configuration
-    base_ladder = args.configure_ladder(args)
-    sizes = [args.size_enum(s) for s in base_ladder.sizes]
+    ladder = args.configure_ladder(args)
+    sizes = [args.size_enum(s) for s in ladder.sizes]
     if args.max_size:
         sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
 
@@ -726,37 +648,16 @@ def metrics_all(args: argparse.Namespace):
     # and tries alternative remote paths for each size
     use_local = getattr(args, "local", False)
     output_dir = Path(args.output_dir)
-    num_runs = getattr(args, "num_runs", 1)
-
-    all_saved_paths: list[str] = []
-    all_missing_sizes: list[str] = []
-
-    if num_runs > 1:
-        # Multiple runs requested
-        for run_num in range(1, num_runs + 1):
-            ladder = args.configure_ladder(args)
-            apply_run_num_to_ladder(ladder, run_num)
-            rich.get_console().print(
-                f"\n[b]Downloading metrics for {ladder.name}:[/]", highlight=False
-            )
-            saved, missing = _metrics_all_for_ladder(ladder, sizes, output_dir, use_local)
-            all_saved_paths.extend(saved)
-            all_missing_sizes.extend(missing)
-    else:
-        # Default: single run without run number suffix
-        ladder = args.configure_ladder(args)
-        saved, missing = _metrics_all_for_ladder(ladder, sizes, output_dir, use_local)
-        all_saved_paths.extend(saved)
-        all_missing_sizes.extend(missing)
+    saved, missing = _metrics_all_for_ladder(ladder, sizes, output_dir, use_local)
 
     print()
-    if all_saved_paths:
+    if saved:
         rich.get_console().print(
             f"Use pandas to load and analyze the metrics, e.g.:\n\n"
             f"    import pandas as pd\n"
-            f"    df = pd.read_pickle('{all_saved_paths[0]}')\n",
+            f"    df = pd.read_pickle('{saved[0]}')\n",
             highlight=False,
         )
 
-    if all_missing_sizes and not all_saved_paths:
+    if missing and not saved:
         sys.exit(1)
