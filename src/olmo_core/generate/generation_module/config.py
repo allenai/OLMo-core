@@ -38,6 +38,8 @@ class GenerationConfig(Config):
     use_cache: bool = True
     """Whether to use an inference cache (e.g. a kv-cache) for generation."""
 
+    print_shape: bool = False 
+
     stop_token_ids: Optional[List[int]] = None
     """Tokens to stop generation at. If provided, the generation will stop when any of these tokens are generated."""
 
