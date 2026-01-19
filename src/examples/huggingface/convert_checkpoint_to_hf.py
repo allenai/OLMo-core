@@ -5,6 +5,7 @@ Note that this script is architecture-dependent, meaning it may only work for OL
 architectures that have support in the `transformers` library.
 """
 
+import contextlib
 import json
 import logging
 import re
@@ -14,26 +15,29 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
-import rich
+try:
+    import flash_attn  # type: ignore
+except ImportError:
+    flash_attn = None
+
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn.functional as F
 from cached_path import cached_path
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
-from olmo_core.nn.attention import AttentionBackendName, AttentionType
+from olmo_core.nn.attention import AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
-from olmo_core.nn.moe.moe import MoEType
-from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
+from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
-from olmo_core.utils import prepare_cli_environment
+from olmo_core.utils import get_default_device, prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
@@ -45,13 +49,10 @@ def convert_checkpoint_to_hf(
     tokenizer_config_dict: Dict[str, Any],
     *,
     dtype: Optional[DType] = None,
-    tokenizer_id: str | None = None,
-    max_sequence_length: int | None = None,
+    max_sequence_length: int = -1,
     validate: bool = True,
     debug: bool = False,
     device: torch.device | None = None,
-    moe_capacity_factor: float | None = None,
-    validation_device: torch.device | None = None,
     validation_sliding_window: int | None = None,
 ) -> None:
     """
@@ -64,8 +65,8 @@ def convert_checkpoint_to_hf(
         transformer_config_dict: Dictionary form of OLMo core model config
         tokenizer_config_dict: Dictionary form of OLMo core tokenizer config
     """
-    if max_sequence_length is not None and max_sequence_length <= 0:
-        raise ValueError(f"Invalid sequence length: {max_sequence_length}")
+    if max_sequence_length <= 0:
+        raise ValueError(f"Missing or invalid sequence length: {max_sequence_length}")
 
     # Remove deprecated transformer config options
     if "compile" in transformer_config_dict:
@@ -78,63 +79,30 @@ def convert_checkpoint_to_hf(
         del transformer_config_dict["float8_config"]
 
     model_config = TransformerConfig.from_dict(transformer_config_dict)
-    rich.print(model_config)
 
-    validation_device = validation_device or torch.device("cpu")
+    device = device or get_default_device()
 
-    block_entries: list[tuple[str, TransformerBlockConfig]] = [("base block", model_config.block)]
-    if model_config.block_overrides:
-        block_entries.extend(
-            (f"block override {idx}", block_config)
-            for idx, block_config in sorted(model_config.block_overrides.items())
-        )
-
-    def prepare_block_for_conversion(
-        block_label: str, block_config: TransformerBlockConfig
-    ) -> None:
-        nonlocal device, validation_device
-        attention_config = block_config.attention
-        if attention_config.name == AttentionType.fused:
-            backend = attention_config.backend
-            if backend is None:
-                assert (
-                    attention_config.use_flash
-                ), "use_flash or flash_2 backend is expected for fused attention"
-                backend = AttentionBackendName.flash_2
-
-            assert backend in (
-                AttentionBackendName.flash_2,
-                AttentionBackendName.flash_3,
-            ), "flash_2 or flash_3 backend is expected for fused attention"
-
-            try:
-                backend.assert_supported()
-                log.info(
-                    f"Fused attention requires flash attention for {block_label}, using GPU and {backend} backend for conversion and validation"
-                )
-                device = torch.device("cuda")
-                validation_device = torch.device("cuda")
-                attention_config.backend = backend
-            except RuntimeError as e:
-                raise RuntimeError(
-                    f"Fused attention requires a flash attention backend for {block_label}, but {backend} is not supported"
-                ) from e
-
-        elif validate and attention_config.backend != AttentionBackendName.torch:
-            backend_name = attention_config.backend.name if attention_config.backend else "None"
-            log.info(
-                f"Overriding attention backend from {backend_name} to torch for {block_label} conversion and validation to make validation less likely to fail."
+    # Check if validation is being performed and flash attn is requested but cannot run.
+    if validate and device != torch.device("cuda"):
+        if model_config.block.attention.name == AttentionType.fused:
+            log.warning(
+                "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
             )
-            attention_config.backend = AttentionBackendName.torch
-            attention_config.use_flash = False
+            validate = False
 
-        if moe_capacity_factor is not None and block_config.feed_forward_moe is not None:
-            block_config.feed_forward_moe.capacity_factor = moe_capacity_factor
+    if validate:
+        if model_config.block.attention.use_flash:
+            log.info(
+                "Flash attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
+            )
+            model_config.block.attention.use_flash = False
+        if model_config.block.attention.use_flex_attn:
+            log.info(
+                "Flex attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
+            )
+            model_config.block.attention.use_flex_attn = False
 
-    for block_label, block_config in block_entries:
-        prepare_block_for_conversion(block_label, block_config)
-
-    model = model_config.build(init_device="meta")
+    model = model_config.build()
     model.to_empty(device=device or torch.device("cpu"))
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
@@ -154,27 +122,6 @@ def convert_checkpoint_to_hf(
         )
         model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
 
-        if (moe_config := model_config.block.feed_forward_moe) is not None:
-            if moe_config.name == MoEType.dropless:
-                for k, v in model_state_dict.items():
-                    # We need to reshape the w1 and w3 weights for the dropless MoE because conversion
-                    # can't distinguish between dropless and regular MoE, and dropless MoE
-                    # weights are shaped differently to regular MoE.
-                    if k.endswith(".feed_forward_moe.experts.mlp.w1") or k.endswith(
-                        ".feed_forward_moe.experts.mlp.w3"
-                    ):
-                        assert isinstance(v, torch.Tensor), (k, v)
-                        model_state_dict[k] = (
-                            v.reshape(moe_config.num_experts, moe_config.hidden_size, -1)
-                            .permute(0, 2, 1)
-                            .reshape(-1, moe_config.hidden_size)
-                        )
-                        log.info(f"Reshaped {k} because MoE is dropless")
-            elif moe_config.name == MoEType.default:
-                log.warning(
-                    f"MoE is {moe_config.name}, which may drop activations and cause validation to fail. You can try mitigating this by setting '--moe-capacity-factor' to a higher value."
-                )
-
         save_hf_model(
             output_path,
             model_state_dict,
@@ -187,38 +134,14 @@ def convert_checkpoint_to_hf(
         # checkpointer.save(output_path, train_module, train_state={}, format=output_format)
         log.info(f"Successfully saved converted model to '{output_path}'")
 
-    tokenizer_id = tokenizer_id or tokenizer_config.identifier
-    if tokenizer_id is not None:
-        log.info(
-            f"Saving HF tokenizer {tokenizer_id}, using updated config from tokenizer config data and script arguments"
-        )
-        huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
-        max_sequence_length = max_sequence_length or getattr(
-            huggingface_tokenizer, "model_max_length", None
-        )
-        huggingface_tokenizer.model_max_length = max_sequence_length
-        huggingface_tokenizer.pad_token_id = tokenizer_config.pad_token_id
-        huggingface_tokenizer.bos_token_id = tokenizer_config.bos_token_id
-        huggingface_tokenizer.eos_token_id = tokenizer_config.eos_token_id
-        huggingface_tokenizer.save_pretrained(output_path)
-        log.info(f"Successfully saved tokenizer {tokenizer_id}")
-    else:
-        log.info(
-            "No tokenizer passed in script arguments or in experiment config, skipping saving tokenizer"
-        )
-
-    log.info(
-        "Fixing HF config using updated config from tokenizer config data and script arguments"
-    )
+    log.info("Fixing HF config using tokenizer config data and script arguments")
     huggingface_config = AutoConfig.from_pretrained(output_path)
     huggingface_config.max_position_embeddings = max_sequence_length
     huggingface_config.pad_token_id = tokenizer_config.pad_token_id
     huggingface_config.bos_token_id = tokenizer_config.bos_token_id
     huggingface_config.eos_token_id = tokenizer_config.eos_token_id
     huggingface_config.save_pretrained(output_path)
-    log.info(
-        "Successfully fixed config using updated config from tokenizer config data and script arguments"
-    )
+    log.info("Successfully fixed config using tokenizer config data and script arguments")
 
     if validate:
         log.info("Validating converted model")
@@ -228,7 +151,8 @@ def convert_checkpoint_to_hf(
             tokenizer_config.vocab_size,
             debug=debug,
             dtype=dtype,
-            device=validation_device,
+            device=device,
+            use_flex_attn=model_config.block.attention.use_flex_attn or False,
             sliding_window=validation_sliding_window,
         )
         log.info("Validation completed successful")
@@ -250,30 +174,13 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     ):
         if (
             model_type == "hf"
-            and re.match(r"model.layers.\d+.mlp$", name)
-            and isinstance(output, tuple)
-        ):
-            # Special casing for FlexOlmo moe
-            assert isinstance(output[0], torch.Tensor), (name, output)
-            output = output[0]
-        if (
-            model_type == "hf"
             and re.match(r"model.layers.\d+.block_sparse_moe$", name)
             and isinstance(output, tuple)
         ):
             # Special casing for HF moe
             assert isinstance(output[0], torch.Tensor), (name, output)
             output = output[0]
-        if model_type == "hf" and re.match(r"model.layers.\d+.mlp.gate$", name):
-            # Special casing for FlexOlmo router
-            assert isinstance(output, torch.Tensor), (name, output)
-            router_logits = output.detach().clone()
-            routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-            # Like topk, but we keep all the data. This will hopefully go ok.
-            routing_weights, routing_indices = torch.sort(routing_weights, descending=True, dim=-1)
-            output = routing_weights
-            module_hook(debug_state, model_type, f"{name}.indices", _, args, routing_indices)
-        if model_type == "hf" and re.match(r"model.layers.\d+.block_sparse_moe.gate$", name):
+        if model_type == "hf" and re.match(r"model.layers.\d+.block_sparse_moe.gate", name):
             # Special casing for HF moe router
             assert isinstance(output, torch.Tensor), (name, output)
             router_logits = output.detach().clone()
@@ -281,14 +188,9 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             # Like topk, but we keep all the data. This will hopefully go ok.
             routing_weights, routing_indices = torch.sort(routing_weights, descending=True, dim=-1)
             output = routing_weights
-            module_hook(debug_state, model_type, f"{name}.indices", _, args, routing_indices)
-        if model_type == "olmo_core" and re.match(r"blocks.\d+.feed_forward_moe.router$", name):
+        if model_type == "olmo_core" and re.match(r"blocks.\d+.feed_forward_moe.router", name):
             # Special casing for OLMo Core moe router
             assert isinstance(output, tuple), (name, output)
-            assert len(output) >= 2, (name, output)
-            assert isinstance(output[1], torch.Tensor), (name, output[1])
-            module_hook(debug_state, model_type, f"{name}.indices", _, args, output[1])
-
             assert isinstance(output[0], torch.Tensor), (name, output[0])
             output = output[0]
 
@@ -320,13 +222,19 @@ def validate_conversion(
     debug: bool = False,
     dtype: DType | None = None,
     device: torch.device | None = None,
+    use_flex_attn: bool = False,
     sliding_window: int | None = None,
 ):
-    device = device or torch.device("cpu")
+    if torch.cuda.is_available():
+        torch.cuda.init()
+
+    device = device or get_default_device()
     log.info(f"Running validation on {device}")
 
     B, T = 1, 60
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
+
+    attn_implementation = "sdpa"
 
     is_sliding = any(
         hasattr(block.attention, "window_size") and block.attention.window_size != (-1, -1)
@@ -337,7 +245,7 @@ def validate_conversion(
     kwargs = {}
     if is_sliding and sliding_window is not None:
         kwargs["sliding_window"] = sliding_window
-    hf_config = AutoConfig.from_pretrained(
+    config = AutoConfig.from_pretrained(
         hf_path,
         **kwargs,
     )
@@ -345,8 +253,8 @@ def validate_conversion(
         AutoModelForCausalLM.from_pretrained(
             hf_path,
             torch_dtype="auto",
-            config=hf_config,
-            attn_implementation="sdpa",
+            config=config,
+            attn_implementation=attn_implementation,
         )
         .to(device)
         .eval()
@@ -358,25 +266,28 @@ def validate_conversion(
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
 
     log.info("Running OLMo core and HF models for validation...")
-    with torch.no_grad():
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(torch.no_grad())
+        # Flex attention matches SDPA maths backend
+        if use_flex_attn:
+            stack.enter_context(torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH))
+
         hf_logits = hf_model(input_ids=input_ids).logits
 
     del hf_model
 
-    # apply sliding_window size override if provided
+    if dtype:
+        model = model.to(dtype.as_pt())
     if is_sliding and sliding_window is not None:
         for block in model.blocks.values():
             if block.attention.window_size != (-1, -1):
                 block.attention.window_size = (sliding_window - 1, 0)
-    if dtype:
-        model = model.to(dtype.as_pt())
-    model = model.to(device=device)
     model.eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
 
     if debug:
-        state_converter = get_converter_to_hf(getattr(hf_config, "model_type", None))
+        state_converter = get_converter_to_hf()
         if not hasattr(hf_config, "num_hidden_layers"):
             raise ValueError(f"Number of hidden layers missing in HF config: {hf_config}")
         n_layers: int = hf_config.num_hidden_layers
@@ -454,13 +365,6 @@ def validate_conversion(
                     for i, dim in enumerate(common_shape):
                         olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
                         hf_tensor = hf_tensor.narrow(i, 0, dim)
-                    if not torch.is_floating_point(olmo_core_tensor) or not torch.is_floating_point(
-                        hf_tensor
-                    ):
-                        diff_elements = olmo_core_tensor != hf_tensor
-                        log.info(
-                            f"{olmo_core_state_name}, {hf_state_name} different elements: {diff_elements.sum()} / {diff_elements.numel()}"
-                        )
                     log.info(
                         f"{olmo_core_state_name}, {hf_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
                     )
@@ -506,12 +410,8 @@ def parse_args():
         "-s",
         "--max-sequence-length",
         type=int,
-        help="Max sequence length supported by the model. If not set, the model_max_length of the tokenizer will be used.",
-    )
-    parser.add_argument(
-        "-t",
-        "--tokenizer",
-        help="Identifier of the HuggingFace tokenizer to save the model with. If not set, the tokenizer from the experiment config will be used, or no tokenizer will be saved if not present in the experiment config.",
+        required=True,
+        help="Max sequence length supported by the model.",
     )
     parser.add_argument(
         "--skip-validation",
@@ -528,7 +428,7 @@ def parse_args():
     parser.add_argument(
         "--device",
         type=torch.device,
-        help="The device on which conversion occurs. Defaults to CPU.",
+        help="The device on which validation occurs (conversion occurs on cpu). Defaults to CUDA or MPS if available and initialized.",
     )
     parser.add_argument(
         "--dtype",
@@ -537,19 +437,9 @@ def parse_args():
         default=DType.bfloat16,
     )
     parser.add_argument(
-        "--validation-device",
-        type=torch.device,
-        help="The device on which validation occurs. Defaults to `device`.",
-    )
-    parser.add_argument(
         "--validation-sliding-window",
         help="If set, overrides the model's sliding window size during validation. Useful for checking that sliding window is correctly implemented.",
         type=int,
-    )
-    parser.add_argument(
-        "--moe-capacity-factor",
-        type=float,
-        help="The MoE capacity factor. Higher capacity factor can decrease validation false negatives but may cause out of memory errors.",
     )
     return parser.parse_args()
 
@@ -574,13 +464,9 @@ def main():
         tokenizer_config_dict=tokenizer_config_dict,
         dtype=args.dtype,
         max_sequence_length=args.max_sequence_length,
-        tokenizer_id=args.tokenizer,
         validate=args.validate,
         debug=args.debug,
         device=args.device,
-        moe_capacity_factor=args.moe_capacity_factor,
-        validation_device=args.validation_device or args.device,
-        validation_sliding_window=args.validation_sliding_window,
     )
 
 
