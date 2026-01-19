@@ -1,7 +1,6 @@
 ARG UBUNTU_VERSION=22.04
 ARG TARGET_PLATFORM=x86_64
 ARG CUDA_VERSION=12.8.1
-ARG CUDA_VERSION_PATH=cu128
 ARG PYTHON_VERSION=3.12
 ARG BASE_IMAGE=ubuntu:${UBUNTU_VERSION}
 ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu${UBUNTU_VERSION}
@@ -28,71 +27,23 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         git && \
     rm -rf /var/lib/apt/lists/*
 
-# Install miniconda, Python, and Python build dependencies.
-ARG TARGET_PLATFORM
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Set Python version for uv
 ARG PYTHON_VERSION
-ENV PATH=/opt/conda/bin:$PATH
-RUN curl -fsSL -v -o ~/miniconda.sh -O  "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${TARGET_PLATFORM}.sh"
-# NOTE: Manually invoke bash on miniconda script per https://github.com/conda/conda/issues/10431
-RUN chmod +x ~/miniconda.sh && \
-    bash ~/miniconda.sh -b -p /opt/conda && \
-    rm ~/miniconda.sh && \
-    /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy ipython && \
-    /opt/conda/bin/python -m pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja && \
-    /opt/conda/bin/conda clean -ya
+ENV UV_PYTHON=${PYTHON_VERSION}
 
-# Install PyTorch core ecosystem.
-ARG CUDA_VERSION_PATH
-ARG TORCH_VERSION=2.9.1
-ARG INSTALL_CHANNEL=whl
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
-    torch==${TORCH_VERSION} torchvision torchaudio
-
+# Set CUDA arch for torch extensions
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 
-# Install grouped-gemm.
-# NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
-# See https://github.com/tgale96/grouped_gemm/pull/21
-ENV GROUPED_GEMM_CUTLASS="1"
-ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
-RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
-
-# Install flash-attn 2
-ARG FLASH_ATTN_VERSION=2.8.2
-RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
-
-# Install flash-attn 3
-ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
-ARG FA3_MAX_JOBS=16
-RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
-    cd flash-attention && \
-    git fetch --depth 1 origin ${FLASH_ATTN_3_SHA} && \
-    git checkout ${FLASH_ATTN_3_SHA} && \
-    git submodule update --init --depth 1 && \
-    cd hopper && \
-    FLASH_ATTENTION_DISABLE_FP16=TRUE MAX_JOBS=${FA3_MAX_JOBS} python setup.py install && \
-    cd /app/build && \
-    rm -rf flash-attention
-
-# Install transformer-engine.
-ARG TE_VERSION=2.9
-RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
-
-# Install ring-flash-attn.
-ARG RING_FLASH_ATTN_VERSION=0.1.8
-RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
-
-# Install liger-kernel.
-ARG LIGER_KERNEL_VERSION=0.6.4
-RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
-
-# Install direct dependencies, but not source code.
-COPY pyproject.toml .
+# Sync all dependencies (uv handles Python installation automatically)
+COPY pyproject.toml uv.lock ./
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
-RUN pip install --no-cache-dir '.[all]' && \
-    pip uninstall -y ai2-olmo-core && \
-    rm -rf *
+RUN uv sync --frozen --extra all && \
+    uv pip uninstall ai2-olmo-core && \
+    rm -rf pyproject.toml uv.lock src
 
 #########################################################################
 # Release image
@@ -125,10 +76,13 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
     rm -rf MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM} && \
     rm MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}.tgz
 
-# Copy conda environment.
-COPY --from=build /opt/conda /opt/conda
+# Copy uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-ENV PATH=/opt/conda/bin:$PATH
+# Copy the virtual environment from build stage
+COPY --from=build /app/build/.venv /app/.venv
+
+ENV PATH=/app/.venv/bin:$PATH
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64

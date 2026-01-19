@@ -31,15 +31,16 @@
 
 ## Installation
 
-First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system and hardware.
+First install [uv](https://docs.astral.sh/uv/getting-started/installation/) and [PyTorch](https://pytorch.org) according to the instructions specific to your operating system and hardware.
 
 For development, we recommend installing from source:
 
 ```bash
 git clone https://github.com/allenai/OLMo-core.git
 cd OLMo-core
-pip install -e .[all]
+uv sync
 ```
+
 Or you can install from PyPI with:
 
 ```bash
