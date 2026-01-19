@@ -1,10 +1,9 @@
 from .eval import (
     RolloutEvaluation,
     SplitEvaluation,
-    evaluate_rollout,
-    evaluate_split,
+    evaluate_rollout_ppl_error,
+    evaluate_split_ppl_error,
     perplexity_ratio,
-    perplexity_ratio_error,
 )
 from .plotting import plot_scaling_law_3d, plot_scaling_law_3d_comparison
 from .scaling_laws import (
@@ -18,10 +17,9 @@ from .scaling_laws import (
 
 __all__ = [
     # Evaluation
-    "evaluate_rollout",
-    "evaluate_split",
+    "evaluate_rollout_ppl_error",
+    "evaluate_split_ppl_error",
     "perplexity_ratio",
-    "perplexity_ratio_error",
     "RolloutEvaluation",
     "SplitEvaluation",
     # Plotting

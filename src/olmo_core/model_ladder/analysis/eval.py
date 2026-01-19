@@ -10,7 +10,10 @@ from typing import Literal, Optional
 
 import numpy as np
 
-from .scaling_laws import RolloutSplit
+from .scaling_laws import RolloutSplit, ScalingLawModel
+
+if TYPE_CHECKING:
+    from .scaling_laws import ChinchillaParametricBootstrappedFit
 
 
 def perplexity_ratio(predicted_bpb: np.ndarray, actual_bpb: np.ndarray) -> np.ndarray:
@@ -47,20 +50,6 @@ def perplexity_ratio(predicted_bpb: np.ndarray, actual_bpb: np.ndarray) -> np.nd
     :returns: Perplexity ratio for each point.
     """
     return np.power(2.0, predicted_bpb - actual_bpb)
-
-
-def perplexity_ratio_error(predicted_bpb: np.ndarray, actual_bpb: np.ndarray) -> np.ndarray:
-    """
-    Compute the signed perplexity ratio error as a percentage.
-
-    This converts the perplexity ratio to a more intuitive percentage error:
-        Error = (perplexity_ratio - 1) * 100
-
-    :param predicted_bpb: Predicted loss in bits-per-byte.
-    :param actual_bpb: Actual loss in bits-per-byte.
-    :returns: Percentage error in perplexity for each point (signed).
-    """
-    return (perplexity_ratio(predicted_bpb, actual_bpb) - 1) * 100
 
 
 def rollout_distance(
@@ -221,44 +210,62 @@ class RolloutEvaluation:
     """Overall unweighted mean absolute perplexity error, in percent."""
 
 
-def evaluate_split(
+def evaluate_split_ppl_error(
     split: RolloutSplit,
     distance_scale: Literal["log", "linear", "relative"] = "log",
     weight_decay: Literal["inverse", "exp"] = "inverse",
     weight_decay_scale: float = 1.0,
 ) -> SplitEvaluation:
     """
-    Evaluate a single rollout split.
+    Evaluate a single rollout split's prediction quality in terms of
+    weighted mean absolute perplexity ratio error.
 
-    :param split: The RolloutSplit to evaluate.
-    :param distance_scale: How to measure rollout distance ("log", "linear", "relative").
-    :param weight_decay: Distance decay function ("inverse", "exp", "soft_inverse").
-    :param weight_decay_scale: Scale parameter for decay (larger = slower decay).
-    :returns: SplitEvaluation with detailed metrics.
+    For each test point in the split, computes:
+    1. Perplexity ratio: 2^(predicted - actual), measuring prediction error
+    2. Rollout distance: how far the test point is from the training cutoff
+    3. Distance weight: gives more importance to nearby extrapolations
+
+    The key metrics returned are:
+    - mean_abs_ppl_error: Average |perplexity ratio - 1| as percentage
+    - weighted_mean_abs_ppl_error: Same, but weighted by distance (closer = more weight)
+
+    Why weight by distance?
+    Scaling laws should be most accurate for nearby extrapolations. Weighting
+    by distance means we care more about getting close predictions right and
+    are more tolerant of errors on distant extrapolations.
+
+    :param split: The RolloutSplit containing the model, predictions, and test data.
+    :param distance_scale: How to measure rollout distance:
+        - "log": log(test/cutoff), natural for power-law scaling (recommended)
+        - "linear": test - cutoff, raw difference
+        - "relative": (test - cutoff) / cutoff
+    :param weight_decay: Distance decay function for weighting:
+        - "inverse": 1/(1 + d), moderate decay (recommended)
+        - "exp": exp(-d), aggressive decay
+    :param weight_decay_scale: Scale parameter for decay. Larger values mean
+        slower decay, giving more weight to distant points.
+    :returns: SplitEvaluation with per-point and aggregate metrics.
     """
     test_loss = np.atleast_1d(split.test_loss)
     predictions = np.atleast_1d(split.predictions)
 
-    # Get the appropriate test values based on cutoff variable
     if split.cutoff_variable == "N":
         test_values = np.atleast_1d(split.test_N)
     else:
         test_values = np.atleast_1d(split.test_D)
 
-    # Compute perplexity ratios
     ppl_ratios = perplexity_ratio(predictions, test_loss)
 
-    # Compute distances and weights
+    # Compute the extrapolation distance from the cutoff value.
     distances = rollout_distance(test_values, split.cutoff_value, scale=distance_scale)
+    # Weight the distances by the decay function to prioritize nearby predictions.
     weights = distance_weights(distances, decay=weight_decay, decay_scale=weight_decay_scale)
 
-    # Compute aggregate metrics
-    abs_ppl_errors = np.abs(ppl_ratios - 1) * 100  # Convert to percentage
-
+    abs_ppl_errors = np.abs(ppl_ratios - 1) * 100
     mean_abs_ppl_error = float(np.mean(abs_ppl_errors))
     weighted_mean_abs_ppl_error = float(np.sum(weights * abs_ppl_errors))
 
-    # Geometric mean of perplexity ratios (use log for numerical stability)
+    # Geometric mean of perplexity ratios
     log_ppl_ratios = np.log(ppl_ratios)
     mean_ppl_ratio = float(np.exp(np.mean(log_ppl_ratios)))
     weighted_mean_ppl_ratio = float(np.exp(np.sum(weights * log_ppl_ratios)))
@@ -276,7 +283,7 @@ def evaluate_split(
     )
 
 
-def evaluate_rollout(
+def evaluate_rollout_ppl_error(
     splits: list[RolloutSplit],
     distance_scale: Literal["log", "linear", "relative"] = "log",
     weight_decay: Literal["inverse", "exp"] = "inverse",
@@ -286,12 +293,26 @@ def evaluate_rollout(
     """
     Evaluate scaling law predictions across all rollout splits.
 
-    This provides a principled aggregate metric that:
-    1. Uses perplexity ratio as the pointwise error metric (scale-invariant for BPB)
-    2. Weights errors by rollout distance (closer = more important)
-    3. Aggregates across splits with optional weighting
+    A "rollout" tests how well a scaling law extrapolates by:
+    1. Fitting the scaling law on data up to some cutoff (e.g., models up to 400M params)
+    2. Predicting loss for held-out points beyond the cutoff (e.g., 800M, 1.6B models)
+    3. Comparing predictions to actual measured loss
 
-    :param splits: List of RolloutSplit objects to evaluate.
+    Each split represents a different cutoff. This function evaluates all splits
+    and aggregates them into a single metric.
+
+    The key output metrics are:
+    - overall_weighted_mean_abs_ppl_error: The primary metric. Errors are weighted
+      so nearby extrapolations matter more than distant ones, then aggregated
+      across splits. Lower is better.
+    - overall_mean_abs_ppl_error: Unweighted version for comparison.
+
+    Why use perplexity ratio?
+    Perplexity ratio = 2^(predicted - actual) is scale-invariant for BPB loss.
+    A ratio of 1.0 means perfect prediction. Errors are symmetric in log-space:
+    over-predicting by 0.01 BPB has the same error magnitude as under-predicting.
+
+    :param splits: List of RolloutSplit objects to evaluate (from ScalingLawRollout.evaluate).
     :param distance_scale: How to measure rollout distance ("log", "linear", "relative").
     :param weight_decay: Distance decay function ("inverse", "exp").
     :param weight_decay_scale: Scale parameter for decay. For "log" distance scale,
@@ -305,13 +326,13 @@ def evaluate_rollout(
         from olmo_core.model_ladder.analysis import (
             ChinchillaParametricBootstrappedFit,
             ScalingLawRollout,
+            evaluate_rollout_ppl_error,
         )
-        from olmo_core.model_ladder.analysis.eval import evaluate_rollout
 
         rollout = ScalingLawRollout(N=N, D=D, loss=loss)
         splits = rollout.evaluate(ChinchillaParametricBootstrappedFit.fit)
 
-        evaluation = evaluate_rollout(splits)
+        evaluation = evaluate_rollout_ppl_error(splits)
         print(f"Weighted mean |ppl error|: {evaluation.overall_weighted_mean_abs_ppl_error:.2f}%")
     """
     if not splits:
@@ -319,7 +340,7 @@ def evaluate_rollout(
 
     # Evaluate each split
     split_evals = [
-        evaluate_split(
+        evaluate_split_ppl_error(
             split,
             distance_scale=distance_scale,
             weight_decay=weight_decay,
