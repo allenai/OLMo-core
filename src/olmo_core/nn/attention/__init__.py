@@ -157,6 +157,7 @@ class AttentionConfig(Config):
     """
     n_heads: int = 16
     n_kv_heads: Optional[int] = None
+    head_dim: Optional[int] = None
     bias: Optional[bool] = None
     rope: Optional[RoPEConfig] = None
     clip_qkv: Optional[float] = None
@@ -176,7 +177,7 @@ class AttentionConfig(Config):
         """
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads or n_heads
-        head_dim = d_model // n_heads
+        head_dim = self.head_dim or d_model // n_heads
         bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
 
         params = 0
@@ -326,6 +327,7 @@ class Attention(AttentionBase):
         d_model: int,
         n_heads: int,
         n_kv_heads: Optional[int] = None,
+        head_dim: Optional[int] = None,
         bias: bool = True,
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
@@ -344,15 +346,22 @@ class Attention(AttentionBase):
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
-        self.head_dim = d_model // n_heads
-        self.w_q = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        if head_dim is not None:
+            self.head_dim = head_dim
+        else:
+            self.head_dim = d_model // n_heads
+        self.w_q = nn.Linear(
+            d_model, n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
         self.w_k = nn.Linear(
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_v = nn.Linear(
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
-        self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w_out = nn.Linear(
+                n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device
+        )        
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
 
@@ -363,7 +372,7 @@ class Attention(AttentionBase):
                 self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
                 self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
             else:
-                self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
+                self.q_norm = qk_norm.build(size=n_heads * self.head_dim, init_device=init_device)
                 self.k_norm = qk_norm.build(
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
