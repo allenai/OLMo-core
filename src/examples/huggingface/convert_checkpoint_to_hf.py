@@ -96,11 +96,6 @@ def convert_checkpoint_to_hf(
                 "Flash attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
             )
             model_config.block.attention.use_flash = False
-        if model_config.block.attention.use_flex_attn:
-            log.info(
-                "Flex attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
-            )
-            model_config.block.attention.use_flex_attn = False
 
     model = model_config.build()
     model.to_empty(device=device or torch.device("cpu"))
