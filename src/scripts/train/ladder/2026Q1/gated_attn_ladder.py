@@ -18,7 +18,7 @@ def configure_model(args: argparse.Namespace) -> TransformerModelConfigurator:
         if args.rank_mbz is None
         else args.rank_mbz * args.sequence_length,
         model_construction_kwargs=dict(
-            gate_config=GateConfig(  # <- this is the intervention
+            gate=GateConfig(  # <- this is the intervention
                 granularity=GateGranularity.headwise
             ),
         ),

@@ -19,7 +19,7 @@ def configure_model(args: argparse.Namespace) -> TransformerModelConfigurator:
         else args.rank_mbz * args.sequence_length,
         model_construction_kwargs=dict(
             no_global_rope=True,  # <- this is the intervention
-            gate_config=GateConfig(  # <- this is the intervention
+            gate=GateConfig(  # <- this is the intervention
                 granularity=GateGranularity.headwise
             ),
         ),

@@ -157,4 +157,4 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
 
 if __name__ == "__main__":
-    main(configure_ladder)
+    main(configure_ladder, add_additional_args=add_additional_args)
