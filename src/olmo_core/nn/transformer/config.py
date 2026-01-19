@@ -14,6 +14,7 @@ from ..attention import (
     AttentionBackendName,
     AttentionConfig,
     AttentionType,
+    GateConfig,
     SlidingWindowAttentionConfig,
 )
 from ..buffer_cache import BufferCache
@@ -1414,6 +1415,7 @@ class TransformerConfig(ModelConfig):
         layer_norm_eps: float = 1e-5,
         rope_theta: int = 500_000,
         rope_type: Optional[RoPEType] = None,
+        gate: Optional[GateConfig] = None,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
@@ -1475,6 +1477,7 @@ class TransformerConfig(ModelConfig):
                 head_dim=head_dim,
                 bias=False,
                 rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
+                gate=gate,
                 qk_norm=layer_norm if qk_norm else None,
                 use_head_qk_norm=use_head_qk_norm if qk_norm else None,
                 use_flash=use_flash,
