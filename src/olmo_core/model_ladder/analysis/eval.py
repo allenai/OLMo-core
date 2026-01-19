@@ -10,10 +10,7 @@ from typing import Literal, Optional
 
 import numpy as np
 
-from .scaling_laws import RolloutSplit, ScalingLawModel
-
-if TYPE_CHECKING:
-    from .scaling_laws import ChinchillaParametricBootstrappedFit
+from .scaling_laws import RolloutSplit
 
 
 def perplexity_ratio(predicted_bpb: np.ndarray, actual_bpb: np.ndarray) -> np.ndarray:
