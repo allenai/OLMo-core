@@ -147,7 +147,6 @@ def convert_checkpoint_to_hf(
             debug=debug,
             dtype=dtype,
             device=device,
-            use_flex_attn=model_config.block.attention.use_flex_attn or False,
             sliding_window=validation_sliding_window,
         )
         log.info("Validation completed successful")
@@ -217,7 +216,6 @@ def validate_conversion(
     debug: bool = False,
     dtype: DType | None = None,
     device: torch.device | None = None,
-    use_flex_attn: bool = False,
     sliding_window: int | None = None,
 ):
     if torch.cuda.is_available():
@@ -264,9 +262,6 @@ def validate_conversion(
     with contextlib.ExitStack() as stack:
         stack.enter_context(torch.no_grad())
         # Flex attention matches SDPA maths backend
-        if use_flex_attn:
-            stack.enter_context(torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH))
-
         hf_logits = hf_model(input_ids=input_ids).logits
 
     del hf_model
