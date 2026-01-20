@@ -468,6 +468,21 @@ class TransformerConfig(ModelConfig):
             hidden_size_multiplier=1.0,
             n_layers=kwargs.pop("n_layers", 4),
             n_heads=kwargs.pop("n_heads", 4),
+            head_dim=kwargs.pop("head_dim", 4),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
+    def olmo2_14M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=128,
+            n_layers=kwargs.pop("n_layers", 4),
+            n_heads=kwargs.pop("n_heads", 8),
             vocab_size=vocab_size,
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
@@ -688,6 +703,23 @@ class TransformerConfig(ModelConfig):
     @classmethod
     def olmo3_1M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         config = cls.olmo2_1M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_14M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        config = cls.olmo2_14M(
             vocab_size=vocab_size,
             sliding_window=kwargs.pop(
                 "sliding_window",

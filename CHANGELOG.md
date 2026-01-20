@@ -25,8 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for Qwen3 models.
 - Added support for Muon and Dion optimizers.
 - Added support for Ulysses-style context parallelism.
-- Added 60M and 1M model sizes.
 - Added Beaker URL to Wandb logging.
+- Added 60M, 14M, and 1M model sizes.
 - `SpeedMonitorCallback` will log Chinchilla multiple number of tokens during training with a `TransformerTrainModule`.
 
 ### Fixed

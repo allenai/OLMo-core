@@ -7,6 +7,10 @@ from olmo_core.model_ladder import *
 log = logging.getLogger(__name__)
 
 
+# A early version of this ladder has been run under the name "olmo3-baseline-ladder"
+# https://wandb.ai/ai2-llm/olmo3-baseline-ladder
+
+
 def configure_model(args: argparse.Namespace) -> ModelConfigurator:
     return Olmo3ModelConfigurator(
         rank_microbatch_size=None
