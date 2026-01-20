@@ -1,35 +1,43 @@
 from .eval import (
     RolloutEvaluation,
+    RolloutSplit,
+    ScalingLawRollout,
     SplitEvaluation,
-    evaluate_rollout_ppl_error,
-    evaluate_split_ppl_error,
+    distance_weights,
+    evaluate_rollout,
+    evaluate_split,
     perplexity_ratio,
+    relative_bpb_error,
+    rollout_distance,
 )
 from .plotting import plot_scaling_law_3d, plot_scaling_law_3d_comparison
 from .scaling_laws import (
     ChinchillaParametricBootstrappedFit,
     ChinchillaParametricFit,
     ChinchillaParams,
-    RolloutSplit,
-    ScalingLawRollout,
     chinchilla_parametric_scaling_law,
 )
 
 __all__ = [
+    # Rollout cross-validation
+    "ScalingLawRollout",
+    "RolloutSplit",
     # Evaluation
-    "evaluate_rollout_ppl_error",
-    "evaluate_split_ppl_error",
-    "perplexity_ratio",
+    "evaluate_rollout",
+    "evaluate_split",
     "RolloutEvaluation",
     "SplitEvaluation",
-    # Plotting
-    "plot_scaling_law_3d",
-    "plot_scaling_law_3d_comparison",
+    # Error metrics
+    "perplexity_ratio",
+    "relative_bpb_error",
+    "rollout_distance",
+    "distance_weights",
     # Scaling laws
     "chinchilla_parametric_scaling_law",
     "ChinchillaParams",
     "ChinchillaParametricFit",
     "ChinchillaParametricBootstrappedFit",
-    "RolloutSplit",
-    "ScalingLawRollout",
+    # Plotting
+    "plot_scaling_law_3d",
+    "plot_scaling_law_3d_comparison",
 ]

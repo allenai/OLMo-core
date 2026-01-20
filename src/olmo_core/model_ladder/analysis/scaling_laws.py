@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 from functools import partial
 from itertools import product
-from typing import Callable, Literal, NamedTuple, Optional, Protocol
+from typing import NamedTuple, Optional, Protocol
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -18,9 +18,7 @@ def chinchilla_parametric_scaling_law(
 
     L(N, D) = E + A / N^α + B / D^β
 
-    Uses logarithmic transformation with clipping for numerical stability:
-    - Inputs are clipped to avoid log(0) = -inf
-    - Exponents are clipped to avoid overflow in exp()
+    Uses logarithmic transformation with clipping for numerical stability.
     Details: https://github.com/kyo-takano/chinchilla/blob/master/docs/math.md#numerical-stability
     """
     N = np.asarray(N)
@@ -46,6 +44,18 @@ def chinchilla_parametric_scaling_law(
     param_term = np.exp(log_param_term)
     data_term = np.exp(log_data_term)
     return E + param_term + data_term
+
+
+class ScalingLawModel(Protocol):
+    """Protocol for any scaling law model that can predict loss for a given (N, D) allocation."""
+
+    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray: ...
+
+
+class ScalingLawModelFitter(Protocol):
+    """Protocol for any scaling law model fitter that can fit a scaling law model to data."""
+
+    def fit(self, N: ArrayLike, D: ArrayLike, loss: ArrayLike, **kwargs) -> "ScalingLawModel": ...
 
 
 class ChinchillaParams(NamedTuple):
@@ -94,7 +104,7 @@ class ChinchillaParametricFit:
     huber_loss: Optional[float] = None
     """Huber loss of the fit (computed on log scale to match optimization objective)."""
 
-    # Stored data from fitting (set by fit())
+    # Stored data from fitting
     _N: Optional[np.ndarray] = None
     _D: Optional[np.ndarray] = None
     _loss: Optional[np.ndarray] = None
@@ -418,138 +428,3 @@ class ChinchillaParametricBootstrappedFit:
             raise ValueError("All bootstrap fits failed")
 
         return cls(point_estimate=point_estimate, fits=bootstrap_fits)
-
-
-class ScalingLawModel(Protocol):
-    """Protocol for any scaling law model that can predict loss for a given (N, D) allocation."""
-
-    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray: ...
-
-
-@dataclass
-class RolloutSplit:
-    """A single split in the rollout evaluation."""
-
-    cutoff_variable: str
-    cutoff_value: float
-
-    train_mask: np.ndarray
-    test_mask: np.ndarray
-
-    model: ScalingLawModel
-
-    # Stored for convenience
-    train_N: np.ndarray
-    train_D: np.ndarray
-    train_loss: np.ndarray
-    test_N: np.ndarray
-    test_D: np.ndarray
-    test_loss: np.ndarray
-
-    def predict(self) -> np.ndarray:
-        return self.model.predict_loss(self.test_N, self.test_D)
-
-    @property
-    def predictions(self) -> np.ndarray:
-        return self.predict()
-
-    @property
-    def residuals(self) -> np.ndarray:
-        """Log-space residuals (log(actual) - log(predicted))."""
-        return np.log(self.test_loss) - np.log(self.predictions)
-
-    @property
-    def relative_error(self) -> np.ndarray:
-        """Relative error ((predicted - actual) / actual)."""
-        # Note: (pred - actual) / actual is standard relative error.
-        # Positive means overestimate.
-        return (self.predictions - self.test_loss) / self.test_loss
-
-
-@dataclass
-class ScalingLawRollout:
-    """
-    Helper for performing rollout evaluation of scaling laws.
-
-    Perform expanding window evaluation:
-    1. Sort data by N (or D).
-    2. Train on first k groups. Test on remaining.
-    3. Train on first k+1 groups. Test on remaining.
-    ...
-    """
-
-    N: ArrayLike
-    D: ArrayLike
-    loss: ArrayLike
-    weights: Optional[ArrayLike] = None
-
-    def evaluate(
-        self,
-        fit_fn: Callable[..., ScalingLawModel],
-        split_by: Literal["N", "D"] = "N",
-        min_points_train: int = 5,
-        min_groups_train: int = 3,
-        **fit_kwargs,
-    ) -> list[RolloutSplit]:
-        N = np.asarray(self.N)
-        D = np.asarray(self.D)
-        loss = np.asarray(self.loss)
-        weights = np.asarray(self.weights) if self.weights is not None else None
-
-        if len(N) != len(D) != len(loss):
-            raise ValueError(
-                f"Input arrays must have same length. Got N={len(N)}, D={len(D)}, loss={len(loss)}"
-            )
-        if weights is not None and len(weights) != len(N):
-            raise ValueError(
-                f"Weights must have same length as data. Got weights={len(weights)}, N={len(N)}"
-            )
-
-        split_var = N if split_by == "N" else D
-        unique_vals = np.unique(split_var)
-        unique_vals.sort()
-
-        splits: list[RolloutSplit] = []
-
-        # Iterate through possible cutoffs
-        # We need at least min_groups_train unique values in training
-        for i in range(min_groups_train, len(unique_vals)):
-            cutoff = unique_vals[i - 1]  # Include up to this value (inclusive)
-
-            train_mask = split_var <= cutoff
-            test_mask = split_var > cutoff
-
-            if train_mask.sum() < min_points_train:
-                continue
-
-            if test_mask.sum() == 0:
-                break
-
-            current_kwargs = fit_kwargs.copy()
-            if weights is not None:
-                current_kwargs["weights"] = weights[train_mask]
-
-            # Fit model
-            model = fit_fn(
-                N=N[train_mask],
-                D=D[train_mask],
-                loss=loss[train_mask],
-                **current_kwargs,
-            )
-
-            split = RolloutSplit(
-                cutoff_variable=split_by,
-                cutoff_value=float(cutoff),
-                train_mask=train_mask,
-                test_mask=test_mask,
-                model=model,
-                train_N=N[train_mask],
-                train_D=D[train_mask],
-                train_loss=loss[train_mask],
-                test_N=N[test_mask],
-                test_D=D[test_mask],
-                test_loss=loss[test_mask],
-            )
-            splits.append(split)
-
-        return splits

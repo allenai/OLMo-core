@@ -1,24 +1,20 @@
-"""
-Plotting utilities for scaling law analysis and visualization.
-
-This module provides interactive 3D visualizations for exploring fitted scaling laws,
-their uncertainty bounds, and prediction accuracy.
-"""
+"""Plotting utilities for scaling law analysis and visualization."""
 
 from pathlib import Path
 from typing import Optional, Union
 
 import numpy as np
 
+from .eval import RolloutSplit, ScalingLawRollout
 from .scaling_laws import (
     ChinchillaParametricBootstrappedFit,
     ChinchillaParametricFit,
-    RolloutSplit,
+    ChinchillaParams,
 )
 
 
 def plot_scaling_law_3d(
-    splits: Union[RolloutSplit, list[RolloutSplit]],
+    rollout: Union[ScalingLawRollout, RolloutSplit],
     *,
     subtitle: Optional[str] = None,
     save_path: Optional[Union[str, Path]] = None,
@@ -34,10 +30,10 @@ def plot_scaling_law_3d(
     Create an interactive 3D visualization of fitted scaling law(s).
 
     Renders fitted surface(s), actual data points, predictions, and
-    (optionally) bootstrap prediction distributions. When multiple splits
-    are provided, a dropdown menu allows switching between cutoffs.
+    (optionally) bootstrap prediction distributions. When a rollout with
+    multiple splits is provided, a slider allows switching between cutoffs.
 
-    :param splits: A single RolloutSplit or list of RolloutSplit objects.
+    :param rollout: A ScalingLawRollout (with multiple splits) or a single RolloutSplit.
         Works best with ChinchillaParametricBootstrappedFit for uncertainty visualization.
     :param subtitle: Subtitle shown below the main title (e.g., experiment name).
     :param save_path: If provided, saves the plot as an HTML file to this path.
@@ -61,14 +57,15 @@ def plot_scaling_law_3d(
             plot_scaling_law_3d,
         )
 
-        rollout = ScalingLawRollout(N=N, D=D, loss=loss)
-        splits = rollout.evaluate(ChinchillaParametricBootstrappedFit.fit)
+        rollout = ScalingLawRollout.fit(
+            N=N, D=D, loss=loss, model_fitter=ChinchillaParametricBootstrappedFit
+        )
 
-        # Single split
-        fig = plot_scaling_law_3d(splits[0], subtitle="OLMo-3 Baseline")
+        # Plot all splits with slider
+        fig = plot_scaling_law_3d(rollout, subtitle="OLMo-3 Baseline")
 
-        # Multiple splits with dropdown
-        fig = plot_scaling_law_3d(splits, subtitle="OLMo-3 Baseline")
+        # Or plot a single split
+        fig = plot_scaling_law_3d(rollout.splits[0], subtitle="OLMo-3 Baseline")
         fig.show()
     """
     try:
@@ -76,12 +73,16 @@ def plot_scaling_law_3d(
     except ImportError:
         raise ImportError("plotly is required for plotting. Install with: pip install plotly")
 
-    # Normalize to list
-    if isinstance(splits, RolloutSplit):
-        splits = [splits]
+    # Normalize to list of splits
+    if isinstance(rollout, ScalingLawRollout):
+        splits = rollout.splits
+    elif isinstance(rollout, RolloutSplit):
+        splits = [rollout]
+    else:
+        raise TypeError(f"Expected ScalingLawRollout or RolloutSplit, got {type(rollout)}")
 
     if not splits:
-        raise ValueError("splits list cannot be empty")
+        raise ValueError("rollout has no splits")
 
     # Compute global axis ranges across all splits for consistent view
     all_N = np.concatenate(
@@ -104,6 +105,8 @@ def plot_scaling_law_3d(
             e_values.append(model.point_estimate.fitted_params.E)
         elif isinstance(model, ChinchillaParametricFit):
             e_values.append(model.fitted_params.E)
+        elif isinstance(model, ChinchillaParams):
+            e_values.append(model.E)
         else:
             raise ValueError(f"Unknown model type: {type(model)}")
     loss_min = min(e_values) if e_values else all_loss.min()
@@ -444,8 +447,8 @@ def plot_scaling_law_3d(
 
 
 def plot_scaling_law_3d_comparison(
-    exp_a: tuple[str, list[RolloutSplit]],
-    exp_b: tuple[str, list[RolloutSplit]],
+    exp_a: tuple[str, ScalingLawRollout],
+    exp_b: tuple[str, ScalingLawRollout],
     *,
     subtitle: Optional[str] = None,
     save_path: Optional[Union[str, Path]] = None,
@@ -461,8 +464,8 @@ def plot_scaling_law_3d_comparison(
     Creates an interactive 3D visualization comparing two experiments' fitted
     scaling law surfaces. A slider lets you move through training cutoffs.
 
-    :param exp_a: Tuple of (name, splits) for the first experiment.
-    :param exp_b: Tuple of (name, splits) for the second experiment.
+    :param exp_a: Tuple of (name, rollout) for the first experiment.
+    :param exp_b: Tuple of (name, rollout) for the second experiment.
     :param subtitle: Subtitle shown below the main title.
     :param save_path: If provided, saves the plot as an HTML file to this path.
     :param width: Plot width in pixels.
@@ -480,12 +483,12 @@ def plot_scaling_law_3d_comparison(
             plot_scaling_law_3d_comparison,
         )
 
-        baseline_splits = ScalingLawRollout(N=N, D=D, loss=baseline_loss).evaluate(...)
-        intervention_splits = ScalingLawRollout(N=N, D=D, loss=interv_loss).evaluate(...)
+        baseline = ScalingLawRollout.fit(N=N, D=D, loss=baseline_loss, model_fitter=...)
+        intervention = ScalingLawRollout.fit(N=N, D=D, loss=interv_loss, model_fitter=...)
 
         fig = plot_scaling_law_3d_comparison(
-            ("Baseline", baseline_splits),
-            ("Intervention", intervention_splits),
+            ("Baseline", baseline),
+            ("Intervention", intervention),
             subtitle="Effect of intervention on scaling"
         )
         fig.show()
@@ -495,8 +498,11 @@ def plot_scaling_law_3d_comparison(
     except ImportError:
         raise ImportError("plotly is required for plotting. Install with: pip install plotly")
 
-    name_a, splits_a = exp_a
-    name_b, splits_b = exp_b
+    name_a, rollout_a = exp_a
+    name_b, rollout_b = exp_b
+
+    splits_a = rollout_a.splits
+    splits_b = rollout_b.splits
 
     # Map cutoff (in millions) to split
     def get_cutoffs(splits: list[RolloutSplit]) -> dict[int, RolloutSplit]:

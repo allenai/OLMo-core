@@ -3,7 +3,8 @@
 import numpy as np
 import pytest
 
-from olmo_core.model_ladder.analysis.scaling_laws import ChinchillaParams, RolloutSplit
+from olmo_core.model_ladder.analysis.eval import RolloutSplit, ScalingLawRollout
+from olmo_core.model_ladder.analysis.scaling_laws import ChinchillaParams
 
 # Check if plotly is available
 try:
@@ -37,6 +38,16 @@ def _create_test_split(cutoff_N: float = 100e6) -> RolloutSplit:
     )
 
 
+def _create_test_rollout(cutoffs: list[float]) -> ScalingLawRollout:
+    """Create a test rollout with the given cutoffs."""
+    splits = [_create_test_split(c) for c in cutoffs]
+    # Combine all data for the rollout
+    all_N = np.concatenate([s.train_N for s in splits] + [s.test_N for s in splits])
+    all_D = np.concatenate([s.train_D for s in splits] + [s.test_D for s in splits])
+    all_loss = np.concatenate([s.train_loss for s in splits] + [s.test_loss for s in splits])
+    return ScalingLawRollout(N=all_N, D=all_D, loss=all_loss, splits=splits)
+
+
 @pytest.mark.skipif(not PLOTLY_AVAILABLE, reason="plotly not installed")
 def test_plot_scaling_law_3d_single_split():
     assert go is not None
@@ -49,22 +60,23 @@ def test_plot_scaling_law_3d_single_split():
 
 
 @pytest.mark.skipif(not PLOTLY_AVAILABLE, reason="plotly not installed")
-def test_plot_scaling_law_3d_multiple_splits():
+def test_plot_scaling_law_3d_rollout():
     assert go is not None
     from olmo_core.model_ladder.analysis.plotting import plot_scaling_law_3d
 
-    splits = [_create_test_split(100e6), _create_test_split(200e6)]
-    fig = plot_scaling_law_3d(splits, subtitle="Test Experiment")
+    rollout = _create_test_rollout([100e6, 200e6])
+    fig = plot_scaling_law_3d(rollout, subtitle="Test Experiment")
     assert fig is not None
     assert isinstance(fig, go.Figure)
 
 
 @pytest.mark.skipif(not PLOTLY_AVAILABLE, reason="plotly not installed")
-def test_plot_scaling_law_3d_empty_splits():
+def test_plot_scaling_law_3d_empty_rollout():
     from olmo_core.model_ladder.analysis.plotting import plot_scaling_law_3d
 
-    with pytest.raises(ValueError, match="splits list cannot be empty"):
-        plot_scaling_law_3d([])
+    empty_rollout = ScalingLawRollout(N=np.array([]), D=np.array([]), loss=np.array([]), splits=[])
+    with pytest.raises(ValueError, match="rollout has no splits"):
+        plot_scaling_law_3d(empty_rollout)
 
 
 @pytest.mark.skipif(not PLOTLY_AVAILABLE, reason="plotly not installed")
@@ -72,10 +84,10 @@ def test_plot_scaling_law_3d_comparison():
     assert go is not None
     from olmo_core.model_ladder.analysis.plotting import plot_scaling_law_3d_comparison
 
-    splits_a = [_create_test_split(100e6), _create_test_split(200e6)]
-    splits_b = [_create_test_split(100e6), _create_test_split(200e6)]
+    rollout_a = _create_test_rollout([100e6, 200e6])
+    rollout_b = _create_test_rollout([100e6, 200e6])
     fig = plot_scaling_law_3d_comparison(
-        ("Experiment A", splits_a), ("Experiment B", splits_b), subtitle="Comparison Test"
+        ("Experiment A", rollout_a), ("Experiment B", rollout_b), subtitle="Comparison Test"
     )
     assert fig is not None
     assert isinstance(fig, go.Figure)
@@ -86,7 +98,7 @@ def test_plot_scaling_law_3d_comparison_no_common_cutoffs():
     assert go is not None
     from olmo_core.model_ladder.analysis.plotting import plot_scaling_law_3d_comparison
 
-    splits_a = [_create_test_split(100e6)]
-    splits_b = [_create_test_split(500e6)]  # Different cutoff
+    rollout_a = _create_test_rollout([100e6])
+    rollout_b = _create_test_rollout([500e6])  # Different cutoff
     with pytest.raises(ValueError, match="No common cutoffs"):
-        plot_scaling_law_3d_comparison(("Experiment A", splits_a), ("Experiment B", splits_b))
+        plot_scaling_law_3d_comparison(("Experiment A", rollout_a), ("Experiment B", rollout_b))

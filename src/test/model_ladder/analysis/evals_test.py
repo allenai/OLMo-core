@@ -1,18 +1,19 @@
 """Tests for scaling law evaluation metrics."""
 
 import numpy as np
-import pytest
 
 from olmo_core.model_ladder.analysis.eval import (
-    evaluate_rollout_ppl_error,
-    evaluate_split_ppl_error,
+    RolloutSplit,
+    ScalingLawRollout,
+    evaluate_rollout,
+    evaluate_split,
     perplexity_ratio,
+    relative_bpb_error,
 )
-from olmo_core.model_ladder.analysis.scaling_laws import ChinchillaParams, RolloutSplit
+from olmo_core.model_ladder.analysis.scaling_laws import ChinchillaParams
 
 
 def test_perplexity_ratio_perfect_prediction():
-    """Test perplexity ratio with perfect predictions."""
     predicted = np.array([1.0, 2.0, 3.0])
     actual = np.array([1.0, 2.0, 3.0])
     ratios = perplexity_ratio(predicted, actual)
@@ -20,7 +21,6 @@ def test_perplexity_ratio_perfect_prediction():
 
 
 def test_perplexity_ratio_overestimate():
-    """Test perplexity ratio when overestimating loss."""
     predicted = np.array([1.1, 2.1])
     actual = np.array([1.0, 2.0])
     ratios = perplexity_ratio(predicted, actual)
@@ -31,7 +31,6 @@ def test_perplexity_ratio_overestimate():
 
 
 def test_perplexity_ratio_underestimate():
-    """Test perplexity ratio when underestimating loss."""
     predicted = np.array([0.9, 1.9])
     actual = np.array([1.0, 2.0])
     ratios = perplexity_ratio(predicted, actual)
@@ -42,7 +41,6 @@ def test_perplexity_ratio_underestimate():
 
 
 def test_perplexity_ratio_symmetry():
-    """Test that over/under prediction by same amount gives symmetric ratios."""
     base = 1.0
     error = 0.1
     over_ratio = perplexity_ratio(np.array([base + error]), np.array([base]))[0]
@@ -51,17 +49,30 @@ def test_perplexity_ratio_symmetry():
     assert np.allclose(over_ratio * under_ratio, 1.0)
 
 
-def test_evaluate_split_ppl_error_perfect_predictions():
-    """Test evaluate_split_ppl_error with perfect predictions."""
-    # Create a simple mock model
+def test_relative_bpb_error_scale_dependence():
+    """Test that relative BPB error weights low-loss predictions more heavily."""
+    # Same absolute error at different loss levels
+    error = 0.01
+
+    # At loss = 1.0: relative error = 1%
+    rel_err_low = relative_bpb_error(np.array([1.0 + error]), np.array([1.0]))[0]
+    assert np.isclose(rel_err_low, 0.01)
+
+    # At loss = 2.0: relative error = 0.5%
+    rel_err_high = relative_bpb_error(np.array([2.0 + error]), np.array([2.0]))[0]
+    assert np.isclose(rel_err_high, 0.005)
+
+    # Low-loss error should be weighted more heavily
+    assert rel_err_low > rel_err_high
+
+
+def test_evaluate_split_perfect_predictions():
     params = ChinchillaParams(E=1.0, A=100.0, alpha=0.5, B=200.0, beta=0.3)
 
-    # Create test data
     test_N = np.array([200e6, 400e6])
     test_D = np.array([2e9, 4e9])
     test_loss = params.predict_loss(test_N, test_D)
 
-    # Create RolloutSplit
     split = RolloutSplit(
         cutoff_variable="N",
         cutoff_value=100e6,
@@ -76,18 +87,19 @@ def test_evaluate_split_ppl_error_perfect_predictions():
         test_loss=test_loss,
     )
 
-    eval_result = evaluate_split_ppl_error(split)
+    eval_result = evaluate_split(split)
 
     assert eval_result.cutoff_value == 100e6
     assert eval_result.n_test_points == 2
     assert np.allclose(eval_result.perplexity_ratios, 1.0)
-    assert np.isclose(eval_result.mean_abs_ppl_error, 0.0)
-    assert np.isclose(eval_result.weighted_mean_abs_ppl_error, 0.0)
-    assert np.isclose(eval_result.mean_ppl_ratio, 1.0)
+    assert np.allclose(eval_result.relative_errors, 0.0)
+    assert np.isclose(eval_result.mean_ppl_error, 0.0)
+    assert np.isclose(eval_result.weighted_mean_ppl_error, 0.0)
+    assert np.isclose(eval_result.mean_relative_error, 0.0)
+    assert np.isclose(eval_result.mean_signed_error, 0.0)
 
 
-def test_evaluate_split_ppl_error_with_error():
-    """Test evaluate_split_ppl_error with prediction errors."""
+def test_evaluate_split_with_error():
     params = ChinchillaParams(E=1.0, A=100.0, alpha=0.5, B=200.0, beta=0.3)
 
     test_N = np.array([200e6])
@@ -113,17 +125,20 @@ def test_evaluate_split_ppl_error_with_error():
         test_loss=actual_loss,
     )
 
-    eval_result = evaluate_split_ppl_error(split)
+    eval_result = evaluate_split(split)
 
     assert eval_result.n_test_points == 1
     # Perplexity ratio should be > 1 (overprediction)
     assert eval_result.perplexity_ratios[0] > 1.0
-    # Mean error should be positive
-    assert eval_result.mean_abs_ppl_error > 0.0
+    # Errors should be positive
+    assert eval_result.mean_ppl_error > 0.0
+    assert eval_result.mean_relative_error > 0.0
+    # Signed error should be positive (overprediction)
+    assert eval_result.mean_signed_error > 0.0
+    assert np.isclose(eval_result.bpb_errors[0], 0.01)
 
 
-def test_evaluate_split_ppl_error_cutoff_by_D():
-    """Test evaluate_split_ppl_error with cutoff by D."""
+def test_evaluate_split_cutoff_by_D():
     params = ChinchillaParams(E=1.0, A=100.0, alpha=0.5, B=200.0, beta=0.3)
 
     test_N = np.array([200e6])
@@ -144,12 +159,12 @@ def test_evaluate_split_ppl_error_cutoff_by_D():
         test_loss=test_loss,
     )
 
-    eval_result = evaluate_split_ppl_error(split)
+    eval_result = evaluate_split(split)
     # Should use test_D for distance calculation
     assert eval_result.distances[0] > 0  # Should be positive since 2e9 > 1e9
 
 
-def test_evaluate_rollout_ppl_error():
+def test_evaluate_rollout_splits():
     params = ChinchillaParams(E=1.0, A=100.0, alpha=0.5, B=200.0, beta=0.3)
 
     splits = []
@@ -173,14 +188,18 @@ def test_evaluate_rollout_ppl_error():
         )
         splits.append(split)
 
-    eval_result = evaluate_rollout_ppl_error(splits)
+    # Create a ScalingLawRollout object with the splits
+    # Construct N, D, and loss arrays from the splits
+    N = np.array([100e6, 200e6, 400e6])
+    D = np.array([1e9, 2e9, 2e9])
+    loss = params.predict_loss(N, D)
+    rollout = ScalingLawRollout(N=N, D=D, loss=loss, splits=splits)
+
+    eval_result = evaluate_rollout(rollout)
 
     assert len(eval_result.split_evaluations) == 2
-    assert eval_result.overall_weighted_mean_abs_ppl_error >= 0.0
-    assert eval_result.overall_mean_abs_ppl_error >= 0.0
-
-
-def test_evaluate_rollout_ppl_error_empty_splits():
-    """Test that empty splits list raises ValueError."""
-    with pytest.raises(ValueError, match="splits list cannot be empty"):
-        evaluate_rollout_ppl_error([])
+    # Both error metrics should be non-negative
+    assert eval_result.overall_weighted_mean_ppl_error >= 0.0
+    assert eval_result.overall_mean_ppl_error >= 0.0
+    assert eval_result.overall_weighted_mean_relative_error >= 0.0
+    assert eval_result.overall_mean_relative_error >= 0.0
