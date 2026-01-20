@@ -270,7 +270,7 @@ def parse_args(
                 help="""A local directory to store artifacts in like metrics or the LR schedule plot.""",
             )
 
-        if cmd in {"metrics", "metrics-all"}:
+        if cmd in {"status", "metrics", "metrics-all"}:
             parser.add_argument(
                 "--alternative-dirs",
                 type=str,
@@ -519,47 +519,6 @@ def launch_all(args: argparse.Namespace):
         )
 
 
-def status(args: argparse.Namespace):
-    prepare_cli_environment()
-    ladder = args.configure_ladder(args)
-
-    sizes: list[str]
-    if args.size:
-        sizes = [args.size_enum(args.size)]
-    else:
-        sizes = [args.size_enum(s) for s in ladder.sizes]
-        if args.max_size:
-            sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
-
-    for size in sizes:
-        print()
-        checkpoints = ladder.get_checkpoints(size)
-        if not checkpoints or checkpoints[-1].step == 0:
-            rich.get_console().print(
-                f"[b yellow]Run for size {size} has no configured checkpoint intervals.[/]",
-                highlight=False,
-            )
-            continue
-
-        max_step_completed = 0
-        max_step = -1
-        checkpoint_displays = []
-        for ckpt in checkpoints:
-            max_step = max(max_step, ckpt.step)
-            if ckpt.exists:
-                max_step_completed = max(max_step_completed, ckpt.step)
-            checkpoint_displays.append(ckpt.display())
-
-        assert max_step > 0
-        pct_complete = round((max_step_completed / max_step) * 100.0)
-        color = "green" if pct_complete == 100 else "yellow"
-        completion_display = f"[b {color}]Run for size {size}, {pct_complete}% complete:[/]"
-        rich.get_console().print(
-            f"{completion_display}\n" + "\n".join(checkpoint_displays),
-            highlight=False,
-        )
-
-
 def _get_alternative_dirs(args: argparse.Namespace, ladder_name: str) -> list[str] | None:
     """Expand alternative_dirs, appending ladder_name to each.
 
@@ -574,6 +533,116 @@ def _get_alternative_dirs(args: argparse.Namespace, ladder_name: str) -> list[st
         else:
             dirs.append(str(io.join_path(d, ladder_name)))
     return dirs if dirs else None
+
+
+def status(args: argparse.Namespace):
+    from rich.table import Table
+
+    prepare_cli_environment()
+    ladder = args.configure_ladder(args)
+    alternative_dirs = _get_alternative_dirs(args, ladder.name)
+
+    sizes: list[str]
+    if args.size:
+        sizes = [args.size_enum(args.size)]
+    else:
+        sizes = [args.size_enum(s) for s in ladder.sizes]
+        if args.max_size:
+            sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
+
+    # Collect summary info for the table
+    # (size, num_ckpts, num_metrics, total, status_emoji)
+    summary: list[tuple[str, int, int, int, str]] = []
+
+    for size in sizes:
+        print()
+        checkpoints = ladder.get_checkpoints(
+            size,
+            discover_all=args.discover_all,
+            alternative_dirs=alternative_dirs,
+        )
+
+        if args.discover_all:
+            # In discover mode, just show what we found
+            if not checkpoints:
+                rich.get_console().print(
+                    f"[b yellow]No checkpoints found for size {size}.[/]",
+                    highlight=False,
+                )
+                summary.append((size, 0, 0, 0, "⚠"))
+                continue
+
+            checkpoint_displays = [ckpt.display() for ckpt in checkpoints]
+            num_ckpts = sum(1 for ckpt in checkpoints if ckpt.exists)
+            num_metrics = sum(1 for ckpt in checkpoints if ckpt.metrics_path is not None)
+            num_total = len(checkpoints)
+            header = f"[b green]Discovered {num_total} checkpoint(s) for size {size}:[/]"
+            rich.get_console().print(
+                f"{header}\n" + "\n".join(checkpoint_displays),
+                highlight=False,
+            )
+            summary.append((size, num_ckpts, num_metrics, num_total, "✔" if num_ckpts > 0 else "⚠"))
+        else:
+            # Normal mode: check expected intervals and show completion percentage
+            if not checkpoints or checkpoints[-1].step == 0:
+                rich.get_console().print(
+                    f"[b yellow]Run for size {size} has no configured checkpoint intervals.[/]",
+                    highlight=False,
+                )
+                summary.append((size, 0, 0, 0, "⚠"))
+                continue
+
+            max_step_completed = 0
+            max_step = -1
+            num_ckpts = 0
+            num_metrics = 0
+            checkpoint_displays = []
+            for ckpt in checkpoints:
+                max_step = max(max_step, ckpt.step)
+                if ckpt.exists:
+                    max_step_completed = max(max_step_completed, ckpt.step)
+                    num_ckpts += 1
+                if ckpt.metrics_path is not None:
+                    num_metrics += 1
+                checkpoint_displays.append(ckpt.display())
+
+            assert max_step > 0
+            pct_complete = round((max_step_completed / max_step) * 100.0)
+            color = "green" if pct_complete == 100 else "yellow"
+            completion_display = f"[b {color}]Run for size {size}, {pct_complete}% complete:[/]"
+            rich.get_console().print(
+                f"{completion_display}\n" + "\n".join(checkpoint_displays),
+                highlight=False,
+            )
+            status_emoji = "✔" if pct_complete == 100 else ("⚠" if num_ckpts > 0 else "✘")
+            summary.append((size, num_ckpts, num_metrics, len(checkpoints), status_emoji))
+
+    if len(sizes) > 1:
+        print()
+        table = Table(title=f"Summary: {ladder.name}", show_header=True, header_style="bold")
+        table.add_column("Size", style="cyan")
+        table.add_column("Checkpoints", justify="right")
+        table.add_column("Metrics", justify="right")
+        table.add_column("Status", justify="center")
+
+        for size, num_ckpts, num_metrics, total, status_emoji in summary:
+            if total == 0:
+                ckpts_str = "-"
+                metrics_str = "-"
+            else:
+                ckpts_str = f"{num_ckpts}/{total}"
+                metrics_str = f"{num_metrics}/{total}"
+
+            if status_emoji == "✔":
+                status_styled = f"[green]{status_emoji}[/]"
+            elif status_emoji == "⚠":
+                status_styled = f"[yellow]{status_emoji}[/]"
+            else:
+                status_styled = f"[red]{status_emoji}[/]"
+
+            table.add_row(size, ckpts_str, metrics_str, status_styled)
+
+        rich.get_console().print(table)
 
 
 def metrics(args: argparse.Namespace):
