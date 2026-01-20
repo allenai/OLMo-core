@@ -61,9 +61,9 @@ class BeakerCallback(Callback):
                 self.experiment_id = get_beaker_experiment_id()
 
             assert self.experiment_id is not None
-            beaker = get_beaker_client()
-            workload = beaker.workload.get(self.experiment_id)
-            beaker_url = beaker.workload.url(workload)
+            with get_beaker_client() as beaker:
+                workload = beaker.workload.get(self.experiment_id)
+                beaker_url = beaker.workload.url(workload)
             log.info(f"Running in Beaker workload {beaker_url}")
 
             # Add Beaker URL to W&B and Comet config if available.
