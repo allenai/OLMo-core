@@ -1,5 +1,3 @@
-"""Plotting utilities for scaling law analysis and visualization."""
-
 from pathlib import Path
 from typing import Optional, Union
 

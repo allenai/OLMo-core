@@ -1,5 +1,3 @@
-"""Scaling law models and fitting utilities for Chinchilla-style parametric laws."""
-
 import multiprocessing
 import os
 from dataclasses import dataclass
@@ -54,7 +52,8 @@ def chinchilla_parametric_scaling_law(
 class ScalingLawModel(Protocol):
     """Protocol for any scaling law model that can predict loss for a given (N, D) allocation."""
 
-    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray: ...
+    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        ...
 
 
 class ChinchillaParams(NamedTuple):
