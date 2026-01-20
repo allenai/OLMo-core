@@ -72,6 +72,7 @@ FULL_TASKS_LARGE_COMPUTE = [
     "mmlu_other_test_mc_5shot_fast",
     # Gen tasks BPB
     "gsm8k_gold_bpb_5shot",
+    "minerva_math_500_gold_bpb_0shot",
     "minerva_math_algebra_gold_bpb_0shot",
     "minerva_math_counting_and_probability_gold_bpb_0shot",
     "minerva_math_geometry_gold_bpb_0shot",
