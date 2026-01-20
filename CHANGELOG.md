@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for Ulysses-style context parallelism.
 - Added 60M, 14M, and 1M model sizes.
 - `SpeedMonitorCallback` will log Chinchilla multiple number of tokens during training with a `TransformerTrainModule`.
+- Added utilities for fitting, evaluating, and visualizing scaling laws.
 
 ### Fixed
 
