@@ -124,6 +124,13 @@ def init_distributed(
         torch.cuda.set_device(device)
 
     if dist.is_initialized():
+        existing_backend = dist.get_backend()
+        if existing_backend != backend:
+            raise OLMoEnvironmentError(
+                f"Process group already initialized with backend '{existing_backend}', "
+                f"but init_distributed() was called with backend='{backend}'. "
+                f"Either use the same backend or do not pre-initialize the process group."
+            )
         log_or_print(log, "Process group already initialized, skipping init_process_group")
     else:
         log_or_print(log, f"Initializing process group with {timeout=}...")
