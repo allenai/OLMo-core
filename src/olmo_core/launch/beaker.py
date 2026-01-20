@@ -498,6 +498,7 @@ class BeakerLaunchConfig(Config):
         :returns: The Beaker workload.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
+            follow_resolved = follow if follow is not None else self.follow
             recipe = self._build_recipe(
                 beaker,
                 follow=follow,
@@ -510,8 +511,9 @@ class BeakerLaunchConfig(Config):
 
             try:
                 return recipe.launch(
-                    show_logs=follow,
-                    start_timeout=launch_timeout,
+                    show_logs=follow_resolved,
+                    timeout=0 if not follow_resolved else None,
+                    start_timeout=launch_timeout if follow_resolved else None,
                     inactive_timeout=step_timeout,
                     inactive_soft_timeout=step_soft_timeout,
                     client=beaker,

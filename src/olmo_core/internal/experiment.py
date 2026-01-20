@@ -426,13 +426,15 @@ def launch(config: ExperimentConfig):
                 slack_enabled = True
             break
 
-    config.launch.launch(
-        follow=True,
-        slack_notifications=slack_enabled,
-        launch_timeout=5 * 60,
-        #  step_timeout=30 * 60,  # hard timeout kills the job
-        step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
-    )
+    if config.launch.follow:
+        config.launch.launch(
+            slack_notifications=slack_enabled,
+            launch_timeout=5 * 60,
+            #  step_timeout=30 * 60,  # hard timeout kills the job
+            step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
+        )
+    else:
+        config.launch.launch()
 
 
 def launch_prep(config: ExperimentConfig):
