@@ -147,13 +147,13 @@ def test_chinchilla_parametric_bootstrapped_fit():
         lambda: ChinchillaParametricFit.fit(
             N=np.array([1e6, 2e6, 5e6, 1e7, 2e7]),
             D=np.array([1e9, 2e9, 5e9, 1e10, 2e10]),
-            loss=np.array([2.5, 2.3, 2.1, 1.9, 1.7]),
+            L=np.array([2.5, 2.3, 2.1, 1.9, 1.7]),
             num_slices=2,
         ),
         lambda: ChinchillaParametricBootstrappedFit.fit(
             N=np.array([1e6, 2e6, 5e6, 1e7, 2e7]),
             D=np.array([1e9, 2e9, 5e9, 1e10, 2e10]),
-            loss=np.array([2.5, 2.3, 2.1, 1.9, 1.7]),
+            L=np.array([2.5, 2.3, 2.1, 1.9, 1.7]),
             num_bootstraps=3,
             num_slices=2,
             progress_bar=False,

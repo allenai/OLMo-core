@@ -21,7 +21,7 @@ def _create_test_split(cutoff_N: float = 100e6) -> RolloutSplit:
 
     test_N = np.array([cutoff_N * 2])
     test_D = np.array([2e9])
-    test_loss = params.predict_loss(test_N, test_D)
+    test_L = params.predict_loss(test_N, test_D)
 
     return RolloutSplit(
         cutoff_variable="N",
@@ -31,10 +31,10 @@ def _create_test_split(cutoff_N: float = 100e6) -> RolloutSplit:
         model=params,
         train_N=np.array([cutoff_N]),
         train_D=np.array([1e9]),
-        train_loss=np.array([params.predict_loss(cutoff_N, 1e9)]),
+        train_L=np.array([params.predict_loss(cutoff_N, 1e9)]),
         test_N=test_N,
         test_D=test_D,
-        test_loss=test_loss,
+        test_L=test_L,
     )
 
 
@@ -44,8 +44,8 @@ def _create_test_rollout(cutoffs: list[float]) -> ScalingLawRollout:
     # Combine all data for the rollout
     all_N = np.concatenate([s.train_N for s in splits] + [s.test_N for s in splits])
     all_D = np.concatenate([s.train_D for s in splits] + [s.test_D for s in splits])
-    all_loss = np.concatenate([s.train_loss for s in splits] + [s.test_loss for s in splits])
-    return ScalingLawRollout(N=all_N, D=all_D, loss=all_loss, splits=splits)
+    all_L = np.concatenate([s.train_L for s in splits] + [s.test_L for s in splits])
+    return ScalingLawRollout(N=all_N, D=all_D, L=all_L, splits=splits)
 
 
 @pytest.mark.skipif(not PLOTLY_AVAILABLE, reason="plotly not installed")
@@ -74,7 +74,7 @@ def test_plot_scaling_law_3d_rollout():
 def test_plot_scaling_law_3d_empty_rollout():
     from olmo_core.model_ladder.analysis.plotting import plot_scaling_law_3d
 
-    empty_rollout = ScalingLawRollout(N=np.array([]), D=np.array([]), loss=np.array([]), splits=[])
+    empty_rollout = ScalingLawRollout(N=np.array([]), D=np.array([]), L=np.array([]), splits=[])
     with pytest.raises(ValueError, match="rollout has no splits"):
         plot_scaling_law_3d(empty_rollout)
 

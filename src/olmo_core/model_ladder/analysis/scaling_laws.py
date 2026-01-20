@@ -1,9 +1,11 @@
+"""Scaling law models and fitting utilities for Chinchilla-style parametric laws."""
+
 import multiprocessing
 import os
 from dataclasses import dataclass
 from functools import partial
 from itertools import product
-from typing import NamedTuple, Optional, Protocol, runtime_checkable
+from typing import NamedTuple, Optional, Protocol, Tuple, runtime_checkable
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -23,8 +25,10 @@ def chinchilla_parametric_scaling_law(
     """
     N = np.asarray(N)
     D = np.asarray(D)
-    assert np.all(N > 0), "N must be positive"
-    assert np.all(D > 0), "D must be positive"
+    if not np.all(N > 0):
+        raise ValueError("N must be positive")
+    if not np.all(D > 0):
+        raise ValueError("D must be positive")
     dtype = np.result_type(N, D, np.float64)
     tiny = np.finfo(dtype).tiny
     max_exp = np.log(np.finfo(dtype).max)  # Limit for exp() to avoid overflow
@@ -50,8 +54,7 @@ def chinchilla_parametric_scaling_law(
 class ScalingLawModel(Protocol):
     """Protocol for any scaling law model that can predict loss for a given (N, D) allocation."""
 
-    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
-        ...
+    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray: ...
 
 
 class ChinchillaParams(NamedTuple):
@@ -100,10 +103,10 @@ class ChinchillaParametricFit:
     huber_loss: Optional[float] = None
     """Huber loss of the fit (computed on log scale to match optimization objective)."""
 
-    # Stored data from fitting
-    _N: Optional[np.ndarray] = None
-    _D: Optional[np.ndarray] = None
-    _loss: Optional[np.ndarray] = None
+    # Stored data used for fitting
+    train_N: Optional[np.ndarray] = None
+    train_D: Optional[np.ndarray] = None
+    train_L: Optional[np.ndarray] = None
 
     def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
         """Predict the loss for a given (N, D) allocation."""
@@ -112,9 +115,9 @@ class ChinchillaParametricFit:
     @property
     def residuals(self) -> Optional[np.ndarray]:
         """Residuals (log scale) from the fit on the original data."""
-        if self._loss is None or self._N is None or self._D is None:
+        if self.train_L is None or self.train_N is None or self.train_D is None:
             return None
-        return np.log(self._loss) - np.log(self.predict_loss(self._N, self._D))
+        return np.log(self.train_L) - np.log(self.predict_loss(self.train_N, self.train_D))
 
     @staticmethod
     def _optimize_single_init(
@@ -125,7 +128,7 @@ class ChinchillaParametricFit:
         L: np.ndarray,
         weights: Optional[np.ndarray] = None,
         overestimate_penalty: float = 1.0,
-    ) -> tuple[float, ChinchillaParams] | None:
+    ) -> Optional[Tuple[float, ChinchillaParams]]:
         """
         Run a single optimization from given initial parameters.
 
@@ -195,7 +198,7 @@ class ChinchillaParametricFit:
         cls,
         N: ArrayLike,
         D: ArrayLike,
-        loss: ArrayLike,
+        L: ArrayLike,
         parallel: bool = True,
         weights: Optional[ArrayLike] = None,
         overestimate_penalty: float = 1.0,
@@ -206,7 +209,7 @@ class ChinchillaParametricFit:
 
         :param N: Array of parameter counts.
         :param D: Array of token counts.
-        :param loss: Array of loss values.
+        :param L: Array of loss values.
         :param parallel: If True, use multiprocessing for grid search optimization.
         :param weights: Optional weights for each observation. Higher weights give more
             importance to those points during fitting. Common choices:
@@ -214,22 +217,26 @@ class ChinchillaParametricFit:
             - None: Uniform weights (default)
         :param overestimate_penalty: Multiplier for overestimate errors in the Huber loss.
             When > 1.0, the loss function penalizes overestimates (predicted > actual)
-            more heavily than underestimates. This pushes the fit toward lower loss
+            more heavily than underestimates. This pushes the fit toward lower L
             predictions, useful since the parametric scaling law is typically used to capture
-            the lower-bound of achievable loss with a given (N, D) allocation. A good choice if
-            the goal is to capture the lower-bound of achievable loss is to set this to 10.0.
+            the lower-bound of achievable L with a given (N, D) allocation. A good choice if
+            the goal is to capture the lower-bound of achievable L is to set this to 10.0.
             Default is 1.0 (symmetric loss).
         :param num_slices: Number of slices to use for grid search along each dimension.
         :returns: :class:`ChinchillaParametricFit` with fitted parameters.
         """
         N = np.asarray(N)
         D = np.asarray(D)
-        L = np.asarray(loss)
+        L = np.asarray(L)
 
-        assert np.all(np.isfinite(N) & (N > 0)), "N must be finite and positive"
-        assert np.all(np.isfinite(D) & (D > 0)), "D must be finite and positive"
-        assert np.all(np.isfinite(L) & (L > 0)), "loss must be finite and positive"
-        assert len(N) >= 5, f"Need at least 5 data points, got {len(N)}"
+        if not np.all(np.isfinite(N) & (N > 0)):
+            raise ValueError("N must be finite and positive")
+        if not np.all(np.isfinite(D) & (D > 0)):
+            raise ValueError("D must be finite and positive")
+        if not np.all(np.isfinite(L) & (L > 0)):
+            raise ValueError("L must be finite and positive")
+        if len(N) < 5:
+            raise ValueError(f"Need at least 5 data points, got {len(N)}")
 
         # Normalize weights if provided
         weights_clean: Optional[np.ndarray] = None
@@ -269,7 +276,7 @@ class ChinchillaParametricFit:
             overestimate_penalty=overestimate_penalty,
         )
 
-        results: list[tuple[float, ChinchillaParams]] = []
+        results: list[Tuple[float, ChinchillaParams]] = []
         if parallel:
             n_workers = os.cpu_count() or 1
             ctx = multiprocessing.get_context("fork")
@@ -290,7 +297,7 @@ class ChinchillaParametricFit:
         best = min(results, key=lambda x: x[0])
         huber_loss, params = best
 
-        return cls(fitted_params=params, huber_loss=huber_loss, _N=N, _D=D, _loss=L)
+        return cls(fitted_params=params, huber_loss=huber_loss, train_N=N, train_D=D, train_L=L)
 
 
 @dataclass
@@ -354,7 +361,7 @@ class ChinchillaParametricBootstrappedFit:
         cls,
         N: ArrayLike,
         D: ArrayLike,
-        loss: ArrayLike,
+        L: ArrayLike,
         num_bootstraps: int = 100,
         parallel: bool = True,
         weights: Optional[ArrayLike] = None,
@@ -368,7 +375,7 @@ class ChinchillaParametricBootstrappedFit:
 
         :param N: Array of parameter counts.
         :param D: Array of token counts.
-        :param loss: Array of loss values.
+        :param L: Array of loss values.
         :param num_bootstraps: Number of bootstrap samples to generate.
         :param parallel: If True, use multiprocessing for grid search optimization.
         :param weights: Optional weights for each observation.
@@ -380,14 +387,14 @@ class ChinchillaParametricBootstrappedFit:
         """
         N = np.asarray(N)
         D = np.asarray(D)
-        loss = np.asarray(loss)
+        L = np.asarray(L)
         n_points = len(N)
 
         # Fit point estimate on original data
         point_estimate = ChinchillaParametricFit.fit(
             N,
             D,
-            loss,
+            L,
             parallel=parallel,
             weights=weights,
             overestimate_penalty=overestimate_penalty,
@@ -402,14 +409,14 @@ class ChinchillaParametricBootstrappedFit:
 
             N_boot = N[indices]
             D_boot = D[indices]
-            loss_boot = loss[indices]
+            L_boot = L[indices]
             weights_boot = None if weights is None else np.asarray(weights)[indices]
 
             try:
                 boot_fit = ChinchillaParametricFit.fit(
                     N_boot,
                     D_boot,
-                    loss_boot,
+                    L_boot,
                     parallel=parallel,
                     weights=weights_boot,
                     overestimate_penalty=overestimate_penalty,

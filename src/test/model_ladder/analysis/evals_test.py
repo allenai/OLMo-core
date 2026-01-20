@@ -74,7 +74,7 @@ def test_evaluate_split_perfect_predictions():
 
     test_N = np.array([200e6, 400e6])
     test_D = np.array([2e9, 4e9])
-    test_loss = params.predict_loss(test_N, test_D)
+    test_L = params.predict_loss(test_N, test_D)
 
     split = RolloutSplit(
         cutoff_variable="N",
@@ -84,10 +84,10 @@ def test_evaluate_split_perfect_predictions():
         model=params,
         train_N=np.array([100e6]),
         train_D=np.array([1e9]),
-        train_loss=np.array([params.predict_loss(100e6, 1e9)]),
+        train_L=np.array([params.predict_loss(100e6, 1e9)]),
         test_N=test_N,
         test_D=test_D,
-        test_loss=test_loss,
+        test_L=test_L,
     )
 
     eval_result = evaluate_split(split)
@@ -107,7 +107,7 @@ def test_evaluate_split_with_error():
 
     test_N = np.array([200e6])
     test_D = np.array([2e9])
-    actual_loss = params.predict_loss(test_N, test_D)
+    actual_L = params.predict_loss(test_N, test_D)
 
     # Create a mock model that overpredicts by 0.01 BPB
     class OverpredictingModel:
@@ -122,10 +122,10 @@ def test_evaluate_split_with_error():
         model=OverpredictingModel(),
         train_N=np.array([100e6]),
         train_D=np.array([1e9]),
-        train_loss=np.array([params.predict_loss(100e6, 1e9)]),
+        train_L=np.array([params.predict_loss(100e6, 1e9)]),
         test_N=test_N,
         test_D=test_D,
-        test_loss=actual_loss,
+        test_L=actual_L,
     )
 
     eval_result = evaluate_split(split)
@@ -146,7 +146,7 @@ def test_evaluate_split_cutoff_by_D():
 
     test_N = np.array([200e6])
     test_D = np.array([2e9])
-    test_loss = params.predict_loss(test_N, test_D)
+    test_L = params.predict_loss(test_N, test_D)
 
     split = RolloutSplit(
         cutoff_variable="D",
@@ -156,10 +156,10 @@ def test_evaluate_split_cutoff_by_D():
         model=params,
         train_N=np.array([100e6]),
         train_D=np.array([1e9]),
-        train_loss=np.array([params.predict_loss(100e6, 1e9)]),
+        train_L=np.array([params.predict_loss(100e6, 1e9)]),
         test_N=test_N,
         test_D=test_D,
-        test_loss=test_loss,
+        test_L=test_L,
     )
 
     eval_result = evaluate_split(split)
@@ -182,7 +182,7 @@ def _create_test_rollout():
         cutoff_N = train_N[-1]
         test_N = np.array([cutoff_N * 2])
         test_D = np.array([1e9 * 2])
-        test_loss = params.predict_loss(test_N, test_D)
+        test_L = params.predict_loss(test_N, test_D)
 
         split = RolloutSplit(
             cutoff_variable="N",
@@ -192,17 +192,17 @@ def _create_test_rollout():
             model=params,
             train_N=train_N,
             train_D=train_D,
-            train_loss=params.predict_loss(train_N, train_D),
+            train_L=params.predict_loss(train_N, train_D),
             test_N=test_N,
             test_D=test_D,
-            test_loss=test_loss,
+            test_L=test_L,
         )
         splits.append(split)
 
     N = np.array([100e6, 150e6, 200e6, 400e6])
     D = np.array([1e9, 1.5e9, 2e9, 2e9])
-    loss = params.predict_loss(N, D)
-    return ScalingLawRollout(N=N, D=D, loss=loss, splits=splits)
+    L = params.predict_loss(N, D)
+    return ScalingLawRollout(N=N, D=D, L=L, splits=splits)
 
 
 def test_evaluate_rollout_splits():
@@ -246,13 +246,13 @@ def test_scaling_law_rollout_fit():
     # Need enough points so each split has >= 5 training points (required by ChinchillaParametricFit)
     N = np.array([1e6, 1e6, 1e6, 2e6, 2e6, 2e6, 5e6, 5e6, 5e6, 1e7, 1e7, 1e7])
     D = np.array([1e9, 2e9, 4e9, 1e9, 2e9, 4e9, 1e9, 2e9, 4e9, 1e9, 2e9, 4e9])
-    loss = true_params.predict_loss(N, D)
+    L = true_params.predict_loss(N, D)
 
     # Fit rollout with small number of slices for speed
     rollout = ScalingLawRollout.fit(
         N=N,
         D=D,
-        loss=loss,
+        L=L,
         fit_fn=ChinchillaParametricFit.fit,
         split_by="N",
         min_points_train=6,
@@ -265,7 +265,7 @@ def test_scaling_law_rollout_fit():
     assert (
         len(np.asarray(rollout.N))
         == len(np.asarray(rollout.D))
-        == len(np.asarray(rollout.loss))
+        == len(np.asarray(rollout.L))
         == len(N)
     )
     assert len(rollout.splits) > 0
@@ -275,7 +275,7 @@ def test_scaling_law_rollout_fit():
         assert split.cutoff_variable == "N"
         assert split.cutoff_value > 0
         assert hasattr(split.model, "predict_loss")
-        assert len(split.train_N) == len(split.train_D) == len(split.train_loss)
-        assert len(split.test_N) == len(split.test_D) == len(split.test_loss)
+        assert len(split.train_N) == len(split.train_D) == len(split.train_L)
+        assert len(split.test_N) == len(split.test_D) == len(split.test_L)
         assert split.train_mask.sum() >= 2  # min_points_train
         assert split.test_mask.sum() > 0  # Must have test points

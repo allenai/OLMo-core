@@ -58,7 +58,7 @@ def plot_scaling_law_3d(
         )
 
         rollout = ScalingLawRollout.fit(
-            N=N, D=D, loss=loss, fit_fn=ChinchillaParametricBootstrappedFit.fit
+            N=N, D=D, L=L, fit_fn=ChinchillaParametricBootstrappedFit.fit
         )
 
         # Plot all splits with slider
@@ -91,8 +91,8 @@ def plot_scaling_law_3d(
     all_D = np.concatenate(
         [np.atleast_1d(s.train_D) for s in splits] + [np.atleast_1d(s.test_D) for s in splits]
     )
-    all_loss = np.concatenate(
-        [np.atleast_1d(s.train_loss) for s in splits] + [np.atleast_1d(s.test_loss) for s in splits]
+    all_L = np.concatenate(
+        [np.atleast_1d(s.train_L) for s in splits] + [np.atleast_1d(s.test_L) for s in splits]
     )
     N_min, N_max = all_N.min(), all_N.max()
     D_min, D_max = all_D.min(), all_D.max()
@@ -109,12 +109,12 @@ def plot_scaling_law_3d(
             e_values.append(model.E)
         else:
             raise ValueError(f"Unknown model type: {type(model)}")
-    loss_min = min(e_values) if e_values else all_loss.min()
+    L_min = min(e_values) if e_values else all_L.min()
 
     # Use max of actual data for upper bound with padding
-    loss_max = all_loss.max()
-    loss_padding = (loss_max - loss_min) * 0.05
-    loss_max += loss_padding
+    L_max = all_L.max()
+    L_padding = (L_max - L_min) * 0.05
+    L_max += L_padding
 
     # Create shared grid for all surfaces
     log_N_grid = np.linspace(np.log10(N_min * 0.8), np.log10(N_max * 1.2), grid_resolution)
@@ -136,7 +136,7 @@ def plot_scaling_law_3d(
         model = split.model
         test_N = np.atleast_1d(split.test_N)
         test_D = np.atleast_1d(split.test_D)
-        test_loss = np.atleast_1d(split.test_loss)
+        test_L = np.atleast_1d(split.test_L)
         point_predictions = np.atleast_1d(model.predict_loss(test_N, test_D))
         visible = idx == 0
 
@@ -208,7 +208,7 @@ def plot_scaling_law_3d(
                     go.Scatter3d(
                         x=[np.log10(test_N[i]), np.log10(test_N[i])],
                         y=[np.log10(test_D[i]), np.log10(test_D[i])],
-                        z=[test_loss[i], point_predictions[i]],
+                        z=[test_L[i], point_predictions[i]],
                         mode="lines",
                         line=dict(color="rgba(255,0,0,0.5)", width=2),
                         showlegend=False,
@@ -250,19 +250,19 @@ def plot_scaling_law_3d(
         # Training points
         train_N = np.atleast_1d(split.train_N)
         train_D = np.atleast_1d(split.train_D)
-        train_loss = np.atleast_1d(split.train_loss)
+        train_L = np.atleast_1d(split.train_L)
 
         fig.add_trace(
             go.Scatter3d(
                 x=np.log10(train_N),
                 y=np.log10(train_D),
-                z=train_loss,
+                z=train_L,
                 mode="markers",
                 marker=dict(
                     size=4, color="blue", symbol="circle", line=dict(width=1, color="darkblue")
                 ),
                 name="Training Data",
-                customdata=np.stack([train_N / 1e6, train_D / 1e9, train_loss], axis=-1),
+                customdata=np.stack([train_N / 1e6, train_D / 1e9, train_L], axis=-1),
                 hovertemplate=(
                     "<b>Training</b><br>"
                     "N: %{customdata[0]:.1f}M<br>"
@@ -279,13 +279,13 @@ def plot_scaling_law_3d(
             go.Scatter3d(
                 x=np.log10(test_N),
                 y=np.log10(test_D),
-                z=test_loss,
+                z=test_L,
                 mode="markers",
                 marker=dict(
                     size=5, color="green", symbol="circle", line=dict(width=1, color="darkgreen")
                 ),
-                name="Actual Loss (Test)",
-                customdata=np.stack([test_N / 1e6, test_D / 1e9, test_loss], axis=-1),
+                name="Actual L (Test)",
+                customdata=np.stack([test_N / 1e6, test_D / 1e9, test_L], axis=-1),
                 hovertemplate=(
                     "<b>Actual (Test)</b><br>"
                     "N: %{customdata[0]:.1f}M<br>"
@@ -298,7 +298,7 @@ def plot_scaling_law_3d(
         trace_count += 1
 
         # Predicted points
-        abs_errors = point_predictions - test_loss
+        abs_errors = point_predictions - test_L
         ppl_ratio_pct = (2**abs_errors - 1) * 100
 
         fig.add_trace(
@@ -310,7 +310,7 @@ def plot_scaling_law_3d(
                 marker=dict(
                     size=3, color="red", symbol="diamond", line=dict(width=1, color="darkred")
                 ),
-                name="Predicted Loss",
+                name="Predicted L",
                 customdata=np.stack(
                     [test_N / 1e6, test_D / 1e9, point_predictions, abs_errors, ppl_ratio_pct],
                     axis=-1,
@@ -370,9 +370,7 @@ def plot_scaling_law_3d(
             showgrid=True,
             gridcolor="rgba(0,0,0,0.1)",
         ),
-        zaxis=dict(
-            title="Loss", showgrid=True, gridcolor="rgba(0,0,0,0.1)", range=[loss_min, loss_max]
-        ),
+        zaxis=dict(title="L", showgrid=True, gridcolor="rgba(0,0,0,0.1)", range=[L_min, L_max]),
         camera=dict(eye=camera_eye),
         aspectmode="cube",
     )
@@ -483,8 +481,8 @@ def plot_scaling_law_3d_comparison(
             plot_scaling_law_3d_comparison,
         )
 
-        baseline = ScalingLawRollout.fit(N=N, D=D, loss=baseline_loss, fit_fn=...)
-        intervention = ScalingLawRollout.fit(N=N, D=D, loss=interv_loss, fit_fn=...)
+        baseline = ScalingLawRollout.fit(N=N, D=D, L=baseline_L, fit_fn=...)
+        intervention = ScalingLawRollout.fit(N=N, D=D, L=interv_L, fit_fn=...)
 
         fig = plot_scaling_law_3d_comparison(
             ("Baseline", baseline),
@@ -530,9 +528,9 @@ def plot_scaling_law_3d_comparison(
         [np.atleast_1d(s.train_D) for s in all_splits]
         + [np.atleast_1d(s.test_D) for s in all_splits]
     )
-    all_loss = np.concatenate(
-        [np.atleast_1d(s.train_loss) for s in all_splits]
-        + [np.atleast_1d(s.test_loss) for s in all_splits]
+    all_L = np.concatenate(
+        [np.atleast_1d(s.train_L) for s in all_splits]
+        + [np.atleast_1d(s.test_L) for s in all_splits]
     )
     N_min, N_max = all_N.min(), all_N.max()
     D_min, D_max = all_D.min(), all_D.max()
@@ -545,10 +543,10 @@ def plot_scaling_law_3d_comparison(
             e_values.append(model.point_estimate.fitted_params.E)
         elif isinstance(model, ChinchillaParametricFit):
             e_values.append(model.fitted_params.E)
-    loss_min = min(e_values) if e_values else all_loss.min()
-    loss_max = all_loss.max()
-    loss_padding = (loss_max - loss_min) * 0.05
-    loss_max += loss_padding
+    L_min = min(e_values) if e_values else all_L.min()
+    L_max = all_L.max()
+    L_padding = (L_max - L_min) * 0.05
+    L_max += L_padding
 
     # Create grid
     log_N_grid = np.linspace(np.log10(N_min * 0.8), np.log10(N_max * 1.2), grid_resolution)
@@ -617,13 +615,13 @@ def plot_scaling_law_3d_comparison(
             # Training points (squares)
             train_N = np.atleast_1d(split.train_N)
             train_D = np.atleast_1d(split.train_D)
-            train_loss = np.atleast_1d(split.train_loss)
+            train_L = np.atleast_1d(split.train_L)
 
             fig.add_trace(
                 go.Scatter3d(
                     x=np.log10(train_N),
                     y=np.log10(train_D),
-                    z=train_loss,
+                    z=train_L,
                     mode="markers",
                     marker=dict(
                         size=4,
@@ -634,7 +632,7 @@ def plot_scaling_law_3d_comparison(
                     ),
                     name=f"{exp_name} Train",
                     legendgroup=exp_name,
-                    customdata=np.stack([train_N / 1e6, train_D / 1e9, train_loss], axis=-1),
+                    customdata=np.stack([train_N / 1e6, train_D / 1e9, train_L], axis=-1),
                     hovertemplate=(
                         f"<b>{exp_name} Train</b><br>"
                         "N: %{customdata[0]:.1f}M<br>"
@@ -649,18 +647,18 @@ def plot_scaling_law_3d_comparison(
             # Test points (circles)
             test_N = np.atleast_1d(split.test_N)
             test_D = np.atleast_1d(split.test_D)
-            test_loss = np.atleast_1d(split.test_loss)
+            test_L = np.atleast_1d(split.test_L)
 
             fig.add_trace(
                 go.Scatter3d(
                     x=np.log10(test_N),
                     y=np.log10(test_D),
-                    z=test_loss,
+                    z=test_L,
                     mode="markers",
                     marker=dict(size=5, color=solid_color, symbol="circle"),
                     name=f"{exp_name} Test",
                     legendgroup=exp_name,
-                    customdata=np.stack([test_N / 1e6, test_D / 1e9, test_loss], axis=-1),
+                    customdata=np.stack([test_N / 1e6, test_D / 1e9, test_L], axis=-1),
                     hovertemplate=(
                         f"<b>{exp_name} Test</b><br>"
                         "N: %{customdata[0]:.1f}M<br>"
@@ -751,7 +749,7 @@ def plot_scaling_law_3d_comparison(
                 title="Loss",
                 showgrid=True,
                 gridcolor="rgba(0,0,0,0.1)",
-                range=[loss_min, loss_max],
+                range=[L_min, L_max],
             ),
             camera=dict(eye=camera_eye),
             aspectmode="cube",

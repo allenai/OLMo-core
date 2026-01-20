@@ -4,11 +4,7 @@ from typing import Callable, Literal, Optional
 import numpy as np
 from numpy.typing import ArrayLike
 
-from olmo_core.model_ladder.analysis.scaling_laws import ScalingLawModel
-
-# =============================================================================
-# Metric Utilities
-# =============================================================================
+from .scaling_laws import ScalingLawModel
 
 
 def perplexity_ratio(predicted_bpb: np.ndarray, actual_bpb: np.ndarray) -> np.ndarray:
@@ -57,36 +53,7 @@ def relative_bpb_error(predicted_bpb: np.ndarray, actual_bpb: np.ndarray) -> np.
     return np.abs(predicted_bpb - actual_bpb) / actual_bpb
 
 
-def rollout_distance(
-    test_values: np.ndarray,
-    cutoff_value: float,
-    scale: Literal["log", "linear", "relative"] = "log",
-) -> np.ndarray:
-    """
-    Compute the rollout distance from the training cutoff to each test point.
-
-    For Chinchilla-style scaling laws, "log" scale is recommended because
-    the scaling law is a power law that's linear in log-space.
-
-    :param test_values: Test point values (N or D depending on split_by).
-    :param cutoff_value: The cutoff value used for training.
-    :param scale: How to measure distance:
-        - "log": log(test/cutoff), natural for power-law relationships (recommended)
-        - "linear": test - cutoff, raw difference
-        - "relative": (test - cutoff) / cutoff, relative difference
-    :returns: Distance for each test point (always positive for valid rollouts).
-    """
-    if scale == "log":
-        return np.log(test_values / cutoff_value)
-    elif scale == "linear":
-        return test_values - cutoff_value
-    elif scale == "relative":
-        return (test_values - cutoff_value) / cutoff_value
-    else:
-        raise ValueError(f"Unknown scale: {scale}")
-
-
-def distance_weights(
+def _distance_weights(
     distances: np.ndarray, decay: Literal["inverse", "exp"] = "inverse", decay_scale: float = 1.0
 ) -> np.ndarray:
     """
@@ -112,11 +79,6 @@ def distance_weights(
         raise ValueError(f"Unknown decay function: {decay}")
 
     return w / w.sum()
-
-
-# =============================================================================
-# Rollout / Cross-Validation Utilities
-# =============================================================================
 
 
 @dataclass
@@ -149,8 +111,8 @@ class RolloutSplit:
     train_D: np.ndarray
     """Data sizes (tokens) for training points."""
 
-    train_loss: np.ndarray
-    """Measured loss for training points."""
+    train_L: np.ndarray
+    """Measured loss (L) for training points."""
 
     test_N: np.ndarray
     """Model sizes (parameters) for test points."""
@@ -158,8 +120,8 @@ class RolloutSplit:
     test_D: np.ndarray
     """Data sizes (tokens) for test points."""
 
-    test_loss: np.ndarray
-    """Measured loss for test points."""
+    test_L: np.ndarray
+    """Measured loss (L) for test points."""
 
     @property
     def train_predictions(self) -> np.ndarray:
@@ -174,7 +136,7 @@ class RolloutSplit:
     @property
     def residuals(self) -> np.ndarray:
         """Log-space residuals (log(actual) - log(predicted)). Scale-invariant."""
-        return np.log(self.test_loss) - np.log(self.test_predictions)
+        return np.log(self.test_L) - np.log(self.test_predictions)
 
 
 @dataclass
@@ -198,7 +160,7 @@ class ScalingLawRollout:
 
         # Fit scaling laws
         rollout = ScalingLawRollout.fit(
-            N=N, D=D, loss=loss, fit_fn=ChinchillaParametricBootstrappedFit.fit
+            N=N, D=D, L=L, fit_fn=ChinchillaParametricBootstrappedFit.fit
         )
 
         # Evaluate predictions
@@ -213,7 +175,7 @@ class ScalingLawRollout:
     D: ArrayLike
     """Data sizes (tokens)."""
 
-    loss: ArrayLike
+    L: ArrayLike
     """Measured loss values."""
 
     splits: list[RolloutSplit]
@@ -227,7 +189,7 @@ class ScalingLawRollout:
         cls,
         N: ArrayLike,
         D: ArrayLike,
-        loss: ArrayLike,
+        L: ArrayLike,
         fit_fn: Callable[..., ScalingLawModel],
         weights: Optional[ArrayLike] = None,
         split_by: Literal["N", "D"] = "N",
@@ -240,9 +202,9 @@ class ScalingLawRollout:
 
         :param N: Model sizes (parameters).
         :param D: Data sizes (tokens).
-        :param loss: Measured loss values.
+        :param L: Measured loss values.
         :param fit_fn: Callable that fits a scaling law model, e.g. ``ChinchillaParametricFit.fit``.
-            Must accept ``N``, ``D``, ``loss`` keyword arguments and return a :class:`ScalingLawModel`.
+            Must accept ``N``, ``D``, ``L`` keyword arguments and return a :class:`ScalingLawModel`.
         :param weights: Optional weights for each data point.
         :param split_by: Variable to split by ("N" or "D").
         :param min_points_train: Minimum number of training points required.
@@ -252,12 +214,12 @@ class ScalingLawRollout:
         """
         N_arr = np.asarray(N)
         D_arr = np.asarray(D)
-        loss_arr = np.asarray(loss)
+        L_arr = np.asarray(L)
         weights_arr = np.asarray(weights) if weights is not None else None
 
-        if len(N_arr) != len(D_arr) != len(loss_arr):
+        if len(N_arr) != len(D_arr) != len(L_arr):
             raise ValueError(
-                f"Input arrays must have same length. Got N={len(N_arr)}, D={len(D_arr)}, loss={len(loss_arr)}"
+                f"Input arrays must have same length. Got N={len(N_arr)}, D={len(D_arr)}, L={len(L_arr)}"
             )
         if weights_arr is not None and len(weights_arr) != len(N_arr):
             raise ValueError(
@@ -289,7 +251,7 @@ class ScalingLawRollout:
             model = fit_fn(
                 N=N_arr[train_mask],
                 D=D_arr[train_mask],
-                loss=loss_arr[train_mask],
+                L=L_arr[train_mask],
                 **current_kwargs,
             )
 
@@ -301,19 +263,14 @@ class ScalingLawRollout:
                 model=model,
                 train_N=N_arr[train_mask],
                 train_D=D_arr[train_mask],
-                train_loss=loss_arr[train_mask],
+                train_L=L_arr[train_mask],
                 test_N=N_arr[test_mask],
                 test_D=D_arr[test_mask],
-                test_loss=loss_arr[test_mask],
+                test_L=L_arr[test_mask],
             )
             splits.append(split)
 
-        return cls(N=N, D=D, loss=loss, splits=splits, weights=weights)
-
-
-# =============================================================================
-# Evaluation Functions and Result Containers
-# =============================================================================
+        return cls(N=N, D=D, L=L, splits=splits, weights=weights)
 
 
 @dataclass
@@ -430,7 +387,7 @@ def evaluate_split(
     :param weight_decay_scale: Scale parameter for decay.
     :returns: SplitEvaluation with per-point and aggregate metrics.
     """
-    test_loss = np.atleast_1d(split.test_loss)
+    test_L = np.atleast_1d(split.test_L)
     test_predictions = np.atleast_1d(split.test_predictions)
 
     if split.cutoff_variable == "N":
@@ -439,14 +396,14 @@ def evaluate_split(
         test_values = np.atleast_1d(split.test_D)
 
     # Compute per-point metrics
-    bpb_errs = test_predictions - test_loss
-    ppl_ratios = perplexity_ratio(test_predictions, test_loss)
-    rel_errs = relative_bpb_error(test_predictions, test_loss)
+    bpb_errs = test_predictions - test_L
+    ppl_ratios = perplexity_ratio(test_predictions, test_L)
+    rel_errs = relative_bpb_error(test_predictions, test_L)
 
     # Log-space distance
     distances = np.log(test_values / split.cutoff_value)
     # Weight the distances by the decay function to prioritize nearby predictions.
-    weights = distance_weights(distances, decay=weight_decay, decay_scale=weight_decay_scale)
+    weights = _distance_weights(distances, decay=weight_decay, decay_scale=weight_decay_scale)
 
     # Perplexity-based aggregates
     abs_ppl_errors = np.abs(ppl_ratios - 1) * 100
@@ -464,7 +421,7 @@ def evaluate_split(
 
     return SplitEvaluation(
         cutoff_value=split.cutoff_value,
-        n_test_points=len(test_loss),
+        n_test_points=len(test_L),
         bpb_errors=bpb_errs,
         perplexity_ratios=ppl_ratios,
         relative_errors=rel_errs,
@@ -512,7 +469,7 @@ def evaluate_rollout(
 
     Example::
 
-        rollout = ScalingLawRollout.fit(N=N, D=D, loss=loss, fit_fn=...)
+        rollout = ScalingLawRollout.fit(N=N, D=D, L=L, fit_fn=...)
         evaluation = evaluate_rollout(rollout)
 
         # Emphasize splits with more training data
