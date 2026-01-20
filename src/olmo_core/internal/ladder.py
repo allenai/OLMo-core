@@ -230,11 +230,16 @@ def parse_args(
         metrics,
         "Download the metrics for a given model size.",
     )
+    add_sub_command(
+        "metrics-all",
+        metrics_all,
+        "Download the metrics for all model sizes of the ladder.",
+    )
 
     for cmd, parser in sub_commands.items():
         add_general_args(parser)
 
-        if cmd != "launch-all":
+        if cmd not in {"launch-all", "metrics-all"}:
             parser.add_argument(
                 "--size",
                 choices=list(size_enum),
@@ -243,7 +248,7 @@ def parse_args(
                 help="The model size.",
             )
 
-        if cmd in {"launch-all", "status"}:
+        if cmd in {"launch-all", "status", "metrics-all"}:
             parser.add_argument(
                 "--max-size",
                 choices=list(size_enum),
@@ -251,7 +256,7 @@ def parse_args(
                 help="The maximum model size. If not specified, status/metrics for all sizes will be shown.",
             )
 
-        if cmd in {"dry-run", "metrics"}:
+        if cmd in {"dry-run", "metrics", "metrics-all"}:
             parser.add_argument(
                 "--output-dir",
                 type=Path,
@@ -346,15 +351,15 @@ def main(
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
     if configure_ladder is None:
-        assert (
-            configure_model is not None
-        ), "configure_model is required if configure_ladder is unspecified"
+        assert configure_model is not None, (
+            "configure_model is required if configure_ladder is unspecified"
+        )
 
         configure_ladder = get_default_ladder_factory(configure_model, configure_run)
     else:
-        assert (
-            configure_model is None and configure_run is None
-        ), "configure_model / configure_run and mutually exclusive with configure_ladder"
+        assert configure_model is None and configure_run is None, (
+            "configure_model / configure_run and mutually exclusive with configure_ladder"
+        )
 
     args = parse_args(
         configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
@@ -547,6 +552,49 @@ def metrics(args: argparse.Namespace):
     else:
         rich.get_console().print(
             f"[b yellow]Run for size {args.size} has no metrics yet.[/]",
+            highlight=False,
+        )
+        sys.exit(1)
+
+
+def metrics_all(args: argparse.Namespace):
+    prepare_cli_environment()
+    ladder = args.configure_ladder(args)
+    sizes = [args.size_enum(s) for s in ladder.sizes]
+    if args.max_size:
+        sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
+
+    success_count = 0
+    failed_sizes = []
+
+    for size in sizes:
+        print()
+        df = ladder.get_metrics(size)
+        if df is not None:
+            path = io.join_path(args.output_dir, f"metrics_{size}.pkl")
+            df.to_pickle(path)
+            rich.get_console().print(
+                f"[b green]✔[/] Metrics for size [green]{size}[/] saved to [u blue]{path}[/]",
+                highlight=False,
+            )
+            success_count += 1
+        else:
+            rich.get_console().print(
+                f"[b yellow]Run for size {size} has no metrics yet.[/]",
+                highlight=False,
+            )
+            failed_sizes.append(size)
+
+    print()
+    if success_count > 0:
+        rich.get_console().print(
+            f"[b green]✔[/] Successfully downloaded metrics for [green]{success_count}[/] model size(s).",
+            highlight=False,
+        )
+    if failed_sizes:
+        rich.get_console().print(
+            f"[b yellow]⚠[/] No metrics available for [yellow]{len(failed_sizes)}[/] model size(s): "
+            f"{', '.join(str(s) for s in failed_sizes)}",
             highlight=False,
         )
         sys.exit(1)
