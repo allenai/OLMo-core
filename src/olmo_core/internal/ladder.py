@@ -23,6 +23,12 @@ from .common import build_launch_config, get_gpu_type, get_root_dir
 
 log = logging.getLogger(__name__)
 
+# Common storage roots where ladder checkpoints and metrics are saved.
+LADDER_STORAGE_ROOTS = [
+    "weka://oe-training-default/ai2-llm/model-ladders",
+    "gs://ai2-llm/model-ladders",
+]
+
 
 def parse_args(
     configure_ladder: Callable[[argparse.Namespace], ModelLadder],
@@ -262,6 +268,25 @@ def parse_args(
                 type=Path,
                 default=Path("~/Downloads").expanduser(),
                 help="""A local directory to store artifacts in like metrics or the LR schedule plot.""",
+            )
+
+        if cmd in {"metrics", "metrics-all"}:
+            parser.add_argument(
+                "--alternative-dirs",
+                type=str,
+                nargs="*",
+                default=None,
+                help=f"""Alternative root directories to search for checkpoints and metrics.
+                The ladder name and size spec are automatically appended to each directory.
+                Use LADDER_STORAGE_ROOTS to expand to: {LADDER_STORAGE_ROOTS}""",
+            )
+            parser.add_argument(
+                "--discover-all",
+                action="store_true",
+                help="""Discover all checkpoints that exist rather than only checking at expected intervals.
+                This is useful for downloading metrics that may not have been saved at expected intervals
+                (e.g. if different device types are used for the ladder runs, different batch sizes may be used,
+                so the expected intervals may not be the same).""",
             )
 
         if cmd == "dry-run":
@@ -535,10 +560,30 @@ def status(args: argparse.Namespace):
         )
 
 
+def _get_alternative_dirs(args: argparse.Namespace, ladder_name: str) -> list[str] | None:
+    """Expand alternative_dirs, appending ladder_name to each.
+
+    LADDER_STORAGE_ROOTS is expanded to the common storage roots.
+    """
+    if not args.alternative_dirs:
+        return None
+    dirs: list[str] = []
+    for d in args.alternative_dirs:
+        if d == "LADDER_STORAGE_ROOTS":
+            dirs.extend(str(io.join_path(root, ladder_name)) for root in LADDER_STORAGE_ROOTS)
+        else:
+            dirs.append(str(io.join_path(d, ladder_name)))
+    return dirs if dirs else None
+
+
 def metrics(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
-    df = ladder.get_metrics(args.size)
+    df = ladder.get_metrics(
+        args.size,
+        discover_all=args.discover_all,
+        alternative_dirs=_get_alternative_dirs(args, ladder.name),
+    )
     if df is not None:
         path = io.join_path(args.output_dir, f"metrics_{args.size}.pkl")
         df.to_pickle(path)
@@ -567,9 +612,14 @@ def metrics_all(args: argparse.Namespace):
     success_count = 0
     failed_sizes = []
 
+    alternative_dirs = _get_alternative_dirs(args, ladder.name)
     for size in sizes:
         print()
-        df = ladder.get_metrics(size)
+        df = ladder.get_metrics(
+            size,
+            discover_all=args.discover_all,
+            alternative_dirs=alternative_dirs,
+        )
         if df is not None:
             path = io.join_path(args.output_dir, f"metrics_{size}.pkl")
             df.to_pickle(path)
