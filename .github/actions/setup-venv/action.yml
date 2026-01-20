@@ -11,11 +11,11 @@ inputs:
   torch-version:
     description: The PyTorch version to install
     required: false
-    default: '2.7.0'
+    default: '2.9.1'
   torchao-version:
     description: The torchao version to install
     required: false
-    default: '0.9.0'
+    default: '0.15.0'
   channel:
     description: The channel to install from
     required: false
