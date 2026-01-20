@@ -1,6 +1,8 @@
+import dataclasses
 import math
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.data import TokenizerConfig
@@ -200,6 +202,11 @@ class Olmo3ModelConfigurator(TransformerModelConfigurator):
     Model configurator for Olmo 3 transformer models.
     """
 
+    model_construction_kwargs: dict[str, Any] = dataclasses.field(default_factory=dict)
+    """
+    Keyword arguments to pass to the model constructor.
+    """
+
     def configure_model(
         self,
         *,
@@ -229,7 +236,7 @@ class Olmo3ModelConfigurator(TransformerModelConfigurator):
             except RuntimeError:
                 pass
 
-        kwargs = dict(attn_backend=attn_backend)
+        kwargs = dict(attn_backend=attn_backend, **self.model_construction_kwargs)
 
         model: TransformerConfig
         if size_spec == TransformerSize.size_60M:

@@ -6,6 +6,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.optim import (
     WSDS,
+    OptimConfig,
     OptimGroupOverride,
     Scheduler,
     SchedulerUnits,
@@ -67,7 +68,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             self.chinchilla_multiple,
         )
 
-    def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepAdamWConfig:
+    def configure_optimizer(self, num_params: int, batch_size: int) -> OptimConfig:
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838,
         # which is optimal for 1xC.
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
@@ -180,6 +181,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         lrs = []
         while tokens_seen <= t_max:
             tokens_seen += batch_size
+            assert isinstance(optim, SkipStepAdamWConfig)
             lr = float(scheduler.get_lr(optim.lr, tokens_seen, t_max))
             tokens.append(tokens_seen)
             lrs.append(lr)
@@ -208,6 +210,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             batch_size * (d.value // batch_size)
             for d, _ in self.configure_checkpoint_intervals(num_params, batch_size)
         ]
+        assert isinstance(optim, SkipStepAdamWConfig)
         plt.scatter(
             checkpoint_intervals,
             [float(scheduler.get_lr(optim.lr, t, t_max)) for t in checkpoint_intervals],

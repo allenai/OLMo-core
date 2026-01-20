@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for Qwen3 models.
 - Added support for Muon and Dion optimizers.
 - Added support for Ulysses-style context parallelism.
+- Added Beaker URL to Wandb logging.
 - Added 60M, 14M, and 1M model sizes.
 - `SpeedMonitorCallback` will log Chinchilla multiple number of tokens during training with a `TransformerTrainModule`.
 - Added utilities for fitting, evaluating, and visualizing chinchilla-style scaling laws.
@@ -53,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Big changes to `olmo_core.model_ladder` API.
 - Add ngram instance filter to olmo3_ladder.
 - Upgraded to beaker-py v2.
+- Now, we check `dist.is_initialized()` before calling `dist.init_process_group()` in `init_distributed()`.
 
 ## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
 

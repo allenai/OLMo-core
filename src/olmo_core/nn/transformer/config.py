@@ -468,6 +468,7 @@ class TransformerConfig(ModelConfig):
             hidden_size_multiplier=1.0,
             n_layers=kwargs.pop("n_layers", 4),
             n_heads=kwargs.pop("n_heads", 4),
+            head_dim=kwargs.pop("head_dim", 4),
             vocab_size=vocab_size,
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
