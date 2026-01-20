@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 from functools import partial
 from itertools import product
-from typing import NamedTuple, Optional, Protocol
+from typing import NamedTuple, Optional, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -46,16 +46,12 @@ def chinchilla_parametric_scaling_law(
     return E + param_term + data_term
 
 
+@runtime_checkable
 class ScalingLawModel(Protocol):
     """Protocol for any scaling law model that can predict loss for a given (N, D) allocation."""
 
-    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray: ...
-
-
-class ScalingLawModelFitter(Protocol):
-    """Protocol for any scaling law model fitter that can fit a scaling law model to data."""
-
-    def fit(self, N: ArrayLike, D: ArrayLike, loss: ArrayLike, **kwargs) -> "ScalingLawModel": ...
+    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
+        ...
 
 
 class ChinchillaParams(NamedTuple):

@@ -1,10 +1,10 @@
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
 
-from olmo_core.model_ladder.analysis.scaling_laws import ScalingLawModel, ScalingLawModelFitter
+from olmo_core.model_ladder.analysis.scaling_laws import ScalingLawModel
 
 # =============================================================================
 # Metric Utilities
@@ -198,7 +198,7 @@ class ScalingLawRollout:
 
         # Fit scaling laws
         rollout = ScalingLawRollout.fit(
-            N=N, D=D, loss=loss, model_fitter=ChinchillaParametricBootstrappedFit
+            N=N, D=D, loss=loss, fit_fn=ChinchillaParametricBootstrappedFit.fit
         )
 
         # Evaluate predictions
@@ -228,7 +228,7 @@ class ScalingLawRollout:
         N: ArrayLike,
         D: ArrayLike,
         loss: ArrayLike,
-        model_fitter: ScalingLawModelFitter,
+        fit_fn: Callable[..., ScalingLawModel],
         weights: Optional[ArrayLike] = None,
         split_by: Literal["N", "D"] = "N",
         min_points_train: int = 5,
@@ -241,12 +241,13 @@ class ScalingLawRollout:
         :param N: Model sizes (parameters).
         :param D: Data sizes (tokens).
         :param loss: Measured loss values.
-        :param model_fitter: Scaling law model fitter with a `fit` method.
+        :param fit_fn: Callable that fits a scaling law model, e.g. ``ChinchillaParametricFit.fit``.
+            Must accept ``N``, ``D``, ``loss`` keyword arguments and return a :class:`ScalingLawModel`.
         :param weights: Optional weights for each data point.
         :param split_by: Variable to split by ("N" or "D").
         :param min_points_train: Minimum number of training points required.
         :param min_groups_train: Minimum number of unique groups in training set.
-        :param **fit_kwargs: Additional arguments passed to model_fitter.fit.
+        :param **fit_kwargs: Additional arguments passed to ``fit_fn``.
         :returns: ScalingLawRollout instance with computed splits.
         """
         N_arr = np.asarray(N)
@@ -285,7 +286,7 @@ class ScalingLawRollout:
             if weights_arr is not None:
                 current_kwargs["weights"] = weights_arr[train_mask]
 
-            model = model_fitter.fit(
+            model = fit_fn(
                 N=N_arr[train_mask],
                 D=D_arr[train_mask],
                 loss=loss_arr[train_mask],
@@ -482,7 +483,7 @@ def evaluate_rollout(
     rollout: ScalingLawRollout,
     weight_decay: Literal["inverse", "exp"] = "inverse",
     weight_decay_scale: float = 1.0,
-    split_weights: Optional[np.ndarray] = None,
+    split_weights_fn: Callable[[RolloutSplit], float] = lambda split: 1.0,
 ) -> RolloutEvaluation:
     """
     Evaluate scaling law predictions across multiple rollout splits.
@@ -492,17 +493,32 @@ def evaluate_rollout(
     - **Perplexity error**: Scale-invariant; a 0.01 BPB error is ~0.7% everywhere
     - **Relative BPB error**: Weights low-loss predictions more heavily
 
-    :param splits: List of RolloutSplit objects to evaluate.
-    :param weight_decay: Distance decay function.
+    :param rollout: ScalingLawRollout to evaluate.
+    :param weight_decay: Distance decay function for within-split weighting.
     :param weight_decay_scale: Scale parameter for decay.
-    :param split_weights: Optional weights for each split. If None, weights by
-        number of test points.
+    :param split_weights_fn: Function that computes a weight for each split.
+        Takes a RolloutSplit and returns a float. Weights are normalized to sum to 1.
+        Default is uniform weighting (``lambda split: 1.0``).
+
+        Common weighting functions::
+
+            # Weight by number of training points
+            lambda split: len(split.train_N)
+
+            # Weight by total training compute
+            lambda split: np.sum(6.0 * split.train_N * split.train_D)
+
     :returns: RolloutEvaluation with per-split and aggregate metrics.
 
     Example::
 
-        rollout = ScalingLawRollout.fit(N=N, D=D, loss=loss, model_fitter=...)
+        rollout = ScalingLawRollout.fit(N=N, D=D, loss=loss, fit_fn=...)
         evaluation = evaluate_rollout(rollout)
+
+        # Emphasize splits with more training data
+        evaluation = evaluate_rollout(
+            rollout, split_weights_fn=lambda s: len(s.train_N)
+        )
     """
     if not rollout.splits:
         raise ValueError("rollout.splits list cannot be empty")
@@ -516,12 +532,8 @@ def evaluate_rollout(
         for split in rollout.splits
     ]
 
-    # Compute split weights
-    if split_weights is None:
-        # Default to weighting by number of test points.
-        computed_weights = np.array([e.n_test_points for e in split_evals], dtype=float)
-    else:
-        computed_weights = np.asarray(split_weights)
+    # Compute split weights by applying the weight function to each split
+    computed_weights = np.array([split_weights_fn(split) for split in rollout.splits], dtype=float)
     computed_weights = computed_weights / computed_weights.sum()
 
     # Aggregate perplexity-based metrics

@@ -58,7 +58,7 @@ def plot_scaling_law_3d(
         )
 
         rollout = ScalingLawRollout.fit(
-            N=N, D=D, loss=loss, model_fitter=ChinchillaParametricBootstrappedFit
+            N=N, D=D, loss=loss, fit_fn=ChinchillaParametricBootstrappedFit.fit
         )
 
         # Plot all splits with slider
@@ -483,8 +483,8 @@ def plot_scaling_law_3d_comparison(
             plot_scaling_law_3d_comparison,
         )
 
-        baseline = ScalingLawRollout.fit(N=N, D=D, loss=baseline_loss, model_fitter=...)
-        intervention = ScalingLawRollout.fit(N=N, D=D, loss=interv_loss, model_fitter=...)
+        baseline = ScalingLawRollout.fit(N=N, D=D, loss=baseline_loss, fit_fn=...)
+        intervention = ScalingLawRollout.fit(N=N, D=D, loss=interv_loss, fit_fn=...)
 
         fig = plot_scaling_law_3d_comparison(
             ("Baseline", baseline),

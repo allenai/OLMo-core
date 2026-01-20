@@ -1,9 +1,11 @@
 import numpy as np
+import pytest
 
 from olmo_core.model_ladder.analysis.scaling_laws import (
     ChinchillaParametricBootstrappedFit,
     ChinchillaParametricFit,
     ChinchillaParams,
+    ScalingLawModel,
     chinchilla_parametric_scaling_law,
 )
 from olmo_core.utils import seed_all
@@ -136,3 +138,29 @@ def test_chinchilla_parametric_bootstrapped_fit():
     )
     assert dist_with_noise.shape == (len(boot_fit.fits), 1)
     assert np.all(np.isfinite(dist_with_noise))
+
+
+@pytest.mark.parametrize(
+    "model_factory",
+    [
+        lambda: ChinchillaParams(E=1.0, A=100.0, alpha=0.5, B=200.0, beta=0.3),
+        lambda: ChinchillaParametricFit.fit(
+            N=np.array([1e6, 2e6, 5e6, 1e7, 2e7]),
+            D=np.array([1e9, 2e9, 5e9, 1e10, 2e10]),
+            loss=np.array([2.5, 2.3, 2.1, 1.9, 1.7]),
+            num_slices=2,
+        ),
+        lambda: ChinchillaParametricBootstrappedFit.fit(
+            N=np.array([1e6, 2e6, 5e6, 1e7, 2e7]),
+            D=np.array([1e9, 2e9, 5e9, 1e10, 2e10]),
+            loss=np.array([2.5, 2.3, 2.1, 1.9, 1.7]),
+            num_bootstraps=3,
+            num_slices=2,
+            progress_bar=False,
+            seed=42,
+        ),
+    ],
+)
+def test_scaling_law_model_protocol(model_factory):
+    model = model_factory()
+    assert isinstance(model, ScalingLawModel)
