@@ -58,7 +58,7 @@ class AttentionSinkMonitor:
         self._handles = []
 
     @torch.no_grad()
-    def _attention_hook(self, _module: nn.Module, args, module_name: str):
+    def _attention_hook(self, module: nn.Module, args, module_name: str):
         """
         Forward pre-hook that captures q, k tensors and computes attention statistics.
 
@@ -101,17 +101,46 @@ class AttentionSinkMonitor:
 
         # Compute attention scores
         scores = torch.einsum('b h q d, b h k d -> b h q k', this_q, k_before) / (head_dim ** 0.5)
+
+        # Determine the effective attention window start
+        # window_size is (left, right) where (-1, -1) means no sliding window
+        # For causal attention, right is typically 0, left is the window size - 1
+        window_size = getattr(module, 'window_size', (-1, -1))
+        window_start = 0  # Default: can attend from position 0
+        if window_size != (-1, -1):
+            window_left = window_size[0]
+            if window_left >= 0:
+                # Token at position t can only attend to [t - window_left - 1, t]
+                window_start = max(0, t - window_left - 1)
+                # Mask out tokens outside the sliding window
+                key_positions = torch.arange(t, device=scores.device)
+                valid_mask = key_positions >= window_start
+                # Apply mask: set invalid positions to -inf before softmax
+                scores = scores.masked_fill(~valid_mask.view(1, 1, 1, -1), float('-inf'))
+
         attn = torch.softmax(scores, dim=-1)  # [B, H, 1, t]
 
         # Compute attention weights for sink and local tokens
-        sink_idx = torch.arange(self.sink_range[0], self.sink_range[1], device=attn.device)
-        local_idx = torch.arange(self.local_range[0], self.local_range[1], device=attn.device)
+        # Sink = first 100 tokens the model CAN attend to (accounting for sliding window)
+        sink_size = self.sink_range[1] - self.sink_range[0]  # Typically 100
+        effective_sink_start = window_start
+        effective_sink_end = min(window_start + sink_size, t)
 
-        sink_weight = attn[..., sink_idx].sum(dim=-1).sum() / n_heads
-        local_weight = attn[..., local_idx].sum(dim=-1).sum() / n_heads
+        # Local = last 100 tokens before token_idx (unchanged)
+        local_idx = torch.arange(self.local_range[0], min(self.local_range[1], t), device=attn.device)
+        sink_idx = torch.arange(effective_sink_start, effective_sink_end, device=attn.device)
 
-        percent_sink = float(sink_weight * 100)
-        percent_local = float(local_weight * 100)
+        if len(sink_idx) > 0:
+            sink_weight = attn[..., sink_idx].sum(dim=-1).sum() / n_heads
+            percent_sink = float(sink_weight * 100)
+        else:
+            percent_sink = 0.0
+
+        if len(local_idx) > 0:
+            local_weight = attn[..., local_idx].sum(dim=-1).sum() / n_heads
+            percent_local = float(local_weight * 100)
+        else:
+            percent_local = 0.0
 
         self._results.append({
             'layer': self._current_layer,
