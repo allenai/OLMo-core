@@ -60,3 +60,6 @@ site/
 /scratch/
 core
 /dataset-cache/
+venv/
+*.md
+test_fingerprint*.py

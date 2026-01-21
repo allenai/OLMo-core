@@ -1,22 +1,16 @@
 import logging
 import os
 import shutil
-import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 
-from olmo_core.data.utils import get_labels
 from olmo_core.distributed.checkpoint import save_state_dict
-from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.eval import Evaluator
+from olmo_core.distributed.utils import get_rank
 from olmo_core.io import join_path
-from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import cuda_sync_debug_mode, format_float, get_default_device, move_to_device
 
-from ..common import Duration
 from .callback import Callback
 from .evaluator_callback import EvaluatorCallback
 
@@ -67,24 +61,18 @@ class ModelMergeCallback(Callback):
     The merged checkpoint will be saved as "step{merge_step}-{output_suffix}".
     """
 
-    evaluators: List[Evaluator] = field(default_factory=list)
-    """
-    Evaluators to run on the merged model. If not provided, evaluators are automatically
-    discovered from any ``EvaluatorCallback`` instances in the trainer's callbacks.
-    After saving a merged checkpoint, the merged weights are temporarily loaded into the
-    model, evaluations run, and original weights restored. Metrics are recorded with a
-    "merged-" prefix (e.g., ``eval/merged-lm/CE loss``).
-    """
-
     eval_merged: bool = True
     """
-    Whether to run evaluations on the merged model. Set to False to skip evaluation
-    and only save the merged checkpoint.
+    Whether to run evaluations on the merged model. When enabled, all ``EvaluatorCallback``
+    instances in the trainer's callbacks are run with the merged weights, and metrics are
+    recorded with an "eval/merged" prefix (e.g., ``eval/merged/lm/CE loss``).
+    Set to False to skip evaluation and only save the merged checkpoint.
     """
 
-    eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
+    validate: bool = False
     """
-    The duration to run each evaluator for when evaluating merged models.
+    If True, captures individual step weights during accumulation and validates
+    that the merged weights are correctly averaged. Useful for testing.
     """
 
     enabled: bool = True
@@ -92,6 +80,7 @@ class ModelMergeCallback(Callback):
     _n_accumulated: int = field(default=0, repr=False)
     _merge_steps: List[int] = field(default_factory=list, repr=False)
     _current_merge_idx: int = field(default=0, repr=False)
+    _captured_weights: List[Dict[str, torch.Tensor]] = field(default_factory=list, repr=False)
 
     def _get_decay_steps_from_scheduler(self, scheduler: Scheduler, max_steps: int) -> Tuple[int, str]:
         """
@@ -138,30 +127,6 @@ class ModelMergeCallback(Callback):
                 f"(decay starts at step {decay_start + 1}, from {decay_source}). "
                 f"Model weights during decay may not be ideal for merging."
             )
-
-    def _get_evaluators(self) -> List[Evaluator]:
-        """
-        Get evaluators to use for merged model evaluation.
-
-        If evaluators were explicitly provided, use those. Otherwise, auto-discover
-        evaluators from any EvaluatorCallback instances in trainer.callbacks.
-        """
-        if self.evaluators:
-            return self.evaluators
-
-        # Auto-discover from EvaluatorCallback instances
-        discovered: List[Evaluator] = []
-        for callback in self.trainer.callbacks.values():
-            if isinstance(callback, EvaluatorCallback):
-                discovered.extend(callback.evaluators)
-
-        if discovered:
-            log.info(
-                f"ModelMergeCallback: auto-discovered {len(discovered)} evaluator(s) "
-                f"from EvaluatorCallback instances"
-            )
-
-        return discovered
 
     @property
     def _current_merge_step(self) -> Optional[int]:
@@ -287,6 +252,10 @@ class ModelMergeCallback(Callback):
         for key, value in model_state.items():
             self._accumulator[key].add_(value.float())
 
+        # Capture individual weights for validation if enabled
+        if self.validate:
+            self._captured_weights.append({k: v.clone().float() for k, v in model_state.items()})
+
         self._n_accumulated += 1
         log.debug(f"Accumulated weights at step {self.step} ({self._n_accumulated} total)")
 
@@ -306,6 +275,10 @@ class ModelMergeCallback(Callback):
         averaged_state = {}
         for key, accumulated_value in self._accumulator.items():
             averaged_state[key] = accumulated_value / self._n_accumulated
+
+        # Validate the average if enabled
+        if self.validate:
+            self._validate_average(averaged_state)
 
         # Only rank 0 saves
         if get_rank() == 0:
@@ -329,35 +302,65 @@ class ModelMergeCallback(Callback):
 
         # Evaluate merged model if enabled
         if self.eval_merged:
-            evaluators = self._get_evaluators()
-            if evaluators:
-                self._evaluate_merged(averaged_state, evaluators)
+            self._evaluate_merged(averaged_state)
 
         # Clean up and advance to next merge step
         self._accumulator = None
         self._n_accumulated = 0
         self._current_merge_idx += 1
+        self._captured_weights = []
 
-    def _evaluate_merged(
-        self, averaged_state: Dict[str, torch.Tensor], evaluators: List[Evaluator]
-    ):
+    def _validate_average(self, averaged_state: Dict[str, torch.Tensor]):
+        """
+        Validate that the averaged weights are correctly computed from captured weights.
+
+        Raises AssertionError if the weights don't match.
+        """
+        if not self._captured_weights:
+            log.warning("No captured weights to validate against")
+            return
+
+        log.info(f"Validating merged weights against {len(self._captured_weights)} captured snapshots...")
+
+        # Compute expected average from captured weights
+        keys = list(self._captured_weights[0].keys())
+        for key in keys:
+            stacked = torch.stack([w[key] for w in self._captured_weights])
+            expected = stacked.mean(dim=0)
+            actual = averaged_state[key]
+
+            if not torch.allclose(expected, actual, rtol=1e-4, atol=1e-6):
+                raise AssertionError(
+                    f"Validation failed for key '{key}': "
+                    f"merged weights do not match expected average"
+                )
+
+        log.info("Validation passed: merged weights correctly average captured snapshots")
+
+    def _evaluate_merged(self, averaged_state: Dict[str, torch.Tensor]):
         """
         Evaluate the merged model by temporarily swapping weights.
 
         This method:
         1. Stores the current model weights
         2. Loads the merged/averaged weights
-        3. Runs all provided evaluators
+        3. Runs all EvaluatorCallbacks with a "eval/merged" prefix
         4. Restores the original weights
 
-        Metrics are recorded with a "merged-" prefix to distinguish them from
+        Metrics are recorded with an "eval/merged" prefix to distinguish them from
         regular evaluation metrics.
         """
-        if not evaluators:
+        # Find EvaluatorCallback instances
+        evaluator_callbacks = [
+            cb for cb in self.trainer.callbacks.values()
+            if isinstance(cb, EvaluatorCallback)
+        ]
+
+        if not evaluator_callbacks:
+            log.info("No EvaluatorCallback instances found, skipping merged model evaluation")
             return
 
         model = self.trainer.train_module.model
-        dp_world_size = get_world_size(self.trainer.dp_process_group)
 
         # Store original weights
         log.info("Storing original model weights for merged model evaluation...")
@@ -373,45 +376,11 @@ class ModelMergeCallback(Callback):
                 merged_state_converted[key] = value
         model.load_state_dict(merged_state_converted)
 
-        # Run evaluators
+        # Run evaluator callbacks with "eval/merged" prefix
         try:
-            for evaluator in evaluators:
-                log.info(f"Running merged model {evaluator.name} evals...")
-                start_time = time.monotonic()
-                evaluator.reset_metrics()
-                eval_step = 0
-                eval_tokens = 0
-
-                for batch in evaluator:
-                    eval_step += 1
-                    eval_tokens += batch["input_ids"].numel() * dp_world_size
-
-                    batch = move_to_device(batch, get_default_device())
-                    with torch.no_grad():
-                        labels = get_labels(batch)
-                        output = self.trainer.train_module.eval_batch(batch, labels=labels)
-                        assert isinstance(output, LMOutputWithLoss)
-                        logits, _, ce_loss, _ = output
-
-                        with cuda_sync_debug_mode(0):
-                            evaluator.update_metrics(batch, ce_loss, logits)
-
-                    if self.eval_duration.due(step=eval_step, tokens=eval_tokens, epoch=1):
-                        break
-
-                # Record metrics with "merged-" prefix
-                metrics_str = []
-                with cuda_sync_debug_mode(0):
-                    metrics = evaluator.compute_metrics()
-                    for name, value in metrics.items():
-                        metrics_str.append(f"    {name}={format_float(value.item())}")
-                        self.trainer.record_metric(f"eval/merged-{evaluator.name}/{name}", value)
-
-                log.info(
-                    f"Finished merged model {evaluator.name} evals in "
-                    f"{time.monotonic() - start_time:.1f} seconds. Metrics:\n"
-                    + "\n".join(metrics_str)
-                )
+            for callback in evaluator_callbacks:
+                log.info(f"Running merged model evaluation via {callback.__class__.__name__}...")
+                callback._perform_eval(prefix="eval/merged")
         finally:
             # Restore original weights
             log.info("Restoring original model weights...")

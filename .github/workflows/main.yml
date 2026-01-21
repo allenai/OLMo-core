@@ -192,6 +192,13 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/optim*
+
+          - name: Integration tests (GPU)
+            image: *gpu_test_image
+            gpus: 1
+            run: |
+              pytest -v --color=yes -m gpu \
+                src/integration_tests/
     steps:
       - uses: actions/checkout@v5
         with:

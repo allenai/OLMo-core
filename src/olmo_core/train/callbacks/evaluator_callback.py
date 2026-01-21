@@ -102,7 +102,13 @@ class EvaluatorCallback(Callback):
         ):
             self._perform_eval()
 
-    def _perform_eval(self):
+    def _perform_eval(self, prefix: str = "eval"):
+        """
+        Run evaluation on all evaluators and record metrics.
+
+        :param prefix: Prefix for metric names (e.g., "eval" or "eval/merged").
+            Metrics will be recorded as "{prefix}/{evaluator.name}/{metric_name}".
+        """
         # Put model in eval train mode.
         # TODO: make sure grads will be zeroed at this point
         #  self.trainer.optim.zero_grad(set_to_none=True)
@@ -151,7 +157,7 @@ class EvaluatorCallback(Callback):
                 for name, value in metrics.items():
                     evaluation_names.append(name)
                     metrics_str.append(f"    {name}={format_float(value.item())}")
-                    self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
+                    self.trainer.record_metric(f"{prefix}/{evaluator.name}/{name}", value)
 
             evaluator_times.append(time.monotonic() - start_time)
             evaluator_names.append(evaluation_names)
