@@ -20,21 +20,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class ModelMergeCallback(Callback):
     """
-    A callback that maintains a running average of model weights during training.
-
-    Starting at ``merge_step - merge_last_n_steps``, this callback begins accumulating
-    model weights. At ``merge_step``, it averages and saves the model as a new checkpoint.
-
-    Example usage::
-
-        # Merge right before decay begins (auto-detected from scheduler)
-        callback = ModelMergeCallback()
-
-        # Or specify a custom merge step or list of steps
-        callback = ModelMergeCallback(
-            merge_step=10000,  # or [5000, 10000, 15000]
-            merge_last_n_steps=100,
-        )
+    Averages model weights over the last ``merge_last_n_steps`` before ``merge_step``
+    and saves the result as a merged checkpoint.
     """
 
     merge_step: Optional[Union[int, List[int]]] = None
