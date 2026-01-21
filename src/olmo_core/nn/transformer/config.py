@@ -300,6 +300,7 @@ class TransformerConfig(ModelConfig):
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
     init_std: float = 0.02
+    embedding_init_std: Optional[float] = None
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
@@ -335,6 +336,7 @@ class TransformerConfig(ModelConfig):
                 init_device=init_device,
                 init_seed=self.init_seed,
                 init_std=self.init_std,
+                embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
                 embed_scale=self.embed_scale,
             )
@@ -351,6 +353,7 @@ class TransformerConfig(ModelConfig):
                 init_device=init_device,
                 init_seed=self.init_seed,
                 init_std=self.init_std,
+                embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
             )
         elif self.name == TransformerType.moe:
@@ -366,6 +369,7 @@ class TransformerConfig(ModelConfig):
                 init_device=init_device,
                 init_seed=self.init_seed,
                 init_std=self.init_std,
+                embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
             )
         else:
