@@ -55,7 +55,9 @@ class ModelMergeCallback(Callback):
     _current_merge_idx: int = field(default=0, repr=False)
     _captured_weights: List[Dict[str, torch.Tensor]] = field(default_factory=list, repr=False)
 
-    def _get_decay_steps_from_scheduler(self, scheduler: Scheduler, max_steps: int) -> Tuple[int, str]:
+    def _get_decay_steps_from_scheduler(
+        self, scheduler: Scheduler, max_steps: int
+    ) -> Tuple[int, str]:
         """
         Extract the number of decay steps from a scheduler.
 
@@ -103,7 +105,9 @@ class ModelMergeCallback(Callback):
             # Try to get decay steps from the scheduler
             scheduler = getattr(self.trainer.train_module, "scheduler", None)
             if scheduler is not None:
-                decay_steps, decay_source = self._get_decay_steps_from_scheduler(scheduler, max_steps)
+                decay_steps, decay_source = self._get_decay_steps_from_scheduler(
+                    scheduler, max_steps
+                )
 
             auto_merge_step = max_steps - decay_steps
             self._merge_steps = [auto_merge_step]
@@ -180,7 +184,7 @@ class ModelMergeCallback(Callback):
             return
 
         # Check if there are remaining merge steps that weren't reached
-        remaining_steps = self._merge_steps[self._current_merge_idx:]
+        remaining_steps = self._merge_steps[self._current_merge_idx :]
         if remaining_steps:
             unreached = [s for s in remaining_steps if self.step < s]
             if unreached:
@@ -199,8 +203,7 @@ class ModelMergeCallback(Callback):
             # Initialize accumulator with zeros
             log.info(f"Starting model weight averaging at step {self.step}")
             self._accumulator = {
-                k: torch.zeros_like(v, dtype=torch.float32)
-                for k, v in model_state.items()
+                k: torch.zeros_like(v, dtype=torch.float32) for k, v in model_state.items()
             }
 
         # Add current weights to accumulator
@@ -235,10 +238,12 @@ class ModelMergeCallback(Callback):
         if self.validate:
             self._validate_average(averaged_state)
 
-        output_path = str(join_path(
-            self.trainer.save_folder,
-            f"step{self.step}-{self.output_suffix}",
-        ))
+        output_path = str(
+            join_path(
+                self.trainer.save_folder,
+                f"step{self.step}-{self.output_suffix}",
+            )
+        )
 
         # Only rank 0 creates/clears the directory
         if get_rank() == 0:
@@ -277,7 +282,9 @@ class ModelMergeCallback(Callback):
             log.warning("No captured weights to validate against")
             return
 
-        log.info(f"Validating merged weights against {len(self._captured_weights)} captured snapshots...")
+        log.info(
+            f"Validating merged weights against {len(self._captured_weights)} captured snapshots..."
+        )
 
         # Compute expected average from captured weights
         keys = list(self._captured_weights[0].keys())
@@ -301,8 +308,7 @@ class ModelMergeCallback(Callback):
         """
         # Find EvaluatorCallback instances
         evaluator_callbacks = [
-            cb for cb in self.trainer.callbacks.values()
-            if isinstance(cb, EvaluatorCallback)
+            cb for cb in self.trainer.callbacks.values() if isinstance(cb, EvaluatorCallback)
         ]
 
         if not evaluator_callbacks:

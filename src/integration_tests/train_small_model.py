@@ -119,9 +119,7 @@ def train(save_folder: Path, work_dir: Path):
     model = model_config.build(init_device="meta")
     train_module = train_module_config.build(model)
     dataset = dataset_config.build()
-    data_loader = data_loader_config.build(
-        dataset, dp_process_group=train_module.dp_process_group
-    )
+    data_loader = data_loader_config.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = trainer_config.build(train_module, data_loader)
 
     trainer.fit()
