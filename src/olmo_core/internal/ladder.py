@@ -551,45 +551,54 @@ def status(args: argparse.Namespace):
             sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
 
     # Collect summary info for the table
-    # (size, num_ckpts, num_metrics, total, status_emoji)
-    summary: list[tuple[str, int, int, int, str]] = []
+    # (size, num_ckpts, expected_ckpts, num_metrics, expected_metrics, status_emoji)
+    summary: list[tuple[str, int, int, int, int, str]] = []
 
     for size in sizes:
         print()
-        checkpoints = ladder.get_checkpoints(
-            size,
-            discover_all=args.discover_all,
-            alternative_dirs=alternative_dirs,
+        # Always get expected checkpoints to know the expected total
+        expected_checkpoints = ladder.get_checkpoints(
+            size, discover_all=False, alternative_dirs=alternative_dirs
         )
+        expected_ckpts = len(expected_checkpoints)
+        # Metrics are not expected for the initialization checkpoint (step 0)
+        expected_metrics = expected_ckpts - 1
 
         if args.discover_all:
-            # In discover mode, just show what we found
+            # In discover mode, get discovered checkpoints separately
+            checkpoints = ladder.get_checkpoints(
+                size, discover_all=True, alternative_dirs=alternative_dirs
+            )
+
             if not checkpoints:
                 rich.get_console().print(
-                    f"[b yellow]No checkpoints found for size {size}.[/]",
+                    f"[b red]No checkpoints found for size {size} (expected {expected_ckpts}).[/]",
                     highlight=False,
                 )
-                summary.append((size, 0, 0, 0, "⚠"))
+                summary.append((size, 0, expected_ckpts, 0, expected_metrics, "✘"))
                 continue
 
             checkpoint_displays = [ckpt.display() for ckpt in checkpoints]
             num_ckpts = sum(1 for ckpt in checkpoints if ckpt.exists)
             num_metrics = sum(1 for ckpt in checkpoints if ckpt.metrics_path is not None)
-            num_total = len(checkpoints)
-            header = f"[b green]Discovered {num_total} checkpoint(s) for size {size}:[/]"
+            header = f"[b green]Discovered {num_ckpts} checkpoint(s) for size {size} (expected {expected_ckpts}):[/]"
             rich.get_console().print(
                 f"{header}\n" + "\n".join(checkpoint_displays),
                 highlight=False,
             )
-            summary.append((size, num_ckpts, num_metrics, num_total, "✔" if num_ckpts > 0 else "⚠"))
+            status_emoji = "✔" if num_ckpts >= expected_ckpts else ("⚠" if num_ckpts > 0 else "✘")
+            summary.append(
+                (size, num_ckpts, expected_ckpts, num_metrics, expected_metrics, status_emoji)
+            )
         else:
+            checkpoints = expected_checkpoints
             # Normal mode: check expected intervals and show completion percentage
             if not checkpoints or checkpoints[-1].step == 0:
                 rich.get_console().print(
-                    f"[b yellow]Run for size {size} has no configured checkpoint intervals.[/]",
+                    f"[b red]Run for size {size} has no configured checkpoint intervals.[/]",
                     highlight=False,
                 )
-                summary.append((size, 0, 0, 0, "⚠"))
+                summary.append((size, 0, 0, 0, 0, "✘"))
                 continue
 
             max_step_completed = 0
@@ -615,7 +624,9 @@ def status(args: argparse.Namespace):
                 highlight=False,
             )
             status_emoji = "✔" if pct_complete == 100 else ("⚠" if num_ckpts > 0 else "✘")
-            summary.append((size, num_ckpts, num_metrics, len(checkpoints), status_emoji))
+            summary.append(
+                (size, num_ckpts, expected_ckpts, num_metrics, expected_metrics, status_emoji)
+            )
 
     if len(sizes) > 1:
         print()
@@ -625,13 +636,13 @@ def status(args: argparse.Namespace):
         table.add_column("Metrics", justify="right")
         table.add_column("Status", justify="center")
 
-        for size, num_ckpts, num_metrics, total, status_emoji in summary:
-            if total == 0:
+        for size, num_ckpts, exp_ckpts, num_metrics, exp_metrics, status_emoji in summary:
+            if exp_ckpts == 0:
                 ckpts_str = "-"
                 metrics_str = "-"
             else:
-                ckpts_str = f"{num_ckpts}/{total}"
-                metrics_str = f"{num_metrics}/{total}"
+                ckpts_str = f"{num_ckpts}/{exp_ckpts}"
+                metrics_str = f"{num_metrics}/{exp_metrics}"
 
             if status_emoji == "✔":
                 status_styled = f"[green]{status_emoji}[/]"
