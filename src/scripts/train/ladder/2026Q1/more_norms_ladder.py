@@ -1,46 +1,16 @@
 import argparse
 import logging
-from dataclasses import dataclass
 
-from olmo_core.data import TokenizerConfig
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.ladder import main
-from olmo_core.model_ladder import *
-from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
+from olmo_core.model_ladder import Olmo3ModelConfigurator, TransformerModelConfigurator
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+from olmo_core.nn.transformer import TransformerBlockType
 
 log = logging.getLogger(__name__)
 
-
-@dataclass(kw_only=True)
-class MoreNormsModelConfigurator(Olmo3ModelConfigurator):
-    style: str = "peri"
-    embedding_norm: bool = False
-
-    def configure_model(
-        self,
-        *,
-        size_spec: str,
-        sequence_length: int,
-        tokenizer: TokenizerConfig,
-        device_type: str,
-    ) -> TransformerConfig:
-        model = super().configure_model(
-            size_spec=size_spec,
-            sequence_length=sequence_length,
-            tokenizer=tokenizer,
-            device_type=device_type,
-        )
-
-        if self.style == "peri":
-            # Peri-LN (https://arxiv.org/pdf/2502.02732) plus QK-norm (equivalent to Gemma3).
-            model.block.name = TransformerBlockType.peri_norm
-        else:
-            raise OLMoConfigurationError(f"Unknown style: {self.style}")
-
-        if self.embedding_norm:
-            model.embedding_norm = model.block.layer_norm
-
-        return model
+# This ladder has been run under the name "olmo3-peri-ln"
+# https://wandb.ai/ai2-llm/olmo3-peri-ln
 
 
 def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
@@ -58,13 +28,23 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
     )
 
 
-def configure_model(args: argparse.Namespace) -> ModelConfigurator:
-    return MoreNormsModelConfigurator(
-        style=args.norm_style,
-        embedding_norm=args.embedding_norm,
+def configure_model(args: argparse.Namespace) -> TransformerModelConfigurator:
+    kwargs: dict = {}
+
+    if args.norm_style == "peri":
+        # Peri-LN (https://arxiv.org/pdf/2502.02732) plus QK-norm (equivalent to Gemma3).
+        kwargs["block_name"] = TransformerBlockType.peri_norm
+    else:
+        raise OLMoConfigurationError(f"Unknown norm style: {args.norm_style}")
+
+    if args.embedding_norm:
+        kwargs["embedding_norm"] = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False)
+
+    return Olmo3ModelConfigurator(
         rank_microbatch_size=None
         if args.rank_mbz is None
         else args.rank_mbz * args.sequence_length,
+        model_construction_kwargs=kwargs,
     )
 
 

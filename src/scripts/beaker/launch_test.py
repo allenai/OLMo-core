@@ -31,7 +31,6 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
         num_nodes=1,
         num_gpus=2,
         shared_filesystem=True,
-        #  host_networking=False,
         torchrun=False,
         env_secrets=[
             BeakerEnvSecret(name="HF_TOKEN", secret="HF_TOKEN"),
