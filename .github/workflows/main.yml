@@ -202,7 +202,7 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             run: |
-              torchrun --nproc-per-node=2 -m pytest -v --color=yes -m gpu \
+              pytest -v --color=yes -m gpu \
                 src/integration_tests/
     steps:
       - uses: actions/checkout@v5

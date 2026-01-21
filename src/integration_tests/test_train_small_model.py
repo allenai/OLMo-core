@@ -4,8 +4,8 @@ Trains a small model for a few steps to test ModelMergeCallback.
 Run CPU test:
     pytest -v src/integration_tests/test_train_small_model.py::test_train_small_model
 
-Run GPU test (requires torchrun):
-    torchrun --nproc-per-node=2 -m pytest -v -m gpu src/integration_tests/test_train_small_model.py
+Run GPU test:
+    pytest -v -m gpu src/integration_tests/test_train_small_model.py::test_train_small_model_fsdp
 """
 
 import logging
@@ -24,6 +24,7 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
+from olmo_core.testing import run_distributed_test
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -93,6 +94,7 @@ def train(
             cancel_check_interval=1,
             max_duration=Duration.steps(max_steps),
         )
+        # Checkpointer needed for ModelMergeCallback's process_group; high interval to skip regular saves
         .with_callback("checkpointer", CheckpointerCallback(save_interval=1000))
         .with_callback(
             "lm_evaluator",
@@ -134,13 +136,12 @@ def test_train_small_model(tmp_path):
     train(save_folder, work_dir)
 
 
-@pytest.mark.gpu
-def test_train_small_model_fsdp(tmp_path):
-    """GPU test for ModelMergeCallback with FSDP sharded checkpoints."""
+def _run_train_fsdp(tmp_path: Path):
+    """Inner function that runs inside the distributed environment."""
     save_folder = tmp_path / "checkpoints"
     work_dir = tmp_path / "work_dir"
-    save_folder.mkdir()
-    work_dir.mkdir()
+    save_folder.mkdir(exist_ok=True)
+    work_dir.mkdir(exist_ok=True)
     train(
         save_folder,
         work_dir,
@@ -149,4 +150,15 @@ def test_train_small_model_fsdp(tmp_path):
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
         ),
+    )
+
+
+@pytest.mark.gpu
+def test_train_small_model_fsdp(tmp_path):
+    """GPU test for ModelMergeCallback with FSDP sharded checkpoints."""
+    run_distributed_test(
+        _run_train_fsdp,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(tmp_path,),
     )
