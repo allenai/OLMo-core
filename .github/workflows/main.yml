@@ -193,7 +193,7 @@ jobs:
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/optim*
 
-          - name: Integration tests (GPU)
+          - name: Test train small model (GPU)
             image: *gpu_test_image
             gpus: 1
             run: |
