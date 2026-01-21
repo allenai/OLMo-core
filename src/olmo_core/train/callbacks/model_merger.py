@@ -77,12 +77,16 @@ class ModelMergeCallback(Callback):
         # No decay information found
         return 0, "no decay found"
 
-    def _get_merge_steps_from_wsds(self, scheduler: WSDS, batch_size: int) -> List[int]:
+    def _get_merge_steps_from_wsds(self, scheduler: WSDS, tokens_per_step: int) -> List[int]:
         """
         Extract merge steps from a WSDS scheduler (one per period, before each decay).
 
-        Returns:
-            List of step numbers where merges should occur.
+        :param scheduler: The WSDS scheduler.
+        :param tokens_per_step: Global batch size in tokens (must be tokens, not instances).
+        :returns: List of step numbers where merges should occur.
+
+        Note: This assumes the data loader's global_batch_size is in tokens, which is true
+        for TextDataLoaderBase and its subclasses (NumpyDataLoaderBase, etc.).
         """
         merge_steps = []
 
@@ -93,15 +97,24 @@ class ModelMergeCallback(Callback):
             else:
                 period_end_tokens = sum(scheduler.period_lengths[: i + 1])
 
-            # Compute decay length for this period
-            decay_tokens = scheduler._resolve_decay(period_length)
+            # Compute decay length for this period using public attributes
+            if scheduler.decay is not None:
+                decay_tokens = scheduler.decay
+            else:
+                assert scheduler.decay_fraction is not None
+                decay_tokens = int(round(scheduler.decay_fraction * period_length))
 
             # Merge should happen right before decay starts
             pre_decay_tokens = period_end_tokens - decay_tokens
 
             # Convert tokens to steps
-            merge_step = pre_decay_tokens // batch_size
+            merge_step = pre_decay_tokens // tokens_per_step
             merge_steps.append(merge_step)
+
+            log.debug(
+                f"WSDS period {i}: end={period_end_tokens} tokens, "
+                f"decay={decay_tokens} tokens, merge_step={merge_step}"
+            )
 
         return merge_steps
 
@@ -131,11 +144,14 @@ class ModelMergeCallback(Callback):
 
             # Check for WSDS scheduler (multi-period with multiple anneals)
             if isinstance(scheduler, WSDS):
-                batch_size = self.trainer.data_loader.global_batch_size
-                self._merge_steps = self._get_merge_steps_from_wsds(scheduler, batch_size)
+                # NOTE: This assumes global_batch_size is in tokens (true for TextDataLoaderBase).
+                # If using a different data loader where batch_size is in instances, this will be wrong.
+                tokens_per_step = self.trainer.data_loader.global_batch_size
+                self._merge_steps = self._get_merge_steps_from_wsds(scheduler, tokens_per_step)
                 log.info(
                     f"ModelMergeCallback: detected WSDS scheduler with {len(scheduler.period_lengths)} periods. "
-                    f"merge_steps set to {self._merge_steps} (one before each decay phase)"
+                    f"merge_steps set to {self._merge_steps} (one before each decay phase, "
+                    f"assuming {tokens_per_step} tokens/step)"
                 )
             else:
                 # Single decay scheduler or no scheduler
@@ -236,8 +252,8 @@ class ModelMergeCallback(Callback):
         """
         Add current model weights to the accumulator (stored on CPU to save GPU memory).
 
-        TODO(large-scale): For 70B+ models, calling state_dict() and moving to CPU at every
-        step in the merge window may cause significant throughput overhead. Consider:
+        TODO(large-scale): For larger models, calling state_dict() and moving to CPU at every
+        step in the merge window may cause significant throughput overhead. To think about:
         - Sparse sampling: accumulate every Nth step instead of every step
         - Checkpoint-based: save checkpoints during window, average post-hoc
         """
@@ -395,8 +411,8 @@ class ModelMergeCallback(Callback):
         Save callback state for checkpointing.
 
         TODO(large-scale): Saving the accumulator during the merge window increases checkpoint
-        size by ~1x model size. For 70B+ models, consider:
-        - Not checkpointing accumulator (lose ability to resume mid-window)
+        size by ~1x model size. For larger models, need to think about:
+        - Not checkpointing accumulator (would lose ability to resume mid-window)
         - Making accumulator checkpointing configurable
         - Using checkpoint-based averaging instead of inline accumulation
         """
