@@ -1,21 +1,27 @@
 """
-Trains a small model for a few steps on CPU to test ModelMergeCallback.
+Trains a small model for a few steps to test ModelMergeCallback.
 
-Run with pytest:
-    pytest -v src/integration_tests/test_train_small_model.py
+Run CPU test:
+    pytest -v src/integration_tests/test_train_small_model.py::test_train_small_model
+
+Run GPU test (requires torchrun):
+    torchrun --nproc-per-node=2 -m pytest -v -m gpu src/integration_tests/test_train_small_model.py
 """
 
 import logging
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
+from olmo_core.config import DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
+from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
 from olmo_core.train import Duration, TrainerConfig
@@ -24,7 +30,10 @@ from olmo_core.train.callbacks import (
     LMEvaluatorCallbackConfig,
     ModelMergeCallback,
 )
-from olmo_core.train.train_module import TransformerTrainModuleConfig
+from olmo_core.train.train_module import (
+    TransformerDataParallelConfig,
+    TransformerTrainModuleConfig,
+)
 from olmo_core.utils import seed_all
 
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +42,11 @@ log = logging.getLogger(__name__)
 DATA_PATH = "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy"
 
 
-def train(save_folder: Path, work_dir: Path):
+def train(
+    save_folder: Path,
+    work_dir: Path,
+    dp_config: Optional[TransformerDataParallelConfig] = None,
+):
     """Train a small model for a few steps."""
     seed_all(42)
 
@@ -62,6 +75,7 @@ def train(save_folder: Path, work_dir: Path):
         max_sequence_length=64,
         optim=AdamWConfig(lr=1e-3),
         compile_model=False,
+        dp_config=dp_config,
     )
 
     eval_dataset_config = NumpyPaddedFSLDatasetConfig(
@@ -112,8 +126,27 @@ def train(save_folder: Path, work_dir: Path):
 
 
 def test_train_small_model(tmp_path):
+    """CPU test for basic ModelMergeCallback logic."""
     save_folder = tmp_path / "checkpoints"
     work_dir = tmp_path / "work_dir"
     save_folder.mkdir()
     work_dir.mkdir()
     train(save_folder, work_dir)
+
+
+@pytest.mark.gpu
+def test_train_small_model_fsdp(tmp_path):
+    """GPU test for ModelMergeCallback with FSDP sharded checkpoints."""
+    save_folder = tmp_path / "checkpoints"
+    work_dir = tmp_path / "work_dir"
+    save_folder.mkdir()
+    work_dir.mkdir()
+    train(
+        save_folder,
+        work_dir,
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+        ),
+    )
