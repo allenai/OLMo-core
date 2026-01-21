@@ -27,7 +27,7 @@ class ModelMergeCallback(Callback):
     merge_step: Optional[Union[int, List[int]]] = None
     """
     The step(s) at which to save merged checkpoint(s). Can be a single int or a list of ints.
-    If not set, defaults to the step right before the scheduler's decay phase begins.
+    If not set, defaults to the steps right before the scheduler's decay phases begin.
     For schedulers without a decay phase, defaults to max_steps.
     """
 
@@ -235,6 +235,11 @@ class ModelMergeCallback(Callback):
     def _accumulate_weights(self):
         """
         Add current model weights to the accumulator (stored on CPU to save GPU memory).
+
+        TODO(large-scale): For 70B+ models, calling state_dict() and moving to CPU at every
+        step in the merge window may cause significant throughput overhead. Consider:
+        - Sparse sampling: accumulate every Nth step instead of every step
+        - Checkpoint-based: save checkpoints during window, average post-hoc
         """
         model_state = self.trainer.train_module.model.state_dict()
 
@@ -388,6 +393,12 @@ class ModelMergeCallback(Callback):
     def state_dict(self) -> Dict[str, Any]:
         """
         Save callback state for checkpointing.
+
+        TODO(large-scale): Saving the accumulator during the merge window increases checkpoint
+        size by ~1x model size. For 70B+ models, consider:
+        - Not checkpointing accumulator (lose ability to resume mid-window)
+        - Making accumulator checkpointing configurable
+        - Using checkpoint-based averaging instead of inline accumulation
         """
         state = {
             "n_accumulated": self._n_accumulated,
