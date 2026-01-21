@@ -3,6 +3,7 @@ Attention sink analysis using hook-based monitoring (inspired by GAP monitor).
 This approach uses forward hooks instead of modifying the attention backend directly.
 """
 
+import argparse
 import functools as ft
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -146,7 +147,12 @@ class AttentionSinkMonitor:
 
 
 class OlmoCoreModel:
-    def __init__(self, model_name: str, tokenizer_name: str = "allenai/dolma2-tokenizer"):
+    def __init__(
+        self,
+        model_name: str,
+        tokenizer_name: str = "allenai/dolma2-tokenizer",
+        max_length: int = 10_000,
+    ):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -159,7 +165,7 @@ class OlmoCoreModel:
         self.generation_config = GenerationConfig(
             eos_token_id=self.tokenizer.eos_token_id,
             pad_token_id=self.tokenizer.pad_token_id,
-            max_length=10_000,
+            max_length=max_length,
             max_new_tokens=1,
             temperature=1.0,
             top_p=1.0,
@@ -180,21 +186,54 @@ class OlmoCoreModel:
         )
 
 
-def main(output_file: str = "attention_sink_results.tsv"):
-    model_names = [
-        "/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo29_7b_140B-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-f1a781d3/step2385",
-        "/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo28_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-988d396f/step2385/",
-        "/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo25_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-b9609b3f/step2385",
-        "/weka/oe-training-default/ai2-llm/checkpoints/amandab/llamalike_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-1623f603/step2385/",
-        "/weka/oe-training-default/ai2-llm/checkpoints/amandab/llamalike_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-ffc378a3/step2385/",
-    ]
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Analyze attention sink patterns in transformer models"
+    )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=[
+            "/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo29_7b_140B-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-f1a781d3/step2385",
+            "/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo28_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-988d396f/step2385/",
+            "/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo25_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-b9609b3f/step2385",
+            "/weka/oe-training-default/ai2-llm/checkpoints/amandab/llamalike_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-1623f603/step2385/",
+            "/weka/oe-training-default/ai2-llm/checkpoints/amandab/llamalike_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-ffc378a3/step2385/",
+        ],
+        help="List of paths to model checkpoints",
+    )
+    parser.add_argument(
+        "--num_texts",
+        type=int,
+        default=10,
+        help="Number of random_text files to process (random_text_1.txt to random_text_{num_texts}.txt)",
+    )
+    parser.add_argument(
+        "--token_idx",
+        type=int,
+        default=4000,
+        help="Token index to compute attention at (also updates local_range and max_length)",
+    )
+    return parser.parse_args()
 
-    text_files = [f"random_text_{i}.txt" for i in range(10)]
+
+def main():
+    args = parse_args()
+
+    token_idx = args.token_idx
+    # local_range: 100 tokens before token_idx
+    local_range = (max(0, token_idx - 100), token_idx)
+    # max_length: ensure we have enough context (token_idx + buffer for generation)
+    max_length = token_idx + 100
+
+    output_file = f"attention_sink_results_tok{token_idx}.tsv"
+
+    text_files = [f"random_text_{i}.txt" for i in range(1, args.num_texts + 1)]
     all_results = []
 
-    for model_name in model_names:
+    for model_name in args.models:
         try:
-            model = OlmoCoreModel(model_name=model_name)
+            model = OlmoCoreModel(model_name=model_name, max_length=max_length)
         except Exception as e:
             print(f"Error on model load: {model_name}")
             print(getattr(e, 'message', str(e)))
@@ -207,9 +246,9 @@ def main(output_file: str = "attention_sink_results.tsv"):
         for text_file in text_files:
             # Create and attach the attention sink monitor
             monitor = AttentionSinkMonitor(
-                token_idx=4000,
+                token_idx=token_idx,
                 sink_range=(0, 100),
-                local_range=(3900, 4000),
+                local_range=local_range,
             )
             monitor.attach(model.generation_module.model)
 
