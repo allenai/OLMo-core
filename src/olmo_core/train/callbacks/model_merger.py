@@ -82,11 +82,10 @@ class ModelMergeCallback(Callback):
         Extract merge steps from a WSDS scheduler (one per period, before each decay).
 
         :param scheduler: The WSDS scheduler.
-        :param tokens_per_step: Global batch size in tokens (must be tokens, not instances).
+        :param tokens_per_step: Global batch size (in tokens)
         :returns: List of step numbers where merges should occur.
 
-        Note: This assumes the data loader's global_batch_size is in tokens, which is true
-        for TextDataLoaderBase and its subclasses (NumpyDataLoaderBase, etc.).
+        Note: This assumes the data loader's global_batch_size is in tokens
         """
         merge_steps = []
 
@@ -142,10 +141,9 @@ class ModelMergeCallback(Callback):
             max_steps = self.trainer.max_steps
             scheduler = getattr(self.trainer.train_module, "scheduler", None)
 
-            # Check for WSDS scheduler (multi-period with multiple anneals)
+            # Check for WSDS scheduler (multiple anneals)
             if isinstance(scheduler, WSDS):
-                # NOTE: This assumes global_batch_size is in tokens (true for TextDataLoaderBase).
-                # If using a different data loader where batch_size is in instances, this will be wrong.
+                # NOTE: This assumes global_batch_size is in tokens (true for TextDataLoaderBase)
                 tokens_per_step = self.trainer.data_loader.global_batch_size
                 self._merge_steps = self._get_merge_steps_from_wsds(scheduler, tokens_per_step)
                 log.info(
@@ -184,7 +182,6 @@ class ModelMergeCallback(Callback):
             log.info(f"ModelMergeCallback: merge_steps set to {self._merge_steps}")
 
         # Warn if any merge steps fall within the decay phase (only for non-WSDS schedulers)
-        # For WSDS, each period has its own decay, and auto-detection handles this correctly.
         if self.trainer.max_steps is not None:
             scheduler = getattr(self.trainer.train_module, "scheduler", None)
             if scheduler is not None and not isinstance(scheduler, WSDS):
@@ -250,12 +247,12 @@ class ModelMergeCallback(Callback):
 
     def _accumulate_weights(self):
         """
-        Add current model weights to the accumulator (stored on CPU to save GPU memory).
+        Adds current model weights to the accumulator (stored on CPU).
 
         TODO(large-scale): For larger models, calling state_dict() and moving to CPU at every
-        step in the merge window may cause significant throughput overhead. To think about:
-        - Sparse sampling: accumulate every Nth step instead of every step
-        - Checkpoint-based: save checkpoints during window, average post-hoc
+        step in the merge window may cause significant throughput overhead. 
+        Might want to consider sparse sampling (accumulate every Nth step instead of every step)
+        or doing this one time (moving to CPU only at the end)
         """
         model_state = self.trainer.train_module.model.state_dict()
 
@@ -271,7 +268,7 @@ class ModelMergeCallback(Callback):
         for key, value in model_state.items():
             self._accumulator[key].add_(value.float().cpu())
 
-        # Capture individual weights for validation if enabled (also on CPU)
+        # Capture individual weights for validation if enabled
         if self.validate:
             self._captured_weights.append(
                 {k: v.clone().float().cpu() for k, v in model_state.items()}
@@ -297,7 +294,7 @@ class ModelMergeCallback(Callback):
         for key, accumulated_value in self._accumulator.items():
             averaged_state[key] = accumulated_value / self._n_accumulated
 
-        # Validate the average if enabled
+        # Validate the average if enabled (testing only)
         if self.validate:
             self._validate_average(averaged_state)
 
@@ -324,6 +321,9 @@ class ModelMergeCallback(Callback):
             process_group=self.trainer.checkpointer.process_group,
         )
 
+        # Wait for all ranks to finish saving before proceeding
+        barrier()
+
         log.info(f"Merged checkpoint saved to: {output_path}")
 
         # Evaluate merged model (skips if no EvaluatorCallbacks found)
@@ -337,9 +337,7 @@ class ModelMergeCallback(Callback):
 
     def _validate_average(self, averaged_state: Dict[str, torch.Tensor]):
         """
-        Validate that the averaged weights are correctly computed from captured weights.
-
-        Raises AssertionError if the weights don't match.
+        Validate that the averaged weights are correctly computed from captured weights (testing only).
         """
         if not self._captured_weights:
             log.warning("No captured weights to validate against")
@@ -414,7 +412,6 @@ class ModelMergeCallback(Callback):
         size by ~1x model size. For larger models, need to think about:
         - Not checkpointing accumulator (would lose ability to resume mid-window)
         - Making accumulator checkpointing configurable
-        - Using checkpoint-based averaging instead of inline accumulation
         """
         state = {
             "n_accumulated": self._n_accumulated,
