@@ -376,15 +376,15 @@ def main(
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
     if configure_ladder is None:
-        assert (
-            configure_model is not None
-        ), "configure_model is required if configure_ladder is unspecified"
+        assert configure_model is not None, (
+            "configure_model is required if configure_ladder is unspecified"
+        )
 
         configure_ladder = get_default_ladder_factory(configure_model, configure_run)
     else:
-        assert (
-            configure_model is None and configure_run is None
-        ), "configure_model / configure_run and mutually exclusive with configure_ladder"
+        assert configure_model is None and configure_run is None, (
+            "configure_model / configure_run and mutually exclusive with configure_ladder"
+        )
 
     args = parse_args(
         configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
@@ -435,7 +435,7 @@ def dry_run(args: argparse.Namespace):
     ladder.dry_run(
         args.size,
         show_plot=args.show_plot,
-        save_plot=io.join_path(args.output_dir / f"lr_schedule_{args.size}.png"),
+        save_plot=io.join_path(args.output_dir, ladder.name, f"lr_schedule_{args.size}.png"),
     )
 
 
@@ -665,7 +665,7 @@ def metrics(args: argparse.Namespace):
         alternative_dirs=_get_alternative_dirs(args, ladder.name),
     )
     if df is not None:
-        path = io.join_path(args.output_dir, f"metrics_{args.size}.pkl")
+        path = io.join_path(args.output_dir, ladder.name, f"metrics_{args.size}.pkl")
         df.to_pickle(path)
         rich.get_console().print(
             f"[b green]✔[/] Metrics for size [green]{args.size}[/] saved to [u blue]{path}[/]\n"
@@ -689,6 +689,7 @@ def metrics_all(args: argparse.Namespace):
     if args.max_size:
         sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
 
+    output_dir = io.join_path(args.output_dir, ladder.name)
     success_count = 0
     failed_sizes = []
 
@@ -701,7 +702,7 @@ def metrics_all(args: argparse.Namespace):
             alternative_dirs=alternative_dirs,
         )
         if df is not None:
-            path = io.join_path(args.output_dir, f"metrics_{size}.pkl")
+            path = io.join_path(output_dir, f"metrics_{size}.pkl")
             df.to_pickle(path)
             rich.get_console().print(
                 f"[b green]✔[/] Metrics for size [green]{size}[/] saved to [u blue]{path}[/]",
