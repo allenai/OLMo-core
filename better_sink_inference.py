@@ -40,7 +40,8 @@ class AttentionSinkMonitor:
 
     def attach(self, model: nn.Module):
         """Attach hooks to all attention backend modules in the model."""
-        self._handles = []
+        # First detach any existing hooks
+        self.detach()
         self._results = []
         self._current_layer = 0
 
@@ -56,6 +57,11 @@ class AttentionSinkMonitor:
         for h in self._handles:
             h.remove()
         self._handles = []
+
+    def reset(self):
+        """Reset results for a new inference run (keeps hooks attached)."""
+        self._results = []
+        self._current_layer = 0
 
     @torch.no_grad()
     def _attention_hook(self, module: nn.Module, args, module_name: str):
@@ -142,11 +148,15 @@ class AttentionSinkMonitor:
         else:
             percent_local = 0.0
 
+        # A "sink layer" is one with full attention (no sliding window)
+        is_sink_layer = 1 if window_size == (-1, -1) else 0
+
         self._results.append({
             'layer': self._current_layer,
             'module': module_name,
             'percent_sink': percent_sink,
             'percent_local': percent_local,
+            'is_sink_layer': is_sink_layer,
         })
 
         self._current_layer += 1
@@ -269,24 +279,26 @@ def main():
             continue
 
         # Results for this model, grouped by layer across all text files
-        # layer -> list of (percent_sink, percent_local) tuples
-        layer_results: dict[int, List[Tuple[float, float, str]]] = defaultdict(list)
+        # layer -> list of (percent_sink, percent_local, text_file, is_sink_layer) tuples
+        layer_results: dict[int, List[Tuple[float, float, str, int]]] = defaultdict(list)
+
+        # Create and attach the monitor once per model
+        monitor = AttentionSinkMonitor(
+            token_idx=token_idx,
+            sink_range=(0, 100),
+            local_range=local_range,
+        )
+        monitor.attach(model.generation_module.model)
 
         for text_file in text_files:
-            # Create and attach the attention sink monitor
-            monitor = AttentionSinkMonitor(
-                token_idx=token_idx,
-                sink_range=(0, 100),
-                local_range=local_range,
-            )
-            monitor.attach(model.generation_module.model)
+            # Reset monitor for this text file (keeps hooks attached)
+            monitor.reset()
 
             try:
                 with open(text_file, 'r') as f:
                     input_text = f.read()
             except FileNotFoundError:
                 print(f"Warning: {text_file} not found, skipping")
-                monitor.detach()
                 continue
 
             inputs = model.tokenizer([input_text], return_tensors='pt', padding=False)
@@ -296,22 +308,26 @@ def main():
             # Collect results for this text file
             for result in monitor.get_results():
                 layer_results[result['layer']].append(
-                    (result['percent_sink'], result['percent_local'], text_file)
+                    (result['percent_sink'], result['percent_local'], text_file, result['is_sink_layer'])
                 )
 
-            monitor.detach()
+        # Detach hooks after processing all text files for this model
+        monitor.detach()
 
         # Store individual and averaged results for this model
         for layer, results in sorted(layer_results.items()):
+            # is_sink_layer is the same for all results in this layer
+            is_sink_layer = results[0][3]
+
             # Individual results for each text file
-            for percent_sink, percent_local, text_file in results:
+            for percent_sink, percent_local, text_file, _ in results:
                 all_results.append({
                     'model': model_name,
                     'layer': layer,
                     'text_file': text_file,
                     'percent_sink': percent_sink,
                     'percent_local': percent_local,
-                    'is_average': False,
+                    'is_sink_layer': is_sink_layer,
                 })
 
             # Average across all text files for this layer
@@ -323,13 +339,13 @@ def main():
                 'text_file': 'AVERAGE',
                 'percent_sink': avg_sink,
                 'percent_local': avg_local,
-                'is_average': True,
+                'is_sink_layer': is_sink_layer,
             })
 
     # Write all results to TSV file
     with open(output_file, 'w') as f:
         # Write header
-        f.write("model\tlayer\ttext_file\tpercent_sink\tpercent_local\n")
+        f.write("model\tlayer\ttext_file\tpercent_sink\tpercent_local\tis_sink_layer\n")
 
         # Write all results
         for result in all_results:
@@ -338,7 +354,8 @@ def main():
                 f"{result['layer']}\t"
                 f"{result['text_file']}\t"
                 f"{result['percent_sink']:.2f}\t"
-                f"{result['percent_local']:.2f}\n"
+                f"{result['percent_local']:.2f}\t"
+                f"{result['is_sink_layer']}\n"
             )
 
     print(f"\nResults written to: {output_file}")
