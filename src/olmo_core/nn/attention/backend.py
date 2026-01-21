@@ -310,6 +310,32 @@ class TorchAttentionBackend(AttentionBackend):
         #        (batch_size, n_kv_heads, seq_len, head_dim)
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
+        """ADDED: for sinks"""
+
+
+        t = 4000                           # token index
+        sink_idx = torch.arange(0,100) # example sink indices
+        local_idx = torch.arange(3900,4000)
+        # or: sink_mask = <bool tensor of shape [seq_len]>
+
+        k_before = k[:, :, :t, :]
+        this_q = q[:, :, t, :].unsqueeze(-2)                           # [d]
+        scores = torch.einsum('b h q d, b h k d -> b h q k', this_q, k_before) / this_q.shape[-1]**0.5
+
+        attn = torch.softmax(scores, dim=-1)
+
+        # Option A: using indices
+        sink_weight = attn[..., sink_idx].sum(dim=-1).sum() / 32  # [1, 32, 1]
+        local_weight = attn[..., local_idx].sum(dim=-1).sum() / 32  # [1, 32, 1]    
+
+        percent_sink = float(sink_weight * 100)
+        percent_local = float(local_weight * 100)
+        print(percent_sink, end = "\t")
+        print(percent_local)
+
+
+
+        """END of ADDED for sinks"""
         # shape: (batch_size, n_heads, seq_len, head_dim)
         att = F.scaled_dot_product_attention(
             q,

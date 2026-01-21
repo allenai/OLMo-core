@@ -2,7 +2,7 @@ from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.generate.generation_module.transformer import (
     TransformerGenerationModule,
 )
-from olmo_core.generate.attention.backends import AttentionBackendName
+from olmo_core.nn.attention.backend import AttentionBackendName
 from transformers import AutoTokenizer
 import torch
 
@@ -31,29 +31,44 @@ class OlmoCoreModel():
             stop_token_ids=self.stop_token_ids,
         )
 
-        print(f"Loading OlmoCoreModel from {model_name}")
 
 
         self.device = (
             torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         )
-        generation_module = TransformerGenerationModule.from_checkpoint(
+        self.generation_module = TransformerGenerationModule.from_checkpoint(
             checkpoint_dir=model_name,
             generation_config=self.generation_config,
             device=self.device,
-            dtype=torch.bfloat16,
+            dtype='bfloat16',
             attention_backend=AttentionBackendName.torch,
         )
 
-        print("Initialized OlmoCoreModel")
 
         self.disable_prefill = False
 
-def __main__():
-    pass
 
-    # TODO: get some text (maybe govreport docs?) and tokenize 10 examples
-    from datasets import load_dataset
+from sink_inference import OlmoCoreModel
+for model_name in [ "/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo29_7b_140B-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-f1a781d3/step2385", \
+        "/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo28_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-988d396f/step2385/",
+        "/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo25_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-b9609b3f/step2385",
+        "/weka/oe-training-default/ai2-llm/checkpoints/amandab/llamalike_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-1623f603/step2385/",
+        "/weka/oe-training-default/ai2-llm/checkpoints/amandab/llamalike_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-ffc378a3/step2385/"]:
+        #"/weka/oe-training-default/ai2-llm/checkpoints/amandab/Meta-Llama-3-8B-Base-redone",
+        #"/weka/oe-training-default/ai2-llm/checkpoints/amandab/Marin-8B-Base",
+        #"/weka/oe-training-default/ai2-llm/checkpoints/amandab/olmo25_float8_rerun_for_init_140B_lc_64k-midtrain_round3_qwenlike_s2pdf_gzip2080_10B-preannealv2-d65cb2d/step2385/"]:
+   
+    try:
+        model = OlmoCoreModel(model_name=model_name)
+    except Exception as e:
+        print("error on model load:", model_name)
+        print(e.message)
+        continue 
 
+    with open('random_text_3.txt', 'r') as f:
+        input_text = f.read()
 
-    # TODO: then, run inference with output_attention set to true 
+    inputs = model.tokenizer([input_text], return_tensors='pt', padding=False)
+    print(model_name)
+    model.generation_module.model_forward(**inputs)
+
