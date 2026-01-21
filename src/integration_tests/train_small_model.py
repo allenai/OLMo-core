@@ -87,7 +87,6 @@ def train(save_folder: Path, work_dir: Path):
             ModelMergeCallback(
                 merge_step=max_steps,
                 merge_last_n_steps=3,
-                eval_merged=False,
                 validate=True,
             ),
         )

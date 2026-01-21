@@ -30,15 +30,9 @@ class ModelMergeCallback(Callback):
         # Merge right before decay begins (auto-detected from scheduler)
         callback = ModelMergeCallback()
 
-        # Or specify a custom merge step (averages steps 9901-10000)
+        # Or specify a custom merge step or list of steps
         callback = ModelMergeCallback(
-            merge_step=10000,
-            merge_last_n_steps=100,
-        )
-
-        # Merge at multiple steps throughout training
-        callback = ModelMergeCallback(
-            merge_step=[5000, 10000, 15000],
+            merge_step=10000,  # or [5000, 10000, 15000]
             merge_last_n_steps=100,
         )
     """
@@ -59,14 +53,6 @@ class ModelMergeCallback(Callback):
     """
     Suffix for the output checkpoint directory name.
     The merged checkpoint will be saved as "step{merge_step}-{output_suffix}".
-    """
-
-    eval_merged: bool = True
-    """
-    Whether to run evaluations on the merged model. When enabled, all ``EvaluatorCallback``
-    instances in the trainer's callbacks are run with the merged weights, and metrics are
-    recorded with an "eval/merged" prefix (e.g., ``eval/merged/lm/CE loss``).
-    Set to False to skip evaluation and only save the merged checkpoint.
     """
 
     validate: bool = False
@@ -300,9 +286,8 @@ class ModelMergeCallback(Callback):
 
             log.info(f"Merged checkpoint saved to: {output_path}")
 
-        # Evaluate merged model if enabled
-        if self.eval_merged:
-            self._evaluate_merged(averaged_state)
+        # Evaluate merged model (skips if no EvaluatorCallbacks found)
+        self._evaluate_merged(averaged_state)
 
         # Clean up and advance to next merge step
         self._accumulator = None
