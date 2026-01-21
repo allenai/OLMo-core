@@ -1,45 +1,30 @@
 """
-Trains a small model for a few steps.
-Adapted from: https://github.com/allenai/OLMo-core/blob/main/src/examples/llm/train.py
-
-Run with torchrun:
-    torchrun --nproc-per-node=1 src/integration_tests/train_small_model.py
+Trains a small model for a few steps on CPU to test ModelMergeCallback.
 
 Run with pytest:
-    pytest -v -m gpu src/integration_tests/train_small_model.py
+    pytest -v src/integration_tests/test_train_small_model.py
 """
 
 import logging
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from olmo_core.config import DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
-from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
-from olmo_core.train import (
-    Duration,
-    TrainerConfig,
-    prepare_training_environment,
-    teardown_training_environment,
-)
+from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     LMEvaluatorCallbackConfig,
     ModelMergeCallback,
 )
-from olmo_core.train.train_module import (
-    TransformerDataParallelConfig,
-    TransformerTrainModuleConfig,
-)
+from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import seed_all
 
 logging.basicConfig(level=logging.INFO)
@@ -77,11 +62,6 @@ def train(save_folder: Path, work_dir: Path):
         max_sequence_length=64,
         optim=AdamWConfig(lr=1e-3),
         compile_model=False,
-        dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-        ),
     )
 
     eval_dataset_config = NumpyPaddedFSLDatasetConfig(
@@ -131,27 +111,9 @@ def train(save_folder: Path, work_dir: Path):
     assert merged_path.exists(), f"Merged checkpoint not found at {merged_path}"
 
 
-def main():
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        save_folder = Path(tmp_dir) / "checkpoints"
-        work_dir = Path(tmp_dir) / "work_dir"
-        save_folder.mkdir(parents=True)
-        work_dir.mkdir(parents=True)
-        train(save_folder, work_dir)
-
-
-@pytest.mark.gpu
 def test_train_small_model(tmp_path):
     save_folder = tmp_path / "checkpoints"
     work_dir = tmp_path / "work_dir"
     save_folder.mkdir()
     work_dir.mkdir()
     train(save_folder, work_dir)
-
-
-if __name__ == "__main__":
-    prepare_training_environment()
-    try:
-        main()
-    finally:
-        teardown_training_environment()
