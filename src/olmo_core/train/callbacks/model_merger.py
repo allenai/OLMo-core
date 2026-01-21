@@ -234,24 +234,27 @@ class ModelMergeCallback(Callback):
 
     def _accumulate_weights(self):
         """
-        Add current model weights to the accumulator.
+        Add current model weights to the accumulator (stored on CPU to save GPU memory).
         """
         model_state = self.trainer.train_module.model.state_dict()
 
         if self._accumulator is None:
-            # Initialize accumulator with zeros
+            # Initialize accumulator with zeros on CPU
             log.info(f"Starting model weight averaging at step {self.step}")
             self._accumulator = {
-                k: torch.zeros_like(v, dtype=torch.float32) for k, v in model_state.items()
+                k: torch.zeros_like(v, dtype=torch.float32, device="cpu")
+                for k, v in model_state.items()
             }
 
-        # Add current weights to accumulator
+        # Add current weights to accumulator (move to CPU first)
         for key, value in model_state.items():
-            self._accumulator[key].add_(value.float())
+            self._accumulator[key].add_(value.float().cpu())
 
-        # Capture individual weights for validation if enabled
+        # Capture individual weights for validation if enabled (also on CPU)
         if self.validate:
-            self._captured_weights.append({k: v.clone().float() for k, v in model_state.items()})
+            self._captured_weights.append(
+                {k: v.clone().float().cpu() for k, v in model_state.items()}
+            )
 
         self._n_accumulated += 1
         log.debug(f"Accumulated weights at step {self.step} ({self._n_accumulated} total)")
@@ -360,12 +363,14 @@ class ModelMergeCallback(Callback):
         log.info("Storing original model weights for merged model evaluation...")
         original_state = {k: v.clone() for k, v in model.state_dict().items()}
 
-        # Load merged weights (convert to model dtype)
+        # Load merged weights (convert to model dtype and device)
         log.info("Loading merged weights for evaluation...")
         merged_state_converted = {}
         for key, value in averaged_state.items():
             if key in original_state:
-                merged_state_converted[key] = value.to(original_state[key].dtype)
+                merged_state_converted[key] = value.to(
+                    device=original_state[key].device, dtype=original_state[key].dtype
+                )
             else:
                 merged_state_converted[key] = value
         model.load_state_dict(merged_state_converted)
