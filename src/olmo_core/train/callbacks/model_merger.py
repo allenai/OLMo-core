@@ -83,12 +83,6 @@ class ModelMergeCallback(Callback):
         return self._merge_steps[self._current_merge_idx]
 
     def pre_train(self):
-        """
-        Resolve merge_step to max_steps minus decay steps if not explicitly set.
-
-        For schedulers with decay phases (WSD, CosWithWarmupAndLinearDecay, etc.),
-        merge_step will be set to the step right before decay begins.
-        """
         if not self.enabled:
             return
 
@@ -302,16 +296,8 @@ class ModelMergeCallback(Callback):
 
     def _evaluate_merged(self, averaged_state: Dict[str, torch.Tensor]):
         """
-        Evaluate the merged model by temporarily swapping weights.
-
-        This method:
-        1. Stores the current model weights
-        2. Loads the merged/averaged weights
-        3. Runs all EvaluatorCallbacks with a "eval/merged" prefix
-        4. Restores the original weights
-
-        Metrics are recorded with an "eval/merged" prefix to distinguish them from
-        regular evaluation metrics.
+        Run evaluators with merged weights (metrics under 'eval/merged' prefix),
+        then restore original weights.
         """
         # Find EvaluatorCallback instances
         evaluator_callbacks = [
