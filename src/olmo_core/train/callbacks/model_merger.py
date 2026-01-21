@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 
 from olmo_core.distributed.checkpoint import save_state_dict
-from olmo_core.distributed.utils import get_rank
+from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import join_path
 from olmo_core.optim.scheduler import Scheduler
 
@@ -253,25 +253,28 @@ class ModelMergeCallback(Callback):
         if self.validate:
             self._validate_average(averaged_state)
 
-        # Only rank 0 saves
-        if get_rank() == 0:
-            output_path = str(join_path(
-                self.trainer.save_folder,
-                f"step{self.step}-{self.output_suffix}",
-            ))
+        output_path = str(join_path(
+            self.trainer.save_folder,
+            f"step{self.step}-{self.output_suffix}",
+        ))
 
-            # Create output directory
+        # Only rank 0 creates/clears the directory
+        if get_rank() == 0:
             if os.path.exists(output_path):
                 shutil.rmtree(output_path)
             os.makedirs(output_path, exist_ok=True)
 
-            # Save the averaged model state
-            save_state_dict(
-                join_path(output_path, "model_and_optim"),
-                {"model": averaged_state, "optim": {}},
-            )
+        # Wait for directory to be ready before all ranks save
+        barrier()
 
-            log.info(f"Merged checkpoint saved to: {output_path}")
+        # All ranks participate in distributed checkpoint saving
+        save_state_dict(
+            join_path(output_path, "model_and_optim"),
+            {"model": averaged_state, "optim": {}},
+            process_group=self.trainer.checkpointer.process_group,
+        )
+
+        log.info(f"Merged checkpoint saved to: {output_path}")
 
         # Evaluate merged model (skips if no EvaluatorCallbacks found)
         self._evaluate_merged(averaged_state)
