@@ -197,8 +197,7 @@ jobs:
             image: *gpu_test_image
             gpus: 1
             run: |
-              pytest -v --color=yes -m gpu \
-                src/integration_tests/
+              torchrun --nproc-per-node=1 src/integration_tests/test_train_small_model.py
     steps:
       - uses: actions/checkout@v5
         with:

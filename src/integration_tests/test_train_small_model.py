@@ -13,6 +13,8 @@ import logging
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from olmo_core.config import DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
@@ -136,9 +138,6 @@ def main():
         save_folder.mkdir(parents=True)
         work_dir.mkdir(parents=True)
         train(save_folder, work_dir)
-
-
-import pytest
 
 
 @pytest.mark.gpu
