@@ -14,7 +14,12 @@ import tempfile
 from pathlib import Path
 
 from olmo_core.config import DType
-from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
@@ -24,7 +29,11 @@ from olmo_core.train import (
     prepare_training_environment,
     teardown_training_environment,
 )
-from olmo_core.train.callbacks import CheckpointerCallback, ModelMergeCallback
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    LMEvaluatorCallbackConfig,
+    ModelMergeCallback,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -73,6 +82,13 @@ def train(save_folder: Path, work_dir: Path):
         ),
     )
 
+    eval_dataset_config = NumpyPaddedFSLDatasetConfig(
+        paths=[DATA_PATH],
+        sequence_length=64,
+        tokenizer=tokenizer_config,
+        work_dir=str(work_dir),
+    )
+
     trainer_config = (
         TrainerConfig(
             save_folder=str(save_folder),
@@ -82,6 +98,14 @@ def train(save_folder: Path, work_dir: Path):
             max_duration=Duration.steps(max_steps),
         )
         .with_callback("checkpointer", CheckpointerCallback(save_interval=1000))
+        .with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=eval_dataset_config,
+                eval_interval=1000,  # don't eval during training, only at merge
+                eval_duration=Duration.steps(2),  # keep it fast
+            ),
+        )
         .with_callback(
             "model_merger",
             ModelMergeCallback(
