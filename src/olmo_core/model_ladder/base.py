@@ -488,6 +488,7 @@ class ModelLadder(Config):
             )
 
         checkpoints_to_check: dict[int, tuple[str, PathOrStr | None]] = {}
+        path: PathOrStr | None  # help mypy
         if discover_all:
             # Discover all checkpoints that exist across all folders.
             for folder in folders_to_search:
