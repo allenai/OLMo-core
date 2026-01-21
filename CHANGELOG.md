@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `ModelMergeCallback` for averaging model weights over the last N steps before a merge step.
-- Added integration test for training a small model (`src/integration_tests/train_small_model.py`).
+- Added integration test for training a small model (`src/integration_tests/test_train_small_model.py`).
 - Added `olmo_core.data.composable` module.
 - Added `PeriNormTransformerBlock`.
 - Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
