@@ -9,7 +9,7 @@ import torch
 from olmo_core.distributed.checkpoint import save_state_dict
 from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import join_path
-from olmo_core.optim.scheduler import Scheduler
+from olmo_core.optim.scheduler import Scheduler, WSDS
 
 from .callback import Callback
 from .evaluator_callback import EvaluatorCallback
@@ -77,6 +77,34 @@ class ModelMergeCallback(Callback):
         # No decay information found
         return 0, "no decay found"
 
+    def _get_merge_steps_from_wsds(self, scheduler: WSDS, batch_size: int) -> List[int]:
+        """
+        Extract merge steps from a WSDS scheduler (one per period, before each decay).
+
+        Returns:
+            List of step numbers where merges should occur.
+        """
+        merge_steps = []
+
+        for i, period_length in enumerate(scheduler.period_lengths):
+            # Compute cumulative tokens at end of this period
+            if i == 0:
+                period_end_tokens = period_length
+            else:
+                period_end_tokens = sum(scheduler.period_lengths[: i + 1])
+
+            # Compute decay length for this period
+            decay_tokens = scheduler._resolve_decay(period_length)
+
+            # Merge should happen right before decay starts
+            pre_decay_tokens = period_end_tokens - decay_tokens
+
+            # Convert tokens to steps
+            merge_step = pre_decay_tokens // batch_size
+            merge_steps.append(merge_step)
+
+        return merge_steps
+
     @property
     def _current_merge_step(self) -> Optional[int]:
         """The current merge step we're working towards, or None if all merges are done."""
@@ -99,29 +127,39 @@ class ModelMergeCallback(Callback):
                 return
 
             max_steps = self.trainer.max_steps
-            decay_steps = 0
-            decay_source = "no scheduler"
-
-            # Try to get decay steps from the scheduler
             scheduler = getattr(self.trainer.train_module, "scheduler", None)
-            if scheduler is not None:
-                decay_steps, decay_source = self._get_decay_steps_from_scheduler(
-                    scheduler, max_steps
-                )
 
-            auto_merge_step = max_steps - decay_steps
-            self._merge_steps = [auto_merge_step]
-
-            if decay_steps > 0:
+            # Check for WSDS scheduler (multi-period with multiple anneals)
+            if isinstance(scheduler, WSDS):
+                batch_size = self.trainer.data_loader.global_batch_size
+                self._merge_steps = self._get_merge_steps_from_wsds(scheduler, batch_size)
                 log.info(
-                    f"ModelMergeCallback: merge_step set to {auto_merge_step} "
-                    f"(max_steps={max_steps} - decay_steps={decay_steps} from {decay_source})"
+                    f"ModelMergeCallback: detected WSDS scheduler with {len(scheduler.period_lengths)} periods. "
+                    f"merge_steps set to {self._merge_steps} (one before each decay phase)"
                 )
             else:
-                log.info(
-                    f"ModelMergeCallback: merge_step set to {auto_merge_step} "
-                    f"(max_steps, {decay_source})"
-                )
+                # Single decay scheduler or no scheduler
+                decay_steps = 0
+                decay_source = "no scheduler"
+
+                if scheduler is not None:
+                    decay_steps, decay_source = self._get_decay_steps_from_scheduler(
+                        scheduler, max_steps
+                    )
+
+                auto_merge_step = max_steps - decay_steps
+                self._merge_steps = [auto_merge_step]
+
+                if decay_steps > 0:
+                    log.info(
+                        f"ModelMergeCallback: merge_step set to {auto_merge_step} "
+                        f"(max_steps={max_steps} - decay_steps={decay_steps} from {decay_source})"
+                    )
+                else:
+                    log.info(
+                        f"ModelMergeCallback: merge_step set to {auto_merge_step} "
+                        f"(max_steps, {decay_source})"
+                    )
         elif isinstance(self.merge_step, int):
             self._merge_steps = [self.merge_step]
             log.info(f"ModelMergeCallback: merge_step set to {self.merge_step}")
@@ -129,10 +167,11 @@ class ModelMergeCallback(Callback):
             self._merge_steps = sorted(self.merge_step)
             log.info(f"ModelMergeCallback: merge_steps set to {self._merge_steps}")
 
-        # Warn if any merge steps fall within the decay phase
+        # Warn if any merge steps fall within the decay phase (only for non-WSDS schedulers)
+        # For WSDS, each period has its own decay, and auto-detection handles this correctly.
         if self.trainer.max_steps is not None:
             scheduler = getattr(self.trainer.train_module, "scheduler", None)
-            if scheduler is not None:
+            if scheduler is not None and not isinstance(scheduler, WSDS):
                 decay_steps, decay_source = self._get_decay_steps_from_scheduler(
                     scheduler, self.trainer.max_steps
                 )
