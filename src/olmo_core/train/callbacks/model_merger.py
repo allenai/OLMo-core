@@ -75,32 +75,6 @@ class ModelMergeCallback(Callback):
         # No decay information found
         return 0, "no decay found"
 
-    def _warn_if_steps_in_decay(self) -> None:
-        """
-        Check if any merge steps fall within the scheduler's decay phase and log a warning.
-        """
-        if self.trainer.max_steps is None:
-            return
-
-        max_steps = self.trainer.max_steps
-        scheduler = getattr(self.trainer.train_module, "scheduler", None)
-        if scheduler is None:
-            return
-
-        decay_steps, decay_source = self._get_decay_steps_from_scheduler(scheduler, max_steps)
-        if decay_steps == 0:
-            return
-
-        decay_start = max_steps - decay_steps
-        steps_in_decay = [s for s in self._merge_steps if s > decay_start]
-
-        if steps_in_decay:
-            log.warning(
-                f"ModelMergeCallback: merge step(s) {steps_in_decay} fall within the decay phase "
-                f"(decay starts at step {decay_start + 1}, from {decay_source}). "
-                f"Model weights during decay may not be ideal for merging."
-            )
-
     @property
     def _current_merge_step(self) -> Optional[int]:
         """The current merge step we're working towards, or None if all merges are done."""
@@ -158,7 +132,21 @@ class ModelMergeCallback(Callback):
             log.info(f"ModelMergeCallback: merge_steps set to {self._merge_steps}")
 
         # Warn if any merge steps fall within the decay phase
-        self._warn_if_steps_in_decay()
+        if self.trainer.max_steps is not None:
+            scheduler = getattr(self.trainer.train_module, "scheduler", None)
+            if scheduler is not None:
+                decay_steps, decay_source = self._get_decay_steps_from_scheduler(
+                    scheduler, self.trainer.max_steps
+                )
+                if decay_steps > 0:
+                    decay_start = self.trainer.max_steps - decay_steps
+                    steps_in_decay = [s for s in self._merge_steps if s > decay_start]
+                    if steps_in_decay:
+                        log.warning(
+                            f"ModelMergeCallback: merge step(s) {steps_in_decay} fall within the "
+                            f"decay phase (decay starts at step {decay_start + 1}, from {decay_source}). "
+                            f"Model weights during decay may not be ideal for merging."
+                        )
 
     @property
     def _start_step(self) -> int:
