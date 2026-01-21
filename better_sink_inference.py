@@ -245,7 +245,7 @@ def parse_args():
         "--num_texts",
         type=int,
         default=10,
-        help="Number of random_text files to process (random_text_1.txt to random_text_{num_texts}.txt)",
+        help="Number of random_text files to process (random_text_0.txt to random_text_{num_texts-1}.txt)",
     )
     parser.add_argument(
         "--token_idx",
@@ -267,7 +267,7 @@ def main():
 
     output_file = f"attention_sink_results_tok{token_idx}.tsv"
 
-    text_files = [f"random_text_{i}.txt" for i in range(1, args.num_texts + 1)]
+    text_files = [f"random_text_{i}.txt" for i in range(args.num_texts)]
     all_results = []
 
     for model_name in args.models:
@@ -302,6 +302,12 @@ def main():
                 continue
 
             inputs = model.tokenizer([input_text], return_tensors='pt', padding=False)
+            seq_len = inputs['input_ids'].shape[1]
+
+            if seq_len <= token_idx:
+                print(f"Skipping {text_file}: only {seq_len} tokens, need > {token_idx}")
+                continue
+
             print(f"Processing: {model_name} with {text_file}")
             model.generation_module.model_forward(**inputs)
 
