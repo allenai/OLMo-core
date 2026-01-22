@@ -28,24 +28,37 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         git && \
     rm -rf /var/lib/apt/lists/*
 
-# Install miniconda, Python, and Python build dependencies.
-ARG TARGET_PLATFORM
+# Install GitHub CLI.
+RUN curl -sS https://webi.sh/gh | sh
+
+# Install AWS CLI.
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install \
+    && rm awscliv2.zip
+
+# Install Google Cloud CLI.
+RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
+        | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
+    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - \
+    && apt-get update -y \
+    && apt-get install google-cloud-sdk -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv and Python.
 ARG PYTHON_VERSION
-ENV PATH=/opt/conda/bin:$PATH
-RUN curl -fsSL -v -o ~/miniconda.sh -O  "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${TARGET_PLATFORM}.sh"
-# NOTE: Manually invoke bash on miniconda script per https://github.com/conda/conda/issues/10431
-RUN chmod +x ~/miniconda.sh && \
-    bash ~/miniconda.sh -b -p /opt/conda && \
-    rm ~/miniconda.sh && \
-    /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy ipython && \
-    /opt/conda/bin/python -m pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja && \
-    /opt/conda/bin/conda clean -ya
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN uv python install ${PYTHON_VERSION}
+ENV PATH=~/.local/bin:$PATH
+ENV UV_SYSTEM_PYTHON=1
+ENV UV_BREAK_SYSTEM_PACKAGES=1
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.10.0
 ARG INSTALL_CHANNEL=whl
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
+RUN uv pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
@@ -55,11 +68,11 @@ ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 # See https://github.com/tgale96/grouped_gemm/pull/21
 ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
-RUN pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
+RUN uv pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
 # Install flash-attn 2/4
 ARG FLASH_ATTN_SHA="2580b5a4882562640f3cfbffd2bb8d2de9268f9f"
-RUN pip install --no-build-isolation --no-cache-dir "flash-attn @ git+https://git@github.com/Dao-AILab/flash-attention.git@${FLASH_ATTN_SHA}"
+RUN uv pip install --no-build-isolation --no-cache-dir "flash-attn @ git+https://git@github.com/Dao-AILab/flash-attention.git@${FLASH_ATTN_SHA}"
 
 # Install flash-attn 3
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
@@ -76,22 +89,22 @@ RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github
 
 # Install transformer-engine.
 ARG TE_VERSION=2.11
-RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
+RUN uv pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
 ARG RING_FLASH_ATTN_VERSION=0.1.8
-RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
+RUN uv pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
 
 # Install liger-kernel.
 ARG LIGER_KERNEL_VERSION=0.6.4
-RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
+RUN uv pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
 # Install direct dependencies, but not source code.
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
-RUN pip install --no-cache-dir '.[all]' && \
-    pip uninstall -y ai2-olmo-core && \
+RUN uv pip install --no-cache-dir '.[all]' && \
+    uv pip uninstall -y ai2-olmo-core && \
     rm -rf *
 
 #########################################################################
