@@ -1,6 +1,7 @@
 import dataclasses
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
@@ -233,6 +234,8 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         plt.tight_layout()
 
         if save_path is not None:
+            save_path_obj = Path(save_path)
+            save_path_obj.parent.mkdir(parents=True, exist_ok=True)
             plt.savefig(save_path)
 
         if show:
