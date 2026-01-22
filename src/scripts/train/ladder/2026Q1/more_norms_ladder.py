@@ -29,7 +29,7 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--norm-style",
         choices=["peri", "olmo3"],
-        default="olmo3",
+        default="peri",
         help="Normalization style to use.",
     )
 
