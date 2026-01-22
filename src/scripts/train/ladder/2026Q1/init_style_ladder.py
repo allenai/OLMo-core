@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True, eq=True)
-class Olmo3ModelConfiguratorForInitStd(Olmo3ModelConfigurator):
+class Olmo3ModelConfiguratorForInitStyle(Olmo3ModelConfigurator):
     init_style: str = "dirk"
 
     def configure_model(
@@ -48,7 +48,7 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
 
 
 def configure_model(args: argparse.Namespace) -> TransformerModelConfigurator:
-    return Olmo3ModelConfiguratorForInitStd(
+    return Olmo3ModelConfiguratorForInitStyle(
         rank_microbatch_size=None
         if args.rank_mbz is None
         else args.rank_mbz * args.sequence_length,
