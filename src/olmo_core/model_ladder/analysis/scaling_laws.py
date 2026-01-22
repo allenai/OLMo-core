@@ -52,8 +52,7 @@ def chinchilla_parametric_scaling_law(
 class ScalingLawModel(Protocol):
     """Protocol for any scaling law model that can predict loss for a given (N, D) allocation."""
 
-    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray:
-        ...
+    def predict_loss(self, N: ArrayLike, D: ArrayLike) -> np.ndarray: ...
 
 
 class ChinchillaParams(NamedTuple):
@@ -278,8 +277,7 @@ class ChinchillaParametricFit:
         results: list[Tuple[float, ChinchillaParams]] = []
         if parallel:
             n_workers = os.cpu_count() or 1
-            ctx = multiprocessing.get_context("fork")
-            with ctx.Pool(n_workers) as pool:
+            with multiprocessing.Pool(n_workers) as pool:
                 for res in pool.imap_unordered(optimize_fn, grid):
                     if res is not None:
                         results.append(res)
