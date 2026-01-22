@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass
 
 from olmo_core.data import TokenizerConfig
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import Olmo3ModelConfigurator, TransformerModelConfigurator
 from olmo_core.nn.transformer import TransformerConfig
@@ -33,7 +34,7 @@ class Olmo3ModelConfiguratorForInitStyle(Olmo3ModelConfigurator):
             model.embedding_init_std = 1.0
             model.init_std = math.sqrt(1 / model.d_model)
         elif self.init_style != "olmo3":
-            raise ValueError(f"Unknown init style: {self.init_style}")
+            raise OLMoConfigurationError(f"Unknown init style: {self.init_style}")
         return model
 
 
