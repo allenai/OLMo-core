@@ -217,7 +217,7 @@ class ScalingLawRollout:
         L_arr = np.asarray(L)
         weights_arr = np.asarray(weights) if weights is not None else None
 
-        if len(N_arr) != len(D_arr) != len(L_arr):
+        if not (len(N_arr) == len(D_arr) == len(L_arr)):
             raise ValueError(
                 f"Input arrays must have same length. Got N={len(N_arr)}, D={len(D_arr)}, L={len(L_arr)}"
             )
