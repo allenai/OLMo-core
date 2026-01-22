@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made some functions involved in data loading preprocessing more robust to race conditions.
 - GAPMonitorCallback would raise an error if a local tensor shard had 0 elements.
 - Fixed a bug where final metrics might not get logged.
+- Fix failing test_build_world_mesh_cpu for pytorch 2.10.
 
 ### Changed
 

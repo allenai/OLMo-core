@@ -581,15 +581,17 @@ def _flatten_dims(
     flatten_mesh(device_mesh[dims], name)  # in-place flatten on sub-mesh
     new_names = tuple(out_names)
 
-    try:
-        # NOTE: device_mesh.mesh_dim_names is not updated based on the flatten operation.
-        # We need to check that the root mesh is indexable by the new dimension names.
-        _ = device_mesh[new_names]
-    except KeyError as exc:
-        raise RuntimeError(
-            "Flattening failed: root device mesh does not recognize the new "
-            f"dimension names {new_names}. Original dims: {dims}."
-        ) from exc
+    # NOTE: device_mesh.mesh_dim_names is not updated based on the flatten operation.
+    # We need to check that the root mesh is indexable by the new dimension names.
+    # Check each dimension individually since PyTorch requires ascending order for multi-dim indexing.
+    for dim_name in new_names:
+        try:
+            _ = device_mesh[dim_name]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Flattening failed: root device mesh does not recognize dimension "
+                f"'{dim_name}'. New dims: {new_names}, original dims: {dims}."
+            ) from exc
 
     return device_mesh, new_names
 
