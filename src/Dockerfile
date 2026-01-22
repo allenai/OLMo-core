@@ -32,10 +32,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # Install uv.
 ARG PYTHON_VERSION
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH=~/.local/bin:$PATH
+ENV PATH=~/.cargo/bin:~/.local/bin:$PATH
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
-env UV_PYTHON_INSTALL_DIR=/opt/uv
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv
 
 # Install Python.
 RUN uv python install ${PYTHON_VERSION}
@@ -141,14 +141,13 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 # Copy conda environment.
 COPY --from=build /opt/uv /opt/uv
 
-ENV PATH=~/.local/bin:$PATH
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
 env UV_PYTHON_INSTALL_DIR=/opt/uv
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:$PATH
+ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:~/.cargo/bin:~/.local/bin:$PATH
 
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core
