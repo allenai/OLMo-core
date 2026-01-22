@@ -140,12 +140,10 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
     blocks = list(model.blocks.values())
     n_layers = len(blocks)
 
-    rope_scaling = _get_rope_scaling_for_hybrid(blocks)
-
-    # Determine layer types and find reference blocks
     layer_types = []
     attention_block = None
     fla_block = None
+
 
     for idx, block in enumerate(blocks):
         if isinstance(block, FLABlock):
@@ -153,13 +151,7 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
             if fla_block is None:
                 fla_block = block
         elif isinstance(block, ReorderedNormTransformerBlock):
-            if hasattr(block.attention, 'backend') and block.attention.backend is not None:
-                if block.attention.backend.window_size != (-1, -1):
-                    layer_types.append("sliding_attention")
-                else:
-                    layer_types.append("full_attention")
-            else:
-                layer_types.append("full_attention")
+            layer_types.append("full_attention")
             if attention_block is None:
                 attention_block = block
         else:
@@ -170,22 +162,16 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
     if fla_block is None:
         raise ValueError("Hybrid model must have at least one FLA layer")
 
-    # Extract attention config
     attn = attention_block.attention
-    if attn.rope is None:
-        raise ValueError("Attention does not use RoPE")
+    
+    rope_theta = None
+    rope_scaling = None
+    if attn.rope is not None:
+        rope_theta = float(attn.rope.theta)
+        rope_scaling = _get_rope_scaling_for_hybrid(blocks)
 
     # Extract FLA config
     fla_inner = fla_block.fla.inner
-
-    # Get sliding window size if any
-    sliding_window = 4096  # Default
-    for block in blocks:
-        if isinstance(block, ReorderedNormTransformerBlock):
-            if hasattr(block.attention, 'backend') and block.attention.backend is not None:
-                if block.attention.backend.window_size != (-1, -1):
-                    sliding_window = block.attention.backend.window_size[0] + 1
-                    break
 
     # Get FLA layer kwargs from original config
     block_config = transformer_config.block
@@ -216,13 +202,10 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
         "use_cache": True,
         "attention_bias": attn.w_out.bias is not None,
         "attention_dropout": 0.0,
-        "rope_theta": float(attn.rope.theta),
+        "rope_theta": rope_theta,
         "rope_scaling": rope_scaling,
         "rms_norm_eps": attention_block.feed_forward_norm.eps,
         "tie_word_embeddings": False,
-        
-        # Sliding window
-        "sliding_window": sliding_window,
         
         # Hybrid layer configuration
         "layer_types": layer_types,
