@@ -43,7 +43,7 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
-ARG TORCH_VERSION=2.9.1
+ARG TORCH_VERSION=2.10.0
 ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
@@ -54,12 +54,12 @@ ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21
 ENV GROUPED_GEMM_CUTLASS="1"
-ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
-RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
+ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
+RUN pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
-# Install flash-attn 2
-ARG FLASH_ATTN_VERSION=2.8.2
-RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+# Install flash-attn 2/4
+ARG FLASH_ATTN_SHA="2580b5a4882562640f3cfbffd2bb8d2de9268f9f"
+RUN pip install --no-build-isolation --no-cache-dir "flash-attn @ git+https://git@github.com/Dao-AILab/flash-attention.git@${FLASH_ATTN_SHA}"
 
 # Install flash-attn 3
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
@@ -75,7 +75,7 @@ RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github
     rm -rf flash-attention
 
 # Install transformer-engine.
-ARG TE_VERSION=2.9
+ARG TE_VERSION=2.11
 RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
