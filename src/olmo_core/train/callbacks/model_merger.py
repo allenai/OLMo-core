@@ -5,11 +5,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
+import torch.distributed.checkpoint.state_dict as dist_cp_sd
 
 from olmo_core.distributed.checkpoint import save_state_dict
 from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import join_path
-from olmo_core.optim.scheduler import Scheduler, WSDS
+from olmo_core.optim.scheduler import WSDS, Scheduler
 
 from .callback import Callback
 from .evaluator_callback import EvaluatorCallback
@@ -250,11 +251,21 @@ class ModelMergeCallback(Callback):
         Adds current model weights to the accumulator (stored on CPU).
 
         TODO(large-scale): For larger models, calling state_dict() and moving to CPU at every
-        step in the merge window may cause significant throughput overhead. 
+        step in the merge window may cause significant throughput overhead.
         Might want to consider sparse sampling (accumulate every Nth step instead of every step)
         or doing this one time (moving to CPU only at the end)
         """
-        model_state = self.trainer.train_module.model.state_dict()
+        # Use get_model_state_dict with full_state_dict=True to gather complete weights to each rank.
+        # This is necessary because:
+        # 1. With FSDP, full_state_dict=False returns DTensors with sharding metadata
+        # 2. When we convert to plain CPU tensors for accumulation, we lose the sharding metadata
+        # 3. save_state_dict() would then treat plain tensors as replicated and only save rank 0's data
+        # Using full_state_dict=True ensures all ranks have identical complete weights, so the
+        # averaged result can be saved correctly from any rank.
+        sd_options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
+        model_state = dist_cp_sd.get_model_state_dict(
+            self.trainer.train_module.model, options=sd_options
+        )
 
         if self._accumulator is None:
             # Initialize accumulator with zeros on CPU
@@ -264,15 +275,13 @@ class ModelMergeCallback(Callback):
                 for k, v in model_state.items()
             }
 
-        # Add current weights to accumulator (move to CPU first)
+        # Add current weights to accumulator (already on CPU from cpu_offload=True)
         for key, value in model_state.items():
-            self._accumulator[key].add_(value.float().cpu())
+            self._accumulator[key].add_(value.float())
 
         # Capture individual weights for validation if enabled
         if self.validate:
-            self._captured_weights.append(
-                {k: v.clone().float().cpu() for k, v in model_state.items()}
-            )
+            self._captured_weights.append({k: v.clone().float() for k, v in model_state.items()})
 
         self._n_accumulated += 1
         log.debug(f"Accumulated weights at step {self.step} ({self._n_accumulated} total)")
@@ -378,21 +387,18 @@ class ModelMergeCallback(Callback):
 
         model = self.trainer.train_module.model
 
-        # Store original weights
+        # Store original weights using get_model_state_dict for proper FSDP support
+        # Use cpu_offload=True to avoid doubling GPU memory usage
         log.info("Storing original model weights for merged model evaluation...")
-        original_state = {k: v.clone() for k, v in model.state_dict().items()}
+        sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
+        original_state = dist_cp_sd.get_model_state_dict(model, options=sd_options)
 
-        # Load merged weights (convert to model dtype and device)
+        # Load merged weights using set_model_state_dict for proper FSDP support
+        # This handles device/dtype conversion automatically
         log.info("Loading merged weights for evaluation...")
-        merged_state_converted = {}
-        for key, value in averaged_state.items():
-            if key in original_state:
-                merged_state_converted[key] = value.to(
-                    device=original_state[key].device, dtype=original_state[key].dtype
-                )
-            else:
-                merged_state_converted[key] = value
-        model.load_state_dict(merged_state_converted)
+        dist_cp_sd.set_model_state_dict(
+            model, averaged_state, options=dist_cp_sd.StateDictOptions(strict=True)
+        )
 
         # Run evaluator callbacks with "eval/merged" prefix
         try:
@@ -400,9 +406,11 @@ class ModelMergeCallback(Callback):
                 log.info(f"Running merged model evaluation via {callback.__class__.__name__}...")
                 callback._perform_eval(prefix="eval/merged")
         finally:
-            # Restore original weights
+            # Restore original weights using set_model_state_dict for proper FSDP support
             log.info("Restoring original model weights...")
-            model.load_state_dict(original_state)
+            dist_cp_sd.set_model_state_dict(
+                model, original_state, options=dist_cp_sd.StateDictOptions(strict=True)
+            )
 
     def state_dict(self) -> Dict[str, Any]:
         """
