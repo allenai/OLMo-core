@@ -23,6 +23,7 @@ from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.utils import (
     cuda_sync_debug_mode,
     format_float,
+    gc_cuda,
     get_default_device,
     move_to_device,
 )
@@ -163,6 +164,7 @@ class EvaluatorCallback(Callback):
             evaluator_names.append(evaluation_names)
             evaluator_bs.append(eval_step)
 
+            gc_cuda()
             log.info(
                 f"Finished {evaluator.name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
                 + "\n".join(metrics_str)
