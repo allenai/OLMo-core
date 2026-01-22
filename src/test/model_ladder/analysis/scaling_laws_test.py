@@ -12,7 +12,6 @@ from olmo_core.utils import seed_all
 
 
 def test_chinchilla_params_predict_loss():
-    """Test predict_loss method."""
     params = ChinchillaParams(E=1.0, A=100.0, alpha=0.5, B=200.0, beta=0.3)
     N = np.array([1e6, 1e7])
     D = np.array([1e9, 1e10])
@@ -59,7 +58,6 @@ def test_chinchilla_parametric_scaling_law_tiny_A_B():
 
 
 def test_chinchilla_parametric_fit_synthetic_data():
-    """Test fitting on synthetic data."""
     # Generate synthetic data from known parameters
     true_params = ChinchillaParams(E=1.0, A=100.0, alpha=0.5, B=200.0, beta=0.3)
 

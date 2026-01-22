@@ -1,5 +1,3 @@
-"""Tests for scaling law evaluation metrics."""
-
 import numpy as np
 
 from olmo_core.model_ladder.analysis.eval import (
@@ -53,7 +51,6 @@ def test_perplexity_ratio_symmetry():
 
 
 def test_relative_bpb_error_scale_dependence():
-    """Test that relative BPB error weights low-loss predictions more heavily."""
     # Same absolute error at different loss levels
     error = 0.01
 
@@ -168,7 +165,6 @@ def test_evaluate_split_cutoff_by_D():
 
 
 def _create_test_rollout():
-    """Helper to create a rollout with two splits for testing."""
     params = ChinchillaParams(E=1.0, A=100.0, alpha=0.5, B=200.0, beta=0.3)
 
     splits = []
@@ -238,7 +234,6 @@ def test_evaluate_rollout_split_weights_fn_custom():
 
 
 def test_scaling_law_rollout_fit():
-    """Test ScalingLawRollout.fit creates rollout splits."""
     # Generate synthetic data from known parameters
     true_params = ChinchillaParams(E=1.0, A=100.0, alpha=0.5, B=200.0, beta=0.3)
 

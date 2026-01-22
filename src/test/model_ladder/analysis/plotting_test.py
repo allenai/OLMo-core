@@ -1,19 +1,16 @@
-"""Basic smoke tests for plotting functions."""
-
 import numpy as np
 import pytest
 
 from olmo_core.model_ladder.analysis.eval import RolloutSplit, ScalingLawRollout
 from olmo_core.model_ladder.analysis.scaling_laws import ChinchillaParams
 
-# Check if plotly is available
 try:
     import plotly.graph_objects as go
 
     PLOTLY_AVAILABLE = True
 except ImportError:
-    PLOTLY_AVAILABLE = False
     go = None
+    PLOTLY_AVAILABLE = False
 
 
 def _create_test_split(cutoff_N: float = 100e6) -> RolloutSplit:
@@ -39,7 +36,6 @@ def _create_test_split(cutoff_N: float = 100e6) -> RolloutSplit:
 
 
 def _create_test_rollout(cutoffs: list[float]) -> ScalingLawRollout:
-    """Create a test rollout with the given cutoffs."""
     splits = [_create_test_split(c) for c in cutoffs]
     # Combine all data for the rollout
     all_N = np.concatenate([s.train_N for s in splits] + [s.test_N for s in splits])
