@@ -78,7 +78,7 @@ jobs:
 
           - name: Test small model
             run: |
-              pytest -v --color=yes --durations=3 \
+              pytest -v --color=yes --durations=3 -m "not gpu" \
                 src/integration_tests/
 
           - name: Test olmo3 ladder
