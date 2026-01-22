@@ -21,7 +21,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         cmake \
         curl \
         wget \
-        unzip \
         libxml2-dev \
         libjpeg-dev \
         libpng-dev \
@@ -29,23 +28,24 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         git && \
     rm -rf /var/lib/apt/lists/*
 
-# Install uv.
+# Install miniconda, Python, and Python build dependencies.
+ARG TARGET_PLATFORM
 ARG PYTHON_VERSION
-ENV UV_SYSTEM_PYTHON=1
-ENV UV_BREAK_SYSTEM_PACKAGES=1
-ENV UV_PYTHON_INSTALL_DIR=/opt/uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH=/root/.cargo/bin:/root/.local/bin:$PATH
-
-# Install Python.
-RUN uv python install ${PYTHON_VERSION}
-RUN uv pip install packaging ninja wheel psutil
+ENV PATH=/opt/conda/bin:$PATH
+RUN curl -fsSL -v -o ~/miniconda.sh -O  "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${TARGET_PLATFORM}.sh"
+# NOTE: Manually invoke bash on miniconda script per https://github.com/conda/conda/issues/10431
+RUN chmod +x ~/miniconda.sh && \
+    bash ~/miniconda.sh -b -p /opt/conda && \
+    rm ~/miniconda.sh && \
+    /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy ipython && \
+    /opt/conda/bin/python -m pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja && \
+    /opt/conda/bin/conda clean -ya
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.10.0
 ARG INSTALL_CHANNEL=whl
-RUN uv pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
@@ -55,11 +55,11 @@ ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 # See https://github.com/tgale96/grouped_gemm/pull/21
 ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
-RUN uv pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
+RUN pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
 # Install flash-attn 2/4
 ARG FLASH_ATTN_SHA="2580b5a4882562640f3cfbffd2bb8d2de9268f9f"
-RUN uv pip install --no-build-isolation --no-cache-dir "flash-attn @ git+https://git@github.com/Dao-AILab/flash-attention.git@${FLASH_ATTN_SHA}"
+RUN pip install --no-build-isolation --no-cache-dir "flash-attn @ git+https://git@github.com/Dao-AILab/flash-attention.git@${FLASH_ATTN_SHA}"
 
 # Install flash-attn 3
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
@@ -76,22 +76,22 @@ RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github
 
 # Install transformer-engine.
 ARG TE_VERSION=2.11
-RUN uv pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
+RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
 ARG RING_FLASH_ATTN_VERSION=0.1.8
-RUN uv pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
+RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
 
 # Install liger-kernel.
 ARG LIGER_KERNEL_VERSION=0.6.4
-RUN uv pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
+RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
 # Install direct dependencies, but not source code.
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
-RUN uv pip install --no-cache-dir '.[all]' && \
-    uv pip uninstall -y ai2-olmo-core && \
+RUN pip install --no-cache-dir '.[all]' && \
+    pip uninstall -y ai2-olmo-core && \
     rm -rf *
 
 #########################################################################
@@ -113,22 +113,8 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         libpng-dev \
         gnupg \
         gcc \
-        git \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -sS https://webi.sh/gh | sh \
-    && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
-    && unzip awscliv2.zip \
-    && ./aws/install \
-    && rm awscliv2.zip \
-    && curl -sS https://webi.sh/gh | sh
-
-RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
-        | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
-    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-        | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - \
-    && apt-get update \
-    && apt-get install -y google-cloud-sdk \
-    && rm -rf /var/lib/apt/lists/*
+        git && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install MLNX OFED user-space drivers
 # See https://docs.nvidia.com/networking/pages/releaseview.action?pageId=15049785#Howto:DeployRDMAacceleratedDockercontaineroverInfiniBandfabric.-Dockerfile
@@ -141,16 +127,36 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
     rm -rf MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM} && \
     rm MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}.tgz
 
-# Copy conda environment.
-COPY --from=build /opt/uv /opt/uv
+# Install AWS CLI.
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install \
+    && rm awscliv2.zip \
 
-ENV UV_SYSTEM_PYTHON=1
-ENV UV_BREAK_SYSTEM_PACKAGES=1
-ENV UV_PYTHON_INSTALL_DIR=/opt/uv
+# Install Google Cloud SDK.
+RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
+        | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
+    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - \
+    && apt-get update \
+    && apt-get install -y google-cloud-sdk \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install webi.
+RUN curl -sS https://webi.sh/gh | sh
+
+# Install uv.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Copy conda environment.
+COPY --from=build /opt/conda /opt/conda
+
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.cargo/bin:/root/.local/bin:$PATH
+ENV UV_SYSTEM_PYTHON=1
+ENV UV_BREAK_SYSTEM_PACKAGES=1
+ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:$PATH
 
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core
