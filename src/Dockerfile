@@ -39,6 +39,7 @@ ENV PATH=/root/.cargo/bin:/root/.local/bin:$PATH
 
 # Install Python.
 RUN uv python install ${PYTHON_VERSION}
+RUN uv pip install packaging ninja
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
