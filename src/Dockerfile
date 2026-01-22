@@ -35,7 +35,7 @@ ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH=~/.cargo/bin:~/.local/bin:$PATH
+eNV PATH=/root/.cargo/bin:/root/.local/bin:$PATH
 
 # Install Python.
 RUN uv python install ${PYTHON_VERSION}
@@ -147,7 +147,7 @@ env UV_PYTHON_INSTALL_DIR=/opt/uv
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:~/.cargo/bin:~/.local/bin:$PATH
+ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.cargo/bin:/root/.local/bin:$PATH
 
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core
