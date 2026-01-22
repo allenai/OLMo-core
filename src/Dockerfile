@@ -21,6 +21,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         cmake \
         curl \
         wget \
+        unzip \
         libxml2-dev \
         libjpeg-dev \
         libpng-dev \
@@ -28,31 +29,16 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         git && \
     rm -rf /var/lib/apt/lists/*
 
-# Install GitHub CLI.
-RUN curl -sS https://webi.sh/gh | sh
-
-# Install AWS CLI.
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
-    && unzip awscliv2.zip \
-    && ./aws/install \
-    && rm awscliv2.zip
-
-# Install Google Cloud CLI.
-RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
-        | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
-    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-        | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - \
-    && apt-get update -y \
-    && apt-get install google-cloud-sdk -y \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv and Python.
+# Install uv.
 ARG PYTHON_VERSION
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-RUN uv python install ${PYTHON_VERSION}
 ENV PATH=~/.local/bin:$PATH
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
+env UV_PYTHON_INSTALL_DIR=/opt/uv
+
+# Install Python.
+RUN uv python install ${PYTHON_VERSION}
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
@@ -120,12 +106,26 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         cmake \
         curl \
         wget \
+        unzip \
         libxml2-dev \
         libjpeg-dev \
         libpng-dev \
         gcc \
-        git && \
-    rm -rf /var/lib/apt/lists/*
+        git \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -sS https://webi.sh/gh | sh \
+    && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install \
+    && rm awscliv2.zip \
+    && curl -sS https://webi.sh/gh | sh \
+    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
+        | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
+    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - \
+    && apt-get update -y \
+    && apt-get install google-cloud-sdk -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install MLNX OFED user-space drivers
 # See https://docs.nvidia.com/networking/pages/releaseview.action?pageId=15049785#Howto:DeployRDMAacceleratedDockercontaineroverInfiniBandfabric.-Dockerfile
@@ -139,9 +139,12 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
     rm MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}.tgz
 
 # Copy conda environment.
-COPY --from=build /opt/conda /opt/conda
+COPY --from=build /opt/uv /opt/uv
 
-ENV PATH=/opt/conda/bin:$PATH
+ENV PATH=~/.local/bin:$PATH
+ENV UV_SYSTEM_PYTHON=1
+ENV UV_BREAK_SYSTEM_PACKAGES=1
+env UV_PYTHON_INSTALL_DIR=/opt/uv
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
