@@ -32,7 +32,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # Install uv.
 ARG PYTHON_VERSION
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-RUN echo "$HOME"
 ENV PATH=~/.cargo/bin:~/.local/bin:$PATH
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
