@@ -31,11 +31,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 
 # Install uv.
 ARG PYTHON_VERSION
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH=~/.cargo/bin:~/.local/bin:$PATH
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH=~/.cargo/bin:~/.local/bin:$PATH
 
 # Install Python.
 RUN uv python install ${PYTHON_VERSION}
