@@ -86,6 +86,44 @@ FLA_OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
 }
 
 
+def _get_rope_scaling_for_hybrid(blocks) -> dict | None:
+    """
+    Get RoPE scaling configuration from attention layers in a hybrid model.
+    FLA layers are skipped since they don't use RoPE.
+    """
+    # Get only attention layers (not FLA layers)
+    attention_layers = [
+        (idx, block)
+        for idx, block in enumerate(blocks)
+        if isinstance(block, ReorderedNormTransformerBlock)
+    ]
+    
+    if not attention_layers:
+        return None
+    
+    # Collect layers with RoPE scaling
+    layers_with_scaling = [
+        (idx, block)
+        for idx, block in attention_layers
+        if block.attention.rope is not None and block.attention.rope.scaling is not None
+    ]
+    
+    if not layers_with_scaling:
+        return None
+    
+    # Validate all use the same config
+    first_config_dict = layers_with_scaling[0][1].attention.rope.scaling.to_hf_config()
+    
+    for idx, block in layers_with_scaling[1:]:
+        config_dict = block.attention.rope.scaling.to_hf_config()
+        if config_dict != first_config_dict:
+            raise NotImplementedError(
+                f"Different RoPE scaling configs found. First: {first_config_dict}, Layer {idx}: {config_dict}"
+            )
+    
+    return first_config_dict
+
+
 def is_hybrid_model(model: Transformer) -> bool:
     """Check if the model has FLA (linear attention) blocks."""
     blocks = list(model.blocks.values())
@@ -101,6 +139,8 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
     """
     blocks = list(model.blocks.values())
     n_layers = len(blocks)
+
+    rope_scaling = _get_rope_scaling_for_hybrid(blocks)
 
     # Determine layer types and find reference blocks
     layer_types = []
@@ -176,10 +216,8 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
         "use_cache": True,
         "attention_bias": attn.w_out.bias is not None,
         "attention_dropout": 0.0,
-        "rope_parameters": {
-            "rope_type": "default",
-            "rope_theta": float(attn.rope.theta),
-        },
+        "rope_theta": float(attn.rope.theta),
+        "rope_scaling": rope_scaling,
         "rms_norm_eps": attention_block.feed_forward_norm.eps,
         "tie_word_embeddings": False,
         
@@ -188,9 +226,6 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
         
         # Hybrid layer configuration
         "layer_types": layer_types,
-        "fla_hybrid_attention_indices": [
-            i for i, t in enumerate(layer_types) if t in {"full_attention", "sliding_attention"}
-        ],
         
         # Linear attention (GatedDeltaNet) parameters
         "linear_num_key_heads": linear_num_heads,
@@ -359,7 +394,6 @@ def convert_checkpoint_to_hf(
     is_hybrid = (
         model_config.block.name == "fla_hybrid"
         or model_config.block.fla is not None
-        or model_config.block.fla_hybrid_attention_indices is not None
     )
 
     if is_hybrid:
