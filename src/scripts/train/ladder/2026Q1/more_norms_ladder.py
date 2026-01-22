@@ -21,8 +21,14 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         help="Whether to apply normalization to the embedding layer.",
     )
     parser.add_argument(
+        "--embedding-init-std",
+        type=float,
+        default=None,
+        help="Standard deviation for embedding initialization.",
+    )
+    parser.add_argument(
         "--norm-style",
-        choices=["peri"],
+        choices=["peri", "olmo3"],
         default="peri",
         help="Normalization style to use.",
     )
@@ -34,11 +40,14 @@ def configure_model(args: argparse.Namespace) -> TransformerModelConfigurator:
     if args.norm_style == "peri":
         # Peri-LN (https://arxiv.org/pdf/2502.02732) plus QK-norm (equivalent to Gemma3).
         kwargs["block_name"] = TransformerBlockType.peri_norm
-    else:
+    elif args.norm_style != "olmo3":
         raise OLMoConfigurationError(f"Unknown norm style: {args.norm_style}")
 
     if args.embedding_norm:
         kwargs["embedding_norm"] = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False)
+
+    if args.embedding_init_std is not None:
+        kwargs["embedding_init_std"] = args.embedding_init_std
 
     return Olmo3ModelConfigurator(
         rank_microbatch_size=None

@@ -262,6 +262,14 @@ def parse_args(
                 help="The maximum model size. If not specified, status/metrics for all sizes will be shown.",
             )
 
+        if cmd in {"launch", "launch-benchmark"}:
+            parser.add_argument(
+                "--follow",
+                action=argparse.BooleanOptionalAction,
+                help="Whether to follow the job logs after launching.",
+                default=True,
+            )
+
         if cmd in {"dry-run", "metrics", "metrics-all"}:
             parser.add_argument(
                 "--output-dir",
@@ -448,7 +456,7 @@ def launch_benchmark(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
     launcher = configure_launcher(args, ladder, "benchmark")
-    launcher.launch(follow=True, slack_notifications=args.slack_notifications)
+    launcher.launch(follow=args.follow, slack_notifications=args.slack_notifications)
 
 
 def run(args: argparse.Namespace):
@@ -494,7 +502,7 @@ def launch(args: argparse.Namespace):
         ladder,
         launcher,
         args.size_enum(args.size),
-        follow=True,
+        follow=args.follow,
         slack_notifications=args.slack_notifications,
         dry_run=args.dry_run,
     )
