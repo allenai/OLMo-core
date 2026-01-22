@@ -35,7 +35,7 @@ ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-eNV PATH=/root/.cargo/bin:/root/.local/bin:$PATH
+ENV PATH=/root/.cargo/bin:/root/.local/bin:$PATH
 
 # Install Python.
 RUN uv python install ${PYTHON_VERSION}
@@ -110,6 +110,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         libxml2-dev \
         libjpeg-dev \
         libpng-dev \
+        gnupg \
         gcc \
         git \
     && rm -rf /var/lib/apt/lists/* \
@@ -144,7 +145,7 @@ COPY --from=build /opt/uv /opt/uv
 
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
-env UV_PYTHON_INSTALL_DIR=/opt/uv
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
