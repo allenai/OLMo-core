@@ -104,7 +104,7 @@ def parse_args(
         parser.add_argument(
             "--cluster",
             type=str,
-            choices=["ai2/augusta", "ai2/jupiter", "ai2/titan"],
+            choices=["ai2/jupiter", "ai2/titan"],
             default="ai2/augusta",
             help="The Beaker cluster to launch each run on.",
         )
@@ -272,6 +272,23 @@ def parse_args(
                 default=False,
             )
 
+        if cmd in {"run", "launch"}:
+            parser.add_argument(
+                "--run-num",
+                type=int,
+                default=None,
+                help="""Run number for this experiment. When set, appends '-run{N}' to the
+                ladder name and adjusts the seed for reproducible variation across runs.""",
+            )
+
+        if cmd == "launch-all":
+            parser.add_argument(
+                "--num-runs",
+                type=int,
+                default=1,
+                help="Number of runs to launch for each model size (each with a different seed).",
+            )
+
         if "launch" in cmd:
             add_launch_args(parser)
 
@@ -346,15 +363,15 @@ def main(
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
     if configure_ladder is None:
-        assert (
-            configure_model is not None
-        ), "configure_model is required if configure_ladder is unspecified"
+        assert configure_model is not None, (
+            "configure_model is required if configure_ladder is unspecified"
+        )
 
         configure_ladder = get_default_ladder_factory(configure_model, configure_run)
     else:
-        assert (
-            configure_model is None and configure_run is None
-        ), "configure_model / configure_run and mutually exclusive with configure_ladder"
+        assert configure_model is None and configure_run is None, (
+            "configure_model / configure_run and mutually exclusive with configure_ladder"
+        )
 
     args = parse_args(
         configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
@@ -363,7 +380,11 @@ def main(
 
 
 def configure_launcher(
-    args: argparse.Namespace, ladder: ModelLadder, cmd: str, size: str | None = None
+    args: argparse.Namespace,
+    ladder: ModelLadder,
+    cmd: str,
+    size: str | None = None,
+    run_num: int | None = None,
 ) -> BeakerLaunchConfig:
     cmd_to_run = [sys.argv[0], cmd] + sys.argv[2:]
 
@@ -374,12 +395,21 @@ def configure_launcher(
         size = args.size
     assert size is not None
 
+    # Pass run_num through to the launched command if specified
+    if run_num is not None:
+        cmd_to_run += ["--run-num", str(run_num)]
+
     num_gpus = ladder.get_num_devices(size)
     assert (num_gpus % 8 == 0) or num_gpus < 8
 
+    # Include run number in the job name if specified
+    job_name = f"{args.name}-{size}"
+    if run_num is not None:
+        job_name = f"{args.name}-run{run_num}-{size}"
+
     launch_config = build_launch_config(
         cmd=cmd_to_run,
-        name=f"{args.name}-{size}",
+        name=job_name,
         num_nodes=max(num_gpus // 8, 1),
         cluster=args.cluster,
         workspace=args.workspace,
@@ -394,6 +424,23 @@ def configure_launcher(
         launch_config.preemptible = args.preemptible
     launch_config.allow_dirty = args.allow_dirty
     return launch_config
+
+
+def apply_run_num_to_ladder(ladder: ModelLadder, run_num: int) -> None:
+    """
+    Apply run number settings to a ladder configuration.
+
+    Modifies the ladder in-place to:
+    - Append '-run{N}' suffix to the ladder name and directory
+    - Offset the seed by run_num for reproducible variation across runs
+    - Preserve the original project name so all runs log to the same W&B project
+    """
+    # Preserve original name for W&B project/group if not explicitly set
+    if ladder.project is None:
+        ladder.project = ladder.name
+    ladder.name = f"{ladder.name}-run{run_num}"
+    ladder.dir = f"{ladder.dir}-run{run_num}"
+    ladder.seed = ladder.seed + run_num
 
 
 def dry_run(args: argparse.Namespace):
@@ -423,6 +470,8 @@ def launch_benchmark(args: argparse.Namespace):
 
 def run(args: argparse.Namespace):
     ladder = args.configure_ladder(args)
+    if args.run_num is not None:
+        apply_run_num_to_ladder(ladder, args.run_num)
     ladder.run(args.size)
 
 
@@ -459,7 +508,9 @@ def _launch_run(
 def launch(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
-    launcher = configure_launcher(args, ladder, "run")
+    if args.run_num is not None:
+        apply_run_num_to_ladder(ladder, args.run_num)
+    launcher = configure_launcher(args, ladder, "run", run_num=args.run_num)
     _launch_run(
         ladder,
         launcher,
@@ -477,19 +528,27 @@ def launch_all(args: argparse.Namespace):
     if args.max_size:
         sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
 
-    for size in sizes:
-        launcher = configure_launcher(args, ladder, "run", size=size)
-        _launch_run(
-            ladder,
-            launcher,
-            size,
-            follow=False,
-            slack_notifications=args.slack_notifications,
-            dry_run=args.dry_run,
-        )
+    for run_num in range(1, args.num_runs + 1):
+        # Reconfigure ladder for each run to get a fresh copy
+        ladder = args.configure_ladder(args)
+        run_num_to_use = run_num if args.num_runs > 1 else None
+        if run_num_to_use is not None:
+            apply_run_num_to_ladder(ladder, run_num_to_use)
+
+        for size in sizes:
+            launcher = configure_launcher(args, ladder, "run", size=size, run_num=run_num_to_use)
+            _launch_run(
+                ladder,
+                launcher,
+                size,
+                follow=False,
+                slack_notifications=args.slack_notifications,
+                dry_run=args.dry_run,
+            )
 
 
 def status(args: argparse.Namespace):
+    # for weka checkpoints, needs to be run on a beaker node with weka access
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
 
