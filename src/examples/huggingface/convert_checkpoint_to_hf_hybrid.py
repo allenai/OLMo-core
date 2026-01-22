@@ -130,12 +130,13 @@ def is_hybrid_model(model: Transformer) -> bool:
     return any(isinstance(block, FLABlock) for block in blocks)
 
 
-def get_hybrid_hf_config_dict(model: Transformer, transformer_config: TransformerConfig) -> Dict[str, Any]:
+def get_hybrid_hf_config_dict(
+    model: Transformer, 
+    transformer_config: TransformerConfig,
+    max_sequence_length: int | None = None,  # NEW parameter
+) -> Dict[str, Any]:
     """
     Build a config dict for Olmo3_5Hybrid model.
-    
-    Returns a dict that can be saved as config.json directly, without needing
-    to import the Olmo3_5HybridConfig class from transformers.
     """
     blocks = list(model.blocks.values())
     n_layers = len(blocks)
@@ -143,7 +144,6 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
     layer_types = []
     attention_block = None
     fla_block = None
-
 
     for idx, block in enumerate(blocks):
         if isinstance(block, FLABlock):
@@ -164,11 +164,17 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
 
     attn = attention_block.attention
     
+    # Handle RoPE - may be None for drope models
     rope_theta = None
     rope_scaling = None
-    if attn.rope is not None:
+    use_rope = attn.rope is not None
+    
+    if use_rope:
         rope_theta = float(attn.rope.theta)
         rope_scaling = _get_rope_scaling_for_hybrid(blocks)
+        log.info(f"RoPE enabled: theta={rope_theta}, scaling={rope_scaling}")
+    else:
+        log.info("No RoPE configured (drope model)")
 
     # Extract FLA config
     fla_inner = fla_block.fla.inner
@@ -183,9 +189,14 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
     linear_key_head_dim = fla_kwargs.get('head_dim', getattr(fla_inner, 'head_k_dim', 96))
     linear_value_head_dim = getattr(fla_inner, 'head_v_dim', linear_key_head_dim * 2)
 
-    # Build the config dict - this matches what Olmo3_5HybridConfig expects
+    # Determine max_position_embeddings
+    # Use passed value, or fall back to a default
+    if max_sequence_length is None:
+        max_sequence_length = 65536  # Default fallback
+        log.warning(f"max_sequence_length not provided, using default: {max_sequence_length}")
+
+    # Build the config dict
     config_dict = {
-        # Required field for HF to know which model class to use
         "model_type": "olmo3_5_hybrid",
         "architectures": ["Olmo3_5HybridForCausalLM"],
         
@@ -197,13 +208,11 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
         "num_attention_heads": attn.n_heads,
         "num_key_value_heads": attn.n_kv_heads or attn.n_heads,
         "hidden_act": "silu",
-        "max_position_embeddings": 65536,
+        "max_position_embeddings": max_sequence_length,  # NOW DYNAMIC
         "initializer_range": 0.02,
         "use_cache": True,
         "attention_bias": attn.w_out.bias is not None,
         "attention_dropout": 0.0,
-        "rope_theta": rope_theta,
-        "rope_scaling": rope_scaling,
         "rms_norm_eps": attention_block.feed_forward_norm.eps,
         "tie_word_embeddings": False,
         
@@ -224,9 +233,19 @@ def get_hybrid_hf_config_dict(model: Transformer, transformer_config: Transforme
         "bos_token_id": None,
         "eos_token_id": None,
         
-        # Transformers version info
         "transformers_version": "4.52.0",
     }
+    
+    # Only add RoPE config if RoPE is used
+    if use_rope:
+        config_dict["rope_theta"] = rope_theta
+        if rope_scaling is not None:
+            config_dict["rope_scaling"] = rope_scaling
+    # For drope models, simply don't include rope_theta/rope_scaling keys
+    # or explicitly set them to indicate no RoPE:
+    else:
+        config_dict["rope_theta"] = None
+        config_dict["rope_scaling"] = None
 
     return config_dict
 
@@ -676,13 +695,21 @@ def main():
     assert transformer_config_dict is not None
     assert tokenizer_config_dict is not None
 
+    max_sequence_length = args.max_sequence_length
+    if max_sequence_length is None:
+        # Try train_module.max_sequence_length first (authoritative source)
+        max_sequence_length = experiment_config.get("train_module", {}).get("max_sequence_length")
+    if max_sequence_length is None:
+        # Fallback to dataset.sequence_length
+        max_sequence_length = experiment_config.get("dataset", {}).get("sequence_length")
+
     convert_checkpoint_to_hf(
         original_checkpoint_path=args.checkpoint_input_path,
         output_path=args.huggingface_output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
         dtype=args.dtype,
-        max_sequence_length=args.max_sequence_length,
+        max_sequence_length=max_sequence_length,
         tokenizer_id=args.tokenizer,
         validate=args.validate,
         debug=args.debug,
