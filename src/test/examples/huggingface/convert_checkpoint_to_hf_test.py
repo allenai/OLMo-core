@@ -1,3 +1,5 @@
+import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -50,7 +52,7 @@ def model_config(request, tokenizer_config: TokenizerConfig) -> tuple[str, Trans
 @pytest.fixture
 def olmo_core_model_path(
     tmp_path: Path, model_config: tuple[str, TransformerConfig]
-) -> tuple[str, Path]:
+) -> Iterator[tuple[str, Path]]:
     """Returns (model_family, model_path) tuple."""
     model_family, transformer_config = model_config
     model = transformer_config.build()
@@ -58,7 +60,8 @@ def olmo_core_model_path(
     model_path = tmp_path / f"olmo_core_{model_family}"
     save_model_and_optim_state(model_path / "model_and_optim", model)
     del model
-    return model_family, model_path
+    yield model_family, model_path
+    shutil.rmtree(model_path)
 
 
 def _get_expected_hf_config(
@@ -168,6 +171,7 @@ def test_convert_checkpoint_to_hf_correct_config(
     hf_config = AutoConfig.from_pretrained(output_dir)
 
     assert hf_config.to_diff_dict() == expected_hf_config.to_diff_dict()
+    shutil.rmtree(output_dir)
 
 
 def test_convert_checkpoint_to_hf_correct_model(
@@ -198,3 +202,4 @@ def test_convert_checkpoint_to_hf_correct_model(
     hf_model = AutoModelForCausalLM.from_pretrained(output_dir)
 
     _validate_models_match(hf_model, olmo_core_model)
+    shutil.rmtree(output_dir)
