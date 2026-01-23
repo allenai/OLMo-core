@@ -62,7 +62,7 @@ ARG FLASH_ATTN_SHA="2580b5a4882562640f3cfbffd2bb8d2de9268f9f"
 RUN pip install --no-build-isolation --no-cache-dir "flash-attn @ git+https://git@github.com/Dao-AILab/flash-attention.git@${FLASH_ATTN_SHA}"
 
 # Install flash-attn 3
-ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
+ARG FLASH_ATTN_3_SHA="060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
 ARG FA3_MAX_JOBS=16
 RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
     cd flash-attention && \
