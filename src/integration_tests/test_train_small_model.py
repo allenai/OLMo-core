@@ -9,6 +9,7 @@ Run GPU test:
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -40,9 +41,18 @@ from olmo_core.utils import seed_all
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-DATA_PATH = "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy"
-# Use training data for eval too - validation data doesn't have metadata available over HTTP
-EVAL_DATA_PATH = DATA_PATH
+# Try local paths first (Weka/NFS), fall back to HTTP
+DEFAULT_DATA_ROOT = "http://olmo-data.org/examples/c4-en/gpt2"
+for dir in (
+    "/weka/oe-training-default/ai2-llm/examples/c4-en/gpt2/",
+    "/net/nfs/allennlp/llm-data/c4/en/",
+):
+    if os.path.exists(dir):
+        DEFAULT_DATA_ROOT = dir
+        break
+
+DATA_PATH = f"{DEFAULT_DATA_ROOT}/c4-train.00000-00099.npy"
+EVAL_DATA_PATH = f"{DEFAULT_DATA_ROOT}/c4-validation.00000-00008.npy"
 
 
 def train(
