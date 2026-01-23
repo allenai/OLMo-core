@@ -49,7 +49,12 @@ def has_flash_attn_3() -> bool:
 
 
 def has_flash_attn_4() -> bool:
-    return flash_attn_4 is not None
+    if flash_attn_4 is not None:
+        if torch.cuda.is_available():
+            compute_capability = torch.cuda.get_device_capability()
+            return (9, 0) <= compute_capability <= (10, 0)  # Hopper, Blackwell
+        return True
+    return False
 
 
 def has_ring_flash_attn() -> bool:
