@@ -93,7 +93,7 @@ RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github
     git checkout ${FLASH_ATTN_4_SHA} && \
     git submodule update --init --depth 1 && \
     cd flash_attn/cute && \
-    python setup.py install && \
+    pip install --no-build-isolation --no-cache-dir . && \
     cd /app/build && \
     rm -rf flash-attention
 
