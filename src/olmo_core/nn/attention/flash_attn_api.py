@@ -482,7 +482,7 @@ def dispatch_flash_attn_4(
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
-        )
+        )[0]
     else:
         return flash_attn_4.flash_attn_func(
             q,
@@ -491,4 +491,4 @@ def dispatch_flash_attn_4(
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
-        )
+        )[0]
