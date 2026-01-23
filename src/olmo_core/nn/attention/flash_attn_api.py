@@ -12,7 +12,7 @@ except ImportError:
     flash_attn_2 = None
 
 try:
-    # NOTE: The flash-attn 3 might be available under the name 'flash_attn_3.flash_attn_interface'
+    # NOTE: The flash-attn 3 API might be available under the name 'flash_attn_3.flash_attn_interface'
     # or just 'flash_attn_interface', depending on how it was built.
     import flash_attn_3.flash_attn_interface as flash_attn_3  # type: ignore
 except ImportError:
