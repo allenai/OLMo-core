@@ -442,6 +442,7 @@ def dispatch_ring_flash_attn_qkvpacked(
     return out  # type: ignore
 
 
+@torch._dynamo.disable()
 def dispatch_flash_attn_4(
     q: torch.Tensor,
     k: torch.Tensor,
