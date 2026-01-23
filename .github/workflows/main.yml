@@ -138,12 +138,6 @@ jobs:
           name: package
           path: dist
 
-      - name: Clean up
-        if: always()
-        run: |
-          . .venv/bin/activate
-          pip uninstall -y ai2-olmo-core
-
   gpu_checks:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
