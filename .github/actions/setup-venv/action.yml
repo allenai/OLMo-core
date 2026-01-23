@@ -11,7 +11,7 @@ inputs:
   torch-version:
     description: The PyTorch version to install
     required: false
-    default: '2.9.1'
+    default: '2.10.0'
   torch-backend:
     description: The torch backend to install for
     required: false
@@ -37,14 +37,14 @@ runs:
       id: virtualenv-cache
       with:
         path: /tmp/.uv-cache
-        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.torch-version }}-${{ inputs.backend }}-${{ hashFiles('*requirements.txt', '*pyproject.toml') }}
+        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.torch-version }}-${{ inputs.torch-backend }}-${{ hashFiles('*requirements.txt', '*pyproject.toml') }}
         restore-keys: |
-          ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.torch-version }}-${{ inputs.backend }}
+          ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.torch-version }}-${{ inputs.torch-backend }}
 
     - shell: bash
       run: |
         uv pip install setuptools build wheel
-        uv pip install torch==${{ inputs.torch-version }} --index-url https://download.pytorch.org/${{ inputs.backend }}
+        uv pip install torch==${{ inputs.torch-version }} --torch-backend=${{ inputs.torch-backend }}
         uv pip install -e .[all]
 
     - shell: bash
