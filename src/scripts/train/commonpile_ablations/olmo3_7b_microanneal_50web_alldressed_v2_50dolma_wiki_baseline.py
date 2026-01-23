@@ -53,6 +53,7 @@ DATASET_CONFIG = SourceMixtureList(
         SourceMixtureConfig(
             source_name="dolma_wiki_baseline",
             target_ratio=0.5,
+            max_repetition_ratio=2,
             paths=[
                 f"s3://ai2-llm/preprocessed/olmo-mix/danyh-compiled-v1_7/documents/wiki/{TOKENIZER_CONFIG.identifier}/*.npy"
             ],
