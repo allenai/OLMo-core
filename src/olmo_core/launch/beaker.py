@@ -150,7 +150,14 @@ class OLMoCoreBeakerImage(StrEnum):
     The stable image with CUDA pinned to 12.8.
     """
 
+    #
     # Sorted roughly from newest versions to oldest versions
+    #
+    tch2100_cu128 = "petew/olmo-core-tch2100cu128-2026-01-23"
+    """
+    Built with torch 2.10.0 and CUDA 12.8.
+    """
+    # Newer images (above this line) include the AWS CLI and Google Cloud SDK.
     tch280_cu128 = "tylerr/olmo-core-tch280cu128-2025-11-25"
     """
     Built with torch 2.8.0 and CUDA 12.8.
@@ -159,6 +166,7 @@ class OLMoCoreBeakerImage(StrEnum):
     """
     Built with torch 2.7.1 and CUDA 12.8.
     """
+    # Newer images (above this line) include TransformerEngine and flash-attention-3.
     tch270_cu128 = "petew/olmo-core-tch270cu128-2025-05-16"
     """
     Built with torch 2.7.0 and CUDA 12.8.
