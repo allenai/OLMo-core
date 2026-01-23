@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import List, Optional, Set
 
 import torch.nn as nn
-from torchao.utils import torch
 
 from olmo_core.utils import has_compute_capability
 
@@ -77,6 +76,8 @@ class Float8Config(Config):
         """
         if not self.enabled:
             return
+
+        from torchao.utils import torch
 
         self.validate()
 
