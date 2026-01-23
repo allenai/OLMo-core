@@ -58,7 +58,7 @@ ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 RUN pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
 # Install flash-attn 2/4
-ARG FLASH_ATTN_SHA="060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
+ARG FLASH_ATTN_SHA="7321879fde54f09ed94f7f6ce9377e2f4cf1fac0"
 RUN pip install --no-build-isolation --no-cache-dir "flash-attn @ git+https://git@github.com/Dao-AILab/flash-attention.git@${FLASH_ATTN_SHA}"
 
 # Install flash-attn 3
