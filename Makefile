@@ -56,6 +56,7 @@ INSTALL_CHANNEL = whl
 GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 FLASH_ATTN_VERSION = 2.8.2
 FLASH_ATTN_3_SHA = "060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
+FLASH_ATTN_4_SHA = "2580b5a4882562640f3cfbffd2bb8d2de9268f9f"
 FA3_MAX_JOBS = 64
 TE_VERSION = 2.9
 RING_FLASH_ATTN_VERSION = 0.1.8
@@ -82,13 +83,14 @@ docker-image :
 		--build-arg GROUPED_GEMM_SHA=$(GROUPED_GEMM_SHA) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
 		--build-arg FLASH_ATTN_3_SHA=$(FLASH_ATTN_3_SHA) \
+		--build-arg FLASH_ATTN_4_SHA=$(FLASH_ATTN_4_SHA) \
 		--build-arg FA3_MAX_JOBS=$(FA3_MAX_JOBS) \
 		--build-arg TE_VERSION=$(TE_VERSION) \
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
-	docker run --rm olmo-core:$(IMAGE_TAG) python -c 'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface; print("Image validated")'
+	docker run --rm olmo-core:$(IMAGE_TAG) python -c 'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface; import flash_attn.cute; print("Image validated")'
 	echo "Built image 'olmo-core:$(IMAGE_TAG)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si)"
 
 .PHONY : ghcr-image
