@@ -15,13 +15,22 @@ from typing import Optional
 import pytest
 
 from olmo_core.config import DType
-from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
 from olmo_core.testing import run_distributed_test
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, ModelMergeCallback
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    LMEvaluatorCallbackConfig,
+    ModelMergeCallback,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -32,6 +41,8 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 DATA_PATH = "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy"
+# Use training data for eval too - validation data doesn't have metadata available over HTTP
+EVAL_DATA_PATH = DATA_PATH
 
 
 def train(
@@ -70,6 +81,14 @@ def train(
         dp_config=dp_config,
     )
 
+    eval_dataset_config = NumpyPaddedFSLDatasetConfig(
+        paths=[EVAL_DATA_PATH],
+        metadata=[{"label": "c4-validation"}],
+        sequence_length=64,
+        tokenizer=tokenizer_config,
+        work_dir=str(work_dir),
+    )
+
     trainer_config = (
         TrainerConfig(
             save_folder=str(save_folder),
@@ -79,7 +98,16 @@ def train(
             max_duration=Duration.steps(max_steps),
         )
         # Checkpointer needed for ModelMergeCallback's process_group; high interval to skip regular saves
-        .with_callback("checkpointer", CheckpointerCallback(save_interval=1000)).with_callback(
+        .with_callback("checkpointer", CheckpointerCallback(save_interval=1000))
+        .with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=eval_dataset_config,
+                eval_interval=1000,  # Don't eval during training, only at merge
+                eval_duration=Duration.steps(2),  # Keep it fast
+            ),
+        )
+        .with_callback(
             "model_merger",
             ModelMergeCallback(
                 merge_step=max_steps,
