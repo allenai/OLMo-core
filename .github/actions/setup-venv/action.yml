@@ -11,7 +11,7 @@ inputs:
   torch-version:
     description: The PyTorch version to install
     required: false
-    default: '2.10.0'
+    default: '2.9.1'
   torch-backend:
     description: The torch backend to install for
     required: false
