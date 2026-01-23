@@ -448,7 +448,9 @@ class FlashAttention2Backend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_flash_attn_2():
-            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn package.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the flash-attn package or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):
@@ -674,7 +676,9 @@ class FlashAttention3Backend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_flash_attn_3():
-            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn 3 package.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the flash-attn 3 package or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):
@@ -869,7 +873,9 @@ class FlashAttention4Backend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_flash_attn_4():
-            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn CUTE implementation.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the flash-attn CUTE implementation or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):
@@ -1004,7 +1010,9 @@ class TEAttentionBackend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_te_attn():
-            raise RuntimeError(f"'{cls.__name__}' requires NVIDIA's TransformerEngine package.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the TransformerEngine package or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):
