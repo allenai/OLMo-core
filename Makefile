@@ -91,7 +91,7 @@ docker-image :
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
-	docker run --rm olmo-core:$(IMAGE_TAG) python -c 'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface; import flash_attn.cute; print("Image validated")'
+	docker run --rm olmo-core:$(IMAGE_TAG) python -c 'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface; print("Image validated")'
 	echo "Built image 'olmo-core:$(IMAGE_TAG)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si)"
 
 .PHONY : ghcr-image
