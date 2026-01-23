@@ -50,7 +50,6 @@ runs:
     - shell: bash
       run: |
         # Show environment info.
-        . .venv/bin/activate
         echo "✓ Installed $(python --version) virtual environment to $(which python)"
         echo "========= Python packages ==========="
         uv pip freeze
