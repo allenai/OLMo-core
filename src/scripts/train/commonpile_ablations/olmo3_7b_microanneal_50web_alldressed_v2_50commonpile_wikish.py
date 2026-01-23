@@ -51,10 +51,11 @@ DATASET_CONFIG = SourceMixtureList(
             ],
         ),
         SourceMixtureConfig(
-            source_name="dolma_wiki_baseline",
+            source_name="commonpile_wikish",
             target_ratio=0.5,
             paths=[
-                f"s3://ai2-llm/preprocessed/olmo-mix/danyh-compiled-v1_7/documents/wiki/{TOKENIZER_CONFIG.identifier}/*.npy"
+                f"s3://ai2-llm/preprocessed/common-pile_wikish/v0/common-pile_wikimedia_filtered/{TOKENIZER_CONFIG.identifier}/*.npy",
+                f"s3://ai2-llm/preprocessed/common-pile_wikish/v0/common-pile_wikiteam_filtered/{TOKENIZER_CONFIG.identifier}/*.npy",
             ],
         ),
     ]
