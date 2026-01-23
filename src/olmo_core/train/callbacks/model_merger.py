@@ -28,14 +28,16 @@ class ModelMergeCallback(Callback):
     merge_step: Optional[Union[int, List[int]]] = None
     """
     The step(s) at which to save merged checkpoint(s). Can be a single int or a list of ints.
-    If not set, defaults to the steps right before the scheduler's decay phases begin.
-    For schedulers without a decay phase, defaults to max_steps.
+    If not set:
+    - For WSDS schedulers: defaults to the steps right before each decay phase begins.
+    - For other schedulers: defaults to every ``merge_interval`` steps.
     """
 
+    merge_interval: int = 10000
+    """Interval at which to save merged checkpoints (e.g., steps 10000, 20000, ...)."""
+
     merge_last_n_steps: int = 100
-    """
-    Number of steps before ``merge_step`` to start accumulating the average.
-    """
+    """Number of steps before ``merge_step`` to start accumulating the average."""
 
     output_suffix: str = "merged"
     """
@@ -43,29 +45,15 @@ class ModelMergeCallback(Callback):
     The merged checkpoint will be saved as "step{merge_step}-{output_suffix}".
     """
 
-    validate: bool = False
-    """
-    If True, captures individual step weights during accumulation and validates
-    that the merged weights are correctly averaged. Useful for testing.
-    """
-
     enabled: bool = True
     _accumulator: Optional[Dict[str, torch.Tensor]] = field(default=None, repr=False)
     _n_accumulated: int = field(default=0, repr=False)
     _merge_steps: List[int] = field(default_factory=list, repr=False)
     _current_merge_idx: int = field(default=0, repr=False)
-    _captured_weights: List[Dict[str, torch.Tensor]] = field(default_factory=list, repr=False)
 
     def _get_decay_steps_from_scheduler(
         self, scheduler: Scheduler, max_steps: int
     ) -> Tuple[int, str]:
-        """
-        Extract the number of decay steps from a scheduler.
-
-        Returns:
-            Tuple of (decay_steps, source_description) where source_description
-            explains how the decay steps were determined.
-        """
         # Check for explicit decay attribute
         if hasattr(scheduler, "decay") and scheduler.decay is not None:
             return scheduler.decay, "scheduler.decay"
@@ -85,8 +73,6 @@ class ModelMergeCallback(Callback):
         :param scheduler: The WSDS scheduler.
         :param tokens_per_step: Global batch size (in tokens)
         :returns: List of step numbers where merges should occur.
-
-        Note: This assumes the data loader's global_batch_size is in tokens
         """
         merge_steps = []
 
@@ -153,28 +139,17 @@ class ModelMergeCallback(Callback):
                     f"assuming {tokens_per_step} tokens/step)"
                 )
             else:
-                # Single decay scheduler or no scheduler
-                decay_steps = 0
-                decay_source = "no scheduler"
-
-                if scheduler is not None:
-                    decay_steps, decay_source = self._get_decay_steps_from_scheduler(
-                        scheduler, max_steps
-                    )
-
-                auto_merge_step = max_steps - decay_steps
-                self._merge_steps = [auto_merge_step]
-
-                if decay_steps > 0:
-                    log.info(
-                        f"ModelMergeCallback: merge_step set to {auto_merge_step} "
-                        f"(max_steps={max_steps} - decay_steps={decay_steps} from {decay_source})"
-                    )
-                else:
-                    log.info(
-                        f"ModelMergeCallback: merge_step set to {auto_merge_step} "
-                        f"(max_steps, {decay_source})"
-                    )
+                # For non-WSDS schedulers, use fixed intervals
+                self._merge_steps = list(
+                    range(self.merge_interval, max_steps + 1, self.merge_interval)
+                )
+                # Ensure we have at least one merge step (at max_steps if interval > max_steps)
+                if not self._merge_steps:
+                    self._merge_steps = [max_steps]
+                log.info(
+                    f"ModelMergeCallback: merge_steps set to {self._merge_steps} "
+                    f"(every {self.merge_interval} steps)"
+                )
         elif isinstance(self.merge_step, int):
             self._merge_steps = [self.merge_step]
             log.info(f"ModelMergeCallback: merge_step set to {self.merge_step}")
@@ -255,11 +230,7 @@ class ModelMergeCallback(Callback):
         Might want to consider sparse sampling (accumulate every Nth step instead of every step)
         or doing this one time (moving to CPU only at the end)
         """
-        # Use get_model_state_dict with full_state_dict=True to gather complete weights to each rank.
-        # This is necessary because:
-        # 1. With FSDP, full_state_dict=False returns DTensors with sharding metadata
-        # 2. When we convert to plain CPU tensors for accumulation, we lose the sharding metadata
-        # 3. save_state_dict() would then treat plain tensors as replicated and only save rank 0's data
+
         # Using full_state_dict=True ensures all ranks have identical complete weights, so the
         # averaged result can be saved correctly from any rank.
         sd_options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
@@ -279,17 +250,10 @@ class ModelMergeCallback(Callback):
         for key, value in model_state.items():
             self._accumulator[key].add_(value.float())
 
-        # Capture individual weights for validation if enabled
-        if self.validate:
-            self._captured_weights.append({k: v.clone().float() for k, v in model_state.items()})
-
         self._n_accumulated += 1
         log.debug(f"Accumulated weights at step {self.step} ({self._n_accumulated} total)")
 
     def _save_merged_checkpoint(self):
-        """
-        Compute the average and save the merged checkpoint.
-        """
         if self._accumulator is None or self._n_accumulated == 0:
             log.warning("No weights accumulated, cannot save merged checkpoint")
             return
@@ -302,10 +266,6 @@ class ModelMergeCallback(Callback):
         averaged_state = {}
         for key, accumulated_value in self._accumulator.items():
             averaged_state[key] = accumulated_value / self._n_accumulated
-
-        # Validate the average if enabled (testing only)
-        if self.validate:
-            self._validate_average(averaged_state)
 
         output_path = str(
             join_path(
@@ -335,41 +295,12 @@ class ModelMergeCallback(Callback):
 
         log.info(f"Merged checkpoint saved to: {output_path}")
 
-        # Evaluate merged model (skips if no EvaluatorCallbacks found)
         self._evaluate_merged(averaged_state)
 
         # Clean up and advance to next merge step
         self._accumulator = None
         self._n_accumulated = 0
         self._current_merge_idx += 1
-        self._captured_weights = []
-
-    def _validate_average(self, averaged_state: Dict[str, torch.Tensor]):
-        """
-        Validate that the averaged weights are correctly computed from captured weights (testing only).
-        """
-        if not self._captured_weights:
-            log.warning("No captured weights to validate against")
-            return
-
-        log.info(
-            f"Validating merged weights against {len(self._captured_weights)} captured snapshots..."
-        )
-
-        # Compute expected average from captured weights
-        keys = list(self._captured_weights[0].keys())
-        for key in keys:
-            stacked = torch.stack([w[key] for w in self._captured_weights])
-            expected = stacked.mean(dim=0)
-            actual = averaged_state[key]
-
-            if not torch.allclose(expected, actual, rtol=1e-4, atol=1e-6):
-                raise AssertionError(
-                    f"Validation failed for key '{key}': "
-                    f"merged weights do not match expected average"
-                )
-
-        log.info("Validation passed: merged weights correctly average captured snapshots")
 
     def _evaluate_merged(self, averaged_state: Dict[str, torch.Tensor]):
         """
