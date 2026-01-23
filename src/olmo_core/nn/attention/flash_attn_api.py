@@ -12,12 +12,14 @@ except ImportError:
     flash_attn_2 = None
 
 try:
-    # Due to how flash-attn 3 is installed, we just import the interface module.
-    # This is a bit of a hack that conveniently avoids the namespace conflict.
-    # When flash-attn 3 is officially released we may need to figure out a better solution.
-    import flash_attn_interface as flash_attn_3  # type: ignore
+    # NOTE: The flash-attn 3 might be available under the name 'flash_attn_3.flash_attn_interface'
+    # or just 'flash_attn_interface', depending on how it was built.
+    import flash_attn_3.flash_attn_interface as flash_attn_3  # type: ignore
 except ImportError:
-    flash_attn_3 = None
+    try:
+        import flash_attn_interface as flash_attn_3  # type: ignore
+    except ImportError:
+        flash_attn_3 = None
 
 try:
     import ring_flash_attn  # type: ignore
