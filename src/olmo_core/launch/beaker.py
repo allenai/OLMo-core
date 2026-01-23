@@ -153,7 +153,7 @@ class OLMoCoreBeakerImage(StrEnum):
     #
     # Sorted roughly from newest versions to oldest versions
     #
-    tch2100_cu128 = "petew/olmo-core-tch2100cu128-2026-01-22"
+    tch2100_cu128 = "petew/olmo-core-tch2100cu128-2026-01-23"
     """
     Built with torch 2.10.0 and CUDA 12.8.
     """
