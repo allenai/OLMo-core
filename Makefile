@@ -57,7 +57,7 @@ GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 FLASH_ATTN_SHA = "2580b5a4882562640f3cfbffd2bb8d2de9268f9f"
 FLASH_ATTN_3_SHA = "92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
 FA3_MAX_JOBS = 64
-TE_VERSION = 2.10
+TE_VERSION = 2.9
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.4
 
@@ -88,6 +88,7 @@ docker-image :
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
+	docker run --rm olmo-core:$(IMAGE_TAG) python -c 'import torch; import transformer_engine.pytorch; import flash_attn'
 	echo "Built image 'olmo-core:$(IMAGE_TAG)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si)"
 
 .PHONY : ghcr-image

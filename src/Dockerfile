@@ -75,7 +75,7 @@ RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github
     rm -rf flash-attention
 
 # Install transformer-engine.
-ARG TE_VERSION=2.10
+ARG TE_VERSION=2.9
 RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
