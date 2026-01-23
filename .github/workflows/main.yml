@@ -128,7 +128,6 @@ jobs:
 
       - name: ${{ matrix.task.name }}
         run: |
-          . .venv/bin/activate
           ${{ matrix.task.run }}
 
       - name: Upload package distribution files
@@ -274,12 +273,10 @@ jobs:
 
       - name: Generate release notes
         run: |
-          . .venv/bin/activate
           python src/scripts/release/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
 
       - name: Publish package to PyPI
         run: |
-          . .venv/bin/activate
           twine upload -u __token__ -p '${{ secrets.PYPI_TOKEN }}' dist/*
 
       - name: Publish GitHub release
@@ -302,5 +299,4 @@ jobs:
       - name: Send Slack notifications about release
         continue-on-error: true
         run: |
-          . .venv/bin/activate
           python ./src/scripts/release/slack_notification.py '${{ secrets.SLACK_WEBHOOK_URL}}'
