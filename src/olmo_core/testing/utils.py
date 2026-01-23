@@ -15,11 +15,8 @@ has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 has_mps = torch.mps.is_available()
 compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
 has_flash_attn_2 = flash_attn_api.has_flash_attn_2()
-has_flash_attn_3 = (
-    flash_attn_api.has_flash_attn_3()
-    and compute_capability is not None
-    and 9 <= compute_capability < 10
-)
+has_flash_attn_3 = flash_attn_api.has_flash_attn_3()
+has_flash_attn_4 = flash_attn_api.has_flash_attn_4()
 has_torchao = False
 has_grouped_gemm = False
 has_te = False

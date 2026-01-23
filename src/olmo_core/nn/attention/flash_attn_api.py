@@ -9,7 +9,7 @@ from .ring import RingAttentionLoadBalancerType
 try:
     import flash_attn as flash_attn_2  # type: ignore
 except ImportError:
-    flash_attn_2 = None
+    flash_attn_2 = None  # type: ignore
 
 try:
     # NOTE: The flash-attn 3 API might be available under the name 'flash_attn_3.flash_attn_interface'
@@ -19,12 +19,17 @@ except ImportError:
     try:
         import flash_attn_interface as flash_attn_3  # type: ignore
     except ImportError:
-        flash_attn_3 = None
+        flash_attn_3 = None  # type: ignore
+
+try:
+    import flash_attn.cute as flash_attn_4  # type: ignore
+except ImportError:
+    flash_attn_4 = None  # type: ignore
 
 try:
     import ring_flash_attn  # type: ignore
 except ImportError:
-    ring_flash_attn = None
+    ring_flash_attn = None  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +44,15 @@ def has_flash_attn_3() -> bool:
             compute_capability = torch.cuda.get_device_capability()
             is_supported = (9, 0) <= compute_capability < (10, 0)  # H100 / H800
             return is_supported
+        return True
+    return False
+
+
+def has_flash_attn_4() -> bool:
+    if flash_attn_4 is not None:
+        if torch.cuda.is_available():
+            compute_capability = torch.cuda.get_device_capability()
+            return (9, 0) <= compute_capability <= (10, 0)  # Hopper, Blackwell
         return True
     return False
 
@@ -426,3 +440,58 @@ def dispatch_ring_flash_attn_qkvpacked(
         raise NotImplementedError(strategy)
 
     return out  # type: ignore
+
+
+@torch._dynamo.disable()
+def dispatch_flash_attn_4(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    cu_seqlens: Optional[torch.Tensor] = None,
+    cu_seqlens_q: Optional[torch.Tensor] = None,
+    cu_seqlens_k: Optional[torch.Tensor] = None,
+    max_seqlen: Optional[int] = None,
+    max_seqlen_q: Optional[int] = None,
+    max_seqlen_k: Optional[int] = None,
+    softmax_scale: Optional[float] = None,
+    causal: bool = False,
+    window_size: Tuple[int, int] = (-1, -1),
+) -> torch.Tensor:
+    if flash_attn_4 is None:
+        raise RuntimeError("flash-attn 4 (CUTE implementation) is required!")
+
+    if cu_seqlens is not None:
+        cu_seqlens_q = cu_seqlens if cu_seqlens_q is None else cu_seqlens_q
+        cu_seqlens_k = cu_seqlens if cu_seqlens_k is None else cu_seqlens_k
+    if max_seqlen is not None:
+        max_seqlen_q = max_seqlen if max_seqlen_q is None else max_seqlen_q
+        max_seqlen_k = max_seqlen if max_seqlen_k is None else max_seqlen_k
+
+    varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
+
+    if window_size == (-1, -1) or (window_size == (-1, 0) and causal):
+        window_size = (None, None)  # type: ignore
+
+    if varlen:
+        return flash_attn_4.flash_attn_varlen_func(
+            _flatten_batch_dim(q),
+            _flatten_batch_dim(k),
+            _flatten_batch_dim(v),
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            window_size=window_size,
+        )[0]
+    else:
+        return flash_attn_4.flash_attn_func(
+            q,
+            k,
+            v,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            window_size=window_size,
+        )[0]
