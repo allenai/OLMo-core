@@ -470,6 +470,9 @@ def dispatch_flash_attn_4(
 
     varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
 
+    if window_size == (-1, -1):
+        window_size = (None, None)  # type: ignore
+
     if varlen:
         return flash_attn_4.flash_attn_varlen_func(
             _flatten_batch_dim(q),
