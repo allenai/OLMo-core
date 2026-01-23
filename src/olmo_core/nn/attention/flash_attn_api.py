@@ -470,7 +470,7 @@ def dispatch_flash_attn_4(
 
     varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
 
-    if window_size == (-1, -1):
+    if window_size == (-1, -1) or (window_size == (-1, 0) and causal):
         window_size = (None, None)  # type: ignore
 
     if varlen:
