@@ -99,8 +99,12 @@ docker-image :
 		-t olmo-core:$(IMAGE_TAG) .
 	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
 		'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface'
-	@echo "✔️Image validated"
+	@echo "✔️Image validated. Python environment:"
+	@echo ""
+	@docker run --rm olmo-core:$(IMAGE_TAG) pip list
+	@echo ""
 	@echo "Built image 'olmo-core:$(IMAGE_TAG)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si)"
+	@echo ""
 
 .PHONY : ghcr-image
 ghcr-image : docker-image
