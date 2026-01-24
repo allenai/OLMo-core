@@ -146,6 +146,10 @@ def cute_cross_entropy_loss(
     """
     Cross entropy loss implementation that uses the quack library.
     """
+    B, T, V = logits.shape
+    logits = logits.view(B * T, V)
+    labels = labels.view(B * T)
+
     if _cute_cross_entropy is None:
         raise RuntimeError("'cute_cross_entropy_loss' requires quack library")
 
@@ -156,6 +160,8 @@ def cute_cross_entropy_loss(
     loss = _cute_cross_entropy(
         logits, labels, lse_partial=lse, ignore_index=ignore_index, reduction=reduction
     )
+    if reduction == "none":
+        loss = loss.view(B, T)
 
     if not compute_z_loss:
         return loss, None
@@ -169,5 +175,7 @@ def cute_cross_entropy_loss(
         z_squared = (z_squared * mask).sum()
 
     z_loss = z_loss_multiplier * z_squared
+    if reduction == "none":
+        z_loss = z_loss.view(B, T)
 
     return loss, z_loss
