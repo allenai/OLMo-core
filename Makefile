@@ -99,11 +99,11 @@ docker-image :
 		-t olmo-core:$(IMAGE_TAG) .
 	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
 		'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface'
-	@echo "✔️Image validated. Python environment:"
+	@echo "✔️ Image validated. Python environment:"
 	@echo ""
 	@docker run --rm olmo-core:$(IMAGE_TAG) pip list
 	@echo ""
-	@echo "Built image 'olmo-core:$(IMAGE_TAG)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si)"
+	@echo "✔️ Build complete: olmo-core:$(IMAGE_TAG) (size=$$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si))"
 	@echo ""
 
 .PHONY : ghcr-image
@@ -119,6 +119,7 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 .PHONY : beaker-image
 beaker-image : docker-image
 	@./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
+	@echo "✔️ Done"
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
