@@ -334,10 +334,10 @@ class ModelMergeCallback(Callback):
         original_state = dist_cp_sd.get_model_state_dict(model, options=sd_options)
 
         # Load merged weights using set_model_state_dict for proper FSDP support
-        # This handles device/dtype conversion automatically
+        # Use full_state_dict=True since averaged_state is a complete (non-sharded) state dict
         log.info("Loading merged weights for evaluation...")
         dist_cp_sd.set_model_state_dict(
-            model, averaged_state, options=dist_cp_sd.StateDictOptions(strict=True)
+            model, averaged_state, options=dist_cp_sd.StateDictOptions(full_state_dict=True, strict=True)
         )
 
         # Run evaluator callbacks with "eval/merged" prefix
@@ -347,9 +347,10 @@ class ModelMergeCallback(Callback):
                 callback._perform_eval(prefix="eval/merged")
         finally:
             # Restore original weights using set_model_state_dict for proper FSDP support
+            # Use full_state_dict=False since original_state is sharded (matches how we got it)
             log.info("Restoring original model weights...")
             dist_cp_sd.set_model_state_dict(
-                model, original_state, options=dist_cp_sd.StateDictOptions(strict=True)
+                model, original_state, options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True)
             )
 
     def state_dict(self) -> Dict[str, Any]:
