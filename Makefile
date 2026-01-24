@@ -97,8 +97,10 @@ docker-image :
 		--build-arg QUACK_VERSION=$(QUACK_VERSION) \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
-	docker run --rm olmo-core:$(IMAGE_TAG) python -c 'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface; print("Image validated")'
-	echo "Built image 'olmo-core:$(IMAGE_TAG)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si)"
+	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
+		'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface'
+	@echo "✔️Image validated"
+	@echo "Built image 'olmo-core:$(IMAGE_TAG)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si)"
 
 .PHONY : ghcr-image
 ghcr-image : docker-image
@@ -112,7 +114,7 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 
 .PHONY : beaker-image
 beaker-image : docker-image
-	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
+	@./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
