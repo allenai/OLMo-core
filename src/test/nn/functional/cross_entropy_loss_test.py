@@ -35,7 +35,7 @@ def test_cross_entropy_loss(device, reduction):
 @pytest.mark.parametrize("reduction", ["sum", "mean"])
 @requires_quack
 def test_cute_cross_entropy_loss(reduction):
-    vocab_size = 50257
+    vocab_size = 65536
     N = 32
     device = get_default_device()
 
@@ -43,7 +43,8 @@ def test_cute_cross_entropy_loss(reduction):
     labels = torch.randint(0, vocab_size, (N,), device=device)
     labels[-1] = -100  # mask some values.
 
-    logits1 = logits.clone()
+    logits_ref = logits.detach().clone().requires_grad_()
+    labels_ref = labels.detach().clone()
 
     ce_loss, z_loss = cute_cross_entropy_loss(
         logits, labels, reduction=reduction, compute_z_loss=True
@@ -54,13 +55,13 @@ def test_cute_cross_entropy_loss(reduction):
     assert logits.grad is not None
 
     # Make sure cute and reference implementation give the same results.
-    ce_loss1, z_loss1 = cross_entropy_loss(
-        logits1, labels, reduction=reduction, compute_z_loss=True
+    ce_loss_ref, z_loss_ref = cross_entropy_loss(
+        logits_ref, labels_ref, reduction=reduction, compute_z_loss=True
     )
-    assert z_loss1 is not None
-    loss1 = ce_loss1 + z_loss1
-    loss1.backward()
-    assert logits1.grad is not None
-    torch.testing.assert_close(ce_loss, ce_loss1)
-    torch.testing.assert_close(z_loss, z_loss1)
-    torch.testing.assert_close(logits.grad, logits1.grad)
+    assert z_loss_ref is not None
+    loss_ref = ce_loss_ref + z_loss_ref
+    loss_ref.backward()
+    assert logits_ref.grad is not None
+    torch.testing.assert_close(ce_loss, ce_loss_ref)
+    torch.testing.assert_close(z_loss, z_loss_ref)
+    torch.testing.assert_close(logits.grad, logits_ref.grad)
