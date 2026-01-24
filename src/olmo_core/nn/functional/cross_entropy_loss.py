@@ -149,19 +149,12 @@ def cute_cross_entropy_loss(
     if _cute_cross_entropy is None:
         raise RuntimeError("'cute_cross_entropy_loss' requires quack library")
 
-    lse: Optional[torch.Tensor] = None
-    if compute_z_loss:
-        lse = logits.float().logsumexp(-1, keepdim=True)
-
-    loss = _cute_cross_entropy(
-        logits, labels, lse_partial=lse, ignore_index=ignore_index, reduction=reduction
-    )
+    loss = _cute_cross_entropy(logits, labels, ignore_index=ignore_index, reduction=reduction)
 
     if not compute_z_loss:
         return loss, None
 
-    assert lse is not None
-    z_squared = lse.pow(2).squeeze(-1)
+    z_squared = logits.float().logsumexp(-1).pow(2)
     mask = labels != ignore_index
     if reduction == "mean":
         z_squared = (z_squared * mask).sum() / mask.sum()
