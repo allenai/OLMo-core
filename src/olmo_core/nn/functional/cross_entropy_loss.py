@@ -151,7 +151,7 @@ def cute_cross_entropy_loss(
 
     lse: Optional[torch.Tensor] = None
     if compute_z_loss:
-        lse = logits.float().logsumexp(-1)
+        lse = logits.float().logsumexp(-1, keepdim=True)
 
     loss = _cute_cross_entropy(
         logits, labels, lse_partial=lse, ignore_index=ignore_index, reduction=reduction
@@ -161,7 +161,7 @@ def cute_cross_entropy_loss(
         return loss, None
 
     assert lse is not None
-    z_squared = lse.pow(2)
+    z_squared = lse.pow(2).squeeze(-1)
     mask = labels != ignore_index
     if reduction == "mean":
         z_squared = (z_squared * mask).sum() / mask.sum()
