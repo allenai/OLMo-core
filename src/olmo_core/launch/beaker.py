@@ -153,9 +153,13 @@ class OLMoCoreBeakerImage(StrEnum):
     #
     # Sorted roughly from newest versions to oldest versions
     #
+    tch291_cu129 = "petew/olmo-core-tch291cu129-2026-01-24"
+    """
+    Built with torch 2.9.1 and CUDA 12.9. Comes with flash-attn 4 (CUTE implementation) and Quack kernels.
+    """
     tch291_cu128 = "petew/olmo-core-tch291cu128-FA4"
     """
-    Build with torch 2.9.1 and CUDA 12.8, with support for flash-attn 4 (CUTE implementation).
+    Built with torch 2.9.1 and CUDA 12.8. Comes with flash-attn 4 (CUTE implementation).
     """
     tch2100_cu128 = "petew/olmo-core-tch2100cu128-2026-01-23"
     """
