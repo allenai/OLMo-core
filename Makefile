@@ -45,7 +45,7 @@ build :
 
 # NOTE: When upgrading dependency versions (like for torch) make sure:
 #  * The corresponding versions specified in 'pyproject.toml' include the new version.
-#  * The versions installed in '.github/actions/setup-venv/action.yml' match if necessary.
+#  * The versions installed in '.github/actions/setup-python-env/action.yml' match if necessary.
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
 CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
