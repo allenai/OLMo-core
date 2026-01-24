@@ -110,6 +110,11 @@ RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLAS
 ARG LIGER_KERNEL_VERSION=0.6.4
 RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
+# Optionally install Quack kernels.
+ARG QUACK_VERSION=""
+RUN if [ -n "${QUACK_VERSION}" ]; then \
+    pip install --no-build-isolation --no-cache-dir quack-kernels==${QUACK_VERSION}; fi
+
 # Install direct dependencies, but not source code.
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py

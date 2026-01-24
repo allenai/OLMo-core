@@ -47,7 +47,7 @@ build :
 #  * The corresponding versions specified in 'pyproject.toml' include the new version.
 #  * The versions installed in '.github/actions/setup-python-env/action.yml' match if necessary.
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
-CUDA_VERSION = 12.8.1
+CUDA_VERSION = 12.9.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.12
 TORCH_VERSION = 2.10.0
@@ -64,6 +64,8 @@ FA3_MAX_JOBS = 64
 TE_VERSION = 2.9
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.4
+# NOTE: Quack requires CUDA 12.9 or higher
+QUACK_VERSION = 0.2.4
 
 #--------------#
 # Build naming #
@@ -91,6 +93,7 @@ docker-image :
 		--build-arg TE_VERSION=$(TE_VERSION) \
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
+		--build-arg QUACK_VERSION=$(QUACK_VERSION) \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
 	docker run --rm olmo-core:$(IMAGE_TAG) python -c 'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface; print("Image validated")'
