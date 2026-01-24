@@ -1,4 +1,4 @@
-name: Set up a Python virtualenv
+name: Set up a Python environment
 description: Set up a Python virtual environment with caching
 inputs:
   python-version:
