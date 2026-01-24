@@ -44,7 +44,7 @@ def test_cute_cross_entropy_loss(reduction):
 
     # Add some masked values.
     logits = torch.cat([logits, torch.rand(3, vocab_size, device=device)], dim=0).unsqueeze(0)
-    labels = torch.cat([labels, torch.tensor([-100] * 3, device=device)], dim=0).unsqueeze(0)
+    labels = torch.cat([labels, torch.tensor([-100] * 3, device=device)], dim=0)
 
     logits1 = logits.clone()
 
