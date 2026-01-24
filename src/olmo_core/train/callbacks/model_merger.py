@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
+import torch.distributed
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 
 from olmo_core.distributed.checkpoint import save_state_dict
@@ -223,7 +224,7 @@ class ModelMergeCallback(Callback):
 
     def _accumulate_weights(self):
         """
-        Adds current model weights to the accumulator (stored on CPU).
+        Adds current model weights to the accumulator (stored on CPU, rank 0 only).
 
         TODO(large-scale): For larger models, calling state_dict() and moving to CPU at every
         step in the merge window may cause significant throughput overhead.
@@ -231,30 +232,32 @@ class ModelMergeCallback(Callback):
         or doing this one time (moving to CPU only at the end)
         """
 
-        # Using full_state_dict=True ensures all ranks have identical complete weights, so the
-        # averaged result can be saved correctly from any rank.
+        # All ranks must participate in get_model_state_dict for FSDP to gather weights,
+        # but only rank 0 receives the actual state dict when full_state_dict=True.
         sd_options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
         model_state = dist_cp_sd.get_model_state_dict(
             self.trainer.train_module.model, options=sd_options
         )
 
-        if self._accumulator is None:
-            # Initialize accumulator with zeros on CPU
-            log.info(f"Starting model weight averaging at step {self.step}")
-            self._accumulator = {
-                k: torch.zeros_like(v, dtype=torch.float32, device="cpu")
-                for k, v in model_state.items()
-            }
+        # Only rank 0 accumulates (other ranks get empty state dict with full_state_dict=True)
+        if get_rank() == 0:
+            if self._accumulator is None:
+                # Initialize accumulator with zeros on CPU
+                log.info(f"Starting model weight averaging at step {self.step}")
+                self._accumulator = {
+                    k: torch.zeros_like(v, dtype=torch.float32, device="cpu")
+                    for k, v in model_state.items()
+                }
 
-        # Add current weights to accumulator (already on CPU from cpu_offload=True)
-        for key, value in model_state.items():
-            self._accumulator[key].add_(value.float())
+            # Add current weights to accumulator (already on CPU from cpu_offload=True)
+            for key, value in model_state.items():
+                self._accumulator[key].add_(value.float())
 
         self._n_accumulated += 1
         log.debug(f"Accumulated weights at step {self.step} ({self._n_accumulated} total)")
 
     def _save_merged_checkpoint(self):
-        if self._accumulator is None or self._n_accumulated == 0:
+        if get_rank() == 0 and (self._accumulator is None or self._n_accumulated == 0):
             log.warning("No weights accumulated, cannot save merged checkpoint")
             return
 
@@ -262,10 +265,16 @@ class ModelMergeCallback(Callback):
             f"Saving merged checkpoint (average of {self._n_accumulated} steps) at step {self.step}"
         )
 
-        # Compute the average
-        averaged_state = {}
-        for key, accumulated_value in self._accumulator.items():
-            averaged_state[key] = accumulated_value / self._n_accumulated
+        # Compute the average on rank 0 (only rank 0 has the accumulator)
+        averaged_state: Dict[str, torch.Tensor] = {}
+        if get_rank() == 0:
+            for key, accumulated_value in self._accumulator.items():  # type: ignore
+                averaged_state[key] = accumulated_value / self._n_accumulated
+
+        # Broadcast averaged_state from rank 0 to all ranks for distributed save and eval
+        object_list = [averaged_state]
+        torch.distributed.broadcast_object_list(object_list, src=0)
+        averaged_state = object_list[0]
 
         output_path = str(
             join_path(
