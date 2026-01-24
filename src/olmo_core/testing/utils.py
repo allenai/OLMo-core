@@ -21,6 +21,7 @@ has_torchao = False
 has_grouped_gemm = False
 has_te = False
 has_dion = False
+has_quack = False
 
 try:
     import torchao  # type: ignore
@@ -51,6 +52,14 @@ try:
 
     has_dion = True
     del dion
+except ImportError:
+    pass
+
+try:
+    import quack  # type: ignore
+
+    has_quack = True
+    del quack
 except ImportError:
     pass
 
@@ -142,6 +151,18 @@ DION_MARKS = (
 
 def requires_dion(func):
     for mark in DION_MARKS:
+        func = mark(func)
+    return func
+
+
+QUACK_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_quack, reason="Requires Quack"),
+)
+
+
+def requires_quack(func):
+    for mark in QUACK_MARKS:
         func = mark(func)
     return func
 

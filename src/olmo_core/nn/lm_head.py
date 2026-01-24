@@ -23,6 +23,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from .config import ModuleConfig
 from .functional import (
     cross_entropy_loss,
+    cute_cross_entropy_loss,
     fused_linear_cross_entropy_loss,
     l2_normalize,
 )
@@ -71,6 +72,11 @@ class LMLossImplementation(StrEnum):
     """
     A low-memory triton implementation from Liger-Kernel that fused the linear logits projection
     with the loss computation.
+    """
+
+    cute = "cute"
+    """
+    An efficient implementation CUTE implementation from the quack library.
     """
 
 
@@ -281,6 +287,21 @@ class LMHead(nn.Module):
                 ce_loss = loss - z_loss
             else:
                 ce_loss = loss
+        elif self.loss_implementation == LMLossImplementation.cute:
+            logits = self.w_out(h)
+            assert logits is not None
+            ce_loss, z_loss = cute_cross_entropy_loss(
+                get_local_tensor(logits).view(-1, self.vocab_size),
+                get_local_tensor(labels).contiguous().view(-1),
+                ignore_index=ignore_index,
+                reduction=loss_reduction,
+                compute_z_loss=z_loss_multiplier is not None,
+                z_loss_multiplier=z_loss_multiplier or 1e-4,
+            )
+            if z_loss is not None:
+                loss = ce_loss + z_loss
+            else:
+                loss = ce_loss
         else:
             raise NotImplementedError(
                 f"'{self.loss_implementation}' loss implementation is not supported by {self.__class__.__name__}"
@@ -510,6 +531,19 @@ class NormalizedLMHead(LMHead):
                 loss = ce_loss + z_loss
             else:
                 loss = ce_loss
+        elif self.loss_implementation == LMLossImplementation.cute:
+            ce_loss, z_loss = cute_cross_entropy_loss(
+                get_local_tensor(logits).view(-1, self.vocab_size),
+                get_local_tensor(labels).contiguous().view(-1),
+                ignore_index=ignore_index,
+                reduction=loss_reduction,
+                compute_z_loss=z_loss_multiplier is not None,
+                z_loss_multiplier=z_loss_multiplier or 1e-4,
+            )
+            if z_loss is not None:
+                loss = ce_loss + z_loss
+            else:
+                loss = ce_loss
         else:
             raise NotImplementedError(
                 f"'{self.loss_implementation}' loss implementation is not supported by '{self.__class__.__name__}'"
@@ -548,11 +582,9 @@ class NormalizedLMHead(LMHead):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
-        use_local_output: bool = True,
+        input_layouts: Optional[Tuple[Placement, Placement]] = None,
     ):
-        del tp_mesh, input_layout, output_layout, use_local_output
+        del tp_mesh, input_layouts
 
         raise NotImplementedError("TP is not implemented yet for the normalized LM head variant")
 

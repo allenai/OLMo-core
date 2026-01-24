@@ -4,7 +4,7 @@ from typing import Callable, Literal, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
-__all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss"]
+__all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss", "cute_cross_entropy_loss"]
 
 log = logging.getLogger(__name__)
 
@@ -122,3 +122,52 @@ def fused_linear_cross_entropy_loss(
         return ce_loss, z_loss
     else:
         return ce_loss, None
+
+
+_cute_cross_entropy: Optional[Callable] = None
+
+try:
+    from quack import cross_entropy as _cute_cross_entropy  # type: ignore
+except ImportError:
+    pass
+except Exception:
+    log.exception("Error importing quack.cross_entropy")
+
+
+def cute_cross_entropy_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    ignore_index: int = -100,
+    reduction: Literal["mean", "sum", "none"] = "mean",
+    compute_z_loss: bool = False,
+    z_loss_multiplier: float = 1e-4,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """
+    Cross entropy loss implementation that uses the quack library.
+    """
+    if _cute_cross_entropy is None:
+        raise RuntimeError("'cute_cross_entropy_loss' requires quack library")
+
+    lse: Optional[torch.Tensor] = None
+    if compute_z_loss:
+        lse = logits.float().logsumexp(-1)
+
+    loss = _cute_cross_entropy(
+        logits, labels, lse_partial=lse, ignore_index=ignore_index, reduction=reduction
+    )
+
+    if not compute_z_loss:
+        return loss, None
+
+    assert lse is not None
+    z_squared = lse.pow(2)
+    mask = labels != ignore_index
+    if reduction == "mean":
+        z_squared = (z_squared * mask).sum() / mask.sum()
+    elif reduction == "sum":
+        z_squared = (z_squared * mask).sum()
+
+    z_loss = z_loss_multiplier * z_squared
+
+    return loss, z_loss
