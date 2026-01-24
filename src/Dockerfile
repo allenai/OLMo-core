@@ -48,7 +48,7 @@ ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
-ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
+ENV TORCH_CUDA_ARCH_LIST="9.0 10.0"
 
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.

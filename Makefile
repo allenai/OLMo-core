@@ -64,8 +64,9 @@ FA3_MAX_JOBS = 64
 TE_VERSION = 2.9
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.4
-# NOTE: Quack requires CUDA 12.9 or higher
-QUACK_VERSION = 0.2.4
+# NOTE: Quack currently requires CUDA 12.9 or higher and PyTorch 2.9.1
+# QUACK_VERSION = 0.2.4
+QUACK_VERSION = ""
 
 #--------------#
 # Build naming #
