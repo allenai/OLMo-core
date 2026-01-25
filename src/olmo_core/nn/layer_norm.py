@@ -249,7 +249,7 @@ class CuteRMSNorm(RMSNorm):
         init_device: str = "cpu",
         dtype: torch.dtype = torch.float32,
     ):
-        from quack import rms_norm as rms_norm_fn  # type: ignore
+        from quack import rmsnorm as rms_norm_fn  # type: ignore
 
         super().__init__(
             size=size,
