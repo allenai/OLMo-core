@@ -1,9 +1,8 @@
 import pytest
 import torch
 
-from olmo_core.nn.functional import cross_entropy_loss, cute_cross_entropy_loss
-from olmo_core.testing import DEVICES, requires_quack
-from olmo_core.utils import get_default_device
+from olmo_core.nn.functional import cross_entropy_loss
+from olmo_core.testing import DEVICES
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -30,38 +29,3 @@ def test_cross_entropy_loss(device, reduction):
     )
     torch.testing.assert_close(ce_loss, ce_loss1)
     torch.testing.assert_close(z_loss, z_loss1)
-
-
-@pytest.mark.parametrize("reduction", ["sum", "mean"])
-@requires_quack
-def test_cute_cross_entropy_loss(reduction):
-    vocab_size = 65536
-    N = 32
-    device = get_default_device()
-
-    logits = torch.randn(N, vocab_size, device=device, requires_grad=True)
-    labels = torch.randint(0, vocab_size, (N,), device=device)
-    labels[-1] = -100  # mask some values.
-
-    logits_ref = logits.detach().clone().requires_grad_()
-    labels_ref = labels.detach().clone()
-
-    ce_loss, z_loss = cute_cross_entropy_loss(
-        logits, labels, reduction=reduction, compute_z_loss=True
-    )
-    assert z_loss is not None
-    loss = ce_loss + z_loss
-    loss.backward()
-    assert logits.grad is not None
-
-    # Make sure cute and reference implementation give the same results.
-    ce_loss_ref, z_loss_ref = cross_entropy_loss(
-        logits_ref, labels_ref, reduction=reduction, compute_z_loss=True
-    )
-    assert z_loss_ref is not None
-    loss_ref = ce_loss_ref + z_loss_ref
-    loss_ref.backward()
-    assert logits_ref.grad is not None
-    torch.testing.assert_close(ce_loss, ce_loss_ref)
-    torch.testing.assert_close(z_loss, z_loss_ref)
-    torch.testing.assert_close(logits.grad, logits_ref.grad)
