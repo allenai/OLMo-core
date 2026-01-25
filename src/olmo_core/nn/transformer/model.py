@@ -686,8 +686,8 @@ class Transformer(nn.Module):
         if mode == TransformerActivationCheckpointingMode.selected_modules and modules is None:
             raise ValueError("'modules' is required for 'selected_modules' mode")
 
-        # TODO: only preserve RNG state if dropout is active
-        preserve_rng_state = False
+        # Preserve RNG state if dropout is active to ensure reproducible results during recomputation
+        preserve_rng_state = any(isinstance(m, nn.Dropout) for m in self.modules())
 
         if mode == TransformerActivationCheckpointingMode.selected_modules:
             from fnmatch import fnmatch
