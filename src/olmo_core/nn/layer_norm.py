@@ -251,6 +251,12 @@ class CuteRMSNorm(RMSNorm):
     ):
         from quack import rmsnorm as rms_norm_fn  # type: ignore
 
+        if not full_precision:
+            # the CUTE kernel always casts to full precision internally
+            raise NotImplementedError(
+                f"Currently only 'full_precision=True' is supported with '{self.__class__.__name__}'"
+            )
+
         super().__init__(
             size=size,
             eps=eps,
@@ -263,16 +269,12 @@ class CuteRMSNorm(RMSNorm):
         self._rms_norm_fn = rms_norm_fn
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        og_dtype = x.dtype
-        if self.full_precision:
-            x = x.float()
         return self._rms_norm_fn(
             x,
             weight=None if self.weight is None else self.weight.type_as(x),
             bias=None if self.bias is None else self.bias.type_as(x),
-            out_dtype=og_dtype,
             eps=self.eps,
-        ).to(og_dtype)
+        ).to(x.dtype)
 
 
 class FusedRMSNorm(RMSNorm):
