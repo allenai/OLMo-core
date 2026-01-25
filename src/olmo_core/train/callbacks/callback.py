@@ -124,7 +124,7 @@ class Callback(Stateful):
         """
         Called when metrics have been gathered for a given step (possibly a previous step),
         but right before :meth:`log_metrics()`. This can used to modify, add, or remove metrics
-        but updating the ``metrics`` dict in-place.
+        by updating the ``metrics`` dict in-place.
         """
         del step, metrics
 
