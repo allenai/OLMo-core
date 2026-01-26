@@ -920,7 +920,6 @@ class Trainer:
         """
         Save a checkpoint for the current step to the :data:`save_folder`.
 
-
         :returns: The path/URL to the checkpoint.
         """
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)

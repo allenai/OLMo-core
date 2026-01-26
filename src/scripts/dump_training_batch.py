@@ -11,22 +11,66 @@ import json
 import logging
 import pickle
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import torch
 from cached_path import cached_path
 
 from olmo_core.data import (
     DataCollator,
-    NumpyFSLDataLoader,
+    InstanceFilterConfig,
+    NumpyDataLoaderBase,
     NumpyFSLDatasetBase,
-    NumpyFSLDatasetConfig,
+    NumpyPackedFSLDatasetConfig,
+    TokenizerConfig,
 )
-from olmo_core.data.mixes import DataMix
-from olmo_core.data.tokenizer import TokenizerConfig
+from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.io import normalize_path
 
 log = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Dataset configuration from OLMo3.1-7B-hybrid-long-context.py
+# ============================================================================
+
+SEQUENCE_LENGTH = 65536
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
+DATA_LOADER_SEED = 34521
+
+TOKENIZER = TokenizerConfig(
+    vocab_size=128256,
+    eos_token_id=128001,
+    pad_token_id=128002,
+    bos_token_id=128000,
+    identifier="allenai/dolma2-tokenizer",
+)
+
+DATA_GLOB = (
+    "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy"
+)
+
+
+def build_dataset_config(
+    work_dir: str,
+    intra_document_masking: bool = True,
+    include_instance_filter: bool = True,
+) -> NumpyPackedFSLDatasetConfig:
+    """Build the dataset config matching the training script."""
+    return NumpyPackedFSLDatasetConfig.glob(
+        DATA_GLOB,
+        tokenizer=TOKENIZER,
+        work_dir=work_dir,
+        sequence_length=SEQUENCE_LENGTH,
+        generate_doc_lengths=intra_document_masking,
+        source_group_size=8,
+        source_permutation_seed=123,
+        instance_filter_config=None
+        if not include_instance_filter
+        else InstanceFilterConfig(
+            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+        ),
+    )
 
 
 def load_checkpoint_config(checkpoint_dir: str) -> Dict[str, Any]:
@@ -36,38 +80,10 @@ def load_checkpoint_config(checkpoint_dir: str) -> Dict[str, Any]:
         return json.load(f)
 
 
-def load_data_paths(checkpoint_dir: str) -> List[str]:
-    """Load data_paths.txt from checkpoint directory."""
-    data_paths_file = f"{checkpoint_dir}/data_paths.txt"
-    with open(cached_path(data_paths_file)) as f:
-        return [line.strip() for line in f if line.strip()]
-
-
 def load_trainer_state(checkpoint_dir: str) -> Dict[str, Any]:
     """Load train/rank0.pt from checkpoint directory."""
     trainer_state_path = f"{checkpoint_dir}/train/rank0.pt"
     return torch.load(cached_path(trainer_state_path), weights_only=False)
-
-
-def verify_paths_match_mix(
-    data_paths: List[str], mix_name: str, tokenizer: TokenizerConfig, mix_base_dir: str
-) -> bool:
-    """Verify that data_paths.txt matches the paths from the mix in config.json."""
-    mix = DataMix(mix_name)
-    assert tokenizer.identifier is not None
-    mix_paths, _ = mix.build(mix_base_dir, tokenizer.identifier)
-
-    if len(data_paths) != len(mix_paths):
-        log.error(
-            f"Path count mismatch: data_paths.txt has {len(data_paths)} paths, mix has {len(mix_paths)}"
-        )
-        return False
-
-    for i, (actual, expected) in enumerate(zip(data_paths, mix_paths)):
-        if normalize_path(actual) != normalize_path(expected):
-            log.error(f"Path mismatch at index {i}:\n  Actual:   {actual}\n  Expected: {expected}")
-            return False
-    return True
 
 
 def main():
@@ -110,6 +126,35 @@ def main():
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "--dp-rank",
+        type=int,
+        default=0,
+        help="DP rank to extract batch for (default: 0)",
+    )
+    parser.add_argument(
+        "--dp-world-size",
+        type=int,
+        default=None,
+        help="Total DP world size. If not specified, uses the value from the checkpoint.",
+    )
+    parser.add_argument(
+        "--epoch",
+        type=int,
+        default=None,
+        help="Epoch number. If not specified, uses the value from the checkpoint.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Data loader seed. If not specified, uses the value from the checkpoint or default.",
+    )
+    parser.add_argument(
+        "--no-instance-filter",
+        action="store_true",
+        help="Disable instance filtering",
+    )
 
     args = parser.parse_args()
 
@@ -124,11 +169,11 @@ def main():
     # Load checkpoint files
     log.info(f"Loading checkpoint from {checkpoint_dir}")
     config = load_checkpoint_config(checkpoint_dir)
-    data_paths = load_data_paths(checkpoint_dir)
     trainer_state = load_trainer_state(checkpoint_dir)
 
-    # Get data loader state
+    # Get data loader state from checkpoint
     data_loader_state = trainer_state["data_loader"]
+    data_loader_config_dict = config["data_loader"]
 
     if args.step < trainer_state["global_step"]:
         log.warning(
@@ -136,104 +181,212 @@ def main():
             f"Make sure this checkpoint has the correct dataset configuration for that earlier step."
         )
 
-    # Extract configuration
-    dataset_config_dict = config["dataset"]
-    data_loader_config_dict = config["data_loader"]
-
-    # Verify FSL dataset
-    if data_loader_state["dataset_type"] != "fsl":
-        log.error(f"Only FSL datasets are supported, got: {data_loader_state['dataset_type']}")
-        sys.exit(1)
-
-    # Verify that data_paths.txt matches the mix
-    tokenizer_config_dict = {
-        k: v for k, v in dataset_config_dict["tokenizer"].items() if k != "_CLASS_"
-    }
-    tokenizer_config = TokenizerConfig(**tokenizer_config_dict)
-
-    if not verify_paths_match_mix(
-        data_paths,
-        dataset_config_dict["mix"],
-        tokenizer_config,
-        dataset_config_dict.get("mix_base_dir", "gs://ai2-llm"),
-    ):
-        log.error("Mix verification failed! data_paths.txt does not match the mix from config.json")
-        sys.exit(1)
-
-    # Reconstruct dataset
-    dataset_class_name = dataset_config_dict["_CLASS_"]
-    if dataset_class_name == "olmo_core.data.numpy_dataset.NumpyDatasetConfig":
-        log.warning(
-            "Dataset config class is 'NumpyDatasetConfig' (base class). Assuming 'NumpyFSLDatasetConfig'."
-        )
-        config_class = NumpyFSLDatasetConfig
-    elif dataset_class_name == "olmo_core.data.numpy_dataset.NumpyFSLDatasetConfig":
-        config_class = NumpyFSLDatasetConfig
-    else:
-        log.error(f"Unsupported dataset config class: {dataset_class_name}")
-        sys.exit(1)
-
-    # Start with the full dataset config and only modify what we need
-    config_fields = dict(dataset_config_dict)
-
-    # Override work_dir with the one from command line args
-    config_fields["work_dir"] = args.work_dir
-
-    # Clean up tokenizer dict (remove _CLASS_ field)
-    if "tokenizer" in config_fields and isinstance(config_fields["tokenizer"], dict):
-        config_fields["tokenizer"] = {
-            k: v for k, v in config_fields["tokenizer"].items() if k != "_CLASS_"
-        }
-
-    # Remove fields that shouldn't be passed to from_dict
-    config_fields.pop("name", None)
-    config_fields.pop("_CLASS_", None)  # Remove _CLASS_ field, we already determined the class
-    # Keep mix and mix_base_dir - the dataset will build paths from the mix
-
-    dataset_config = config_class.from_dict(config_fields)
+    # Build dataset using hardcoded config from training script
+    log.info("Building dataset from hardcoded config...")
+    dataset_config = build_dataset_config(
+        work_dir=args.work_dir,
+        include_instance_filter=not args.no_instance_filter,
+    )
     dataset = dataset_config.build()
     assert isinstance(dataset, NumpyFSLDatasetBase), f"Expected FSL dataset, got {type(dataset)}"
 
     # Prepare the dataset
+    log.info("Preparing dataset...")
     dataset.prepare()
 
-    # Verify fingerprint
-    if dataset.fingerprint != data_loader_state["dataset_fingerprint"]:
-        log.error(
-            f"Dataset fingerprint mismatch!\n"
-            f"  Checkpoint: {data_loader_state['dataset_fingerprint']}\n"
+    log.info(f"Dataset ready: {len(dataset)} instances, sequence_length={dataset.sequence_length}")
+
+    # Optionally verify fingerprint
+    checkpoint_fingerprint = data_loader_state.get("dataset_fingerprint")
+    if checkpoint_fingerprint and dataset.fingerprint != checkpoint_fingerprint:
+        log.warning(
+            f"Dataset fingerprint mismatch (this may be expected if config differs):\n"
+            f"  Checkpoint: {checkpoint_fingerprint}\n"
             f"  Computed:   {dataset.fingerprint}"
         )
-        log.error(
-            "This may indicate the dataset has changed in the code since the checkpoint was created."
-        )
-        sys.exit(1)
 
     collator = DataCollator(pad_token_id=dataset.pad_token_id)
 
-    data_loader = NumpyFSLDataLoader(
+    # Determine DP world size
+    if args.dp_world_size is not None:
+        dp_world_size = args.dp_world_size
+    else:
+        # Try to get from checkpoint state, fall back to 1
+        dp_world_size = data_loader_state.get("dp_world_size", 1)
+        log.info(f"Using dp_world_size={dp_world_size} from checkpoint")
+
+    if args.dp_rank >= dp_world_size:
+        log.error(f"dp_rank ({args.dp_rank}) must be < dp_world_size ({dp_world_size})")
+        sys.exit(1)
+
+    # Determine seed
+    if args.seed is not None:
+        seed = args.seed
+    else:
+        seed = data_loader_state.get("seed", DATA_LOADER_SEED)
+        log.info(f"Using seed={seed} from checkpoint")
+
+    # Determine epoch
+    if args.epoch is not None:
+        epoch = args.epoch
+    else:
+        epoch = data_loader_state.get("epoch", 0)
+        log.info(f"Using epoch={epoch} from checkpoint")
+
+    log.info(f"Extracting batch for dp_rank={args.dp_rank}/{dp_world_size}")
+
+    data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(
         dataset,
         collator=collator,
-        global_batch_size=data_loader_config_dict["global_batch_size"],
+        global_batch_size=data_loader_config_dict.get("global_batch_size", GLOBAL_BATCH_SIZE),
         work_dir=args.work_dir,
-        seed=data_loader_state["seed"],
+        seed=seed,
         shuffle=True,
-        dp_world_size=1,  # We're extracting for a single "rank"
-        dp_rank=0,
-        num_threads=10,  # 10 is the default connection pool size
+        dp_world_size=dp_world_size,
+        dp_rank=args.dp_rank,
+        num_threads=16,
     )
 
     # Reshuffle to regenerate the same global indices as during training
-    data_loader.reshuffle(epoch=data_loader_state["epoch"], in_memory=True)
+    log.info(f"Reshuffling for epoch {epoch}...")
+    data_loader.reshuffle(epoch=epoch, in_memory=True)
+
+    log.info(f"Total batches in epoch: {data_loader.total_batches}")
+
+    if args.step >= data_loader.total_batches:
+        log.error(f"Step {args.step} out of range (total batches: {data_loader.total_batches})")
+        sys.exit(1)
 
     batch = data_loader[args.step]
 
+    # Print detailed batch info
+    print("\n" + "=" * 80)
+    print(f"BATCH INFO: Step={args.step}, DP Rank={args.dp_rank}/{dp_world_size}, Epoch={epoch}")
+    print("=" * 80)
+
+    input_ids = batch["input_ids"]
+    print("\n[Shapes]")
+    print(f"  input_ids:    {tuple(input_ids.shape)} (dtype={input_ids.dtype})")
+
+    if "label_mask" in batch:
+        label_mask = batch["label_mask"]
+        print(f"  label_mask:   {tuple(label_mask.shape)} (dtype={label_mask.dtype})")
+        # Count trainable tokens per instance
+        trainable_per_instance = label_mask.sum(dim=-1).tolist()
+        print(f"  trainable tokens per instance: {trainable_per_instance[:5]}... (first 5)")
+        print(f"  total trainable tokens: {label_mask.sum().item()}")
+
+    if "doc_lens" in batch:
+        doc_lens = batch["doc_lens"]
+        print(f"  doc_lens:     {tuple(doc_lens.shape)} (dtype={doc_lens.dtype})")
+
+        # Compute cu_seqlens for the batch
+        cu_seqlens = get_cumulative_document_lengths(doc_lens)
+        print(f"  cu_seqlens:   {tuple(cu_seqlens.shape)} (dtype={cu_seqlens.dtype})")
+        print(f"  cu_seqlens values: {cu_seqlens[:20].tolist()}... (first 20)")
+
+        # Show doc counts per instance
+        docs_per_instance = (doc_lens > 0).sum(dim=-1).tolist()
+        print(f"  docs per instance: {docs_per_instance[:10]}... (first 10)")
+
+    if "max_doc_lens" in batch:
+        print(f"  max_doc_lens: {batch['max_doc_lens'][:10]}... (first 10)")
+
+    if "index" in batch:
+        indices = batch["index"]
+        if isinstance(indices, torch.Tensor):
+            indices = indices.tolist()
+        print("\n[Instance Indices]")
+        print(f"  {indices[:10]}... (first 10 of {len(indices)})")
+
+    # Instance filter info
+    if "instance_mask" in batch:
+        instance_mask = batch["instance_mask"]
+        print("\n[Instance Filter]")
+        print(f"  instance_mask shape: {tuple(instance_mask.shape)}")
+
+        num_passed = instance_mask.sum().item()
+        num_failed = (~instance_mask).sum().item()
+        total = instance_mask.numel()
+
+        print(f"  Passed filter: {num_passed}/{total} ({100 * num_passed / total:.1f}%)")
+        print(f"  FAILED filter: {num_failed}/{total} ({100 * num_failed / total:.1f}%)")
+
+        if num_failed > 0:
+            failed_indices = torch.where(~instance_mask)[0].tolist()
+            print(f"  Failed instance indices (within batch): {failed_indices}")
+    else:
+        print("\n[Instance Filter]")
+        print("  No instance_mask in batch (instance filter not enabled or all passed)")
+
+    # Metadata if present
+    if "metadata" in batch:
+        print("\n[Metadata]")
+        print(f"  {batch['metadata'][:3]}... (first 3)")
+
+    print("\n" + "=" * 80)
+
+    # Check for EOS tokens (important for document boundary detection)
+    print("\n[EOS Token Analysis]")
+    eos_token_id = TOKENIZER.eos_token_id
+    print(f"  EOS token ID: {eos_token_id}")
+    eos_counts = (input_ids == eos_token_id).sum(dim=-1).tolist()
+    print(f"  EOS tokens per instance: {eos_counts}")
+
+    # Find EOS positions in first instance
+    eos_positions = (input_ids[0] == eos_token_id).nonzero(as_tuple=True)[0]
+    if len(eos_positions) > 0:
+        print(f"  EOS positions in first instance: {eos_positions[:20].tolist()}... (first 20)")
+        print(f"  Total EOS in first instance: {len(eos_positions)}")
+    else:
+        print("  WARNING: No EOS tokens found in first instance!")
+
+    # Check for potential issues with cu_seqlens format
+    if "doc_lens" in batch:
+        print("\n[Potential Mechanical Issues]")
+        doc_lens = batch["doc_lens"]
+        cu_seqlens = get_cumulative_document_lengths(doc_lens)
+
+        # Check 1: cu_seqlens should match batch * seq_len
+        expected_total = input_ids.shape[0] * input_ids.shape[1]
+        actual_total = cu_seqlens[-1].item()
+        if actual_total != expected_total:
+            print(f"  WARNING: cu_seqlens[-1]={actual_total} != batch*seq_len={expected_total}")
+        else:
+            print(f"  OK: cu_seqlens[-1]={actual_total} matches batch*seq_len")
+
+        # Check 2: With CP=2, the model expects batch_size=1 in GatedDeltaNet
+        # But data loader provides batch_size=2 for this DP rank
+        batch_size = input_ids.shape[0]
+        print(f"  Batch size for this DP rank: {batch_size}")
+        print("  NOTE: GatedDeltaNet with CP requires batch_size=1 per GPU")
+        print(
+            f"        With CP=2, each GPU processes batch_size={batch_size // 2} (if split by CP)"
+        )
+
+        # Check 3: Number of documents
+        n_docs = cu_seqlens.numel() - 1
+        print(f"  Number of documents (cu_seqlens entries - 1): {n_docs}")
+
+        # Check 4: Doc lens sum check per instance
+        for i in range(min(batch_size, 3)):
+            instance_doc_lens = doc_lens[i][doc_lens[i] > 0]
+            doc_sum = instance_doc_lens.sum().item()
+            print(
+                f"  Instance {i}: {len(instance_doc_lens)} docs, sum={doc_sum}, seq_len={input_ids.shape[1]}"
+            )
+            if doc_sum != input_ids.shape[1]:
+                print(f"    WARNING: doc_lens sum ({doc_sum}) != seq_len ({input_ids.shape[1]})")
+
+    # Save to file if requested
     if args.output is not None:
         with open(args.output, "wb") as f:
             pickle.dump(batch, f)
+        print(f"\nBatch saved to: {args.output}")
     else:
-        for instance in batch["input_ids"]:
-            print(", ".join(str(token_id.item()) for token_id in instance))
+        print("\n[Token IDs (first instance, first 100 tokens)]")
+        first_instance = input_ids[0].tolist()
+        print(f"  {first_instance[:100]}")
 
 
 if __name__ == "__main__":

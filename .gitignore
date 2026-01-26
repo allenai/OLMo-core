@@ -60,3 +60,5 @@ site/
 /scratch/
 core
 /dataset-cache/
+
+.history/

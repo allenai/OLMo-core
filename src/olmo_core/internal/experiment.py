@@ -68,6 +68,7 @@ class CliContext(Config):
 @dataclass
 class CommonComponents(Config):
     run_name: str
+    cluster: str
 
     root_dir: str
     work_dir: str
@@ -207,6 +208,7 @@ def build_common_components(
 
     return CommonComponents(
         run_name=cli_context.run_name,
+        cluster=cli_context.cluster,
         root_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
@@ -429,7 +431,7 @@ def launch(config: ExperimentConfig):
     config.launch.launch(
         follow=True,
         slack_notifications=slack_enabled,
-        launch_timeout=5 * 60,
+        launch_timeout=5 * 24 * 60 * 60,  # willm: 5 days
         #  step_timeout=30 * 60,  # hard timeout kills the job
         step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
     )

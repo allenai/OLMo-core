@@ -18,7 +18,11 @@ def _all_to_all_equal_split():
     # Create input tensor where each rank has [rank, rank, ...]
     # Shape: (world_size, 2) - each rank sends 2 elements to each other rank
     input_tensor = torch.full(
-        (world_size, 2), float(rank), device=device, dtype=torch.float32, requires_grad=True
+        (world_size, 2),
+        float(rank),
+        device=device,
+        dtype=torch.float32,
+        requires_grad=True,
     )
 
     # Test forward pass

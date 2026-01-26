@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
@@ -16,6 +17,11 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.kv_cache import KVCacheManager
+from olmo_core.nn.attention.ring import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
+from olmo_core.nn.fla.cp_utils import _qkvo_all2ll
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
@@ -43,10 +49,18 @@ from .ring import (
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
-    UlyssesLoadBalancer,
 )
+
+
+def _a2a_heads(x: torch.Tensor, *, is_qkv: bool, group: dist.ProcessGroup) -> torch.Tensor:
+    """All-to-all across head dimension (Ulysses-style)."""
+    b, t, h, d = x.shape
+    x_flat = x.reshape(b * t, h, d).contiguous()
+    out = _qkvo_all2ll(x_flat, is_qkv=is_qkv, group=group)
+    world_size = dist.get_world_size(group)
+    h_out = h // world_size if is_qkv else h * world_size
+    return out.view(b, t, h_out, d)
+
 
 __all__ = [
     "SlidingWindowAttentionConfig",
@@ -400,11 +414,20 @@ class Attention(AttentionBase):
             d_model, n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_k = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+            d_model,
+            self.n_kv_heads * self.head_dim,
+            bias=bias,
+            dtype=dtype,
+            device=init_device,
         )
         self.w_v = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+            d_model,
+            self.n_kv_heads * self.head_dim,
+            bias=bias,
+            dtype=dtype,
+            device=init_device,
         )
+        self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w_out = nn.Linear(
             n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device
         )
@@ -460,7 +483,8 @@ class Attention(AttentionBase):
                 )
             elif backend is None:
                 warnings.warn(
-                    "'use_flash' is deprecated, use 'backend=flash_2' instead", DeprecationWarning
+                    "'use_flash' is deprecated, use 'backend=flash_2' instead",
+                    DeprecationWarning,
                 )
                 backend = AttentionBackendName.flash_2
 
@@ -499,10 +523,12 @@ class Attention(AttentionBase):
             cache=cache,
         )
         self.kv_cache_manager: Optional[KVCacheManager] = None
+        self._cp_pg: Optional[dist.ProcessGroup] = None
+        self._cp_ulysses: bool = False
 
     @property
     def cp_enabled(self) -> bool:
-        return self.backend.cp_enabled
+        return self.backend.cp_enabled or self._cp_ulysses
 
     def sdpa(
         self,
@@ -559,6 +585,7 @@ class Attention(AttentionBase):
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
             Required together with ``max_doc_len`` when using intra-document masking.
+            For Ulysses CP, this should be the full unsharded document lengths.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
 
@@ -597,15 +624,37 @@ class Attention(AttentionBase):
             if self.k_norm is not None:
                 k = self.k_norm(k)
 
+        if self._cp_ulysses:
+            assert self._cp_pg is not None
+            world_size = dist.get_world_size(self._cp_pg)
+            if self.n_heads % world_size != 0 or self.n_kv_heads % world_size != 0:
+                raise OLMoConfigurationError(
+                    f"Ulysses CP requires n_heads ({self.n_heads}) and n_kv_heads ({self.n_kv_heads}) "
+                    f"to be divisible by cp degree ({world_size})"
+                )
+            if self.kv_cache_manager is not None:
+                raise RuntimeError("KV cache is not supported with Ulysses context parallelism")
+
+            q = _a2a_heads(q, is_qkv=True, group=self._cp_pg)
+            k = _a2a_heads(k, is_qkv=True, group=self._cp_pg)
+            v = _a2a_heads(v, is_qkv=True, group=self._cp_pg)
+
         if self.rope is not None:
-            # In context-parallel mode we must be given pre-sharded buffers
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+            # In ring CP we must be given pre-sharded buffers
+            if (
+                self.backend.cp_enabled
+                and self.backend.ring is not None
+                and pos_sin is None
+                and pos_cos is None
+                and freqs_cis is None
+            ):
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
+
             q, k = self.rope(
                 q,
                 k,
@@ -617,6 +666,8 @@ class Attention(AttentionBase):
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
+        # Note: For Ulysses CP, cu_doc_lens should already be the full unsharded
+        # document lengths (set by the transformer model).
         att = self.sdpa(
             q,
             k,
@@ -630,6 +681,10 @@ class Attention(AttentionBase):
             local_k_slice=local_k_slice,
             cache_leftpad=cache_leftpad,
         )
+
+        if self._cp_ulysses:
+            assert self._cp_pg is not None
+            att = _a2a_heads(att, is_qkv=False, group=self._cp_pg)
 
         if self.gate is not None:
             assert self.w_g is not None
@@ -714,7 +769,7 @@ class Attention(AttentionBase):
         Prepare the module for context-parallelism (ring attention).
 
         .. important::
-            This requires a backend that supports CP, such as "flash_2" or "te".
+            Ring CP requires a backend that supports CP, such as "flash_2" or "te".
 
         :param cp_mesh: The context parallel device sub-mesh.
         :param ring: The ring context parallel style.
@@ -861,7 +916,13 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+            if (
+                self.cp_enabled
+                and self.backend.ring is not None
+                and pos_sin is None
+                and pos_cos is None
+                and freqs_cis is None
+            ):
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
@@ -1032,7 +1093,13 @@ class FusedAttention(AttentionBase):
             qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
         if self.rope is not None:
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+            if (
+                self.cp_enabled
+                and self.backend.ring is not None
+                and pos_sin is None
+                and pos_cos is None
+                and freqs_cis is None
+            ):
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
