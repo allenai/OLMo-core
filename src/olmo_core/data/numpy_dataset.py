@@ -687,6 +687,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         bos_token_id: Optional[int] = None,
         max_target_sequence_length: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
+        chunk_based: bool = False,
     ):
         if max_target_sequence_length is not None and (
             max_target_sequence_length < sequence_length
@@ -729,6 +730,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._path_offset_index = path_offset_index
         self._seed = seed
         self.instance_filter_config = instance_filter_config
+        self._chunk_based = chunk_based
 
     @property
     def indices_dtype(
@@ -737,11 +739,16 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         return np.uint32
 
     def prepare(self):
-        if self.fs_local_rank == 0:
-            log.info("Gathering indices...")
-            self._write_document_indices()
-        barrier()
-        len(self)
+        if self._chunk_based:
+            # No document indices needed - just trigger offset calculation
+            len(self)
+        else:
+            # Existing document-based logic
+            if self.fs_local_rank == 0:
+                log.info("Gathering indices...")
+                self._write_document_indices()
+            barrier()
+            len(self)
 
     def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
         return self._get_indices_path(
@@ -807,6 +814,12 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
         file_size = self._get_size_from_offset_index((path, idx))
+
+        if self._chunk_based:
+            # Simple chunk-based: tokens // sequence_length
+            num_instances = file_size // (item_size * self.sequence_length)
+            return file_size, num_instances
+
         if (
             self.max_target_sequence_length is None
             or self.max_target_sequence_length == self.sequence_length
@@ -2319,6 +2332,13 @@ class NumpyDatasetConfig(Config):
     """
     Determines how long documents are handled with the packed FSL dataset.
     """
+    chunk_based_mixture: bool = False
+    """
+    When using a source_mixture_config, use simple chunk-based sampling instead of
+    document-aware sampling. This avoids the need for .csv.gz metadata files.
+    Each file is divided into sequence_length chunks and the appropriate number
+    of chunks are taken from each source based on target_ratios.
+    """
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -2511,6 +2531,7 @@ class NumpyDatasetConfig(Config):
                     bos_token_id=self.tokenizer.bos_token_id,
                     path_offset_index=mixture.to_index(),
                     instance_filter_config=self.instance_filter_config,
+                    chunk_based=self.chunk_based_mixture,
                 )
             else:
                 dataset = NumpyFSLDataset(
