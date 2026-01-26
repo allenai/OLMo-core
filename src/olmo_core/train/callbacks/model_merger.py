@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 class ModelMergeCallback(Callback):
     """
     Averages model weights over the last ``merge_last_n_steps`` before ``merge_step``
-    and saves the result as a merged checkpoint.
+    and saves the result as a merged checkpoint (no optimizer state).
     """
 
     merge_step: Optional[Union[int, List[int]]] = None
