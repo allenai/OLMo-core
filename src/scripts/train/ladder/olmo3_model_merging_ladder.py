@@ -26,7 +26,7 @@ class ModelMergingLadder(ModelLadder):
     def _configure_trainer(self, size_spec: str, for_benchmarking: bool = False):
         config = super()._configure_trainer(size_spec, for_benchmarking)
         config.callbacks["model_merger"] = callbacks.ModelMergeCallback(
-            merge_last_n_steps=500,
+            merge_last_n_steps=250,
             enabled=not for_benchmarking,
         )
         return config
