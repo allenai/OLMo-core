@@ -1315,6 +1315,8 @@ class Trainer:
                 if ce_loss < 10:
                     metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
             for callback in self._iter_callbacks():
+                callback.pre_log_metrics(step, metrics[step])
+            for callback in self._iter_callbacks():
                 callback.log_metrics(step, metrics[step])
 
     def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:

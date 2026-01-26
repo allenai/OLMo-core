@@ -15,6 +15,7 @@ from ..attention import (
     AttentionBackendName,
     AttentionConfig,
     AttentionType,
+    GateConfig,
     SlidingWindowAttentionConfig,
 )
 from ..buffer_cache import BufferCache
@@ -349,6 +350,7 @@ class TransformerConfig(ModelConfig):
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
     init_std: float = 0.02
+    embedding_init_std: Optional[float] = None
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     fla_config: Optional[FLAModelConfig] = None
@@ -385,6 +387,7 @@ class TransformerConfig(ModelConfig):
                 init_device=init_device,
                 init_seed=self.init_seed,
                 init_std=self.init_std,
+                embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
                 embed_scale=self.embed_scale,
             )
@@ -401,6 +404,7 @@ class TransformerConfig(ModelConfig):
                 init_device=init_device,
                 init_seed=self.init_seed,
                 init_std=self.init_std,
+                embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
             )
         elif self.name == TransformerType.moe:
@@ -416,6 +420,7 @@ class TransformerConfig(ModelConfig):
                 init_device=init_device,
                 init_seed=self.init_seed,
                 init_std=self.init_std,
+                embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
             )
         elif self.name == TransformerType.linear_rnn:
@@ -522,6 +527,7 @@ class TransformerConfig(ModelConfig):
             hidden_size_multiplier=1.0,
             n_layers=kwargs.pop("n_layers", 4),
             n_heads=kwargs.pop("n_heads", 4),
+            head_dim=kwargs.pop("head_dim", 4),
             vocab_size=vocab_size,
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
             qk_norm=kwargs.pop("qk_norm", True),
@@ -1463,11 +1469,13 @@ class TransformerConfig(ModelConfig):
         n_heads: int,
         n_kv_heads: Optional[int] = None,
         head_dim: Optional[int] = None,
+        gate: Optional[GateConfig] = None,
         qk_norm: bool = False,
         use_head_qk_norm: bool = False,
         layer_norm_eps: float = 1e-5,
         rope_theta: int = 500_000,
         rope_type: Optional[RoPEType] = None,
+        no_global_rope: bool = False,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
@@ -1528,7 +1536,13 @@ class TransformerConfig(ModelConfig):
                 n_kv_heads=n_kv_heads,
                 head_dim=head_dim,
                 bias=False,
-                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
+                rope=RoPEConfig(
+                    name=rope_type,
+                    theta=rope_theta,
+                    no_global_rope=no_global_rope,
+                    scaling=rope_scaling,
+                ),
+                gate=gate,
                 qk_norm=layer_norm if qk_norm else None,
                 use_head_qk_norm=use_head_qk_norm if qk_norm else None,
                 use_flash=use_flash,

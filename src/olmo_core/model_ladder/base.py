@@ -421,65 +421,131 @@ class ModelLadder(Config):
         return str(io.join_path(self.dir, size_spec))
 
     def get_checkpoints(
-        self, size_spec: str, download_metrics: bool = False
+        self,
+        size_spec: str,
+        download_metrics: bool = False,
+        discover_all: bool = False,
+        alternative_dirs: list[PathOrStr] | None = None,
     ) -> list[RunCheckpointInfo]:
         """
-        Get the list of ordered checkpoints from the run for the given size spec, at the intervals
-        defined by :meth:`RunConfigurator.configure_checkpoint_intervals()`.
-        """
+        Get the list of ordered checkpoints from the run for the given size spec.
 
-        def _get_checkpoint_info(step: int, name: str) -> RunCheckpointInfo:
+        :param size_spec: The size specification for the model run.
+        :param download_metrics: If ``True``, download metrics files to local cache.
+        :param discover_all: If ``True``, discover all checkpoints that exist in the save folder
+            rather than only checking at the intervals defined by
+            :meth:`RunConfigurator.configure_checkpoint_intervals()`.
+        :param alternative_dirs: Optional list of alternative root directories to search for checkpoints.
+            The size_spec is appended to each directory. For each checkpoint, the primary save
+            directory is checked first, then each alternative directory in order until found.
+        """
+        save_folder = self.get_save_folder(size_spec)
+        folders_to_search: list[str] = [save_folder] + [
+            str(io.join_path(d, size_spec)) for d in (alternative_dirs or [])
+        ]
+        for folder in folders_to_search:
+            io.init_client(folder)
+
+        num_params = self.get_num_params(size_spec)
+        global_batch_size, *_ = self._configure_batch_size_and_num_devices(size_spec, num_params)
+
+        def _find_checkpoint_path(step: int) -> tuple[PathOrStr, bool]:
+            """Find the checkpoint path across all folders, returning (path, exists)."""
             dirname = Checkpointer.checkpoint_dirname(step)
-            dir = io.join_path(save_folder, dirname)
-            exists = Checkpointer.dir_is_checkpoint(dir)
-            metrics_path: PathOrStr | None = io.join_path(save_folder, f"metrics_step{step}.json")
-            if not io.file_exists(metrics_path):  # type: ignore[arg-type]
-                metrics_path = None
-            elif download_metrics:
+            for folder in folders_to_search:
+                path = io.join_path(folder, dirname)
+                if Checkpointer.dir_is_checkpoint(path):
+                    return path, True
+            # Not found in any folder, return the primary path
+            return io.join_path(save_folder, dirname), False
+
+        def _find_metrics_path(step: int) -> PathOrStr | None:
+            """Find the metrics file across all folders."""
+            metrics_filename = f"metrics_step{step}.json"
+            for folder in folders_to_search:
+                metrics_path = io.join_path(folder, metrics_filename)
+                if io.file_exists(metrics_path):
+                    return metrics_path
+            return None
+
+        def _get_checkpoint_info(
+            step: int, name: str, path: PathOrStr | None = None
+        ) -> RunCheckpointInfo:
+            if path is None:
+                path, exists = _find_checkpoint_path(step)
+            else:
+                exists = Checkpointer.dir_is_checkpoint(path)
+            metrics_path = _find_metrics_path(step)
+            if metrics_path is not None and download_metrics:
                 metrics_path = cached_path(metrics_path, quiet=True)
             return RunCheckpointInfo(
                 name=name,
                 step=step,
                 tokens=step * global_batch_size,
-                path=dir,
+                path=path,
                 metrics_path=metrics_path,
                 exists=exists,
             )
 
-        save_folder = self.get_save_folder(size_spec)
-        io.init_client(save_folder)
-
-        num_params = self.get_num_params(size_spec)
-        global_batch_size, *_ = self._configure_batch_size_and_num_devices(size_spec, num_params)
-
-        checkpoints_to_check: dict[int, str] = {0: "initialization"}
-        for step, (_, checkpoint_name) in zip(
-            self._get_checkpoint_intervals(
-                num_params=num_params, global_batch_size=global_batch_size
-            ),
-            self.run_configurator.configure_checkpoint_intervals(num_params, global_batch_size),
-        ):
-            checkpoints_to_check[step] = checkpoint_name
+        checkpoints_to_check: dict[int, tuple[str, PathOrStr | None]] = {}
+        path: PathOrStr | None  # help mypy
+        if discover_all:
+            # Discover all checkpoints that exist across all folders.
+            for folder in folders_to_search:
+                try:
+                    for step, path in Checkpointer.find_checkpoints(folder):
+                        if step not in checkpoints_to_check:
+                            checkpoints_to_check[step] = (f"step-{step}", path)
+                except FileNotFoundError:
+                    continue
+        else:
+            # Only check at the expected checkpoint intervals.
+            checkpoints_to_check[0] = ("initialization", None)
+            for step, (_, checkpoint_name) in zip(
+                self._get_checkpoint_intervals(
+                    num_params=num_params, global_batch_size=global_batch_size
+                ),
+                self.run_configurator.configure_checkpoint_intervals(num_params, global_batch_size),
+            ):
+                checkpoints_to_check[step] = (checkpoint_name, None)
 
         step_to_checkpoint_info: dict[int, RunCheckpointInfo] = {}
         with ThreadPoolExecutor() as executor:
             futures = []
-            for step, name in checkpoints_to_check.items():
-                futures.append(executor.submit(_get_checkpoint_info, step, name))
+            for step, (name, path) in checkpoints_to_check.items():
+                futures.append(executor.submit(_get_checkpoint_info, step, name, path))
             for future in concurrent.futures.as_completed(futures):
                 info = future.result()
                 step_to_checkpoint_info[info.step] = info
 
         return [step_to_checkpoint_info[step] for step in sorted(step_to_checkpoint_info.keys())]
 
-    def get_metrics(self, size_spec: str, prefix: str | None = None) -> "DataFrame | None":
+    def get_metrics(
+        self,
+        size_spec: str,
+        prefix: str | None = None,
+        discover_all: bool = False,
+        alternative_dirs: list[PathOrStr] | None = None,
+    ) -> "DataFrame | None":
         """
-        Get the metrics from the run of the given size spec, at the intervals
-        defined by :meth:`RunConfigurator.configure_checkpoint_intervals()`.
+        Get the metrics from the run of the given size spec.
+
+        :param size_spec: The size specification for the model run.
+        :param prefix: If provided, only include metrics with keys starting with this prefix.
+        :param discover_all: If ``True``, discover all checkpoints that exist in the save folder
+            rather than only checking at the intervals defined by
+            :meth:`RunConfigurator.configure_checkpoint_intervals()`.
+        :param alternative_dirs: Optional list of alternative root directories to search for
+            checkpoints and metrics files. The size_spec is appended to each directory.
         """
         import pandas as pd
 
-        checkpoints = self.get_checkpoints(size_spec, download_metrics=True)
+        checkpoints = self.get_checkpoints(
+            size_spec,
+            download_metrics=True,
+            discover_all=discover_all,
+            alternative_dirs=alternative_dirs,
+        )
         num_params = self.get_num_params(size_spec)
         all_metrics = []
         for checkpoint in checkpoints:
@@ -630,7 +696,7 @@ class ModelLadder(Config):
                     enabled=not for_benchmarking,
                 ),
                 "profiler": callbacks.ProfilerCallback(enabled=for_benchmarking),
-                "gap_monitor": callbacks.GAPMonitorCallback(enabled=False),
+                "gap_monitor": callbacks.GAPMonitorCallback(enabled=False, interval=10),
                 "slack_notifier": callbacks.SlackNotifierCallback(name=run_name, enabled=False),
                 "beaker": callbacks.BeakerCallback(),
                 "wandb": callbacks.WandBCallback(
