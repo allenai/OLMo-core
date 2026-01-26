@@ -253,3 +253,45 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         )
         # Round duration to nearest multiple of batch size.
         return dataclasses.replace(duration, value=batch_size * round(duration.value / batch_size))
+
+
+class WSDSStepLawRunConfigurator(WSDSChinchillaRunConfigurator):
+    """
+    A run configurator that uses WSD-S learning rate scheduling and Step-Law scaling laws.
+    https://arxiv.org/abs/2503.04715v6
+    """
+
+    def configure_target_batch_size(self, num_params: int) -> int:
+        # Calculate global batch size according to https://api.semanticscholar.org/CorpusID:270764838
+        # which assumes a sequence length of 2048.
+        return round(2048 * 160 * (num_params / 108_000_000) ** (2 / 3))
+
+    def configure_duration(self, num_params: int, batch_size: int) -> Duration:
+        return self._chinchilla_duration(
+            num_params,
+            batch_size,
+            self.chinchilla_multiple,
+        )
+
+    def configure_optimizer(self, num_params: int, batch_size: int) -> OptimConfig:
+        max_num_tokens = 100_000_000_000  # 100B
+
+        # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838,
+        # which is optimal for 1xC.
+        lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
+        # But divide that by 2, which empirically seems to be near optimal, at least for Olmo models
+        # and especially with the stepped schedule. See
+        # https://wandb.ai/ai2-llm/olmo3-baseline-ladder/reports/Stepped-Ladder-Overlay--VmlldzoxNTYxNzEyOQ
+        lr /= 2.0
+        # Apply user-specified LR multiplier.
+        lr *= self.lr_multiplier
+        # NOTE: paper above suggest using larger beta2 (~0.99) for small batch sizes (Table 4)
+        beta2 = 0.95 if batch_size >= 524_288 else 0.99
+        return SkipStepAdamWConfig(
+            lr=lr,
+            weight_decay=0.1,
+            betas=(0.9, beta2),
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
+        )

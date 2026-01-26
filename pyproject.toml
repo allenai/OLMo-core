@@ -24,6 +24,7 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
+    "flash-linear-attention>=0.4.1",
 ]
 
 [project.urls]
