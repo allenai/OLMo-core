@@ -9,7 +9,7 @@ import torch.distributed
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 
 from olmo_core.distributed.checkpoint import save_state_dict
-from olmo_core.distributed.utils import barrier, get_rank
+from olmo_core.distributed.utils import barrier, get_rank, is_distributed
 from olmo_core.io import join_path
 from olmo_core.optim.scheduler import WSDS, Scheduler
 
@@ -175,19 +175,33 @@ class ModelMergeCallback(Callback):
                             f"Model weights during decay may not be ideal for merging."
                         )
 
-        # Skip past any merge steps that have already been completed (e.g., when resuming training)
-        # This handles the case where we resume past a merge step that wasn't saved
+        # Handle resume scenarios where we may have accumulated weights ready to save
+        # or need to skip past completed merge steps
         current_step = self.step
-        while (
-            self._current_merge_idx < len(self._merge_steps)
-            and self._merge_steps[self._current_merge_idx] < current_step
-        ):
-            skipped_step = self._merge_steps[self._current_merge_idx]
-            log.info(
-                f"ModelMergeCallback: skipping past merge step {skipped_step} "
-                f"(current step is {current_step})"
-            )
-            self._current_merge_idx += 1
+        while self._current_merge_idx < len(self._merge_steps):
+            target_merge_step = self._merge_steps[self._current_merge_idx]
+
+            if target_merge_step < current_step:
+                # We're past this merge step - skip it
+                log.info(
+                    f"ModelMergeCallback: skipping past merge step {target_merge_step} "
+                    f"(current step is {current_step})"
+                )
+                self._accumulator = None
+                self._n_accumulated = 0
+                self._current_merge_idx += 1
+            elif target_merge_step == current_step and self._n_accumulated > 0:
+                # We're exactly at the merge step with accumulated weights ready
+                # This happens when resuming from a checkpoint saved before the merge completed
+                log.info(
+                    f"ModelMergeCallback: resuming at merge step {target_merge_step} "
+                    f"with {self._n_accumulated} accumulated weights, saving now..."
+                )
+                self._save_merged_checkpoint()
+                # _save_merged_checkpoint advances _current_merge_idx, so continue the loop
+            else:
+                # Not past and not at merge step with weights ready - stop checking
+                break
 
     @property
     def _start_step(self) -> int:
@@ -286,9 +300,10 @@ class ModelMergeCallback(Callback):
                 averaged_state[key] = accumulated_value / self._n_accumulated
 
         # Broadcast averaged_state from rank 0 to all ranks for distributed save and eval
-        object_list = [averaged_state]
-        torch.distributed.broadcast_object_list(object_list, src=0)
-        averaged_state = object_list[0]
+        if is_distributed():
+            object_list = [averaged_state]
+            torch.distributed.broadcast_object_list(object_list, src=0)
+            averaged_state = object_list[0]
 
         output_path = str(
             join_path(
