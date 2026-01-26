@@ -144,6 +144,7 @@ class TransformerBlockType(StrEnum):
     """
 
 
+
 @dataclass
 class TransformerBlockConfig(ModuleConfig):
     """
@@ -152,7 +153,8 @@ class TransformerBlockConfig(ModuleConfig):
 
     attention: AttentionConfig
     """
-    The attention config.
+    The attention/sequence mixer config. Can be a standard :class:`AttentionConfig` or a
+    :class:`~olmo_core.nn.attention.recurrent.RecurrentConfig` subclass (e.g., :class:`GatedDeltaNetConfig`).
     """
     layer_norm: Optional[LayerNormConfig] = None
     """
@@ -176,7 +178,7 @@ class TransformerBlockConfig(ModuleConfig):
     """
     attention_residual_alpha: Optional[float] = None
     """
-    A scaling factor applied to the attention output before adding it to the residual stream.
+    A scaling factor applied to the attention/recurrent output before adding it to the residual stream.
     """
     feed_forward_residual_alpha: Optional[float] = None
     """

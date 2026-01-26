@@ -1,86 +1,145 @@
 import math
+from abc import abstractmethod
 from dataclasses import dataclass
-from enum import StrEnum
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import Placement
 from torch.nn import functional as F
 
 from olmo_core.config import DType
-from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.attention import AttentionBase, GateConfig
+from olmo_core.nn.attention import AttentionBase
 from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_gated_delta_rule, has_fla
 from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
+from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.config import ModuleConfig
 from olmo_core.nn.feed_forward import ActivationFunction
-
-
-class RecurrentType(StrEnum):
-    gated_delta_net = "gated_delta_net"
-    """
-    ➡️ :class:`GatedDeltaNet`
-    """
 
 
 @dataclass
 class RecurrentConfig(ModuleConfig):
     """
-    A configuration class for easily building any of the different attention modules.
+    Base configuration class for recurrent sequence mixing modules.
 
-    See the individual :class:`Attention` subclasses for a description of the configuration options.
+    Subclasses should implement the :meth:`build` method to construct the
+    specific recurrent module.
     """
 
-    name: RecurrentType = RecurrentType.gated_delta_net
-    """
-    The name of the implementation.
-    """
-    n_heads: int = 16
-    n_kv_heads: Optional[int] = None
-    head_dim: Optional[int] = None
-    bias: Optional[bool] = None
-    gate: Optional[GateConfig] = None
-    clip_qkv: Optional[float] = None
-    dropout: Optional[float] = None
-    dtype: DType = DType.float32
-    use_head_qk_norm: Optional[bool] = None
-
-    def build(self, d_model: int, *, init_device: str = "cpu") -> "AttentionBase":
+    @abstractmethod
+    def build(
+        self,
+        d_model: int,
+        *,
+        layer_idx: int,
+        n_layers: int,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> AttentionBase:
         """
-        Build the corresponding attention module.
+        Build the corresponding recurrent module.
 
         :param d_model: The model dimensionality.
+        :param layer_idx: The layer index (may be used for layer-specific configuration).
+        :param n_layers: The total number of layers.
         :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
+        :param cache: Optional buffer cache (unused by most recurrent modules).
         """
-        kwargs = self.as_dict(exclude_none=True, recurse=False)
-        kwargs.pop("name")
+        raise NotImplementedError
 
-        kwargs.update(
-            dtype=kwargs.pop("dtype").as_pt(),
+
+@dataclass
+class GatedDeltaNetConfig(RecurrentConfig):
+    """
+    Configuration for :class:`GatedDeltaNet`.
+
+    See :class:`GatedDeltaNet` for a description of the configuration options.
+    """
+
+    n_heads: int = 16
+    """
+    The number of attention heads.
+    """
+    n_kv_heads: Optional[int] = None
+    """
+    The number of key/value heads. If ``None``, defaults to ``n_heads``.
+    """
+    head_dim: Optional[int] = None
+    """
+    The dimension of each head. If ``None``, defaults to ``d_model // n_heads``.
+    """
+    expand_v: float = 2.0
+    """
+    The expansion ratio for the value dimension.
+    """
+    allow_neg_eigval: bool = True
+    """
+    Allow negative eigenvalues in the recurrent dynamics.
+    """
+    conv_size: int = 4
+    """
+    The kernel size of the short convolution.
+    """
+    conv_bias: bool = False
+    """
+    Whether to use bias in the short convolution.
+    """
+    norm_eps: float = 1e-5
+    """
+    The epsilon value for the normalization layer.
+    """
+    dtype: DType = DType.float32
+    """
+    The default data type to use for parameters.
+    """
+
+    def build(
+        self,
+        d_model: int,
+        *,
+        layer_idx: int,
+        n_layers: int,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> "GatedDeltaNet":
+        """
+        Build the GatedDeltaNet module.
+
+        :param d_model: The model dimensionality.
+        :param layer_idx: The layer index (unused).
+        :param n_layers: The total number of layers (unused).
+        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
+        :param cache: Optional buffer cache (unused).
+        """
+        del layer_idx, n_layers, cache  # Unused by GatedDeltaNet
+        return GatedDeltaNet(
             d_model=d_model,
+            n_heads=self.n_heads,
+            n_kv_heads=self.n_kv_heads,
+            head_dim=self.head_dim,
+            expand_v=self.expand_v,
+            allow_neg_eigval=self.allow_neg_eigval,
+            conv_size=self.conv_size,
+            conv_bias=self.conv_bias,
+            norm_eps=self.norm_eps,
+            dtype=self.dtype.as_pt(),
             init_device=init_device,
         )
 
-        try:
-            if self.name == "gated_delta_net":
-                return GatedDeltaNet(**kwargs)
-            else:
-                raise NotImplementedError(self.name)
-        except TypeError as e:
-            raise OLMoConfigurationError(
-                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
-            ) from e
+
+# Type alias for any recurrent config
+AnyRecurrentConfig = Union[GatedDeltaNetConfig]
 
 
 class GatedDeltaNet(AttentionBase):
     """
-    The layer implementaion for [Gated Delta Networks](https://arxiv.org/abs/2412.06464)
+    The layer implementation for `Gated Delta Networks <https://arxiv.org/abs/2412.06464>`_.
 
     :param d_model: The model hidden size.
     :param n_heads: The number of attention heads.
     :param n_kv_heads: The number of key/value heads. If ``None``, defaults to ``n_heads``.
-        GVA is applied if ``n_kv_heads`` > ``n_heads``.
+        GQA is applied if ``n_kv_heads`` < ``n_heads``.
     :param head_dim: The dimension of each head. If ``None``, defaults to ``d_model // n_heads``.
     :param expand_v: The expansion ratio for the value dim. Default: 2.0.
     :param allow_neg_eigval: Allow negative eigenvalues. Default: ``True``. If set to ``True``, the beta
@@ -118,6 +177,7 @@ class GatedDeltaNet(AttentionBase):
         self.head_dim = head_dim if head_dim is not None else d_model // n_heads
         self.expand_v = expand_v
         self.allow_neg_eigval = allow_neg_eigval
+        self.conv_size = conv_size
 
         self.head_k_dim = self.head_dim
         self.head_v_dim = int(self.head_dim * self.expand_v)
@@ -151,7 +211,7 @@ class GatedDeltaNet(AttentionBase):
 
         A = torch.empty(self.n_kv_heads, dtype=torch.float32, device=init_device).uniform_(0, 16)
         self.A_log = nn.Parameter(torch.log(A))
-        self.A_log._no_weight_decay = True
+        self.A_log._no_weight_decay = True  # type: ignore[attr-defined]
 
         # hard coded for now
         dt_min = 0.001
@@ -167,7 +227,7 @@ class GatedDeltaNet(AttentionBase):
         self.dt_bias = nn.Parameter(inv_dt)
         # Just to be explicit. Without this we already don't put wd on dt_bias because of the check
         # name.endswith("bias") in param_grouping.py
-        self.dt_bias._no_weight_decay = True
+        self.dt_bias._no_weight_decay = True  # type: ignore[attr-defined]
 
         self.q_conv1d = ShortConvolution(
             hidden_size=self.key_dim,
@@ -194,21 +254,25 @@ class GatedDeltaNet(AttentionBase):
         self.o_norm = FusedRMSNormGated(self.head_v_dim, eps=norm_eps, device=init_device)  # type: ignore
         self.w_out = nn.Linear(self.value_dim, d_model, bias=False, dtype=dtype, device=init_device)
 
+        self.cp_enabled = False
+
     def forward(
         self,
         x: torch.Tensor,
-        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> torch.Tensor:
         """
-        Apply gated delta network attention to the input.
+        Apply gated delta network sequence mixing to the input.
 
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
         :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
 
-        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
+        :returns: The output with shape ``(batch_size, seq_len, d_model)``.
         """
+        del kwargs  # Ignore any extra kwargs passed from attention interface
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads * head_k_dim),
@@ -251,6 +315,17 @@ class GatedDeltaNet(AttentionBase):
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(self.o_norm(o, g).view(B, T, -1))
 
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
+        raise NotImplementedError("Tensor parallelism is not yet implemented for GatedDeltaNet")
+
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
@@ -263,27 +338,27 @@ class GatedDeltaNet(AttentionBase):
             raise ValueError("Ulysses context parallelism is required for GatedDeltaNet CP")
 
         # Ulysses CP requires divisibility by CP world size for:
-        # 1. num_v_heads - for head partitioning in the recurrent kernel
+        # 1. n_kv_heads - for head partitioning in the recurrent kernel
         # 2. key_dim and value_dim - for channel partitioning in the conv layers
         cp_world_size = cp_mesh.size()
         if self.n_kv_heads % cp_world_size != 0:
             raise ValueError(
-                f"Ulysses context parallelism requires num_v_heads ({self.n_kv_heads}) "
+                f"Ulysses context parallelism requires n_kv_heads ({self.n_kv_heads}) "
                 f"to be divisible by CP world size ({cp_world_size}). "
-                f"Consider adjusting num_v_heads or CP degree."
+                f"Consider adjusting n_kv_heads or CP degree."
             )
-        if self.use_short_conv:
+        if self.q_conv1d is not None:
             if self.key_dim % cp_world_size != 0:
                 raise ValueError(
                     f"Ulysses context parallelism requires key_dim ({self.key_dim}) "
                     f"to be divisible by CP world size ({cp_world_size}). "
-                    f"key_dim = num_heads * head_dim = {self.num_heads} * {self.head_dim}."
+                    f"key_dim = n_heads * head_dim = {self.n_heads} * {self.head_dim}."
                 )
             if self.value_dim % cp_world_size != 0:
                 raise ValueError(
                     f"Ulysses context parallelism requires value_dim ({self.value_dim}) "
                     f"to be divisible by CP world size ({cp_world_size}). "
-                    f"value_dim = num_v_heads * head_v_dim = {self.num_v_heads} * {self.head_v_dim}."
+                    f"value_dim = n_kv_heads * head_v_dim = {self.n_kv_heads} * {self.head_v_dim}."
                 )
 
         self.uly = uly
@@ -299,7 +374,7 @@ class GatedDeltaNet(AttentionBase):
         # Shard conv weights across CP ranks for channel-parallel execution.
         # After _to_channel_parallel, each rank processes C/CP channels with full sequence.
         # The conv weights need to be sharded on dim 0 (the channel dimension).
-        if self.use_short_conv and group is not None:
+        if self.q_conv1d is not None and group is not None:
             self.q_conv1d.apply_cp(cp_mesh)
             self.k_conv1d.apply_cp(cp_mesh)
             self.v_conv1d.apply_cp(cp_mesh)

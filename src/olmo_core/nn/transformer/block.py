@@ -99,7 +99,8 @@ class TransformerBlock(TransformerBlockBase):
 
     :param d_model: The model dimensionality.
     :param block_idx: The index/position of the block within the model. Ranges from 0 to ``n_layers - 1``.
-    :param attention: The attention module config.
+    :param attention: The attention/sequence mixer config. Can be a standard :class:`AttentionConfig`
+        or a :class:`~olmo_core.nn.attention.recurrent.RecurrentConfig` subclass.
     :param feed_forward: The feed forward module config.
     :param layer_norm: The layer norm config for both the attention LN and the feed forward LN.
     :param dropout: Dropout probability.
@@ -124,8 +125,13 @@ class TransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
+
         self.attention = attention.build(
-            d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
+            d_model,
+            layer_idx=block_idx,
+            n_layers=n_layers,
+            init_device=init_device,
+            cache=cache,
         )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
         self.attention_residual_stream = ResidualStream(
