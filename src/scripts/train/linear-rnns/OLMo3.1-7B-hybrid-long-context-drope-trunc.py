@@ -30,7 +30,7 @@ from olmo_core.optim import (
     SchedulerUnits,
     SkipStepAdamWConfig,
 )
-from olmo_core.train import Duration, LoadStrategy, StepSkipRange, TrainerConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
@@ -44,8 +44,46 @@ log = logging.getLogger(__name__)
 
 SEQUENCE_LENGTH = 65536
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
-MAX_TOKENS = 10_000_000_000  # 10B annealing phase
-LR = 0.00020712352850360292
+
+# Original schedule parameters
+ORIGINAL_LR = 0.00020712352850360292
+ORIGINAL_MAX_TOKENS = 100_000_000_000  # 100B
+ORIGINAL_WARMUP_STEPS = 200
+
+# Annealing configuration
+RESUME_FROM_TOKENS = 41943040000  # 42B
+ANNEAL_TOKENS = 10_000_000_000  # 10B additional tokens to anneal over
+MAX_TOKENS = ANNEAL_TOKENS
+
+
+def compute_lr_at_tokens(
+    resume_tokens: int,
+    original_lr: float,
+    original_max_tokens: int,
+    warmup_steps: int,
+    global_batch_size: int,
+    alpha_f: float = 0.0,
+) -> float:
+    """Compute the LR at a given token count using LinearWithWarmup schedule."""
+    t_max = original_max_tokens // global_batch_size
+    current_step = resume_tokens // global_batch_size
+    eta_min = original_lr * alpha_f
+
+    if current_step < warmup_steps:
+        # Still in warmup phase
+        return original_lr * current_step / warmup_steps
+    elif current_step >= t_max:
+        return eta_min
+    else:
+        # Linear decay phase
+        current_adj = current_step - warmup_steps
+        t_max_adj = t_max - warmup_steps
+        return original_lr - (original_lr - eta_min) * (current_adj / t_max_adj)
+
+
+LR = compute_lr_at_tokens(
+    RESUME_FROM_TOKENS, ORIGINAL_LR, ORIGINAL_MAX_TOKENS, ORIGINAL_WARMUP_STEPS, GLOBAL_BATCH_SIZE
+)
 
 
 # Remove heads to match params/TPS of transformer.
@@ -136,7 +174,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=0, alpha_f=0.0),  # No warmup for annealing
+        scheduler=LinearWithWarmup(
+            units=SchedulerUnits.steps, warmup=0, alpha_f=0.0
+        ),  # No warmup for annealing
     )
 
 
@@ -180,14 +220,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
-            load_path="gs://ai2-llm/checkpoints/TODO_40B_CHECKPOINT_PATH/",  # TODO: Replace with 40B checkpoint
+            load_path="/weka/oe-training-default/ai2-llm/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-long-context-drope/step10000/",
             save_folder=f"{common.root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_TOKENS),
             hard_stop=HARD_STOP,
-            steps_to_skip=[StepSkipRange(start=961, stop=976)],  # Skip steps 961-975 (inclusive)
         )
         .with_callback(
             "checkpointer",
@@ -195,7 +234,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=1000,
                 ephemeral_save_interval=500,
                 save_async=True,
-                fixed_steps=[960, 2380],
             ),
         )
         .with_callback(
