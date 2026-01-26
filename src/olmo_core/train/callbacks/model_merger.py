@@ -175,6 +175,20 @@ class ModelMergeCallback(Callback):
                             f"Model weights during decay may not be ideal for merging."
                         )
 
+        # Skip past any merge steps that have already been completed (e.g., when resuming training)
+        # This handles the case where we resume past a merge step that wasn't saved
+        current_step = self.step
+        while (
+            self._current_merge_idx < len(self._merge_steps)
+            and self._merge_steps[self._current_merge_idx] < current_step
+        ):
+            skipped_step = self._merge_steps[self._current_merge_idx]
+            log.info(
+                f"ModelMergeCallback: skipping past merge step {skipped_step} "
+                f"(current step is {current_step})"
+            )
+            self._current_merge_idx += 1
+
     @property
     def _start_step(self) -> int:
         """The step at which to start accumulating for the current merge step."""
