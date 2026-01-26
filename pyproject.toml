@@ -61,7 +61,7 @@ comet = ["comet_ml"]
 dion = ["dion @ git+https://github.com/microsoft/dion.git@b17a7699f1398b9cba69d760a52c79bc0ee0e420 ; sys_platform == 'linux'"]
 eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao==0.15.0"]
-transformers = ["transformers", "tqdm>=4.67.0,<5.0.0"]
+transformers = ["transformers<5.0.0"]
 wandb = ["wandb"]
 all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,torchao,transformers,wandb]"]
 
