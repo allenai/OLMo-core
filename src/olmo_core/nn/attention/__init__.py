@@ -70,6 +70,9 @@ __all__ = [
     "UlyssesLoadBalancer",
     "RingContextParallelStyle",
     "UlyssesContextParallelStyle",
+    "RecurrentConfig",
+    "GatedDeltaNetConfig",
+    "GatedDeltaNet",
 ]
 
 log = logging.getLogger(__name__)
@@ -1078,3 +1081,7 @@ class FusedAttention(AttentionBase):
         attn_flops = 12 * self.n_heads * self.head_dim * seq_len
 
         return param_flops + attn_flops
+
+
+# Import recurrent modules at the end to avoid circular imports
+from .recurrent import GatedDeltaNet, GatedDeltaNetConfig, RecurrentConfig

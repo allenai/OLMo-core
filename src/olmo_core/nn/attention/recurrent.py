@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 from torch import nn
@@ -23,9 +23,18 @@ class RecurrentConfig(ModuleConfig):
     """
     Base configuration class for recurrent sequence mixing modules.
 
-    Subclasses should implement the :meth:`build` method to construct the
-    specific recurrent module.
+    This is an abstract base class - use concrete implementations like
+    :class:`GatedDeltaNetConfig` to build recurrent modules.
     """
+
+    @abstractmethod
+    def num_params(self, d_model: int) -> int:
+        """
+        The number of params that the recurrent implementation will have once built.
+
+        :param d_model: The model dimensionality.
+        """
+        raise NotImplementedError
 
     @abstractmethod
     def build(
@@ -41,10 +50,10 @@ class RecurrentConfig(ModuleConfig):
         Build the corresponding recurrent module.
 
         :param d_model: The model dimensionality.
-        :param layer_idx: The layer index (may be used for layer-specific configuration).
+        :param layer_idx: The layer index.
         :param n_layers: The total number of layers.
         :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
-        :param cache: Optional buffer cache (unused by most recurrent modules).
+        :param cache: Optional buffer cache.
         """
         raise NotImplementedError
 
@@ -94,6 +103,44 @@ class GatedDeltaNetConfig(RecurrentConfig):
     The default data type to use for parameters.
     """
 
+    def num_params(self, d_model: int) -> int:
+        """
+        The number of params that the GatedDeltaNet will have once built.
+
+        :param d_model: The model dimensionality.
+        """
+        n_heads = self.n_heads
+        n_kv_heads = self.n_kv_heads or n_heads
+        head_dim = self.head_dim or d_model // n_heads
+        head_v_dim = int(head_dim * self.expand_v)
+        key_dim = n_heads * head_dim
+        value_dim = n_kv_heads * head_v_dim
+
+        params = 0
+
+        # Linear projections: w_q, w_k, w_v, w_a, w_b, w_g, w_out
+        params += d_model * key_dim  # w_q
+        params += d_model * key_dim  # w_k
+        params += d_model * value_dim  # w_v
+        params += d_model * n_kv_heads  # w_a
+        params += d_model * n_kv_heads  # w_b
+        params += d_model * value_dim  # w_g
+        params += value_dim * d_model  # w_out
+
+        # A_log and dt_bias parameters
+        params += n_kv_heads  # A_log
+        params += n_kv_heads  # dt_bias
+
+        # Short convolutions (kernel_size * hidden_size for each)
+        params += self.conv_size * key_dim  # q_conv1d
+        params += self.conv_size * key_dim  # k_conv1d
+        params += self.conv_size * value_dim  # v_conv1d
+
+        # FusedRMSNormGated (weight only, no bias)
+        params += head_v_dim  # o_norm
+
+        return params
+
     def build(
         self,
         d_model: int,
@@ -112,7 +159,8 @@ class GatedDeltaNetConfig(RecurrentConfig):
         :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
         :param cache: Optional buffer cache (unused).
         """
-        del layer_idx, n_layers, cache  # Unused by GatedDeltaNet
+        del layer_idx, n_layers, cache  # Unused
+
         return GatedDeltaNet(
             d_model=d_model,
             n_heads=self.n_heads,
@@ -128,13 +176,12 @@ class GatedDeltaNetConfig(RecurrentConfig):
         )
 
 
-# Type alias for any recurrent config
-AnyRecurrentConfig = Union[GatedDeltaNetConfig]
-
-
 class GatedDeltaNet(AttentionBase):
     """
     The layer implementation for `Gated Delta Networks <https://arxiv.org/abs/2412.06464>`_.
+
+    This is a linear attention variant that uses a gated delta rule for recurrent
+    state updates, providing efficient O(n) sequence modeling.
 
     :param d_model: The model hidden size.
     :param n_heads: The number of attention heads.

@@ -17,6 +17,7 @@ from ..attention import (
     GateConfig,
     SlidingWindowAttentionConfig,
 )
+from ..attention.recurrent import RecurrentConfig
 from ..buffer_cache import BufferCache
 from ..config import ModelConfig, ModuleConfig
 from ..feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
@@ -151,10 +152,13 @@ class TransformerBlockConfig(ModuleConfig):
     A configuration class for easily building transformer blocks.
     """
 
-    attention: AttentionConfig
+    attention: Optional[AttentionConfig] = None
     """
-    The attention/sequence mixer config. Can be a standard :class:`AttentionConfig` or a
-    :class:`~olmo_core.nn.attention.recurrent.RecurrentConfig` subclass (e.g., :class:`GatedDeltaNetConfig`).
+    The attention config. Mutually exclusive with ``recurrent``.
+    """
+    recurrent: Optional[RecurrentConfig] = None
+    """
+    The recurrent sequence mixer config (e.g., GatedDeltaNet). Mutually exclusive with ``attention``.
     """
     layer_norm: Optional[LayerNormConfig] = None
     """
@@ -249,8 +253,11 @@ class TransformerBlockConfig(ModuleConfig):
         if self.name == TransformerBlockType.normalized:
             block_params += 2 * d_model
 
-        # Block attention params.
-        block_params += self.attention.num_params(d_model)
+        # Block attention/recurrent params.
+        if self.attention is not None:
+            block_params += self.attention.num_params(d_model)
+        elif self.recurrent is not None:
+            block_params += self.recurrent.num_params(d_model)
         if self.layer_norm is not None:
             block_params += self.layer_norm.num_params(d_model)
 
@@ -1707,6 +1714,7 @@ class TransformerConfig(ModelConfig):
         )
 
         block_overrides: Dict[int, TransformerBlockConfig] = {}
+        assert block.attention is not None
         for layer_idx in range(n_layers):
             if not sliding_window.should_use_swa(layer_idx, n_layers):
                 global_block = block.copy()
@@ -1737,12 +1745,16 @@ class TransformerConfig(ModelConfig):
         Return a copy of this config with the given RoPE scaling scheme applied.
         """
         new_config = self.copy()
+        if new_config.block.attention is None:
+            raise ValueError("Cannot apply RoPE scaling to a model without attention.")
         if new_config.block.attention.rope is None:
             raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
         if new_config.block_overrides:
             raise ValueError("Cannot apply RoPE scaling when block_overrides are already set.")
 
         def apply_scaling(block_config: TransformerBlockConfig) -> None:
+            if block_config.attention is None:
+                raise ValueError("Cannot apply RoPE scaling to a block without attention.")
             rope_config = block_config.attention.rope
             if rope_config is None:
                 raise ValueError("Cannot apply RoPE scaling to a layer without RoPE.")
@@ -1758,6 +1770,7 @@ class TransformerConfig(ModelConfig):
         # We supply "block_overrides" for the layers we want to scale.
         overrides: Dict[int, TransformerBlockConfig] = {}
         for i in range(new_config.n_layers):
+            assert new_config.block.attention is not None
             sliding_window_cfg = new_config.block.attention.sliding_window
             if sliding_window_cfg and sliding_window_cfg.should_use_swa(i, new_config.n_layers):
                 continue

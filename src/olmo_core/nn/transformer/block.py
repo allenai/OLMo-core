@@ -15,6 +15,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
 
 from ..attention import AttentionConfig
+from ..attention.recurrent import RecurrentConfig
 from ..attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
@@ -99,8 +100,8 @@ class TransformerBlock(TransformerBlockBase):
 
     :param d_model: The model dimensionality.
     :param block_idx: The index/position of the block within the model. Ranges from 0 to ``n_layers - 1``.
-    :param attention: The attention/sequence mixer config. Can be a standard :class:`AttentionConfig`
-        or a :class:`~olmo_core.nn.attention.recurrent.RecurrentConfig` subclass.
+    :param attention: The attention config. Mutually exclusive with ``recurrent``.
+    :param recurrent: The recurrent sequence mixer config. Mutually exclusive with ``attention``.
     :param feed_forward: The feed forward module config.
     :param layer_norm: The layer norm config for both the attention LN and the feed forward LN.
     :param dropout: Dropout probability.
@@ -113,7 +114,8 @@ class TransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        attention: Optional[AttentionConfig] = None,
+        recurrent: Optional[RecurrentConfig] = None,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -126,13 +128,28 @@ class TransformerBlock(TransformerBlockBase):
         self.d_model = d_model
         self.block_idx = block_idx
 
-        self.attention = attention.build(
-            d_model,
-            layer_idx=block_idx,
-            n_layers=n_layers,
-            init_device=init_device,
-            cache=cache,
-        )
+        # Build either attention or recurrent module
+        if attention is not None and recurrent is not None:
+            raise ValueError("Cannot specify both 'attention' and 'recurrent'")
+        if attention is not None:
+            self.attention = attention.build(
+                d_model,
+                layer_idx=block_idx,
+                n_layers=n_layers,
+                init_device=init_device,
+                cache=cache,
+            )
+        elif recurrent is not None:
+            self.attention = recurrent.build(
+                d_model,
+                layer_idx=block_idx,
+                n_layers=n_layers,
+                init_device=init_device,
+                cache=cache,
+            )
+        else:
+            raise ValueError("Must specify either 'attention' or 'recurrent'")
+
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
         self.attention_residual_stream = ResidualStream(
             alpha=attention_residual_alpha, dropout=dropout
