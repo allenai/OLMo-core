@@ -14,6 +14,7 @@ has_mps = torch.mps.is_available()
 compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
 has_flash_attn_2 = False
 has_flash_attn_3 = False
+has_fla = False
 has_torchao = False
 has_grouped_gemm = False
 has_te = False
@@ -34,6 +35,14 @@ try:
         is_supported = 9 <= compute_capability < 10  # H100 / H800
         has_flash_attn_3 = is_supported
     del flash_attn_interface
+except ModuleNotFoundError:
+    pass
+
+try:
+    import fla
+
+    has_fla = True
+    del fla
 except ModuleNotFoundError:
     pass
 
@@ -121,6 +130,18 @@ FLASH_3_MARKS = (
 
 def requires_flash_attn_3(func):
     for mark in FLASH_3_MARKS:
+        func = mark(func)
+    return func
+
+
+FLA_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_fla, reason="Requires flash-linear-attention (fla)"),
+)
+
+
+def requires_fla(func):
+    for mark in FLA_MARKS:
         func = mark(func)
     return func
 
