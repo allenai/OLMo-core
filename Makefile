@@ -47,7 +47,7 @@ build :
 #  * The corresponding versions specified in 'pyproject.toml' include the new version.
 #  * The versions installed in '.github/actions/setup-python-env/action.yml' match if necessary.
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
-CUDA_VERSION = 12.9.1
+CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.12
 TORCH_VERSION = 2.10.0
@@ -99,11 +99,11 @@ docker-image :
 		-t olmo-core:$(IMAGE_TAG) .
 	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
 		'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface'
-	@echo "✔️ Image validated. Python environment:"
+	@echo "✓ Image validated. Python environment:"
 	@echo ""
 	@docker run --rm olmo-core:$(IMAGE_TAG) pip list
 	@echo ""
-	@echo "✔️ Build complete: olmo-core:$(IMAGE_TAG) (size=$$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si))"
+	@echo "✓ Build complete: olmo-core:$(IMAGE_TAG) (size=$$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si))"
 	@echo ""
 
 .PHONY : ghcr-image
