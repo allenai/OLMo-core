@@ -353,12 +353,8 @@ class PeriNormTransformerBlock(TransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = self.attention_residual_stream(
-            x, self.post_attention_norm(self.attention(self.attention_norm(x), **kwargs))
-        )
-        return self.feed_forward_residual_stream(
-            h, self.post_feed_forward_norm(self.feed_forward(self.feed_forward_norm(h)))
-        )
+        h = self.post_attention_norm(self.attention(self.attention_norm(x), **kwargs), residual=x)
+        return self.post_feed_forward_norm(self.feed_forward(self.feed_forward_norm(h)), residual=h)
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
