@@ -13,7 +13,7 @@ from ..config import ModuleConfig
 from .ring import RingContextParallelStyle, UlyssesContextParallelStyle
 
 
-class SequenceMixerBase(nn.Module):
+class SequenceMixer(nn.Module):
     """
     Base class for sequence mixing modules (e.g. attention, recurrent, convolution, etc.).
     """
@@ -43,7 +43,7 @@ class SequenceMixerBase(nn.Module):
         raise NotImplementedError
 
 
-SeqMixer = TypeVar("SeqMixer", bound=SequenceMixerBase)
+SeqMixer = TypeVar("SeqMixer", bound=SequenceMixer)
 
 
 @dataclass
