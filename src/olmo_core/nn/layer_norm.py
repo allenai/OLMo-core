@@ -294,7 +294,6 @@ class CuTeRMSNorm(RMSNorm):
         )
         return result.to(x.dtype)
 
-,
 class FusedRMSNorm(RMSNorm):
     """
     A "fused" triton-based implementation of :class:`RMSNorm`.
