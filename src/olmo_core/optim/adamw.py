@@ -230,8 +230,9 @@ class SkipStepAdamW(SkipStepOptimizer):
             )
 
 
+@OptimConfig.register("adamw")
 @dataclass
-class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[torch.optim.AdamW]"
+class AdamWConfig(OptimConfig[torch.optim.AdamW]):
     """
     Configuration class for building an :class:`torch.optim.AdamW` optimizer.
     """
@@ -248,8 +249,9 @@ class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[tor
         return torch.optim.AdamW
 
 
+@OptimConfig.register("skip_step_adamw")
 @dataclass
-class SkipStepAdamWConfig(OptimConfig):
+class SkipStepAdamWConfig(OptimConfig[SkipStepAdamW]):
     """
     Configuration class for building a :class:`SkipStepAdamW` optimizer.
     """

@@ -15,7 +15,8 @@ from olmo_core.distributed.parallel import (
     get_world_mesh,
 )
 from olmo_core.nn.transformer import Transformer
-from olmo_core.optim.config import MatrixAwareOptimConfig, OptimGroupOverride
+
+from .config import MatrixAwareOptimConfig, OptimConfig, OptimGroupOverride
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ def _import_dion():
     return Dion
 
 
+@OptimConfig.register("dion")
 @dataclass
 class DionConfig(MatrixAwareOptimConfig):
     """
