@@ -14,8 +14,6 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
     **Option A: Using mason.py (recommended)**
 
-    This script should be saved and run from [allenai/open-instruct](https://github.com/allenai/open-instruct).
-
     ```bash
     #!/bin/bash
     #
