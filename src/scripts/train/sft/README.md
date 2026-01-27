@@ -10,6 +10,55 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
 1. Check out [open-instruct](https://github.com/allenai/open-instruct) and run a command such as:
 
+    Both approaches below should work, but launching with `gantry` can require some finnagling of `gantry` and `beaker-py` versions.
+
+    **Option A: Using mason.py (recommended)**
+
+    ```bash
+    #!/bin/bash
+    #
+    # Usage: ./scripts/train/build_image_and_launch.sh scripts/train/olmo3/7b-hybrid-sft-tokenization.sh
+    #
+    set -euo pipefail
+    # Get the Beaker username to construct the image name
+    BEAKER_USER=$(beaker account whoami --format json | jq -r '.[0].name')
+    BEAKER_IMAGE="${1:-${BEAKER_USER}/open-instruct-integration-test}"
+
+    echo "Using Beaker image: $BEAKER_IMAGE"
+
+    TOKENIZER=allenai/dolma-2-tokenizer-olmo-3-instruct-final
+    tokenizer_path=/weka/oe-adapt-default/saumyam/open-instruct/dolma2-tokenizer-olmo-3-instruct-final
+
+    uv run python mason.py \
+      --cluster ai2/jupiter \
+      --budget ai2/oe-adapt \
+      --workspace ai2/olmo-instruct \
+      --image "$BEAKER_IMAGE" \
+      --pure_docker_mode \
+      --no-host-networking \
+      --gpus 8 \
+      --priority urgent \
+      --description "7B hybrid SFT tokenization" \
+      --no_auto_dataset_cache \
+      -- huggingface-cli download $TOKENIZER --local-dir $tokenizer_path \&\& python scripts/data/convert_sft_data_for_olmocore.py \
+          --dataset_mixer_list \
+             allenai/Dolci-Think-SFT-32B 1.0 \
+             allenai/olmo-toolu-sft-mix-T2-S2-f2-bfclv3-decontaminated-200K-thinking-id-fixed 3.0 \
+             allenai/olmo-toolu-s2-sft-m3-thinking-id-fixed 3.0 \
+             allenai/olmo-toolu-s2-sft-m4v2-thinking-id-fixed 3.0 \
+             allenai/olmo-toolu-s2-sft-m5v2-thinking-id-fixed 3.0 \
+             allenai/olmo-toolu_deepresearch_thinking_DRv4-modified-system-prompts 3.0 \
+          --tokenizer_name_or_path $tokenizer_path \
+          --output_dir /weka/oe-adapt-default/nathanl/dataset/olmo-hybrid \
+          --visualize True \
+          --chat_template_name "olmo123" \
+          --max_seq_length 32768
+    ```
+
+    > NOTE: This script uses GPUs to ensure sufficient CPU resources for large-scale tokenization. The chat template `olmo123` is a placeholder—the chat template is loaded from the tokenizer in the command.
+
+    **Option B: Using gantry**
+
     ```bash
     gantry run \
         --cluster ai2/neptune-cirrascale \
@@ -70,6 +119,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         * The "launch" command automatically creates a Beaker experiment and runs the exact same command remotely with "train" substituted for launch.
         * Highly recommended: Tokenize and train at the same context length (recommended 32k)
         * Make sure to use the right script for your model: Currently supported: `Olmo-2-7B`, `Olmo-3-7B`, and `Olmo-3-32B`.
+        * **For new base models**, you will need to create a new training script that configures the parallelism settings correctly for that model architecture. See the existing scripts in this directory for examples.
         * `--dataset_path`: Path to your tokenized dataset. If on Augusta, you must copy it to GCP. Include `gs://`.
         * Include `model_and_optim` at the end of your base checkpoint path.
 
