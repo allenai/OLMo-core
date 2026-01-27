@@ -109,9 +109,9 @@ def _test_roundtrip():
     hp = all_to_all_single_cp2hp(original, group)
     recovered = all_to_all_single_hp2cp(hp, group)
 
-    assert torch.allclose(
-        original, recovered
-    ), f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
+    assert torch.allclose(original, recovered), (
+        f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
+    )
 
 
 def _test_batched_cp2hp():
