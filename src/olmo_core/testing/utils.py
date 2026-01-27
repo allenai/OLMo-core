@@ -4,6 +4,9 @@ import os
 import pytest
 import torch
 
+import olmo_core.nn.attention.flash_attn_api as flash_attn_api
+import olmo_core.nn.attention.flash_linear_attn_api as flash_linear_attn_api
+
 log = logging.getLogger(__name__)
 
 HF_TOKEN = os.environ.get("HF_TOKEN")
@@ -12,39 +15,15 @@ has_cuda = torch.cuda.is_available()
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 has_mps = torch.mps.is_available()
 compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
-has_flash_attn_2 = False
-has_flash_attn_3 = False
-has_fla = False
+has_flash_attn_2 = flash_attn_api.has_flash_attn_2()
+has_flash_attn_3 = flash_attn_api.has_flash_attn_3()
+has_flash_attn_4 = flash_attn_api.has_flash_attn_4()
+has_fla = flash_linear_attn_api.has_fla()
 has_torchao = False
 has_grouped_gemm = False
 has_te = False
 has_dion = False
 
-try:
-    import flash_attn  # type: ignore
-
-    has_flash_attn_2 = True
-    del flash_attn
-except ModuleNotFoundError:
-    pass
-
-try:
-    import flash_attn_interface  # type: ignore
-
-    if compute_capability is not None:
-        is_supported = 9 <= compute_capability < 10  # H100 / H800
-        has_flash_attn_3 = is_supported
-    del flash_attn_interface
-except ModuleNotFoundError:
-    pass
-
-try:
-    import fla
-
-    has_fla = True
-    del fla
-except ModuleNotFoundError:
-    pass
 
 try:
     import torchao  # type: ignore

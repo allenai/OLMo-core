@@ -18,8 +18,9 @@ dependencies = [
     "cached-path>=1.7.2",
     "requests",
     "packaging",
+    "dataclass-extensions>=0.2.6",
+    "pyyaml",
     "rich",
-    "omegaconf",
     "safetensors",
     "importlib_resources",
     "bettermap",
@@ -62,7 +63,7 @@ comet = ["comet_ml"]
 dion = ["dion @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb2535239b ; sys_platform == 'linux'"]
 eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao==0.15.0"]
-transformers = ["transformers"]
+transformers = ["transformers<5.0"]
 wandb = ["wandb"]
 all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,torchao,transformers,wandb]"]
 

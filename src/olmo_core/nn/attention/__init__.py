@@ -34,6 +34,7 @@ from .backend import (
     AttentionBackendName,
     FlashAttention2Backend,
     FlashAttention3Backend,
+    FlashAttention4Backend,
     TEAttentionBackend,
     TorchAttentionBackend,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "TorchAttentionBackend",
     "FlashAttention2Backend",
     "FlashAttention3Backend",
+    "FlashAttention4Backend",
     "TEAttentionBackend",
     "AttentionConfig",
     "AttentionBase",

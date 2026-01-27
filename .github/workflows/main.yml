@@ -105,7 +105,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Python environment
-        uses: ./.github/actions/setup-venv
+        uses: ./.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python }}
           cache-prefix: ${{ env.CACHE_PREFIX }}
@@ -128,7 +128,6 @@ jobs:
 
       - name: ${{ matrix.task.name }}
         run: |
-          . .venv/bin/activate
           ${{ matrix.task.run }}
 
       - name: Upload package distribution files
@@ -137,12 +136,6 @@ jobs:
         with:
           name: package
           path: dist
-
-      - name: Clean up
-        if: always()
-        run: |
-          . .venv/bin/activate
-          pip uninstall -y ai2-olmo-core
 
   gpu_checks:
     name: ${{ matrix.task.name }}
@@ -262,7 +255,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Python environment
-        uses: ./.github/actions/setup-venv
+        uses: ./.github/actions/setup-python-env
         with:
           python-version: "3.11"
           cache-prefix: ${{ env.CACHE_PREFIX }}
@@ -280,12 +273,10 @@ jobs:
 
       - name: Generate release notes
         run: |
-          . .venv/bin/activate
           python src/scripts/release/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
 
       - name: Publish package to PyPI
         run: |
-          . .venv/bin/activate
           twine upload -u __token__ -p '${{ secrets.PYPI_TOKEN }}' dist/*
 
       - name: Publish GitHub release
@@ -308,5 +299,4 @@ jobs:
       - name: Send Slack notifications about release
         continue-on-error: true
         run: |
-          . .venv/bin/activate
           python ./src/scripts/release/slack_notification.py '${{ secrets.SLACK_WEBHOOK_URL}}'
