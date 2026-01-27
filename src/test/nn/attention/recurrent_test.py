@@ -1,4 +1,3 @@
-from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Any, Dict
 
 import pytest
@@ -14,9 +13,10 @@ from olmo_core.distributed.utils import get_full_tensor, get_rank, get_world_siz
 from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
-from olmo_core.testing import run_distributed_test
+from olmo_core.testing import requires_gpu, run_distributed_test
 from olmo_core.testing.utils import requires_fla, requires_multi_gpu
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 
 
 @requires_fla
@@ -43,6 +43,7 @@ def test_gated_delta_net_config_num_params(recurrent_config: GatedDeltaNetConfig
 
 
 @requires_fla
+@requires_gpu
 def test_gated_delta_net_fwd_bwd():
     device = "cuda"
     dtype = torch.bfloat16
