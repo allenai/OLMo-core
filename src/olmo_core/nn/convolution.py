@@ -63,14 +63,11 @@ class CausalConv1d(nn.Conv1d):
         cu_seqlens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Run the causal convolution on the input.
-
         :param x: Input tensor of shape ``(batch_size, seq_len, hidden_size)``.
             ``batch_size`` must be 1 if ``cu_seqlens`` is provided.
             When CP is enabled, input should be channel-parallel: ``(batch_size, seq_len, hidden_size/CP)``.
         :param cu_seqlens: Cumulative sequence lengths for variable-length sequences.
             Shape: ``(num_seqs + 1,)``.
-
         :returns: Output tensor of shape ``(batch_size, seq_len, hidden_size)``.
             When CP is enabled, output is channel-parallel: ``(batch_size, seq_len, hidden_size/CP)``.
         """
@@ -97,15 +94,14 @@ class CausalConv1d(nn.Conv1d):
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         """
-        Configure conv for Ulysses-style context parallelism.
+        Configure convolution for Ulysses-style (channel-parallel) context parallelism.
 
-        Instead of sharding parameters (which conflicts with FSDP), we keep the full
-        parameters and slice to the local C/CP channels during forward based on CP rank.
+        Instead of sharding parameters (which conflicts with ``FSDP``), we keep the full
+        parameters and slice to the local ``C/CP`` channels during forward based on CP rank.
+        Since convolutions tend to have a small number of parameters, the extra memory overhead
+        of keeping the full parameters on each rank is minimal.
 
-        This way:
-        - FSDP handles the full parameters normally (no DTensor conflicts)
-        - Checkpoints save/load the full parameters
-        - Forward pass uses only the local slice for the C/CP channels this rank processes
+        :param cp_mesh: The context parallel device mesh.
         """
         if cp_mesh.size() == 1:
             return

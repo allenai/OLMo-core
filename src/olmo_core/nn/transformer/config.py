@@ -1726,7 +1726,6 @@ class TransformerConfig(ModelConfig):
         )
 
         block_overrides: Dict[int, TransformerBlockConfig] = {}
-        assert block.sequence_mixer is not None
         for layer_idx in range(n_layers):
             if not sliding_window.should_use_swa(layer_idx, n_layers):
                 global_block = block.copy()
