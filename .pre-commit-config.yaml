@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: make-style
+        name: Format code with isort and black
+        entry: make style
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true

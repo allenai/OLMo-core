@@ -27,6 +27,7 @@ def _test_cp2hp_scatter(input_ndim: int = 4):
     t_local = T // world_size
     h_local = H // world_size
 
+    expected_shape: tuple[int, ...]
     if input_ndim == 4:
         input_tensor = torch.full((B, t_local, H, D), float(rank), device=device, dtype=dtype)
         expected_shape = (B, T, h_local, D)
@@ -68,6 +69,7 @@ def _test_hp2cp_gather(input_ndim: int = 4):
     h_local = H // world_size
     t_local = T // world_size
 
+    expected_shape: tuple[int, ...]
     if input_ndim == 4:
         input_tensor = torch.full((B, T, h_local, D), float(rank), device=device, dtype=dtype)
         expected_shape = (B, t_local, H, D)
@@ -138,6 +140,7 @@ def _test_batched_cp2hp(input_ndim: int = 4):
     h_local = H // world_size
 
     # Create multiple input tensors with different values
+    expected_shape: tuple[int, ...]
     if input_ndim == 4:
         input1 = torch.full((B, t_local, H, D), float(rank), device=device, dtype=dtype)
         input2 = torch.full((B, t_local, H, D), float(rank) + 10.0, device=device, dtype=dtype)
@@ -232,6 +235,7 @@ def _test_batched_hp2cp(input_ndim: int = 4):
     h_local = H // world_size
 
     # Create multiple input tensors with different values
+    expected_shape: tuple[int, ...]
     if input_ndim == 4:
         input1 = torch.full((B, T, h_local, D), float(rank), device=device, dtype=dtype)
         input2 = torch.full((B, T, h_local, D), float(rank) + 10.0, device=device, dtype=dtype)
