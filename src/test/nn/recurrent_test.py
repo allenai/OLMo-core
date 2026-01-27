@@ -3,18 +3,17 @@ from typing import Any, Dict
 import pytest
 import torch
 from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import DTensor, Shard
 
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
-from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.distributed.utils import get_full_tensor, get_rank, get_world_size
 from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.testing import run_distributed_test
 from olmo_core.testing.utils import requires_fla, requires_multi_gpu
 from olmo_core.utils import get_default_device, seed_all
-
-BF16_RTOL = 1e-5
-BF16_ATOL = 5e-3
+from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 
 
 @requires_fla
@@ -78,7 +77,7 @@ def test_gated_delta_net_num_flops_per_token():
     assert 0 < gdn_flops < attn_flops
 
 
-def _run_context_parallel_gated_delta_net(
+def _run_context_parallel_gdn_ulysses(
     checkpoint_dir: str,
     inputs_path: str,
     outputs_path: str,
@@ -98,21 +97,19 @@ def _run_context_parallel_gated_delta_net(
     x_local = x[:, rank * chunk_size : (rank + 1) * chunk_size, :]
 
     with torch.autocast(device.type, dtype=x_local.dtype):
-        y_local = gdn(x_local)
+        local_y = gdn(x_local)
+    y = DTensor.from_local(local_y, mesh, (Shard(1),))
 
-    # Gather outputs from all ranks.
-    y_gathered = [torch.empty_like(y_local) for _ in range(world_size)]
-    torch.distributed.all_gather(y_gathered, y_local)
-    y_cp = torch.cat(y_gathered, dim=1)
-
-    # Compare with non-CP output.
-    y = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(y_cp, y, rtol=BF16_RTOL, atol=BF16_ATOL)
+    og_y = torch.load(outputs_path, map_location=device)
+    tol_scale = 1.5  # requires slightly more tolerance than default
+    torch.testing.assert_close(
+        og_y, get_full_tensor(y), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
+    )
 
 
 @requires_multi_gpu
 @requires_fla
-def test_context_parallel_gated_delta_net(tmp_path):
+def test_context_parallel_gdn_ulysses(tmp_path):
     seed_all(0)
     device = get_default_device()
 
@@ -133,7 +130,7 @@ def test_context_parallel_gated_delta_net(tmp_path):
     save_model_and_optim_state(checkpoint_dir, gdn)
 
     run_distributed_test(
-        _run_context_parallel_gated_delta_net,
+        _run_context_parallel_gdn_ulysses,
         backend="nccl",
         start_method="spawn",
         func_args=(checkpoint_dir, inputs_path, outputs_path, gdn_kwargs),

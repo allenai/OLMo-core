@@ -67,17 +67,20 @@ class CausalConv1d(nn.Conv1d):
 
         :param x: Input tensor of shape ``(batch_size, seq_len, hidden_size)``.
             ``batch_size`` must be 1 if ``cu_seqlens`` is provided.
+            When CP is enabled, input should be channel-parallel: ``(batch_size, seq_len, hidden_size/CP)``.
         :param cu_seqlens: Cumulative sequence lengths for variable-length sequences.
             Shape: ``(num_seqs + 1,)``.
 
         :returns: Output tensor of shape ``(batch_size, seq_len, hidden_size)``.
+            When CP is enabled, output is channel-parallel: ``(batch_size, seq_len, hidden_size/CP)``.
         """
         from fla.modules.convolution import causal_conv1d
 
         weight = self.weight
         bias = self.bias
+
         if self.cp_enabled:
-            # Slice to local C/CP channels
+            # Slice weights to local channels
             weight = weight[self._cp_channel_start : self._cp_channel_end]
             if bias is not None:
                 bias = bias[self._cp_channel_start : self._cp_channel_end]

@@ -4,12 +4,17 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
+import torch.distributed as dist
 from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement
 from torch.nn import functional as F
 
 from olmo_core.config import DType
+from olmo_core.distributed.parallel.context_parallel import (
+    all_to_all_cp2hp,
+    all_to_all_hp2cp,
+)
 from olmo_core.nn.attention import AttentionBase
 from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_gated_delta_rule, has_fla
 from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
@@ -333,9 +338,24 @@ class GatedDeltaNet(AttentionBase):
         #        (batch_size, seq_len, n_kv_heads * head_v_dim)
         q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
 
+        if self.cp_enabled and self.uly is not None:
+            assert self._cp_group is not None
+            # For conv, we need full sequence. Swap from seq-parallel to channel-parallel.
+            # [B, T/CP, C] -> [B, T, C/CP]
+            q = _to_channel_parallel(q, self._cp_group)
+            k = _to_channel_parallel(k, self._cp_group)
+            v = _to_channel_parallel(v, self._cp_group)
+
         q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
         k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
         v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
+
+        if self.cp_enabled and self.uly is not None:
+            assert self._cp_group is not None
+            # Swap back to seq-parallel (partitioned sequence, full channels)
+            q = _to_seq_parallel(q, self.key_dim, self._cp_group)
+            k = _to_seq_parallel(k, self.key_dim, self._cp_group)
+            v = _to_seq_parallel(v, self.value_dim, self._cp_group)
 
         q = q.view(B, T, -1, self.head_k_dim)
         k = k.view(B, T, -1, self.head_k_dim)
@@ -353,6 +373,17 @@ class GatedDeltaNet(AttentionBase):
         # shape: (batch_size, seq_len, n_kv_heads)
         g = -self.A_log.float().exp() * F.softplus(self.w_a(x).float() + self.dt_bias)
 
+        if self.cp_enabled and self.uly is not None:
+            assert self._cp_group is not None
+
+            # Transform from context-parallel to head-parallel partitioning
+            # [B, T/CP, H, D] -> [B, T, H/CP, D]
+            q = all_to_all_cp2hp(q, self._cp_group)
+            k = all_to_all_cp2hp(k, self._cp_group)
+            v = all_to_all_cp2hp(v, self._cp_group)
+            g = all_to_all_cp2hp(g.unsqueeze(-1), self._cp_group).squeeze(-1)
+            beta = all_to_all_cp2hp(beta.unsqueeze(-1), self._cp_group).squeeze(-1)
+
         o, _ = dispatch_chunk_gated_delta_rule(
             q=q,
             k=k,
@@ -362,6 +393,12 @@ class GatedDeltaNet(AttentionBase):
             cu_seqlens=cu_doc_lens,  # pyright: ignore[reportCallIssue]
             use_qk_l2norm_in_kernel=True,  # pyright: ignore[reportCallIssue]
         )
+
+        if self.cp_enabled and self.uly is not None:
+            assert self._cp_group is not None
+            # Transform back from head-parallel to context-parallel partitioning
+            # [B, T, H/CP, D] -> [B, T/CP, H, D]
+            o = all_to_all_hp2cp(o, self._cp_group)
 
         g = self.w_g(x).view(B, T, -1, self.head_v_dim)
 
@@ -418,14 +455,10 @@ class GatedDeltaNet(AttentionBase):
                 )
 
         self.uly = uly
-        group = cp_mesh.get_group()
         self._cp_mesh = cp_mesh
-        self._cp_group = group
+        self._cp_group = cp_mesh.get_group()
         self.cp_enabled = True
 
-        # Shard conv weights across CP ranks for channel-parallel execution.
-        # After _to_channel_parallel, each rank processes C/CP channels with full sequence.
-        # The conv weights need to be sharded on dim 0 (the channel dimension).
         if self.q_conv1d is not None:
             self.q_conv1d.apply_cp(cp_mesh)
         if self.k_conv1d is not None:
@@ -471,3 +504,35 @@ class GatedDeltaNet(AttentionBase):
         recurrent_flops = 2 * 4 * state_size
 
         return int(linear_flops + conv_flops + recurrent_flops)
+
+
+def _to_channel_parallel(x: torch.Tensor, cp_group: dist.ProcessGroup) -> torch.Tensor:
+    """
+    Transform from sequence-parallel to channel-parallel for conv in CP mode.
+    [B, T/CP, C] -> [B, T, C/CP]
+    """
+    world_size = dist.get_world_size(cp_group)
+    B, t_local, C = x.shape
+    c_local = C // world_size
+    # Reshape to [B, T/CP, C, 1] to match [B, T/CP, H, D] expected by cp2hp
+    x_4d = x.view(B, t_local, C, 1)
+    # cp2hp: [B, T/CP, H, D] -> [B, T, H/CP, D]
+    out_4d = all_to_all_cp2hp(x_4d, cp_group)
+    # Flatten back to 3D: [B, T, C/CP]
+    return out_4d.reshape(B, t_local * world_size, c_local)
+
+
+def _to_seq_parallel(x: torch.Tensor, orig_C: int, cp_group: dist.ProcessGroup) -> torch.Tensor:
+    """
+    Transform from channel-parallel to sequence-parallel after conv in CP mode.
+    [B, T, C/CP] -> [B, T/CP, C]
+    """
+    world_size = dist.get_world_size(cp_group)
+    B, t_full, c_local = x.shape
+    t_local = t_full // world_size
+    # Reshape to [B, T, C/CP, 1] to match [B, T, H/CP, D] expected by hp2cp
+    x_4d = x.view(B, t_full, c_local, 1)
+    # hp2cp: [B, T, H/CP, D] -> [B, T/CP, H, D]
+    out_4d = all_to_all_hp2cp(x_4d, cp_group)
+    # Flatten back to 3D: [B, T/CP, C]
+    return out_4d.reshape(B, t_local, orig_C)
