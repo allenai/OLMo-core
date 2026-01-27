@@ -15,7 +15,7 @@ __all__ = [
     "LayerNormConfig",
     "LayerNorm",
     "RMSNorm",
-    "CuteRMSNorm",
+    "CuTeRMSNorm",
     "FusedRMSNorm",
     "L2Norm",
 ]
@@ -36,7 +36,7 @@ class LayerNormType(StrEnum):
     """
     cute_rms = "cute_rms"
     """
-    ➡️ :class:`CuteRMSNorm`
+    ➡️ :class:`CuTeRMSNorm`
     """
     fused_rms = "fused_rms"
     """
@@ -103,7 +103,7 @@ class LayerNormConfig(ModuleConfig):
             elif self.name == LayerNormType.rms:
                 return RMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.cute_rms:
-                return CuteRMSNorm(size=size, init_device=init_device, **kwargs)
+                return CuTeRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.fused_rms:
                 return FusedRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.l2_norm:
@@ -229,9 +229,9 @@ class RMSNorm(LayerNorm):
             return x.to(og_dtype)
 
 
-class CuteRMSNorm(RMSNorm):
+class CuTeRMSNorm(RMSNorm):
     """
-    A CUTE-based implementation from the QuACK library.
+    A CuTe-based implementation from the QuACK library.
 
     .. warning::
         This requires `quack <https://github.com/Dao-AILab/quack>`_ to be installed.
