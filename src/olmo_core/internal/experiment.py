@@ -415,7 +415,6 @@ def build_config(
 
 
 def launch(config: ExperimentConfig):
-    log.info(config)
     assert config.launch is not None
 
     # Only send local Slack notifications when slack callback is enabled.
@@ -429,7 +428,6 @@ def launch(config: ExperimentConfig):
     config.launch.launch(
         follow=True,
         slack_notifications=slack_enabled,
-        launch_timeout=5 * 60,
         #  step_timeout=30 * 60,  # hard timeout kills the job
         step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
     )
@@ -439,7 +437,6 @@ def launch_prep(config: ExperimentConfig):
     assert config.launch is not None
     config.launch.num_gpus = 0
     config.launch.num_nodes = 1
-    log.info(config)
     config.launch.launch(follow=True, torchrun=False)
 
 

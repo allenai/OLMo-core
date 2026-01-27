@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for flash-attn 4 (CUTE implementation).
 - Added `Callback.pre_log_metrics()` method.
 - Added `SequenceMixer` base class that both attention and recurrent layers inherit from.
+- Added `CuTeRMSNorm`, a CuTe-based RMSNorm implementation from the QuACK library.
 
 ### Fixed
 
