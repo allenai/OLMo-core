@@ -33,7 +33,7 @@ class CausalConv1d(nn.Conv1d):
         :param kernel_size: Size of the convolution kernel.
         :param bias: Whether to include learnable bias.
         :param backend: Backend implementation ('triton' or 'cuda').
-        :param dtype: The data type of the input and output.
+        :param dtype: The data type of the convolution weights and bias.
         :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
         :param activation: Activation function ('silu' or 'swish').
         """
