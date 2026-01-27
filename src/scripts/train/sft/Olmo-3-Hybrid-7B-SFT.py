@@ -350,6 +350,19 @@ class SFTConfig(Config):
 
         model = build_model_config(vocab_size=tokenizer_config.padded_vocab_size())
 
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+        ),
+        cp_config=TransformerContextParallelConfig.ulysses(degree=2),
+        # tp_config=TransformerTensorParallelConfig(degree=8),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.1,
+        ),
+
         config = SFTConfig(
             run_name=run_name,
             launch=build_launch_config(
@@ -392,7 +405,7 @@ class SFTConfig(Config):
                 ),
                 dp_config=dp_config,
                 cp_config=None,
-                ac_config=None,
+                ac_config=ac_config,
                 scheduler=LinearWithWarmup(
                     warmup_fraction=0.03,
                     alpha_f=0.0,  # lr drops all the way to 0.0 at the end
