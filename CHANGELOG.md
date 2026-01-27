@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SpeedMonitorCallback` will log Chinchilla multiple number of tokens during training with a `TransformerTrainModule`.
 - Added support for flash-attn 4 (CUTE implementation).
 - Added `Callback.pre_log_metrics()` method.
+- Added `SequenceMixer` base class that both attention and recurrent layers inherit from.
 
 ### Fixed
 

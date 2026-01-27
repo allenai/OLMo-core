@@ -84,9 +84,9 @@ class BatchSizeConfig:
     def __post_init__(self):
         assert self.global_batch_size_tokens > 0, "global_batch_size_tokens must be positive"
         assert self.sequence_length > 0, "sequence_length must be positive"
-        assert (self.sequence_length & (self.sequence_length - 1)) == 0, (
-            "sequence_length must be a power of 2"
-        )
+        assert (
+            self.sequence_length & (self.sequence_length - 1)
+        ) == 0, "sequence_length must be a power of 2"
         assert self.world_size > 0, "world_size must be positive"
         assert (self.world_size & (self.world_size - 1)) == 0, "world_size must be a power of 2"
 
