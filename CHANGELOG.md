@@ -21,10 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for no-global-rope ("GNoPE").
 - Added support for MXFP8 Linear layers via torchao.
 - Added support for tracking total flops.
+- Added support for Gemma 3 models.
 - Added support for Qwen3 models.
 - Added support for Muon and Dion optimizers.
 - Added support for Ulysses-style context parallelism.
-- Added 60M and 1M model sizes.
+- Added Beaker URL to Wandb logging.
+- Added 60M, 14M, and 1M model sizes.
+- `SpeedMonitorCallback` will log Chinchilla multiple number of tokens during training with a `TransformerTrainModule`.
+- Added support for flash-attn 4 (CUTE implementation).
+- Added `Callback.pre_log_metrics()` method.
 
 ### Fixed
 
@@ -39,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ladder lmevaluator typo.
 - Made some functions involved in data loading preprocessing more robust to race conditions.
 - GAPMonitorCallback would raise an error if a local tensor shard had 0 elements.
+- Fixed a bug where final metrics might not get logged.
+- Fix failing test_build_world_mesh_cpu for pytorch 2.10.
+- Fix failing convert_checkpoint_to_hf_test due by reducing total disk space required.
+
 
 ### Changed
 
@@ -49,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Big changes to `olmo_core.model_ladder` API.
 - Add ngram instance filter to olmo3_ladder.
 - Upgraded to beaker-py v2.
+- Now, we check `dist.is_initialized()` before calling `dist.init_process_group()` in `init_distributed()`.
 
 ## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
 

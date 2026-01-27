@@ -70,17 +70,13 @@ class MetricSaverCallback(Callback):
             )
             log.info(f"Metrics for step {step} saved to '{dest_path}'")
 
-    def post_train(self):
+    def close(self):
         if not self.enabled or get_rank() != 0:
             return
 
         if self.metrics is not None:
             dest_path = self._write_metrics(self.final_metrics_fname, self.metrics)
             log.info(f"Final metrics from step {self._metrics_step} saved to '{dest_path}'")
-
-    def close(self):
-        if not self.enabled or get_rank() != 0:
-            return
 
         self._metrics = None
         self._metrics_step = 0

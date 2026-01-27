@@ -23,6 +23,12 @@ from .common import build_launch_config, get_gpu_type, get_root_dir
 
 log = logging.getLogger(__name__)
 
+# Common storage roots where ladder checkpoints and metrics are saved.
+LADDER_STORAGE_ROOTS = [
+    "weka://oe-training-default/ai2-llm/model-ladders",
+    "gs://ai2-llm/model-ladders",
+]
+
 
 def parse_args(
     configure_ladder: Callable[[argparse.Namespace], ModelLadder],
@@ -96,6 +102,12 @@ def parse_args(
             help="A multiplier to apply to the default learning rate.",
         )
         parser.add_argument(
+            "--stepped-schedule",
+            action="store_true",
+            default=False,
+            help="Use the stepped WSDS schedule when using the chinchilla run configurator.",
+        )
+        parser.add_argument(
             "--cluster",
             type=str,
             choices=["ai2/augusta", "ai2/jupiter", "ai2/titan"],
@@ -160,7 +172,7 @@ def parse_args(
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Print the launch config without launching the run.",
+            help="Do a dry-run of the launch.",
             default=False,
         )
 
@@ -225,15 +237,15 @@ def parse_args(
         "Download the metrics for a given model size.",
     )
     add_sub_command(
-        "all-metrics",
-        all_metrics,
+        "metrics-all",
+        metrics_all,
         "Download the metrics for all model sizes of the ladder.",
     )
 
     for cmd, parser in sub_commands.items():
         add_general_args(parser)
 
-        if cmd not in {"launch-all", "all-metrics"}:
+        if cmd not in {"launch-all", "metrics-all"}:
             parser.add_argument(
                 "--size",
                 choices=list(size_enum),
@@ -242,7 +254,7 @@ def parse_args(
                 help="The model size.",
             )
 
-        if cmd in {"launch-all", "status", "all-metrics"}:
+        if cmd in {"launch-all", "status", "metrics-all"}:
             parser.add_argument(
                 "--max-size",
                 choices=list(size_enum),
@@ -250,12 +262,39 @@ def parse_args(
                 help="The maximum model size. If not specified, status/metrics for all sizes will be shown.",
             )
 
-        if cmd in {"dry-run", "metrics", "all-metrics"}:
+        if cmd in {"launch", "launch-benchmark"}:
+            parser.add_argument(
+                "--follow",
+                action=argparse.BooleanOptionalAction,
+                help="Whether to follow the job logs after launching.",
+                default=True,
+            )
+
+        if cmd in {"dry-run", "metrics", "metrics-all"}:
             parser.add_argument(
                 "--output-dir",
                 type=Path,
                 default=Path("~/Downloads").expanduser(),
                 help="""A local directory to store artifacts in like metrics or the LR schedule plot.""",
+            )
+
+        if cmd in {"status", "metrics", "metrics-all"}:
+            parser.add_argument(
+                "--alternative-dirs",
+                type=str,
+                nargs="*",
+                default=None,
+                help=f"""Alternative root directories to search for checkpoints and metrics.
+                The ladder name and size spec are automatically appended to each directory.
+                Use LADDER_STORAGE_ROOTS to expand to: {LADDER_STORAGE_ROOTS}""",
+            )
+            parser.add_argument(
+                "--discover-all",
+                action="store_true",
+                help="""Discover all checkpoints that exist rather than only checking at expected intervals.
+                This is useful for downloading metrics that may not have been saved at expected intervals
+                (e.g. if different device types are used for the ladder runs, different batch sizes may be used,
+                so the expected intervals may not be the same).""",
             )
 
         if cmd == "dry-run":
@@ -318,11 +357,14 @@ def get_default_ladder_factory(
             max_devices=args.max_gpus,
             device_type=get_gpu_type(args.cluster),
             model_configurator=configure_model(args),
-            run_configurator=configure_run(args)
-            if configure_run is not None
-            else WSDSChinchillaRunConfigurator(
-                chinchilla_multiple=args.chinchilla_multiple,
-                lr_multiplier=args.lr_multiplier,
+            run_configurator=(
+                configure_run(args)
+                if configure_run is not None
+                else WSDSChinchillaRunConfigurator(
+                    chinchilla_multiple=args.chinchilla_multiple,
+                    lr_multiplier=args.lr_multiplier,
+                    stepped_schedule=args.stepped_schedule,
+                )
             ),
             sequence_length=args.sequence_length,
             tokenizer=tokenizer,
@@ -403,7 +445,7 @@ def dry_run(args: argparse.Namespace):
     ladder.dry_run(
         args.size,
         show_plot=args.show_plot,
-        save_plot=io.join_path(args.output_dir / f"lr_schedule_{args.size}.png"),
+        save_plot=io.join_path(args.output_dir, ladder.name, f"lr_schedule_{args.size}.png"),
     )
 
 
@@ -416,7 +458,7 @@ def launch_benchmark(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
     launcher = configure_launcher(args, ladder, "benchmark")
-    launcher.launch(follow=True, slack_notifications=args.slack_notifications)
+    launcher.launch(follow=args.follow, slack_notifications=args.slack_notifications)
 
 
 def run(args: argparse.Namespace):
@@ -447,7 +489,7 @@ def _launch_run(
     if dry_run:
         log.info(f"Launch dry run for size {size}...")
         log.info(f"Results would be saved to {ladder.get_save_folder(size)}")
-        rich.get_console().print(launcher)
+        launcher.dry_run(follow=follow, slack_notifications=slack_notifications)
     else:
         log.info(f"Launching ladder run for size {size}...")
         log.info(f"Results will be saved to {ladder.get_save_folder(size)}")
@@ -462,7 +504,7 @@ def launch(args: argparse.Namespace):
         ladder,
         launcher,
         args.size_enum(args.size),
-        follow=True,
+        follow=args.follow,
         slack_notifications=args.slack_notifications,
         dry_run=args.dry_run,
     )
@@ -487,9 +529,28 @@ def launch_all(args: argparse.Namespace):
         )
 
 
+def _get_alternative_dirs(args: argparse.Namespace, ladder_name: str) -> list[str] | None:
+    """Expand alternative_dirs, appending ladder_name to each.
+
+    LADDER_STORAGE_ROOTS is expanded to the common storage roots.
+    """
+    if not args.alternative_dirs:
+        return None
+    dirs: list[str] = []
+    for d in args.alternative_dirs:
+        if d == "LADDER_STORAGE_ROOTS":
+            dirs.extend(str(io.join_path(root, ladder_name)) for root in LADDER_STORAGE_ROOTS)
+        else:
+            dirs.append(str(io.join_path(d, ladder_name)))
+    return dirs if dirs else None
+
+
 def status(args: argparse.Namespace):
+    from rich.table import Table
+
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
+    alternative_dirs = _get_alternative_dirs(args, ladder.name)
 
     sizes: list[str]
     if args.size:
@@ -499,41 +560,122 @@ def status(args: argparse.Namespace):
         if args.max_size:
             sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
 
+    # Collect summary info for the table
+    # (size, num_ckpts, expected_ckpts, num_metrics, expected_metrics, status_emoji)
+    summary: list[tuple[str, int, int, int, int, str]] = []
+
     for size in sizes:
         print()
-        checkpoints = ladder.get_checkpoints(size)
-        if not checkpoints or checkpoints[-1].step == 0:
+        # Always get expected checkpoints to know the expected total
+        expected_checkpoints = ladder.get_checkpoints(
+            size, discover_all=False, alternative_dirs=alternative_dirs
+        )
+        expected_ckpts = len(expected_checkpoints)
+        # Metrics are not expected for the initialization checkpoint (step 0)
+        expected_metrics = expected_ckpts - 1
+
+        if args.discover_all:
+            # In discover mode, get discovered checkpoints separately
+            checkpoints = ladder.get_checkpoints(
+                size, discover_all=True, alternative_dirs=alternative_dirs
+            )
+
+            if not checkpoints:
+                rich.get_console().print(
+                    f"[b red]No checkpoints found for size {size} (expected {expected_ckpts}).[/]",
+                    highlight=False,
+                )
+                summary.append((size, 0, expected_ckpts, 0, expected_metrics, "✘"))
+                continue
+
+            checkpoint_displays = [ckpt.display() for ckpt in checkpoints]
+            num_ckpts = sum(1 for ckpt in checkpoints if ckpt.exists)
+            num_metrics = sum(1 for ckpt in checkpoints if ckpt.metrics_path is not None)
+            header = f"[b green]Discovered {num_ckpts} checkpoint(s) for size {size} (expected {expected_ckpts}):[/]"
             rich.get_console().print(
-                f"[b yellow]Run for size {size} has no configured checkpoint intervals.[/]",
+                f"{header}\n" + "\n".join(checkpoint_displays),
                 highlight=False,
             )
-            continue
+            status_emoji = "✔" if num_ckpts >= expected_ckpts else ("⚠" if num_ckpts > 0 else "✘")
+            summary.append(
+                (size, num_ckpts, expected_ckpts, num_metrics, expected_metrics, status_emoji)
+            )
+        else:
+            checkpoints = expected_checkpoints
+            # Normal mode: check expected intervals and show completion percentage
+            if not checkpoints or checkpoints[-1].step == 0:
+                rich.get_console().print(
+                    f"[b red]Run for size {size} has no configured checkpoint intervals.[/]",
+                    highlight=False,
+                )
+                summary.append((size, 0, 0, 0, 0, "✘"))
+                continue
 
-        max_step_completed = 0
-        max_step = -1
-        checkpoint_displays = []
-        for ckpt in checkpoints:
-            max_step = max(max_step, ckpt.step)
-            if ckpt.exists:
-                max_step_completed = max(max_step_completed, ckpt.step)
-            checkpoint_displays.append(ckpt.display())
+            max_step_completed = 0
+            max_step = -1
+            num_ckpts = 0
+            num_metrics = 0
+            checkpoint_displays = []
+            for ckpt in checkpoints:
+                max_step = max(max_step, ckpt.step)
+                if ckpt.exists:
+                    max_step_completed = max(max_step_completed, ckpt.step)
+                    num_ckpts += 1
+                if ckpt.metrics_path is not None:
+                    num_metrics += 1
+                checkpoint_displays.append(ckpt.display())
 
-        assert max_step > 0
-        pct_complete = round((max_step_completed / max_step) * 100.0)
-        color = "green" if pct_complete == 100 else "yellow"
-        completion_display = f"[b {color}]Run for size {size}, {pct_complete}% complete:[/]"
-        rich.get_console().print(
-            f"{completion_display}\n" + "\n".join(checkpoint_displays),
-            highlight=False,
-        )
+            assert max_step > 0
+            pct_complete = round((max_step_completed / max_step) * 100.0)
+            color = "green" if pct_complete == 100 else "yellow"
+            completion_display = f"[b {color}]Run for size {size}, {pct_complete}% complete:[/]"
+            rich.get_console().print(
+                f"{completion_display}\n" + "\n".join(checkpoint_displays),
+                highlight=False,
+            )
+            status_emoji = "✔" if pct_complete == 100 else ("⚠" if num_ckpts > 0 else "✘")
+            summary.append(
+                (size, num_ckpts, expected_ckpts, num_metrics, expected_metrics, status_emoji)
+            )
+
+    if len(sizes) > 1:
+        print()
+        table = Table(title=f"Summary: {ladder.name}", show_header=True, header_style="bold")
+        table.add_column("Size", style="cyan")
+        table.add_column("Checkpoints", justify="right")
+        table.add_column("Metrics", justify="right")
+        table.add_column("Status", justify="center")
+
+        for size, num_ckpts, exp_ckpts, num_metrics, exp_metrics, status_emoji in summary:
+            if exp_ckpts == 0:
+                ckpts_str = "-"
+                metrics_str = "-"
+            else:
+                ckpts_str = f"{num_ckpts}/{exp_ckpts}"
+                metrics_str = f"{num_metrics}/{exp_metrics}"
+
+            if status_emoji == "✔":
+                status_styled = f"[green]{status_emoji}[/]"
+            elif status_emoji == "⚠":
+                status_styled = f"[yellow]{status_emoji}[/]"
+            else:
+                status_styled = f"[red]{status_emoji}[/]"
+
+            table.add_row(size, ckpts_str, metrics_str, status_styled)
+
+        rich.get_console().print(table)
 
 
 def metrics(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
-    df = ladder.get_metrics(args.size)
+    df = ladder.get_metrics(
+        args.size,
+        discover_all=args.discover_all,
+        alternative_dirs=_get_alternative_dirs(args, ladder.name),
+    )
     if df is not None:
-        path = io.join_path(args.output_dir, f"metrics_{args.size}.pkl")
+        path = io.join_path(args.output_dir, ladder.name, f"metrics_{args.size}.pkl")
         df.to_pickle(path)
         rich.get_console().print(
             f"[b green]✔[/] Metrics for size [green]{args.size}[/] saved to [u blue]{path}[/]\n"
@@ -550,41 +692,50 @@ def metrics(args: argparse.Namespace):
         sys.exit(1)
 
 
-def all_metrics(args: argparse.Namespace):
+def metrics_all(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
     sizes = [args.size_enum(s) for s in ladder.sizes]
     if args.max_size:
         sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
 
-    saved_count = 0
+    output_dir = io.join_path(args.output_dir, ladder.name)
+    success_count = 0
+    failed_sizes = []
+
+    alternative_dirs = _get_alternative_dirs(args, ladder.name)
     for size in sizes:
-        df = ladder.get_metrics(size)
+        print()
+        df = ladder.get_metrics(
+            size,
+            discover_all=args.discover_all,
+            alternative_dirs=alternative_dirs,
+        )
         if df is not None:
-            path = io.join_path(args.output_dir, f"metrics_{size}.pkl")
+            path = io.join_path(output_dir, f"metrics_{size}.pkl")
             df.to_pickle(path)
             rich.get_console().print(
                 f"[b green]✔[/] Metrics for size [green]{size}[/] saved to [u blue]{path}[/]",
                 highlight=False,
             )
-            saved_count += 1
+            success_count += 1
         else:
             rich.get_console().print(
                 f"[b yellow]Run for size {size} has no metrics yet.[/]",
                 highlight=False,
             )
+            failed_sizes.append(size)
 
-    if saved_count > 0:
+    print()
+    if success_count > 0:
         rich.get_console().print(
-            f"\n[b green]✔[/] Saved metrics for [green]{saved_count}[/] size(s) to [u blue]{args.output_dir}[/]\n"
-            f"Use pandas to load and analyze the metrics, e.g.:\n\n"
-            f"    import pandas as pd\n"
-            f"    df = pd.read_pickle('{args.output_dir}/metrics_<size>.pkl')\n",
+            f"[b green]✔[/] Successfully downloaded metrics for [green]{success_count}[/] model size(s).",
             highlight=False,
         )
-    else:
+    if failed_sizes:
         rich.get_console().print(
-            "\n[b yellow]No metrics found for any of the requested sizes.[/]",
+            f"[b yellow]⚠[/] No metrics available for [yellow]{len(failed_sizes)}[/] model size(s): "
+            f"{', '.join(str(s) for s in failed_sizes)}",
             highlight=False,
         )
         sys.exit(1)

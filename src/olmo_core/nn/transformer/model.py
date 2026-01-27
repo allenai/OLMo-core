@@ -104,7 +104,9 @@ class Transformer(nn.Module):
         init_device: str = "cpu",
         init_seed: int = 0,
         init_std: float = 0.02,
+        embedding_init_std: Optional[float] = None,
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+        embed_scale: Optional[float] = None,
     ):
         super().__init__()
 
@@ -115,6 +117,7 @@ class Transformer(nn.Module):
         self.n_layers = n_layers
         self.n_attn_heads = block.attention.n_heads
         self.dtype = dtype
+        self.embed_scale = embed_scale
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -147,6 +150,7 @@ class Transformer(nn.Module):
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
         self.init_std = init_std
+        self.embedding_init_std = embedding_init_std
 
         self._cache = cache
         self._pp_enabled = False
@@ -265,7 +269,9 @@ class Transformer(nn.Module):
             self.init_method.init_embeddings(
                 self.embeddings,
                 d_model=self.d_model,
-                std=self.init_std,
+                std=self.embedding_init_std
+                if self.embedding_init_std is not None
+                else self.init_std,
                 generator=generator,
             )
 
@@ -530,6 +536,8 @@ class Transformer(nn.Module):
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+        if self.embeddings is not None and self.embed_scale is not None:
+            h = h * self.embed_scale
         if self.embedding_norm is not None:
             h = self.embedding_norm(h)
 
@@ -938,6 +946,7 @@ class NormalizedTransformer(Transformer):
         init_device: str = "cpu",
         init_seed: int = 0,
         init_std: float = 0.02,
+        embedding_init_std: Optional[float] = None,
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
     ):
         super().__init__(
@@ -951,6 +960,7 @@ class NormalizedTransformer(Transformer):
             init_device=init_device,
             init_seed=init_seed,
             init_std=init_std,
+            embedding_init_std=embedding_init_std,
             block_overrides=block_overrides,
         )
 
