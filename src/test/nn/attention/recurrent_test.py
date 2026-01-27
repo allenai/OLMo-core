@@ -1,3 +1,4 @@
+from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Any, Dict
 
 import pytest
@@ -16,7 +17,6 @@ from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.testing import run_distributed_test
 from olmo_core.testing.utils import requires_fla, requires_multi_gpu
 from olmo_core.utils import get_default_device, seed_all
-from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 
 
 @requires_fla
