@@ -173,6 +173,7 @@ class AttentionType(StrEnum):
     """
 
 
+@SequenceMixerConfig.register("attention")
 @dataclass
 class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
@@ -1058,7 +1059,3 @@ class FusedAttention(SequenceMixer):
         attn_flops = 12 * self.n_heads * self.head_dim * seq_len
 
         return param_flops + attn_flops
-
-
-# Import recurrent modules at the end to avoid circular imports
-from .recurrent import GatedDeltaNet, GatedDeltaNetConfig, RecurrentConfig
