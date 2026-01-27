@@ -115,22 +115,24 @@ class GatedDeltaNet(SequenceMixer):
             hidden_size=self.key_dim,
             kernel_size=conv_size,
             bias=conv_bias,
-            activation=ActivationFunction.silu,
+            activation=ActivationFunction.silu.value,
+            dtype=dtype,
             init_device=init_device,
-            # TODO: why no explicit dtype?
         )
         self.k_conv1d = CausalConv1d(
             hidden_size=self.key_dim,
             kernel_size=conv_size,
             bias=conv_bias,
-            activation=ActivationFunction.silu,
+            activation=ActivationFunction.silu.value,
+            dtype=dtype,
             init_device=init_device,
         )
         self.v_conv1d = CausalConv1d(
             hidden_size=self.value_dim,
             kernel_size=conv_size,
             bias=conv_bias,
-            activation=ActivationFunction.silu,
+            activation=ActivationFunction.silu.value,
+            dtype=dtype,
             init_device=init_device,
         )
         self.w_g = nn.Linear(d_model, self.value_dim, bias=False, dtype=dtype, device=init_device)

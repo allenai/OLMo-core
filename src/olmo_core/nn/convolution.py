@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 
-from olmo_core.nn.attention.flash_linear_attn_api import has_fla
+from olmo_core.nn.attention.flash_linear_attn_api import dispatch_causal_conv1d
 
 __all__ = ["CausalConv1d"]
 
@@ -13,8 +13,6 @@ class CausalConv1d(nn.Conv1d):
     """
     CausalConv1d (aka short convolution) layer for efficient causal convolution operations.
     This implements a depthwise separable 1D convolution with causal padding.
-
-    Modified from: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/modules/conv/short_conv.py#L19
     """
 
     def __init__(
@@ -26,7 +24,7 @@ class CausalConv1d(nn.Conv1d):
         backend: Literal["triton", "cuda"] = "triton",
         dtype: torch.dtype | None = None,
         init_device: str = "cpu",
-        activation: Optional[str] = "silu",
+        activation: Literal["silu", "swish"] | None = "silu",
     ):
         """
         :param hidden_size: Number of input/output channels (must be equal for depthwise conv).
@@ -47,16 +45,9 @@ class CausalConv1d(nn.Conv1d):
             device=init_device,
             dtype=dtype,
         )
-
         self.hidden_size = hidden_size
-        self.activation: Optional[str] = None
         self.backend = backend
-
-        if activation is not None:
-            if activation not in ("silu", "swish"):
-                raise ValueError(f"Activation `{activation}` not supported, use 'silu' or 'swish'")
-            self.activation = activation
-
+        self.activation = activation
         self.cp_enabled = False
 
     def forward(  # type: ignore[override]
@@ -73,19 +64,15 @@ class CausalConv1d(nn.Conv1d):
         :returns: Output tensor of shape ``(batch_size, seq_len, hidden_size)``.
             When CP is enabled, output is channel-parallel: ``(batch_size, seq_len, hidden_size/CP)``.
         """
-        assert has_fla(), "flash-linear-attention (fla) is required for causal convolution"
-        from fla.modules.convolution import causal_conv1d
-
         weight = self.weight
         bias = self.bias
 
         if self.cp_enabled:
-            # Slice weights to local channels
-            weight = weight[self._cp_channel_start : self._cp_channel_end]
+            weight = weight[self._cp_channel_slice]
             if bias is not None:
-                bias = bias[self._cp_channel_start : self._cp_channel_end]
+                bias = bias[self._cp_channel_slice]
 
-        output = causal_conv1d(
+        output = dispatch_causal_conv1d(
             x=x,
             weight=weight.squeeze(1),
             bias=bias,
@@ -109,11 +96,7 @@ class CausalConv1d(nn.Conv1d):
         if cp_mesh.size() == 1:
             return
 
-        # Store CP info for slicing
-        self._cp_mesh = cp_mesh
-        self._cp_world_size = cp_mesh.size()
-        self._cp_rank = cp_mesh.get_local_rank()
-        local_channels = self.hidden_size // self._cp_world_size
-        self._cp_channel_start = self._cp_rank * local_channels
-        self._cp_channel_end = self._cp_channel_start + local_channels
+        local_channels = self.hidden_size // cp_mesh.size()
+        start = cp_mesh.get_local_rank() * local_channels
+        self._cp_channel_slice = slice(start, start + local_channels)
         self.cp_enabled = True

@@ -1,3 +1,5 @@
+from typing import Literal
+
 import torch
 
 try:
@@ -26,7 +28,7 @@ def dispatch_chunk_gated_delta_rule(
     assert has_fla()
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule
 
-    return chunk_gated_delta_rule(  # pyright: ignore[reportCallIssue]
+    return chunk_gated_delta_rule(  # type: ignore[reportCallIssue]
         q=q,
         k=k,
         v=v,
@@ -36,5 +38,26 @@ def dispatch_chunk_gated_delta_rule(
         initial_state=initial_state,
         output_final_state=output_final_state,
         use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        cu_seqlens=cu_seqlens,
+    )
+
+
+def dispatch_causal_conv1d(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+    activation: str | None,
+    backend: Literal["triton", "cuda"] = "triton",
+    cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
+) -> torch.Tensor:
+    assert has_fla()
+    from fla.modules.convolution import causal_conv1d
+
+    return causal_conv1d(
+        x=x,
+        weight=weight,
+        bias=bias,
+        activation=activation,
+        backend=backend,
         cu_seqlens=cu_seqlens,
     )
