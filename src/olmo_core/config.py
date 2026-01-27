@@ -1,6 +1,7 @@
 import copy
+import dataclasses
 import json
-from dataclasses import dataclass, fields, is_dataclass, replace
+from dataclasses import dataclass
 from enum import Enum
 from typing import (
     Any,
@@ -11,17 +12,16 @@ from typing import (
     Generator,
     List,
     Optional,
+    Sequence,
     Tuple,
     Type,
     TypeVar,
-    cast,
 )
 
 import torch
 import yaml
 from cached_path import cached_path
-from omegaconf import OmegaConf as om
-from omegaconf.errors import OmegaConfBaseException
+from dataclass_extensions import Registrable, decode, encode
 from typing_extensions import Self
 
 from .aliases import PathOrStr
@@ -97,7 +97,7 @@ class Config:
         exclude_set = set(exclude) if exclude is not None else set()
 
         def iter_fields(d) -> Generator[Tuple[str, Any], None, None]:
-            for field in fields(d):
+            for field in dataclasses.fields(d):
                 if field.name in exclude_set:
                     continue
                 value = getattr(d, field.name)
@@ -109,13 +109,19 @@ class Config:
                     yield (field.name, value)
 
         def as_dict(d: Any, recurse: bool = True) -> Any:
-            if is_dataclass(d):
+            if dataclasses.is_dataclass(d):
                 if recurse:
                     out = {k: as_dict(v) for k, v in iter_fields(d)}
                 else:
                     out = {k: v for k, v in iter_fields(d)}
                 if include_class_name:
                     out[self.CLASS_NAME_FIELD] = f"{d.__class__.__module__}.{d.__class__.__name__}"
+                if isinstance(d, Registrable):
+                    try:
+                        registered_name = d.get_registered_name()
+                        out["type"] = registered_name
+                    except ValueError:
+                        pass
                 return out
             elif isinstance(d, dict):
                 return {k: as_dict(v) for k, v in d.items()}
@@ -157,8 +163,8 @@ class Config:
             if isinstance(d, Config):
                 func(d)
 
-            if is_dataclass(d):
-                for field in fields(d):
+            if dataclasses.is_dataclass(d):
+                for field in dataclasses.fields(d):
                     value = getattr(d, field.name)
                     apply(value)
             elif isinstance(d, dict):
@@ -185,37 +191,32 @@ class Config:
             and strip that prefix (including the subsequent ".") before applying the overrides.
         :param strict: Parse the dotlist strictly.
         """
-        try:
-            dotlist = _clean_opts(dotlist)
-            if prefix is not None:
-                dotlist = [
-                    o.replace(f"{prefix}.", "", 1) for o in dotlist if o.startswith(f"{prefix}.")
-                ]
-            if not strict:
-                field_names = set(f.name for f in fields(self))
-                dotlist = [
-                    o
-                    for o in dotlist
-                    if any(
-                        [
-                            o.startswith(f"{name}=") or o.startswith(f"{name}.")
-                            for name in field_names
-                        ]
-                    )
-                ]
-            merge_fields = om.from_dotlist(dotlist)
-            merged = om.merge(self, merge_fields)
-            out = cast(Self, om.to_object(merged))
-            out.apply(lambda c: c.validate())
-            return out
-        except OmegaConfBaseException as e:
-            raise OLMoConfigurationError(str(e))
+        overrides = _clean_opts(dotlist)
+        if prefix is not None:
+            overrides = [
+                (k.replace(f"{prefix}.", "", 1), v)
+                for k, v in overrides
+                if k.startswith(f"{prefix}.")
+            ]
+
+        if not strict:
+            field_names = set(f.name for f in dataclasses.fields(self))
+            overrides = [
+                (k, v)
+                for k, v in overrides
+                if any([k == name or k.startswith(f"{name}.") for name in field_names])
+            ]
+
+        merged_data = encode(self)
+        for key, value in overrides:
+            _set_nested(merged_data, key, value)
+        return decode(type(self), merged_data)
 
     def replace(self, **changes) -> Self:
         """
         Creates a new object of the same type, replacing fields with values from ``changes``.
         """
-        return replace(self, **changes)
+        return dataclasses.replace(self, **changes)
 
     def copy(self, deep: bool = True) -> Self:
         """
@@ -249,7 +250,7 @@ class Config:
                 d = {(int(k) if isinstance(k, str) and k.isdigit() else k): v for k, v in d.items()}
 
                 new_dict = {
-                    k: clean_data(v, f"{prefix}.{k}" if prefix else k)
+                    str(k): clean_data(v, f"{prefix}.{k}" if prefix else str(k))
                     for k, v in d.items()
                     if k != cls.CLASS_NAME_FIELD
                 }
@@ -261,10 +262,10 @@ class Config:
                         new_dict = {
                             k: v for k, v in new_dict.items() if k not in cls_o._IGNORE_FIELDS
                         }
-                    schema = om.structured(cls_o)
+
                     try:
-                        return om.to_object(om.merge(schema, new_dict))
-                    except OmegaConfBaseException as e:
+                        return decode(cls_o, new_dict)
+                    except Exception as e:
                         if prefix:
                             msg = f"Failed to construct '{prefix}' in config"
                         else:
@@ -279,15 +280,11 @@ class Config:
                 return d
 
         data = clean_data(data, "")
+        if overrides:
+            for key, value in _clean_opts(overrides):
+                _set_nested(data, key, value)
 
-        try:
-            schema = om.structured(cls)
-            conf = om.merge(schema, data)
-            if overrides:
-                conf = om.merge(conf, om.from_dotlist(_clean_opts(overrides)))
-            return cast(C, om.to_object(conf))
-        except OmegaConfBaseException as e:
-            raise OLMoConfigurationError(str(e))
+        return decode(cls, data)
 
     @classmethod
     def from_file(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
@@ -312,16 +309,39 @@ class Config:
         return cls.from_dict(config_dict, overrides=overrides)
 
 
-def _clean_opts(opts: List[str]) -> List[str]:
+def _set_nested(data: Any, key: str, value: Any):
+    if "." in key:
+        key, child_keys = key.split(".", 1)
+        if isinstance(data, dict):
+            _set_nested(data[key], child_keys, value)
+        elif isinstance(data, list):
+            _set_nested(data[int(key)], child_keys, value)
+        else:
+            raise ValueError(data)
+    else:
+        if isinstance(data, dict):
+            data[key] = value
+        elif isinstance(data, list):
+            data[int(key)] = value
+        else:
+            raise ValueError(f"Can't set value '{value}' at key '{key}' for object {data}")
+
+
+def _clean_opts(opts: Sequence[str]) -> list[tuple[str, Any]]:
     return [_clean_opt(s) for s in opts]
 
 
-def _clean_opt(arg: str) -> str:
+def _clean_opt(arg: str) -> tuple[str, Any]:
     if "=" not in arg:
-        arg = f"{arg}=True"
-    name, val = arg.split("=", 1)
-    name = name.strip("-").replace("-", "_")
-    return f"{name}={val}"
+        name, val = arg, "true"
+    else:
+        name, val = arg.split("=", 1)
+    name = name.strip(" -").replace("-", "_")
+    if not val or val.isspace():
+        val = ""
+    else:
+        val = yaml.safe_load(val)
+    return (name, val)
 
 
 class DType(StrEnum):
