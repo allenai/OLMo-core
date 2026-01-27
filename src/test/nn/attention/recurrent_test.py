@@ -1,4 +1,3 @@
-from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Any, Dict
 
 import pytest
@@ -17,6 +16,7 @@ from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.testing import run_distributed_test
 from olmo_core.testing.utils import requires_fla, requires_multi_gpu
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 
 
 @requires_fla
@@ -44,17 +44,17 @@ def test_gated_delta_net_config_num_params(recurrent_config: GatedDeltaNetConfig
 
 @requires_fla
 def test_gated_delta_net_fwd_bwd():
-    device = get_default_device()
+    device = "cuda"
     dtype = torch.bfloat16
 
     d_model, seq_len, batch_size = 256, 32, 2
 
     config = GatedDeltaNetConfig(n_heads=8)
-    module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device.type)
+    module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
 
     x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype, requires_grad=True)
 
-    with torch.autocast(device_type=device.type, dtype=dtype):
+    with torch.autocast(device_type=device, dtype=dtype):
         y = module(x)
         assert y.shape == x.shape
 
