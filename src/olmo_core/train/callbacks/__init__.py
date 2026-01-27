@@ -24,6 +24,7 @@ from .profiler import ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
+from .stability_monitor import StabilityMonitorCallback
 from .wandb import WandBCallback
 
 __all__ = [
@@ -46,6 +47,7 @@ __all__ = [
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
+    "StabilityMonitorCallback",
     "WandBCallback",
     "BeakerCallback",
     "BatchSizeSchedulerCallback",

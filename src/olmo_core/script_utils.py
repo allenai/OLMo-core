@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
 import rich
+import torch.cuda
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
@@ -23,6 +24,12 @@ from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
 
+parser = argparse.ArgumentParser(
+    prog=sys.argv[0],
+    usage=f"python {sys.argv[0]} [OPTIONS...] [CONFIG_OVERRIDES...]",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
+
 
 @dataclass
 class ExperimentConfig(Config):
@@ -36,11 +43,6 @@ class ExperimentConfig(Config):
 
 
 def get_cli_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog=sys.argv[0],
-        usage=f"python {sys.argv[0]} [OPTIONS...] [CONFIG_OVERRIDES...]",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
     parser.add_argument(
         "--name",
         type=str,
@@ -82,6 +84,11 @@ def get_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="""Print the config and exit.""",
     )
+    parser.add_argument(
+        "--train-single",
+        action="store_true",
+        help="""Train on a single rank. Use this for debugging.""",
+    )
     return parser
 
 
@@ -112,7 +119,25 @@ def main(
         rich.print(config)
         return
 
-    prepare_training_environment(shared_filesystem=not is_url(opts.save_folder))
+    if opts.train_single:
+        if (dp_config := getattr(config.train_module, "dp_config", None)) is not None:
+            log.warning(
+                "'dp_config' is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
+                dp_config,
+            )
+            config.train_module.dp_config = None  # type: ignore
+        if (tp_config := getattr(config.train_module, "tp_config", None)) is not None:
+            log.warning(
+                "'tp_config' is set to %s, but you can't use tensor parallelism when running on a single node. Disabling.",
+                tp_config,
+            )
+            config.train_module.tp_config = None  # type: ignore
+
+    if torch.cuda.is_available():
+        backend = "cpu:gloo,cuda:nccl"
+    else:
+        backend = None
+    prepare_training_environment(shared_filesystem=not is_url(opts.save_folder), backend=backend)
 
     # Set RNG states on all devices.
     seed_all(config.init_seed)
