@@ -59,6 +59,7 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (
@@ -344,8 +345,7 @@ class SFTConfig(Config):
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
-            // (bs_config.cp_degree or 1),
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         )
 
         model = build_model_config(vocab_size=tokenizer_config.padded_vocab_size())
@@ -392,7 +392,7 @@ class SFTConfig(Config):
                 ),
                 dp_config=dp_config,
                 cp_config=None,
-                ac_config=ac_config,
+                ac_config=None,
                 scheduler=LinearWithWarmup(
                     warmup_fraction=0.03,
                     alpha_f=0.0,  # lr drops all the way to 0.0 at the end
