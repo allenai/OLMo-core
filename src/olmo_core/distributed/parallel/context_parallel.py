@@ -35,10 +35,9 @@ def all_to_all_single_cp2hp(
         dimensionality), partitioned along the head dimension.
     """
     assert input_.dim() in (3, 4), (
-        "all_to_all_cp2hp expects 3-d input shape [B, T/CP, H] or 4-d input shape [B, T/CP, H, D]."
+        "all_to_all_single_cp2hp expects 3-d input shape [B, T/CP, H] or 4-d input shape [B, T/CP, H, D]."
     )
 
-    # Handle 3D input by reshaping to 4D with D=1
     input_was_3d = input_.dim() == 3
     if input_was_3d:
         input_ = input_.unsqueeze(-1)  # [B, T/CP, H] -> [B, T/CP, H, 1]
@@ -58,7 +57,6 @@ def all_to_all_single_cp2hp(
     exchanged = exchanged.view(world_size, B, t_local, h_out, d_in).permute(1, 0, 2, 3, 4)
     exchanged = exchanged.reshape(B, t_local * world_size, h_out, d_in)
 
-    # Restore 3D shape if input was 3D
     if input_was_3d:
         exchanged = exchanged.squeeze(-1)  # [B, T, H/CP, 1] -> [B, T, H/CP]
 
@@ -83,8 +81,6 @@ def all_to_all_cp2hp(
     if not inputs:
         return []
 
-    # Handle 3D inputs by reshaping to 4D with D=1
-    # All inputs must have the same shape, so check first input only
     assert inputs[0].dim() in (3, 4), (
         "all_to_all_cp2hp expects 3-d input shape [B, T/CP, H] or 4-d input shape [B, T/CP, H, D]."
     )
@@ -95,7 +91,6 @@ def all_to_all_cp2hp(
     world_size = get_world_size(cp_group)
 
     # Validate and prepare all inputs: split each tensor into CP chunks
-    # prepared[i] has shape [CP, B, T/CP, H/CP, D] for input i
     prepared = []
     shapes = []
     for input_ in inputs:
@@ -112,23 +107,19 @@ def all_to_all_cp2hp(
     chunk_size = prepared[0][0].numel()
     input_list = [torch.cat([p[r].flatten() for p in prepared], dim=0) for r in range(world_size)]
 
-    # Single all-to-all exchange
     output_list = all_to_all(cp_group, input_list)
 
     # Split received data back into individual tensors and reshape
     outputs = []
     for i, (B, t_local, h_out, d_in) in enumerate(shapes):
-        # Extract this tensor's data from each rank and stack
         chunks = [
             output_list[r][i * chunk_size : (i + 1) * chunk_size].view(B, t_local, h_out, d_in)
             for r in range(world_size)
         ]
-        # Stack along new dim then merge: [CP, B, T/CP, H/CP, D] -> [B, T, H/CP, D]
         out = torch.stack(chunks, dim=0).permute(1, 0, 2, 3, 4)
         out = out.reshape(B, t_local * world_size, h_out, d_in)
         outputs.append(out)
 
-    # Restore 3D shape if inputs were 3D
     if inputs_were_3d:
         outputs = [out.squeeze(-1) for out in outputs]  # [B, T, H/CP, 1] -> [B, T, H/CP]
 
@@ -154,7 +145,6 @@ def all_to_all_single_hp2cp(
         "all_to_all_single_hp2cp expects 3-d input shape [B, T, H/CP] or 4-d input shape [B, T, H/CP, D]."
     )
 
-    # Handle 3D input by reshaping to 4D with D=1
     input_was_3d = input_.dim() == 3
     if input_was_3d:
         input_ = input_.unsqueeze(-1)  # [B, T, H/CP] -> [B, T, H/CP, 1]
@@ -174,7 +164,6 @@ def all_to_all_single_hp2cp(
     exchanged = exchanged.view(world_size, B, t_out, h_in, d_in).permute(1, 2, 0, 3, 4)
     exchanged = exchanged.reshape(B, t_out, h_in * world_size, d_in)
 
-    # Restore 3D shape if input was 3D
     if input_was_3d:
         exchanged = exchanged.squeeze(-1)  # [B, T/CP, H, 1] -> [B, T/CP, H]
 
@@ -201,8 +190,6 @@ def all_to_all_hp2cp(
     if not inputs:
         return []
 
-    # Handle 3D inputs by reshaping to 4D with D=1
-    # All inputs must have the same shape, so check first input only
     assert inputs[0].dim() in (3, 4), (
         "all_to_all_hp2cp expects 3-d input shape [B, T, H/CP] or 4-d input shape [B, T, H/CP, D]."
     )
@@ -213,7 +200,6 @@ def all_to_all_hp2cp(
     world_size = get_world_size(cp_group)
 
     # Validate and prepare all inputs: split each tensor into CP chunks
-    # prepared[i] has shape [CP, B, T/CP, H/CP, D] for input i
     prepared = []
     shapes = []
     for input_ in inputs:
@@ -230,23 +216,19 @@ def all_to_all_hp2cp(
     chunk_size = prepared[0][0].numel()
     input_list = [torch.cat([p[r].flatten() for p in prepared], dim=0) for r in range(world_size)]
 
-    # Single all-to-all exchange
     output_list = all_to_all(cp_group, input_list)
 
     # Split received data back into individual tensors and reshape
     outputs = []
     for i, (B, t_out, h_in, d_in) in enumerate(shapes):
-        # Extract this tensor's data from each rank and stack
         chunks = [
             output_list[r][i * chunk_size : (i + 1) * chunk_size].view(B, t_out, h_in, d_in)
             for r in range(world_size)
         ]
-        # Stack along new dim then permute: [CP, B, T/CP, H/CP, D] -> [B, T/CP, CP, H/CP, D] -> [B, T/CP, H, D]
         out = torch.stack(chunks, dim=0).permute(1, 2, 0, 3, 4)
         out = out.reshape(B, t_out, h_in * world_size, d_in)
         outputs.append(out)
 
-    # Restore 3D shape if inputs were 3D
     if inputs_were_3d:
         outputs = [out.squeeze(-1) for out in outputs]  # [B, T/CP, H, 1] -> [B, T/CP, H]
 
