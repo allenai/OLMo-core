@@ -116,12 +116,12 @@ def _test_roundtrip(input_ndim: int = 4):
     hp = all_to_all_single_cp2hp(original, group)
     recovered = all_to_all_single_hp2cp(hp, group)
 
-    assert original.shape == recovered.shape, (
-        f"Rank {rank}: shape mismatch, original {original.shape} vs recovered {recovered.shape}"
-    )
-    assert torch.allclose(original, recovered), (
-        f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
-    )
+    assert (
+        original.shape == recovered.shape
+    ), f"Rank {rank}: shape mismatch, original {original.shape} vs recovered {recovered.shape}"
+    assert torch.allclose(
+        original, recovered
+    ), f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
 
 
 def _test_batched_cp2hp(input_ndim: int = 4):
@@ -161,9 +161,9 @@ def _test_batched_cp2hp(input_ndim: int = 4):
 
     # Both outputs should have expected shape
     for output in outputs:
-        assert output.shape == expected_shape, (
-            f"Expected shape {expected_shape}, got {output.shape}"
-        )
+        assert (
+            output.shape == expected_shape
+        ), f"Expected shape {expected_shape}, got {output.shape}"
 
     # Verify output values match what single version would produce
     expected1 = torch.cat([expected1_first, expected1_second], dim=1)
@@ -255,9 +255,9 @@ def _test_batched_hp2cp(input_ndim: int = 4):
 
     # Both outputs should have expected shape
     for output in outputs:
-        assert output.shape == expected_shape, (
-            f"Expected shape {expected_shape}, got {output.shape}"
-        )
+        assert (
+            output.shape == expected_shape
+        ), f"Expected shape {expected_shape}, got {output.shape}"
 
     # Verify output values: H chunks gathered from all ranks
     expected1 = torch.cat([expected1_h0, expected1_h1], dim=2)

@@ -31,6 +31,7 @@ __all__ = [
     "Config",
     "DType",
     "StrEnum",
+    "UNSET",
     "Registrable",  # re-exported for convenience
 ]
 
@@ -261,7 +262,7 @@ class Config:
                 d = {(int(k) if isinstance(k, str) and k.isdigit() else k): v for k, v in d.items()}
 
                 new_dict = {
-                    str(k): decode_data(v, f"{prefix}.{k}" if prefix else str(k))
+                    k: decode_data(v, f"{prefix}.{k}" if prefix else str(k))
                     for k, v in d.items()
                     if k != cls.CLASS_NAME_FIELD
                 }
@@ -273,7 +274,7 @@ class Config:
                         new_dict = {k: v for k, v in new_dict.items() if k not in ignore_fields}
 
                     try:
-                        return decode(cls_o, new_dict)
+                        return decode(cls_o, new_dict)  # type: ignore[arg-type]
                     except Exception as e:
                         if prefix:
                             msg = f"Failed to construct '{prefix}' in config: {e}"
@@ -384,3 +385,16 @@ class DType(StrEnum):
 
     def as_pt(self) -> torch.dtype:
         return getattr(torch, self)
+
+
+class _Unset:
+    """
+    Sentinel value indicating that a value was not explicitly provided.
+    Used internally to detect when a value should be skipped.
+    """
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+UNSET: Any = _Unset()

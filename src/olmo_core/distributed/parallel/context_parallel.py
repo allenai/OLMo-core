@@ -34,9 +34,10 @@ def all_to_all_single_cp2hp(
     :returns: The output tensor with shape ``[B, T, H/CP, D]`` or ``[B, T, H/CP]`` (matching input
         dimensionality), partitioned along the head dimension.
     """
-    assert input_.dim() in (3, 4), (
-        "all_to_all_single_cp2hp expects 3-d input shape [B, T/CP, H] or 4-d input shape [B, T/CP, H, D]."
-    )
+    assert input_.dim() in (
+        3,
+        4,
+    ), "all_to_all_single_cp2hp expects 3-d input shape [B, T/CP, H] or 4-d input shape [B, T/CP, H, D]."
 
     input_was_3d = input_.dim() == 3
     if input_was_3d:
@@ -81,9 +82,10 @@ def all_to_all_cp2hp(
     if not inputs:
         return []
 
-    assert inputs[0].dim() in (3, 4), (
-        "all_to_all_cp2hp expects 3-d input shape [B, T/CP, H] or 4-d input shape [B, T/CP, H, D]."
-    )
+    assert inputs[0].dim() in (
+        3,
+        4,
+    ), "all_to_all_cp2hp expects 3-d input shape [B, T/CP, H] or 4-d input shape [B, T/CP, H, D]."
     inputs_were_3d = inputs[0].dim() == 3
     if inputs_were_3d:
         inputs = [input_.unsqueeze(-1) for input_ in inputs]  # [B, T/CP, H] -> [B, T/CP, H, 1]
@@ -141,9 +143,10 @@ def all_to_all_single_hp2cp(
     :returns: The output tensor with shape ``[B, T/CP, H, D]`` or ``[B, T/CP, H]`` (matching input
         dimensionality), partitioned along the sequence dimension but with full head dimension.
     """
-    assert input_.dim() in (3, 4), (
-        "all_to_all_single_hp2cp expects 3-d input shape [B, T, H/CP] or 4-d input shape [B, T, H/CP, D]."
-    )
+    assert input_.dim() in (
+        3,
+        4,
+    ), "all_to_all_single_hp2cp expects 3-d input shape [B, T, H/CP] or 4-d input shape [B, T, H/CP, D]."
 
     input_was_3d = input_.dim() == 3
     if input_was_3d:
@@ -190,9 +193,10 @@ def all_to_all_hp2cp(
     if not inputs:
         return []
 
-    assert inputs[0].dim() in (3, 4), (
-        "all_to_all_hp2cp expects 3-d input shape [B, T, H/CP] or 4-d input shape [B, T, H/CP, D]."
-    )
+    assert inputs[0].dim() in (
+        3,
+        4,
+    ), "all_to_all_hp2cp expects 3-d input shape [B, T, H/CP] or 4-d input shape [B, T, H/CP, D]."
     inputs_were_3d = inputs[0].dim() == 3
     if inputs_were_3d:
         inputs = [input_.unsqueeze(-1) for input_ in inputs]  # [B, T, H/CP] -> [B, T, H/CP, 1]
@@ -247,9 +251,9 @@ def all_to_all_single_cp2hp_qkvpacked(
     :returns: The output tensor with shape ``[B, T, 3, H/CP, D]``, partitioned along
         the head dimension.
     """
-    assert input_.dim() == 5, (
-        "all_to_all_single_cp2hp_qkvpacked expects 5-d input shape [B, T/CP, 3, H, D]."
-    )
+    assert (
+        input_.dim() == 5
+    ), "all_to_all_single_cp2hp_qkvpacked expects 5-d input shape [B, T/CP, 3, H, D]."
     world_size = get_world_size(cp_group)
 
     B, t_local, three, h_in, d_in = input_.shape
@@ -280,9 +284,9 @@ def all_to_all_single_hp2cp_qkvpacked(
     :returns: The output tensor with shape ``[B, T/CP, 3, H, D]``, partitioned along
         the sequence dimension but with full head dimension.
     """
-    assert input_.dim() == 5, (
-        "all_to_all_single_hp2cp_qkvpacked expects 5-d input shape [B, T, 3, H/CP, D]."
-    )
+    assert (
+        input_.dim() == 5
+    ), "all_to_all_single_hp2cp_qkvpacked expects 5-d input shape [B, T, 3, H/CP, D]."
     world_size = get_world_size(cp_group)
 
     B, t_full, three, h_in, d_in = input_.shape

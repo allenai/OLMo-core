@@ -12,7 +12,6 @@ from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
 from olmo_core.train import Duration
@@ -52,14 +51,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     tokenizer_config = TokenizerConfig.dolma2()
-    # model_config = TransformerConfig.olmo3_7B(vocab_size=tokenizer_config.padded_vocab_size())
-    model_config = TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size())
-    model_config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[4096, 4096, 4096, -1],
+    model_config = TransformerConfig.olmo3_32B(
+        vocab_size=tokenizer_config.padded_vocab_size(),
     )
-    model_config.block.attention.use_flash = True
 
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
