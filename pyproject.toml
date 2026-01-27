@@ -18,7 +18,7 @@ dependencies = [
     "cached-path>=1.7.2",
     "requests",
     "packaging",
-    "dataclass-extensions>=0.2.5",
+    "dataclass-extensions>=0.2.6",
     "pyyaml",
     "rich",
     "safetensors",

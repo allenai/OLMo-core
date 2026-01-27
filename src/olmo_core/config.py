@@ -265,9 +265,9 @@ class Config:
                         return decode(cls_o, new_dict)
                     except Exception as e:
                         if prefix:
-                            msg = f"Failed to construct '{prefix}' in config"
+                            msg = f"Failed to construct '{prefix}' in config: {e}"
                         else:
-                            msg = "Error building config"
+                            msg = f"Error building config: {e}"
                         raise OLMoConfigurationError(msg) from e
                 return new_dict
             elif isinstance(d, (list, tuple, set)):
