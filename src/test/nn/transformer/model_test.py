@@ -1,6 +1,5 @@
 import logging
 from dataclasses import replace
-from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
 
 import pytest
@@ -55,6 +54,7 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 
 log = logging.getLogger(__name__)
 
@@ -614,13 +614,15 @@ def test_gemma3_block_overrides_rope_theta():
     for layer_idx in range(config.n_layers):
         if layer_idx in config.block_overrides:
             global_block = config.block_overrides[layer_idx]
-            attention = cast(AttentionConfig, global_block.sequence_mixer)
+            attention = global_block.sequence_mixer
+            assert isinstance(attention, AttentionConfig)
             assert attention.rope is not None
             assert attention.rope.theta == 1_000_000
             assert attention.sliding_window is None
             global_count += 1
         else:
-            attention = cast(AttentionConfig, config.block.sequence_mixer)
+            attention = config.block.sequence_mixer
+            assert isinstance(attention, AttentionConfig)
             assert attention.rope is not None
             assert attention.rope.theta == 10_000
             local_count += 1
@@ -632,7 +634,8 @@ def test_gemma3_block_overrides_rope_theta():
 def test_gemma3_sliding_window_pattern():
     config = TransformerConfig.gemma3_1B(n_layers=12)
 
-    attention = cast(AttentionConfig, config.block.sequence_mixer)
+    attention = config.block.sequence_mixer
+    assert isinstance(attention, AttentionConfig)
 
     swa = attention.sliding_window
     assert swa is not None
@@ -656,7 +659,8 @@ def test_qwen3_builder_configs(config_builder, expected_d_model):
     config = config_builder(vocab_size=151936, n_layers=2)
     assert config.d_model == expected_d_model
     assert config.n_layers == 2
-    attention = cast(AttentionConfig, config.block.sequence_mixer)
+    attention = config.block.sequence_mixer
+    assert isinstance(attention, AttentionConfig)
     assert attention.n_kv_heads == 8
     assert attention.rope is not None
     assert attention.rope.theta == 1_000_000
