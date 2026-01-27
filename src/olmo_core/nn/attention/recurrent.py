@@ -1,5 +1,4 @@
 import math
-from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Optional
 
@@ -15,7 +14,7 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_single_cp2hp,
     all_to_all_single_hp2cp,
 )
-from olmo_core.nn.attention import AttentionBase
+from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.flash_linear_attn_api import (
     dispatch_chunk_gated_delta_rule,
     has_fla,
@@ -25,174 +24,11 @@ from olmo_core.nn.attention.ring import (
     UlyssesContextParallelStyle,
 )
 from olmo_core.nn.buffer_cache import BufferCache
-from olmo_core.nn.config import ModuleConfig
 from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
 
 
-@dataclass
-class RecurrentConfig(ModuleConfig):
-    """
-    Base configuration class for recurrent sequence mixing modules.
-
-    This is an abstract base class - use concrete implementations like
-    :class:`GatedDeltaNetConfig` to build recurrent modules.
-    """
-
-    @abstractmethod
-    def num_params(self, d_model: int) -> int:
-        """
-        The number of params that the recurrent implementation will have once built.
-
-        :param d_model: The model dimensionality.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def build(
-        self,
-        d_model: int,
-        *,
-        layer_idx: int,
-        n_layers: int,
-        init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
-    ) -> AttentionBase:
-        """
-        Build the corresponding recurrent module.
-
-        :param d_model: The model dimensionality.
-        :param layer_idx: The layer index.
-        :param n_layers: The total number of layers.
-        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
-        :param cache: Optional buffer cache.
-        """
-        raise NotImplementedError
-
-
-@dataclass
-class GatedDeltaNetConfig(RecurrentConfig):
-    """
-    Configuration for :class:`GatedDeltaNet`.
-
-    See :class:`GatedDeltaNet` for a description of the configuration options.
-    """
-
-    n_heads: int = 16
-    """
-    The number of attention heads.
-    """
-    n_kv_heads: Optional[int] = None
-    """
-    The number of key/value heads. If ``None``, defaults to ``n_heads``.
-    """
-    head_dim: Optional[int] = None
-    """
-    The dimension of each head. If ``None``, defaults to ``d_model // n_heads``.
-    """
-    expand_v: float = 2.0
-    """
-    The expansion ratio for the value dimension.
-    """
-    allow_neg_eigval: bool = True
-    """
-    Allow negative eigenvalues in the recurrent dynamics.
-    """
-    conv_size: int = 4
-    """
-    The kernel size of the short convolution.
-    """
-    conv_bias: bool = False
-    """
-    Whether to use bias in the short convolution.
-    """
-    norm_eps: float = 1e-5
-    """
-    The epsilon value for the normalization layer.
-    """
-    dtype: DType = DType.float32
-    """
-    The default data type to use for parameters.
-    """
-
-    def num_params(self, d_model: int) -> int:
-        """
-        The number of params that the GatedDeltaNet will have once built.
-
-        :param d_model: The model dimensionality.
-        """
-        n_heads = self.n_heads
-        n_kv_heads = self.n_kv_heads or n_heads
-        head_dim = self.head_dim or d_model // n_heads
-        head_v_dim = int(head_dim * self.expand_v)
-        key_dim = n_heads * head_dim
-        value_dim = n_kv_heads * head_v_dim
-
-        params = 0
-
-        # Linear projections: w_q, w_k, w_v, w_a, w_b, w_g, w_out
-        params += d_model * key_dim  # w_q
-        params += d_model * key_dim  # w_k
-        params += d_model * value_dim  # w_v
-        params += d_model * n_kv_heads  # w_a
-        params += d_model * n_kv_heads  # w_b
-        params += d_model * value_dim  # w_g
-        params += value_dim * d_model  # w_out
-
-        # A_log and dt_bias parameters
-        params += n_kv_heads  # A_log
-        params += n_kv_heads  # dt_bias
-
-        # Short convolutions (kernel_size * hidden_size for each)
-        params += self.conv_size * key_dim  # q_conv1d
-        params += self.conv_size * key_dim  # k_conv1d
-        params += self.conv_size * value_dim  # v_conv1d
-        if self.conv_bias:
-            params += key_dim  # q_conv1d bias
-            params += key_dim  # k_conv1d bias
-            params += value_dim  # v_conv1d bias
-
-        # FusedRMSNormGated (weight only, no bias)
-        params += head_v_dim  # o_norm
-
-        return params
-
-    def build(
-        self,
-        d_model: int,
-        *,
-        layer_idx: int,
-        n_layers: int,
-        init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
-    ) -> "GatedDeltaNet":
-        """
-        Build the GatedDeltaNet module.
-
-        :param d_model: The model dimensionality.
-        :param layer_idx: The layer index (unused).
-        :param n_layers: The total number of layers (unused).
-        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
-        :param cache: Optional buffer cache (unused).
-        """
-        del layer_idx, n_layers, cache  # Unused
-
-        return GatedDeltaNet(
-            d_model=d_model,
-            n_heads=self.n_heads,
-            n_kv_heads=self.n_kv_heads,
-            head_dim=self.head_dim,
-            expand_v=self.expand_v,
-            allow_neg_eigval=self.allow_neg_eigval,
-            conv_size=self.conv_size,
-            conv_bias=self.conv_bias,
-            norm_eps=self.norm_eps,
-            dtype=self.dtype.as_pt(),
-            init_device=init_device,
-        )
-
-
-class GatedDeltaNet(AttentionBase):
+class GatedDeltaNet(SequenceMixer):
     """
     The layer implementation for `Gated Delta Networks <https://arxiv.org/abs/2412.06464>`_.
 
@@ -447,3 +283,126 @@ class GatedDeltaNet(AttentionBase):
         recurrent_flops = 2 * 4 * state_size
 
         return int(linear_flops + conv_flops + recurrent_flops)
+
+
+@SequenceMixerConfig.register("gated_delta_net")
+@dataclass
+class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
+    """
+    Configuration for :class:`GatedDeltaNet`.
+
+    See :class:`GatedDeltaNet` for a description of the configuration options.
+    """
+
+    n_heads: int = 16
+    """
+    The number of attention heads.
+    """
+    n_kv_heads: Optional[int] = None
+    """
+    The number of key/value heads. If ``None``, defaults to ``n_heads``.
+    """
+    head_dim: Optional[int] = None
+    """
+    The dimension of each head. If ``None``, defaults to ``d_model // n_heads``.
+    """
+    expand_v: float = 2.0
+    """
+    The expansion ratio for the value dimension.
+    """
+    allow_neg_eigval: bool = True
+    """
+    Allow negative eigenvalues in the recurrent dynamics.
+    """
+    conv_size: int = 4
+    """
+    The kernel size of the short convolution.
+    """
+    conv_bias: bool = False
+    """
+    Whether to use bias in the short convolution.
+    """
+    norm_eps: float = 1e-5
+    """
+    The epsilon value for the normalization layer.
+    """
+    dtype: DType = DType.float32
+    """
+    The default data type to use for parameters.
+    """
+
+    def num_params(self, d_model: int) -> int:
+        """
+        The number of params that the GatedDeltaNet will have once built.
+
+        :param d_model: The model dimensionality.
+        """
+        n_heads = self.n_heads
+        n_kv_heads = self.n_kv_heads or n_heads
+        head_dim = self.head_dim or d_model // n_heads
+        head_v_dim = int(head_dim * self.expand_v)
+        key_dim = n_heads * head_dim
+        value_dim = n_kv_heads * head_v_dim
+
+        params = 0
+
+        # Linear projections: w_q, w_k, w_v, w_a, w_b, w_g, w_out
+        params += d_model * key_dim  # w_q
+        params += d_model * key_dim  # w_k
+        params += d_model * value_dim  # w_v
+        params += d_model * n_kv_heads  # w_a
+        params += d_model * n_kv_heads  # w_b
+        params += d_model * value_dim  # w_g
+        params += value_dim * d_model  # w_out
+
+        # A_log and dt_bias parameters
+        params += n_kv_heads  # A_log
+        params += n_kv_heads  # dt_bias
+
+        # Short convolutions (kernel_size * hidden_size for each)
+        params += self.conv_size * key_dim  # q_conv1d
+        params += self.conv_size * key_dim  # k_conv1d
+        params += self.conv_size * value_dim  # v_conv1d
+        if self.conv_bias:
+            params += key_dim  # q_conv1d bias
+            params += key_dim  # k_conv1d bias
+            params += value_dim  # v_conv1d bias
+
+        # FusedRMSNormGated (weight only, no bias)
+        params += head_v_dim  # o_norm
+
+        return params
+
+    def build(
+        self,
+        d_model: int,
+        *,
+        layer_idx: int,
+        n_layers: int,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> GatedDeltaNet:
+        """
+        Build the GatedDeltaNet module.
+
+        :param d_model: The model dimensionality.
+        :param layer_idx: The layer index (unused).
+        :param n_layers: The total number of layers (unused).
+        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
+        :param cache: Optional buffer cache (unused).
+        """
+        del layer_idx, n_layers, cache  # Unused
+
+        return GatedDeltaNet(
+            d_model=d_model,
+            n_heads=self.n_heads,
+            n_kv_heads=self.n_kv_heads,
+            head_dim=self.head_dim,
+            expand_v=self.expand_v,
+            allow_neg_eigval=self.allow_neg_eigval,
+            conv_size=self.conv_size,
+            conv_bias=self.conv_bias,
+            norm_eps=self.norm_eps,
+            dtype=self.dtype.as_pt(),
+            init_device=init_device,
+        )
