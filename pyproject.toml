@@ -25,7 +25,6 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
-    "flash-linear-attention>=0.4.1",
 ]
 
 [project.urls]
@@ -62,11 +61,11 @@ beaker = ["beaker-py>=2.5.4,<3.0", "beaker-gantry>=3.4.3,<4.0", "GitPython>=3.0,
 comet = ["comet_ml"]
 dion = ["dion @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb2535239b ; sys_platform == 'linux'"]
 eval = ["ai2-olmo-eval==0.8.5"]
+fla = ["flash-linear-attention>=0.4.1"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers<5.0"]
 wandb = ["wandb"]
-all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,torchao,transformers,wandb]"]
-
+all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fla,torchao,transformers,wandb]"]
 
 [tool.setuptools]
 include-package-data = true

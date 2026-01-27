@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 
+from olmo_core.nn.attention.flash_linear_attn_api import has_fla
+
 __all__ = ["CausalConv1d"]
 
 
@@ -71,6 +73,7 @@ class CausalConv1d(nn.Conv1d):
         :returns: Output tensor of shape ``(batch_size, seq_len, hidden_size)``.
             When CP is enabled, output is channel-parallel: ``(batch_size, seq_len, hidden_size/CP)``.
         """
+        assert has_fla(), "flash-linear-attention (fla) is required for causal convolution"
         from fla.modules.convolution import causal_conv1d
 
         weight = self.weight

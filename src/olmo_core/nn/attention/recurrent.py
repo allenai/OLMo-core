@@ -32,6 +32,8 @@ class GatedDeltaNet(SequenceMixer):
     """
     The layer implementation for `Gated Delta Networks <https://arxiv.org/abs/2412.06464>`_.
 
+    Modified from: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/layers/gated_deltanet.py#L34
+
     This is a linear attention variant that uses a gated delta rule for recurrent
     state updates, providing efficient O(n) sequence modeling.
 
@@ -97,13 +99,9 @@ class GatedDeltaNet(SequenceMixer):
         self.w_b = nn.Linear(d_model, self.n_kv_heads, bias=False, dtype=dtype, device=init_device)
 
         A = torch.empty(self.n_kv_heads, dtype=torch.float32, device=init_device).uniform_(0, 16)
-        self.A_log = nn.Parameter(torch.log(A))
-        self.A_log._no_weight_decay = True  # type: ignore[attr-defined]
+        self.A_log = nn.Parameter(torch.log(A))  # recommended to not apply weight decay to A_log
 
-        # hard coded for now
-        dt_min = 0.001
-        dt_max = 0.1
-        dt_init_floor = 1e-4
+        dt_min, dt_max, dt_init_floor = 0.001, 0.1, 1e-4  # hard coded for now
         dt = torch.exp(
             torch.rand(self.n_kv_heads, device=init_device) * (math.log(dt_max) - math.log(dt_min))
             + math.log(dt_min),
@@ -111,10 +109,7 @@ class GatedDeltaNet(SequenceMixer):
         dt = torch.clamp(dt, min=dt_init_floor)
         # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
         inv_dt = dt + torch.log(-torch.expm1(-dt))
-        self.dt_bias = nn.Parameter(inv_dt)
-        # Just to be explicit. Without this we already don't put wd on dt_bias because of the check
-        # name.endswith("bias") in param_grouping.py
-        self.dt_bias._no_weight_decay = True  # type: ignore[attr-defined]
+        self.dt_bias = nn.Parameter(inv_dt)  # bias param, recommended to not apply weight decay
 
         self.q_conv1d = CausalConv1d(
             hidden_size=self.key_dim,
