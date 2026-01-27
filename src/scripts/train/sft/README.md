@@ -78,6 +78,8 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
     *Be careful with your choice of chat template!* It is highly recommended to use the `olmo` chat template for tokenization. Olmo-core uses `[eos]` tokens to find document boundaries, and the `olmo` chat template uses a single `eos` token to mark the end of a conversation, enabling document packing to work correctly.
 
+    > TIP: For best performance, download the tokenizer to your local filesystem (e.g., Weka at AI2) before launching the tokenization script. This avoids repeated downloads and network latency during processing. Option A demonstrates this pattern with `huggingface-cli download`.
+
     > TIP: Using `uv` you can install gantry on your machine with `uv tool install beaker-gantry`.
 
 ## Training
