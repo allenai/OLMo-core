@@ -45,7 +45,7 @@ def test_gated_delta_net_fwd_bwd():
     device = get_default_device()
     dtype = torch.bfloat16
 
-    d_model, seq_len, batch_size = 512, 32, 2
+    d_model, seq_len, batch_size = 256, 32, 2
 
     config = GatedDeltaNetConfig(n_heads=8)
     module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device.type)

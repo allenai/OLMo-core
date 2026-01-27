@@ -76,14 +76,13 @@ class CausalConv1d(nn.Conv1d):
 
         weight = self.weight
         bias = self.bias
-
         if self.cp_enabled:
             # Slice to local C/CP channels
             weight = weight[self._cp_channel_start : self._cp_channel_end]
             if bias is not None:
                 bias = bias[self._cp_channel_start : self._cp_channel_end]
 
-        return causal_conv1d(
+        output = causal_conv1d(
             x=x,
             weight=weight.squeeze(1),
             bias=bias,
@@ -91,6 +90,7 @@ class CausalConv1d(nn.Conv1d):
             backend=self.backend,
             cu_seqlens=cu_seqlens,
         )
+        return output[0]
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         """
