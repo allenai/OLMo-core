@@ -18,11 +18,10 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     #!/bin/bash
     # Save this as a script (e.g., scripts/train/olmo3/7b-hybrid-sft-tokenization.sh)
     # and run with: ./scripts/train/build_image_and_launch.sh <your-script.sh>
+    # The wrapper builds a Docker image and passes the image name as $1.
     set -euo pipefail
 
-    # Get the Beaker username to construct the image name
-    BEAKER_USER=$(beaker account whoami --format json | jq -r '.[0].name')
-    BEAKER_IMAGE="${BEAKER_USER}/open-instruct-integration-test"
+    BEAKER_IMAGE="$1"
 
     echo "Using Beaker image: $BEAKER_IMAGE"
 
