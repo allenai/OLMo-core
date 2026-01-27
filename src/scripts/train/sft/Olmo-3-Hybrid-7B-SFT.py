@@ -356,7 +356,7 @@ class SFTConfig(Config):
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         )
-        cp_config=TransformerContextParallelConfig.ulysses(degree=2),
+        cp_config=TransformerContextParallelConfig.ulysses(degree=2)
         # tp_config=TransformerTensorParallelConfig(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
@@ -404,7 +404,7 @@ class SFTConfig(Config):
                     compile=False,
                 ),
                 dp_config=dp_config,
-                cp_config=None,
+                cp_config=cp_config,
                 ac_config=ac_config,
                 scheduler=LinearWithWarmup(
                     warmup_fraction=0.03,
