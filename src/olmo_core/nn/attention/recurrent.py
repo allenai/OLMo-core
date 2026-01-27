@@ -13,7 +13,6 @@ from torch.nn import functional as F
 from olmo_core.config import DType
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
-    all_to_all_hp2cp,
     all_to_all_single_hp2cp,
 )
 from olmo_core.nn.attention import AttentionBase
@@ -248,24 +247,12 @@ class GatedDeltaNet(AttentionBase):
         self.key_dim = int(self.n_heads * self.head_k_dim)
         self.value_dim = int(self.n_kv_heads * self.head_v_dim)
 
-        # Consistency check: Ensure expand_v produces integer values
-        if not math.isclose(
+        # Consistency checks: ensure expand_v produces integer dimensions
+        assert math.isclose(
             self.n_kv_heads * self.head_dim * expand_v, self.value_dim, rel_tol=1e-5
-        ):
-            raise ValueError(
-                f"expand_v={expand_v} does not produce an integer value when multiplied by key_dim={self.key_dim}. "
-                f"Resulting value_dim would be {self.n_kv_heads * self.head_dim * expand_v}, which is invalid for nn.Linear.",
-            )
-        if self.n_kv_heads > self.n_heads and self.n_kv_heads % self.n_heads != 0:
-            raise ValueError(
-                f"n_kv_heads={self.n_kv_heads} must be divisible by n_heads={self.n_heads}.",
-            )
-
-        if not math.isclose(self.head_dim * expand_v, self.head_v_dim, rel_tol=1e-5):
-            raise ValueError(
-                f"expand_v={expand_v} does not produce an integer value when multiplied by head_dim={self.head_dim}. "
-                f"Resulting head_v_dim would be {self.head_dim * expand_v}, which is invalid for FusedRMSNormGated.",
-            )
+        )
+        assert math.isclose(self.head_dim * expand_v, self.head_v_dim, rel_tol=1e-5)
+        assert self.n_kv_heads <= self.n_heads or self.n_kv_heads % self.n_heads == 0
 
         self.w_q = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
         self.w_k = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
@@ -338,25 +325,29 @@ class GatedDeltaNet(AttentionBase):
         :returns: The output with shape ``(batch_size, seq_len, d_model)``.
         """
         del kwargs  # Ignore any extra kwargs passed from attention interface
-        B, T, _ = x.shape
+        B, T_og, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads * head_k_dim),
         #        (batch_size, seq_len, n_kv_heads * head_k_dim),
         #        (batch_size, seq_len, n_kv_heads * head_v_dim)
         q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
 
+        beta = self.w_b(x).sigmoid()
+        if self.allow_neg_eigval:
+            beta = beta * 2.0
+        g = -self.A_log.float().exp() * F.softplus(self.w_a(x).float() + self.dt_bias)
+
         if self.cp_enabled and self.uly is not None:
             assert self._cp_group is not None
-            q, k, v = _all_to_all_cp2hp_3d([q, k, v], self._cp_group)
+            # [B, T_local, C] -> [B, T_total, C/CP]
+            q, k, v, g, beta = _all_to_all_cp2hp_3d([q, k, v, g, beta], self._cp_group)
 
         q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
         k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
         v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
 
-        if self.cp_enabled and self.uly is not None:
-            assert self._cp_group is not None
-            q, k, v = _all_to_all_hp2cp_3d([q, k, v], self._cp_group)
-
+        # Reshape to head format
+        T = q.size(1)
         q = q.view(B, T, -1, self.head_k_dim)
         k = k.view(B, T, -1, self.head_k_dim)
         v = v.view(B, T, -1, self.head_v_dim)
@@ -365,22 +356,6 @@ class GatedDeltaNet(AttentionBase):
             repeat_factor = self.n_kv_heads // self.n_heads
             q = q.repeat_interleave(repeat_factor, dim=-2)
             k = k.repeat_interleave(repeat_factor, dim=-2)
-
-        beta = self.w_b(x).sigmoid()
-        if self.allow_neg_eigval:
-            beta = beta * 2.0
-
-        # shape: (batch_size, seq_len, n_kv_heads)
-        g = -self.A_log.float().exp() * F.softplus(self.w_a(x).float() + self.dt_bias)
-
-        if self.cp_enabled and self.uly is not None:
-            assert self._cp_group is not None
-            # [B, T/CP, H, D] -> [B, T, H/CP, D]
-            q, k, v, g, beta = all_to_all_cp2hp(
-                [q, k, v, g.unsqueeze(-1), beta.unsqueeze(-1)], self._cp_group
-            )
-            g = g.squeeze(-1)
-            beta = beta.squeeze(-1)
 
         o, _ = dispatch_chunk_gated_delta_rule(
             q=q, k=k, v=v, g=g, beta=beta, cu_seqlens=cu_doc_lens, use_qk_l2norm_in_kernel=True
@@ -394,7 +369,7 @@ class GatedDeltaNet(AttentionBase):
         g = self.w_g(x).view(B, T, -1, self.head_v_dim)
 
         # shape: (batch_size, seq_len, d_model)
-        return self.w_out(self.o_norm(o, g).view(B, T, -1))
+        return self.w_out(self.o_norm(o, g).view(B, T_og, -1))
 
     def apply_tp(
         self,
@@ -415,47 +390,27 @@ class GatedDeltaNet(AttentionBase):
     ):
         if ring is not None:
             raise NotImplementedError("Ring context parallelism is not supported for GatedDeltaNet")
-        if uly is None:
-            raise ValueError("Ulysses context parallelism is required for GatedDeltaNet CP")
+        assert uly is not None
 
-        # Ulysses CP requires divisibility by CP world size for:
-        # 1. n_kv_heads - for head partitioning in the recurrent kernel
-        # 2. key_dim and value_dim - for channel partitioning in the conv layers
         cp_world_size = cp_mesh.size()
         if cp_world_size == 1:
             return
 
-        if self.n_kv_heads % cp_world_size != 0:
-            raise ValueError(
-                f"Ulysses context parallelism requires n_kv_heads ({self.n_kv_heads}) "
-                f"to be divisible by CP world size ({cp_world_size}). "
-                f"Consider adjusting n_kv_heads or CP degree."
-            )
-        if self.q_conv1d is not None:
-            if self.key_dim % cp_world_size != 0:
-                raise ValueError(
-                    f"Ulysses context parallelism requires key_dim ({self.key_dim}) "
-                    f"to be divisible by CP world size ({cp_world_size}). "
-                    f"key_dim = n_heads * head_dim = {self.n_heads} * {self.head_dim}."
-                )
-            if self.value_dim % cp_world_size != 0:
-                raise ValueError(
-                    f"Ulysses context parallelism requires value_dim ({self.value_dim}) "
-                    f"to be divisible by CP world size ({cp_world_size}). "
-                    f"value_dim = n_kv_heads * head_v_dim = {self.n_kv_heads} * {self.head_v_dim}."
-                )
+        # Ulysses CP requires divisibility by CP world size for:
+        # 1. n_kv_heads - for head partitioning in the recurrent kernel
+        # 2. key_dim and value_dim - for channel partitioning in the conv layers
+        assert self.n_kv_heads % cp_world_size == 0
+        assert self.key_dim % cp_world_size == 0
+        assert self.value_dim % cp_world_size == 0
 
         self.uly = uly
         self._cp_mesh = cp_mesh
         self._cp_group = cp_mesh.get_group()
         self.cp_enabled = True
 
-        if self.q_conv1d is not None:
-            self.q_conv1d.apply_cp(cp_mesh)
-        if self.k_conv1d is not None:
-            self.k_conv1d.apply_cp(cp_mesh)
-        if self.v_conv1d is not None:
-            self.v_conv1d.apply_cp(cp_mesh)
+        self.q_conv1d.apply_cp(cp_mesh)
+        self.k_conv1d.apply_cp(cp_mesh)
+        self.v_conv1d.apply_cp(cp_mesh)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
@@ -499,13 +454,4 @@ def _all_to_all_cp2hp_3d(x: list[torch.Tensor], cp_group: dist.ProcessGroup) -> 
     """
     x_4d = [t.unsqueeze(-1) for t in x]
     out_4d = all_to_all_cp2hp(x_4d, cp_group)
-    return [t.squeeze(-1) for t in out_4d]
-
-
-def _all_to_all_hp2cp_3d(x: list[torch.Tensor], cp_group: dist.ProcessGroup) -> list[torch.Tensor]:
-    """
-    Scatter sequence, gather channels: [B, T, C/CP] -> [B, T/CP, C]
-    """
-    x_4d = [t.unsqueeze(-1) for t in x]
-    out_4d = all_to_all_hp2cp(x_4d, cp_group)
     return [t.squeeze(-1) for t in out_4d]
