@@ -171,7 +171,7 @@ class AttentionType(StrEnum):
 
 
 @dataclass
-class AttentionConfig(SequenceMixerConfig["SequenceMixerBase"]):
+class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
     A configuration class for easily building any of the different attention modules.
 

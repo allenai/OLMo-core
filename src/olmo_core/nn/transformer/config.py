@@ -1,11 +1,11 @@
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import InitVar, dataclass
+from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional, cast
 
-from olmo_core.config import DType, StrEnum
+from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixerConfig
@@ -151,7 +151,7 @@ class TransformerBlockConfig(ModuleConfig):
     A configuration class for easily building transformer blocks.
     """
 
-    sequence_mixer: Optional[SequenceMixerConfig] = None
+    sequence_mixer: SequenceMixerConfig = field(default=UNSET)
     """
     The sequence mixer config (e.g. attention, recurrent, convolution, etc.).
     """
@@ -193,13 +193,13 @@ class TransformerBlockConfig(ModuleConfig):
     def __post_init__(self, attention: Optional[AttentionConfig] = None):
         # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
         if attention is not None:
-            if self.sequence_mixer is not None:
+            if self.sequence_mixer is not UNSET:
                 raise OLMoConfigurationError(
                     "Cannot specify both 'attention' and 'sequence_mixer' in TransformerBlockConfig. "
                     "Use 'sequence_mixer' only (the 'attention' field is deprecated)."
                 )
             self.sequence_mixer = attention
-        if self.sequence_mixer is None:
+        if self.sequence_mixer is UNSET:
             raise OLMoConfigurationError(
                 "TransformerBlockConfig requires 'sequence_mixer' to be set."
             )
@@ -269,7 +269,6 @@ class TransformerBlockConfig(ModuleConfig):
             block_params += 2 * d_model
 
         # Block attention params.
-        assert self.sequence_mixer is not None
         block_params += self.sequence_mixer.num_params(d_model)
         if self.layer_norm is not None:
             block_params += self.layer_norm.num_params(d_model)
@@ -1730,7 +1729,6 @@ class TransformerConfig(ModelConfig):
         for layer_idx in range(n_layers):
             if not sliding_window.should_use_swa(layer_idx, n_layers):
                 global_block = block.copy()
-                assert block.sequence_mixer is not None
                 sequence_mixer = cast(AttentionConfig, block.sequence_mixer.copy())
                 sequence_mixer.rope = RoPEConfig(name=RoPEType.default, theta=global_rope_theta)
                 sequence_mixer.sliding_window = None
