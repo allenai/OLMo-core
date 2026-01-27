@@ -53,13 +53,10 @@ def create_test_checkpoint(
         optim_config = AdamWConfig(lr=1e-3)
 
     # Create config.json
-    optim_dict = optim_config.as_dict()
-    optim_dict["_CLASS_"] = f"{optim_config.__class__.__module__}.{optim_config.__class__.__name__}"
-
     config_dict = {
-        "model": model_config.as_dict(),
+        "model": model_config.as_config_dict(),
         "dataset": {"tokenizer": {"identifier": "test_tokenizer", "type": "test"}},
-        "train_module": {"optim": optim_dict},
+        "train_module": {"optim": optim_config.as_config_dict()},
     }
 
     config_path = checkpoint_dir / "config.json"
