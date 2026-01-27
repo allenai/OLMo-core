@@ -336,32 +336,32 @@ class SFTConfig(Config):
         if not dp_shard_degree > 0:
             raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
 
-        ac_config = TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.feed_forward"],
-        )
+        # ac_config = TransformerActivationCheckpointingConfig(
+        #     mode=TransformerActivationCheckpointingMode.selected_modules,
+        #     modules=["blocks.*.feed_forward"],
+        # )
 
-        dp_config = TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-        )
+        # dp_config = TransformerDataParallelConfig(
+        #     name=DataParallelType.hsdp,
+        #     param_dtype=DType.bfloat16,
+        #     reduce_dtype=DType.float32,
+        #     wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+        # )
 
         model = build_model_config(vocab_size=tokenizer_config.padded_vocab_size())
 
-        dp_config=TransformerDataParallelConfig(
+        dp_config = TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-        ),
+        )
         cp_config=TransformerContextParallelConfig.ulysses(degree=2),
         # tp_config=TransformerTensorParallelConfig(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.1,
-        ),
+        )
 
         config = SFTConfig(
             run_name=run_name,
