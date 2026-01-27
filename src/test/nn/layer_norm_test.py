@@ -35,6 +35,7 @@ def test_fused_rms_norm(bias, dtype):
 def test_cute_rms_norm():
     dim = 64
     norm = CuTeRMSNorm(size=dim, init_device="cuda")
+    norm.compile()
     ref_norm = RMSNorm(size=dim, init_device="cuda")
 
     x = torch.randn(4, dim, requires_grad=True, device="cuda", dtype=torch.bfloat16)
