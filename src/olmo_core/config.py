@@ -31,6 +31,7 @@ __all__ = [
     "Config",
     "DType",
     "StrEnum",
+    "UNSET",
     "Registrable",  # re-exported for convenience
 ]
 
@@ -384,3 +385,16 @@ class DType(StrEnum):
 
     def as_pt(self) -> torch.dtype:
         return getattr(torch, self)
+
+
+class _Unset:
+    """
+    Sentinel value indicating that a value was not explicitly provided.
+    Used internally to detect when a value should be skipped.
+    """
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+UNSET: Any = _Unset()

@@ -1,13 +1,14 @@
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, cast
 
-from olmo_core.config import DType, StrEnum
+from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.attention.base import SequenceMixerConfig
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import (
@@ -150,9 +151,15 @@ class TransformerBlockConfig(ModuleConfig):
     A configuration class for easily building transformer blocks.
     """
 
-    attention: AttentionConfig
+    sequence_mixer: SequenceMixerConfig = field(default=UNSET)
     """
-    The attention config.
+    The sequence mixer config (e.g. attention, recurrent, convolution, etc.).
+    """
+    attention: InitVar[Optional[AttentionConfig]] = None
+    """
+    .. deprecated::
+        Use :data:`sequence_mixer` instead. This field is only kept for backwards compatibility
+        with old configs that used ``attention: AttentionConfig``.
     """
     layer_norm: Optional[LayerNormConfig] = None
     """
@@ -182,6 +189,20 @@ class TransformerBlockConfig(ModuleConfig):
     """
     A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
     """
+
+    def __post_init__(self, attention: Optional[AttentionConfig] = None):
+        # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
+        if attention is not None:
+            if self.sequence_mixer is not UNSET:
+                raise OLMoConfigurationError(
+                    "Cannot specify both 'attention' and 'sequence_mixer' in TransformerBlockConfig. "
+                    "Use 'sequence_mixer' only (the 'attention' field is deprecated)."
+                )
+            self.sequence_mixer = attention
+        if self.sequence_mixer is UNSET:
+            raise OLMoConfigurationError(
+                "TransformerBlockConfig requires 'sequence_mixer' to be set."
+            )
 
     def build(
         self,
@@ -248,7 +269,7 @@ class TransformerBlockConfig(ModuleConfig):
             block_params += 2 * d_model
 
         # Block attention params.
-        block_params += self.attention.num_params(d_model)
+        block_params += self.sequence_mixer.num_params(d_model)
         if self.layer_norm is not None:
             block_params += self.layer_norm.num_params(d_model)
 
@@ -1476,7 +1497,7 @@ class TransformerConfig(ModelConfig):
         # Configure blocks.
         block = TransformerBlockConfig(
             name=block_name,
-            attention=AttentionConfig(
+            sequence_mixer=AttentionConfig(
                 name=att_type,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
@@ -1603,7 +1624,7 @@ class TransformerConfig(ModelConfig):
         # Configure blocks.
         block = TransformerBlockConfig(
             name=TransformerBlockType.normalized,
-            attention=AttentionConfig(
+            sequence_mixer=AttentionConfig(
                 name=AttentionType.normalized,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
@@ -1681,7 +1702,7 @@ class TransformerConfig(ModelConfig):
 
         block = TransformerBlockConfig(
             name=TransformerBlockType.peri_norm,
-            attention=AttentionConfig(
+            sequence_mixer=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
@@ -1708,12 +1729,10 @@ class TransformerConfig(ModelConfig):
         for layer_idx in range(n_layers):
             if not sliding_window.should_use_swa(layer_idx, n_layers):
                 global_block = block.copy()
-                global_block.attention = block.attention.copy()
-                global_block.attention.rope = RoPEConfig(
-                    name=RoPEType.default,
-                    theta=global_rope_theta,
-                )
-                global_block.attention.sliding_window = None
+                sequence_mixer = cast(AttentionConfig, block.sequence_mixer.copy())
+                sequence_mixer.rope = RoPEConfig(name=RoPEType.default, theta=global_rope_theta)
+                sequence_mixer.sliding_window = None
+                global_block.sequence_mixer = sequence_mixer
                 block_overrides[layer_idx] = global_block
 
         return cls(
@@ -1735,18 +1754,22 @@ class TransformerConfig(ModelConfig):
         Return a copy of this config with the given RoPE scaling scheme applied.
         """
         new_config = self.copy()
-        if new_config.block.attention.rope is None:
+        assert isinstance(
+            new_config.block.sequence_mixer, AttentionConfig
+        ), "Sequence mixer must be an attention config for RoPE scaling"
+        if new_config.block.sequence_mixer.rope is None:
             raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
         if new_config.block_overrides:
             raise ValueError("Cannot apply RoPE scaling when block_overrides are already set.")
 
         def apply_scaling(block_config: TransformerBlockConfig) -> None:
-            rope_config = block_config.attention.rope
+            assert isinstance(block_config.sequence_mixer, AttentionConfig)
+            rope_config = block_config.sequence_mixer.rope
             if rope_config is None:
                 raise ValueError("Cannot apply RoPE scaling to a layer without RoPE.")
             rope_config = rope_config.copy()
             rope_config.scaling = rope_scaling
-            block_config.attention.rope = rope_config
+            block_config.sequence_mixer.rope = rope_config
 
         if not full_attn_layers_only:
             apply_scaling(new_config.block)
@@ -1756,7 +1779,7 @@ class TransformerConfig(ModelConfig):
         # We supply "block_overrides" for the layers we want to scale.
         overrides: Dict[int, TransformerBlockConfig] = {}
         for i in range(new_config.n_layers):
-            sliding_window_cfg = new_config.block.attention.sliding_window
+            sliding_window_cfg = new_config.block.sequence_mixer.sliding_window
             if sliding_window_cfg and sliding_window_cfg.should_use_swa(i, new_config.n_layers):
                 continue
             block_copy = new_config.block.copy()

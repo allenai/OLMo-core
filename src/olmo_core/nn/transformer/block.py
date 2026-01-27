@@ -14,7 +14,7 @@ from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
 
-from ..attention import AttentionConfig
+from ..attention.base import SequenceMixerConfig
 from ..attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
@@ -99,7 +99,7 @@ class TransformerBlock(TransformerBlockBase):
 
     :param d_model: The model dimensionality.
     :param block_idx: The index/position of the block within the model. Ranges from 0 to ``n_layers - 1``.
-    :param attention: The attention module config.
+    :param sequence_mixer: The sequence mixer module config (e.g. attention, recurrent, convolution, etc.).
     :param feed_forward: The feed forward module config.
     :param layer_norm: The layer norm config for both the attention LN and the feed forward LN.
     :param dropout: Dropout probability.
@@ -112,7 +112,7 @@ class TransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -124,7 +124,11 @@ class TransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
@@ -242,7 +246,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -255,7 +259,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
             d_model=d_model,
             block_idx=block_idx,
             n_layers=n_layers,
-            attention=attention,
+            sequence_mixer=sequence_mixer,
             feed_forward=feed_forward,
             layer_norm=layer_norm,
             dropout=dropout,
@@ -316,7 +320,7 @@ class PeriNormTransformerBlock(TransformerBlock):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -329,7 +333,7 @@ class PeriNormTransformerBlock(TransformerBlock):
             d_model=d_model,
             block_idx=block_idx,
             n_layers=n_layers,
-            attention=attention,
+            sequence_mixer=sequence_mixer,
             feed_forward=feed_forward,
             layer_norm=layer_norm,
             dropout=dropout,
@@ -381,7 +385,7 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -389,7 +393,11 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
@@ -513,7 +521,7 @@ class MoETransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward_moe: MoEConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -523,7 +531,11 @@ class MoETransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
@@ -711,6 +723,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         *,
         d_model: int,
         n_layers: int,
+        sequence_mixer: SequenceMixerConfig,
         layer_norm: LayerNormConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
@@ -719,6 +732,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         super().__init__(
             d_model=d_model,
             n_layers=n_layers,
+            sequence_mixer=sequence_mixer,
             layer_norm=layer_norm,
             init_device=init_device,
             **kwargs,
