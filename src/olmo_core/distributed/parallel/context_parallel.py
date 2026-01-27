@@ -27,13 +27,22 @@ def all_to_all_single_cp2hp(
 
     Ref: https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/ssm/mamba_context_parallel.py#L287
 
-    :param input_: The input tensor with shape ``[B, T/CP, H, D]``, partitioned along
-        the sequence dimension across context parallel ranks.
+    :param input_: The input tensor with shape ``[B, T/CP, H, D]`` or ``[B, T/CP, H]``, partitioned
+        along the sequence dimension across context parallel ranks. 3D inputs are treated as having
+        D=1 (i.e., ``[B, T/CP, H, 1]``).
     :param cp_group: The process group for context parallel communication.
-    :returns: The output tensor with shape ``[B, T, H/CP, D]``, partitioned along
-        the head dimension.
+    :returns: The output tensor with shape ``[B, T, H/CP, D]`` or ``[B, T, H/CP]`` (matching input
+        dimensionality), partitioned along the head dimension.
     """
-    assert input_.dim() == 4, "all_to_all_cp2hp expects 4-d input shape [B, T/CP, H, D]."
+    assert input_.dim() in (3, 4), (
+        "all_to_all_cp2hp expects 3-d input shape [B, T/CP, H] or 4-d input shape [B, T/CP, H, D]."
+    )
+
+    # Handle 3D input by reshaping to 4D with D=1
+    input_was_3d = input_.dim() == 3
+    if input_was_3d:
+        input_ = input_.unsqueeze(-1)  # [B, T/CP, H] -> [B, T/CP, H, 1]
+
     world_size = get_world_size(cp_group)
 
     B, t_local, h_in, d_in = input_.shape
@@ -48,6 +57,11 @@ def all_to_all_single_cp2hp(
     # [CP, B, T/CP, H/CP, D] -> [B, CP, T/CP, H/CP, D] -> [B, T, H/CP, D]
     exchanged = exchanged.view(world_size, B, t_local, h_out, d_in).permute(1, 0, 2, 3, 4)
     exchanged = exchanged.reshape(B, t_local * world_size, h_out, d_in)
+
+    # Restore 3D shape if input was 3D
+    if input_was_3d:
+        exchanged = exchanged.squeeze(-1)  # [B, T, H/CP, 1] -> [B, T, H/CP]
+
     return exchanged
 
 
@@ -59,14 +73,24 @@ def all_to_all_cp2hp(
 
     This batches the communication into a single collective operation.
 
-    :param inputs: List of input tensors, each with shape ``[B, T/CP, H, D]``, partitioned along
-        the sequence dimension across context parallel ranks.
+    :param inputs: List of input tensors, each with shape ``[B, T/CP, H, D]`` or ``[B, T/CP, H]``,
+        partitioned along the sequence dimension across context parallel ranks. 3D inputs are
+        treated as having D=1 (i.e., ``[B, T/CP, H, 1]``).
     :param cp_group: The process group for context parallel communication.
-    :returns: List of output tensors, each with shape ``[B, T, H/CP, D]``, partitioned along
-        the head dimension.
+    :returns: List of output tensors, each with shape ``[B, T, H/CP, D]`` or ``[B, T, H/CP]``
+        (matching input dimensionality), partitioned along the head dimension.
     """
     if not inputs:
         return []
+
+    # Handle 3D inputs by reshaping to 4D with D=1
+    # All inputs must have the same shape, so check first input only
+    assert inputs[0].dim() in (3, 4), (
+        "all_to_all_cp2hp expects 3-d input shape [B, T/CP, H] or 4-d input shape [B, T/CP, H, D]."
+    )
+    inputs_were_3d = inputs[0].dim() == 3
+    if inputs_were_3d:
+        inputs = [input_.unsqueeze(-1) for input_ in inputs]  # [B, T/CP, H] -> [B, T/CP, H, 1]
 
     world_size = get_world_size(cp_group)
 
@@ -75,7 +99,6 @@ def all_to_all_cp2hp(
     prepared = []
     shapes = []
     for input_ in inputs:
-        assert input_.dim() == 4, "all_to_all_cp2hp expects 4-d input shape [B, T/CP, H, D]."
         B, t_local, h_in, d_in = input_.shape
         h_out = h_in // world_size
         shapes.append((B, t_local, h_out, d_in))
@@ -102,7 +125,12 @@ def all_to_all_cp2hp(
         ]
         # Stack along new dim then merge: [CP, B, T/CP, H/CP, D] -> [B, T, H/CP, D]
         out = torch.stack(chunks, dim=0).permute(1, 0, 2, 3, 4)
-        outputs.append(out.reshape(B, t_local * world_size, h_out, d_in))
+        out = out.reshape(B, t_local * world_size, h_out, d_in)
+        outputs.append(out)
+
+    # Restore 3D shape if inputs were 3D
+    if inputs_were_3d:
+        outputs = [out.squeeze(-1) for out in outputs]  # [B, T, H/CP, 1] -> [B, T, H/CP]
 
     return outputs
 
@@ -115,13 +143,22 @@ def all_to_all_single_hp2cp(
 
     Ref: https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/ssm/mamba_context_parallel.py#L324
 
-    :param input_: The input tensor with shape ``[B, T, H/CP, D]``, containing full sequence
-        but partitioned along the head dimension.
+    :param input_: The input tensor with shape ``[B, T, H/CP, D]`` or ``[B, T, H/CP]``, containing
+        full sequence but partitioned along the head dimension. 3D inputs are treated as having
+        D=1 (i.e., ``[B, T, H/CP, 1]``).
     :param cp_group: The process group for context parallel communication.
-    :returns: The output tensor with shape ``[B, T/CP, H, D]``, partitioned along
-        the sequence dimension but with full head dimension.
+    :returns: The output tensor with shape ``[B, T/CP, H, D]`` or ``[B, T/CP, H]`` (matching input
+        dimensionality), partitioned along the sequence dimension but with full head dimension.
     """
-    assert input_.dim() == 4, "all_to_all_single_hp2cp expects 4-d input shape [B, T, H/CP, D]."
+    assert input_.dim() in (3, 4), (
+        "all_to_all_single_hp2cp expects 3-d input shape [B, T, H/CP] or 4-d input shape [B, T, H/CP, D]."
+    )
+
+    # Handle 3D input by reshaping to 4D with D=1
+    input_was_3d = input_.dim() == 3
+    if input_was_3d:
+        input_ = input_.unsqueeze(-1)  # [B, T, H/CP] -> [B, T, H/CP, 1]
+
     world_size = get_world_size(cp_group)
 
     B, t_full, h_in, d_in = input_.shape
@@ -136,6 +173,11 @@ def all_to_all_single_hp2cp(
     # [CP, B, T/CP, H/CP, D] -> [B, T/CP, CP, H/CP, D] -> [B, T/CP, H, D]
     exchanged = exchanged.view(world_size, B, t_out, h_in, d_in).permute(1, 2, 0, 3, 4)
     exchanged = exchanged.reshape(B, t_out, h_in * world_size, d_in)
+
+    # Restore 3D shape if input was 3D
+    if input_was_3d:
+        exchanged = exchanged.squeeze(-1)  # [B, T/CP, H, 1] -> [B, T/CP, H]
+
     return exchanged
 
 
@@ -148,14 +190,25 @@ def all_to_all_hp2cp(
     This is more efficient than calling :func:`all_to_all_hp2cp` multiple times as it batches
     the communication into a single collective operation.
 
-    :param inputs: List of input tensors, each with shape ``[B, T, H/CP, D]``, containing full sequence
-        but partitioned along the head dimension.
+    :param inputs: List of input tensors, each with shape ``[B, T, H/CP, D]`` or ``[B, T, H/CP]``,
+        containing full sequence but partitioned along the head dimension. 3D inputs are treated
+        as having D=1 (i.e., ``[B, T, H/CP, 1]``).
     :param cp_group: The process group for context parallel communication.
-    :returns: List of output tensors, each with shape ``[B, T/CP, H, D]``, partitioned along
-        the sequence dimension but with full head dimension.
+    :returns: List of output tensors, each with shape ``[B, T/CP, H, D]`` or ``[B, T/CP, H]``
+        (matching input dimensionality), partitioned along the sequence dimension but with full
+        head dimension.
     """
     if not inputs:
         return []
+
+    # Handle 3D inputs by reshaping to 4D with D=1
+    # All inputs must have the same shape, so check first input only
+    assert inputs[0].dim() in (3, 4), (
+        "all_to_all_hp2cp expects 3-d input shape [B, T, H/CP] or 4-d input shape [B, T, H/CP, D]."
+    )
+    inputs_were_3d = inputs[0].dim() == 3
+    if inputs_were_3d:
+        inputs = [input_.unsqueeze(-1) for input_ in inputs]  # [B, T, H/CP] -> [B, T, H/CP, 1]
 
     world_size = get_world_size(cp_group)
 
@@ -164,7 +217,6 @@ def all_to_all_hp2cp(
     prepared = []
     shapes = []
     for input_ in inputs:
-        assert input_.dim() == 4, "all_to_all_hp2cp expects 4-d input shape [B, T, H/CP, D]."
         B, t_full, h_in, d_in = input_.shape
         t_out = t_full // world_size
         shapes.append((B, t_out, h_in, d_in))
@@ -191,7 +243,12 @@ def all_to_all_hp2cp(
         ]
         # Stack along new dim then permute: [CP, B, T/CP, H/CP, D] -> [B, T/CP, CP, H/CP, D] -> [B, T/CP, H, D]
         out = torch.stack(chunks, dim=0).permute(1, 2, 0, 3, 4)
-        outputs.append(out.reshape(B, t_out, h_in * world_size, d_in))
+        out = out.reshape(B, t_out, h_in * world_size, d_in)
+        outputs.append(out)
+
+    # Restore 3D shape if inputs were 3D
+    if inputs_were_3d:
+        outputs = [out.squeeze(-1) for out in outputs]  # [B, T/CP, H, 1] -> [B, T/CP, H]
 
     return outputs
 

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
-import torch.distributed as dist
 from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement
@@ -13,6 +12,7 @@ from torch.nn import functional as F
 from olmo_core.config import DType
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
+    all_to_all_single_cp2hp,
     all_to_all_single_hp2cp,
 )
 from olmo_core.nn.attention import AttentionBase
@@ -340,13 +340,14 @@ class GatedDeltaNet(AttentionBase):
         if self.cp_enabled and self.uly is not None:
             assert self._cp_group is not None
             # [B, T_local, C] -> [B, T_total, C/CP]
-            q, k, v, g, beta = _all_to_all_cp2hp_3d([q, k, v, g, beta], self._cp_group)
+            q, k = all_to_all_cp2hp([q, k], self._cp_group)
+            v = all_to_all_single_cp2hp(v, self._cp_group)
+            g, beta = all_to_all_cp2hp([g, beta], self._cp_group)
 
         q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
         k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
         v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
 
-        # Reshape to head format
         T = q.size(1)
         q = q.view(B, T, -1, self.head_k_dim)
         k = k.view(B, T, -1, self.head_k_dim)
@@ -446,12 +447,3 @@ class GatedDeltaNet(AttentionBase):
         recurrent_flops = 2 * 4 * state_size
 
         return int(linear_flops + conv_flops + recurrent_flops)
-
-
-def _all_to_all_cp2hp_3d(x: list[torch.Tensor], cp_group: dist.ProcessGroup) -> list[torch.Tensor]:
-    """
-    Gather sequence, scatter channels: [B, T/CP, C] -> [B, T, C/CP]
-    """
-    x_4d = [t.unsqueeze(-1) for t in x]
-    out_4d = all_to_all_cp2hp(x_4d, cp_group)
-    return [t.squeeze(-1) for t in out_4d]
