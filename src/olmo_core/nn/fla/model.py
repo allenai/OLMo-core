@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 import torch
-from transformers import AutoModelForCausalLM
 
 from olmo_core.config import Config
 
@@ -25,6 +24,7 @@ class FLAModelConfig(Config):
 
     def build(self) -> "FLAModel":
         import fla.models
+        from transformers import AutoModelForCausalLM
 
         config_cls = getattr(fla.models, self.fla_model_name + "Config", None)
         assert config_cls is not None, f"Unknown FLA model name: {self.fla_model_name}"
