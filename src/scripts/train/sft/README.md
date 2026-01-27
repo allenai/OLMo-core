@@ -10,7 +10,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
 1. Check out [open-instruct](https://github.com/allenai/open-instruct) and run a command such as:
 
-    Both approaches below should work, but launching with `gantry` can require some finnagling of `gantry` and `beaker-py` versions.
+    Both approaches below should work, but launching with `gantry` can require some finnagling of `gantry` and `beaker-py` versions in open-instruct.
 
     **Option A: Using mason.py (recommended)**
 
