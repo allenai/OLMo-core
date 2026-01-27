@@ -27,6 +27,13 @@ from typing_extensions import Self
 from .aliases import PathOrStr
 from .exceptions import OLMoConfigurationError
 
+__all__ = [
+    "Config",
+    "DType",
+    "StrEnum",
+    "Registrable",  # re-exported for convenience
+]
+
 
 class StrEnum(str, Enum):
     """
@@ -80,6 +87,7 @@ class Config:
         exclude_private_fields: bool = False,
         exclude: Optional[Collection[str]] = None,
         include_class_name: bool = False,
+        include_registered_name: bool = False,
         json_safe: bool = False,
         recurse: bool = True,
     ) -> Dict[str, Any]:
@@ -90,6 +98,8 @@ class Config:
         :param exclude_private_fields: Don't include private fields.
         :param exclude: A list of field names to exclude.
         :param include_class_name: Include a field for the name of the class.
+        :param include_registered_name: If the config is :class:`Registrable`, include the
+            registered name under the key "type".
         :param json_safe: Output only JSON-safe types.
         :param recurse: Recurse into fields that are also configs/dataclasses.
         """
@@ -116,7 +126,7 @@ class Config:
                     out = {k: v for k, v in iter_fields(d)}
                 if include_class_name:
                     out[self.CLASS_NAME_FIELD] = f"{d.__class__.__module__}.{d.__class__.__name__}"
-                if isinstance(d, Registrable):
+                if include_registered_name and isinstance(d, Registrable):
                     try:
                         registered_name = d.get_registered_name()
                         out["type"] = registered_name
@@ -148,6 +158,7 @@ class Config:
             exclude_none=True,
             exclude_private_fields=True,
             include_class_name=True,
+            include_registered_name=True,
             json_safe=True,
             recurse=True,
         )
@@ -207,7 +218,7 @@ class Config:
                 if any([k == name or k.startswith(f"{name}.") for name in field_names])
             ]
 
-        merged_data = self.as_dict(include_class_name=True)
+        merged_data = self.as_dict(include_class_name=True, include_registered_name=True)
         for key, value in overrides:
             _set_nested(merged_data, key, value)
         return self.from_dict(merged_data)
