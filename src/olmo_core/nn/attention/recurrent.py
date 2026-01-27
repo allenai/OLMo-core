@@ -15,6 +15,7 @@ from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_gated_de
 from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.config import ModuleConfig
+from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
 
 
@@ -135,6 +136,10 @@ class GatedDeltaNetConfig(RecurrentConfig):
         params += self.conv_size * key_dim  # q_conv1d
         params += self.conv_size * key_dim  # k_conv1d
         params += self.conv_size * value_dim  # v_conv1d
+        if self.conv_bias:
+            params += key_dim  # q_conv1d bias
+            params += key_dim  # k_conv1d bias
+            params += value_dim  # v_conv1d bias
 
         # FusedRMSNormGated (weight only, no bias)
         params += head_v_dim  # o_norm
@@ -216,7 +221,7 @@ class GatedDeltaNet(AttentionBase):
     ):
         super().__init__()
         assert has_fla()
-        from fla.modules import FusedRMSNormGated, ShortConvolution
+        from fla.modules import FusedRMSNormGated
 
         self.d_model = d_model
         self.n_heads = n_heads
@@ -276,26 +281,27 @@ class GatedDeltaNet(AttentionBase):
         # name.endswith("bias") in param_grouping.py
         self.dt_bias._no_weight_decay = True  # type: ignore[attr-defined]
 
-        self.q_conv1d = ShortConvolution(
+        self.q_conv1d = CausalConv1d(
             hidden_size=self.key_dim,
             kernel_size=conv_size,
             bias=conv_bias,
             activation=ActivationFunction.silu,
-            device=init_device,  # type: ignore
+            init_device=init_device,
+            # TODO: why no explicit dtype?
         )
-        self.k_conv1d = ShortConvolution(
+        self.k_conv1d = CausalConv1d(
             hidden_size=self.key_dim,
             kernel_size=conv_size,
             bias=conv_bias,
             activation=ActivationFunction.silu,
-            device=init_device,  # type: ignore
+            init_device=init_device,
         )
-        self.v_conv1d = ShortConvolution(
+        self.v_conv1d = CausalConv1d(
             hidden_size=self.value_dim,
             kernel_size=conv_size,
             bias=conv_bias,
             activation=ActivationFunction.silu,
-            device=init_device,  # type: ignore
+            init_device=init_device,
         )
         self.w_g = nn.Linear(d_model, self.value_dim, bias=False, dtype=dtype, device=init_device)
         self.o_norm = FusedRMSNormGated(self.head_v_dim, eps=norm_eps, device=init_device)  # type: ignore
@@ -327,9 +333,9 @@ class GatedDeltaNet(AttentionBase):
         #        (batch_size, seq_len, n_kv_heads * head_v_dim)
         q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
 
-        q, _ = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
-        k, _ = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
-        v, _ = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
+        q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
+        k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
+        v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
 
         q = q.view(B, T, -1, self.head_k_dim)
         k = k.view(B, T, -1, self.head_k_dim)
@@ -388,6 +394,9 @@ class GatedDeltaNet(AttentionBase):
         # 1. n_kv_heads - for head partitioning in the recurrent kernel
         # 2. key_dim and value_dim - for channel partitioning in the conv layers
         cp_world_size = cp_mesh.size()
+        if cp_world_size == 1:
+            return
+
         if self.n_kv_heads % cp_world_size != 0:
             raise ValueError(
                 f"Ulysses context parallelism requires n_kv_heads ({self.n_kv_heads}) "
@@ -409,11 +418,7 @@ class GatedDeltaNet(AttentionBase):
                 )
 
         self.uly = uly
-
         group = cp_mesh.get_group()
-        if cp_mesh.size() == 1:
-            group = None
-
         self._cp_mesh = cp_mesh
         self._cp_group = group
         self.cp_enabled = True
@@ -421,9 +426,11 @@ class GatedDeltaNet(AttentionBase):
         # Shard conv weights across CP ranks for channel-parallel execution.
         # After _to_channel_parallel, each rank processes C/CP channels with full sequence.
         # The conv weights need to be sharded on dim 0 (the channel dimension).
-        if self.q_conv1d is not None and group is not None:
+        if self.q_conv1d is not None:
             self.q_conv1d.apply_cp(cp_mesh)
+        if self.k_conv1d is not None:
             self.k_conv1d.apply_cp(cp_mesh)
+        if self.v_conv1d is not None:
             self.v_conv1d.apply_cp(cp_mesh)
 
     def num_flops_per_token(self, seq_len: int) -> int:

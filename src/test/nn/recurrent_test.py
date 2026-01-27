@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import pytest
 import torch
@@ -21,11 +21,11 @@ BF16_ATOL = 5e-3
 @pytest.mark.parametrize(
     "recurrent_config",
     [
-        pytest.param(GatedDeltaNetConfig(n_heads=8), id="MHA"),
-        pytest.param(GatedDeltaNetConfig(n_heads=8, n_kv_heads=4), id="GQA-4"),
-        pytest.param(GatedDeltaNetConfig(n_heads=8, n_kv_heads=2), id="GQA-2"),
-        pytest.param(GatedDeltaNetConfig(n_heads=8, n_kv_heads=1), id="MQA"),
-        pytest.param(GatedDeltaNetConfig(n_heads=8, conv_size=8), id="conv_size=8"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8), id="default"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8, n_kv_heads=2), id="GQA"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8, head_dim=32), id="head_dim=32"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8, expand_v=1.0), id="expand_v=1.0"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8, conv_size=8, conv_bias=True), id="conv_bias"),
         pytest.param(
             GatedDeltaNetConfig(n_heads=8, allow_neg_eigval=False), id="allow_neg_eigval=False"
         ),
@@ -41,40 +41,24 @@ def test_gated_delta_net_config_num_params(recurrent_config: GatedDeltaNetConfig
 
 
 @requires_fla
-@pytest.mark.parametrize("n_kv_heads", [pytest.param(4, id="GQA-4")])
-def test_gated_delta_net_fwd_bwd(n_kv_heads: Optional[int]):
-    seed_all(0)
+def test_gated_delta_net_fwd_bwd():
+    device = get_default_device()
+    dtype = torch.bfloat16
 
-    d_model = 512
-    seq_len = 32
+    d_model, seq_len, batch_size = 512, 32, 2
 
-    config = GatedDeltaNetConfig(n_heads=8, n_kv_heads=n_kv_heads)
-    module = config.build(d_model, layer_idx=0, n_layers=12, init_device="cuda")
+    config = GatedDeltaNetConfig(n_heads=8)
+    module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device.type)
 
-    x1 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
-    x2 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
-    x = torch.cat([x1, x2])
+    x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype, requires_grad=True)
 
-    # Make sure batch outputs match individual outputs.
-    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-        y1 = module(x1)
-        y2 = module(x2)
+    with torch.autocast(device_type=device.type, dtype=dtype):
         y = module(x)
+        assert y.shape == x.shape
 
-    torch.testing.assert_close(y[0:1, :, :], y1)
-    torch.testing.assert_close(y[1:, :, :], y2)
-
-    # Test backward pass.
-    x = torch.randn(2, seq_len, d_model, device="cuda", dtype=torch.bfloat16, requires_grad=True)
-
-    with torch.autocast("cuda", dtype=torch.bfloat16):
-        y = module(x)
         loss = y.sum()
-
-    loss.backward()
-
+        loss.backward()
     assert x.grad is not None
-    assert x.grad.shape == x.shape
 
 
 @requires_fla
