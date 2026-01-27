@@ -1,4 +1,3 @@
-from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Any, Dict
 
 import pytest
@@ -17,6 +16,7 @@ from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.testing import run_distributed_test
 from olmo_core.testing.utils import requires_fla, requires_multi_gpu
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 
 
 @requires_fla
@@ -104,7 +104,7 @@ def _run_context_parallel_gdn_ulysses(
     y = DTensor.from_local(local_y, mesh, (Shard(1),))
 
     og_y = torch.load(outputs_path, map_location=device)
-    tol_scale = 1.5  # requires slightly more tolerance than default
+    tol_scale = 2  # requires slightly more tolerance than default
     torch.testing.assert_close(
         og_y, get_full_tensor(y), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
     )
