@@ -488,7 +488,7 @@ def create_test_checkpoint_for_merging(
         # from_checkpoint expects the config to be nested under "model" key
         # and also needs a "dataset" with "tokenizer" config
         config_dict = {
-            "model": transformer_config.as_dict(),
+            "model": transformer_config.as_config_dict(),
             "dataset": {
                 "tokenizer": {
                     "identifier": "dummy",
@@ -557,9 +557,9 @@ def test_from_checkpoints_weight_averaging(tmp_path: Path):
 
         # Verify dtype is float32 (default) for floating point tensors
         if merged_state[key].is_floating_point():
-            assert (
-                merged_state[key].dtype == torch.float32
-            ), f"Expected float32 for {key}, got {merged_state[key].dtype}"
+            assert merged_state[key].dtype == torch.float32, (
+                f"Expected float32 for {key}, got {merged_state[key].dtype}"
+            )
 
         # Calculate expected average
         tensors = [state_dict[key].float() for state_dict in state_dicts]
