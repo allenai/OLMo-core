@@ -119,7 +119,7 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 .PHONY : beaker-image
 beaker-image : docker-image
 	@./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
-	@echo "✔️ Done"
+	@echo "✓ Done"
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
