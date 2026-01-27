@@ -66,7 +66,7 @@ eval = ["ai2-olmo-eval @ git+https://github.com/allenai/OLMo-in-loop-evals.git@9
 dion = ["dion @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb2535239b ; sys_platform == 'linux'"]
 # eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao==0.15.0"]
-transformers = ["transformers"]
+transformers = ["transformers", "tqdm>=4.62.0"]
 wandb = ["wandb"]
 fla = [
     "flash-linear-attention"
