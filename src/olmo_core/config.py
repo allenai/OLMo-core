@@ -21,7 +21,7 @@ from typing import (
 import torch
 import yaml
 from cached_path import cached_path
-from dataclass_extensions import Registrable, decode, encode
+from dataclass_extensions import Registrable, decode
 from typing_extensions import Self
 
 from .aliases import PathOrStr
@@ -207,10 +207,10 @@ class Config:
                 if any([k == name or k.startswith(f"{name}.") for name in field_names])
             ]
 
-        merged_data = encode(self)
+        merged_data = self.as_dict(include_class_name=True)
         for key, value in overrides:
             _set_nested(merged_data, key, value)
-        return decode(type(self), merged_data)
+        return self.from_dict(merged_data)
 
     def replace(self, **changes) -> Self:
         """
@@ -239,18 +239,18 @@ class Config:
                 *modules, cls_name = cls_name.split(".")
                 module_name = ".".join(modules)
                 module = import_module(module_name)
-                return getattr(module, cls_name)
+                return getattr(module, cls_name, None)
             else:
                 return None
 
-        def clean_data(d: Any, prefix: str) -> Any:
+        def decode_data(d: Any, prefix: str) -> Any:
             if isinstance(d, dict):
                 # HACK: Try to convert string keys to int if they look like integers. Handles cases
                 # where integer keys were serialized as strings (eg "block_overrides")
                 d = {(int(k) if isinstance(k, str) and k.isdigit() else k): v for k, v in d.items()}
 
                 new_dict = {
-                    str(k): clean_data(v, f"{prefix}.{k}" if prefix else str(k))
+                    str(k): decode_data(v, f"{prefix}.{k}" if prefix else str(k))
                     for k, v in d.items()
                     if k != cls.CLASS_NAME_FIELD
                 }
@@ -258,10 +258,8 @@ class Config:
                     cls_o := resolve_cls(cls_name)
                 ) is not None:
                     # Remove ignored fields if the class defines any
-                    if cls_o._IGNORE_FIELDS:
-                        new_dict = {
-                            k: v for k, v in new_dict.items() if k not in cls_o._IGNORE_FIELDS
-                        }
+                    if (ignore_fields := getattr(cls_o, "_IGNORE_FIELDS", None)) is not None:
+                        new_dict = {k: v for k, v in new_dict.items() if k not in ignore_fields}
 
                     try:
                         return decode(cls_o, new_dict)
@@ -274,17 +272,20 @@ class Config:
                 return new_dict
             elif isinstance(d, (list, tuple, set)):
                 return d.__class__(
-                    (clean_data(x, f"{prefix}.{i}" if prefix else str(i)) for i, x in enumerate(d))
+                    (decode_data(x, f"{prefix}.{i}" if prefix else str(i)) for i, x in enumerate(d))
                 )
             else:
                 return d
 
-        data = clean_data(data, "")
         if overrides:
             for key, value in _clean_opts(overrides):
                 _set_nested(data, key, value)
 
-        return decode(cls, data)
+        decoded = decode_data(data, "")
+        if isinstance(decoded, cls):
+            return decoded
+        else:
+            return decode(cls, decoded)
 
     @classmethod
     def from_file(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
