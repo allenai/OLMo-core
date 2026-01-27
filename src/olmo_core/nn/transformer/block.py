@@ -124,6 +124,10 @@ class TransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
         self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )

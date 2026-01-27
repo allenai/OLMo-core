@@ -10,10 +10,7 @@ from olmo_core.config import Registrable
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
-from .ring import (
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
-)
+from .ring import RingContextParallelStyle, UlyssesContextParallelStyle
 
 
 class SequenceMixerBase(nn.Module):

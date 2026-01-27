@@ -14,6 +14,7 @@ from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.generate.generation_module.transformer.config import (
     TransformerGenerationModuleConfig,
 )
+from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.testing.utils import (
@@ -35,7 +36,8 @@ def small_transformer_config(n_layers: int = 2, use_rope: bool = True, **kwargs)
         d_model=128, n_heads=4, n_layers=n_layers, vocab_size=512, **kwargs
     )
     if not use_rope:
-        config.block.attention.rope = None
+        assert isinstance(config.block.sequence_mixer, AttentionConfig)
+        config.block.sequence_mixer.rope = None
     return config
 
 

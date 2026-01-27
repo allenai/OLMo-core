@@ -33,9 +33,9 @@ from olmo_core.internal.common import (
 )
 from olmo_core.io import copy_dir, dir_is_empty, get_parent, join_path, list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
+from olmo_core.nn.attention import AttentionBackendName, SlidingWindowAttentionConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerBlockConfig, TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -310,30 +310,17 @@ class SFTConfig(Config):
             // (bs_config.cp_degree or 1),
         )
 
-        model = TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size())
-        model.block.attention.sliding_window = SlidingWindowAttentionConfig(
-            force_full_attention_on_first_layer=False,
-            force_full_attention_on_last_layer=True,
-            pattern=[4096, 4096, 4096, -1],
+        model = TransformerConfig.olmo2_7B(
+            vocab_size=tokenizer_config.padded_vocab_size(),
+            backend=AttentionBackendName.flash_2,
+            swa=SlidingWindowAttentionConfig(
+                force_full_attention_on_first_layer=False,
+                force_full_attention_on_last_layer=True,
+                pattern=[4096, 4096, 4096, -1],
+            ),
+        ).with_rope_scaling(
+            YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
         )
-        model.block.attention.use_flash = True
-        if model.block.attention.rope is not None:
-            model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
-                factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
-            )
-
-        def no_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
-            rope_config = block.attention.rope
-            if rope_config is not None:
-                rope_config.scaling = None
-                block.attention.rope = rope_config
-            return block
-
-        model.block_overrides = {
-            i: no_rope_scaling(model.block.copy())
-            for i in range(model.n_layers)
-            if model.block.attention.sliding_window.should_use_swa(i, model.n_layers)
-        }
 
         config = SFTConfig(
             run_name=run_name,
