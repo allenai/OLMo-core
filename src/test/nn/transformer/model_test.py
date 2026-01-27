@@ -1,6 +1,5 @@
 import logging
 from dataclasses import replace
-from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
 
 import pytest
@@ -55,6 +54,7 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 
 log = logging.getLogger(__name__)
 
@@ -168,7 +168,7 @@ def test_ngpt_with_fsdp2():
 def get_transformer_config(
     architecture: str,
     dtype: torch.dtype = torch.float32,
-    backend: Optional[AttentionBackendName] = None,
+    attn_backend: Optional[AttentionBackendName] = None,
     swa: Optional[SlidingWindowAttentionConfig] = None,
 ) -> TransformerConfig:
     config: TransformerConfig
@@ -177,7 +177,7 @@ def get_transformer_config(
             vocab_size=16_000,
             n_layers=2,
             fused_ops=False,
-            backend=backend,
+            attn_backend=attn_backend,
             dtype=DType.from_pt(dtype),
             sliding_window=swa,
         )
@@ -186,7 +186,7 @@ def get_transformer_config(
             vocab_size=16_000,
             n_layers=2,
             fused_ops=False,
-            backend=backend,
+            attn_backend=attn_backend,
             dtype=DType.from_pt(dtype),
             sliding_window=swa,
         )
@@ -256,7 +256,7 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
 def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
     config = get_transformer_config(
-        architecture, dtype=torch.bfloat16, backend=AttentionBackendName.flash_2
+        architecture, dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
     )
 
     mesh = init_device_mesh(
@@ -287,7 +287,7 @@ def test_context_parallel_transformer_ring(architecture: str, tmp_path):
     seed_all(0)
     device = torch.device("cuda")
     config = get_transformer_config(
-        architecture, dtype=torch.bfloat16, backend=AttentionBackendName.flash_2
+        architecture, dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
     )
 
     model = config.build()
@@ -317,7 +317,7 @@ def run_context_parallel_transformer_ulysses(
     checkpoint_dir, outputs_path, architecture: str, backend_name: AttentionBackendName
 ):
     device = get_default_device()
-    config = get_transformer_config(architecture, dtype=torch.bfloat16, backend=backend_name)
+    config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
 
     mesh = init_device_mesh(
         device.type,
@@ -356,7 +356,7 @@ def test_context_parallel_transformer_ulysses(
 ):
     seed_all(0)
     device = torch.device("cuda")
-    config = get_transformer_config(architecture, dtype=torch.bfloat16, backend=backend_name)
+    config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
 
     model = config.build()
     model.init_weights(device=device, max_seq_len=512)
@@ -592,9 +592,11 @@ def test_gemma3_builder_configs(config_builder, expected_d_model):
     assert config.block.feed_forward is not None
     assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
 
-    assert config.block.attention.qk_norm is not None
-    assert config.block.attention.rope is not None
-    assert config.block.attention.rope.theta == 10_000
+    sequence_mixer = config.block.sequence_mixer
+    assert isinstance(sequence_mixer, AttentionConfig)
+    assert sequence_mixer.qk_norm is not None
+    assert sequence_mixer.rope is not None
+    assert sequence_mixer.rope.theta == 10_000
 
     # Use meta device to avoid allocating large amounts of memory for big models.
     model = config.build(init_device="meta")

@@ -26,7 +26,7 @@ LENGTH_IN_TOKENS = int(100e9)
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.olmo2_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        backend=AttentionBackendName.flash_2,
+        attn_backend=AttentionBackendName.flash_2,
     )
 
 

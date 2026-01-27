@@ -1754,9 +1754,9 @@ class TransformerConfig(ModelConfig):
         Return a copy of this config with the given RoPE scaling scheme applied.
         """
         new_config = self.copy()
-        assert isinstance(
-            new_config.block.sequence_mixer, AttentionConfig
-        ), "Sequence mixer must be an attention config for RoPE scaling"
+        assert isinstance(new_config.block.sequence_mixer, AttentionConfig), (
+            "Sequence mixer must be an attention config for RoPE scaling"
+        )
         if new_config.block.sequence_mixer.rope is None:
             raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
         if new_config.block_overrides:
