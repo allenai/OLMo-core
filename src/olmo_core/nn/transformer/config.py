@@ -145,7 +145,6 @@ class TransformerBlockType(StrEnum):
     """
 
 
-
 @dataclass
 class TransformerBlockConfig(ModuleConfig):
     """

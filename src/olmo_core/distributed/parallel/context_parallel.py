@@ -19,7 +19,7 @@ class ContextParallelConfig(Config):
     """
 
 
-def all_to_all_cp2hp(
+def all_to_all_single_cp2hp(
     input_: torch.Tensor, cp_group: torch.distributed.ProcessGroup
 ) -> torch.Tensor:
     """
@@ -51,14 +51,13 @@ def all_to_all_cp2hp(
     return exchanged
 
 
-def all_to_all_cp2hp_multi(
+def all_to_all_cp2hp(
     inputs: list[torch.Tensor], cp_group: torch.distributed.ProcessGroup
 ) -> list[torch.Tensor]:
     """
     Transform multiple tensors from context-parallel to head-parallel partitioning via a single AlltoAll.
 
-    This is more efficient than calling :func:`all_to_all_cp2hp` multiple times as it batches
-    the communication into a single collective operation.
+    This batches the communication into a single collective operation.
 
     :param inputs: List of input tensors, each with shape ``[B, T/CP, H, D]``, partitioned along
         the sequence dimension across context parallel ranks.
@@ -76,7 +75,7 @@ def all_to_all_cp2hp_multi(
     prepared = []
     shapes = []
     for input_ in inputs:
-        assert input_.dim() == 4, "all_to_all_cp2hp_multi expects 4-d input shape [B, T/CP, H, D]."
+        assert input_.dim() == 4, "all_to_all_cp2hp expects 4-d input shape [B, T/CP, H, D]."
         B, t_local, h_in, d_in = input_.shape
         h_out = h_in // world_size
         shapes.append((B, t_local, h_out, d_in))
@@ -108,7 +107,7 @@ def all_to_all_cp2hp_multi(
     return outputs
 
 
-def all_to_all_hp2cp(
+def all_to_all_single_hp2cp(
     input_: torch.Tensor, cp_group: torch.distributed.ProcessGroup
 ) -> torch.Tensor:
     """
@@ -122,7 +121,7 @@ def all_to_all_hp2cp(
     :returns: The output tensor with shape ``[B, T/CP, H, D]``, partitioned along
         the sequence dimension but with full head dimension.
     """
-    assert input_.dim() == 4, "all_to_all_hp2cp expects 4-d input shape [B, T, H/CP, D]."
+    assert input_.dim() == 4, "all_to_all_single_hp2cp expects 4-d input shape [B, T, H/CP, D]."
     world_size = get_world_size(cp_group)
 
     B, t_full, h_in, d_in = input_.shape
@@ -140,7 +139,7 @@ def all_to_all_hp2cp(
     return exchanged
 
 
-def all_to_all_hp2cp_multi(
+def all_to_all_hp2cp(
     inputs: list[torch.Tensor], cp_group: torch.distributed.ProcessGroup
 ) -> list[torch.Tensor]:
     """
@@ -165,7 +164,7 @@ def all_to_all_hp2cp_multi(
     prepared = []
     shapes = []
     for input_ in inputs:
-        assert input_.dim() == 4, "all_to_all_hp2cp_multi expects 4-d input shape [B, T, H/CP, D]."
+        assert input_.dim() == 4, "all_to_all_hp2cp expects 4-d input shape [B, T, H/CP, D]."
         B, t_full, h_in, d_in = input_.shape
         t_out = t_full // world_size
         shapes.append((B, t_out, h_in, d_in))
@@ -209,9 +208,9 @@ def all_to_all_cp2hp_qkvpacked(
     :returns: The output tensor with shape ``[B, T, 3, H/CP, D]``, partitioned along
         the head dimension.
     """
-    assert input_.dim() == 5, (
-        "all_to_all_cp2hp_qkvpacked expects 5-d input shape [B, T/CP, 3, H, D]."
-    )
+    assert (
+        input_.dim() == 5
+    ), "all_to_all_single_cp2hp_qkvpacked expects 5-d input shape [B, T/CP, 3, H, D]."
     world_size = get_world_size(cp_group)
 
     B, t_local, three, h_in, d_in = input_.shape
@@ -230,7 +229,7 @@ def all_to_all_cp2hp_qkvpacked(
     return exchanged
 
 
-def all_to_all_hp2cp_qkvpacked(
+def all_to_all_single_hp2cp_qkvpacked(
     input_: torch.Tensor, cp_group: torch.distributed.ProcessGroup
 ) -> torch.Tensor:
     """
@@ -242,9 +241,9 @@ def all_to_all_hp2cp_qkvpacked(
     :returns: The output tensor with shape ``[B, T/CP, 3, H, D]``, partitioned along
         the sequence dimension but with full head dimension.
     """
-    assert input_.dim() == 5, (
-        "all_to_all_hp2cp_qkvpacked expects 5-d input shape [B, T, 3, H/CP, D]."
-    )
+    assert (
+        input_.dim() == 5
+    ), "all_to_all_single_hp2cp_qkvpacked expects 5-d input shape [B, T, 3, H/CP, D]."
     world_size = get_world_size(cp_group)
 
     B, t_full, three, h_in, d_in = input_.shape

@@ -1,3 +1,4 @@
+from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Any, Dict
 
 import pytest
@@ -5,7 +6,10 @@ import torch
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import DTensor, Shard
 
-from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
 from olmo_core.distributed.utils import get_full_tensor, get_rank, get_world_size
 from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
@@ -13,7 +17,6 @@ from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.testing import run_distributed_test
 from olmo_core.testing.utils import requires_fla, requires_multi_gpu
 from olmo_core.utils import get_default_device, seed_all
-from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 
 
 @requires_fla

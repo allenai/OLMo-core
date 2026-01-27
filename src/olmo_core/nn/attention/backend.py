@@ -10,8 +10,8 @@ from torch.distributed import DeviceMesh
 from olmo_core.config import StrEnum
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
-    all_to_all_cp2hp_qkvpacked,
-    all_to_all_hp2cp,
+    all_to_all_single_cp2hp_qkvpacked,
+    all_to_all_single_hp2cp,
 )
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.buffer_cache import BufferCache
@@ -332,9 +332,7 @@ class TorchAttentionBackend(AttentionBackend):
             assert self.cp_pg is not None
             # Transform from context-parallel to head-parallel partitioning
             # [B, T/CP, H, D] -> [B, T, H/CP, D]
-            q = all_to_all_cp2hp(q, self.cp_pg)
-            k = all_to_all_cp2hp(k, self.cp_pg)
-            v = all_to_all_cp2hp(v, self.cp_pg)
+            q, k, v = all_to_all_cp2hp([q, k, v], self.cp_pg)
 
         # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
         n_rep = self.n_heads // self.n_kv_heads
@@ -366,7 +364,7 @@ class TorchAttentionBackend(AttentionBackend):
             assert self.cp_pg is not None
             # Transform back from head-parallel to context-parallel partitioning
             # [B, T, H/CP, D] -> [B, T/CP, H, D]
-            att = all_to_all_hp2cp(att, self.cp_pg)
+            att = all_to_all_single_hp2cp(att, self.cp_pg)
 
         return att.contiguous()
 
@@ -504,7 +502,7 @@ class FlashAttention2Backend(AttentionBackend):
                 elif self.uly is not None:
                     # Transform packed qkv from context-parallel to head-parallel partitioning
                     # [B, T/CP, 3, H, D] -> [B, T, 3, H/CP, D]
-                    qkv = all_to_all_cp2hp_qkvpacked(qkv, self.cp_pg)
+                    qkv = all_to_all_single_cp2hp_qkvpacked(qkv, self.cp_pg)
                     B, T, _, H_local, D = qkv.shape
 
                     # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -523,7 +521,7 @@ class FlashAttention2Backend(AttentionBackend):
 
                     # Transform back from head-parallel to context-parallel partitioning
                     # [B, T, H/CP, D] -> [B, T/CP, H, D]
-                    return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                    return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
                 else:
                     raise RuntimeError("One of ring or uly must be specified")
             else:
@@ -585,9 +583,7 @@ class FlashAttention2Backend(AttentionBackend):
             elif self.uly is not None:
                 # Transform from context-parallel to head-parallel partitioning
                 # [B, T/CP, H, D] -> [B, T, H/CP, D]
-                q = all_to_all_cp2hp(q, self.cp_pg)
-                k = all_to_all_cp2hp(k, self.cp_pg)
-                v = all_to_all_cp2hp(v, self.cp_pg)
+                q, k, v = all_to_all_cp2hp([q, k, v], self.cp_pg)
                 B, T, H_local, D = q.shape
 
                 # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -613,7 +609,7 @@ class FlashAttention2Backend(AttentionBackend):
 
                 # Transform back from head-parallel to context-parallel partitioning
                 # [B, T, H/CP, D] -> [B, T/CP, H, D]
-                return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
             else:
                 raise RuntimeError("One of ring or uly must be specified")
 
@@ -719,7 +715,7 @@ class FlashAttention3Backend(AttentionBackend):
                 elif self.uly is not None:
                     # Transform packed qkv from context-parallel to head-parallel partitioning
                     # [B, T/CP, 3, H, D] -> [B, T, 3, H/CP, D]
-                    qkv = all_to_all_cp2hp_qkvpacked(qkv, self.cp_pg)
+                    qkv = all_to_all_single_cp2hp_qkvpacked(qkv, self.cp_pg)
                     B, T, _, H_local, D = qkv.shape
 
                     # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -737,7 +733,7 @@ class FlashAttention3Backend(AttentionBackend):
 
                     # Transform back from head-parallel to context-parallel partitioning
                     # [B, T, H/CP, D] -> [B, T/CP, H, D]
-                    return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                    return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
                 else:
                     raise RuntimeError("One of ring or uly must be specified")
 
@@ -782,9 +778,7 @@ class FlashAttention3Backend(AttentionBackend):
 
                 # Transform from context-parallel to head-parallel partitioning
                 # [B, T/CP, H, D] -> [B, T, H/CP, D]
-                q = all_to_all_cp2hp(q, self.cp_pg)
-                k = all_to_all_cp2hp(k, self.cp_pg)
-                v = all_to_all_cp2hp(v, self.cp_pg)
+                q, k, v = all_to_all_cp2hp([q, k, v], self.cp_pg)
                 B, T, H_local, D = q.shape
 
                 # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -809,7 +803,7 @@ class FlashAttention3Backend(AttentionBackend):
 
                 # Transform back from head-parallel to context-parallel partitioning
                 # [B, T, H/CP, D] -> [B, T/CP, H, D]
-                return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
             else:
                 raise RuntimeError("One of ring or uly must be specified")
 
