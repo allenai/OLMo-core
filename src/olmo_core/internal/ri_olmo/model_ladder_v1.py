@@ -301,7 +301,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     # Dataset config
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         # DataMix.OLMo_mix_0925_official,
-        DataMix.OLMo_mix_0925_official,
+        DataMix.OLMo_mix_0925,
         tokenizer=tokenizer_config,
         mix_base_dir=data_root,
         sequence_length=sequence_length,
