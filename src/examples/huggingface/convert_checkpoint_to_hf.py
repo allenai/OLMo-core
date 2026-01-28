@@ -26,7 +26,7 @@ from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
-from olmo_core.nn.attention import AttentionBackendName, AttentionType
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
@@ -93,7 +93,11 @@ def convert_checkpoint_to_hf(
         block_label: str, block_config: TransformerBlockConfig
     ) -> None:
         nonlocal device, validation_device
-        attention_config = block_config.attention
+        attention_config = block_config.sequence_mixer
+        if not isinstance(attention_config, AttentionConfig):
+            raise NotImplementedError(
+                f"Block {block_label} has an unsupported sequence mixing config: {attention_config}"
+            )
         if attention_config.name == AttentionType.fused:
             backend = attention_config.backend
             if backend is None:

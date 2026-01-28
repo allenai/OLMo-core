@@ -1,6 +1,7 @@
 """
 Tests for the merge_core_checkpoints.py script.
 """
+
 import importlib.util
 import json
 import tempfile
@@ -55,11 +56,11 @@ def create_test_checkpoint_with_seed(
         optim_config = AdamWConfig(lr=1e-3)
 
     # Create config.json
-    optim_dict = optim_config.as_dict()
+    optim_dict = optim_config.as_config_dict()
     optim_dict["_CLASS_"] = f"{optim_config.__class__.__module__}.{optim_config.__class__.__name__}"
 
     config_dict = {
-        "model": model_config.as_dict(),
+        "model": model_config.as_config_dict(),
         "dataset": {"tokenizer": {"identifier": "test_tokenizer", "type": "test"}},
         "train_module": {"optim": optim_dict},
     }

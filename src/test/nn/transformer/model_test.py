@@ -168,6 +168,7 @@ def test_ngpt_with_fsdp2():
 def get_transformer_config(
     architecture: str,
     dtype: torch.dtype = torch.float32,
+    attn_backend: Optional[AttentionBackendName] = None,
     swa: Optional[SlidingWindowAttentionConfig] = None,
 ) -> TransformerConfig:
     config: TransformerConfig
@@ -176,23 +177,21 @@ def get_transformer_config(
             vocab_size=16_000,
             n_layers=2,
             fused_ops=False,
-            use_flash=False,
+            attn_backend=attn_backend,
             dtype=DType.from_pt(dtype),
+            sliding_window=swa,
         )
     elif architecture == "llama":
         config = TransformerConfig.llama2_271M(
             vocab_size=16_000,
             n_layers=2,
             fused_ops=False,
-            use_flash=False,
+            attn_backend=attn_backend,
             dtype=DType.from_pt(dtype),
+            sliding_window=swa,
         )
     else:
         raise NotImplementedError(architecture)
-
-    if swa is not None:
-        config.block.attention.sliding_window = swa
-        config.block.attention.use_flash = True
 
     return config
 
@@ -256,8 +255,9 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
 
 def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
-    config = get_transformer_config(architecture, dtype=torch.bfloat16)
-    config.block.attention.use_flash = True
+    config = get_transformer_config(
+        architecture, dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
+    )
 
     mesh = init_device_mesh(
         device.type,
@@ -286,8 +286,9 @@ def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architec
 def test_context_parallel_transformer_ring(architecture: str, tmp_path):
     seed_all(0)
     device = torch.device("cuda")
-    config = get_transformer_config(architecture, dtype=torch.bfloat16)
-    config.block.attention.use_flash = True
+    config = get_transformer_config(
+        architecture, dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
+    )
 
     model = config.build()
     model.init_weights(device=device, max_seq_len=512)
@@ -316,8 +317,7 @@ def run_context_parallel_transformer_ulysses(
     checkpoint_dir, outputs_path, architecture: str, backend_name: AttentionBackendName
 ):
     device = get_default_device()
-    config = get_transformer_config(architecture, dtype=torch.bfloat16)
-    config.block.attention.backend = backend_name
+    config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
 
     mesh = init_device_mesh(
         device.type,
@@ -356,8 +356,7 @@ def test_context_parallel_transformer_ulysses(
 ):
     seed_all(0)
     device = torch.device("cuda")
-    config = get_transformer_config(architecture, dtype=torch.bfloat16)
-    config.block.attention.backend = backend_name
+    config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
 
     model = config.build()
     model.init_weights(device=device, max_seq_len=512)
@@ -593,9 +592,11 @@ def test_gemma3_builder_configs(config_builder, expected_d_model):
     assert config.block.feed_forward is not None
     assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
 
-    assert config.block.attention.qk_norm is not None
-    assert config.block.attention.rope is not None
-    assert config.block.attention.rope.theta == 10_000
+    sequence_mixer = config.block.sequence_mixer
+    assert isinstance(sequence_mixer, AttentionConfig)
+    assert sequence_mixer.qk_norm is not None
+    assert sequence_mixer.rope is not None
+    assert sequence_mixer.rope.theta == 10_000
 
     # Use meta device to avoid allocating large amounts of memory for big models.
     model = config.build(init_device="meta")
@@ -615,13 +616,17 @@ def test_gemma3_block_overrides_rope_theta():
     for layer_idx in range(config.n_layers):
         if layer_idx in config.block_overrides:
             global_block = config.block_overrides[layer_idx]
-            assert global_block.attention.rope is not None
-            assert global_block.attention.rope.theta == 1_000_000
-            assert global_block.attention.sliding_window is None
+            attention = global_block.sequence_mixer
+            assert isinstance(attention, AttentionConfig)
+            assert attention.rope is not None
+            assert attention.rope.theta == 1_000_000
+            assert attention.sliding_window is None
             global_count += 1
         else:
-            assert config.block.attention.rope is not None
-            assert config.block.attention.rope.theta == 10_000
+            attention = config.block.sequence_mixer
+            assert isinstance(attention, AttentionConfig)
+            assert attention.rope is not None
+            assert attention.rope.theta == 10_000
             local_count += 1
 
     assert global_count == 2
@@ -631,7 +636,10 @@ def test_gemma3_block_overrides_rope_theta():
 def test_gemma3_sliding_window_pattern():
     config = TransformerConfig.gemma3_1B(n_layers=12)
 
-    swa = config.block.attention.sliding_window
+    attention = config.block.sequence_mixer
+    assert isinstance(attention, AttentionConfig)
+
+    swa = attention.sliding_window
     assert swa is not None
     assert swa.pattern == [1024, 1024, 1024, 1024, 1024, -1]
     assert swa.force_full_attention_on_first_layer is False
@@ -653,8 +661,11 @@ def test_qwen3_builder_configs(config_builder, expected_d_model):
     config = config_builder(vocab_size=151936, n_layers=2)
     assert config.d_model == expected_d_model
     assert config.n_layers == 2
-    assert config.block.attention.n_kv_heads == 8
-    assert config.block.attention.rope.theta == 1_000_000
+    attention = config.block.sequence_mixer
+    assert isinstance(attention, AttentionConfig)
+    assert attention.n_kv_heads == 8
+    assert attention.rope is not None
+    assert attention.rope.theta == 1_000_000
 
     # Use meta device to avoid allocating large amounts of memory for big models.
     model = config.build(init_device="meta")
