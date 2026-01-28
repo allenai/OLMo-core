@@ -84,6 +84,12 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
 ## Training
 
+0. Sync with the required extras for your local environment (not needed on cluster):
+
+    ```bash
+    uv sync --extra beaker --extra transformers
+    ```
+
 1. Ensure that the beaker workspace you are using has the following secrets configured.
     * `{beaker_username}_BEAKER_TOKEN`
     * `{beaker_username}_AWS_CREDENTIALS`
@@ -124,6 +130,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         * **For new base models**, you will need to create a new training script that configures the parallelism settings correctly for that model architecture. See the existing scripts in this directory for examples.
         * `--dataset_path`: Path to your tokenized dataset. If on Augusta, you must copy it to GCP. Include `gs://`.
         * Include `model_and_optim` at the end of your base checkpoint path.
+        * **Checkpoint output path**: Checkpoints are saved to `/weka/oe-training-default/checkpoints/{your_beaker_user}/olmo-sft/{MODEL_NAME_HERE}/`. The `MODEL_NAME_HERE` argument in the launch command determines this path. For non-Weka environments, you can override the save location by setting `--trainer.save_folder`.
 
 ## Evaluation
 
