@@ -23,6 +23,7 @@ Usage:
 
 """
 
+import argparse
 import math
 from datetime import datetime
 from typing import Optional, Tuple
@@ -136,6 +137,34 @@ class RicursiveOlmoV1(StrEnum):
                 )
 
 
+def handle_custom_args(
+    overrides: list[str],
+) -> tuple[list[str], argparse.Namespace]:
+    """Extract multiplier override values using argparse and remove them from the list."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lr-multiplier", type=float, default=1.0)
+    parser.add_argument("--batch-multiplier", type=float, default=1.0)
+    parser.add_argument("--chinchilla-multiple", type=float, default=1.0)
+
+    # Extract multiplier args and remaining overrides
+    multiplier_args = []
+    remaining = []
+    for override in overrides:
+        if any(
+            override.startswith(f"{prefix}=")
+            for prefix in ["--lr-multiplier", "--batch-multiplier", "--chinchilla-multiple"]
+        ):
+            # Split "key=value" into ["--key", "value"] for argparse
+            key, value = override.split("=", 1)
+            multiplier_args.extend([key, value])
+        else:
+            remaining.append(override)
+
+    # Parse multiplier args
+    args = parser.parse_args(multiplier_args)
+    return remaining, args
+
+
 def get_learning_rate(model_params: int, training_tokens: int) -> float:
     """
     Get optimal learning rate using step law from Li 2025.
@@ -196,20 +225,6 @@ def parse_model_size(run_name: str) -> RicursiveOlmoV1:
     )
 
 
-def _extract_and_remove_overrides(
-    overrides: list[str], prefix: str
-) -> tuple[list[str], Optional[str]]:
-    """Extract override with given prefix and remove it from the list."""
-    value = None
-    remaining = []
-    for override in overrides:
-        if override.startswith(f"{prefix}="):
-            value = override.split("=", 1)[1]
-        else:
-            remaining.append(override)
-    return remaining, value
-
-
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     """
     Build experiment config for RI-OLMo v1.
@@ -244,15 +259,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     # Extract convenience multipliers from overrides (remove them from override list)
     overrides = list(cli_context.overrides)
-    overrides, lr_multiplier_str = _extract_and_remove_overrides(overrides, "--lr-multiplier")
-    overrides, batch_multiplier_str = _extract_and_remove_overrides(overrides, "--batch-multiplier")
-    overrides, chinchilla_multiple_str = _extract_and_remove_overrides(
-        overrides, "--chinchilla-multiple"
-    )
-
-    lr_multiplier = float(lr_multiplier_str) if lr_multiplier_str else 1.0
-    batch_multiplier = float(batch_multiplier_str) if batch_multiplier_str else 1.0
-    chinchilla_multiple = float(chinchilla_multiple_str) if chinchilla_multiple_str else 1.0
+    overrides, custom_args = handle_custom_args(overrides)
+    lr_multiplier = custom_args.lr_multiplier
+    batch_multiplier = custom_args.batch_multiplier
+    chinchilla_multiple = custom_args.chinchilla_multiple
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
     root_dir = get_root_dir(cli_context.cluster)
