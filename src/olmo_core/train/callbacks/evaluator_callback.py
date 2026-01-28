@@ -432,8 +432,8 @@ class DownstreamEvaluator(Evaluator):
         return outputs
 
     def reset_metrics(self) -> None:
-        assert self.metric is not None
-        self.metric.reset()
+        if self.metric is not None:
+            self.metric.reset()
 
 
 @dataclass
