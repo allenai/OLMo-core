@@ -49,6 +49,7 @@ from .utils import (
     get_doc_lengths_from_indices,
     get_document_lengths,
     get_rng,
+    iter_document_indices,
     load_array_slice_into_tensor,
     memmap_to_write,
     pack_documents_into_instances,
@@ -64,6 +65,7 @@ __all__ = [
     "NumpyPaddedFSLDataset",
     "NumpyPackedFSLDataset",
     "NumpyInterleavedFSLDataset",
+    "NumpyShuffledFSLDataset",
     "VSLCurriculum",
     "VSLNaturalCurriculum",
     "VSLGrowthCurriculum",
@@ -1528,6 +1530,318 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         )
 
 
+class NumpyShuffledFSLDataset(NumpyFSLDatasetBase):
+    """
+    A fixed sequence length (FSL) numpy array-backed dataset with global document shuffling.
+
+    This implementation:
+    1. Reads all documents from the source files
+    2. Truncates documents longer than ``max_window_size`` to ``max_window_size - 1`` tokens
+       plus a separator token
+    3. Globally shuffles all documents using a deterministic permutation based on ``shuffle_seed``
+    4. Virtually concatenates all shuffled documents into a single token stream
+    5. Chunks the stream into ``sequence_length`` blocks to create training instances
+
+    The shuffling is done once during preparation and the resulting order is deterministic
+    for a given seed. Instance-level shuffling per epoch is handled by the dataloader.
+
+    .. important::
+        Requires ``.csv.gz`` metadata files alongside the ``.npy`` files that contain
+        document boundary information (start_idx, end_idx per line).
+
+    :param paths: Paths or URLs to numpy token ID arrays.
+    :param sequence_length: The number of tokens per training instance.
+    :param max_window_size: Maximum document size. Documents longer than this are truncated.
+    :param separator_token_id: Token ID to append to truncated documents.
+    :param shuffle_seed: Seed for the global document shuffle permutation.
+    :param pad_token_id: The ID of the padding token.
+    :param eos_token_id: The ID of the EOS token.
+    :param vocab_size: The vocabulary size.
+    :param dtype: The numpy datatype of the arrays.
+    """
+
+    def __init__(
+        self,
+        *paths: PathOrStr,
+        sequence_length: int,
+        max_window_size: int,
+        separator_token_id: int,
+        shuffle_seed: int,
+        pad_token_id: int,
+        eos_token_id: int,
+        vocab_size: int,
+        dtype: NumpyUIntTypes = np.uint16,
+        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
+        include_instance_metadata: Optional[bool] = None,
+        bos_token_id: Optional[int] = None,
+    ):
+        super().__init__(
+            *paths,
+            sequence_length=sequence_length,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            vocab_size=vocab_size,
+            dtype=dtype,
+            metadata=metadata,
+            include_instance_metadata=include_instance_metadata,
+            bos_token_id=bos_token_id,
+        )
+
+        if max_window_size >= sequence_length:
+            raise OLMoConfigurationError(
+                f"'max_window_size' ({max_window_size}) must be less than "
+                f"'sequence_length' ({sequence_length})"
+            )
+
+        self._max_window_size = max_window_size
+        self._separator_token_id = separator_token_id
+        self._shuffle_seed = shuffle_seed
+
+        # These will be populated during prepare()
+        self._num_documents: Optional[int] = None
+        self._total_tokens: Optional[int] = None
+        self._num_instances: Optional[int] = None
+
+        # Memory-mapped arrays for the index
+        self._permutation: Optional[np.ndarray] = None
+        self._cumsum: Optional[np.ndarray] = None
+        self._doc_metadata: Optional[np.ndarray] = None
+
+    @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        return (
+            "vocab_size",
+            "pad_token_id",
+            "eos_token_id",
+            "dtype",
+            "bos_token_id",
+            "max_window_size",
+            "separator_token_id",
+            "shuffle_seed",
+        )
+
+    @property
+    def max_window_size(self) -> int:
+        return self._max_window_size
+
+    @property
+    def separator_token_id(self) -> int:
+        return self._separator_token_id
+
+    @property
+    def shuffle_seed(self) -> int:
+        return self._shuffle_seed
+
+    @property
+    def num_tokens(self) -> int:
+        if self._total_tokens is None:
+            self._load_or_build_index()
+        assert self._total_tokens is not None
+        return self._total_tokens
+
+    def prepare(self):
+        if self.fs_local_rank == 0:
+            log.info("Building shuffled document index...")
+            self._build_index()
+        barrier()
+        self._load_index()
+        len(self)
+
+    def __len__(self) -> int:
+        if self._num_instances is None:
+            self._load_or_build_index()
+        assert self._num_instances is not None
+        return self._num_instances
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        index = int(index)
+        pos_index = index if index >= 0 else len(self) + index
+
+        if pos_index < 0 or pos_index >= len(self):
+            raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
+
+        # Ensure index is loaded
+        self._load_or_build_index()
+        assert self._cumsum is not None
+        assert self._permutation is not None
+        assert self._doc_metadata is not None
+
+        start_token = pos_index * self.sequence_length
+        end_token = start_token + self.sequence_length
+
+        # Binary search: find the documents that span this token range
+        # cumsum[i] is the start position of shuffled document i in the virtual stream
+        first_doc = int(np.searchsorted(self._cumsum, start_token, side="right")) - 1
+        last_doc = int(np.searchsorted(self._cumsum, end_token, side="left"))
+
+        # Clamp to valid range
+        first_doc = max(0, first_doc)
+        last_doc = min(last_doc, len(self._permutation) - 1)
+
+        tokens_list: List[torch.Tensor] = []
+        for shuffled_idx in range(first_doc, last_doc + 1):
+            orig_idx = int(self._permutation[shuffled_idx])
+            file_idx, doc_start, orig_len, proc_len = self._doc_metadata[orig_idx]
+
+            # Read and process this document
+            doc_tokens = self._read_document(int(file_idx), int(doc_start), int(orig_len), int(proc_len))
+
+            # Calculate which portion of this document we need
+            doc_start_in_stream = int(self._cumsum[shuffled_idx])
+            local_start = max(0, start_token - doc_start_in_stream)
+            local_end = min(int(proc_len), end_token - doc_start_in_stream)
+
+            if local_start < local_end:
+                tokens_list.append(doc_tokens[local_start:local_end])
+
+        input_ids = torch.cat(tokens_list) if tokens_list else torch.tensor([], dtype=torch.long)
+
+        out: Dict[str, Any] = {"input_ids": input_ids}
+        return out
+
+    def _read_document(
+        self, file_idx: int, doc_start: int, orig_len: int, proc_len: int
+    ) -> torch.Tensor:
+        """Read a document's tokens, handling truncation if needed."""
+        path = self.paths[file_idx]
+        if orig_len <= self._max_window_size:
+            # Short document: read as-is (includes natural EOS)
+            return load_array_slice_into_tensor(path, doc_start, doc_start + orig_len, self.dtype)
+        else:
+            # Long document: read first (max_window_size - 1) tokens + separator
+            tokens = load_array_slice_into_tensor(
+                path, doc_start, doc_start + self._max_window_size - 1, self.dtype
+            )
+            separator = torch.tensor([self._separator_token_id], dtype=torch.long)
+            return torch.cat([tokens, separator])
+
+    def _load_or_build_index(self):
+        """Load index if it exists, otherwise build it."""
+        if self._cumsum is not None:
+            return
+
+        if self._index_files_exist():
+            self._load_index()
+        else:
+            if self.fs_local_rank == 0:
+                self._build_index()
+            barrier()
+            self._load_index()
+
+    def _index_files_exist(self) -> bool:
+        """Check if all index files exist."""
+        return (
+            self._get_permutation_path().is_file()
+            and self._get_cumsum_path().is_file()
+            and self._get_doc_metadata_path().is_file()
+        )
+
+    def _get_index_dir(self) -> Path:
+        return self.work_dir / f"dataset-{self.fingerprint}"
+
+    def _get_permutation_path(self) -> Path:
+        return self._get_index_dir() / "shuffled-fsl-permutation.npy"
+
+    def _get_cumsum_path(self) -> Path:
+        return self._get_index_dir() / "shuffled-fsl-cumsum.npy"
+
+    def _get_doc_metadata_path(self) -> Path:
+        return self._get_index_dir() / "shuffled-fsl-docs.npy"
+
+    def _load_index(self):
+        """Load the pre-built index files as memory-mapped arrays."""
+        log.info(f"Loading shuffled document index from {self._get_index_dir()}")
+
+        self._permutation = np.memmap(
+            self._get_permutation_path(), mode="r", dtype=np.uint32
+        )
+        self._cumsum = np.memmap(
+            self._get_cumsum_path(), mode="r", dtype=np.uint64
+        )
+        self._doc_metadata = np.memmap(
+            self._get_doc_metadata_path(), mode="r", dtype=np.uint32
+        ).reshape(-1, 4)
+
+        self._num_documents = len(self._permutation)
+        # Total tokens is the last value in cumsum (which has len = num_docs + 1)
+        self._total_tokens = int(self._cumsum[-1])
+        self._num_instances = self._total_tokens // self.sequence_length
+
+        log.info(
+            f"Loaded index: {self._num_documents:,d} documents, "
+            f"{self._total_tokens:,d} tokens, {self._num_instances:,d} instances"
+        )
+
+    def _build_index(self):
+        """Build the shuffled document index."""
+        log.info("Building shuffled document index...")
+
+        # Step 1: Read all document boundaries from csv.gz files
+        doc_metadata_list: List[Tuple[int, int, int, int]] = []  # (file_idx, start, orig_len, proc_len)
+
+        for file_idx, path in enumerate(self.paths):
+            log.info(f"Reading document indices from {path}...")
+            for start_idx, end_idx in iter_document_indices(path):
+                orig_len = end_idx - start_idx
+                # Compute processed length
+                if orig_len <= self._max_window_size:
+                    proc_len = orig_len
+                else:
+                    proc_len = self._max_window_size
+                doc_metadata_list.append((file_idx, start_idx, orig_len, proc_len))
+
+        num_documents = len(doc_metadata_list)
+        log.info(f"Found {num_documents:,d} documents across {len(self.paths)} files")
+
+        # Step 2: Build document metadata array
+        doc_metadata = np.array(doc_metadata_list, dtype=np.uint32)
+
+        # Step 3: Generate shuffled permutation
+        log.info(f"Generating shuffled permutation with seed {self._shuffle_seed}...")
+        rng = get_rng(self._shuffle_seed)
+        permutation = np.arange(num_documents, dtype=np.uint32)
+        rng.shuffle(permutation)
+
+        # Step 4: Compute cumulative token offsets in shuffled order
+        log.info("Computing cumulative token offsets...")
+        processed_lengths = doc_metadata[permutation, 3]  # proc_len is column 3
+        cumsum = np.zeros(num_documents + 1, dtype=np.uint64)
+        cumsum[1:] = np.cumsum(processed_lengths)
+
+        total_tokens = int(cumsum[-1])
+        num_instances = total_tokens // self.sequence_length
+        log.info(
+            f"Total tokens: {total_tokens:,d}, instances: {num_instances:,d} "
+            f"(sequence_length={self.sequence_length})"
+        )
+
+        # Step 5: Save index files
+        index_dir = self._get_index_dir()
+        index_dir.mkdir(parents=True, exist_ok=True)
+
+        log.info(f"Saving index files to {index_dir}...")
+
+        # Save permutation
+        with memmap_to_write(
+            self._get_permutation_path(), shape=permutation.shape, dtype=np.uint32
+        ) as mmap:
+            mmap[:] = permutation
+
+        # Save cumsum
+        with memmap_to_write(
+            self._get_cumsum_path(), shape=cumsum.shape, dtype=np.uint64
+        ) as mmap:
+            mmap[:] = cumsum
+
+        # Save document metadata
+        with memmap_to_write(
+            self._get_doc_metadata_path(), shape=doc_metadata.shape, dtype=np.uint32
+        ) as mmap:
+            mmap[:] = doc_metadata
+
+        log.info("Shuffled document index built successfully")
+
+
 @dataclass
 class VSLCurriculum:
     """
@@ -2339,6 +2653,21 @@ class NumpyDatasetConfig(Config):
     Each file is divided into sequence_length chunks and the appropriate number
     of chunks are taken from each source based on target_ratios.
     """
+    max_window_size: Optional[int] = None
+    """
+    Maximum document size for :class:`NumpyShuffledFSLDataset`. Documents longer than
+    this are truncated to ``max_window_size - 1`` tokens plus a separator token.
+    Must be less than ``sequence_length``.
+    """
+    separator_token_id: Optional[int] = None
+    """
+    Token ID to append to truncated documents in :class:`NumpyShuffledFSLDataset`.
+    """
+    shuffle_seed: Optional[int] = None
+    """
+    Seed for the global document shuffle in :class:`NumpyShuffledFSLDataset`.
+    This determines the order of documents in the virtual concatenated stream.
+    """
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -2779,6 +3108,85 @@ class NumpyDatasetConfig(Config):
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
                 instance_filter_config=self.instance_filter_config,
+            )
+        elif self.name == NumpyDatasetType.shuffled_fsl:
+            if self.sequence_length is None:
+                raise OLMoConfigurationError(
+                    "'sequence_length' is required for shuffled FSL dataset"
+                )
+            if self.max_window_size is None:
+                raise OLMoConfigurationError(
+                    "'max_window_size' is required for shuffled FSL dataset"
+                )
+            if self.separator_token_id is None:
+                raise OLMoConfigurationError(
+                    "'separator_token_id' is required for shuffled FSL dataset"
+                )
+            if self.shuffle_seed is None:
+                raise OLMoConfigurationError(
+                    "'shuffle_seed' is required for shuffled FSL dataset"
+                )
+            if self.max_target_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'max_target_sequence_length' is not valid for the shuffled FSL dataset"
+                )
+            if self.generate_doc_lengths:
+                raise OLMoConfigurationError(
+                    "'generate_doc_lengths' is not valid for the shuffled FSL dataset"
+                )
+            if self.max_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'max_sequence_length' is only a valid field for VSL datasets"
+                )
+            if self.min_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'min_sequence_length' is only a valid field for VSL datasets"
+                )
+            if self.vsl_curriculum is not None:
+                raise OLMoConfigurationError(
+                    "'vsl_curriculum' is only a valid field for VSL datasets"
+                )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
+                )
+            if self.docs_per_instance is not None:
+                raise OLMoConfigurationError(
+                    "'docs_per_instance' is only valid for the interleaved FSL dataset"
+                )
+            if self.chunks_per_doc is not None:
+                raise OLMoConfigurationError(
+                    "'chunks_per_doc' is only valid for the interleaved FSL dataset"
+                )
+            if self.seed is not None:
+                raise OLMoConfigurationError(
+                    "'seed' is only valid for the interleaved FSL dataset"
+                )
+            if self.interleaving_exempt_paths is not None:
+                raise OLMoConfigurationError(
+                    "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
+                )
+            if label_mask_paths is not None:
+                raise OLMoConfigurationError(
+                    "'label_mask_paths' is not supported for shuffled FSL datasets"
+                )
+            if self.instance_filter_config is not None:
+                raise OLMoConfigurationError(
+                    "'instance_filter_config' is not supported for shuffled FSL datasets"
+                )
+            dataset = NumpyShuffledFSLDataset(
+                *paths,
+                sequence_length=self.sequence_length,
+                max_window_size=self.max_window_size,
+                separator_token_id=self.separator_token_id,
+                shuffle_seed=self.shuffle_seed,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                vocab_size=self.tokenizer.vocab_size,
+                dtype=self.get_dtype(),
+                metadata=metadata,
+                include_instance_metadata=self.include_instance_metadata,
+                bos_token_id=self.tokenizer.bos_token_id,
             )
         else:
             raise NotImplementedError(self.name)

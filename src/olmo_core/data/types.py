@@ -37,6 +37,12 @@ class NumpyDatasetType(StrEnum):
     Variable sequenced length ➡️ :class:`NumpyVSLDataset`.
     """
 
+    shuffled_fsl = "shuffled_fsl"
+    """
+    Shuffled fixed sequence length ➡️ :class:`NumpyShuffledFSLDataset`.
+    Documents are globally shuffled, optionally truncated, concatenated, and chunked.
+    """
+
 
 class LongDocStrategy(StrEnum):
     """

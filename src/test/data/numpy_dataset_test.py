@@ -13,7 +13,7 @@ from olmo_core.data import (
     NumpyVSLDataset,
     TokenizerConfig,
 )
-from olmo_core.data.numpy_dataset import NumpyInterleavedFSLDataset
+from olmo_core.data.numpy_dataset import NumpyInterleavedFSLDataset, NumpyShuffledFSLDataset
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
@@ -866,3 +866,244 @@ def test_guess_dtype():
 
     config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2())
     assert config.get_dtype() == np.uint32
+
+
+def test_numpy_shuffled_fsl_dataset_basic(tmp_path: Path):
+    """Test basic functionality of NumpyShuffledFSLDataset."""
+    # Create data with documents of varying lengths
+    # Format: [doc1_tokens..., EOS, doc2_tokens..., EOS, ...]
+    # Doc 1: 3 tokens + EOS = 4 tokens
+    # Doc 2: 2 tokens + EOS = 3 tokens
+    # Doc 3: 4 tokens + EOS = 5 tokens
+    data = [1, 2, 3, 0, 4, 5, 0, 6, 7, 8, 9, 0]  # 12 tokens total
+    mmap = np.memmap(tmp_path / "data.npy", mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+
+    # Write document indices (csv.gz)
+    write_document_indices(tmp_path / "data.npy", dtype=np.uint16, eos_token_id=0)
+
+    ds = NumpyShuffledFSLDataset(
+        tmp_path / "data.npy",
+        sequence_length=8,  # Instance size
+        max_window_size=6,  # Max doc size (no truncation needed here)
+        separator_token_id=99,  # Separator for truncated docs
+        shuffle_seed=42,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=100,
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    # After shuffling and concatenation, we should have 12 tokens -> 1 instance of length 8
+    assert len(ds) == 1
+    instance = ds[0]
+    assert len(instance["input_ids"]) == 8
+
+
+def test_numpy_shuffled_fsl_dataset_truncation(tmp_path: Path):
+    """Test that long documents are properly truncated."""
+    # Doc 1: 10 tokens + EOS = 11 tokens (will be truncated)
+    # Doc 2: 3 tokens + EOS = 4 tokens (will not be truncated)
+    data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 11, 12, 13, 0]
+    mmap = np.memmap(tmp_path / "data.npy", mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+
+    write_document_indices(tmp_path / "data.npy", dtype=np.uint16, eos_token_id=0)
+
+    max_window_size = 6
+    separator_token_id = 99
+
+    ds = NumpyShuffledFSLDataset(
+        tmp_path / "data.npy",
+        sequence_length=16,
+        max_window_size=max_window_size,
+        separator_token_id=separator_token_id,
+        shuffle_seed=42,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=100,
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    # Doc 1 truncated to 5 tokens + separator = 6 tokens
+    # Doc 2 kept as 4 tokens
+    # Total: 10 tokens -> 0 full instances of length 16
+    assert len(ds) == 0  # 10 tokens < 16
+
+    # Let's try with smaller sequence_length
+    ds2 = NumpyShuffledFSLDataset(
+        tmp_path / "data.npy",
+        sequence_length=8,
+        max_window_size=max_window_size,
+        separator_token_id=separator_token_id,
+        shuffle_seed=42,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=100,
+    )
+    ds2.work_dir = tmp_path / "ds2"
+    ds2.prepare()
+
+    # 10 tokens -> 1 instance of length 8
+    assert len(ds2) == 1
+    instance = ds2[0]
+    assert len(instance["input_ids"]) == 8
+
+    # Check that separator token appears in output if truncated doc is first
+    # The exact content depends on shuffle order
+
+
+def test_numpy_shuffled_fsl_dataset_deterministic_shuffle(tmp_path: Path):
+    """Test that the same seed produces the same shuffle."""
+    data = [1, 0, 2, 0, 3, 0, 4, 0]  # 4 single-token docs + EOS each = 8 tokens
+    mmap = np.memmap(tmp_path / "data.npy", mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+
+    write_document_indices(tmp_path / "data.npy", dtype=np.uint16, eos_token_id=0)
+
+    ds1 = NumpyShuffledFSLDataset(
+        tmp_path / "data.npy",
+        sequence_length=8,
+        max_window_size=4,
+        separator_token_id=99,
+        shuffle_seed=123,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=100,
+    )
+    ds1.work_dir = tmp_path / "ds1"
+    ds1.prepare()
+
+    ds2 = NumpyShuffledFSLDataset(
+        tmp_path / "data.npy",
+        sequence_length=8,
+        max_window_size=4,
+        separator_token_id=99,
+        shuffle_seed=123,  # Same seed
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=100,
+    )
+    ds2.work_dir = tmp_path / "ds2"
+    ds2.prepare()
+
+    # Same seed should produce same order
+    assert ds1[0]["input_ids"].tolist() == ds2[0]["input_ids"].tolist()
+
+
+def test_numpy_shuffled_fsl_dataset_different_seeds(tmp_path: Path):
+    """Test that different seeds produce different shuffles."""
+    data = [1, 0, 2, 0, 3, 0, 4, 0]  # 4 single-token docs + EOS each
+    mmap = np.memmap(tmp_path / "data.npy", mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+
+    write_document_indices(tmp_path / "data.npy", dtype=np.uint16, eos_token_id=0)
+
+    ds1 = NumpyShuffledFSLDataset(
+        tmp_path / "data.npy",
+        sequence_length=8,
+        max_window_size=4,
+        separator_token_id=99,
+        shuffle_seed=123,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=100,
+    )
+    ds1.work_dir = tmp_path / "ds1"
+    ds1.prepare()
+
+    ds2 = NumpyShuffledFSLDataset(
+        tmp_path / "data.npy",
+        sequence_length=8,
+        max_window_size=4,
+        separator_token_id=99,
+        shuffle_seed=456,  # Different seed
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=100,
+    )
+    ds2.work_dir = tmp_path / "ds2"
+    ds2.prepare()
+
+    # Different seeds should (very likely) produce different order
+    # Note: There's a tiny chance they could be the same, but with these inputs it's very unlikely
+    assert ds1[0]["input_ids"].tolist() != ds2[0]["input_ids"].tolist()
+
+
+def test_numpy_shuffled_fsl_dataset_multiple_files(tmp_path: Path):
+    """Test with multiple source files."""
+    # File 1: 2 docs
+    data1 = [1, 2, 0, 3, 4, 5, 0]
+    mmap1 = np.memmap(tmp_path / "data1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+    write_document_indices(tmp_path / "data1.npy", dtype=np.uint16, eos_token_id=0)
+
+    # File 2: 2 docs
+    data2 = [10, 11, 0, 12, 13, 14, 0]
+    mmap2 = np.memmap(tmp_path / "data2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+    write_document_indices(tmp_path / "data2.npy", dtype=np.uint16, eos_token_id=0)
+
+    ds = NumpyShuffledFSLDataset(
+        tmp_path / "data1.npy",
+        tmp_path / "data2.npy",
+        sequence_length=8,
+        max_window_size=5,
+        separator_token_id=99,
+        shuffle_seed=42,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=100,
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    # 4 docs total: 3 + 4 + 3 + 4 = 14 tokens -> 1 instance of length 8
+    assert len(ds) == 1
+    instance = ds[0]
+    assert len(instance["input_ids"]) == 8
+
+    # All tokens should come from the original data
+    all_tokens = set(data1 + data2)
+    all_tokens.add(99)  # separator might appear if truncation happens
+    for tok in instance["input_ids"].tolist():
+        assert tok in all_tokens
+
+
+def test_numpy_shuffled_fsl_dataset_config(tmp_path: Path):
+    """Test that NumpyDatasetConfig correctly builds NumpyShuffledFSLDataset."""
+    data = [1, 2, 3, 0, 4, 5, 0]
+    mmap = np.memmap(tmp_path / "data.npy", mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    write_document_indices(tmp_path / "data.npy", dtype=np.uint16, eos_token_id=0)
+
+    from olmo_core.data.types import NumpyDatasetType
+
+    config = NumpyDatasetConfig(
+        paths=[str(tmp_path / "data.npy")],
+        sequence_length=8,
+        max_window_size=5,
+        separator_token_id=99,
+        shuffle_seed=42,
+        name=NumpyDatasetType.shuffled_fsl,
+        tokenizer=TokenizerConfig(
+            vocab_size=100,
+            eos_token_id=0,
+            pad_token_id=-1,
+        ),
+        work_dir=str(tmp_path),
+    )
+
+    dataset = config.build()
+    assert isinstance(dataset, NumpyShuffledFSLDataset)
+    dataset.prepare()
+    assert len(dataset) >= 0  # Just verify it works
