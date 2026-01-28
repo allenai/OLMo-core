@@ -5,13 +5,25 @@ import math
 import olmo_core.io as io
 from olmo_core.config import DType
 from olmo_core.data import DataMix, TokenizerConfig
-from olmo_core.data.composable import *
+from olmo_core.data.composable import (
+    ComposableDataLoaderConfig,
+    ConcatAndChunkInstanceSourceConfig,
+    InstanceFilterConfig,
+    InstanceSourceConfig,
+    NumpyDocumentSourceMixConfig,
+)
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
-from olmo_core.model_ladder import *
+from olmo_core.model_ladder import (
+    ModelLadder,
+    TransformerModelConfigurator,
+    TransformerSize,
+    WSDSChinchillaRunConfigurator,
+)
 from olmo_core.model_ladder.utils import format_count
-from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.fla.layer import FLAConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
@@ -26,19 +38,9 @@ from olmo_core.train.train_module import (
     TransformerTrainModule,
     TransformerTrainModuleConfig,
 )
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of, warn_once
 
 log = logging.getLogger(__name__)
-
-
-def add_hybrid_args(_cmd: str, parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--transformer-ratio",
-        type=int,
-        default=4,
-        help="Ratio of layers between transformer blocks (e.g., 4 means every 4th layer is transformer, 2 means every other layer).",
-    )
 
 
 def get_mix_base_dir(cluster: str) -> str:
@@ -48,15 +50,10 @@ def get_mix_base_dir(cluster: str) -> str:
         return "gs://ai2-llm/"
 
 
-class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
-    def __init__(self, transformer_ratio: int = 4):
-        """
-        Args:
-            transformer_ratio: Ratio of layers between transformer blocks.
-                E.g., 4 means every 4th layer is transformer (1/4 transformer),
-                2 means every other layer is transformer (1/2 transformer).
-        """
-        self.transformer_ratio = transformer_ratio
+class Mamba2ModelConfigurator(TransformerModelConfigurator):
+    """
+    Model configurator for pure Mamba2.
+    """
 
     def configure_model(
         self,
@@ -66,61 +63,49 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
         tokenizer: TokenizerConfig,
         device_type: str,
     ) -> TransformerConfig:
-        # TODO: configure context-parallelism if needed.
         device_type = device_type.lower()
         assert "h100" in device_type or "b200" in device_type
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
         vocab_size = tokenizer.padded_vocab_size()
-        kwargs = dict(attn_backend=AttentionBackendName.flash_2)
 
         model: TransformerConfig
         if size_spec == TransformerSize.size_60M:
-            model = TransformerConfig.olmo3_60M(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_60M(vocab_size)
         elif size_spec == TransformerSize.size_100M:
-            model = TransformerConfig.olmo3_100M(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_100M(vocab_size)
         elif size_spec == TransformerSize.size_190M:
-            model = TransformerConfig.olmo3_190M(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_190M(vocab_size)
         elif size_spec == TransformerSize.size_370M:
-            model = TransformerConfig.olmo3_370M(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_370M(vocab_size)
         elif size_spec == TransformerSize.size_600M:
-            model = TransformerConfig.olmo3_600M(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_600M(vocab_size)
         elif size_spec == TransformerSize.size_760M:
-            model = TransformerConfig.olmo3_760M(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_760M(vocab_size)
         elif size_spec == TransformerSize.size_1B:
-            model = TransformerConfig.olmo3_1B(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_1B(vocab_size)
         elif size_spec == TransformerSize.size_3B:
-            model = TransformerConfig.olmo3_3B(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_3B(vocab_size)
         elif size_spec == TransformerSize.size_7B:
-            model = TransformerConfig.olmo3_7B(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_7B(vocab_size)
         elif size_spec == TransformerSize.size_13B:
-            model = TransformerConfig.olmo3_13B(vocab_size, **kwargs)
+            model = TransformerConfig.olmo3_13B(vocab_size)
         else:
             raise OLMoConfigurationError(f"Unsupported model size '{size_spec}'")
 
-        ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
+        # Convert to pure FLA (Mamba2) block
+        model.block.name = TransformerBlockType.fla
+        model.block.attention = AttentionConfig(n_heads=model.block.attention.n_heads)
 
-        # Update the config to use an FLA block.
-        model.block.name = TransformerBlockType.fla_hybrid
-
-        # Every Nth layer is a quadratic attention layer (N = transformer_ratio).
-        attention_indices = [i for i in range(model.n_layers) if i % self.transformer_ratio == self.transformer_ratio - 1]
-        # Force full attention on the last layer
-        if model.n_layers - 1 not in attention_indices:
-            attention_indices.append(model.n_layers - 1)
-        model.block.fla_hybrid_attention_indices = sorted(attention_indices)
-
-        # Configure the non-attention part of the block to be a DeltaNet.
+        # Configure Mamba2
+        # Similar to GatedDeltaNet: num_heads * head_dim = 0.75 * hidden_size
         model.block.fla = FLAConfig(
-            name="GatedDeltaNet",
+            name="Mamba2",
             dtype=model.dtype,
             fla_layer_kwargs={
-                # FLA repo says num_heads * head_dim = 0.75 * hidden_size
                 "head_dim": ensure_multiple_of(
                     int(0.75 * model.d_model / model.block.attention.n_heads), 128
                 ),
-                "use_gate": True,
-                "allow_neg_eigval": True,
             },
         )
 
@@ -192,9 +177,11 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925_official
-                    if args.cluster == "lambda"
-                    else DataMix.OLMo_mix_0925,
+                    mix=(
+                        DataMix.OLMo_mix_0925_official
+                        if args.cluster == "lambda"
+                        else DataMix.OLMo_mix_0925
+                    ),
                     mix_base_dir=get_mix_base_dir(args.cluster),
                 )
             ],
@@ -207,9 +194,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=HybridGDNTransformerModelConfigurator(
-            transformer_ratio=args.transformer_ratio
-        ),
+        model_configurator=Mamba2ModelConfigurator(),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple
         ),
@@ -224,4 +209,4 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
 
 if __name__ == "__main__":
-    main(configure_ladder, add_additional_args=add_hybrid_args)
+    main(configure_ladder)

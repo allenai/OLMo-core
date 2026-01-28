@@ -7,6 +7,7 @@ from olmo_core.config import DType
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
@@ -26,7 +27,6 @@ from olmo_core.train.train_module import (
     TransformerTrainModule,
     TransformerTrainModuleConfig,
 )
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of, warn_once
 
 log = logging.getLogger(__name__)
@@ -37,7 +37,13 @@ def add_hybrid_args(_cmd: str, parser: argparse.ArgumentParser):
         "--transformer-ratio",
         type=int,
         default=4,
-        help="Ratio of layers between transformer blocks (e.g., 4 means every 4th layer is transformer, 2 means every other layer).",
+        help="Ratio of transformer layers (e.g., 4 means 1/4 of layers are transformer, 2 means 1/2 of layers are transformer). Transformers are placed in the middle.",
+    )
+    parser.add_argument(
+        "--final-attention-layer",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Whether to add a final attention layer. Use --final-attention-layer to enable (default) or --no-final-attention-layer to disable.",
     )
 
 
@@ -48,15 +54,17 @@ def get_mix_base_dir(cluster: str) -> str:
         return "gs://ai2-llm/"
 
 
-class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
-    def __init__(self, transformer_ratio: int = 4):
+class HybridGDNMiddleTransformerModelConfigurator(TransformerModelConfigurator):
+    def __init__(self, transformer_ratio: int = 4, final_attention_layer: bool = True):
         """
         Args:
-            transformer_ratio: Ratio of layers between transformer blocks.
-                E.g., 4 means every 4th layer is transformer (1/4 transformer),
-                2 means every other layer is transformer (1/2 transformer).
+            transformer_ratio: Ratio of transformer layers.
+                E.g., 4 means 1/4 of layers are transformer (placed in the middle),
+                2 means 1/2 of layers are transformer (placed in the middle).
+            final_attention_layer: Whether to add a final attention layer.
         """
         self.transformer_ratio = transformer_ratio
+        self.final_attention_layer = final_attention_layer
 
     def configure_model(
         self,
@@ -98,15 +106,18 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
         else:
             raise OLMoConfigurationError(f"Unsupported model size '{size_spec}'")
 
-        ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
-
         # Update the config to use an FLA block.
         model.block.name = TransformerBlockType.fla_hybrid
 
-        # Every Nth layer is a quadratic attention layer (N = transformer_ratio).
-        attention_indices = [i for i in range(model.n_layers) if i % self.transformer_ratio == self.transformer_ratio - 1]
-        # Force full attention on the last layer
-        if model.n_layers - 1 not in attention_indices:
+        # Place transformer layers in the middle of the model.
+        n_transformer_layers = model.n_layers // self.transformer_ratio
+        # Center the transformer layers
+        start_idx = (model.n_layers - n_transformer_layers) // 2
+        end_idx = start_idx + n_transformer_layers
+        attention_indices = list(range(start_idx, end_idx))
+
+        # Optionally add full attention on the last layer
+        if self.final_attention_layer and model.n_layers - 1 not in attention_indices:
             attention_indices.append(model.n_layers - 1)
         model.block.fla_hybrid_attention_indices = sorted(attention_indices)
 
@@ -192,9 +203,11 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925_official
-                    if args.cluster == "lambda"
-                    else DataMix.OLMo_mix_0925,
+                    mix=(
+                        DataMix.OLMo_mix_0925_official
+                        if args.cluster == "lambda"
+                        else DataMix.OLMo_mix_0925
+                    ),
                     mix_base_dir=get_mix_base_dir(args.cluster),
                 )
             ],
@@ -207,8 +220,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=HybridGDNTransformerModelConfigurator(
-            transformer_ratio=args.transformer_ratio
+        model_configurator=HybridGDNMiddleTransformerModelConfigurator(
+            transformer_ratio=args.transformer_ratio,
+            final_attention_layer=args.final_attention_layer,
         ),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple

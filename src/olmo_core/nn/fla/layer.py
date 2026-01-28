@@ -136,7 +136,7 @@ class FLAConfig(Config):
                 **self.fla_layer_kwargs,
             ).to(device=init_device, dtype=self.dtype.as_pt())
         else:
-            raise NotImplementedError(f"Layer {self.name} not implemented")
+            # Use generic fla.layers for other FLA layer types
             import fla.layers
 
             layer = getattr(fla.layers, self.name)(
