@@ -24,7 +24,7 @@ Usage:
 """
 
 import math
-from typing import Optional
+from typing import Optional, Tuple
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.data import (
@@ -39,7 +39,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode
+from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.optim import (
     CosWithWarmup,
     OptimGroupOverride,
@@ -81,18 +81,65 @@ class RicursiveOlmoV1(StrEnum):
     RI_OLMO_34B = "34B"
     RI_OLMO_65B = "65B"
 
+    def get_num_nodes(self) -> int:
+        """Get the number of nodes required for this model size."""
+        match self:
+            case (
+                RicursiveOlmoV1.RI_OLMO_260M
+                | RicursiveOlmoV1.RI_OLMO_709M
+                | RicursiveOlmoV1.RI_OLMO_1p3B
+                | RicursiveOlmoV1.RI_OLMO_2B
+                | RicursiveOlmoV1.RI_OLMO_4B
+                | RicursiveOlmoV1.RI_OLMO_8B
+            ):
+                return 1  # 8 GPUs
+            case RicursiveOlmoV1.RI_OLMO_15B:
+                return 2  # 16 GPUs
+            case RicursiveOlmoV1.RI_OLMO_34B:
+                return 4  # 32 GPUs
+            case RicursiveOlmoV1.RI_OLMO_65B:
+                return 8  # 64 GPUs
+            case _:
+                raise ValueError(f"Invalid model size: {self}")
+
+    def get_model_config_and_settings(
+        self, vocab_size: int
+    ) -> Tuple[TransformerConfig, int, float]:
+        """Get the model config, round_nearest, and activation_memory_budget for this model size."""
+        match self:
+            case RicursiveOlmoV1.RI_OLMO_260M:
+                return (RicursiveTransformerConfig.ri_olmo_v1_260M(vocab_size), 16, 1.0)
+            case RicursiveOlmoV1.RI_OLMO_709M:
+                return (RicursiveTransformerConfig.ri_olmo_v1_709M(vocab_size), 16, 1.0)
+            case RicursiveOlmoV1.RI_OLMO_1p3B:
+                return (RicursiveTransformerConfig.ri_olmo_v1_1p3B(vocab_size), 16, 1.0)
+            case RicursiveOlmoV1.RI_OLMO_2B:
+                return (RicursiveTransformerConfig.ri_olmo_v1_2B(vocab_size), 16, 1.0)
+            case RicursiveOlmoV1.RI_OLMO_4B:
+                return (RicursiveTransformerConfig.ri_olmo_v1_4B(vocab_size), 32, 1.0)
+            case RicursiveOlmoV1.RI_OLMO_8B:
+                return (RicursiveTransformerConfig.ri_olmo_v1_8B(vocab_size), 64, 0.9)
+            case RicursiveOlmoV1.RI_OLMO_15B:
+                # Support up to 16 hosts, bsz8 per host
+                return (RicursiveTransformerConfig.ri_olmo_v1_15B(vocab_size), 128, 0.4)
+            case RicursiveOlmoV1.RI_OLMO_34B:
+                # Currently does not work, OOMs!!!
+                return (RicursiveTransformerConfig.ri_olmo_v1_34B(vocab_size), 16, 0.1)
+            case RicursiveOlmoV1.RI_OLMO_65B:
+                return (RicursiveTransformerConfig.ri_olmo_v1_65B(vocab_size), 16, 1.0)
+            case _:
+                raise ValueError(
+                    f"Model not in list! Valid models: {[m.name for m in RicursiveOlmoV1]}\n\n"
+                )
+
 
 def get_learning_rate(model_params: int, training_tokens: int) -> float:
     """
     Get optimal learning rate using step law from Li 2025.
     https://arxiv.org/pdf/2503.04715v1
-
-    Formula: lr = 1.79 * N^(-0.713) * D^(0.307)
-    where N = model params, D = training tokens
     """
     n = model_params
     d = training_tokens
-
     lr = 1.79 * pow(n, -0.713) * pow(d, 0.307)
 
     print(f"Model size: {n}, training tokens: {d}, opt_lr: {lr}")
@@ -109,18 +156,12 @@ def get_global_batch_size(
     """
     Get optimal global batch size in tokens using step law from Li 2025.
     https://arxiv.org/pdf/2503.04715v1
-
-    Formula: B = 0.58 * D^(0.571)
-    where D = training tokens
     """
     n = model_params
     d = training_tokens
-
     global_bsz = 0.58 * pow(d, 0.571)
 
     print(f"Model size: {n}, training tokens: {d}, opt_global_bsz: {global_bsz}")
-
-    # Calculate instance batch size
     instance_bsz = global_bsz / sequence_length
 
     # Round batch size to (round_nearest * seqlen), clamping up
@@ -131,11 +172,6 @@ def get_global_batch_size(
     print(f"Rounding global bsz from {global_bsz} to {rounded_global_bsz}")
 
     return rounded_global_bsz
-
-
-def get_optimal_training_tokens(model_params: int) -> int:
-    """Get optimal training tokens using Chinchilla-like 20 tok/param rule."""
-    return int(20 * model_params)
 
 
 def parse_model_size(run_name: str) -> RicursiveOlmoV1:
@@ -155,28 +191,6 @@ def parse_model_size(run_name: str) -> RicursiveOlmoV1:
         f"Valid sizes: {[s.value for s in RicursiveOlmoV1]}. "
         f"Examples: '260m', 'ri-olmo-v1-260m', '1.3b'"
     )
-
-
-def get_num_nodes(model: RicursiveOlmoV1) -> int:
-    """Get the number of nodes required for a given model size."""
-    match model:
-        case (
-            RicursiveOlmoV1.RI_OLMO_260M
-            | RicursiveOlmoV1.RI_OLMO_709M
-            | RicursiveOlmoV1.RI_OLMO_1p3B
-            | RicursiveOlmoV1.RI_OLMO_2B
-            | RicursiveOlmoV1.RI_OLMO_4B
-            | RicursiveOlmoV1.RI_OLMO_8B
-        ):
-            return 1  # 8 GPUs
-        case RicursiveOlmoV1.RI_OLMO_15B:
-            return 2  # 16 GPUs
-        case RicursiveOlmoV1.RI_OLMO_34B:
-            return 4  # 32 GPUs
-        case RicursiveOlmoV1.RI_OLMO_65B:
-            return 8  # 64 GPUs
-        case _:
-            return 1
 
 
 def _extract_and_remove_overrides(
@@ -225,9 +239,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     overrides = list(cli_context.overrides)
     overrides, lr_multiplier_str = _extract_and_remove_overrides(overrides, "--lr-multiplier")
     overrides, batch_multiplier_str = _extract_and_remove_overrides(overrides, "--batch-multiplier")
+    overrides, chinchilla_multiple_str = _extract_and_remove_overrides(
+        overrides, "--chinchilla-multiple"
+    )
 
     lr_multiplier = float(lr_multiplier_str) if lr_multiplier_str else 1.0
     batch_multiplier = float(batch_multiplier_str) if batch_multiplier_str else 1.0
+    chinchilla_multiple = float(chinchilla_multiple_str) if chinchilla_multiple_str else 1.0
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
     root_dir = get_root_dir(cli_context.cluster)
@@ -238,44 +256,15 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     vocab_size = tokenizer_config.padded_vocab_size()
 
     # Get model config and size-specific settings
-    round_nearest = 16
-    activation_memory_budget = 1.0
-
-    match model:
-        case RicursiveOlmoV1.RI_OLMO_260M:
-            model_config = RicursiveTransformerConfig.ri_olmo_v1_260M(vocab_size)
-        case RicursiveOlmoV1.RI_OLMO_709M:
-            model_config = RicursiveTransformerConfig.ri_olmo_v1_709M(vocab_size)
-        case RicursiveOlmoV1.RI_OLMO_1p3B:
-            model_config = RicursiveTransformerConfig.ri_olmo_v1_1p3B(vocab_size)
-        case RicursiveOlmoV1.RI_OLMO_2B:
-            model_config = RicursiveTransformerConfig.ri_olmo_v1_2B(vocab_size)
-        case RicursiveOlmoV1.RI_OLMO_4B:
-            model_config = RicursiveTransformerConfig.ri_olmo_v1_4B(vocab_size)
-            round_nearest = 32
-        case RicursiveOlmoV1.RI_OLMO_8B:
-            model_config = RicursiveTransformerConfig.ri_olmo_v1_8B(vocab_size)
-            round_nearest = 64
-            activation_memory_budget = 0.9
-        case RicursiveOlmoV1.RI_OLMO_15B:
-            model_config = RicursiveTransformerConfig.ri_olmo_v1_15B(vocab_size)
-            # Support up to 16 hosts, bsz8 per host
-            round_nearest = 128
-            activation_memory_budget = 0.4
-        case RicursiveOlmoV1.RI_OLMO_34B:
-            model_config = RicursiveTransformerConfig.ri_olmo_v1_34B(vocab_size)
-            # Currently does not work, OOMs!!!
-            activation_memory_budget = 0.1
-        case RicursiveOlmoV1.RI_OLMO_65B:
-            model_config = RicursiveTransformerConfig.ri_olmo_v1_65B(vocab_size)
-        case _:
-            raise ValueError(
-                f"Model not in list! Valid models: {[m.name for m in RicursiveOlmoV1]}\n\n"
-            )
+    model_config, round_nearest, activation_memory_budget = model.get_model_config_and_settings(
+        vocab_size
+    )
 
     # Compute hyperparameters
     model_active_params = model_config.num_active_params
-    training_tokens = Duration.chinchilla_tokens(1.0, model_params=model_active_params).value
+    training_tokens = Duration.chinchilla_tokens(
+        chinchilla_multiple, model_params=model_active_params
+    ).value
 
     learning_rate = get_learning_rate(model_active_params, training_tokens)
     base_global_batch_size = get_global_batch_size(
@@ -305,7 +294,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cluster=cli_context.cluster,
         root_dir=root_dir,
         workspace="ai2/OLMo-core",
-        num_nodes=get_num_nodes(model),
+        num_nodes=model.get_num_nodes(),
         nccl_debug=True,
     )
 
@@ -320,9 +309,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=global_batch_size,
-        seed=34521,
-        num_workers=8,
+        global_batch_size=global_batch_size, seed=34521, num_workers=8
     )
 
     # Train module config
