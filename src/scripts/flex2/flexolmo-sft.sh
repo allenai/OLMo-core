@@ -82,10 +82,11 @@ sudo uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
 -----
 
 # TOOL USE
+# SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tool-use-general-mix
 BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-50B/step95368
-SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tool-use-general-mix
+SFT_DATASET=/weka/oe-adapt-default/jacobm/olmo3-final-datasets/olmo3-32b-instruct-sft-1114
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-2x7b-50b_olmo3_code_anneal-tool_use_general_mix_sft \
+    flexolmo-2x7b-50b_olmo3_code_anneal-full_olmo3_sft \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
