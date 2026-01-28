@@ -163,19 +163,26 @@ def get_hybrid_hf_config_dict(
         raise ValueError("Hybrid model must have at least one FLA layer")
 
     attn = attention_block.attention
-    
+
     # Handle RoPE - may be None for drope models
-    rope_theta = None
-    rope_scaling = None
+    rope_parameters = None
     use_rope = attn.rope is not None
-    
+
     if use_rope:
         rope_theta = float(attn.rope.theta)
         rope_scaling = _get_rope_scaling_for_hybrid(blocks)
-        log.info(f"RoPE enabled: theta={rope_theta}, scaling={rope_scaling}")
+        
+        # Build unified rope_parameters dict
+        rope_parameters = {"rope_theta": rope_theta}
+        if rope_scaling:
+            rope_parameters.update(rope_scaling)  # includes rope_type and other params
+        else:
+            rope_parameters["rope_type"] = "default"
+        
+        log.info(f"RoPE enabled: {rope_parameters}")
     else:
         log.info("No RoPE configured (drope model)")
-
+    
     # Extract FLA config
     fla_inner = fla_block.fla.inner
 
@@ -236,16 +243,7 @@ def get_hybrid_hf_config_dict(
         "transformers_version": "4.52.0",
     }
     
-    # Only add RoPE config if RoPE is used
-    if use_rope:
-        config_dict["rope_theta"] = rope_theta
-        if rope_scaling is not None:
-            config_dict["rope_scaling"] = rope_scaling
-    # For drope models, simply don't include rope_theta/rope_scaling keys
-    # or explicitly set them to indicate no RoPE:
-    else:
-        config_dict["rope_theta"] = None
-        config_dict["rope_scaling"] = None
+    config_dict["rope_parameters"] = rope_parameters
 
     return config_dict
 
