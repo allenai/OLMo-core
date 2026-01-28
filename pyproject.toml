@@ -59,6 +59,8 @@ dev = [
     "sphinx-copybutton",
     "sphinx-inline-tabs",
     "twine>=1.11.0",
+    "beaker-py>=2.5.4",
+    "beaker-gantry>=3.4.3",
 ]
 beaker = ["beaker-py>=2.5.4,<3.0", "beaker-gantry>=3.4.3,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]

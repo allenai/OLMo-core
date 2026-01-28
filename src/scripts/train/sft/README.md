@@ -33,6 +33,12 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
 ## Training
 
+0. Add the beaker dependency to your local environment (not needed on cluster):
+
+    ```bash
+    uv add beaker-py beaker-gantry --optional dev
+    ```
+
 1. Ensure that the beaker workspace you are using has the following secrets configured.
     * `{beaker_username}_BEAKER_TOKEN`
     * `{beaker_username}_AWS_CREDENTIALS`
