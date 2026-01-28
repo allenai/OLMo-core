@@ -40,7 +40,7 @@ from ..io import _get_s3_client, get_file_size
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
 from .tokenizer import TokenizerConfig
-from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
+from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes, TruncateFrom
 from .utils import (
     bucket_documents,
     chunk_array,
@@ -1554,6 +1554,8 @@ class NumpyShuffledFSLDataset(NumpyFSLDatasetBase):
     :param max_window_size: Maximum document size. Documents longer than this are truncated.
     :param separator_token_id: Token ID to append to truncated documents.
     :param shuffle_seed: Seed for the global document shuffle permutation.
+    :param truncate_from: Which end of the document to keep when truncating.
+        "start" keeps the first tokens, "end" keeps the last tokens. Defaults to "start".
     :param pad_token_id: The ID of the padding token.
     :param eos_token_id: The ID of the EOS token.
     :param vocab_size: The vocabulary size.
@@ -1574,6 +1576,7 @@ class NumpyShuffledFSLDataset(NumpyFSLDatasetBase):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         bos_token_id: Optional[int] = None,
+        truncate_from: TruncateFrom = TruncateFrom.start,
     ):
         super().__init__(
             *paths,
@@ -1596,6 +1599,7 @@ class NumpyShuffledFSLDataset(NumpyFSLDatasetBase):
         self._max_window_size = max_window_size
         self._separator_token_id = separator_token_id
         self._shuffle_seed = shuffle_seed
+        self._truncate_from = truncate_from
 
         # These will be populated during prepare()
         self._num_documents: Optional[int] = None
@@ -1618,6 +1622,7 @@ class NumpyShuffledFSLDataset(NumpyFSLDatasetBase):
             "max_window_size",
             "separator_token_id",
             "shuffle_seed",
+            "truncate_from",
         )
 
     @property
@@ -1631,6 +1636,10 @@ class NumpyShuffledFSLDataset(NumpyFSLDatasetBase):
     @property
     def shuffle_seed(self) -> int:
         return self._shuffle_seed
+
+    @property
+    def truncate_from(self) -> TruncateFrom:
+        return self._truncate_from
 
     @property
     def num_tokens(self) -> int:
@@ -1708,12 +1717,22 @@ class NumpyShuffledFSLDataset(NumpyFSLDatasetBase):
             # Short document: read as-is (includes natural EOS)
             return load_array_slice_into_tensor(path, doc_start, doc_start + orig_len, self.dtype)
         else:
-            # Long document: read first (max_window_size - 1) tokens + separator
-            tokens = load_array_slice_into_tensor(
-                path, doc_start, doc_start + self._max_window_size - 1, self.dtype
-            )
+            # Long document: truncate to (max_window_size - 1) tokens + separator
             separator = torch.tensor([self._separator_token_id], dtype=torch.long)
-            return torch.cat([tokens, separator])
+            if self._truncate_from == TruncateFrom.start:
+                # Keep first (max_window_size - 1) tokens + separator at end
+                tokens = load_array_slice_into_tensor(
+                    path, doc_start, doc_start + self._max_window_size - 1, self.dtype
+                )
+                return torch.cat([tokens, separator])
+            else:
+                # Keep last (max_window_size - 1) tokens + separator at start
+                # Read from the end of the document
+                read_start = doc_start + orig_len - (self._max_window_size - 1)
+                tokens = load_array_slice_into_tensor(
+                    path, read_start, doc_start + orig_len, self.dtype
+                )
+                return torch.cat([separator, tokens])
 
     def _load_or_build_index(self):
         """Load index if it exists, otherwise build it."""
@@ -2668,6 +2687,11 @@ class NumpyDatasetConfig(Config):
     Seed for the global document shuffle in :class:`NumpyShuffledFSLDataset`.
     This determines the order of documents in the virtual concatenated stream.
     """
+    truncate_from: Optional[TruncateFrom] = None
+    """
+    Which end of the document to keep when truncating in :class:`NumpyShuffledFSLDataset`.
+    "start" keeps the first tokens, "end" keeps the last tokens. Defaults to "start".
+    """
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -3187,6 +3211,7 @@ class NumpyDatasetConfig(Config):
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
                 bos_token_id=self.tokenizer.bos_token_id,
+                truncate_from=self.truncate_from or TruncateFrom.start,
             )
         else:
             raise NotImplementedError(self.name)

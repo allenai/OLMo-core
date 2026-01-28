@@ -61,6 +61,22 @@ class LongDocStrategy(StrEnum):
     """
 
 
+class TruncateFrom(StrEnum):
+    """
+    Specifies which end of a document to truncate from when it exceeds the max window size.
+    """
+
+    start = "start"
+    """
+    Keep the first N tokens of the document (truncate from the end).
+    """
+
+    end = "end"
+    """
+    Keep the last N tokens of the document (truncate from the start).
+    """
+
+
 class NumpyDatasetDType(StrEnum):
     uint8 = "uint8"
     uint16 = "uint16"
