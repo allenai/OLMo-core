@@ -45,7 +45,10 @@ from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.internal.ri_olmo.ri_olmo_config import RicursiveTransformerConfig
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import (
     CosWithWarmup,
     OptimGroupOverride,
