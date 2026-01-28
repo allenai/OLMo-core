@@ -9,6 +9,7 @@ from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixerConfig
+from olmo_core.nn.fla import FLAConfig
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import (
