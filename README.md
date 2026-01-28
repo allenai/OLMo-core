@@ -52,6 +52,7 @@ There are a number of optional dependencies that must be installed to use certai
 - [Liger-Kernel](https://github.com/linkedin/Liger-Kernel) for a low-memory "fused-linear" loss implementation.
 - [torchao](https://github.com/pytorch/ao) for float8 training.
 - [grouped_gemm](https://github.com/tgale96/grouped_gemm) for dropless mixture-of-experts (MoE) models. You may need to compile from source until [PR #21](https://github.com/tgale96/grouped_gemm/pull/21) is released (post v0.1.6).
+- [QuACK](https://github.com/Dao-AILab/quack) for some CuTe-based kernels.
 
 The published [Docker images](https://github.com/orgs/allenai/packages?repo_name=OLMo-core) contain all core and optional dependencies, and are regularly tested on our in-house H100 clusters.
 But there are several things to keep in mind if you intend to use these images:

@@ -150,7 +150,24 @@ class OLMoCoreBeakerImage(StrEnum):
     The stable image with CUDA pinned to 12.8.
     """
 
+    #
     # Sorted roughly from newest versions to oldest versions
+    #
+    tch291_cu129 = "petew/olmo-core-tch291cu129-2026-01-24"
+    """
+    Built with torch 2.9.1 and CUDA 12.9. Comes with flash-attn 4 (CUTE implementation) and Quack kernels.
+
+    To rebuild: ``make beaker-image TORCH_VERSION=2.9.1 QUACK_VERSION=0.2.4 CUDA_VERSION=12.9.1 FLASH_ATTN_4_SHA=2580b5a4882562640f3cfbffd2bb8d2de9268f9f``.
+    """
+    tch291_cu128 = "petew/olmo-core-tch291cu128-FA4"
+    """
+    Built with torch 2.9.1 and CUDA 12.8. Comes with flash-attn 4 (CUTE implementation).
+    """
+    tch2100_cu128 = "petew/olmo-core-tch2100cu128-2026-01-23"
+    """
+    Built with torch 2.10.0 and CUDA 12.8.
+    """
+    # Newer images (above this line) include the AWS CLI and Google Cloud SDK.
     tch280_cu128 = "tylerr/olmo-core-tch280cu128-2025-11-25"
     """
     Built with torch 2.8.0 and CUDA 12.8.
@@ -159,6 +176,7 @@ class OLMoCoreBeakerImage(StrEnum):
     """
     Built with torch 2.7.1 and CUDA 12.8.
     """
+    # Newer images (above this line) include TransformerEngine and flash-attention-3.
     tch270_cu128 = "petew/olmo-core-tch270cu128-2025-05-16"
     """
     Built with torch 2.7.0 and CUDA 12.8.

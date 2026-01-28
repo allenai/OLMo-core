@@ -45,21 +45,28 @@ build :
 
 # NOTE: When upgrading dependency versions (like for torch) make sure:
 #  * The corresponding versions specified in 'pyproject.toml' include the new version.
-#  * The versions installed in '.github/actions/setup-venv/action.yml' match if necessary.
+#  * The versions installed in '.github/actions/setup-python-env/action.yml' match if necessary.
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
 CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.12
-TORCH_VERSION = 2.9.1
+TORCH_VERSION = 2.10.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
-GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
+GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 FLASH_ATTN_VERSION = 2.8.2
-FLASH_ATTN_3_SHA = "92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
+FLASH_ATTN_3_SHA = "060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
+# NOTE: At the moment FA4 isn't compatible with PyTorch 2.10, so to build FA4 you should set
+# TORCH_VERSION to 2.9.1.
+# FLASH_ATTN_4_SHA = "2580b5a4882562640f3cfbffd2bb8d2de9268f9f"
+FLASH_ATTN_4_SHA = ""
 FA3_MAX_JOBS = 64
 TE_VERSION = 2.9
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.4
+# NOTE: Quack currently requires CUDA 12.9 or higher and PyTorch 2.9.1
+# QUACK_VERSION = 0.2.4
+QUACK_VERSION = ""
 
 #--------------#
 # Build naming #
@@ -79,16 +86,25 @@ docker-image :
 		--build-arg PYTHON_VERSION=$(PYTHON_VERSION) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
-		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
+		--build-arg GROUPED_GEMM_SHA=$(GROUPED_GEMM_SHA) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
 		--build-arg FLASH_ATTN_3_SHA=$(FLASH_ATTN_3_SHA) \
+		--build-arg FLASH_ATTN_4_SHA=$(FLASH_ATTN_4_SHA) \
 		--build-arg FA3_MAX_JOBS=$(FA3_MAX_JOBS) \
 		--build-arg TE_VERSION=$(TE_VERSION) \
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
+		--build-arg QUACK_VERSION=$(QUACK_VERSION) \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
-	echo "Built image 'olmo-core:$(IMAGE_TAG)', size: $$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si)"
+	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
+		'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface'
+	@echo "✓ Image validated. Python environment:"
+	@echo ""
+	@docker run --rm olmo-core:$(IMAGE_TAG) pip list
+	@echo ""
+	@echo "✓ Build complete: olmo-core:$(IMAGE_TAG) (size=$$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si))"
+	@echo ""
 
 .PHONY : ghcr-image
 ghcr-image : docker-image
@@ -102,7 +118,8 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 
 .PHONY : beaker-image
 beaker-image : docker-image
-	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
+	@./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
+	@echo "✓ Done"
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :

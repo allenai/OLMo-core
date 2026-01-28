@@ -12,7 +12,7 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 
@@ -95,7 +95,12 @@ def _get_expected_hf_config(
             pytest.skip("The installed transformers version does not support Olmo3")
 
         # Compute expected layer_types and sliding_window from the transformer config
-        sliding_window_config = transformer_config.block.attention.sliding_window
+        attention_config = transformer_config.block.sequence_mixer
+        if not isinstance(attention_config, AttentionConfig):
+            raise NotImplementedError(
+                f"Block has an unsupported sequence mixing config: {attention_config}"
+            )
+        sliding_window_config = attention_config.sliding_window
         assert sliding_window_config is not None
 
         pattern = sliding_window_config.pattern
