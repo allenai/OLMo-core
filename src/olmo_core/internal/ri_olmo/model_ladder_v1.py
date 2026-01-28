@@ -17,9 +17,9 @@ All additional proposed features will be run on top of this baseline.
 * Change sliding window pattern to [1K*4, global]
 
 Usage:
-    python -m olmo_core.internal.ri_olmo.model_ladder_v1 dry_run ri-olmo-v1-260m ai2/jupiter
-    python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-260m ai2/jupiter
-    python -m olmo_core.internal.ri_olmo.model_ladder_v1 train ri-olmo-v1-260m ai2/jupiter
+    python src/olmo_core/internal/ri_olmo/model_ladder_v1.py dry_run ri-olmo-v1-260m ai2/jupiter
+    python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-260m ai2/jupiter
+    python src/olmo_core/internal/ri_olmo/model_ladder_v1.py train ri-olmo-v1-260m ai2/jupiter
 
 """
 
@@ -38,6 +38,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
+from olmo_core.internal.ri_olmo.ri_olmo_config import RicursiveTransformerConfig
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.optim import (
@@ -64,8 +65,6 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-
-from .ri_olmo_config import RicursiveTransformerConfig
 
 DEFAULT_SEQUENCE_LENGTH = 8192
 
@@ -467,21 +466,21 @@ if __name__ == "__main__":
 
     Examples:
         To render the config and exit:
-            python -m olmo_core.internal.ri_olmo.model_ladder_v1 dry_run ri-olmo-v1-260m ai2/jupiter
+            python src/olmo_core/internal/ri_olmo/model_ladder_v1.py dry_run ri-olmo-v1-260m ai2/jupiter
 
         To start a training run with torchrun:
-            torchrun --nproc-per-node=8 src/olmo_core.internal.ri_olmo.model_ladder_v1 train ri-olmo-v1-260m ai2/jupiter
+            torchrun --nproc-per-node=8 src/olmo_core/internal/ri_olmo/model_ladder_v1.py train ri-olmo-v1-260m ai2/jupiter
 
         To launch a training run on Jupiter:
-            python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-260m ai2/jupiter
+            python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-260m ai2/jupiter
 
         To launch with custom hyperparameters:
-            python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-260m ai2/jupiter \\
+            python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-260m ai2/jupiter \\
                 --lr-multiplier=2.0 \\
                 --warmup-steps=1000
 
         To override num_nodes:
-            python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-8b ai2/jupiter \\
+            python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-8b ai2/jupiter \\
                 --launch.num_nodes=2
     """
     main(config_builder=build_experiment_config)
