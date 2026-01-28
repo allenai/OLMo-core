@@ -17,9 +17,9 @@ All additional proposed features will be run on top of this baseline.
 * Change sliding window pattern to [1K*4, global]
 
 Usage:
-    python -m olmo_core.internal.ri_olmo.model_ladder_v1 dry_run ri-olmo-v1-260m ai2/augusta
-    python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-260m ai2/augusta
-    python -m olmo_core.internal.ri_olmo.model_ladder_v1 train ri-olmo-v1-260m ai2/augusta
+    python -m olmo_core.internal.ri_olmo.model_ladder_v1 dry_run ri-olmo-v1-260m ai2/jupiter
+    python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-260m ai2/jupiter
+    python -m olmo_core.internal.ri_olmo.model_ladder_v1 train ri-olmo-v1-260m ai2/jupiter
 
 """
 
@@ -467,21 +467,21 @@ if __name__ == "__main__":
 
     Examples:
         To render the config and exit:
-            python -m olmo_core.internal.ri_olmo.model_ladder_v1 dry_run ri-olmo-v1-260m ai2/augusta
+            python -m olmo_core.internal.ri_olmo.model_ladder_v1 dry_run ri-olmo-v1-260m ai2/jupiter
 
         To start a training run with torchrun:
-            torchrun --nproc-per-node=8 src/olmo_core.internal.ri_olmo.model_ladder_v1 train ri-olmo-v1-260m ai2/augusta
+            torchrun --nproc-per-node=8 src/olmo_core.internal.ri_olmo.model_ladder_v1 train ri-olmo-v1-260m ai2/jupiter
 
-        To launch a training run on Augusta:
-            python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-260m ai2/augusta
+        To launch a training run on Jupiter:
+            python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-260m ai2/jupiter
 
         To launch with custom hyperparameters:
-            python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-260m ai2/augusta \\
+            python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-260m ai2/jupiter \\
                 --lr-multiplier=2.0 \\
                 --warmup-steps=1000
 
         To override num_nodes:
-            python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-8b ai2/augusta \\
+            python -m olmo_core.internal.ri_olmo.model_ladder_v1 launch ri-olmo-v1-8b ai2/jupiter \\
                 --launch.num_nodes=2
     """
     main(config_builder=build_experiment_config)
