@@ -24,8 +24,6 @@ Usage:
 """
 
 import math
-import re
-from dataclasses import dataclass
 from typing import Optional
 
 from olmo_core.config import DType, StrEnum
@@ -73,8 +71,6 @@ DEFAULT_SEQUENCE_LENGTH = 8192
 
 
 class RicursiveOlmoV1(StrEnum):
-    """Model sizes for RI-OLMo v1 model series."""
-
     RI_OLMO_260M = "260M"
     RI_OLMO_709M = "709M"
     RI_OLMO_1p3B = "1.3B"
@@ -84,37 +80,6 @@ class RicursiveOlmoV1(StrEnum):
     RI_OLMO_15B = "15B"
     RI_OLMO_34B = "34B"
     RI_OLMO_65B = "65B"
-
-    @property
-    def approx_num_params(self) -> int:
-        """Parse size string and return approximate parameter count."""
-        size = self.replace(" ", "").upper()
-        if (m := re.match(r"^([\d\.]+)([KMBT])$", size)) is not None:
-            value, unit = m.groups()
-            multiplier = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}[unit]
-            return int(float(value) * multiplier)
-        else:
-            raise ValueError(f"Invalid size descriptor '{self}'")
-
-    def __lt__(self, other) -> bool:
-        if isinstance(other, RicursiveOlmoV1):
-            return self.approx_num_params < other.approx_num_params
-        return NotImplemented
-
-    def __le__(self, other) -> bool:
-        if isinstance(other, RicursiveOlmoV1):
-            return self.approx_num_params <= other.approx_num_params
-        return NotImplemented
-
-    def __gt__(self, other) -> bool:
-        if isinstance(other, RicursiveOlmoV1):
-            return self.approx_num_params > other.approx_num_params
-        return NotImplemented
-
-    def __ge__(self, other) -> bool:
-        if isinstance(other, RicursiveOlmoV1):
-            return self.approx_num_params >= other.approx_num_params
-        return NotImplemented
 
 
 def get_learning_rate(model_params: int, training_tokens: int) -> float:
@@ -176,31 +141,19 @@ def get_optimal_training_tokens(model_params: int) -> int:
 def parse_model_size(run_name: str) -> RicursiveOlmoV1:
     """
     Parse model size from run name.
-    Expected format: ri-olmo-v1-260m, ri-olmo-v1-1p3b, etc.
+    The run name must contain one of the enum values (e.g., "260M", "1.3B", "8B").
+    Examples: "260m", "ri-olmo-v1-260m", "1.3b", "1p3b" (normalized to "1.3b").
     """
-    run_name_lower = run_name.lower()
+    normalized = run_name.lower().strip().replace("1p3b", "1.3b").replace("1p3", "1.3")
 
-    size_patterns = {
-        RicursiveOlmoV1.RI_OLMO_260M: ["260m"],
-        RicursiveOlmoV1.RI_OLMO_709M: ["709m"],
-        RicursiveOlmoV1.RI_OLMO_1p3B: ["1p3b", "1.3b"],
-        RicursiveOlmoV1.RI_OLMO_2B: ["2b"],
-        RicursiveOlmoV1.RI_OLMO_4B: ["4b"],
-        RicursiveOlmoV1.RI_OLMO_8B: ["8b"],
-        RicursiveOlmoV1.RI_OLMO_15B: ["15b"],
-        RicursiveOlmoV1.RI_OLMO_34B: ["34b"],
-        RicursiveOlmoV1.RI_OLMO_65B: ["65b"],
-    }
-
-    for size, patterns in size_patterns.items():
-        for pattern in patterns:
-            if pattern in run_name_lower:
-                return size
+    for size in RicursiveOlmoV1:
+        if size.value.lower() in normalized:
+            return size
 
     raise ValueError(
         f"Could not parse model size from run name '{run_name}'. "
-        f"Expected format: ri-olmo-v1-260m, ri-olmo-v1-1p3b, etc. "
-        f"Valid sizes: {[s.value for s in RicursiveOlmoV1]}"
+        f"Valid sizes: {[s.value for s in RicursiveOlmoV1]}. "
+        f"Examples: '260m', 'ri-olmo-v1-260m', '1.3b'"
     )
 
 
@@ -226,45 +179,41 @@ def get_num_nodes(model: RicursiveOlmoV1) -> int:
             return 1
 
 
-@dataclass
-class HyperparamOverrides:
-    """Custom hyperparameter overrides parsed from CLI."""
-
-    lr_multiplier: float = 1.0
-    batch_multiplier: float = 1.0
-    batch_override_instances: Optional[int] = None
-    warmup_steps: int = 2000
-
-
-def parse_hyperparam_overrides(overrides: list[str]) -> HyperparamOverrides:
-    """Parse custom hyperparameter overrides from CLI args."""
-    hp = HyperparamOverrides()
-
+def _extract_and_remove_overrides(
+    overrides: list[str], prefix: str
+) -> tuple[list[str], Optional[str]]:
+    """Extract override with given prefix and remove it from the list."""
+    value = None
+    remaining = []
     for override in overrides:
-        if override.startswith("--lr-multiplier="):
-            hp.lr_multiplier = float(override.split("=")[1])
-        elif override.startswith("--batch-multiplier="):
-            hp.batch_multiplier = float(override.split("=")[1])
-        elif override.startswith("--batch-override-instances="):
-            hp.batch_override_instances = int(override.split("=")[1])
-        elif override.startswith("--warmup-steps="):
-            hp.warmup_steps = int(override.split("=")[1])
-
-    return hp
+        if override.startswith(f"{prefix}="):
+            value = override.split("=", 1)[1]
+        else:
+            remaining.append(override)
+    return remaining, value
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     """
     Build experiment config for RI-OLMo v1.
 
-    Custom args (affect computed values):
+    Model size can be specified as just the size (e.g., "260m") or with prefix
+    (e.g., "ri-olmo-v1-260m"). The model size is parsed from the run name.
+
+    Hyperparameters are computed using StepFun optimal schedules [Li 2025], but can be
+    overridden using standard config override syntax:
+
+        --train_module.optim.lr=0.001              Override learning rate
+        --data_loader.global_batch_size=1000       Override batch size
+        --train_module.scheduler.warmup=1000000    Override warmup (in tokens)
+
+    Convenience multipliers (for quick sweeps):
         --lr-multiplier=2.0          Multiply computed LR
         --batch-multiplier=0.5       Multiply computed batch size
-        --batch-override-instances=N Override batch size to N instances
-        --warmup-steps=1000          Set warmup steps (converted to tokens)
 
     Other settings can be overridden via standard config paths, e.g.:
         --trainer.callbacks.comet.enabled=false
+        --trainer.callbacks.comet.auto_resume=true
         --trainer.callbacks.wandb.enabled=true
         --launch.num_nodes=2
     """
@@ -272,8 +221,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     model = parse_model_size(cli_context.run_name)
     print(f"Parsed model size: {model} from run name: {cli_context.run_name}")
 
-    # Parse custom hyperparameter overrides
-    hp = parse_hyperparam_overrides(cli_context.overrides)
+    # Extract convenience multipliers from overrides (remove them from override list)
+    overrides = list(cli_context.overrides)
+    overrides, lr_multiplier_str = _extract_and_remove_overrides(overrides, "--lr-multiplier")
+    overrides, batch_multiplier_str = _extract_and_remove_overrides(overrides, "--batch-multiplier")
+
+    lr_multiplier = float(lr_multiplier_str) if lr_multiplier_str else 1.0
+    batch_multiplier = float(batch_multiplier_str) if batch_multiplier_str else 1.0
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
     root_dir = get_root_dir(cli_context.cluster)
@@ -324,24 +278,25 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     training_tokens = Duration.chinchilla_tokens(1.0, model_params=model_active_params).value
 
     learning_rate = get_learning_rate(model_active_params, training_tokens)
-    global_batch_size = get_global_batch_size(
+    base_global_batch_size = get_global_batch_size(
         model_params=model_active_params,
         training_tokens=training_tokens,
         sequence_length=sequence_length,
         round_nearest=round_nearest,
     )
 
-    # Apply batch overrides
-    old_global_batch_size = global_batch_size
-    if hp.batch_override_instances is not None:
-        global_batch_size = hp.batch_override_instances * sequence_length
-    else:
-        global_batch_size = int(global_batch_size * hp.batch_multiplier)
+    # Apply multipliers
+    adjusted_learning_rate = learning_rate * lr_multiplier
+    global_batch_size = int(base_global_batch_size * batch_multiplier)
 
-    if global_batch_size != old_global_batch_size:
-        print(f"Modified global batch from {old_global_batch_size} to {global_batch_size}")
-
-    adjusted_learning_rate = learning_rate * hp.lr_multiplier
+    if lr_multiplier != 1.0:
+        print(
+            f"Applied LR multiplier: {lr_multiplier}, LR: {learning_rate} -> {adjusted_learning_rate}"
+        )
+    if batch_multiplier != 1.0:
+        print(
+            f"Applied batch multiplier: {batch_multiplier}, batch: {base_global_batch_size} -> {global_batch_size}"
+        )
 
     # Build Beaker launch config
     beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
@@ -384,7 +339,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         ),
         scheduler=CosWithWarmup(
             units=SchedulerUnits.tokens,
-            warmup=hp.warmup_steps * global_batch_size,
+            warmup=2000 * global_batch_size,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -514,7 +469,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         data_loader=data_loader_config,
     )
 
-    return experiment_config.merge(cli_context.overrides)
+    # Merge remaining overrides (multipliers have been removed)
+    return experiment_config.merge(overrides)
 
 
 if __name__ == "__main__":
