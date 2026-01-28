@@ -83,21 +83,24 @@ class RicursiveOlmoV1(StrEnum):
     def get_num_nodes(self) -> int:
         """Get the number of nodes required for this model size."""
         match self:
-            case (
-                RicursiveOlmoV1.RI_OLMO_260M
-                | RicursiveOlmoV1.RI_OLMO_709M
-                | RicursiveOlmoV1.RI_OLMO_1p3B
-                | RicursiveOlmoV1.RI_OLMO_2B
-                | RicursiveOlmoV1.RI_OLMO_4B
-                | RicursiveOlmoV1.RI_OLMO_8B
-            ):
-                return 1  # 8 GPUs
+            case RicursiveOlmoV1.RI_OLMO_260M:
+                return 1
+            case RicursiveOlmoV1.RI_OLMO_709M:
+                return 2
+            case RicursiveOlmoV1.RI_OLMO_1p3B:
+                return 4
+            case RicursiveOlmoV1.RI_OLMO_2B:
+                return 4
+            case RicursiveOlmoV1.RI_OLMO_4B:
+                return 8
+            case RicursiveOlmoV1.RI_OLMO_8B:
+                return 8
             case RicursiveOlmoV1.RI_OLMO_15B:
-                return 2  # 16 GPUs
-            case RicursiveOlmoV1.RI_OLMO_34B:
-                return 4  # 32 GPUs
-            case RicursiveOlmoV1.RI_OLMO_65B:
                 return 8  # 64 GPUs
+            case RicursiveOlmoV1.RI_OLMO_34B:
+                return 8  # 64 GPUs
+            case RicursiveOlmoV1.RI_OLMO_65B:
+                return 16  # 128 GPUs
             case _:
                 raise ValueError(f"Invalid model size: {self}")
 
