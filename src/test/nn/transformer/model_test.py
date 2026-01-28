@@ -1,6 +1,6 @@
 import logging
 from dataclasses import replace
-from test.nn.attention_test import BF16_ATOL, BF16_RTOL
+from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
 
 import pytest
