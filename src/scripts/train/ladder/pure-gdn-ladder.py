@@ -103,8 +103,9 @@ class GatedDeltaNetModelConfigurator(TransformerModelConfigurator):
             raise OLMoConfigurationError(f"Unsupported model size '{size_spec}'")
 
         # Convert to pure FLA (GatedDeltaNet) block
+        n_heads = model.block.sequence_mixer.n_heads
         model.block.name = TransformerBlockType.fla
-        model.block.attention = AttentionConfig(n_heads=model.block.attention.n_heads)
+        model.block.sequence_mixer = AttentionConfig(n_heads=n_heads)
 
         # Configure GatedDeltaNet
         # FLA repo recommends: num_heads * head_dim = 0.75 * hidden_size
@@ -113,7 +114,7 @@ class GatedDeltaNetModelConfigurator(TransformerModelConfigurator):
             dtype=model.dtype,
             fla_layer_kwargs={
                 "head_dim": ensure_multiple_of(
-                    int(0.75 * model.d_model / model.block.attention.n_heads), 128
+                    int(0.75 * model.d_model / n_heads), 128
                 ),
                 "use_gate": self.use_gate,
                 "allow_neg_eigval": self.allow_neg_eigval,

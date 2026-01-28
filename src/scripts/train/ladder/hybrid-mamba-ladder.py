@@ -5,11 +5,23 @@ import math
 import olmo_core.io as io
 from olmo_core.config import DType
 from olmo_core.data import DataMix, TokenizerConfig
-from olmo_core.data.composable import *
+from olmo_core.data.composable import (
+    ComposableDataLoaderConfig,
+    ConcatAndChunkInstanceSourceConfig,
+    InstanceFilterConfig,
+    InstanceSourceConfig,
+    NumpyDocumentSourceMixConfig,
+)
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
-from olmo_core.model_ladder import *
+from olmo_core.model_ladder import (
+    ModelLadder,
+    TransformerModelConfigurator,
+    TransformerSize,
+    WSDSChinchillaRunConfigurator,
+)
 from olmo_core.model_ladder.utils import format_count
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.fla.layer import FLAConfig
@@ -26,7 +38,6 @@ from olmo_core.train.train_module import (
     TransformerTrainModule,
     TransformerTrainModuleConfig,
 )
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of, warn_once
 
 log = logging.getLogger(__name__)
@@ -48,7 +59,7 @@ def get_mix_base_dir(cluster: str) -> str:
         return "gs://ai2-llm/"
 
 
-class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
+class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
     def __init__(self, transformer_ratio: int = 4):
         """
         Args:
@@ -66,7 +77,6 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
         tokenizer: TokenizerConfig,
         device_type: str,
     ) -> TransformerConfig:
-        # TODO: configure context-parallelism if needed.
         device_type = device_type.lower()
         assert "h100" in device_type or "b200" in device_type
         assert sequence_length in {2048, 4096, 8192}
@@ -98,29 +108,27 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
         else:
             raise OLMoConfigurationError(f"Unsupported model size '{size_spec}'")
 
-        ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
-
-        # Update the config to use an FLA block.
+        # Update the config to use an FLA hybrid block.
         model.block.name = TransformerBlockType.fla_hybrid
 
         # Every Nth layer is a quadratic attention layer (N = transformer_ratio).
-        attention_indices = [i for i in range(model.n_layers) if i % self.transformer_ratio == self.transformer_ratio - 1]
+        attention_indices = [
+            i for i in range(model.n_layers) if i % self.transformer_ratio == self.transformer_ratio - 1
+        ]
         # Force full attention on the last layer
         if model.n_layers - 1 not in attention_indices:
             attention_indices.append(model.n_layers - 1)
         model.block.fla_hybrid_attention_indices = sorted(attention_indices)
 
-        # Configure the non-attention part of the block to be a DeltaNet.
+        # Configure the non-attention part of the block to be Mamba2.
+        # Similar to GatedDeltaNet: num_heads * head_dim = 0.75 * hidden_size
         model.block.fla = FLAConfig(
-            name="GatedDeltaNet",
+            name="Mamba2",
             dtype=model.dtype,
             fla_layer_kwargs={
-                # FLA repo says num_heads * head_dim = 0.75 * hidden_size
                 "head_dim": ensure_multiple_of(
                     int(0.75 * model.d_model / model.block.sequence_mixer.n_heads), 128
                 ),
-                "use_gate": True,
-                "allow_neg_eigval": True,
             },
         )
 
@@ -192,9 +200,11 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925_official
-                    if args.cluster == "lambda"
-                    else DataMix.OLMo_mix_0925,
+                    mix=(
+                        DataMix.OLMo_mix_0925_official
+                        if args.cluster == "lambda"
+                        else DataMix.OLMo_mix_0925
+                    ),
                     mix_base_dir=get_mix_base_dir(args.cluster),
                 )
             ],
@@ -207,7 +217,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=HybridGDNTransformerModelConfigurator(
+        model_configurator=HybridMamba2TransformerModelConfigurator(
             transformer_ratio=args.transformer_ratio
         ),
         run_configurator=WSDSChinchillaRunConfigurator(

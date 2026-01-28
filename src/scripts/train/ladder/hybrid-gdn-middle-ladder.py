@@ -128,7 +128,7 @@ class HybridGDNMiddleTransformerModelConfigurator(TransformerModelConfigurator):
             fla_layer_kwargs={
                 # FLA repo says num_heads * head_dim = 0.75 * hidden_size
                 "head_dim": ensure_multiple_of(
-                    int(0.75 * model.d_model / model.block.attention.n_heads), 128
+                    int(0.75 * model.d_model / model.block.sequence_mixer.n_heads), 128
                 ),
                 "use_gate": True,
                 "allow_neg_eigval": True,

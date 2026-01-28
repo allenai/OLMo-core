@@ -94,8 +94,9 @@ class Mamba2ModelConfigurator(TransformerModelConfigurator):
             raise OLMoConfigurationError(f"Unsupported model size '{size_spec}'")
 
         # Convert to pure FLA (Mamba2) block
+        n_heads = model.block.sequence_mixer.n_heads
         model.block.name = TransformerBlockType.fla
-        model.block.attention = AttentionConfig(n_heads=model.block.attention.n_heads)
+        model.block.sequence_mixer = AttentionConfig(n_heads=n_heads)
 
         # Configure Mamba2
         # Similar to GatedDeltaNet: num_heads * head_dim = 0.75 * hidden_size
@@ -104,7 +105,7 @@ class Mamba2ModelConfigurator(TransformerModelConfigurator):
             dtype=model.dtype,
             fla_layer_kwargs={
                 "head_dim": ensure_multiple_of(
-                    int(0.75 * model.d_model / model.block.attention.n_heads), 128
+                    int(0.75 * model.d_model / n_heads), 128
                 ),
             },
         )
