@@ -24,6 +24,7 @@ Usage:
 """
 
 import math
+from datetime import datetime
 from typing import Optional, Tuple
 
 from olmo_core.config import DType, StrEnum
@@ -237,6 +238,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     model = parse_model_size(cli_context.run_name)
     print(f"Parsed model size: {model} from run name: {cli_context.run_name}")
 
+    # Add timestamp to run name
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_name_with_timestamp = f"{cli_context.run_name}-{timestamp}"
+
     # Extract convenience multipliers from overrides (remove them from override list)
     overrides = list(cli_context.overrides)
     overrides, lr_multiplier_str = _extract_and_remove_overrides(overrides, "--lr-multiplier")
@@ -382,8 +387,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         .with_callback(
             "wandb",
             WandBCallback(
-                name=cli_context.run_name,
-                project="ri-olmo-v1",
+                name=run_name_with_timestamp,
+                group=cli_context.run_name,
+                project="ri-olmo",
+                entity="ai2-llm",
                 cancel_check_interval=10,
                 enabled=False,
             ),
