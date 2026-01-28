@@ -25,6 +25,7 @@ Usage:
 
 import argparse
 import math
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Tuple
 
@@ -37,8 +38,10 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.eval.task_groups import TASK_GROUPS
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
+from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.internal.ri_olmo.ri_olmo_config import RicursiveTransformerConfig
 from olmo_core.launch.beaker import BeakerLaunchConfig
@@ -53,10 +56,8 @@ from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
-    ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     LMEvaluatorCallbackConfig,
-    MonkeyPatcherCallback,
     SpeedMonitorCallback,
     StabilityMonitorCallback,
     WandBCallback,
@@ -71,6 +72,16 @@ from olmo_core.train.train_module import (
 DEFAULT_SEQUENCE_LENGTH = 8192
 
 
+@dataclass
+class _ModelSizeSettings:
+    """Training settings for a specific model size."""
+
+    size: str
+    num_nodes: int
+    batch_size_round_nearest: int
+    activation_memory_budget: float
+
+
 class RicursiveOlmoV1(StrEnum):
     RI_OLMO_260M = "260M"
     RI_OLMO_709M = "709M"
@@ -82,59 +93,33 @@ class RicursiveOlmoV1(StrEnum):
     RI_OLMO_34B = "34B"
     RI_OLMO_65B = "65B"
 
-    def get_num_nodes(self) -> int:
-        """Get the number of nodes required for this model size."""
-        match self:
-            case RicursiveOlmoV1.RI_OLMO_260M:
-                return 1
-            case RicursiveOlmoV1.RI_OLMO_709M:
-                return 2
-            case RicursiveOlmoV1.RI_OLMO_1p3B:
-                return 2
-            case RicursiveOlmoV1.RI_OLMO_2B:
-                return 4
-            case RicursiveOlmoV1.RI_OLMO_4B:
-                return 4
-            case RicursiveOlmoV1.RI_OLMO_8B:
-                return 8
-            case RicursiveOlmoV1.RI_OLMO_15B:
-                return 8  # 64 GPUs
-            case RicursiveOlmoV1.RI_OLMO_34B:
-                return 8  # 64 GPUs
-            case RicursiveOlmoV1.RI_OLMO_65B:
-                return 16  # 128 GPUs
-            case _:
-                raise ValueError(f"Invalid model size: {self}")
+    def get_settings(self, vocab_size: int) -> Tuple[TransformerConfig, _ModelSizeSettings]:
+        """Get the model config and all settings for this model size."""
+        # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
+        settings_map = {
+            RicursiveOlmoV1.RI_OLMO_260M: _ModelSizeSettings("260M", 1, 16, 1.0),
+            RicursiveOlmoV1.RI_OLMO_709M: _ModelSizeSettings("709M", 2, 16, 1.0),
+            RicursiveOlmoV1.RI_OLMO_1p3B: _ModelSizeSettings("1p3B", 2, 16, 1.0),
+            RicursiveOlmoV1.RI_OLMO_2B: _ModelSizeSettings("2B", 4, 16, 1.0),
+            RicursiveOlmoV1.RI_OLMO_4B: _ModelSizeSettings("4B", 4, 32, 1.0),
+            RicursiveOlmoV1.RI_OLMO_8B: _ModelSizeSettings("8B", 8, 64, 0.9),
+            RicursiveOlmoV1.RI_OLMO_15B: _ModelSizeSettings(
+                "15B", 8, 128, 0.4
+            ),  # Support up to 16 hosts, bsz8 per host
+            RicursiveOlmoV1.RI_OLMO_34B: _ModelSizeSettings(
+                "34B", 8, 16, 0.1
+            ),  # Currently does not work, OOMs!!!
+            RicursiveOlmoV1.RI_OLMO_65B: _ModelSizeSettings("65B", 16, 16, 1.0),
+        }
+        if self not in settings_map:
+            raise ValueError(
+                f"Model not in list! Valid models: {[m.name for m in RicursiveOlmoV1]}\n\n"
+            )
 
-    def get_model_config_and_settings(
-        self, vocab_size: int
-    ) -> Tuple[TransformerConfig, int, float]:
-        """Get the model config, round_nearest, and activation_memory_budget for this model size."""
-        match self:
-            case RicursiveOlmoV1.RI_OLMO_260M:
-                return (RicursiveTransformerConfig.ri_olmo_v1_260M(vocab_size), 16, 1.0)
-            case RicursiveOlmoV1.RI_OLMO_709M:
-                return (RicursiveTransformerConfig.ri_olmo_v1_709M(vocab_size), 16, 1.0)
-            case RicursiveOlmoV1.RI_OLMO_1p3B:
-                return (RicursiveTransformerConfig.ri_olmo_v1_1p3B(vocab_size), 16, 1.0)
-            case RicursiveOlmoV1.RI_OLMO_2B:
-                return (RicursiveTransformerConfig.ri_olmo_v1_2B(vocab_size), 16, 1.0)
-            case RicursiveOlmoV1.RI_OLMO_4B:
-                return (RicursiveTransformerConfig.ri_olmo_v1_4B(vocab_size), 32, 1.0)
-            case RicursiveOlmoV1.RI_OLMO_8B:
-                return (RicursiveTransformerConfig.ri_olmo_v1_8B(vocab_size), 64, 0.9)
-            case RicursiveOlmoV1.RI_OLMO_15B:
-                # Support up to 16 hosts, bsz8 per host
-                return (RicursiveTransformerConfig.ri_olmo_v1_15B(vocab_size), 128, 0.4)
-            case RicursiveOlmoV1.RI_OLMO_34B:
-                # Currently does not work, OOMs!!!
-                return (RicursiveTransformerConfig.ri_olmo_v1_34B(vocab_size), 16, 0.1)
-            case RicursiveOlmoV1.RI_OLMO_65B:
-                return (RicursiveTransformerConfig.ri_olmo_v1_65B(vocab_size), 16, 1.0)
-            case _:
-                raise ValueError(
-                    f"Model not in list! Valid models: {[m.name for m in RicursiveOlmoV1]}\n\n"
-                )
+        settings = settings_map[self]
+        config_method = getattr(RicursiveTransformerConfig, f"ri_olmo_v1_{settings.size}")
+        model_config = config_method(vocab_size)
+        return (model_config, settings)
 
 
 def handle_custom_args(
@@ -144,16 +129,21 @@ def handle_custom_args(
     parser = argparse.ArgumentParser()
     parser.add_argument("--lr-multiplier", type=float, default=1.0)
     parser.add_argument("--batch-multiplier", type=float, default=1.0)
-    parser.add_argument("--chinchilla-multiple", type=float, default=1.0)
+    parser.add_argument("--chinchilla-multiple", type=float, default=4.0)  # Default is 4xC
 
-    # Extract multiplier args and remaining overrides
+    # Extract argument names from parser
+    arg_prefixes = [
+        option_string
+        for action in parser._actions
+        if isinstance(action, argparse._StoreAction)
+        for option_string in action.option_strings
+    ]
+
+    # Remove custom args from overrides
     multiplier_args = []
     remaining = []
     for override in overrides:
-        if any(
-            override.startswith(f"{prefix}=")
-            for prefix in ["--lr-multiplier", "--batch-multiplier", "--chinchilla-multiple"]
-        ):
+        if any(override.startswith(f"{prefix}=") for prefix in arg_prefixes):
             # Split "key=value" into ["--key", "value"] for argparse
             key, value = override.split("=", 1)
             multiplier_args.extend([key, value])
@@ -235,19 +225,19 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     Hyperparameters are computed using StepFun optimal schedules [Li 2025], but can be
     overridden using standard config override syntax:
 
-        --train_module.optim.lr=0.001              Override learning rate
-        --data_loader.global_batch_size=1000       Override batch size
-        --train_module.scheduler.warmup=1000000    Override warmup (in tokens)
+    Standard config overrides:
+        --train_module.optim.lr=0.001                     Override learning rate
+        --data_loader.global_batch_size=1000              Override batch size
+        --train_module.scheduler.warmup=1000000           Override warmup (in tokens)
+        --trainer.callbacks.comet.enabled=false           Disable Comet logging
+        --trainer.callbacks.wandb.enabled=true            Enable WandB logging
+        --launch.num_nodes=2                              Override node count
 
-    Convenience multipliers (for quick sweeps):
-        --lr-multiplier=2.0          Multiply computed LR
-        --batch-multiplier=0.5       Multiply computed batch size
+    Convenience multipliers (for quick hyperparameter sweeps):
+        --lr-multiplier=2.0                                Multiply computed learning rate
+        --batch-multiplier=0.5                             Multiply computed batch size
+        --chinchilla-multiple=1                          Multiply Chinchilla training tokens
 
-    Other settings can be overridden via standard config paths, e.g.:
-        --trainer.callbacks.comet.enabled=false
-        --trainer.callbacks.comet.auto_resume=true
-        --trainer.callbacks.wandb.enabled=true
-        --launch.num_nodes=2
     """
     # Parse model size from run name
     model = parse_model_size(cli_context.run_name)
@@ -271,31 +261,26 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     save_folder = f"{root_dir}/checkpoints/{cli_context.run_name}"
 
     tokenizer_config = TokenizerConfig.dolma2()
-    vocab_size = tokenizer_config.padded_vocab_size()
-
-    # Get model config and size-specific settings
-    model_config, round_nearest, activation_memory_budget = model.get_model_config_and_settings(
-        vocab_size
-    )
+    model_config, model_size_settings = model.get_settings(tokenizer_config.padded_vocab_size())
 
     # Compute hyperparameters
     model_active_params = model_config.num_active_params
-    training_tokens = Duration.chinchilla_tokens(
+    train_duration = Duration.chinchilla_tokens(
         chinchilla_multiple, model_params=model_active_params
-    ).value
+    )
+    training_tokens = train_duration.value
 
     learning_rate = get_learning_rate(model_active_params, training_tokens)
     base_global_batch_size = get_global_batch_size(
         model_params=model_active_params,
         training_tokens=training_tokens,
         sequence_length=sequence_length,
-        round_nearest=round_nearest,
+        round_nearest=model_size_settings.batch_size_round_nearest,
     )
 
-    # Apply multipliers
+    # Apply custom multipliers
     adjusted_learning_rate = learning_rate * lr_multiplier
     global_batch_size = int(base_global_batch_size * batch_multiplier)
-
     if lr_multiplier != 1.0:
         print(
             f"Applied LR multiplier: {lr_multiplier}, LR: {learning_rate} -> {adjusted_learning_rate}"
@@ -305,14 +290,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             f"Applied batch multiplier: {batch_multiplier}, batch: {base_global_batch_size} -> {global_batch_size}"
         )
 
-    # Build Beaker launch config
     beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
         name=cli_context.run_name,
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,
         root_dir=root_dir,
         workspace="ai2/oe-t-ladder",
-        num_nodes=model.get_num_nodes(),
+        num_nodes=model_size_settings.num_nodes,
         nccl_debug=True,
     )
 
@@ -356,7 +340,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=activation_memory_budget,
+            activation_memory_budget=model_size_settings.activation_memory_budget,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
@@ -370,9 +354,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
-            max_duration=Duration.tokens(training_tokens),
+            max_duration=train_duration,
         )
-        .with_callback("monkey_patcher", MonkeyPatcherCallback())
+        .with_callbacks(configure_required_callbacks(cli_context.run_name))
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
@@ -405,7 +389,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 enabled=False,
             ),
         )
-        .with_callback("config_saver", ConfigSaverCallback())
         .with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
@@ -425,40 +408,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=sorted(
-                    [  # "fast" task set
-                        # Subset of OLMES
-                        "arc_challenge_test_bpb_5shot",
-                        "arc_challenge_test_mc_5shot_fast",
-                        "arc_easy_test_bpb_5shot",
-                        "arc_easy_test_mc_5shot_fast",
-                        "hellaswag_bpb_5shot",
-                        "mmlu_humanities_test_bpb_5shot",
-                        "mmlu_humanities_test_mc_5shot_fast",
-                        "mmlu_other_test_bpb_5shot",
-                        "mmlu_other_test_mc_5shot_fast",
-                        "mmlu_social_sciences_test_bpb_5shot",
-                        "mmlu_social_sciences_test_mc_5shot_fast",
-                        "mmlu_stem_test_bpb_5shot",
-                        "mmlu_stem_test_mc_5shot_fast",
-                        # Basic Skills
-                        "basic_skills_arithmetic_rc_5shot",
-                        "basic_skills_coding_rc_5shot",
-                        "basic_skills_common_knowledge_rc_5shot",
-                        "basic_skills_logical_reasoning_rc_5shot",
-                        "basic_skills_pattern_rc_5shot",
-                        "basic_skills_string_operations_rc_5shot",
-                        # Gen tasks BPB
-                        "codex_humaneval_gold_bpb_3shot",
-                        "codex_mbpp_gold_bpb_3shot",
-                        "minerva_math_500_gold_bpb_0shot",
-                        "mt_mbpp_cpp_gold_bpb_3shot",
-                        "mt_mbpp_java_gold_bpb_3shot",
-                        "mt_mbpp_rust_gold_bpb_3shot",
-                        # Sanity check for MCQA ability
-                        "copycolors_10way_fast",
-                    ]
-                ),
+                tasks=sorted(TASK_GROUPS["fast"]),
                 tokenizer=tokenizer_config,
                 # eval_on_finish=True,
                 # max_steps=max_steps,
@@ -483,26 +433,34 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    Invoke this script directly to access the internal experiment CLI, which
-    supports launch, train, dry_run, and other subcommands.
+    Invoke this script directly to access the internal experiment CLI.
+
+    The CLI supports several subcommands: launch, train, dry_run, and others.
+    See the main() function documentation for full details.
 
     Examples:
-        To render the config and exit:
+        Render the config and exit (dry run):
             python src/olmo_core/internal/ri_olmo/model_ladder_v1.py dry_run ri-olmo-v1-260m ai2/jupiter
 
-        To start a training run with torchrun:
+        Start a local training run with torchrun:
             torchrun --nproc-per-node=8 src/olmo_core/internal/ri_olmo/model_ladder_v1.py train ri-olmo-v1-260m ai2/jupiter
 
-        To launch a training run on Jupiter:
+        Launch a training run on Beaker (Jupiter cluster):
             python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-260m ai2/jupiter
 
-        To launch with custom hyperparameters:
+        Launch with custom hyperparameters using multipliers:
             python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-260m ai2/jupiter \\
                 --lr-multiplier=2.0 \\
-                --warmup-steps=1000
+                --batch-multiplier=0.5
 
-        To override num_nodes:
+        Override specific config values:
             python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-8b ai2/jupiter \\
-                --launch.num_nodes=2
+                --launch.num_nodes=2 \\
+                --train_module.scheduler.warmup=5000000
+
+        Enable logging callbacks:
+            python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-260m ai2/jupiter \\
+                --trainer.callbacks.wandb.enabled=true \\
+                --trainer.callbacks.comet.enabled=true
     """
     main(config_builder=build_experiment_config)
