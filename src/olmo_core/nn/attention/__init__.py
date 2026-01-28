@@ -16,6 +16,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
 from olmo_core.nn.fla.cp_utils import _qkvo_all2ll
@@ -181,7 +182,7 @@ class AttentionType(StrEnum):
 
 
 @dataclass
-class AttentionConfig(ModuleConfig):
+class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
     A configuration class for easily building any of the different attention modules.
 
@@ -269,7 +270,7 @@ class AttentionConfig(ModuleConfig):
         n_layers: int,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
-    ) -> "AttentionBase":
+    ) -> "SequenceMixer":
         """
         Build the corresponding attention module.
 
@@ -322,33 +323,7 @@ class AttentionConfig(ModuleConfig):
             ) from e
 
 
-class AttentionBase(nn.Module):
-    """
-    Base class for attention modules.
-    """
-
-    @abstractmethod
-    def apply_tp(
-        self,
-        tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
-        use_local_output: bool = True,
-        float8_enabled: bool = False,
-    ):
-        raise NotImplementedError
-
-    @abstractmethod
-    def apply_cp(
-        self,
-        cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
-    ):
-        raise NotImplementedError
-
-
-class Attention(AttentionBase):
+class Attention(SequenceMixer):
     """
     An implementation of multi-head self-attention with support for multi-query (MQA)
     and grouped-query (GQA) attention.
@@ -984,7 +959,7 @@ class NormalizedAttention(Attention):
         w.copy_(l2_normalize(w, dim=dim))
 
 
-class FusedAttention(AttentionBase):
+class FusedAttention(SequenceMixer):
     """
     An "fused" implementation of multi-head self-attention.
 

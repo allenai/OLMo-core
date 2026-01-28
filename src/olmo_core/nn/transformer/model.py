@@ -115,7 +115,6 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.vocab_size = vocab_size
         self.n_layers = n_layers
-        self.n_attn_heads = block.attention.n_heads
         self.dtype = dtype
         self.embed_scale = embed_scale
 

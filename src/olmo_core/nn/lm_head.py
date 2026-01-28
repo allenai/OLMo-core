@@ -548,11 +548,9 @@ class NormalizedLMHead(LMHead):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
-        use_local_output: bool = True,
+        input_layouts: Optional[Tuple[Placement, Placement]] = None,
     ):
-        del tp_mesh, input_layout, output_layout, use_local_output
+        del tp_mesh, input_layouts
 
         raise NotImplementedError("TP is not implemented yet for the normalized LM head variant")
 

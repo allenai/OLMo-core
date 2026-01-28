@@ -237,10 +237,12 @@ def build_default_data_components(
         # max target sequence length doesn't affect how the data is loaded, just how it's cached behind the scenes
         max_target_sequence_length=max(common.max_sequence_length, 8192),
         generate_doc_lengths=intra_document_masking,
-        instance_filter_config=None
-        if not include_instance_filter
-        else InstanceFilterConfig(
-            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+        instance_filter_config=(
+            None
+            if not include_instance_filter
+            else InstanceFilterConfig(
+                repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+            )
         ),
     )
 
@@ -417,7 +419,6 @@ def build_config(
 
 
 def launch(config: ExperimentConfig):
-    log.info(config)
     assert config.launch is not None
 
     # Only send local Slack notifications when slack callback is enabled.
@@ -431,7 +432,6 @@ def launch(config: ExperimentConfig):
     config.launch.launch(
         follow=True,
         slack_notifications=slack_enabled,
-        launch_timeout=5 * 24 * 60 * 60,  # willm: 5 days
         #  step_timeout=30 * 60,  # hard timeout kills the job
         step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
     )
@@ -441,7 +441,6 @@ def launch_prep(config: ExperimentConfig):
     assert config.launch is not None
     config.launch.num_gpus = 0
     config.launch.num_nodes = 1
-    log.info(config)
     config.launch.launch(follow=True, torchrun=False)
 
 

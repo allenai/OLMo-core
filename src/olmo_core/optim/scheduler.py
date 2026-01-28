@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 import numpy as np
 import torch
 
-from ..config import Config, StrEnum
+from ..config import Config, Registrable, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .config import INITIAL_LR_FIELD, LR_FIELD
 
@@ -24,7 +24,7 @@ class SchedulerUnits(StrEnum):
 
 
 @dataclass
-class Scheduler(Config, metaclass=ABCMeta):
+class Scheduler(Config, Registrable, metaclass=ABCMeta):
     """
     Learning rate scheduler base class.
     """
@@ -96,6 +96,7 @@ class Scheduler(Config, metaclass=ABCMeta):
         return new_lr
 
 
+@Scheduler.register("constant")
 @dataclass
 class ConstantScheduler(Scheduler):
     """
@@ -109,6 +110,7 @@ class ConstantScheduler(Scheduler):
         return initial_lr
 
 
+@Scheduler.register("constant_with_warmup")
 @dataclass
 class ConstantWithWarmup(Scheduler):
     """
@@ -120,7 +122,8 @@ class ConstantWithWarmup(Scheduler):
     warmup_fraction: Optional[float] = None
     warmup_min_lr: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if self.warmup is None and self.warmup_steps is not None:
             self.warmup = self.warmup_steps
             self.warmup_steps = None
@@ -152,6 +155,7 @@ class ConstantWithWarmup(Scheduler):
         return initial_lr
 
 
+@Scheduler.register("wsd")
 @dataclass
 class WSD(Scheduler):
     """
@@ -167,7 +171,8 @@ class WSD(Scheduler):
     warmup_min_lr: float = 0.0
     decay_min_lr: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if self.warmup is None and self.warmup_steps is not None:
             self.warmup = self.warmup_steps
             self.warmup_steps = None
@@ -224,6 +229,7 @@ class WSD(Scheduler):
         return initial_lr
 
 
+@Scheduler.register("linear_with_warmup")
 @dataclass
 class LinearWithWarmup(Scheduler):
     """
@@ -237,7 +243,8 @@ class LinearWithWarmup(Scheduler):
     warmup_fraction: Optional[float] = None
     warmup_min_lr: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if self.warmup is None and self.warmup_steps is not None:
             self.warmup = self.warmup_steps
             self.warmup_steps = None
@@ -276,6 +283,7 @@ class LinearWithWarmup(Scheduler):
             return initial_lr - (initial_lr - eta_min) * (current / t_max)
 
 
+@Scheduler.register("inv_sqrt_with_warmup")
 @dataclass
 class InvSqrtWithWarmup(Scheduler):
     """
@@ -288,7 +296,8 @@ class InvSqrtWithWarmup(Scheduler):
     warmup_fraction: Optional[float] = None
     warmup_min_lr: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if self.warmup is None and self.warmup_steps is not None:
             self.warmup = self.warmup_steps
             self.warmup_steps = None
@@ -321,6 +330,7 @@ class InvSqrtWithWarmup(Scheduler):
         return eta_min + (initial_lr - eta_min) * sqrt(warmup / current)
 
 
+@Scheduler.register("cos_with_warmup")
 @dataclass
 class CosWithWarmup(Scheduler):
     """
@@ -334,7 +344,8 @@ class CosWithWarmup(Scheduler):
     t_max: Optional[int] = None
     warmup_min_lr: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if self.warmup is None and self.warmup_steps is not None:
             self.warmup = self.warmup_steps
             self.warmup_steps = None
@@ -373,6 +384,7 @@ class CosWithWarmup(Scheduler):
             return eta_min + (initial_lr - eta_min) * (1 + cos(pi * current / t_max)) / 2
 
 
+@Scheduler.register("half_cos_with_warmup")
 @dataclass
 class HalfCosWithWarmup(Scheduler):
     """
@@ -387,7 +399,8 @@ class HalfCosWithWarmup(Scheduler):
     t_max: Optional[int] = None
     warmup_min_lr: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if self.warmup is None and self.warmup_steps is not None:
             self.warmup = self.warmup_steps
             self.warmup_steps = None
@@ -429,6 +442,7 @@ class HalfCosWithWarmup(Scheduler):
             return eta_min + (initial_lr - eta_min) * (1 + cos(pi * current / t_max)) / 2
 
 
+@Scheduler.register("cos_with_warmup_and_linear_decay")
 @dataclass
 class CosWithWarmupAndLinearDecay(CosWithWarmup):
     """
@@ -440,7 +454,8 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
     decay_fraction: Optional[float] = 0.1
     decay_min_lr: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         super().__post_init__()
 
         if self.decay is None and self.decay_steps is not None:
@@ -493,6 +508,7 @@ def _linear_decay(
     return decay_min_lr + (initial_lr - decay_min_lr) * min(step_from_end, decay) / decay
 
 
+@Scheduler.register("sequential")
 @dataclass
 class SequentialScheduler(Scheduler):
     """
@@ -509,7 +525,8 @@ class SequentialScheduler(Scheduler):
     """
     schedulers_max_steps: Optional[List[int]] = None  # deprecated, use 'schedulers_max' instead.
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if self.schedulers_max is None and self.schedulers_max_steps is not None:
             self.schedulers_max = self.schedulers_max_steps
             self.schedulers_max_steps = None
@@ -555,6 +572,7 @@ class SequentialScheduler(Scheduler):
         return self.schedulers[-1].get_lr(initial_lr, current, t_max)
 
 
+@Scheduler.register("wsds")
 @dataclass
 class WSDS(Scheduler):
     """
@@ -578,7 +596,8 @@ class WSDS(Scheduler):
     _warmup_steps: int = field(default=0, init=False, repr=False)
     _adjusted_period_lengths: List[int] = field(default_factory=list, init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if not self.period_lengths:
             raise OLMoConfigurationError("'period_lengths' must be provided and non-empty.")
         if any(p <= 0 for p in self.period_lengths):
@@ -690,6 +709,7 @@ class WSDS(Scheduler):
             return _linear_decay(self._get_peak_lr(initial_lr, pidx), D - t, D, self.decay_min_lr)
 
 
+@Scheduler.register("exponential")
 @dataclass
 class ExponentialScheduler(Scheduler):
     """
@@ -700,7 +720,8 @@ class ExponentialScheduler(Scheduler):
 
     lr_min: float = 1e-9
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if self.lr_min <= 0:
             raise OLMoConfigurationError("'lr_min' must be positive.")
 

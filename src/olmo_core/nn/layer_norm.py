@@ -10,7 +10,15 @@ from ..exceptions import OLMoConfigurationError
 from .config import ModuleConfig
 from .functional import l2_normalize
 
-__all__ = ["LayerNormType", "LayerNormConfig", "LayerNorm", "RMSNorm", "FusedRMSNorm", "L2Norm"]
+__all__ = [
+    "LayerNormType",
+    "LayerNormConfig",
+    "LayerNorm",
+    "RMSNorm",
+    "CuTeRMSNorm",
+    "FusedRMSNorm",
+    "L2Norm",
+]
 
 
 class LayerNormType(StrEnum):
@@ -25,6 +33,10 @@ class LayerNormType(StrEnum):
     rms = "rms"
     """
     ➡️ :class:`RMSNorm`
+    """
+    cute_rms = "cute_rms"
+    """
+    ➡️ :class:`CuTeRMSNorm`
     """
     fused_rms = "fused_rms"
     """
@@ -90,6 +102,8 @@ class LayerNormConfig(ModuleConfig):
                 return LayerNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.rms:
                 return RMSNorm(size=size, init_device=init_device, **kwargs)
+            elif self.name == LayerNormType.cute_rms:
+                return CuTeRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.fused_rms:
                 return FusedRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.l2_norm:
@@ -213,6 +227,54 @@ class RMSNorm(LayerNorm):
                     x = self.weight.type_as(x) * x
 
             return x.to(og_dtype)
+
+
+class CuTeRMSNorm(RMSNorm):
+    """
+    A CuTe-based implementation from the QuACK library.
+
+    .. warning::
+        This requires `quack <https://github.com/Dao-AILab/quack>`_ to be installed.
+
+    """
+
+    def __init__(
+        self,
+        *,
+        size: int,
+        eps: float = 1e-5,
+        elementwise_affine: bool = True,
+        bias: bool = True,
+        full_precision: bool = True,
+        init_device: str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ):
+        from quack import rmsnorm as rms_norm_fn  # type: ignore
+
+        if not full_precision:
+            # the CUTE kernel always casts to full precision internally
+            raise NotImplementedError(
+                f"Currently only 'full_precision=True' is supported with '{self.__class__.__name__}'"
+            )
+
+        super().__init__(
+            size=size,
+            eps=eps,
+            elementwise_affine=elementwise_affine,
+            bias=bias,
+            full_precision=full_precision,
+            dtype=dtype,
+            init_device=init_device,
+        )
+        self._rms_norm_fn = rms_norm_fn
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self._rms_norm_fn(
+            x,
+            weight=None if self.weight is None else self.weight.type_as(x),
+            bias=None if self.bias is None else self.bias.type_as(x),
+            eps=self.eps,
+        ).to(x.dtype)
 
 
 class FusedRMSNorm(RMSNorm):

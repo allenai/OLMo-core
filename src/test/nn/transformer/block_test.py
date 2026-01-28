@@ -36,33 +36,15 @@ def _build_block(
     kwargs: Optional[Dict[str, Any]] = None,
 ) -> TransformerBlockBase:
     ln_cfg = LayerNormConfig()
-    ff_cfg = FeedForwardConfig(hidden_size=4 * d_model)
-    kwargs = kwargs or {}
-
-    if block_cls == FLABlock:
-        fla_cfg = FLAConfig(name=kwargs.get("name", "GatedDeltaNet"))
-        return FLABlock(
-            d_model=d_model,
-            n_heads=kwargs.get("n_heads", 4),
-            block_idx=0,
-            n_layers=1,
-            fla=fla_cfg,
-            feed_forward=ff_cfg,
-            layer_norm=ln_cfg,
-            init_device=init_device,
-        )
-    else:
-        attn_cfg = AttentionConfig(**kwargs)
-        # block_cls is a TransformerBlock subclass here
-        return block_cls(  # type: ignore[call-arg]
-            d_model=d_model,
-            block_idx=0,
-            n_layers=1,
-            attention=attn_cfg,
-            feed_forward=ff_cfg,
-            layer_norm=ln_cfg,
-            init_device=init_device,
-        )
+    return block_cls(
+        d_model=d_model,
+        block_idx=0,
+        n_layers=1,
+        sequence_mixer=attn_cfg,
+        feed_forward=ff_cfg,
+        layer_norm=ln_cfg,
+        init_device=init_device,
+    )
 
 
 def _run_tensor_parallel_block(
