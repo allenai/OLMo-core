@@ -1,7 +1,8 @@
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from functools import cache
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 import torch
 import torch.distributed as dist
@@ -277,6 +278,13 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         )
 
 
+@cache
+def _all_tasks() -> Set[str]:
+    from olmo_eval import list_tasks
+
+    return set(list_tasks())
+
+
 class DownstreamEvaluator(Evaluator):
     metric_type_to_label = {
         "f1_v1": "F1 score",
@@ -308,9 +316,9 @@ class DownstreamEvaluator(Evaluator):
         dp_process_group: Optional[dist.ProcessGroup] = None,
         lazy: bool = False,
     ):
-        from olmo_eval import ICLMetric, list_tasks
+        from olmo_eval import ICLMetric
 
-        if task not in list_tasks():
+        if task not in _all_tasks():
             raise OLMoConfigurationError(f"Unknown downstream eval task: '{task}'")
 
         self.label = task
