@@ -89,7 +89,7 @@ class RicursiveOlmoV1(StrEnum):
             case RicursiveOlmoV1.RI_OLMO_709M:
                 return 2
             case RicursiveOlmoV1.RI_OLMO_1p3B:
-                return 4
+                return 2
             case RicursiveOlmoV1.RI_OLMO_2B:
                 return 4
             case RicursiveOlmoV1.RI_OLMO_4B:
