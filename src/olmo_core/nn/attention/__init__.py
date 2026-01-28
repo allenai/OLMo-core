@@ -17,6 +17,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.kv_cache import KVCacheManager
+from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedDeltaNetConfig
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
@@ -62,7 +63,6 @@ __all__ = [
     "FlashAttention4Backend",
     "TEAttentionBackend",
     "AttentionConfig",
-    "AttentionBase",
     "Attention",
     "FusedAttention",
     "NormalizedAttention",
@@ -73,6 +73,8 @@ __all__ = [
     "UlyssesLoadBalancer",
     "RingContextParallelStyle",
     "UlyssesContextParallelStyle",
+    "GatedDeltaNetConfig",
+    "GatedDeltaNet",
 ]
 
 log = logging.getLogger(__name__)
@@ -170,6 +172,7 @@ class AttentionType(StrEnum):
     """
 
 
+@SequenceMixerConfig.register("attention")
 @dataclass
 class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """

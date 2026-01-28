@@ -154,6 +154,7 @@ jobs:
               pytest -v --color=yes --durations=3 -m gpu \
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 --ignore-glob='src/test/nn/transformer*' \
+                --ignore-glob='src/test/nn/attention*' \
                 --ignore-glob='src/test/nn/moe*' \
                 --ignore-glob='src/test/optim*' \
                 src/test/
@@ -171,6 +172,13 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
+
+          - name: Test attention (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/nn/attention*
 
           - name: Test MoE (GPU)
             image: *gpu_test_image
