@@ -326,6 +326,9 @@ class DownstreamEvaluator(Evaluator):
         self.tokenizer = tokenizer
         self.dp_process_group = dp_process_group
         self.metric: Optional[ICLMetric] = None
+        if lazy:
+            log.info(f"Initializing lazy DownstreamEvaluator for task '{self.label}'")
+
         super().__init__(
             name=name,
             batches=None if lazy else self._build_data_loader(),
@@ -335,6 +338,8 @@ class DownstreamEvaluator(Evaluator):
 
     def _build_data_loader(self) -> DataLoader:
         from olmo_eval import ICLMetric, ICLMultiChoiceTaskDataset, build_task
+
+        log.info(f"Building downstream eval task dataset for '{self.label}'...")
 
         task_dataset: ICLMultiChoiceTaskDataset
         if self.batch_spec.fixed_sequence_length:
