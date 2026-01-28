@@ -216,11 +216,12 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         if not self.enabled:
             return None
 
+        dataset_max_sequence_length: int
         if isinstance(self.eval_dataset, NumpyVSLDatasetConfig):
             dataset_max_sequence_length = self.eval_dataset.max_sequence_length
         else:
             assert hasattr(self.eval_dataset, "sequence_length")
-            dataset_max_sequence_length = self.eval_dataset.sequence_length
+            dataset_max_sequence_length = self.eval_dataset.sequence_length  # type: ignore
 
         batch_spec = trainer.train_module.eval_batch_spec
         if (
@@ -305,89 +306,111 @@ class DownstreamEvaluator(Evaluator):
         tokenizer: "HFTokenizer",
         device: Optional[torch.device] = None,
         dp_process_group: Optional[dist.ProcessGroup] = None,
+        lazy: bool = False,
     ):
+        from olmo_eval import ICLMetric, list_tasks
+
+        if task not in list_tasks():
+            raise OLMoConfigurationError(f"Unknown downstream eval task: '{task}'")
+
+        self.label = task
+        self.batch_spec = batch_spec
+        self.tokenizer = tokenizer
+        self.dp_process_group = dp_process_group
+        self.metric: Optional[ICLMetric] = None
+        super().__init__(
+            name=name,
+            batches=None if lazy else self._build_data_loader(),
+            batches_factory=self._build_data_loader if lazy else None,
+            device=device,
+        )
+
+    def _build_data_loader(self) -> DataLoader:
         from olmo_eval import ICLMetric, ICLMultiChoiceTaskDataset, build_task
 
         task_dataset: ICLMultiChoiceTaskDataset
-        if batch_spec.fixed_sequence_length:
-            assert batch_spec.max_sequence_length is not None
+        if self.batch_spec.fixed_sequence_length:
+            assert self.batch_spec.max_sequence_length is not None
             task_dataset = build_task(
-                task, tokenizer, model_ctx_len=batch_spec.max_sequence_length, fixed_ctx_len=True
+                self.label,
+                self.tokenizer,
+                model_ctx_len=self.batch_spec.max_sequence_length,
+                fixed_ctx_len=True,
             )
-        elif batch_spec.max_sequence_length is not None:
-            task_dataset = build_task(task, tokenizer, model_ctx_len=batch_spec.max_sequence_length)
+        elif self.batch_spec.max_sequence_length is not None:
+            task_dataset = build_task(
+                self.label, self.tokenizer, model_ctx_len=self.batch_spec.max_sequence_length
+            )
         else:
-            task_dataset = build_task(task, tokenizer)
+            task_dataset = build_task(self.label, self.tokenizer)
 
-        self.label = task
-        self.task = task_dataset
-        self.metric = ICLMetric(metric_type=self.task.metric_type).to(
-            device or get_default_device()
+        self.metric = ICLMetric(metric_type=task_dataset.metric_type).to(
+            self.device or get_default_device()
         )
         sampler: Optional[DistributedSampler] = None
         if is_distributed():
             sampler = DistributedSampler(
-                self.task,  # type: ignore
+                task_dataset,  # type: ignore
                 drop_last=False,
                 shuffle=False,
-                num_replicas=get_world_size(dp_process_group),
-                rank=get_rank(dp_process_group),
+                num_replicas=get_world_size(self.dp_process_group),
+                rank=get_rank(self.dp_process_group),
             )
 
         if (
-            batch_spec.max_sequence_length is not None
-            and self.task.max_sequence_length > batch_spec.max_sequence_length
+            self.batch_spec.max_sequence_length is not None
+            and task_dataset.max_sequence_length > self.batch_spec.max_sequence_length
         ):
             raise OLMoConfigurationError(
-                f"The maximum sequence length for downstream eval task '{task}' ({self.task.max_sequence_length:,d} tokens) "
-                f"is too long for the train module's maximum eval sequence length ({batch_spec.max_sequence_length:,d} tokens)"
+                f"The maximum sequence length for downstream eval task '{self.label}' ({task_dataset.max_sequence_length:,d} tokens) "
+                f"is too long for the train module's maximum eval sequence length ({self.batch_spec.max_sequence_length:,d} tokens)"
             )
 
         rank_batch_size_instances: int
-        if batch_spec.batch_size_unit == EvalBatchSizeUnit.instances:
-            rank_batch_size_instances = batch_spec.rank_batch_size
-        elif batch_spec.batch_size_unit == EvalBatchSizeUnit.tokens:
-            if batch_spec.fixed_sequence_length:
-                assert batch_spec.max_sequence_length is not None
-                if batch_spec.rank_batch_size % batch_spec.max_sequence_length != 0:
+        if self.batch_spec.batch_size_unit == EvalBatchSizeUnit.instances:
+            rank_batch_size_instances = self.batch_spec.rank_batch_size
+        elif self.batch_spec.batch_size_unit == EvalBatchSizeUnit.tokens:
+            if self.batch_spec.fixed_sequence_length:
+                assert self.batch_spec.max_sequence_length is not None
+                if self.batch_spec.rank_batch_size % self.batch_spec.max_sequence_length != 0:
                     raise OLMoConfigurationError(
-                        f"The eval batch size ({batch_spec.rank_batch_size} tokens) must be divisible "
-                        f"by the maximum eval sequence length ({batch_spec.max_sequence_length:,d} tokens)"
+                        f"The eval batch size ({self.batch_spec.rank_batch_size} tokens) must be divisible "
+                        f"by the maximum eval sequence length ({self.batch_spec.max_sequence_length:,d} tokens)"
                     )
                 rank_batch_size_instances = (
-                    batch_spec.rank_batch_size // batch_spec.max_sequence_length
+                    self.batch_spec.rank_batch_size // self.batch_spec.max_sequence_length
                 )
             else:
                 rank_batch_size_instances = (
-                    batch_spec.rank_batch_size // self.task.max_sequence_length
+                    self.batch_spec.rank_batch_size // task_dataset.max_sequence_length
                 )
         else:
-            raise NotImplementedError(batch_spec.batch_size_unit)
+            raise NotImplementedError(self.batch_spec.batch_size_unit)
 
         log.info(
             f"Using per-rank batch size of {rank_batch_size_instances} instances "
-            f"for downstream eval task '{task}' with max sequence length {self.task.max_sequence_length:,d} tokens"
+            f"for downstream eval task '{self.label}' with max sequence length {task_dataset.max_sequence_length:,d} tokens"
         )
 
-        data_loader = DataLoader(
-            self.task,  # type: ignore
+        return DataLoader(
+            task_dataset,  # type: ignore
             batch_size=rank_batch_size_instances,
-            collate_fn=self.task.collate_fn,
+            collate_fn=task_dataset.collate_fn,
             drop_last=False,
             shuffle=False,
             num_workers=0,
             sampler=sampler,
         )
 
-        super().__init__(name=name, batches=data_loader, device=device)
-
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
         del ce_loss
+        assert self.metric is not None
         self.metric.update(batch, logits)
 
     def compute_metrics(self) -> Dict[str, torch.Tensor]:
+        assert self.metric is not None
         metric_type_to_value = self.metric.compute()
         outputs = {}
         for metric_type, value in metric_type_to_value.items():
@@ -396,6 +419,7 @@ class DownstreamEvaluator(Evaluator):
         return outputs
 
     def reset_metrics(self) -> None:
+        assert self.metric is not None
         self.metric.reset()
 
 
@@ -409,6 +433,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     eval_on_startup: bool = False
     cancel_after_first_eval: bool = False
     log_interval: int = 5
+    lazy: bool = False
     enabled: bool = True
 
     def build(self, trainer: "Trainer") -> Optional[Callback]:
@@ -439,6 +464,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
                     tokenizer=tokenizer,
                     device=trainer.device,
                     dp_process_group=trainer.dp_process_group,
+                    lazy=self.lazy,
                 )
             )
 
