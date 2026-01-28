@@ -248,6 +248,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
     root_dir = get_root_dir(cli_context.cluster)
+    data_root = "gs://ai2-llm"
     work_dir = get_work_dir(root_dir)
     save_folder = f"{root_dir}/checkpoints/{cli_context.run_name}"
 
@@ -301,7 +302,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMo_mix_0925_official,
         tokenizer=tokenizer_config,
-        mix_base_dir=root_dir,
+        mix_base_dir=data_root,
         sequence_length=sequence_length,
         max_target_sequence_length=max(8192, sequence_length),
         work_dir=work_dir,
@@ -389,7 +390,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             LMEvaluatorCallbackConfig(
                 eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
-                    mix_base_dir=root_dir,
+                    mix_base_dir=data_root,
                     sequence_length=sequence_length,
                     tokenizer=tokenizer_config,
                     work_dir=work_dir,
