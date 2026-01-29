@@ -3,7 +3,7 @@
 # Requires gantry to be installed: uv tool install beaker-gantry
 
 gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
-    --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
+    --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras && /root/.local/bin/uv pip install flash-attn --no-build-isolation" \
     --weka=oe-adapt-default:/weka/oe-adapt-default \
     --weka=oe-training-default:/weka/oe-training-default \
     --priority urgent \
