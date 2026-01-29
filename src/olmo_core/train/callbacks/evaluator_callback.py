@@ -116,7 +116,7 @@ class EvaluatorCallback(Callback):
         evaluator_bs = []
 
         for evaluator in self.evaluators:
-            log.info(f"Running {evaluator.name} evals...")
+            log.info(f"Running {evaluator.display_name} evals...")
             start_time = time.monotonic()
             evaluator.reset_metrics()
             eval_step = 0
@@ -161,7 +161,7 @@ class EvaluatorCallback(Callback):
 
             gc_cuda()
             log.info(
-                f"Finished {evaluator.name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
+                f"Finished {evaluator.display_name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
                 + "\n".join(metrics_str)
             )
 
@@ -335,6 +335,10 @@ class DownstreamEvaluator(Evaluator):
             batches_factory=self._build_data_loader if lazy else None,
             device=device,
         )
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.name} '{self.label}'"
 
     def _build_data_loader(self) -> DataLoader:
         from olmo_eval import ICLMetric, ICLMultiChoiceTaskDataset, build_task

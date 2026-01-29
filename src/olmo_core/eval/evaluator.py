@@ -58,6 +58,10 @@ class Evaluator(metaclass=ABCMeta):
             self.batches.reset()
 
     @property
+    def display_name(self) -> str:
+        return self.name
+
+    @property
     def total_batches(self) -> Optional[int]:
         """
         Get the total number of batches in an eval loop if it's known ahead of time.
