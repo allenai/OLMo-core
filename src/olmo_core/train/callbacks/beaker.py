@@ -133,35 +133,24 @@ class BeakerCallback(Callback):
 
     def post_train(self):
         if self.enabled and get_rank() == 0:
-            self._update(block=True)
-            self._finalized = True
+            self._update()
 
-    def _update(self, block: bool = False):
-        submission_time = time.monotonic()
-        if block:
-            self._set_description(self.trainer.training_progress, submission_time)
-        else:
-            self.trainer.run_bookkeeping_op(
-                self._set_description,
-                self.trainer.training_progress,
-                submission_time,
-                op_name="beaker_set_description",
-                allow_multiple=True,
-                distributed=False,
-            )
-        self._last_update = submission_time
+    def _update(self):
+        self.trainer.run_bookkeeping_op(
+            self._set_description,
+            op_name="beaker_set_description",
+            allow_multiple=False,
+            distributed=False,
+        )
+        self._last_update = time.monotonic()
 
-    def _set_description(self, progress: TrainingProgress, submission_time: float):
+    def _set_description(self):
         from beaker.exceptions import BeakerError, HTTPError, RequestException, RpcError
         from gantry.api import update_workload_description
 
         from olmo_core.launch.beaker import get_beaker_client
 
-        # Skip if there's a more recent invocation.
-        if self._last_update is not None and submission_time < self._last_update:
-            return
-
-        description = f"[{progress}] "
+        description = f"[{self.trainer.training_progress}] "
 
         if self.description is not None:
             description = f"{description}{self.description}\n"
