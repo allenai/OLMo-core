@@ -319,7 +319,7 @@ def main():
             source = doc.get('source', f'doc_{doc_idx}')
             doc_id = f"{source}_{doc_idx}"
 
-            inputs = model.tokenizer([input_text], return_tensors='pt', padding=False)
+            inputs = model.tokenizer([input_text], return_tensors='pt', padding=False, truncation=True, max_length=max_length)
             seq_len = inputs['input_ids'].shape[1]
 
             if seq_len <= token_idx:
