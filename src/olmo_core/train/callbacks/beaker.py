@@ -10,7 +10,6 @@ from typing import Any, ClassVar, Dict, Optional
 
 from olmo_core.distributed.utils import get_rank
 
-from ..common import TrainingProgress
 from .callback import Callback
 from .comet import CometCallback
 from .wandb import WandBCallback
@@ -138,20 +137,19 @@ class BeakerCallback(Callback):
     def _update(self):
         self.trainer.run_bookkeeping_op(
             self._set_description,
-            self.trainer.training_progress,
             op_name="beaker_set_description",
             allow_multiple=False,
             distributed=False,
         )
         self._last_update = time.monotonic()
 
-    def _set_description(self, progress: TrainingProgress):
+    def _set_description(self):
         from beaker.exceptions import BeakerError, HTTPError, RequestException, RpcError
         from gantry.api import update_workload_description
 
         from olmo_core.launch.beaker import get_beaker_client
 
-        description = f"[{progress}] "
+        description = f"[{self.trainer.training_progress}] "
 
         if self.description is not None:
             description = f"{description}{self.description}\n"
