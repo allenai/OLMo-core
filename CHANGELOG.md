@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `SequenceMixer` base class that both attention and recurrent layers inherit from.
 - Added `GatedDeltaNet` layer implementation.
 - Added `CuTeRMSNorm`, a CuTe-based RMSNorm implementation from the QuACK library.
+- Added `lazy` option to `DownstreamEvaluatorCallbackConfig` for lazily loading each task which can decrease startup time.
 
 ### Fixed
 
