@@ -155,6 +155,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         * Look at the logs of your training job to find the path your final checkpoint was saved to.
         * Recommended to use one GPU. This is currently the only way to "reserve" CPUs for your job, and conversion takes <10 minutes.
         * If you'll be evaluating your model using `submit_eval_jobs.py` in open-instruct, your converted model must be saved in the `oe-adapt-default` weka bucket.
+        * **Custom architectures**: The standard conversion script only supports OLMo transformer models. For non-standard architectures (e.g., hybrid FLA models, Qwen, Gemma), you may need a custom conversion script. Check `src/examples/huggingface/` for architecture-specific converters.
 
 2. Launch evaluations using the submit_eval_jobs.sh script in `open-instruct` using a command such as:
 
