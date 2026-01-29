@@ -417,8 +417,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                     tokenizer=tokenizer_config,
                     work_dir=work_dir,
                 ),
-                # eval_on_finish=True,
-                # max_steps=max_steps,
+                eval_on_finish=True,
                 log_interval=10,
                 eval_interval=2_500,
             ),
@@ -428,8 +427,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             DownstreamEvaluatorCallbackConfig(
                 tasks=sorted(TASK_GROUPS["fast"]),
                 tokenizer=tokenizer_config,
-                # eval_on_finish=True,
-                # max_steps=max_steps,
+                eval_on_finish=True,
                 eval_interval=5_000,
             ),
         )
