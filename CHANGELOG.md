@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `GatedDeltaNet` layer implementation.
 - Added `CuTeRMSNorm`, a CuTe-based RMSNorm implementation from the QuACK library.
 - Added `lazy` option to `DownstreamEvaluatorCallbackConfig` for lazily loading each task which can decrease startup time.
+- `BeakerCallback` will include throughput metrics in the workload description.
 
 ### Fixed
 
