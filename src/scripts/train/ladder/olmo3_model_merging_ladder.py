@@ -11,7 +11,12 @@ from olmo_core.data.composable import (
 )
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
-from olmo_core.model_ladder import ModelLadder, Olmo3ModelConfigurator, TransformerSize, WSDSChinchillaRunConfigurator
+from olmo_core.model_ladder import (
+    ModelLadder,
+    Olmo3ModelConfigurator,
+    TransformerSize,
+    WSDSChinchillaRunConfigurator,
+)
 from olmo_core.train import callbacks
 
 log = logging.getLogger(__name__)
@@ -42,7 +47,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
         model_configurator=Olmo3ModelConfigurator(
-            rank_microbatch_size=None if args.rank_mbz is None else args.rank_mbz * args.sequence_length,
+            rank_microbatch_size=None
+            if args.rank_mbz is None
+            else args.rank_mbz * args.sequence_length,
         ),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple,
@@ -53,11 +60,17 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         tokenizer=tokenizer,
         instance_sources=[
             ConcatAndChunkInstanceSourceConfig(
-                sources=[NumpyDocumentSourceMixConfig(tokenizer=tokenizer, mix=DataMix.OLMo_mix_0925, mix_base_dir="gs://ai2-llm/")],
+                sources=[
+                    NumpyDocumentSourceMixConfig(
+                        tokenizer=tokenizer, mix=DataMix.OLMo_mix_0925, mix_base_dir="gs://ai2-llm/"
+                    )
+                ],
                 sequence_length=args.sequence_length,
             ),
         ],
-        data_loader=ComposableDataLoaderConfig(num_workers=8, instance_filter_config=InstanceFilterConfig()),
+        data_loader=ComposableDataLoaderConfig(
+            num_workers=8, instance_filter_config=InstanceFilterConfig()
+        ),
     )
 
 

@@ -26,7 +26,7 @@ class ModelMergeCallback(Callback):
     and saves the result as a merged checkpoint (no optimizer state).
     """
 
-    priority: ClassVar[int] = 2 
+    priority: ClassVar[int] = 2
 
     merge_step: Optional[Union[int, List[int]]] = None
     """
@@ -95,7 +95,9 @@ class ModelMergeCallback(Callback):
         fixed_decay = scheduler.decay
         decay_fraction = scheduler.decay_fraction
         if fixed_decay is None:
-            assert decay_fraction is not None, "Either scheduler.decay or scheduler.decay_fraction must be set"
+            assert (
+                decay_fraction is not None
+            ), "Either scheduler.decay or scheduler.decay_fraction must be set"
 
         merge_steps = []
         cumulative_tokens = 0
@@ -103,7 +105,11 @@ class ModelMergeCallback(Callback):
         for i, period_length in enumerate(scheduler.period_lengths):
             cumulative_tokens += period_length  # end-of-period tokens
 
-            decay_tokens = fixed_decay if fixed_decay is not None else int(round(decay_fraction * period_length))
+            decay_tokens = (
+                fixed_decay
+                if fixed_decay is not None
+                else int(round(decay_fraction * period_length))
+            )
 
             # Pre-decay merge (before decay starts)
             pre_decay_tokens = cumulative_tokens - decay_tokens
@@ -112,7 +118,10 @@ class ModelMergeCallback(Callback):
 
             log.debug(
                 "WSDS period %d: end=%d tokens, decay=%d tokens, merge_step=%d",
-                i, cumulative_tokens, decay_tokens, pre_decay_step,
+                i,
+                cumulative_tokens,
+                decay_tokens,
+                pre_decay_step,
             )
 
         return merge_steps
@@ -132,7 +141,9 @@ class ModelMergeCallback(Callback):
         """Check if a complete merged checkpoint already exists for a given step."""
         try:
             # Check for .metadata file which is written last by save_state_dict
-            metadata_path = join_path(self._merged_checkpoint_path(step), "model_and_optim", ".metadata")
+            metadata_path = join_path(
+                self._merged_checkpoint_path(step), "model_and_optim", ".metadata"
+            )
             return file_exists(metadata_path)
         except Exception as e:
             log.warning(
@@ -489,7 +500,9 @@ class ModelMergeCallback(Callback):
         # Use full_state_dict=False since averaged_state is sharded (each rank has its shard)
         log.info("Loading merged weights for evaluation...")
         dist_cp_sd.set_model_state_dict(
-            model, averaged_state, options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True)
+            model,
+            averaged_state,
+            options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True),
         )
 
         # Ensure all ranks have loaded merged weights before evaluation
@@ -505,7 +518,9 @@ class ModelMergeCallback(Callback):
             # Use full_state_dict=False since original_state is sharded
             log.info("Restoring original model weights...")
             dist_cp_sd.set_model_state_dict(
-                model, original_state, options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True)
+                model,
+                original_state,
+                options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True),
             )
             # Ensure all ranks have restored before continuing training
             barrier()
