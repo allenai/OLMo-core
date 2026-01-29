@@ -11,4 +11,5 @@ gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt
     -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_to_hf_hybrid.py \
         -i /weka/oe-training-default/ai2-llm/checkpoints/nathanl/olmo-sft/HYBRID_SFT_SMOKETEST/step4 \
         -o /weka/oe-adapt-default/nathanl/checkpoints/HYBRID_SFT_SMOKETEST/step4-hf \
+        --max-sequence-length 32768 \
         --skip-validation
