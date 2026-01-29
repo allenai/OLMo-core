@@ -10,7 +10,6 @@ from typing import Any, ClassVar, Dict, Optional
 
 from olmo_core.distributed.utils import get_rank
 
-from ..common import TrainingProgress
 from .callback import Callback
 from .comet import CometCallback
 from .wandb import WandBCallback
