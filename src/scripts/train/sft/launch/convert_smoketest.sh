@@ -4,7 +4,7 @@
 
 gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
     --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
-    --install "pip install -e '.[fla,transformers]' && pip install flash-attn --no-build-isolation" \
+    --install "python -m pip install -e '.[fla,transformers]' && python -m pip install flash-attn --no-build-isolation" \
     --weka=oe-adapt-default:/weka/oe-adapt-default \
     --weka=oe-training-default:/weka/oe-training-default \
     --priority urgent \
