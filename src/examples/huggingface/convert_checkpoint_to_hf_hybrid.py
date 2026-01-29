@@ -437,7 +437,8 @@ def convert_checkpoint_to_hf(
             except RuntimeError as e:
                 raise RuntimeError(f"Flash attention required but not supported: {e}")
 
-        elif validate and attention_config.backend != AttentionBackendName.torch:
+        elif attention_config.backend != AttentionBackendName.torch:
+            # Always override to torch backend when not using GPU/flash-attn
             log.info(f"Overriding attention backend to torch for {block_label}")
             attention_config.backend = AttentionBackendName.torch
             attention_config.use_flash = False
