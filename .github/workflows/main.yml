@@ -205,7 +205,7 @@ jobs:
       - name: Install Gantry
         run:
           # uv tool install git+https://github.com/allenai/beaker-gantry
-          uv tool install 'beaker-gantry>=3.1,<4.0'
+          uv tool install 'beaker-gantry>=3.4.5,<4.0'
 
       - name: Determine Beaker workspace
         if: env.BEAKER_TOKEN != ''
@@ -227,7 +227,7 @@ jobs:
       - name: GPU Tests
         if: env.BEAKER_TOKEN != ''
         run: |
-          gantry run \
+          exec gantry run \
             --show-logs \
             --yes \
             --workspace ${{ env.BEAKER_WORKSPACE }} \
