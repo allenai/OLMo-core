@@ -122,6 +122,7 @@ class TrainerConfig(Config):
                 tokenizer=tokenizer,
                 eval_interval=eval_interval,
                 lazy=lazy_load,
+                eval_on_finish=True,
             ),
         ).with_callback(
             "lm_evaluator",
@@ -134,6 +135,7 @@ class TrainerConfig(Config):
                     work_dir=get_work_dir(get_root_dir(cluster)),
                 ),
                 eval_interval=eval_interval,
+                eval_on_finish=True,
             ),
         )
 

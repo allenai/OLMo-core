@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `lazy` option to `DownstreamEvaluatorCallbackConfig` for lazily loading each task which can decrease startup time.
 - `TrainingProgress` (from `Trainer.training_progress`) now includes `current_tokens`, `bps`, `tps`, and `mfu` fields.
 - `BeakerCallback` will include throughput metrics in the workload description.
+- Added `eval_on_finish` option to `EvaluatorCallback`.
 
 ### Fixed
 
