@@ -83,7 +83,6 @@ sudo uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
 
 # TOOL USE
 BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-50B/step95368
-# SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tool-use-general-mix
 SFT_DATASET=/weka/oe-adapt-default/jacobm/olmo3-final-datasets/olmo3-32b-instruct-sft-1114
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     flexolmo-2x7b-50b_olmo3_code_anneal-full_olmo3_sft2 \
@@ -103,3 +102,23 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --model_name olmoe-2x7b \
     --dataset_path $SFT_DATASET
 
+
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tool-use-general-mix
+BASE_CKPT=/weka/oe-adapt-default/jacobm/flexolmo/checkpoints/general-model-resized
+uv run python src/scripts/train/sft/OLMo-sft.py launch \
+    olmo2-7b-tool_use_general_mix \
+        $BASE_CKPT \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=1e-4 \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=4096 \
+    --launch.num_gpus=8 \
+    --num_nodes=8 \
+    --budget ai2/oceo \
+    --workspace ai2/flex2 \
+    --model_name olmo2-7b \
+    --dataset_path $SFT_DATASET
