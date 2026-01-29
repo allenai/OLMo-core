@@ -317,8 +317,9 @@ class ModelMergeCallback(Callback):
                     self._accumulator = None
                     self._n_accumulated = 0
                     self._current_merge_idx += 1
+                continue  # Re-check with updated index
 
-            elif target_merge_step == current_step and self._n_accumulated > 0:
+            if target_merge_step == current_step and self._n_accumulated > 0:
                 # We're exactly at the merge step with accumulated weights ready
                 # This happens when resuming from a checkpoint saved before the merge completed
                 log.info(
@@ -481,12 +482,18 @@ class ModelMergeCallback(Callback):
         sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
         original_state = dist_cp_sd.get_model_state_dict(model, options=sd_options)
 
+        # Ensure all ranks are ready before loading merged weights
+        barrier()
+
         # Load merged weights using set_model_state_dict for proper FSDP support
         # Use full_state_dict=False since averaged_state is sharded (each rank has its shard)
         log.info("Loading merged weights for evaluation...")
         dist_cp_sd.set_model_state_dict(
             model, averaged_state, options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True)
         )
+
+        # Ensure all ranks have loaded merged weights before evaluation
+        barrier()
 
         # Run evaluator callbacks with "eval/merged" prefix
         try:
@@ -500,6 +507,8 @@ class ModelMergeCallback(Callback):
             dist_cp_sd.set_model_state_dict(
                 model, original_state, options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True)
             )
+            # Ensure all ranks have restored before continuing training
+            barrier()
 
     def state_dict(self) -> Dict[str, Any]:
         """
