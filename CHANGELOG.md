@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Changed Weka mounts to also mount `oe-adapt-default` when mounting `oe-training-default`
 - Added `olmo_core.data.composable` module.
 - Added `PeriNormTransformerBlock`.
 - Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
