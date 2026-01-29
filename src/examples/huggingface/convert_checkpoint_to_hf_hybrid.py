@@ -76,7 +76,7 @@ FLA_OLMO_CORE_TO_HF_WEIGHT_MAPPINGS: Dict[str, str] = {
     f"blocks.{LAYER}.fla.inner.o_norm.weight": f"model.layers.{LAYER}.linear_attn.o_norm.weight",
     f"blocks.{LAYER}.fla.inner.A_log": f"model.layers.{LAYER}.linear_attn.A_log",
     f"blocks.{LAYER}.fla.inner.dt_bias": f"model.layers.{LAYER}.linear_attn.dt_bias",
-    f"blocks.{LAYER}.fla_norm.weight": f"model.layers.{LAYER}.post_attention_layernorm.weight",
+    f"blocks.{LAYER}.fla_norm.weight": f"model.layers.{LAYER}.attention_layer_norm.weight",
 }
 
 FLA_OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
@@ -322,8 +322,15 @@ def save_hybrid_hf_model(
     
     n_layers = len(list(model.blocks.values()))
     hf_state_dict = convert_hybrid_state_to_hf(model_state_dict, n_layers)
-    
 
+    blocks = list(model.blocks.values())
+    for i, block in enumerate(blocks):
+        if isinstance(block, FLABlock):
+            old_key = f"model.layers.{i}.post_feedforward_layernorm.weight"
+            new_key = f"model.layers.{i}.feedforward_layer_norm.weight"
+            if old_key in hf_state_dict:
+                hf_state_dict[new_key] = hf_state_dict.pop(old_key)
+    
     if dtype is not None:
         hf_state_dict = {
             k: v.to(dtype.as_pt()) if torch.is_tensor(v) else v 
