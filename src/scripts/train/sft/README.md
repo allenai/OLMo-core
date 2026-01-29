@@ -136,6 +136,8 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
 1. Convert the model to a Huggingface model using a command such as:
 
+    > NOTE: Requires gantry to be installed: `uv tool install beaker-gantry`
+
     ```bash
     gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/<your_workspace> \
             --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
