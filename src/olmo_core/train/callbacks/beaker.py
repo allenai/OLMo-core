@@ -9,12 +9,10 @@ from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional
 
 from olmo_core.distributed.utils import get_rank
-from olmo_core.utils import format_float
 
 from ..common import TrainingProgress
 from .callback import Callback
 from .comet import CometCallback
-from .speed_monitor import SpeedMonitorCallback
 from .wandb import WandBCallback
 
 log = logging.getLogger(__name__)
@@ -46,36 +44,6 @@ class BeakerCallback(Callback):
 
     _url: str | None = dataclasses.field(repr=False, default=None)
     _last_update: float | None = dataclasses.field(repr=False, default=None)
-    _speed_monitor_name: str | None = dataclasses.field(repr=False, default=None)
-
-    @property
-    def speed_monitor(self) -> Optional[SpeedMonitorCallback]:
-        if self._speed_monitor_name is not None:
-            speed_monitor = self.trainer.callbacks.get(self._speed_monitor_name)
-            if isinstance(speed_monitor, SpeedMonitorCallback):
-                return speed_monitor
-        return None
-
-    @property
-    def bps_avg(self) -> Optional[float]:
-        if (speed_monitor := self.speed_monitor) is not None:
-            return speed_monitor.bps_avg
-        else:
-            return None
-
-    @property
-    def tps_avg(self) -> Optional[float]:
-        if (speed_monitor := self.speed_monitor) is not None:
-            return speed_monitor.tps_avg
-        else:
-            return None
-
-    @property
-    def mfu_avg(self) -> Optional[float]:
-        if (speed_monitor := self.speed_monitor) is not None:
-            return speed_monitor.mfu_avg
-        else:
-            return None
 
     def post_attach(self):
         if self.enabled is None:
@@ -99,7 +67,7 @@ class BeakerCallback(Callback):
             log.info(f"Running in Beaker workload {beaker_url}")
 
             # Add Beaker URL to W&B and Comet config if available.
-            for callback_name, callback in self.trainer.callbacks.items():
+            for callback in self.trainer.callbacks.values():
                 if isinstance(callback, WandBCallback):
                     if callback.enabled and callback.run is not None:
                         callback.run.config.update(
@@ -116,8 +84,6 @@ class BeakerCallback(Callback):
                         callback.exp.log_parameter("beaker_experiment_id", self.experiment_id)
                         log.info(f"Added beaker_experiment_url to Comet: {beaker_url}")
                         log.info(f"Added beaker_experiment_id to Comet: {self.experiment_id}")
-                elif isinstance(callback, SpeedMonitorCallback):
-                    self._speed_monitor_name = callback_name
 
             # Ensure result dataset directory exists.
             result_dir = Path(self.result_dir) / "olmo-core"
@@ -185,18 +151,7 @@ class BeakerCallback(Callback):
 
         from olmo_core.launch.beaker import get_beaker_client
 
-        throughput_metrics = []
-        if (tps_avg := self.tps_avg) is not None:
-            throughput_metrics.append(f"{format_float(tps_avg)} TPS")
-        elif (bps_avg := self.bps_avg) is not None:
-            throughput_metrics.append(f"{format_float(bps_avg)} BPS")
-        if (mfu_avg := self.mfu_avg) is not None:
-            throughput_metrics.append(f"{format_float(mfu_avg)}% MFU")
-
-        if throughput_metrics:
-            description = f"[{progress} | {', '.join(throughput_metrics)}] "
-        else:
-            description = f"[{progress}] "
+        description = f"[{progress}] "
 
         if self.description is not None:
             description = f"{description}{self.description}\n"
