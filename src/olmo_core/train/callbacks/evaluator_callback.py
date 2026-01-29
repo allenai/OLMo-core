@@ -217,7 +217,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_interval: Optional[int] = 1000
     fixed_steps: Optional[List[int]] = None
     eval_on_startup: bool = False
-    eval_on_finish: bool = True
+    eval_on_finish: bool = False
     cancel_after_first_eval: bool = False
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
@@ -460,7 +460,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     fixed_steps: Optional[List[int]] = None
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     eval_on_startup: bool = False
-    eval_on_finish: bool = True
+    eval_on_finish: bool = False
     cancel_after_first_eval: bool = False
     log_interval: int = 5
     lazy: bool = False
