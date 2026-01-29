@@ -133,28 +133,38 @@ def handle_custom_args(
     parser.add_argument("--lr-multiplier", type=float, default=1.0)
     parser.add_argument("--batch-multiplier", type=float, default=1.0)
     parser.add_argument("--chinchilla-multiple", type=float, default=4.0)  # Default is 4xC
+    parser.add_argument("--no-beaker-launch", action="store_true", default=False)
 
-    # Extract argument names from parser
-    arg_prefixes = [
-        option_string
-        for action in parser._actions
-        if isinstance(action, argparse._StoreAction)
-        for option_string in action.option_strings
-    ]
+    # Extract argument names from parser (both value-based and boolean flags)
+    arg_prefixes = []
+    boolean_flags = []
+    for action in parser._actions:
+        if isinstance(action, argparse._StoreAction):
+            arg_prefixes.extend(action.option_strings)
+        elif isinstance(action, argparse._StoreTrueAction):
+            boolean_flags.extend(action.option_strings)
 
     # Remove custom args from overrides
-    multiplier_args = []
+    custom_args_list = []
     remaining = []
     for override in overrides:
+        matched = False
+        # Check for value-based args (--key=value)
         if any(override.startswith(f"{prefix}=") for prefix in arg_prefixes):
             # Split "key=value" into ["--key", "value"] for argparse
             key, value = override.split("=", 1)
-            multiplier_args.extend([key, value])
-        else:
+            custom_args_list.extend([key, value])
+            matched = True
+        # Check for boolean flags (--flag)
+        elif override in boolean_flags:
+            custom_args_list.append(override)
+            matched = True
+
+        if not matched:
             remaining.append(override)
 
-    # Parse multiplier args
-    args = parser.parse_args(multiplier_args)
+    # Parse custom args
+    args = parser.parse_args(custom_args_list)
     return remaining, args
 
 
@@ -236,10 +246,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         --trainer.callbacks.wandb.enabled=true            Enable WandB logging
         --launch.num_nodes=2                              Override node count
 
+
     Convenience multipliers (for quick hyperparameter sweeps):
         --lr-multiplier=2.0                                Multiply computed learning rate
         --batch-multiplier=0.5                             Multiply computed batch size
         --chinchilla-multiple=1                          Multiply Chinchilla training tokens
+        --no-beaker-launch                                 Skip setting beaker launch config
 
     """
     # Parse model size from run name
@@ -256,6 +268,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     lr_multiplier = custom_args.lr_multiplier
     batch_multiplier = custom_args.batch_multiplier
     chinchilla_multiple = custom_args.chinchilla_multiple
+    no_beaker_launch = custom_args.no_beaker_launch
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
     root_dir = get_root_dir(cli_context.cluster)
@@ -293,15 +306,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             f"Applied batch multiplier: {batch_multiplier}, batch: {base_global_batch_size} -> {global_batch_size}"
         )
 
-    beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
-        name=cli_context.run_name,
-        cmd=cli_context.remote_cmd,
-        cluster=cli_context.cluster,
-        root_dir=root_dir,
-        workspace="ai2/oe-t-ladder",
-        num_nodes=model_size_settings.num_nodes,
-        nccl_debug=True,
-    )
+    beaker_launch_config = None
+    if not no_beaker_launch:
+        beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
+            name=cli_context.run_name,
+            cmd=cli_context.remote_cmd,
+            cluster=cli_context.cluster,
+            root_dir=root_dir,
+            workspace="ai2/oe-t-ladder",
+            num_nodes=model_size_settings.num_nodes,
+            nccl_debug=True,
+        )
 
     # Dataset config
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
@@ -465,5 +480,12 @@ if __name__ == "__main__":
             python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-260m ai2/jupiter \\
                 --trainer.callbacks.wandb.enabled=true \\
                 --trainer.callbacks.comet.enabled=true
+
+        Override config without setting launch (uses default node count):
+            python src/olmo_core/internal/ri_olmo/model_ladder_v1.py launch ri-olmo-v1-260m ai2/jupiter \\
+                --train_module.optim.lr=0.001 \\
+                --data_loader.global_batch_size=1000 \\
+                --train_module.scheduler.warmup=1000000
+
     """
     main(config_builder=build_experiment_config)
