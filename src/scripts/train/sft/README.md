@@ -119,3 +119,48 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         --skip_oi_evals \
         --process_output r1_style
     ```
+
+## Using Prebuilt Docker Images (Custom Architectures)
+
+When working with custom architectures (e.g., hybrid FLA models), you may need to use a prebuilt docker image that has specialized dependencies like `flash-attn` or `flash-linear-attention` pre-compiled.
+
+### Key considerations:
+
+1. **Use the conda Python directly, not gantry's venv.** Gantry creates a fresh virtual environment that doesn't have access to packages pre-installed in the docker image. To leverage the docker image's packages:
+
+    ```bash
+    # Instead of:
+    --install "uv pip install ..." \
+    -- python script.py
+
+    # Use:
+    --install "/opt/conda/bin/pip install ..." \
+    -- /opt/conda/bin/python script.py
+    ```
+
+2. **Only install what's missing.** The docker image already has torch, CUDA libraries, flash-attn, etc. You only need to install:
+    - The project itself: `pip install -e '.[extras]'`
+    - Any architecture-specific packages not in the base image (e.g., `flash-linear-attention` for FLA models)
+
+3. **Use architecture-specific converters.** Custom architectures need custom HuggingFace conversion scripts:
+    - Standard models: `src/examples/huggingface/convert_checkpoint_to_hf.py`
+    - Hybrid FLA models: `src/examples/huggingface/convert_checkpoint_to_hf_hybrid.py`
+
+4. **Find available beaker images.** Images follow the naming pattern `<user>/olmo-core-tch<torch_version>cu<cuda_version>-<date>`. Example: `tylerr/olmo-core-tch291cu128-2025-11-25`.
+
+### Example: Hybrid FLA model conversion
+
+```bash
+gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/<your_workspace> \
+    --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
+    --install "/opt/conda/bin/pip install -e '.[fla,transformers]'" \
+    --weka=oe-adapt-default:/weka/oe-adapt-default \
+    --weka=oe-training-default:/weka/oe-training-default \
+    --priority high \
+    --gpus 1 \
+    -- /opt/conda/bin/python src/examples/huggingface/convert_checkpoint_to_hf_hybrid.py \
+        -i /weka/oe-training-default/$USER/checkpoints/path-to-model/stepFINAL_STEP \
+        -o /weka/oe-adapt-default/$USER/checkpoints/path-to-model/stepFINAL_STEP-hf \
+        --max-sequence-length 32768 \
+        --skip-validation
+```
