@@ -7,10 +7,12 @@ import argparse
 import functools as ft
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Tuple
 
 import torch
 import torch.nn as nn
+from datasets import load_from_disk
 from transformers import AutoTokenizer
 
 from olmo_core.config import DType
@@ -242,10 +244,16 @@ def parse_args():
         help="List of paths to model checkpoints",
     )
     parser.add_argument(
-        "--num_texts",
+        "--dataset_path",
+        type=str,
+        default="long_docs",
+        help="Path to the long_docs dataset (HuggingFace dataset format)",
+    )
+    parser.add_argument(
+        "--num_docs",
         type=int,
-        default=10,
-        help="Number of random_text files to process (random_text_0.txt to random_text_{num_texts-1}.txt)",
+        default=None,
+        help="Number of documents to process (default: all documents in dataset)",
     )
     parser.add_argument(
         "--token_idx",
@@ -267,7 +275,19 @@ def main():
 
     output_file = f"attention_sink_results_tok{token_idx}.tsv"
 
-    text_files = [f"random_text_{i}.txt" for i in range(args.num_texts)]
+    # Load the long_docs dataset
+    dataset_path = Path(args.dataset_path)
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset not found at {dataset_path}")
+
+    print(f"Loading dataset from {dataset_path}...")
+    dataset = load_from_disk(str(dataset_path))
+    print(f"Loaded {len(dataset)} documents")
+
+    # Optionally limit number of documents
+    num_docs = args.num_docs if args.num_docs else len(dataset)
+    num_docs = min(num_docs, len(dataset))
+
     all_results = []
 
     for model_name in args.models:
@@ -278,8 +298,8 @@ def main():
             print(getattr(e, 'message', str(e)))
             continue
 
-        # Results for this model, grouped by layer across all text files
-        # layer -> list of (percent_sink, percent_local, text_file, is_sink_layer) tuples
+        # Results for this model, grouped by layer across all documents
+        # layer -> list of (percent_sink, percent_local, doc_id, is_sink_layer) tuples
         layer_results: dict[int, List[Tuple[float, float, str, int]]] = defaultdict(list)
 
         # Create and attach the monitor once per model
@@ -290,34 +310,32 @@ def main():
         )
         monitor.attach(model.generation_module.model)
 
-        for text_file in text_files:
-            # Reset monitor for this text file (keeps hooks attached)
+        for doc_idx in range(num_docs):
+            # Reset monitor for this document (keeps hooks attached)
             monitor.reset()
 
-            try:
-                with open(text_file, 'r') as f:
-                    input_text = f.read()
-            except FileNotFoundError:
-                print(f"Warning: {text_file} not found, skipping")
-                continue
+            doc = dataset[doc_idx]
+            input_text = doc['text']
+            source = doc.get('source', f'doc_{doc_idx}')
+            doc_id = f"{source}_{doc_idx}"
 
             inputs = model.tokenizer([input_text], return_tensors='pt', padding=False)
             seq_len = inputs['input_ids'].shape[1]
 
             if seq_len <= token_idx:
-                print(f"Skipping {text_file}: only {seq_len} tokens, need > {token_idx}")
+                print(f"Skipping doc {doc_idx} ({source}): only {seq_len} tokens, need > {token_idx}")
                 continue
 
-            print(f"Processing: {model_name} with {text_file}")
+            print(f"Processing: {model_name} with doc {doc_idx} ({source}, {seq_len} tokens)")
             model.generation_module.model_forward(**inputs)
 
-            # Collect results for this text file
+            # Collect results for this document
             for result in monitor.get_results():
                 layer_results[result['layer']].append(
-                    (result['percent_sink'], result['percent_local'], text_file, result['is_sink_layer'])
+                    (result['percent_sink'], result['percent_local'], doc_id, result['is_sink_layer'])
                 )
 
-        # Detach hooks after processing all text files for this model
+        # Detach hooks after processing all documents for this model
         monitor.detach()
 
         # Store individual and averaged results for this model
@@ -325,24 +343,24 @@ def main():
             # is_sink_layer is the same for all results in this layer
             is_sink_layer = results[0][3]
 
-            # Individual results for each text file
-            for percent_sink, percent_local, text_file, _ in results:
+            # Individual results for each document
+            for percent_sink, percent_local, doc_id, _ in results:
                 all_results.append({
                     'model': model_name,
                     'layer': layer,
-                    'text_file': text_file,
+                    'doc_id': doc_id,
                     'percent_sink': percent_sink,
                     'percent_local': percent_local,
                     'is_sink_layer': is_sink_layer,
                 })
 
-            # Average across all text files for this layer
+            # Average across all documents for this layer
             avg_sink = sum(r[0] for r in results) / len(results)
             avg_local = sum(r[1] for r in results) / len(results)
             all_results.append({
                 'model': model_name,
                 'layer': layer,
-                'text_file': 'AVERAGE',
+                'doc_id': 'AVERAGE',
                 'percent_sink': avg_sink,
                 'percent_local': avg_local,
                 'is_sink_layer': is_sink_layer,
@@ -351,14 +369,14 @@ def main():
     # Write all results to TSV file
     with open(output_file, 'w') as f:
         # Write header
-        f.write("model\tlayer\ttext_file\tpercent_sink\tpercent_local\tis_sink_layer\n")
+        f.write("model\tlayer\tdoc_id\tpercent_sink\tpercent_local\tis_sink_layer\n")
 
         # Write all results
         for result in all_results:
             f.write(
                 f"{result['model']}\t"
                 f"{result['layer']}\t"
-                f"{result['text_file']}\t"
+                f"{result['doc_id']}\t"
                 f"{result['percent_sink']:.2f}\t"
                 f"{result['percent_local']:.2f}\t"
                 f"{result['is_sink_layer']}\n"
