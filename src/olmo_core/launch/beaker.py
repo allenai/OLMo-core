@@ -132,7 +132,7 @@ class OLMoCoreBeakerImage(StrEnum):
     Official Beaker images that work well for OLMo-core.
 
     You can find the full list at
-    `beaker.org/ws/ai2/OLMo-core/images <https://beaker.org/ws/ai2/OLMo-core/images>`_, which
+    `beaker.org/orgs/ai2/workspaces/olmo-core/images <https://beaker.org/orgs/ai2/workspaces/olmo-core/images>`_, which
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
