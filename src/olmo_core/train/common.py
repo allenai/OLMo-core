@@ -6,7 +6,7 @@ import torch
 
 from ..config import StrEnum
 from ..data.utils import get_labels
-from ..utils import format_timedelta
+from ..utils import format_float, format_int, format_timedelta
 
 TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
@@ -219,6 +219,10 @@ class TrainingProgress:
     """
     The current training step.
     """
+    current_tokens: Optional[int] = None
+    """
+    The current number of tokens processed during training.
+    """
     total_steps: Optional[int] = None
     """
     The step that training will stop at.
@@ -227,17 +231,42 @@ class TrainingProgress:
     """
     Estimated time remaining.
     """
+    bps: Optional[float] = None
+    """
+    The average training speed in batches per second.
+    """
+    tps: Optional[float] = None
+    """
+    The average training speed in tokens per second per device.
+    """
+    mfu: Optional[float] = None
+    """
+    The average model flops utilization (MFU) percentage.
+    """
 
     def __str__(self) -> str:
         if self.total_steps is not None:
             progress_perc = min(100, int(100 * self.current_step / self.total_steps))
             progress_str = (
-                f"{progress_perc}% complete (step {self.current_step:,d}/{self.total_steps:,d})"
+                f"{progress_perc}% complete, step {self.current_step:,d}/{self.total_steps:,d}"
             )
         else:
             progress_str = f"step {self.current_step:,d}/???"
+
+        if self.current_tokens is not None:
+            progress_str += f", {format_int(self.current_tokens)} tokens"
+
         if self.time_remaining is not None:
             progress_str += f", eta {format_timedelta(self.time_remaining)}"
+
+        if self.tps is not None:
+            progress_str += f", {format_float(self.tps)} TPS"
+        elif self.bps is not None:
+            progress_str += f", {format_float(self.bps)} BPS"
+
+        if self.mfu is not None:
+            progress_str += f", {format_float(self.mfu)}% MFU"
+
         return progress_str
 
 

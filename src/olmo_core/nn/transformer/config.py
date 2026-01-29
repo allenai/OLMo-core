@@ -183,7 +183,7 @@ class TransformerBlockConfig(ModuleConfig):
     """
     attention_residual_alpha: Optional[float] = None
     """
-    A scaling factor applied to the attention output before adding it to the residual stream.
+    A scaling factor applied to the attention/recurrent output before adding it to the residual stream.
     """
     feed_forward_residual_alpha: Optional[float] = None
     """

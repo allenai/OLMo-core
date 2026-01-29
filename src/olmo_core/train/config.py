@@ -96,6 +96,7 @@ class TrainerConfig(Config):
         cluster: str,
         task_set: str = "full",
         eval_interval: int = 10_000,
+        lazy_load: bool = False,
     ) -> "TrainerConfig":
         """
         Return a new trainer config with added callbacks for downstream evaluation and validation sets.
@@ -117,7 +118,11 @@ class TrainerConfig(Config):
         return self.with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=tasks, tokenizer=tokenizer, eval_interval=eval_interval
+                tasks=tasks,
+                tokenizer=tokenizer,
+                eval_interval=eval_interval,
+                lazy=lazy_load,
+                eval_on_finish=True,
             ),
         ).with_callback(
             "lm_evaluator",
@@ -130,6 +135,7 @@ class TrainerConfig(Config):
                     work_dir=get_work_dir(get_root_dir(cluster)),
                 ),
                 eval_interval=eval_interval,
+                eval_on_finish=True,
             ),
         )
 

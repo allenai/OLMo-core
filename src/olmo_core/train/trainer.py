@@ -585,9 +585,13 @@ class Trainer:
 
         # Get current speed in batches per second.
         bps: Optional[float] = None
+        tps: Optional[float] = None
+        mfu: Optional[float] = None
         for callback in self._iter_callbacks():
             if isinstance(callback, SpeedMonitorCallback):
                 bps = callback.bps_avg
+                tps = callback.tps_avg
+                mfu = callback.mfu_avg
                 break
 
         # Estimate the remaining time.
@@ -604,8 +608,12 @@ class Trainer:
 
         return TrainingProgress(
             current_step=self.global_step,
+            current_tokens=self.global_train_tokens_seen,
             total_steps=total_steps,
             time_remaining=time_remaining,
+            bps=bps,
+            tps=tps,
+            mfu=mfu,
         )
 
     def cancel_run(self, reason: str, no_sync: bool = False):
