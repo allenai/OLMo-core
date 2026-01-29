@@ -486,6 +486,5 @@ if __name__ == "__main__":
                 --train_module.optim.lr=0.001 \\
                 --data_loader.global_batch_size=1000 \\
                 --train_module.scheduler.warmup=1000000
-
     """
     main(config_builder=build_experiment_config)
