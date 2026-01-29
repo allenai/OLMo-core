@@ -18,7 +18,6 @@ from olmo_core.internal.experiment import (
     main,
 )
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -43,14 +42,7 @@ GLOBAL_BATCH_SIZE = 8 * 1024 * 1024
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_32B(vocab_size=common.tokenizer.padded_vocab_size())
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[4096, 4096, 4096, -1],
-    )
-    config.block.attention.use_flash = True
-    return config
+    return TransformerConfig.olmo3_32B(vocab_size=common.tokenizer.padded_vocab_size())
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:

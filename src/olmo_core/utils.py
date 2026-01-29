@@ -676,6 +676,20 @@ def format_float(value: float) -> str:
         return f"{value:.4f}"
 
 
+def format_int(count: int) -> str:
+    """Format a large integer into a more human-readable string."""
+    if count < 1_000:
+        return f"{count}"
+    elif count < 1_000_000:
+        return f"{count / 1_000:.1f}K".replace(".0", "")
+    elif count < 1_000_000_000:
+        return f"{count / 1_000_000:.1f}M".replace(".0", "")
+    elif count < 1_000_000_000_000:
+        return f"{count / 1_000_000_000:.1f}B".replace(".0", "")
+    else:
+        return f"{count / 1_000_000_000_000:.1f}T".replace(".0", "")
+
+
 def format_timedelta(td: timedelta) -> str:
     breakdown = []
     if td.days > 0:
