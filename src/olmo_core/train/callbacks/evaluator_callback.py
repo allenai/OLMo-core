@@ -68,6 +68,11 @@ class EvaluatorCallback(Callback):
     Whether to run an evaluation when the trainer starts up.
     """
 
+    eval_on_finish: bool = False
+    """
+    Whether to run an evaluation when training finishes.
+    """
+
     cancel_after_first_eval: bool = False
     """
     If ``True``, cancel the run after running evals for the first time.
@@ -83,11 +88,6 @@ class EvaluatorCallback(Callback):
     log_interval: int = 5
     """
     How often to log eval progress to the console during an eval loop.
-    """
-
-    eval_on_finish: bool = False
-    """
-    Whether to run an evaluation when training finishes.
     """
 
     def post_attach(self):
