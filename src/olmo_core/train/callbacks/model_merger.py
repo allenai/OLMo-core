@@ -1,16 +1,16 @@
 import logging
 import os
-import shutil
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 
 from olmo_core.distributed.checkpoint import save_state_dict
-from olmo_core.distributed.utils import barrier, get_rank, is_distributed
-from olmo_core.io import join_path
+from olmo_core.distributed.utils import barrier, get_rank
+from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.io import clear_directory, dir_is_empty, file_exists, is_url, join_path
 from olmo_core.optim.scheduler import WSDS, Scheduler
 
 from .callback import Callback
@@ -26,6 +26,8 @@ class ModelMergeCallback(Callback):
     and saves the result as a merged checkpoint (no optimizer state).
     """
 
+    priority: ClassVar[int] = 2 
+
     merge_step: Optional[Union[int, List[int]]] = None
     """
     The step(s) at which to save merged checkpoint(s). Can be a single int or a list of ints.
@@ -34,16 +36,15 @@ class ModelMergeCallback(Callback):
     - For other schedulers: defaults to every ``merge_interval`` steps.
     """
 
-    merge_interval: int = 10000
-    """Interval at which to save merged checkpoints (e.g., steps 10000, 20000, ...)."""
+    merge_interval: int = 5000
+    """Interval at which to save merged checkpoints (e.g., steps 5000, 10000, ...)."""
 
     merge_last_n_steps: int = 100
     """Number of steps before ``merge_step`` to start accumulating the average."""
 
     output_suffix: str = "merged"
     """
-    Suffix for the output checkpoint directory name.
-    The merged checkpoint will be saved as "step{merge_step}-{output_suffix}".
+    Suffix for merged checkpoint directory. Checkpoint will be saved as "step{merge_step}-{output_suffix}".
     """
 
     enabled: bool = True
@@ -51,15 +52,32 @@ class ModelMergeCallback(Callback):
     _n_accumulated: int = field(default=0, repr=False)
     _merge_steps: List[int] = field(default_factory=list, repr=False)
     _current_merge_idx: int = field(default=0, repr=False)
+    _restored: bool = field(default=False, repr=False)
+
+    def __post_init__(self):
+        if self.merge_last_n_steps <= 0:
+            raise OLMoConfigurationError(
+                f"ModelMergeCallback: merge_last_n_steps must be positive, got {self.merge_last_n_steps}"
+            )
+
+        # Validate merge steps
+        if self.merge_step is not None:
+            steps = [self.merge_step] if isinstance(self.merge_step, int) else self.merge_step
+            invalid = [s for s in steps if s <= 0]
+            if invalid:
+                raise OLMoConfigurationError(
+                    f"ModelMergeCallback: merge_step values must be positive, got invalid step(s): {invalid}"
+                )
 
     def _get_decay_steps_from_scheduler(
         self, scheduler: Scheduler, max_steps: int
     ) -> Tuple[int, str]:
+        assert max_steps >= 0, "max_steps must be >= 0"
+
         # Check for explicit decay attribute
         if hasattr(scheduler, "decay") and scheduler.decay is not None:
             return scheduler.decay, "scheduler.decay"
 
-        # Check for decay_fraction attribute
         if hasattr(scheduler, "decay_fraction") and scheduler.decay_fraction is not None:
             decay_steps = round(max_steps * scheduler.decay_fraction)
             return decay_steps, f"scheduler.decay_fraction ({scheduler.decay_fraction})"
@@ -70,53 +88,63 @@ class ModelMergeCallback(Callback):
     def _get_merge_steps_from_wsds(self, scheduler: WSDS, tokens_per_step: int) -> List[int]:
         """
         Extract merge steps from a WSDS scheduler (one per period, before each decay).
-
-        :param scheduler: The WSDS scheduler.
-        :param tokens_per_step: Global batch size (in tokens)
-        :returns: List of step numbers where merges should occur.
+        NOTE: This is to handle the Olmo 3 ladder. We may need to expand on this to also include WSD.
         """
+        assert tokens_per_step > 0, "tokens_per_step must be > 0"
+
+        fixed_decay = scheduler.decay
+        decay_fraction = scheduler.decay_fraction
+        if fixed_decay is None:
+            assert decay_fraction is not None, "Either scheduler.decay or scheduler.decay_fraction must be set"
+
         merge_steps = []
+        cumulative_tokens = 0
 
         for i, period_length in enumerate(scheduler.period_lengths):
-            # Compute cumulative tokens at end of this period
-            if i == 0:
-                period_end_tokens = period_length
-            else:
-                period_end_tokens = sum(scheduler.period_lengths[: i + 1])
+            cumulative_tokens += period_length  # end-of-period tokens
 
-            # Compute decay length for this period using public attributes
-            if scheduler.decay is not None:
-                decay_tokens = scheduler.decay
-            else:
-                assert scheduler.decay_fraction is not None
-                decay_tokens = int(round(scheduler.decay_fraction * period_length))
+            decay_tokens = fixed_decay if fixed_decay is not None else int(round(decay_fraction * period_length))
 
-            # Merge should happen right before decay starts
-            pre_decay_tokens = period_end_tokens - decay_tokens
-
-            # Convert tokens to steps
-            merge_step = pre_decay_tokens // tokens_per_step
-            merge_steps.append(merge_step)
+            # Pre-decay merge (before decay starts)
+            pre_decay_tokens = cumulative_tokens - decay_tokens
+            pre_decay_step = pre_decay_tokens // tokens_per_step
+            merge_steps.append(pre_decay_step)
 
             log.debug(
-                f"WSDS period {i}: end={period_end_tokens} tokens, "
-                f"decay={decay_tokens} tokens, merge_step={merge_step}"
+                "WSDS period %d: end=%d tokens, decay=%d tokens, merge_step=%d",
+                i, cumulative_tokens, decay_tokens, pre_decay_step,
             )
 
         return merge_steps
 
     @property
     def _current_merge_step(self) -> Optional[int]:
-        """The current merge step we're working towards, or None if all merges are done."""
+        """The current merge step we're working towards."""
         if self._current_merge_idx >= len(self._merge_steps):
             return None
         return self._merge_steps[self._current_merge_idx]
 
-    def pre_train(self):
-        if not self.enabled:
-            return
+    def _merged_checkpoint_path(self, step: int) -> str:
+        """Returns the path for a merged checkpoint at a given step."""
+        return str(join_path(self.trainer.save_folder, f"step{step}-{self.output_suffix}"))
 
-        # Normalize merge_step to a sorted list
+    def _merged_checkpoint_exists(self, step: int) -> bool:
+        """Check if a complete merged checkpoint already exists for a given step."""
+        try:
+            # Check for .metadata file which is written last by save_state_dict
+            metadata_path = join_path(self._merged_checkpoint_path(step), "model_and_optim", ".metadata")
+            return file_exists(metadata_path)
+        except Exception as e:
+            log.warning(
+                "ModelMergeCallback: failed to check if merged checkpoint exists for step %d: %s. "
+                "Assuming checkpoint does not exist.",
+                step,
+                e,
+            )
+            return False
+
+    def _compute_merge_steps(self) -> bool:
+        """Compute merge steps from config or scheduler."""
         if self.merge_step is None:
             if self.trainer.max_steps is None:
                 log.warning(
@@ -124,56 +152,131 @@ class ModelMergeCallback(Callback):
                     "Disabling merging."
                 )
                 self.enabled = False
-                return
+                return False
 
             max_steps = self.trainer.max_steps
             scheduler = getattr(self.trainer.train_module, "scheduler", None)
 
-            # Check for WSDS scheduler (multiple anneals)
             if isinstance(scheduler, WSDS):
-                # NOTE: This assumes global_batch_size is in tokens (true for TextDataLoaderBase)
+                # NOTE: This assumes global_batch_size is in tokens
                 tokens_per_step = self.trainer.data_loader.global_batch_size
                 self._merge_steps = self._get_merge_steps_from_wsds(scheduler, tokens_per_step)
                 log.info(
-                    f"ModelMergeCallback: detected WSDS scheduler with {len(scheduler.period_lengths)} periods. "
-                    f"merge_steps set to {self._merge_steps} (one before each decay phase, "
-                    f"assuming {tokens_per_step} tokens/step)"
+                    "ModelMergeCallback: detected WSDS scheduler with %d periods. "
+                    "merge_steps set to %s (one before each decay phase, assuming %d tokens/step)",
+                    len(scheduler.period_lengths),
+                    self._merge_steps,
+                    tokens_per_step,
                 )
             else:
                 # For non-WSDS schedulers, use fixed intervals
                 self._merge_steps = list(
                     range(self.merge_interval, max_steps + 1, self.merge_interval)
                 )
-                # Ensure we have at least one merge step (at max_steps if interval > max_steps)
                 if not self._merge_steps:
                     self._merge_steps = [max_steps]
                 log.info(
-                    f"ModelMergeCallback: merge_steps set to {self._merge_steps} "
-                    f"(every {self.merge_interval} steps)"
+                    "ModelMergeCallback: merge_steps set to %s (every %d steps)",
+                    self._merge_steps,
+                    self.merge_interval,
                 )
         elif isinstance(self.merge_step, int):
             self._merge_steps = [self.merge_step]
-            log.info(f"ModelMergeCallback: merge_step set to {self.merge_step}")
+            log.info("ModelMergeCallback: merge_step set to %d", self.merge_step)
         else:
             self._merge_steps = sorted(self.merge_step)
-            log.info(f"ModelMergeCallback: merge_steps set to {self._merge_steps}")
+            log.info("ModelMergeCallback: merge_steps set to %s", self._merge_steps)
 
-        # Warn if any merge steps fall within the decay phase (only for non-WSDS schedulers)
-        if self.trainer.max_steps is not None:
-            scheduler = getattr(self.trainer.train_module, "scheduler", None)
-            if scheduler is not None and not isinstance(scheduler, WSDS):
-                decay_steps, decay_source = self._get_decay_steps_from_scheduler(
-                    scheduler, self.trainer.max_steps
+        self._merge_steps = sorted(set(self._merge_steps))
+        return True
+
+    def _warn_if_merge_in_decay_phase(self):
+        """Warn if any merge steps fall within the decay phase."""
+        if self.trainer.max_steps is None:
+            return
+
+        scheduler = getattr(self.trainer.train_module, "scheduler", None)
+        if scheduler is None:
+            return
+
+        # Warn if user manually specified merge_step in decay phase of scheduler
+        if isinstance(scheduler, WSDS) and self.merge_step is None:
+            return
+
+        decay_steps, decay_source = self._get_decay_steps_from_scheduler(
+            scheduler, self.trainer.max_steps
+        )
+        if decay_steps <= 0:
+            return
+
+        decay_start = self.trainer.max_steps - decay_steps
+        steps_in_decay = [s for s in self._merge_steps if s > decay_start]
+        if steps_in_decay:
+            log.warning(
+                "ModelMergeCallback: merge step(s) %s fall within the decay phase "
+                "(decay starts at step %d, from %s). "
+                "Model weights during decay may not be ideal for merging.",
+                steps_in_decay,
+                decay_start + 1,
+                decay_source,
+            )
+
+    def _warn_for_truncated_windows(self):
+        """Warn if any merge steps would have truncated accumulation windows."""
+        for step in self._merge_steps:
+            if step < self.merge_last_n_steps:
+                actual_window = step  # Can only accumulate from step 1 to step
+                log.warning(
+                    "ModelMergeCallback: merge step %d is less than merge_last_n_steps=%d. "
+                    "The accumulation window will be truncated to %d steps (steps 1-%d).",
+                    step,
+                    self.merge_last_n_steps,
+                    actual_window,
+                    step,
                 )
-                if decay_steps > 0:
-                    decay_start = self.trainer.max_steps - decay_steps
-                    steps_in_decay = [s for s in self._merge_steps if s > decay_start]
-                    if steps_in_decay:
-                        log.warning(
-                            f"ModelMergeCallback: merge step(s) {steps_in_decay} fall within the "
-                            f"decay phase (decay starts at step {decay_start + 1}, from {decay_source}). "
-                            f"Model weights during decay may not be ideal for merging."
-                        )
+
+    def _check_for_overlapping_merge_windows(self):
+        """
+        Check if any merge windows overlap.
+        TODO: Allow overlapping windows by tracking multiple accumulators, if desired.
+        """
+        if len(self._merge_steps) < 2:
+            return
+
+        for i in range(1, len(self._merge_steps)):
+            prev_step = self._merge_steps[i - 1]
+            curr_step = self._merge_steps[i]
+            gap = curr_step - prev_step
+
+            if gap < self.merge_last_n_steps:
+                # NOTE: Could change to warning + skip instead of error, since merging is
+                # complementary to training, not critical. For now, fail early to alert user.
+                raise OLMoConfigurationError(
+                    f"ModelMergeCallback: merge steps {prev_step} and {curr_step} are only {gap} steps apart, "
+                    f"but merge_last_n_steps={self.merge_last_n_steps}. "
+                    f"Merge windows would overlap. Either:\n"
+                    f"  - Decrease merge_last_n_steps to <= {gap}, or\n"
+                    f"  - Increase the gap between merge steps, or\n"
+                    f"  - Remove one of the merge steps"
+                )
+
+    def pre_train(self):
+        if not self.enabled:
+            return
+
+        # Restore or compute merge steps
+        if self._restored and self._merge_steps:
+            log.info(
+                "ModelMergeCallback: restored state from checkpoint; using merge_steps=%s and current_merge_idx=%d",
+                self._merge_steps,
+                self._current_merge_idx,
+            )
+        elif not self._compute_merge_steps():
+            return  # Could not determine merge steps (no merge_step set and no max_steps)
+
+        self._warn_for_truncated_windows()
+        self._warn_if_merge_in_decay_phase()
+        self._check_for_overlapping_merge_windows()
 
         # Handle resume scenarios where we may have accumulated weights ready to save
         # or need to skip past completed merge steps
@@ -181,24 +284,49 @@ class ModelMergeCallback(Callback):
         while self._current_merge_idx < len(self._merge_steps):
             target_merge_step = self._merge_steps[self._current_merge_idx]
 
-            if target_merge_step < current_step:
-                # We're past this merge step - skip it
+            # If merged checkpoint already exists, skip it
+            if self._merged_checkpoint_exists(target_merge_step):
                 log.info(
-                    f"ModelMergeCallback: skipping past merge step {target_merge_step} "
-                    f"(current step is {current_step})"
+                    "ModelMergeCallback: merged checkpoint for step %d already exists; skipping.",
+                    target_merge_step,
                 )
                 self._accumulator = None
                 self._n_accumulated = 0
                 self._current_merge_idx += 1
+                continue
+
+            if target_merge_step < current_step:
+                if self._n_accumulated > 0:
+                    # We were accumulating for this merge step, but we're now past it.
+                    # This can happen if the job was interrupted after accumulating but before saving.
+                    log.warning(
+                        "ModelMergeCallback: current step %d is past merge step %d, but we have %d accumulated "
+                        "weight snapshots. Saving merged checkpoint now (may be missing final step(s)).",
+                        current_step,
+                        target_merge_step,
+                        self._n_accumulated,
+                    )
+                    self._save_merged_checkpoint(target_step=target_merge_step)
+                else:
+                    # We're past this merge step and have nothing accumulated; skip it.
+                    log.info(
+                        "ModelMergeCallback: skipping past merge step %d (current step is %d)",
+                        target_merge_step,
+                        current_step,
+                    )
+                    self._accumulator = None
+                    self._n_accumulated = 0
+                    self._current_merge_idx += 1
+
             elif target_merge_step == current_step and self._n_accumulated > 0:
                 # We're exactly at the merge step with accumulated weights ready
                 # This happens when resuming from a checkpoint saved before the merge completed
                 log.info(
-                    f"ModelMergeCallback: resuming at merge step {target_merge_step} "
-                    f"with {self._n_accumulated} accumulated weights, saving now..."
+                    "ModelMergeCallback: resuming at merge step %d with %d accumulated weights, saving now...",
+                    target_merge_step,
+                    self._n_accumulated,
                 )
-                self._save_merged_checkpoint()
-                # _save_merged_checkpoint advances _current_merge_idx, so continue the loop
+                self._save_merged_checkpoint(target_step=target_merge_step)
             else:
                 # Not past and not at merge step with weights ready - stop checking
                 break
@@ -252,76 +380,67 @@ class ModelMergeCallback(Callback):
 
     def _accumulate_weights(self):
         """
-        Adds current model weights to the accumulator (stored on CPU, rank 0 only).
+        Adds current model weights to the accumulator (stored on CPU).
 
-        TODO(large-scale): For larger models, calling state_dict() and moving to CPU at every
+        Each rank accumulates its own shard of the weights (sharded approach).
+
+        NOTE(large-scale): For larger models, calling state_dict() and moving to CPU at every
         step in the merge window may cause significant throughput overhead.
         Might want to consider sparse sampling (accumulate every Nth step instead of every step)
         or doing this one time (moving to CPU only at the end)
         """
-
-        # All ranks must participate in get_model_state_dict for FSDP to gather weights,
-        # but only rank 0 receives the actual state dict when full_state_dict=True.
-        sd_options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
+        sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
         model_state = dist_cp_sd.get_model_state_dict(
             self.trainer.train_module.model, options=sd_options
         )
 
-        # Only rank 0 accumulates (other ranks get empty state dict with full_state_dict=True)
-        if get_rank() == 0:
-            if self._accumulator is None:
-                # Initialize accumulator with zeros on CPU
-                log.info(f"Starting model weight averaging at step {self.step}")
-                self._accumulator = {
-                    k: torch.zeros_like(v, dtype=torch.float32, device="cpu")
-                    for k, v in model_state.items()
-                }
+        if self._accumulator is None:
+            log.info(f"Starting model weight averaging at step {self.step}")
+            self._accumulator = {
+                k: torch.zeros_like(v, dtype=torch.float32, device="cpu")
+                for k, v in model_state.items()
+            }
 
-            # Add current weights to accumulator (already on CPU from cpu_offload=True)
-            for key, value in model_state.items():
-                self._accumulator[key].add_(value.float())
+        for key, value in model_state.items():
+            self._accumulator[key].add_(value.float())
 
         self._n_accumulated += 1
         log.debug(f"Accumulated weights at step {self.step} ({self._n_accumulated} total)")
 
-    def _save_merged_checkpoint(self):
-        if get_rank() == 0 and (self._accumulator is None or self._n_accumulated == 0):
+    def _save_merged_checkpoint(self, target_step: Optional[int] = None):
+        if self._accumulator is None or self._n_accumulated == 0:
             log.warning("No weights accumulated, cannot save merged checkpoint")
             return
 
+        # Use target_step if provided (for recovery saves), otherwise use current step
+        checkpoint_step = target_step if target_step is not None else self.step
+
         log.info(
-            f"Saving merged checkpoint (average of {self._n_accumulated} steps) at step {self.step}"
+            f"Saving merged checkpoint (average of {self._n_accumulated} steps) at step {checkpoint_step}"
         )
 
-        # Compute the average on rank 0 (only rank 0 has the accumulator)
+        # Each rank computes the average of its shard
         averaged_state: Dict[str, torch.Tensor] = {}
-        if get_rank() == 0:
-            for key, accumulated_value in self._accumulator.items():  # type: ignore
-                averaged_state[key] = accumulated_value / self._n_accumulated
-
-        # Broadcast averaged_state from rank 0 to all ranks for distributed save and eval
-        if is_distributed():
-            object_list = [averaged_state]
-            torch.distributed.broadcast_object_list(object_list, src=0)
-            averaged_state = object_list[0]
+        for key, accumulated_value in self._accumulator.items():
+            averaged_state[key] = accumulated_value / self._n_accumulated
 
         output_path = str(
             join_path(
                 self.trainer.save_folder,
-                f"step{self.step}-{self.output_suffix}",
+                f"step{checkpoint_step}-{self.output_suffix}",
             )
         )
 
-        # Only rank 0 creates/clears the directory
         if get_rank() == 0:
-            if os.path.exists(output_path):
-                shutil.rmtree(output_path)
-            os.makedirs(output_path, exist_ok=True)
+            if not dir_is_empty(output_path):
+                clear_directory(output_path)
+            # For local paths, create the directory (remote paths are created implicitly)
+            if not is_url(output_path):
+                os.makedirs(output_path, exist_ok=True)
 
         # Wait for directory to be ready before all ranks save
         barrier()
 
-        # All ranks participate in distributed checkpoint saving
         save_state_dict(
             join_path(output_path, "model_and_optim"),
             {"model": averaged_state, "optim": {}},
@@ -345,7 +464,7 @@ class ModelMergeCallback(Callback):
         Run evaluators with merged weights (metrics under 'eval/merged' prefix),
         then restore original weights.
         """
-        # Find EvaluatorCallback instances
+
         evaluator_callbacks = [
             cb for cb in self.trainer.callbacks.values() if isinstance(cb, EvaluatorCallback)
         ]
@@ -363,10 +482,10 @@ class ModelMergeCallback(Callback):
         original_state = dist_cp_sd.get_model_state_dict(model, options=sd_options)
 
         # Load merged weights using set_model_state_dict for proper FSDP support
-        # Use full_state_dict=True since averaged_state is a complete (non-sharded) state dict
+        # Use full_state_dict=False since averaged_state is sharded (each rank has its shard)
         log.info("Loading merged weights for evaluation...")
         dist_cp_sd.set_model_state_dict(
-            model, averaged_state, options=dist_cp_sd.StateDictOptions(full_state_dict=True, strict=True)
+            model, averaged_state, options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True)
         )
 
         # Run evaluator callbacks with "eval/merged" prefix
@@ -376,7 +495,7 @@ class ModelMergeCallback(Callback):
                 callback._perform_eval(prefix="eval/merged")
         finally:
             # Restore original weights using set_model_state_dict for proper FSDP support
-            # Use full_state_dict=False since original_state is sharded (matches how we got it)
+            # Use full_state_dict=False since original_state is sharded
             log.info("Restoring original model weights...")
             dist_cp_sd.set_model_state_dict(
                 model, original_state, options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True)
@@ -386,10 +505,11 @@ class ModelMergeCallback(Callback):
         """
         Save callback state for checkpointing.
 
-        TODO(large-scale): Saving the accumulator during the merge window increases checkpoint
-        size by ~1x model size. For larger models, need to think about:
-        - Not checkpointing accumulator (would lose ability to resume mid-window)
-        - Making accumulator checkpointing configurable
+        NOTE: Each rank saves its own shard of the accumulator.
+        This increases total checkpoint size by ~1x model sizeca.
+        This might cause issues with scalability. Could consider:
+            - Not checkpointing accumulator (would lose ability to resume mid-window)
+            - Making accumulator checkpointing configurable
         """
         state = {
             "n_accumulated": self._n_accumulated,
@@ -408,3 +528,4 @@ class ModelMergeCallback(Callback):
         self._current_merge_idx = state_dict.get("current_merge_idx", 0)
         self._merge_steps = state_dict.get("merge_steps", [])
         self._accumulator = state_dict.get("accumulator", None)
+        self._restored = True
