@@ -6,6 +6,16 @@ training codebase and better dataloading via a bin-packing algorithm.
 
 You can follow the instructions here to generate an Olmo-core compatable SFT dataset, launch SFT, and run evaluation with the resulting model.
 
+## Prerequisites
+
+Sync with the required extras for your local environment (not needed on cluster):
+
+```bash
+uv sync --extra beaker --extra transformers
+```
+
+> TIP: Using `uv` you can install gantry on your machine with `uv tool install beaker-gantry`.
+
 ## Prepping a Dataset
 
 1. Check out [open-instruct](https://github.com/allenai/open-instruct) and run a command such as:
@@ -80,15 +90,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
     > TIP: For best performance, download the tokenizer to your local filesystem (e.g., Weka at AI2) before launching the tokenization script. This avoids repeated downloads and network latency during processing. Option A demonstrates this pattern with `huggingface-cli download`.
 
-    > TIP: Using `uv` you can install gantry on your machine with `uv tool install beaker-gantry`.
-
 ## Training
-
-0. Sync with the required extras for your local environment (not needed on cluster):
-
-    ```bash
-    uv sync --extra beaker --extra transformers
-    ```
 
 1. Ensure that the beaker workspace you are using has the following secrets configured.
     * `{beaker_username}_BEAKER_TOKEN`
@@ -135,8 +137,6 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 ## Evaluation
 
 1. Convert the model to a Huggingface model using a command such as:
-
-    > NOTE: Requires gantry to be installed: `uv tool install beaker-gantry`
 
     ```bash
     gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/<your_workspace> \
