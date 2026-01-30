@@ -14,7 +14,6 @@ Sync with the required extras for your local environment (not needed on cluster)
 uv sync --extra beaker --extra transformers
 ```
 
-> TIP: Using `uv` you can install gantry on your machine with `uv tool install beaker-gantry`.
 
 ## Prepping a Dataset
 
