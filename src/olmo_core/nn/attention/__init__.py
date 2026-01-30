@@ -46,6 +46,9 @@ from .ring import (
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+    UlyssesLoadBalancer,
 )
 
 
