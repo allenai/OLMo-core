@@ -381,7 +381,7 @@ class BeakerLaunchConfig(Config):
     step_timeout: int | None = None
     """
     A timeout in seconds to wait for new logs when ``follow=True``.
-    If a step isn't detected in a time a timeout error will be raised.
+    If no new logs are detected in a time a timeout error will be raised.
     """
 
     step_soft_timeout: int | None = None
@@ -512,7 +512,7 @@ class BeakerLaunchConfig(Config):
         :param launch_timeout: A timeout in seconds to wait for the job to start after submitting it.
             If the job doesn't start in time a timeout error will be raised.
         :param step_timeout: A timeout in seconds to wait for new logs when ``follow=True``.
-            If a step isn't detected in a time a timeout error will be raised.
+            If no new logs are detected in a time a timeout error will be raised.
         :param step_soft_timeout: A soft timeout in seconds to wait for new logs when ``follow=True``.
             If no new logs are detected in a time warning will be issued.
         :param torchrun: Launch the target command with ``torchrun``. This will default to ``True``
