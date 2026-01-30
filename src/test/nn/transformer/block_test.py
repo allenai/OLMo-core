@@ -20,11 +20,7 @@ from olmo_core.nn.transformer.block import (
     TransformerBlock,
     TransformerBlockBase,
 )
-from olmo_core.testing import (
-    BACKENDS,
-    requires_multi_gpu,
-    run_distributed_test,
-)
+from olmo_core.testing import BACKENDS, requires_multi_gpu, run_distributed_test
 from olmo_core.utils import get_default_device, seed_all
 
 

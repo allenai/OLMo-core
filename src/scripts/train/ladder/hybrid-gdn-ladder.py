@@ -7,6 +7,7 @@ from olmo_core.config import DType
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *

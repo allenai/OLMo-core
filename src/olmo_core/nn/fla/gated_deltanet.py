@@ -19,7 +19,10 @@ from fla.modules.convolution import (
     causal_conv1d_update_cuda,
 )
 
-from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
+from olmo_core.nn.attention.ring import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 
 try:
     from causal_conv1d import causal_conv1d_fn
@@ -32,7 +35,10 @@ from fla.ops.gated_delta_rule import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.nn import functional as F
 
-from olmo_core.distributed.parallel.context_parallel import all_to_all_cp2hp, all_to_all_hp2cp
+from olmo_core.distributed.parallel.context_parallel import (
+    all_to_all_cp2hp,
+    all_to_all_hp2cp,
+)
 
 if TYPE_CHECKING:
     from fla.models.utils import Cache

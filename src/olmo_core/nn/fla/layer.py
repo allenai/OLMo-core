@@ -8,7 +8,10 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config, DType
-from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
+from olmo_core.nn.attention.ring import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 
 log = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional, cast
 
-from olmo_core.config import UNSET, DType, StrEnum
+from olmo_core.config import DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixerConfig
@@ -374,6 +374,7 @@ class TransformerConfig(ModelConfig):
     embedding_init_std: Optional[float] = None
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    fla_config: Optional[FLAModelConfig] = None
     embed_scale: Optional[float] = None
 
     def build(
@@ -1706,6 +1707,18 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
+    def fla(cls, fla_model_name: str, **kwargs) -> "TransformerConfig":
+        return cls(
+            d_model=0,
+            vocab_size=0,
+            n_layers=0,
+            block=TransformerBlockConfig(attention=AttentionConfig()),
+            lm_head=LMHeadConfig(),
+            dtype=DType.float32,
+            block_overrides=None,
+            fla_config=FLAModelConfig(fla_model_name=fla_model_name, kwargs=kwargs),
+        )
+
     def gemma3_like(
         cls,
         *,

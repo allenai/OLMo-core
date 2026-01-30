@@ -30,6 +30,7 @@ from olmo_core.nn.attention.ring import (
     UlyssesContextParallelStyle,
 )
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
+from olmo_core.nn.fla import FLAConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
@@ -372,7 +373,10 @@ def run_context_parallel_transformer_ulysses(
     og_logits = torch.load(outputs_path, map_location=device)
     tol_scale = 2.0  # requires slightly more tolerance than default
     torch.testing.assert_close(
-        og_logits, get_full_tensor(logits), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
+        og_logits,
+        get_full_tensor(logits),
+        rtol=BF16_RTOL * tol_scale,
+        atol=BF16_ATOL * tol_scale,
     )
 
 
