@@ -5,7 +5,7 @@ from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional, cast
 
-from olmo_core.config import DType, StrEnum
+from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixerConfig
