@@ -489,7 +489,9 @@ class BeakerLaunchConfig(Config):
                 step_soft_timeout=step_soft_timeout,
                 torchrun=torchrun,
             )
-            log.info(f"Gantry launch options: {launch_control_kwargs}")
+            log.info(
+                f"Experiment would be launched with the following options: {launch_control_kwargs}"
+            )
             recipe.dry_run(client=beaker)
 
     def launch(
