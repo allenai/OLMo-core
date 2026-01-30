@@ -480,7 +480,7 @@ class BeakerLaunchConfig(Config):
         Arguments are the same as :meth:`launch()`.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
-            recipe = self._build_recipe(
+            recipe, launch_control_kwargs = self._build_recipe(
                 beaker,
                 follow=follow,
                 slack_notifications=slack_notifications,
@@ -489,6 +489,7 @@ class BeakerLaunchConfig(Config):
                 step_soft_timeout=step_soft_timeout,
                 torchrun=torchrun,
             )
+            log.info(f"Gantry launch options: {launch_control_kwargs}")
             recipe.dry_run(client=beaker)
 
     def launch(
@@ -516,7 +517,7 @@ class BeakerLaunchConfig(Config):
         :returns: The Beaker workload.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
-            recipe = self._build_recipe(
+            recipe, launch_control_kwargs = self._build_recipe(
                 beaker,
                 follow=follow,
                 slack_notifications=slack_notifications,
@@ -528,11 +529,8 @@ class BeakerLaunchConfig(Config):
 
             try:
                 return recipe.launch(
-                    show_logs=follow,
-                    start_timeout=launch_timeout,
-                    inactive_timeout=step_timeout,
-                    inactive_soft_timeout=step_soft_timeout,
                     client=beaker,
+                    **launch_control_kwargs,
                 )
             except ExperimentFailedError as exc:
                 raise OLMoBeakerExperimentFailedError(str(exc))
@@ -546,7 +544,7 @@ class BeakerLaunchConfig(Config):
         step_timeout: int | None = None,
         step_soft_timeout: int | None = None,
         torchrun: bool | None = None,
-    ) -> GantryRecipe:
+    ) -> tuple[GantryRecipe, dict[str, Any]]:
         follow = follow if follow is not None else self.follow
         slack_notifications = (
             slack_notifications if slack_notifications is not None else self.slack_notifications
@@ -557,6 +555,14 @@ class BeakerLaunchConfig(Config):
             step_soft_timeout if step_soft_timeout is not None else self.step_soft_timeout
         )
         torchrun = torchrun if torchrun is not None else self.torchrun
+
+        launch_control_kwargs = {
+            "show_logs": follow,
+            "start_timeout": launch_timeout,
+            "inactive_timeout": step_timeout,
+            "inactive_soft_timeout": step_soft_timeout,
+        }
+
         if torchrun is None:
             if self.num_gpus > 1 or (self.num_gpus >= 1 and self.num_nodes > 1):
                 torchrun = True
@@ -657,7 +663,7 @@ class BeakerLaunchConfig(Config):
             ],
         )
 
-        return recipe
+        return recipe, launch_control_kwargs
 
 
 # Regex for detecting training (and eval) steps in logs.
