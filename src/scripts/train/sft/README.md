@@ -14,7 +14,6 @@ Sync with the required extras for your local environment (not needed on cluster)
 uv sync --extra beaker --extra transformers
 ```
 
-
 ## Prepping a Dataset
 
 1. Check out [open-instruct](https://github.com/allenai/open-instruct) and run a command such as:
