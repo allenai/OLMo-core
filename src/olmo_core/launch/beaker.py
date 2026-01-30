@@ -480,7 +480,7 @@ class BeakerLaunchConfig(Config):
         Arguments are the same as :meth:`launch()`.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
-            recipe, launch_control_kwargs = self._build_recipe(
+            recipe, recipe_launch_kwargs = self._build_recipe(
                 beaker,
                 follow=follow,
                 slack_notifications=slack_notifications,
@@ -490,7 +490,7 @@ class BeakerLaunchConfig(Config):
                 torchrun=torchrun,
             )
             log.info(
-                f"Experiment would be launched with the following options: {launch_control_kwargs}"
+                f"Experiment would be launched with the following options: {recipe_launch_kwargs}"
             )
             recipe.dry_run(client=beaker)
 
@@ -519,7 +519,7 @@ class BeakerLaunchConfig(Config):
         :returns: The Beaker workload.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
-            recipe, launch_control_kwargs = self._build_recipe(
+            recipe, recipe_launch_kwargs = self._build_recipe(
                 beaker,
                 follow=follow,
                 slack_notifications=slack_notifications,
@@ -532,7 +532,7 @@ class BeakerLaunchConfig(Config):
             try:
                 return recipe.launch(
                     client=beaker,
-                    **launch_control_kwargs,
+                    **recipe_launch_kwargs,
                 )
             except ExperimentFailedError as exc:
                 raise OLMoBeakerExperimentFailedError(str(exc))
@@ -558,7 +558,7 @@ class BeakerLaunchConfig(Config):
         )
         torchrun = torchrun if torchrun is not None else self.torchrun
 
-        launch_control_kwargs = {
+        recipe_launch_kwargs = {
             "show_logs": follow,
             "start_timeout": launch_timeout,
             "inactive_timeout": step_timeout,
@@ -665,7 +665,7 @@ class BeakerLaunchConfig(Config):
             ],
         )
 
-        return recipe, launch_control_kwargs
+        return recipe, recipe_launch_kwargs
 
 
 # Regex for detecting training (and eval) steps in logs.
