@@ -380,13 +380,13 @@ class BeakerLaunchConfig(Config):
 
     step_timeout: int | None = None
     """
-    A timeout in seconds to wait for new logs when ``follow=True``.
+    A timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
     If no new logs are detected in a time a timeout error will be raised.
     """
 
     step_soft_timeout: int | None = None
     """
-    A soft timeout in seconds to wait for new logs when ``follow=True``.
+    A soft timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
     If no new logs are detected in a time warning will be issued.
     """
 
