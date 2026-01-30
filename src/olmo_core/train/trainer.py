@@ -1273,10 +1273,11 @@ class Trainer:
         """
         futures: List[Future] = []
         for op_name, futures_dict in self._bookkeeping_queue.items():
-            log.info(
-                f"Waiting for bookkeeping ops to finish: '{op_name}' ({len(futures_dict)} ops)..."
-            )
-            futures.extend(futures_dict.values())
+            if futures_dict:
+                log.info(
+                    f"Waiting for bookkeeping ops to finish: '{op_name}' ({len(futures_dict)} ops)..."
+                )
+                futures.extend(futures_dict.values())
         concurrent.futures.wait(futures, timeout=timeout)
         log.info("All bookkeeping ops complete")
 
