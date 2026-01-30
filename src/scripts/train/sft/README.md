@@ -18,7 +18,7 @@ uv sync --extra beaker --extra transformers
 
 1. Check out [open-instruct](https://github.com/allenai/open-instruct) and run a command such as:
 
-    Launching with `mason.py` is the recommended way to run scripts in open-instruct.
+    Launching with `mason.py` is the recommended way to run scripts in open-instruct. See [this example script](https://github.com/allenai/open-instruct/blob/main/scripts/train/olmo3/7b-hybrid-sft-tokenization.sh).
 
     ```bash
     #!/bin/bash
