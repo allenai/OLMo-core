@@ -54,10 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed a bug where final metrics might not get logged.
 - Fix failing test_build_world_mesh_cpu for pytorch 2.10.
 - Fix failing convert_checkpoint_to_hf_test due by reducing total disk space required.
-
+- Ensure all metrics have been logged and bookkeeping ops complete before writing a checkpoint.
 
 ### Changed
 
+- Updated SFT documentation with alternative tokenization approach and tips for new base models.
 - Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
 - Updated stable torch version to 2.9.1, updated versions of underlying libraries in Beaker Images.
 - `olmo_core.io.join_path()` now accepts an arbitrary number of components to join.
