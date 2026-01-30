@@ -587,7 +587,7 @@ class BeakerLaunchConfig(Config):
             else:
                 # Pull from secret if available.
                 for env_secret in self.env_secrets:
-                     if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR and self._secret_exists(env_secret):
+                    if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR and self._secret_exists(env_secret):
                         secret = beaker.secret.get(env_secret.secret)
                         slack_webhook_url = beaker.secret.read(secret)
                         break
