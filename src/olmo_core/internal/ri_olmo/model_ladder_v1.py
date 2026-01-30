@@ -130,10 +130,20 @@ def handle_custom_args(
 ) -> tuple[list[str], argparse.Namespace]:
     """Extract multiplier override values using argparse and remove them from the list."""
     parser = argparse.ArgumentParser()
+    parser.add_argument("--mix-base-dir", type=str, default="gs://ai2-llm")
+    parser.add_argument("--root-dir", type=str, default="")
+    parser.add_argument("--work-dir", type=str, default="")
+    parser.add_argument("--save-folder", type=str, default="")
     parser.add_argument("--lr-multiplier", type=float, default=1.0)
     parser.add_argument("--batch-multiplier", type=float, default=1.0)
     parser.add_argument("--chinchilla-multiple", type=float, default=4.0)  # Default is 4xC
     parser.add_argument("--no-beaker-launch", action="store_true", default=False)
+    parser.add_argument(
+        "--data-mix",
+        type=str,
+        choices=list(DataMix),
+        default=str(DataMix.OLMo_mix_0925),
+    )
 
     # Extract argument names from parser (both value-based and boolean flags)
     arg_prefixes = []
@@ -265,16 +275,22 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     # Extract convenience multipliers from overrides (remove them from override list)
     overrides = list(cli_context.overrides)
     overrides, custom_args = handle_custom_args(overrides)
+    mix_base_dir = custom_args.mix_base_dir
+    data_mix = custom_args.data_mix
     lr_multiplier = custom_args.lr_multiplier
     batch_multiplier = custom_args.batch_multiplier
     chinchilla_multiple = custom_args.chinchilla_multiple
     no_beaker_launch = custom_args.no_beaker_launch
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
-    root_dir = get_root_dir(cli_context.cluster)
-    data_root = "gs://ai2-llm"
-    work_dir = get_work_dir(root_dir)
-    save_folder = f"{root_dir}/checkpoints/{cli_context.run_name}"
+    root_dir = custom_args.root_dir or get_root_dir(cli_context.cluster)
+    work_dir = custom_args.work_dir or get_work_dir(root_dir)
+    save_folder = custom_args.save_folder or f"{root_dir}/checkpoints/{cli_context.run_name}"
+
+    print(f"mix_base_dir (dataset location): {mix_base_dir}")
+    print(f"root_dir (checkpoint location): {root_dir}")
+    print(f"work_dir (local path for temp files): {work_dir}")
+    print(f"save_folder (checkpoint location): {save_folder}")
 
     tokenizer_config = TokenizerConfig.dolma2()
     model_config, model_size_settings = model.get_settings(tokenizer_config.padded_vocab_size())
@@ -320,10 +336,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     # Dataset config
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        # DataMix.OLMo_mix_0925_official,
-        DataMix.OLMo_mix_0925,
+        mix=data_mix,
         tokenizer=tokenizer_config,
-        mix_base_dir=data_root,
+        mix_base_dir=mix_base_dir,
         sequence_length=sequence_length,
         max_target_sequence_length=max(8192, sequence_length),
         work_dir=work_dir,
@@ -412,12 +427,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             LMEvaluatorCallbackConfig(
                 eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
-                    mix_base_dir=data_root,
+                    mix_base_dir=mix_base_dir,
                     sequence_length=sequence_length,
                     tokenizer=tokenizer_config,
                     work_dir=work_dir,
                 ),
-                eval_on_finish=True,
+                #eval_on_finish=True,
                 log_interval=10,
                 eval_interval=2_500,
             ),
@@ -427,7 +442,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             DownstreamEvaluatorCallbackConfig(
                 tasks=sorted(TASK_GROUPS["fast"]),
                 tokenizer=tokenizer_config,
-                eval_on_finish=True,
+                #eval_on_finish=True,
                 eval_interval=5_000,
             ),
         )
