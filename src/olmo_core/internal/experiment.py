@@ -426,6 +426,7 @@ def launch(config: ExperimentConfig):
             break
 
     config.launch.launch(
+        follow=True,
         slack_notifications=slack_enabled,
         #  step_timeout=30 * 60,  # hard timeout kills the job
         step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
