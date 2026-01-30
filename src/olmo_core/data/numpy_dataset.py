@@ -725,6 +725,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             generate_doc_lengths=generate_doc_lengths,
             bos_token_id=bos_token_id,
             max_target_sequence_length=max_target_sequence_length,
+            instance_filter_config=instance_filter_config,
         )
         self._num_instances: Optional[int] = None
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None

@@ -9,7 +9,17 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generic,
+    Iterable,
+    Iterator,
+    Optional,
+    Tuple,
+    TypeVar,
+)
 
 import bettermap
 import numpy as np
@@ -19,7 +29,7 @@ import torch.utils.data
 from torch.distributed import DeviceMesh
 
 from ..aliases import PathOrStr
-from ..config import Config
+from ..config import Config, Registrable
 from ..distributed.parallel import get_dp_process_group
 from ..distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
 from ..exceptions import OLMoConfigurationError
@@ -1078,8 +1088,23 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         )
 
 
+L = TypeVar("L", bound="DataLoaderBase")
+
+
 @dataclass
-class NumpyDataLoaderConfig(Config):
+class DataLoaderConfig(Config, Registrable, Generic[L]):
+    """
+    Registrable base class for data loader configs.
+    """
+
+    @abstractmethod
+    def build(self, *args, **kwargs) -> L:
+        raise NotImplementedError
+
+
+@DataLoaderConfig.register("numpy")
+@dataclass
+class NumpyDataLoaderConfig(DataLoaderConfig[NumpyDataLoaderBase]):
     """
     A configuration class for building :class:`NumpyDataLoaderBase` data loaders.
     """

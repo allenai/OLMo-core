@@ -5,16 +5,24 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
 import torch
+import torch.distributed as dist
 from rich import print
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import (
+    DataLoaderBase,
+    DataLoaderConfig,
     DataMix,
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
+)
+from olmo_core.data.composable import (
+    ComposableDataLoaderConfig,
+    InstanceSource,
+    InstanceSourceConfig,
 )
 from olmo_core.data.numpy_dataset import NumpyFSLDatasetConfig
 from olmo_core.distributed.utils import get_local_rank
@@ -82,8 +90,8 @@ class CommonComponents(Config):
 
 @dataclass
 class DataComponents(Config):
-    dataset: NumpyDatasetConfig
-    data_loader: NumpyDataLoaderConfig
+    dataset: NumpyDatasetConfig | List[InstanceSourceConfig]
+    data_loader: DataLoaderConfig
 
 
 @dataclass
@@ -91,8 +99,8 @@ class ExperimentConfig(Config):
     run_name: str
     launch: Optional[BeakerLaunchConfig]
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
-    data_loader: NumpyDataLoaderConfig
+    dataset: NumpyDatasetConfig | List[InstanceSourceConfig]
+    data_loader: DataLoaderConfig
     train_module: TrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
@@ -433,6 +441,26 @@ def launch(config: ExperimentConfig):
     )
 
 
+def _build_data_loader(
+    config: ExperimentConfig, dp_process_group: Optional[dist.ProcessGroup] = None
+) -> DataLoaderBase:
+    if isinstance(config.data_loader, NumpyDataLoaderConfig):
+        assert isinstance(config.dataset, NumpyDatasetConfig)
+        dataset = config.dataset.build()
+        return config.data_loader.build(dataset, dp_process_group=dp_process_group)
+    elif isinstance(config.data_loader, ComposableDataLoaderConfig):
+        assert isinstance(config.dataset, list)
+        work_dir = config.data_loader.work_dir
+        assert work_dir is not None, "Please set 'work_dir' on data loader config"
+        sources: List[InstanceSource] = []
+        for source in config.dataset:
+            assert isinstance(source, InstanceSourceConfig)
+            sources.append(source.build(work_dir))
+        return config.data_loader.build(*sources, dp_process_group=dp_process_group)
+    else:
+        raise NotImplementedError(type(config.data_loader))
+
+
 def launch_prep(config: ExperimentConfig):
     assert config.launch is not None
     config.launch.num_gpus = 0
@@ -441,8 +469,7 @@ def launch_prep(config: ExperimentConfig):
 
 
 def prep(config: ExperimentConfig):
-    dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset)
+    data_loader = _build_data_loader(config)
     data_loader.reshuffle(epoch=1)
 
 
@@ -453,8 +480,7 @@ def train(config: ExperimentConfig):
     # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
-    dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    data_loader = _build_data_loader(config, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.

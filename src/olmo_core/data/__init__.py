@@ -17,6 +17,7 @@ from . import composable
 from .collator import DataCollator, PaddingDirection
 from .data_loader import (
     DataLoaderBase,
+    DataLoaderConfig,
     NumpyDataLoaderBase,
     NumpyDataLoaderConfig,
     NumpyFSLDataLoader,
@@ -79,6 +80,7 @@ __all__ = [
     "DataCollator",
     "PaddingDirection",
     "DataLoaderBase",
+    "DataLoaderConfig",
     "TextDataLoaderBase",
     "NumpyDataLoaderBase",
     "NumpyFSLDataLoader",
