@@ -374,20 +374,20 @@ class BeakerLaunchConfig(Config):
 
     launch_timeout: int | None = None
     """
-    A timeout in seconds to wait for the job to start after submitting it.
+    A timeout in seconds to wait for the job to start after submission when ``follow=True``.
     If the job doesn't start in time a timeout error will be raised.
     """
 
     step_timeout: int | None = None
     """
-    A timeout in seconds to wait for the first training step when ``follow=True``.
+    A timeout in seconds to wait for new logs when ``follow=True``.
     If a step isn't detected in a time a timeout error will be raised.
     """
 
     step_soft_timeout: int | None = None
     """
-    A soft timeout in seconds to wait for the first training step when ``follow=True``.
-    If a step isn't detected in a time warning will be issued.
+    A soft timeout in seconds to wait for new logs when ``follow=True``.
+    If no new logs are detected in a time warning will be issued.
     """
 
     _beaker = None

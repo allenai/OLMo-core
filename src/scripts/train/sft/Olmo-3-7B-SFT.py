@@ -84,9 +84,9 @@ class BatchSizeConfig:
     def __post_init__(self):
         assert self.global_batch_size_tokens > 0, "global_batch_size_tokens must be positive"
         assert self.sequence_length > 0, "sequence_length must be positive"
-        assert (
-            self.sequence_length & (self.sequence_length - 1)
-        ) == 0, "sequence_length must be a power of 2"
+        assert (self.sequence_length & (self.sequence_length - 1)) == 0, (
+            "sequence_length must be a power of 2"
+        )
         assert self.world_size > 0, "world_size must be positive"
         assert (self.world_size & (self.world_size - 1)) == 0, "world_size must be a power of 2"
 
@@ -457,7 +457,7 @@ if __name__ == "__main__":
         epilog="""
 Examples:
   python %(prog)s dry_run test my-dataset-name /path/to/ckpt ai2/cluster
-  python %(prog)s launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --seq_len=4096 --num_nodes=2 --launch.priority=high
+  python %(prog)s launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --seq_len=4096 --num_nodes=2 --launch.priority=high  --launch.follow=false
 """,
     )
 
@@ -485,11 +485,6 @@ Examples:
     )
     parser.add_argument(
         "--num_nodes", type=int, help="The number of nodes to use.", default=DEFAULT_NUM_NODES
-    )
-    parser.add_argument(
-        "--follow",
-        action="store_true",
-        help="Whether to follow the experiment in the terminal.",
     )
     parser.add_argument(
         "--no_save_tokenizer",
@@ -540,7 +535,7 @@ Examples:
     if args.cmd == "dry_run":
         pass
     elif args.cmd == "launch":
-        config.launch.launch(follow=args.follow)
+        config.launch.launch()
     elif args.cmd == "train":
         try:
             train(args.pretrain_checkpoint, config, args.no_save_tokenizer)
