@@ -68,6 +68,11 @@ class EvaluatorCallback(Callback):
     Whether to run an evaluation when the trainer starts up.
     """
 
+    eval_on_finish: bool = False
+    """
+    Whether to run an evaluation when training finishes.
+    """
+
     cancel_after_first_eval: bool = False
     """
     If ``True``, cancel the run after running evals for the first time.
@@ -93,6 +98,10 @@ class EvaluatorCallback(Callback):
 
     def pre_train(self):
         if self.eval_on_startup:
+            self._perform_eval()
+
+    def post_train(self):
+        if self.eval_on_finish:
             self._perform_eval()
 
     def post_step(self):
@@ -208,6 +217,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_interval: Optional[int] = 1000
     fixed_steps: Optional[List[int]] = None
     eval_on_startup: bool = False
+    eval_on_finish: bool = False
     cancel_after_first_eval: bool = False
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
@@ -275,6 +285,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             eval_on_startup=self.eval_on_startup,
             cancel_after_first_eval=self.cancel_after_first_eval,
             eval_duration=self.eval_duration,
+            eval_on_finish=self.eval_on_finish,
         )
 
 
@@ -324,6 +335,7 @@ class DownstreamEvaluator(Evaluator):
         self.label = task
         self.batch_spec = batch_spec
         self.tokenizer = tokenizer
+        self.device = device  # set here for _build_data_loader() to use
         self.dp_process_group = dp_process_group
         self.metric: Optional[ICLMetric] = None
         if lazy:
@@ -448,6 +460,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     fixed_steps: Optional[List[int]] = None
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     eval_on_startup: bool = False
+    eval_on_finish: bool = False
     cancel_after_first_eval: bool = False
     log_interval: int = 5
     lazy: bool = False
@@ -493,4 +506,5 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             cancel_after_first_eval=self.cancel_after_first_eval,
             log_interval=self.log_interval,
             eval_duration=self.eval_duration,
+            eval_on_finish=self.eval_on_finish,
         )
