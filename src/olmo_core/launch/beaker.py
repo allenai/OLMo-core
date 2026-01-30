@@ -480,7 +480,7 @@ class BeakerLaunchConfig(Config):
         Arguments are the same as :meth:`launch()`.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
-            recipe, recipe_launch_kwargs = self._build_recipe(
+            recipe, _ = self._build_recipe(
                 beaker,
                 follow=follow,
                 slack_notifications=slack_notifications,
@@ -488,9 +488,6 @@ class BeakerLaunchConfig(Config):
                 step_timeout=step_timeout,
                 step_soft_timeout=step_soft_timeout,
                 torchrun=torchrun,
-            )
-            log.info(
-                f"Experiment would be launched with the following options: {recipe_launch_kwargs}"
             )
             recipe.dry_run(client=beaker)
 
