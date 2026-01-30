@@ -374,7 +374,7 @@ class BeakerLaunchConfig(Config):
 
     launch_timeout: int | None = None
     """
-    A timeout in seconds to wait for the job to start after submission
+    A timeout in seconds to wait for the job to start after submission.
     If the job doesn't start in time a timeout error will be raised.
     """
 
