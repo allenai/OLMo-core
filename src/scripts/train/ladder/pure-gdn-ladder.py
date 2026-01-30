@@ -57,10 +57,16 @@ class GatedDeltaNetModelConfigurator(TransformerModelConfigurator):
     Args:
         use_gate: Whether to use output gating in GatedDeltaNet. Default: True.
         allow_neg_eigval: Whether to allow negative eigenvalues. Default: True.
+        rank_microbatch_size: Optional fixed rank micro-batch size in tokens.
     """
 
-    def __init__(self, use_gate: bool = True, allow_neg_eigval: bool = True):
-        super().__init__()
+    def __init__(
+        self,
+        use_gate: bool = True,
+        allow_neg_eigval: bool = True,
+        rank_microbatch_size: int | None = None,
+    ):
+        super().__init__(rank_microbatch_size=rank_microbatch_size)
         self.use_gate = use_gate
         self.allow_neg_eigval = allow_neg_eigval
 
@@ -209,6 +215,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         model_configurator=GatedDeltaNetModelConfigurator(
             use_gate=args.use_gate,
             allow_neg_eigval=args.allow_neg_eigval,
+            rank_microbatch_size=(
+                None if args.rank_mbz is None else args.rank_mbz * args.sequence_length
+            ),
         ),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple

@@ -91,11 +91,11 @@ def _to_seq_parallel(x: torch.Tensor, orig_C: int, cp_group: dist.ProcessGroup) 
 
 class GatedDeltaNet(nn.Module):
     """
-    The layer implementaion for [Gated Delta Networks: Improving Mamba2 with Delta Rule](https://arxiv.org/abs/2412.06464).  # noqa
+    The layer implementation for [Gated Delta Networks: Improving Mamba2 with Delta Rule](https://arxiv.org/abs/2412.06464).  # noqa
 
     Similar to Mamba2, each layer contains around 6*hidden_size*hidden_size parameters.
 
-    Parameter alloation when use_gate=True:
+    Parameter allocation when use_gate=True:
         - 0.75 * hidden_size * hidden_size for the q_proj and k_proj each
         - 1.5 * hidden_size * hidden_size for the v_proj, g_proj and o_proj each
         - Others are ignorably small.
@@ -441,9 +441,9 @@ class GatedDeltaNet(nn.Module):
         if past_key_values is not None:
             past_key_values.update(
                 recurrent_state=recurrent_state,
-                conv_state=(conv_state_q, conv_state_k, conv_state_v)
-                if self.use_short_conv
-                else None,
+                conv_state=(
+                    (conv_state_q, conv_state_k, conv_state_v) if self.use_short_conv else None
+                ),
                 layer_idx=self.layer_idx,
                 offset=q_len,
             )

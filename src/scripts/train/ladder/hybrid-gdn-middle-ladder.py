@@ -55,14 +55,21 @@ def get_mix_base_dir(cluster: str) -> str:
 
 
 class HybridGDNMiddleTransformerModelConfigurator(TransformerModelConfigurator):
-    def __init__(self, transformer_ratio: int = 4, final_attention_layer: bool = True):
+    def __init__(
+        self,
+        transformer_ratio: int = 4,
+        final_attention_layer: bool = True,
+        rank_microbatch_size: int | None = None,
+    ):
         """
         Args:
             transformer_ratio: Ratio of transformer layers.
                 E.g., 4 means 1/4 of layers are transformer (placed in the middle),
                 2 means 1/2 of layers are transformer (placed in the middle).
             final_attention_layer: Whether to add a final attention layer.
+            rank_microbatch_size: Optional fixed rank micro-batch size in tokens.
         """
+        super().__init__(rank_microbatch_size=rank_microbatch_size)
         self.transformer_ratio = transformer_ratio
         self.final_attention_layer = final_attention_layer
 
@@ -223,6 +230,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         model_configurator=HybridGDNMiddleTransformerModelConfigurator(
             transformer_ratio=args.transformer_ratio,
             final_attention_layer=args.final_attention_layer,
+            rank_microbatch_size=(
+                None if args.rank_mbz is None else args.rank_mbz * args.sequence_length
+            ),
         ),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple

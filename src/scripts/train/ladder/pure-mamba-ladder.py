@@ -53,7 +53,13 @@ def get_mix_base_dir(cluster: str) -> str:
 class Mamba2ModelConfigurator(TransformerModelConfigurator):
     """
     Model configurator for pure Mamba2.
+
+    Args:
+        rank_microbatch_size: Optional fixed rank micro-batch size in tokens.
     """
+
+    def __init__(self, rank_microbatch_size: int | None = None):
+        super().__init__(rank_microbatch_size=rank_microbatch_size)
 
     def configure_model(
         self,
@@ -195,7 +201,11 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=Mamba2ModelConfigurator(),
+        model_configurator=Mamba2ModelConfigurator(
+            rank_microbatch_size=(
+                None if args.rank_mbz is None else args.rank_mbz * args.sequence_length
+            ),
+        ),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple
         ),

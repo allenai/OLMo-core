@@ -50,13 +50,19 @@ def get_mix_base_dir(cluster: str) -> str:
 
 
 class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
-    def __init__(self, transformer_ratio: int = 4):
+    def __init__(
+        self,
+        transformer_ratio: int = 4,
+        rank_microbatch_size: int | None = None,
+    ):
         """
         Args:
             transformer_ratio: Ratio of layers between transformer blocks.
                 E.g., 4 means every 4th layer is transformer (1/4 transformer),
                 2 means every other layer is transformer (1/2 transformer).
+            rank_microbatch_size: Optional fixed rank micro-batch size in tokens.
         """
+        super().__init__(rank_microbatch_size=rank_microbatch_size)
         self.transformer_ratio = transformer_ratio
 
     def configure_model(
@@ -209,7 +215,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
         model_configurator=HybridGDNTransformerModelConfigurator(
-            transformer_ratio=args.transformer_ratio
+            transformer_ratio=args.transformer_ratio,
+            rank_microbatch_size=(
+                None if args.rank_mbz is None else args.rank_mbz * args.sequence_length
+            ),
         ),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple
