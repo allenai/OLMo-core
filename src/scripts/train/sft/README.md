@@ -18,9 +18,7 @@ uv sync --extra beaker --extra transformers
 
 1. Check out [open-instruct](https://github.com/allenai/open-instruct) and run a command such as:
 
-    Both approaches below should work, but launching with `gantry` can require some finnagling of `gantry` and `beaker-py` versions in open-instruct.
-
-    **Option A: Using mason.py (recommended)**
+    Launching with `mason.py` is the recommended way to run scripts in open-instruct.
 
     ```bash
     #!/bin/bash
@@ -65,28 +63,9 @@ uv sync --extra beaker --extra transformers
 
     > NOTE: This script uses GPUs to ensure sufficient CPU resources for large-scale tokenization. The chat template `olmo123` is a placeholder—the chat template is loaded from the tokenizer in the command.
 
-    **Option B: Using gantry**
-
-    ```bash
-    gantry run \
-        --cluster ai2/neptune-cirrascale \
-        --allow-dirty --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/jacobm \
-        --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync" \
-        --weka=oe-training-default:/weka/oe-training-default \
-        --env-secret HF_TOKEN=HF_TOKEN \
-        -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py \
-            --dataset_mixer_list hf-dataset/number_1 1.0 \
-                hf-dataset/number_2 1.0 \
-            --tokenizer_name_or_path /path/to/hf-style/tokenizer \
-            --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/example-tokenized-dataset \
-            --visualize True \
-            --chat_template_name olmo \
-            --max_seq_length 32768
-    ```
-
     *Be careful with your choice of chat template!* It is highly recommended to use the `olmo` chat template for tokenization. Olmo-core uses `[eos]` tokens to find document boundaries, and the `olmo` chat template uses a single `eos` token to mark the end of a conversation, enabling document packing to work correctly.
 
-    > TIP: For best performance, download the tokenizer to your local filesystem (e.g., Weka at AI2) before launching the tokenization script. This avoids repeated downloads and network latency during processing. Option A demonstrates this pattern with `huggingface-cli download`.
+    > TIP: Download the tokenizer to your local filesystem (e.g., Weka at AI2) before launching the tokenization script. This avoids repeated downloads and network latency during processing. The example above demonstrates this pattern with `huggingface-cli download`.
 
 ## Training
 
