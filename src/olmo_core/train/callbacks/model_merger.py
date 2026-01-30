@@ -47,7 +47,7 @@ class ModelMergeCallback(Callback):
     Suffix for merged checkpoint directory. Checkpoint will be saved as "step{merge_step}-{output_suffix}".
     """
 
-    enabled: bool = True
+    enabled: bool = False
     _accumulator: Optional[Dict[str, torch.Tensor]] = field(default=None, repr=False)
     _n_accumulated: int = field(default=0, repr=False)
     _merge_steps: List[int] = field(default_factory=list, repr=False)
