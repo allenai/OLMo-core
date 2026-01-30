@@ -556,6 +556,7 @@ class BeakerLaunchConfig(Config):
             step_soft_timeout if step_soft_timeout is not None else self.step_soft_timeout
         )
         torchrun = torchrun if torchrun is not None else self.torchrun
+        env_secrets = self._get_env_secrets()
 
         recipe_launch_kwargs = {
             "show_logs": follow,
@@ -586,11 +587,7 @@ class BeakerLaunchConfig(Config):
                 slack_webhook_url = os.environ[SLACK_WEBHOOK_URL_ENV_VAR]
             else:
                 # Pull from secret if available.
-                for env_secret in self.env_secrets:
-                    if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR:
-                        secret = beaker.secret.get(env_secret.secret)
-                        slack_webhook_url = beaker.secret.read(secret)
-                        break
+                slack_webhook_url = dict(env_secrets).get(SLACK_WEBHOOK_URL_ENV_VAR)
 
             if slack_notifications is None:
                 slack_notifications = slack_webhook_url is not None
@@ -622,7 +619,7 @@ class BeakerLaunchConfig(Config):
             # Inputs.
             beaker_image=self._resolve_beaker_image(),
             env_vars=self._get_env_vars(),
-            env_secrets=self._get_env_secrets(),
+            env_secrets=env_secrets,
             google_credentials_secret=self.google_credentials_secret,
             aws_config_secret=self.aws_config_secret,
             aws_credentials_secret=self.aws_credentials_secret,
