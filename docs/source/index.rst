@@ -51,6 +51,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    eval/index
    exceptions
    float8
+   fs_cache
    io
    launch
    model_ladder
