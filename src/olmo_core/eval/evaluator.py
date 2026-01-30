@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, Iterable, Iterator, Optional
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional
 
 import torch
 
@@ -17,6 +17,8 @@ class Evaluator(metaclass=ABCMeta):
     :param name: A name to assign to the evaluator.
     :param batches: Generates batches for the evaluator. These should at least include the
         "input_ids" field, but can contain any other arbitrary fields as well.
+    :param batches_factory: A callable that returns an iterable over batches. This is an
+        alternative to providing the ``batches`` argument directly.
     :param device: The device to compute/reduce metrics on.
     """
 
@@ -24,23 +26,40 @@ class Evaluator(metaclass=ABCMeta):
         self,
         *,
         name: str,
-        batches: Iterable[Dict[str, Any]],
+        batches: Optional[Iterable[Dict[str, Any]]] = None,
+        batches_factory: Optional[Callable[[], Iterable[Dict[str, Any]]]] = None,
         device: Optional[torch.device] = None,
     ):
+        if batches is None:
+            assert (
+                batches_factory is not None
+            ), "Either 'batches' or 'batches_factory' must be provided."
+        else:
+            assert (
+                batches_factory is None
+            ), "'batches' and 'batches_factory' cannot both be provided."
         self.name = name
         self.batches = batches
+        self.batches_factory = batches_factory
         self.device = device
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
         Iterator over the evaluator's batches.
         """
+        if self.batches is None:
+            assert self.batches_factory is not None
+            self.batches = self.batches_factory()
         if isinstance(self.batches, DataLoaderBase):
             self.batches.reshuffle(in_memory=True)
         for batch in self.batches:
             yield batch
         if isinstance(self.batches, DataLoaderBase):
             self.batches.reset()
+
+    @property
+    def display_name(self) -> str:
+        return self.name
 
     @property
     def total_batches(self) -> Optional[int]:

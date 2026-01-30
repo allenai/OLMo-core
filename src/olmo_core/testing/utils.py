@@ -5,6 +5,7 @@ import pytest
 import torch
 
 import olmo_core.nn.attention.flash_attn_api as flash_attn_api
+import olmo_core.nn.attention.flash_linear_attn_api as flash_linear_attn_api
 
 log = logging.getLogger(__name__)
 
@@ -17,11 +18,13 @@ compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
 has_flash_attn_2 = flash_attn_api.has_flash_attn_2()
 has_flash_attn_3 = flash_attn_api.has_flash_attn_3()
 has_flash_attn_4 = flash_attn_api.has_flash_attn_4()
+has_fla = flash_linear_attn_api.has_fla()
 has_torchao = False
 has_grouped_gemm = False
 has_te = False
 has_dion = False
 has_quack = False
+
 
 try:
     import torchao  # type: ignore
@@ -115,6 +118,18 @@ FLASH_3_MARKS = (
 
 def requires_flash_attn_3(func):
     for mark in FLASH_3_MARKS:
+        func = mark(func)
+    return func
+
+
+FLA_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_fla, reason="Requires flash-linear-attention (fla)"),
+)
+
+
+def requires_fla(func):
+    for mark in FLA_MARKS:
         func = mark(func)
     return func
 
