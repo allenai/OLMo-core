@@ -61,6 +61,47 @@ class Mamba2ModelConfigurator(TransformerModelConfigurator):
     def __init__(self, rank_microbatch_size: int | None = None):
         super().__init__(rank_microbatch_size=rank_microbatch_size)
 
+    def configure_rank_microbatch_size(
+        self,
+        *,
+        size_spec: str,
+        sequence_length: int,
+        device_type: str,
+    ) -> int:
+        if self.rank_microbatch_size is not None:
+            assert self.rank_microbatch_size > 0
+            assert self.rank_microbatch_size % sequence_length == 0
+            return self.rank_microbatch_size
+
+        device_type = device_type.lower()
+        assert "h100" in device_type or "b200" in device_type
+        assert sequence_length in {2048, 4096, 8192}
+        size_spec = TransformerSize(size_spec)
+
+        num_params = size_spec.approx_num_params
+        mbz: int
+        if num_params <= 100e6:
+            mbz = 4 * 4096
+        elif num_params <= 190e6:
+            mbz = 8 * 4096
+        elif num_params <= 370e6:
+            mbz = 6 * 4096
+        elif num_params <= 760e6:
+            mbz = 6 * 4096
+        elif num_params <= 1e9:
+            mbz = 8 * 4096
+        elif num_params <= 3e9:
+            mbz = 4 * 4096
+        elif num_params <= 7e9:
+            mbz = 2 * 4096
+        else:
+            mbz = 2 * 4096
+
+        if "b200" in device_type:
+            mbz = mbz * 2
+
+        return mbz
+
     def configure_model(
         self,
         *,
