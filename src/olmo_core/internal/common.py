@@ -71,6 +71,8 @@ def build_launch_config(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     num_execution_units: Optional[int] = None,
+    step_timeout: Optional[int] = None,
+    step_soft_timeout: Optional[int] = 10 * 60,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
 
@@ -158,6 +160,8 @@ def build_launch_config(
         google_credentials_secret="GOOGLE_CREDENTIALS",
         aws_config_secret=f"{beaker_user}_AWS_CONFIG",
         aws_credentials_secret=f"{beaker_user}_AWS_CREDENTIALS",
+        step_timeout=step_timeout,
+        step_soft_timeout=step_soft_timeout,
     )
 
     return launch_config

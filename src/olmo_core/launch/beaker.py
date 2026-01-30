@@ -374,20 +374,20 @@ class BeakerLaunchConfig(Config):
 
     launch_timeout: int | None = None
     """
-    A timeout in seconds to wait for the job to start after submitting it.
+    A timeout in seconds to wait for the job to start after submission.
     If the job doesn't start in time a timeout error will be raised.
     """
 
     step_timeout: int | None = None
     """
-    A timeout in seconds to wait for the first training step when ``follow=True``.
-    If a step isn't detected in a time a timeout error will be raised.
+    A timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
+    If no new logs are detected in a time a timeout error will be raised.
     """
 
     step_soft_timeout: int | None = None
     """
-    A soft timeout in seconds to wait for the first training step when ``follow=True``.
-    If a step isn't detected in a time warning will be issued.
+    A soft timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
+    If no new logs are detected in a time warning will be issued.
     """
 
     _beaker = None
@@ -480,7 +480,7 @@ class BeakerLaunchConfig(Config):
         Arguments are the same as :meth:`launch()`.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
-            recipe = self._build_recipe(
+            recipe, _ = self._build_recipe(
                 beaker,
                 follow=follow,
                 slack_notifications=slack_notifications,
@@ -504,19 +504,21 @@ class BeakerLaunchConfig(Config):
         Launch a Beaker experiment using this config.
 
         :param follow: Stream the logs and follow the experiment until completion.
-        :param torchrun: Launch the target command with ``torchrun``. This will default to ``True``
-            if ``num_gpus > 1`` and ``False`` otherwise.
-        :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
-            Defaults to 'python'.
         :param slack_notifications: If ``follow=True``, send Slack notifications when the run launches,
             fails, or succeeds. This requires the env var ``SLACK_WEBHOOK_URL``.
         :param launch_timeout: A timeout in seconds to wait for the job to start after submitting it.
             If the job doesn't start in time a timeout error will be raised.
+        :param step_timeout: A timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
+            If no new logs are detected in a time a timeout error will be raised.
+        :param step_soft_timeout: A soft timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
+            If no new logs are detected in a time warning will be issued.
+        :param torchrun: Launch the target command with ``torchrun``. This will default to ``True``
+            if ``num_gpus > 1`` and ``False`` otherwise.
 
         :returns: The Beaker workload.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
-            recipe = self._build_recipe(
+            recipe, recipe_launch_kwargs = self._build_recipe(
                 beaker,
                 follow=follow,
                 slack_notifications=slack_notifications,
@@ -528,11 +530,8 @@ class BeakerLaunchConfig(Config):
 
             try:
                 return recipe.launch(
-                    show_logs=follow,
-                    start_timeout=launch_timeout,
-                    inactive_timeout=step_timeout,
-                    inactive_soft_timeout=step_soft_timeout,
                     client=beaker,
+                    **recipe_launch_kwargs,
                 )
             except ExperimentFailedError as exc:
                 raise OLMoBeakerExperimentFailedError(str(exc))
@@ -546,7 +545,7 @@ class BeakerLaunchConfig(Config):
         step_timeout: int | None = None,
         step_soft_timeout: int | None = None,
         torchrun: bool | None = None,
-    ) -> GantryRecipe:
+    ) -> tuple[GantryRecipe, dict[str, Any]]:
         follow = follow if follow is not None else self.follow
         slack_notifications = (
             slack_notifications if slack_notifications is not None else self.slack_notifications
@@ -557,6 +556,14 @@ class BeakerLaunchConfig(Config):
             step_soft_timeout if step_soft_timeout is not None else self.step_soft_timeout
         )
         torchrun = torchrun if torchrun is not None else self.torchrun
+
+        recipe_launch_kwargs = {
+            "show_logs": follow,
+            "start_timeout": launch_timeout,
+            "inactive_timeout": step_timeout,
+            "inactive_soft_timeout": step_soft_timeout,
+        }
+
         if torchrun is None:
             if self.num_gpus > 1 or (self.num_gpus >= 1 and self.num_nodes > 1):
                 torchrun = True
@@ -657,7 +664,7 @@ class BeakerLaunchConfig(Config):
             ],
         )
 
-        return recipe
+        return recipe, recipe_launch_kwargs
 
 
 # Regex for detecting training (and eval) steps in logs.
