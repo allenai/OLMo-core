@@ -19,7 +19,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device, roundrobin, threaded_generator
 
 from ..collator import DataCollator
-from ..data_loader import TextDataLoaderBase
+from ..data_loader import DataLoaderConfig, TextDataLoaderBase
 from ..tokenizer import TokenizerConfig
 from ..utils import (
     find_periodic_sequences,
@@ -65,8 +65,9 @@ class ShuffleStrategy(StrEnum):
     """
 
 
+@DataLoaderConfig.register("composable")
 @dataclass
-class ComposableDataLoaderConfig(Config):
+class ComposableDataLoaderConfig(DataLoaderConfig["ComposableDataLoader"]):
     """
     A configuration class for building :class:`ComposableDataLoader` data loaders.
     """
@@ -86,7 +87,8 @@ class ComposableDataLoaderConfig(Config):
     instance_filter_config: Optional[InstanceFilterConfig] = None
     display_source_visualization: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if self.sources_per_epoch == 0 or self.sources_per_epoch < -1:
             raise OLMoConfigurationError(
                 "'sources_per_epoch' must be -1 (for all sources) or a positive integer."
