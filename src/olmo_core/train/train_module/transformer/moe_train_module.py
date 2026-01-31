@@ -90,7 +90,6 @@ def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
     ranks = gpu_mesh.mesh.clone()          # e.g., tensor([[0,1],[2,3]]) or nested shape
     return DeviceMesh(
         "cpu",
-        # "cuda",
         ranks,                             # keep the exact shape
         mesh_dim_names=gpu_mesh.mesh_dim_names,
     )
@@ -591,14 +590,12 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         raise NotImplementedError("Use load_state_dict_direct instead")
-    
-    def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
-        return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
-    def state_dict_to_load(self, metadata: Metadata, *, optim: bool = True) -> Dict[str, Any]:
-        load_opts = self.state_dict_load_opts
-        state_dict = self._get_state_dict(load_opts, optim=optim)
-        return state_dict
+    def state_dict_to_load(self, metadata: Metadata, *, optim: Optional[bool] = True) -> Dict[str, Any]:
+        raise NotImplementedError("Use load_state_dict_direct instead")
+    
+    def state_dict(self, *, optim: Optional[bool] = True) -> Dict[str, Any]:
+        raise NotImplementedError("Use save_state_dict_direct or load_state_dict_direct instead")
 
     def save_state_dict_direct(
         self,
@@ -658,44 +655,16 @@ class MoEV2TransformerTrainModule(TrainModule):
             pre_download=pre_download, work_dir=work_dir
         )
 
-        ######## HACK load FSDP ckpt ########
-        HACK=False
-        if HACK:
-            metadata = reader.read_metadata()
-            fsdp_model_sd_meta = {k: v for k, v in metadata.state_dict_metadata.items() if k.startswith('model')}
-            fsdp_sd_to_load = {}
-            for k in fsdp_model_sd_meta.keys():
-                fsdp_sd_to_load[k] = torch.empty(fsdp_model_sd_meta[k].size, dtype=torch.float32)
-        
-            dist_cp.state_dict_loader.load(
-                fsdp_sd_to_load,
-                checkpoint_id=dir,
-                storage_reader=reader,
-                process_group=process_group,
-                # planner=FlatLoadPlanner(),
-            )
+        # useful if metadata is needed
+        # metadata = reader.read_metadata()
 
-            # convert
-            model_sd = {k: v for k, v in sd_to_load.items() if k.endswith('.main')}
-
-            # for k, v in fsdp_sd_to_load.items():
-            #     print(k, v.size(), v.mean().item(), v.std().item())
-            pass
-            assert False, "HACK not finished"
-
-
-            # mapping = {} # src -> dst (fsdp key -> moe v2 key)
-            # mapping['embeddings.weight']
-
-        ###################
-        else:
-            dist_cp.state_dict_loader.load(
-                sd_to_load,
-                checkpoint_id=dir,
-                storage_reader=reader,
-                process_group=process_group,
-                # planner=FlatLoadPlanner(),
-            )
+        dist_cp.state_dict_loader.load(
+            sd_to_load,
+            checkpoint_id=dir,
+            storage_reader=reader,
+            process_group=process_group,
+            # planner=FlatLoadPlanner(),
+        )
 
         # since the sd_to_load is returned by optim.state_dict(),
         # the optim's state should automatically updated.
@@ -1485,51 +1454,6 @@ class MoEV2TransformerTrainModule(TrainModule):
 
                 optim_sd[optim_buf_key] = optim_buf_v # save the dtensor back
 
-
-    def _get_state_dict(
-        self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
-    ) -> Dict[str, Any]:
-        raise NotImplementedError("Deprecated")
-        assert optim, "Optimizer always needed"
-
-        wrapped_model_sd = self._get_model_param_state_dicts_dtensor()
-
-        # don't need to store bf16 model params, just use the fp32 params in optimizer state
-        state_dict: Dict[str, Any] = {}
-        # state_dict: Dict[str, Any] = {
-        #     "model": wrapped_model_sd,
-        # }
-
-
-        # TODO: combine the unshard and shard to reduce memory usage
-        optim_sd = self.optim.unsharded_state_dict() # unshard for DP, still sharded over PP, EP_MP
-
-        # unshard over EP_MP
-        wrapped_optim_sd = OrderedDict()
-        for k, v in optim_sd.items():
-            if self.ep_enabled and isinstance(v, torch.Tensor) and "routed_experts." in k:
-                assert self.world_mesh is not None
-                assert self.world_mesh['moe_cpu'] is not None
-                wrapped_optim_sd[k] = DTensor.from_local(v, device_mesh=self.world_mesh['moe_cpu']['ep_dp', 'ep_mp'] , placements=(Replicate(), Shard(0)))
-            elif isinstance(v, torch.Tensor):
-                assert self.world_mesh is not None
-                assert self.world_mesh['dense_cpu'] is not None
-                wrapped_optim_sd[k] = DTensor.from_local(v, device_mesh=self.world_mesh['dense_cpu']['dp'], placements=(Replicate(),))
-            else:
-                wrapped_optim_sd[k] = v
-
-        self._shard_optim_per_tensor_inplace(optim_sd, wrapped_model_sd)
-
-        assert len(optim_sd) == 3 * len(wrapped_model_sd)
-        
-        state_dict["optim"] = optim_sd
-
-        debug_sz = [v.nbytes for v in optim_sd.values()]
-
-        total_sz = sum(debug_sz)/1024**3
-        print("expect ckpt sz (GB): ", total_sz)
-        debug = optim_sd['blocks.1.routed_experts.w_down.main']
-        return state_dict
 
 
     def _clip_grad_norm(

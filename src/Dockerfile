@@ -53,9 +53,9 @@ ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21
-ENV GROUPED_GEMM_CUTLASS="1"
+# ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
-RUN pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
+RUN unset GROUPED_GEMM_CUTLASS && pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
 # Install flash-attn 2
 ARG FLASH_ATTN_VERSION=2.8.2
@@ -144,6 +144,8 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         git-lfs \
         bc \
         sudo \
+        htop \
+        tmux \
         git && \
     rm -rf /var/lib/apt/lists/* \
     # AWS CLI \
@@ -205,7 +207,7 @@ WORKDIR /app/olmo-core
 
 
 # additional tools
-RUN pip install nvitop
+RUN pip install nvitop nvtx
 
 # nsys
 ARG UBUNTU_VERSION
