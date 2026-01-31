@@ -222,13 +222,14 @@ def get_fla_transformer_config(dtype: torch.dtype = torch.float32) -> Transforme
     )
 
     # Update the config to use FLA blocks
+    n_heads = 4
     config.block.name = TransformerBlockType.fla
-    config.block.attention = AttentionConfig(n_heads=4)  # n_heads needed for FLA
+    config.block.sequence_mixer = AttentionConfig(n_heads=n_heads)  # n_heads needed for FLA
     config.block.fla = FLAConfig(
         name="GatedDeltaNet",
         dtype=DType.from_pt(dtype),
         fla_layer_kwargs={
-            "head_dim": int(config.d_model / config.block.attention.n_heads),
+            "head_dim": int(config.d_model / n_heads),
             "use_gate": True,
             "allow_neg_eigval": False,
         },

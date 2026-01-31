@@ -62,10 +62,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     # Update the config to use an FLA block.
     config.block.name = TransformerBlockType.fla
-    config.block.attention = AttentionConfig()  # not used
     # https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/path_attn.py
     config.d_model = 2048
-    config.block.attention.n_heads = 16  # Default is 32
+    n_heads = 16  # Default is 32
+    config.block.sequence_mixer = AttentionConfig(n_heads=n_heads)
     config.block.fla = FLAConfig(
         name="PaTHAttention",
         dtype=config.dtype,

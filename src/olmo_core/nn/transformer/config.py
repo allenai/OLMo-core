@@ -279,8 +279,8 @@ class TransformerBlockConfig(ModuleConfig):
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.fla:
-                n_heads = self.attention.n_heads
-                kwargs.pop("attention")  # FLA does not use attention
+                n_heads = self.sequence_mixer.n_heads
+                kwargs.pop("sequence_mixer")  # FLA does not use sequence_mixer
                 return FLABlock(n_heads=n_heads, **kwargs)
             elif self.name == TransformerBlockType.fla_hybrid:
                 # TODO: Abstract to allow custom interleaved block types
@@ -300,8 +300,8 @@ class TransformerBlockConfig(ModuleConfig):
                     kwargs.pop("fla")
                     return ReorderedNormTransformerBlock(**kwargs)
                 else:
-                    n_heads = self.attention.n_heads
-                    kwargs.pop("attention")
+                    n_heads = self.sequence_mixer.n_heads
+                    kwargs.pop("sequence_mixer")
                     return FLABlock(n_heads=n_heads, **kwargs)
             else:
                 raise NotImplementedError(self.name)
