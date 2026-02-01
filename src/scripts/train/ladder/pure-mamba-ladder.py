@@ -149,9 +149,6 @@ class Mamba2ModelConfigurator(TransformerModelConfigurator):
         model.block.fla = FLAConfig(
             name="Mamba2",
             dtype=model.dtype,
-            fla_layer_kwargs={
-                "head_dim": int(model.d_model / n_heads),
-            },
         )
 
         # Make sure actual number of params is close to target number.
