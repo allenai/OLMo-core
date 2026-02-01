@@ -1,3 +1,4 @@
+import inspect
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -16,11 +17,25 @@ from olmo_core.nn.attention.ring import (
 log = logging.getLogger(__name__)
 
 
+def _supports_cu_seqlens(layer: nn.Module) -> bool:
+    """Check if a layer's forward method accepts cu_seqlens (directly or via **kwargs)."""
+    sig = inspect.signature(layer.forward)
+    params = sig.parameters
+    # Check for direct parameter or **kwargs (VAR_KEYWORD)
+    if "cu_seqlens" in params:
+        return True
+    for param in params.values():
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+    return False
+
+
 class FLA(nn.Module):
     def __init__(self, inner: "fla.layers.ABCAttention"):
         super().__init__()
         self.inner = inner
         self.kv_cache_manager = None
+        self._inner_supports_cu_seqlens = _supports_cu_seqlens(inner)
 
     def init_kv_cache_manager(self, batch_size: int):
         raise NotImplementedError()
@@ -38,7 +53,11 @@ class FLA(nn.Module):
         elif self.kv_cache_manager is not None:
             raise NotImplementedError()  # generate step
         else:
-            return self.inner(x, cu_seqlens=cu_doc_lens)[0]  # returns out, ?, cache
+            # Only pass cu_seqlens if the inner layer supports it (e.g., GatedDeltaNet does, Mamba2 doesn't)
+            if self._inner_supports_cu_seqlens:
+                return self.inner(x, cu_seqlens=cu_doc_lens)[0]  # returns out, ?, cache
+            else:
+                return self.inner(x)[0]
 
     def apply_tp(
         self,
