@@ -133,9 +133,9 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
             name="Mamba2",
             dtype=model.dtype,
             fla_layer_kwargs={
-                "head_dim": ensure_multiple_of(
-                    int(model.d_model / model.block.sequence_mixer.n_heads), 128
-                ),
+                # "head_dim": ensure_multiple_of(
+                #     int(model.d_model / model.block.sequence_mixer.n_heads), 128
+                # ),
             },
         )
 
