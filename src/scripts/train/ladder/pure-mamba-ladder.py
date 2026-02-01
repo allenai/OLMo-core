@@ -150,7 +150,7 @@ class Mamba2ModelConfigurator(TransformerModelConfigurator):
             name="Mamba2",
             dtype=model.dtype,
             fla_layer_kwargs={
-                # "head_dim": ensure_multiple_of(int(model.d_model / n_heads), 128),
+                "head_dim": int(model.d_model / n_heads),
             },
         )
 
