@@ -157,6 +157,21 @@ class FLAConfig(Config):
                 num_heads=n_heads,
                 **self.fla_layer_kwargs,
             ).to(device=init_device, dtype=self.dtype.as_pt())
+        elif self.name == "Mamba2":
+            # Mamba2 requires: num_heads = (expand * hidden_size) / head_dim
+            # To match n_heads from transformer config, compute:
+            #   head_dim = (expand * d_model) / n_heads
+            import fla.layers
+
+            expand = self.fla_layer_kwargs.get("expand", 2)
+            head_dim = (expand * d_model) // n_heads
+
+            layer = fla.layers.Mamba2(
+                hidden_size=d_model,
+                num_heads=n_heads,
+                head_dim=head_dim,
+                **self.fla_layer_kwargs,
+            ).to(device=init_device, dtype=self.dtype.as_pt())
         else:
             # Use generic fla.layers for other FLA layer types
             import fla.layers
