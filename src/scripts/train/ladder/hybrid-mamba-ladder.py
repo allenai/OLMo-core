@@ -119,7 +119,9 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
 
         # Every Nth layer is a quadratic attention layer (N = transformer_ratio).
         attention_indices = [
-            i for i in range(model.n_layers) if i % self.transformer_ratio == self.transformer_ratio - 1
+            i
+            for i in range(model.n_layers)
+            if i % self.transformer_ratio == self.transformer_ratio - 1
         ]
         # Force full attention on the last layer
         if model.n_layers - 1 not in attention_indices:
@@ -127,13 +129,12 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
         model.block.fla_hybrid_attention_indices = sorted(attention_indices)
 
         # Configure the non-attention part of the block to be Mamba2.
-        # Similar to GatedDeltaNet: num_heads * head_dim = 0.75 * hidden_size
         model.block.fla = FLAConfig(
             name="Mamba2",
             dtype=model.dtype,
             fla_layer_kwargs={
                 "head_dim": ensure_multiple_of(
-                    int(0.75 * model.d_model / model.block.sequence_mixer.n_heads), 128
+                    int(model.d_model / model.block.sequence_mixer.n_heads), 128
                 ),
             },
         )

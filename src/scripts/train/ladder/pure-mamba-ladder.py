@@ -146,14 +146,11 @@ class Mamba2ModelConfigurator(TransformerModelConfigurator):
         model.block.sequence_mixer = AttentionConfig(n_heads=n_heads)
 
         # Configure Mamba2
-        # Similar to GatedDeltaNet: num_heads * head_dim = 0.75 * hidden_size
         model.block.fla = FLAConfig(
             name="Mamba2",
             dtype=model.dtype,
             fla_layer_kwargs={
-                "head_dim": ensure_multiple_of(
-                    int(0.75 * model.d_model / n_heads), 128
-                ),
+                "head_dim": ensure_multiple_of(int(model.d_model / n_heads), 128),
             },
         )
 
