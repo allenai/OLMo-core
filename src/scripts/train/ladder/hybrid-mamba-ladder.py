@@ -95,17 +95,17 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
         num_params = size_spec.approx_num_params
         mbz: int
         if num_params <= 100e6:
-            mbz = 4 * 4096
+            mbz = 2 * 4096
         elif num_params <= 190e6:
-            mbz = 8 * 4096
-        elif num_params <= 370e6:
-            mbz = 6 * 4096
-        elif num_params <= 760e6:
-            mbz = 6 * 4096
-        elif num_params <= 1e9:
-            mbz = 8 * 4096
-        elif num_params <= 3e9:
             mbz = 4 * 4096
+        elif num_params <= 370e6:
+            mbz = 3 * 4096
+        elif num_params <= 760e6:
+            mbz = 3 * 4096
+        elif num_params <= 1e9:
+            mbz = 4 * 4096
+        elif num_params <= 3e9:
+            mbz = 2 * 4096
         elif num_params <= 7e9:
             mbz = 2 * 4096
         else:
