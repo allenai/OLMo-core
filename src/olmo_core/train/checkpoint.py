@@ -248,7 +248,12 @@ class Checkpointer:
         tmp_path = Path(tmp_file.name)
         try:
             tmp_file.write(contents)
+
+            # Ensure all data is written to disk.
             tmp_file.flush()
+            if hasattr(os, "fdatasync"):  # only available on linux
+                os.fdatasync(tmp_file)  # type: ignore
+            tmp_file.close()
 
             target: PathOrStr
             if is_url(dir):
@@ -259,10 +264,11 @@ class Checkpointer:
                 if target.is_file() and not self.save_overwrite:
                     raise FileExistsError(target)
                 target.parent.mkdir(exist_ok=True, parents=True)
-                tmp_path.rename(target)
+                tmp_path.replace(target)
 
             return target
         finally:
+            tmp_file.close()
             tmp_path.unlink(missing_ok=True)
 
     @classmethod
@@ -397,6 +403,8 @@ class Checkpointer:
             if get_fs_local_rank() == 0:
                 clear_directory(tmp_dir)
                 tmp_dir.mkdir(exist_ok=True, parents=True)
+                if hasattr(os, "fdatasync"):  # only available on linux
+                    os.fdatasync(tmp_dir)  # type: ignore
             # NOTE: anytime we clear a directory in preparation to use it we should have a barrier
             # right after, otherwise one rank might get ahead and write something to the directory
             # prematurely, which then gets removed by the call to `clear_directory()`.

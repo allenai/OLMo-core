@@ -2,6 +2,7 @@ import dataclasses
 import io
 import logging
 import operator
+import os
 import pickle
 import tempfile
 import traceback
@@ -99,38 +100,46 @@ def _write_items(
 ) -> List[WriteResult]:
     results: List[WriteResult] = []
 
-    tmp_path = Path(
-        tempfile.mktemp(suffix=".distcp", dir=None if is_url(path) else Path(path).parent)
+    tmp_file = tempfile.NamedTemporaryFile(
+        mode="w+b", suffix=".distcp", dir=None if is_url(path) else Path(path).parent, delete=False
     )
+    tmp_path = Path(tmp_file.name)
     try:
-        with tmp_path.open("wb") as tmp_file:
-            for write_item in items:
-                offset = tmp_file.tell()
-                data = planner.resolve_data(write_item)
+        for write_item in items:
+            offset = tmp_file.tell()
+            data = planner.resolve_data(write_item)
 
-                if write_item.type == WriteItemType.BYTE_IO:
-                    assert isinstance(data, io.BytesIO)
-                    tmp_file.write(data.getbuffer())
-                else:
-                    assert isinstance(data, torch.Tensor)
-                    data = data.cpu()  # should already be on CPU, but just in case
-                    torch.save(data, tmp_file)
+            if write_item.type == WriteItemType.BYTE_IO:
+                assert isinstance(data, io.BytesIO)
+                tmp_file.write(data.getbuffer())
+            else:
+                assert isinstance(data, torch.Tensor)
+                data = data.cpu()  # should already be on CPU, but just in case
+                torch.save(data, tmp_file)
 
-                length = tmp_file.tell() - offset
+            length = tmp_file.tell() - offset
 
-                results.append(
-                    WriteResult(
-                        index=write_item.index,
-                        size_in_bytes=length,
-                        storage_data=_StorageInfo(storage_key, offset, length),
-                    )
+            results.append(
+                WriteResult(
+                    index=write_item.index,
+                    size_in_bytes=length,
+                    storage_data=_StorageInfo(storage_key, offset, length),
                 )
+            )
 
+        # Ensure all data is written to disk.
+        tmp_file.flush()
+        if hasattr(os, "fdatasync"):  # only available on linux
+            os.fdatasync(tmp_file)  # type: ignore
+        tmp_file.close()
+
+        # Copy to final destination.
         if is_url(path):
             upload(tmp_path, path, save_overwrite=True)
         else:
-            tmp_path.rename(path)
+            tmp_path.replace(path)
     finally:
+        tmp_file.close()
         tmp_path.unlink(missing_ok=True)
 
     return results
@@ -211,15 +220,15 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             nonlocal file_count
             file_name = f"{storage_plan.prefix}{file_count}.distcp"
             file_count += 1
-            return file_name
+            return f"{self.path}/{file_name}"
 
-        def write_items(buckets: List[List[WriteItem]]) -> List[WriteResult]:
+        def write_buckets(buckets: List[List[WriteItem]]) -> List[WriteResult]:
             results: List[WriteResult] = []
             for bucket in buckets:
-                file_name = gen_file_name()
-                path = f"{self.path}/{file_name}"
+                path = gen_file_name()
+                key = os.path.basename(path)
                 try:
-                    results.extend(_write_items(path, file_name, bucket, planner))
+                    results.extend(_write_items(path, key, bucket, planner))
                 except BaseException:
                     # NOTE: we might get an error here that can't be pickled, which causes a different failure
                     # later when PyTorch tries to reduce that error across ranks. So here we just make
@@ -231,7 +240,7 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         if self.throttle_uploads and is_url(self.path):
             buckets = _split_by_size_and_type(1, plan.items)
             results = do_n_at_a_time(
-                partial(write_items, buckets),
+                partial(write_buckets, buckets),
                 process_group=self.process_group,
                 n=max(get_num_nodes() // 4, 1),
             )
@@ -241,7 +250,7 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
                 futures = []
                 for bucket in buckets:
-                    futures.append(executor.submit(write_items, [bucket]))
+                    futures.append(executor.submit(write_buckets, [bucket]))
                 for f in as_completed(futures):
                     results.extend(f.result())
 
@@ -256,21 +265,29 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         metadata.storage_data = storage_md
         metadata.storage_meta = self.storage_meta()
 
-        tmp_path = Path(
-            tempfile.mktemp(
-                suffix=".tmp",
-                dir=None if is_url(self.metadata_path) else Path(self.metadata_path).parent,
-            )
+        tmp_file = tempfile.NamedTemporaryFile(
+            mode="w+b",
+            suffix=".tmp",
+            dir=None if is_url(self.metadata_path) else Path(self.metadata_path).parent,
+            delete=False,
         )
+        tmp_path = Path(tmp_file.name)
         try:
-            with tmp_path.open("wb") as tmp_file:
-                pickle.dump(metadata, tmp_file)
+            pickle.dump(metadata, tmp_file)
 
+            # Ensure all data is written to disk.
+            tmp_file.flush()
+            if hasattr(os, "fdatasync"):  # only available on linux
+                os.fdatasync(tmp_file)  # type: ignore
+            tmp_file.close()
+
+            # Copy to final destination.
             if is_url(self.metadata_path):
                 upload(tmp_path, self.metadata_path, save_overwrite=True)
             else:
-                tmp_path.rename(self.metadata_path)
+                tmp_path.replace(self.metadata_path)
         finally:
+            tmp_file.close()
             tmp_path.unlink(missing_ok=True)
 
     def storage_meta(self) -> Optional[StorageMeta]:
