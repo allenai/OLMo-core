@@ -99,9 +99,9 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
         elif num_params <= 190e6:
             mbz = 4 * 4096
         elif num_params <= 370e6:
-            mbz = 3 * 4096
+            mbz = 2 * 4096
         elif num_params <= 760e6:
-            mbz = 3 * 4096
+            mbz = 2 * 4096
         elif num_params <= 1e9:
             mbz = 4 * 4096
         elif num_params <= 3e9:
