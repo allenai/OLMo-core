@@ -1016,7 +1016,11 @@ class TEAttentionBackend(AttentionBackend):
         pass
 
     @classmethod
-    def assert_supports_cp(cls):
+    def assert_supports_ring_cp(cls):
+        pass
+
+    @classmethod
+    def assert_supports_ulysses_cp(cls):
         pass
 
     @classmethod

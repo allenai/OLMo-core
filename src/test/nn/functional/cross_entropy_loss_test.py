@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from olmo_core.nn.functional import cross_entropy_loss
-from olmo_core.testing import DEVICES
+from olmo_core.nn.functional import cross_entropy_loss, cute_cross_entropy_loss
+from olmo_core.testing import DEVICES, requires_gpu, requires_quack
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -29,3 +29,40 @@ def test_cross_entropy_loss(device, reduction):
     )
     torch.testing.assert_close(ce_loss, ce_loss1)
     torch.testing.assert_close(z_loss, z_loss1)
+
+
+@requires_gpu
+@requires_quack
+@pytest.mark.parametrize("reduction", ["sum", "mean"])
+def test_cute_cross_entropy_loss(reduction):
+    device = torch.device("cuda")
+    vocab_size = 128 * 10
+    N = 256
+
+    logits = torch.randn(N, vocab_size, device=device, requires_grad=True)
+    labels = torch.randint(0, vocab_size, (N,), device=device)
+
+    logits_ref = logits.detach().clone().requires_grad_(True)
+    labels_ref = labels.detach().clone()
+
+    ce_loss, z_loss = cute_cross_entropy_loss(
+        logits, labels, reduction=reduction, compute_z_loss=True
+    )
+    assert z_loss is not None
+    loss = ce_loss + z_loss
+
+    ce_loss_ref, z_loss_ref = cross_entropy_loss(
+        logits_ref, labels_ref, reduction=reduction, compute_z_loss=True
+    )
+    assert z_loss_ref is not None
+    loss_ref = ce_loss_ref + z_loss_ref
+
+    torch.testing.assert_close(ce_loss, ce_loss_ref)
+    torch.testing.assert_close(z_loss, z_loss_ref)
+
+    loss.backward()
+    loss_ref.backward()
+
+    assert logits.grad is not None
+    assert logits_ref.grad is not None
+    torch.testing.assert_close(logits.grad, logits_ref.grad)

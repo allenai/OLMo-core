@@ -23,6 +23,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from .config import ModuleConfig
 from .functional import (
     cross_entropy_loss,
+    cute_cross_entropy_loss,
     fused_linear_cross_entropy_loss,
     l2_normalize,
 )
@@ -71,6 +72,11 @@ class LMLossImplementation(StrEnum):
     """
     A low-memory triton implementation from Liger-Kernel that fused the linear logits projection
     with the loss computation.
+    """
+
+    cute = "cute"
+    """
+    An efficient CuTe-based implementation from the QuACK library.
     """
 
 
@@ -249,10 +255,17 @@ class LMHead(nn.Module):
         loss: torch.Tensor
         ce_loss: torch.Tensor
         z_loss: Optional[torch.Tensor]
-        if self.loss_implementation == LMLossImplementation.default:
+        if self.loss_implementation in (LMLossImplementation.default, LMLossImplementation.cute):
+            loss_fn = (
+                cute_cross_entropy_loss
+                if self.loss_implementation == LMLossImplementation.cute
+                else cross_entropy_loss
+            )
+
             logits = self.w_out(h)
             assert logits is not None
-            ce_loss, z_loss = cross_entropy_loss(
+
+            ce_loss, z_loss = loss_fn(
                 get_local_tensor(logits).view(-1, self.vocab_size),
                 get_local_tensor(labels).contiguous().view(-1),
                 ignore_index=ignore_index,
@@ -260,6 +273,7 @@ class LMHead(nn.Module):
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
+
             if z_loss is not None:
                 loss = ce_loss + z_loss
             else:
@@ -497,8 +511,14 @@ class NormalizedLMHead(LMHead):
         loss: torch.Tensor
         ce_loss: torch.Tensor
         z_loss: Optional[torch.Tensor]
-        if self.loss_implementation == LMLossImplementation.default:
-            ce_loss, z_loss = cross_entropy_loss(
+        if self.loss_implementation in (LMLossImplementation.default, LMLossImplementation.cute):
+            loss_fn = (
+                cute_cross_entropy_loss
+                if self.loss_implementation == LMLossImplementation.cute
+                else cross_entropy_loss
+            )
+
+            ce_loss, z_loss = loss_fn(
                 get_local_tensor(logits).view(-1, self.vocab_size),
                 get_local_tensor(labels).contiguous().view(-1),
                 ignore_index=ignore_index,
@@ -506,6 +526,7 @@ class NormalizedLMHead(LMHead):
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
+
             if z_loss is not None:
                 loss = ce_loss + z_loss
             else:

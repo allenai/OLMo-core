@@ -4,7 +4,7 @@ from typing import Callable, Literal, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
-__all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss"]
+__all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss", "cute_cross_entropy_loss"]
 
 log = logging.getLogger(__name__)
 
@@ -122,3 +122,92 @@ def fused_linear_cross_entropy_loss(
         return ce_loss, z_loss
     else:
         return ce_loss, None
+
+
+_cute_cross_entropy_fwd: Optional[Callable] = None
+_cute_cross_entropy_bwd: Optional[Callable] = None
+try:
+    from quack.cross_entropy import cross_entropy_bwd, cross_entropy_fwd  # type: ignore
+
+    _cute_cross_entropy_fwd = cross_entropy_fwd
+    _cute_cross_entropy_bwd = cross_entropy_bwd
+except ImportError:
+    pass
+
+
+class _CuTeCrossEntropyFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, target, lse_partial=None, ignore_index=-100, inplace_backward=False):
+        assert _cute_cross_entropy_fwd is not None
+        if lse_partial is None:
+            loss, lse = _cute_cross_entropy_fwd(
+                x, target, ignore_index=ignore_index, return_lse=True
+            )
+        else:
+            # if we already compute partial lse, then to compute the final lse we treat
+            # @lse_partial as @x and @x as @target_logit
+            loss, lse = _cute_cross_entropy_fwd(
+                lse_partial, target, target_logit=x, ignore_index=ignore_index, return_lse=True
+            )
+        ctx.save_for_backward(x, target, lse)
+        ctx.ignore_index = ignore_index
+        ctx.inplace_backward = inplace_backward
+        return loss
+
+    @staticmethod
+    def backward(ctx, dloss):  # type: ignore
+        assert _cute_cross_entropy_bwd is not None
+        x, target, lse = ctx.saved_tensors
+        dx = _cute_cross_entropy_bwd(
+            x,
+            target,
+            dloss.contiguous(),
+            lse,
+            ctx.ignore_index,
+            inplace_backward=ctx.inplace_backward,
+        )
+        return dx, None, None, None, None
+
+
+def cute_cross_entropy_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    ignore_index: int = -100,
+    reduction: Literal["mean", "sum", "none"] = "mean",
+    compute_z_loss: bool = False,
+    z_loss_multiplier: float = 1e-4,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """
+    Like :func:`cross_entropy_loss`, but uses an efficient CuTe-based implementation from the QuACK
+    library.
+    """
+    lse_partial: Optional[torch.Tensor] = None
+    if compute_z_loss:
+        M, N = logits.shape
+        assert N % 128 == 0, "CuTe cross entropy loss requires vocab size to be multiple of 128"
+        lse_partial = logits.view(M, N // 128, 128).float().logsumexp(dim=-1)
+
+    loss: torch.Tensor = _CuTeCrossEntropyFunction.apply(logits, labels, lse_partial, ignore_index)  # type: ignore[assignment]
+    mask = labels != ignore_index
+    mask_sum: Optional[torch.Tensor] = None
+    if reduction == "mean":
+        mask_sum = mask.sum().float()
+        loss = loss.sum() / mask_sum
+    elif reduction == "sum":
+        loss = loss.sum()
+
+    if not compute_z_loss:
+        return loss, None
+
+    assert lse_partial is not None
+    z_squared = lse_partial.logsumexp(-1).pow(2)
+    if reduction == "mean":
+        assert mask_sum is not None
+        z_squared = (z_squared * mask).sum() / mask_sum
+    elif reduction == "sum":
+        z_squared = (z_squared * mask).sum()
+
+    z_loss = z_loss_multiplier * z_squared
+
+    return loss, z_loss

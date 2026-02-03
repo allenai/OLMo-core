@@ -1,4 +1,5 @@
 import logging
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional, Union
@@ -49,7 +50,9 @@ def get_root_dir(cluster: str) -> str:
 
 
 def get_work_dir(root_dir: str) -> str:
-    if is_url(root_dir):
+    if (work_dir := os.getenv("OLMO_CORE_WORK_DIR")) is not None:
+        return work_dir
+    elif is_url(root_dir):
         return "./dataset-cache"
     elif (beaker_username := get_beaker_username()) is not None:
         return f"{root_dir}/checkpoints/{beaker_username.lower()}/dataset-cache"

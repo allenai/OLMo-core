@@ -141,13 +141,13 @@ def handle_custom_args(
     parser.add_argument(
         "--data-mix",
         type=str,
-        choices=list(DataMix),
+        choices=[str(m) for m in DataMix],
         default=str(DataMix.OLMo_mix_0925),
     )
 
     # Extract argument names from parser (both value-based and boolean flags)
-    arg_prefixes = []
-    boolean_flags = []
+    arg_prefixes: list[str] = []
+    boolean_flags: list[str] = []
     for action in parser._actions:
         if isinstance(action, argparse._StoreAction):
             arg_prefixes.extend(action.option_strings)
@@ -322,9 +322,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             f"Applied batch multiplier: {batch_multiplier}, batch: {base_global_batch_size} -> {global_batch_size}"
         )
 
-    beaker_launch_config = None
+    beaker_launch_config: Optional[BeakerLaunchConfig] = None
     if not no_beaker_launch:
-        beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
+        beaker_launch_config = build_launch_config(
             name=cli_context.run_name,
             cmd=cli_context.remote_cmd,
             cluster=cli_context.cluster,
