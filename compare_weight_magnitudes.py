@@ -20,9 +20,10 @@ class ParameterDiff:
     name: str
     max_diff: float
     mean_diff: float
-    l2_norm: float
-    num_elements: int
-    shape: tuple
+    l2_norm: float  # L2 norm of the difference tensor
+    l2_norm_diff: float = 0.0  # l2(W_model1) - l2(W_model2)
+    num_elements: int = 0
+    shape: tuple = ()
     direction: str = ""  # "+" if model1 larger at max diff, "-" if model2 larger
     pct_model1_larger: float = 0.0  # % of elements where model1 > model2 + tol
     pct_model2_larger: float = 0.0  # % of elements where model2 > model1 + tol
@@ -108,6 +109,11 @@ def compute_parameter_diff(
     mean_diff = abs_diff.mean().item()
     l2_norm = torch.linalg.vector_norm(abs_diff).item()
 
+    # Compute L2 norm difference: ||W_model1|| - ||W_model2||
+    l2_norm1 = torch.linalg.norm(tensor1.float()).item()
+    l2_norm2 = torch.linalg.norm(tensor2.float()).item()
+    l2_norm_diff = l2_norm1 - l2_norm2
+
     # Determine direction: sign at the location of max absolute difference
     # "+" means model1 is larger, "-" means model2 is larger
     max_idx = abs_diff.argmax()
@@ -132,6 +138,7 @@ def compute_parameter_diff(
         max_diff=max_diff,
         mean_diff=mean_diff,
         l2_norm=l2_norm,
+        l2_norm_diff=l2_norm_diff,
         num_elements=num_elements,
         shape=tuple(tensor1.shape),
         direction=direction,
@@ -208,7 +215,8 @@ def write_diff_report(
         f.write(f"# === TOP {top_n} PARAMETERS BY MAX DIFFERENCE ===\n")
         f.write(f"# Direction: + means model1 larger, - means model2 larger (at max diff location)\n")
         f.write(f"# pct_m1/pct_m2: % of elements where model1/model2 is larger (tol=0.01)\n")
-        f.write("parameter_name\tdir\tpct_m1\tpct_m2\tmax_diff\tmean_diff\tl2_norm\tnum_elements\tshape\n")
+        f.write(f"# l2_norm_diff: ||W_model1|| - ||W_model2||\n")
+        f.write("parameter_name\tdir\tpct_m1\tpct_m2\tmax_diff\tmean_diff\tl2_norm\tl2_norm_diff\tnum_elements\tshape\n")
 
         sorted_by_max = sorted(diffs, key=lambda d: d.max_diff, reverse=True)
         for diff in sorted_by_max[:top_n]:
@@ -220,6 +228,7 @@ def write_diff_report(
                 f"{diff.max_diff:.6e}\t"
                 f"{diff.mean_diff:.6e}\t"
                 f"{diff.l2_norm:.6e}\t"
+                f"{diff.l2_norm_diff:.6e}\t"
                 f"{diff.num_elements}\t"
                 f"{diff.shape}\n"
             )
@@ -233,7 +242,8 @@ def write_diff_report(
             f.write(f"# (* = mean also exceeds threshold)\n")
             f.write(f"# Direction: + means model1 larger, - means model2 larger (at max diff location)\n")
             f.write(f"# pct_m1/pct_m2: % of elements where model1/model2 is larger (tol=0.01)\n")
-            f.write("parameter_name\tdir\tpct_m1\tpct_m2\tmax_diff\tmean_diff\tl2_norm\tnum_elements\tshape\tmean_exceeds\n")
+            f.write(f"# l2_norm_diff: ||W_model1|| - ||W_model2||\n")
+            f.write("parameter_name\tdir\tpct_m1\tpct_m2\tmax_diff\tmean_diff\tl2_norm\tl2_norm_diff\tnum_elements\tshape\tmean_exceeds\n")
 
             sorted_exceeding = sorted(exceeding, key=lambda d: d.max_diff, reverse=True)
             for diff in sorted_exceeding:
@@ -246,6 +256,7 @@ def write_diff_report(
                     f"{diff.max_diff:.6e}\t"
                     f"{diff.mean_diff:.6e}\t"
                     f"{diff.l2_norm:.6e}\t"
+                    f"{diff.l2_norm_diff:.6e}\t"
                     f"{diff.num_elements}\t"
                     f"{diff.shape}\t"
                     f"{diff.mean_exceeds_threshold}\n"
@@ -284,7 +295,7 @@ def main():
     # Generate output filename
     model1_name = get_model_name(args.model1)
     model2_name = get_model_name(args.model2)
-    output_path = f"{model1_name}_{model2_name}.diff"
+    output_path = f"comparing-mag/{model1_name}_{model2_name}.diff"
 
     print(f"Writing report to {output_path}")
     write_diff_report(
