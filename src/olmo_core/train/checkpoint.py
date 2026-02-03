@@ -403,8 +403,6 @@ class Checkpointer:
             if get_fs_local_rank() == 0:
                 clear_directory(tmp_dir)
                 tmp_dir.mkdir(exist_ok=True, parents=True)
-                if hasattr(os, "fdatasync"):  # only available on linux
-                    os.fdatasync(tmp_dir)  # type: ignore
             # NOTE: anytime we clear a directory in preparation to use it we should have a barrier
             # right after, otherwise one rank might get ahead and write something to the directory
             # prematurely, which then gets removed by the call to `clear_directory()`.
