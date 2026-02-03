@@ -57,6 +57,7 @@ class CheckpointerConfig(Config):
     pre_download: bool = False
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
+    #  save_process_count: Optional[int] = None
     throttle_uploads: bool = False
 
     def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
@@ -88,6 +89,7 @@ class Checkpointer:
     process_group: Optional[dist.ProcessGroup] = None
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
+    #  save_process_count: Optional[int] = None  # TODO: leads to some MP issues, needs more investigating.
     throttle_uploads: bool = False
 
     def __post_init__(self):
@@ -113,6 +115,7 @@ class Checkpointer:
                 train_module.state_dict_to_save(),
                 process_group=self.process_group,
                 thread_count=self.save_thread_count,
+                #  process_count=self.save_process_count,
                 throttle_uploads=self.throttle_uploads,
                 enable_plan_caching=True,
                 # NOTE: we've already checked and cleared the directory at this point so we can skip
@@ -148,6 +151,7 @@ class Checkpointer:
             train_module.state_dict_to_save(),
             process_group=self.process_group,
             thread_count=self.save_thread_count,
+            #  process_count=self.save_process_count,
             throttle_uploads=self.throttle_uploads,
             enable_plan_caching=True,
             # NOTE: we've already checked and cleared the directory at this point so we can skip
@@ -248,7 +252,12 @@ class Checkpointer:
         tmp_path = Path(tmp_file.name)
         try:
             tmp_file.write(contents)
+
+            # Ensure all data is written to disk.
             tmp_file.flush()
+            if hasattr(os, "fdatasync"):  # only available on linux
+                os.fdatasync(tmp_file)  # type: ignore
+            tmp_file.close()
 
             target: PathOrStr
             if is_url(dir):
@@ -259,10 +268,11 @@ class Checkpointer:
                 if target.is_file() and not self.save_overwrite:
                     raise FileExistsError(target)
                 target.parent.mkdir(exist_ok=True, parents=True)
-                tmp_path.rename(target)
+                tmp_path.replace(target)
 
             return target
         finally:
+            tmp_file.close()
             tmp_path.unlink(missing_ok=True)
 
     @classmethod
