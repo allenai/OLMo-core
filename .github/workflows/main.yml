@@ -76,7 +76,7 @@ jobs:
               pytest -v --color=yes --durations=3 \
                 src/test/scripts/
 
-          - name: Test small model
+          - name: Integration tests
             run: |
               pytest -v --color=yes --durations=3 -m "not gpu" \
                 src/integration_tests/
