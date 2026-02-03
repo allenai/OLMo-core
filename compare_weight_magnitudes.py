@@ -23,6 +23,9 @@ class ParameterDiff:
     l2_norm: float
     num_elements: int
     shape: tuple
+    direction: str = ""  # "+" if model1 larger at max diff, "-" if model2 larger
+    pct_model1_larger: float = 0.0  # % of elements where model1 > model2 + tol
+    pct_model2_larger: float = 0.0  # % of elements where model2 > model1 + tol
     any_exceeds_threshold: bool = False
     mean_exceeds_threshold: bool = False
 
@@ -95,13 +98,28 @@ def compute_parameter_diff(
     tensor1: torch.Tensor,
     tensor2: torch.Tensor,
     min_diff: Optional[float] = None,
+    tol: float = 0.01,
 ) -> ParameterDiff:
     """Compute difference statistics between two parameter tensors."""
-    diff = (tensor1.float() - tensor2.float()).abs()
+    signed_diff = tensor1.float() - tensor2.float()
+    abs_diff = signed_diff.abs()
 
-    max_diff = diff.max().item()
-    mean_diff = diff.mean().item()
-    l2_norm = torch.linalg.vector_norm(diff).item()
+    max_diff = abs_diff.max().item()
+    mean_diff = abs_diff.mean().item()
+    l2_norm = torch.linalg.vector_norm(abs_diff).item()
+
+    # Determine direction: sign at the location of max absolute difference
+    # "+" means model1 is larger, "-" means model2 is larger
+    max_idx = abs_diff.argmax()
+    direction = "+" if signed_diff.flatten()[max_idx].item() > 0 else "-"
+
+    # Compute percentage of elements where each model is larger
+    # Values within tol are considered equal
+    num_elements = tensor1.numel()
+    model1_larger = (signed_diff > tol).sum().item()
+    model2_larger = (signed_diff < -tol).sum().item()
+    pct_model1_larger = 100.0 * model1_larger / num_elements
+    pct_model2_larger = 100.0 * model2_larger / num_elements
 
     any_exceeds = False
     mean_exceeds = False
@@ -114,8 +132,11 @@ def compute_parameter_diff(
         max_diff=max_diff,
         mean_diff=mean_diff,
         l2_norm=l2_norm,
-        num_elements=tensor1.numel(),
+        num_elements=num_elements,
         shape=tuple(tensor1.shape),
+        direction=direction,
+        pct_model1_larger=pct_model1_larger,
+        pct_model2_larger=pct_model2_larger,
         any_exceeds_threshold=any_exceeds,
         mean_exceeds_threshold=mean_exceeds,
     )
@@ -185,12 +206,17 @@ def write_diff_report(
 
         # Section 1: Top N parameters by max difference
         f.write(f"# === TOP {top_n} PARAMETERS BY MAX DIFFERENCE ===\n")
-        f.write("parameter_name\tmax_diff\tmean_diff\tl2_norm\tnum_elements\tshape\n")
+        f.write(f"# Direction: + means model1 larger, - means model2 larger (at max diff location)\n")
+        f.write(f"# pct_m1/pct_m2: % of elements where model1/model2 is larger (tol=0.01)\n")
+        f.write("parameter_name\tdir\tpct_m1\tpct_m2\tmax_diff\tmean_diff\tl2_norm\tnum_elements\tshape\n")
 
         sorted_by_max = sorted(diffs, key=lambda d: d.max_diff, reverse=True)
         for diff in sorted_by_max[:top_n]:
             f.write(
                 f"{diff.name}\t"
+                f"{diff.direction}\t"
+                f"{diff.pct_model1_larger:.1f}\t"
+                f"{diff.pct_model2_larger:.1f}\t"
                 f"{diff.max_diff:.6e}\t"
                 f"{diff.mean_diff:.6e}\t"
                 f"{diff.l2_norm:.6e}\t"
@@ -205,13 +231,18 @@ def write_diff_report(
             f.write(f"# === PARAMETERS EXCEEDING THRESHOLD (min_diff={min_diff}) ===\n")
             f.write(f"# Total: {len(exceeding)} parameters\n")
             f.write(f"# (* = mean also exceeds threshold)\n")
-            f.write("parameter_name\tmax_diff\tmean_diff\tl2_norm\tnum_elements\tshape\tmean_exceeds\n")
+            f.write(f"# Direction: + means model1 larger, - means model2 larger (at max diff location)\n")
+            f.write(f"# pct_m1/pct_m2: % of elements where model1/model2 is larger (tol=0.01)\n")
+            f.write("parameter_name\tdir\tpct_m1\tpct_m2\tmax_diff\tmean_diff\tl2_norm\tnum_elements\tshape\tmean_exceeds\n")
 
             sorted_exceeding = sorted(exceeding, key=lambda d: d.max_diff, reverse=True)
             for diff in sorted_exceeding:
                 marker = "*" if diff.mean_exceeds_threshold else ""
                 f.write(
                     f"{marker}{diff.name}\t"
+                    f"{diff.direction}\t"
+                    f"{diff.pct_model1_larger:.1f}\t"
+                    f"{diff.pct_model2_larger:.1f}\t"
                     f"{diff.max_diff:.6e}\t"
                     f"{diff.mean_diff:.6e}\t"
                     f"{diff.l2_norm:.6e}\t"
@@ -267,9 +298,9 @@ def main():
 
     # Print summary to console
     sorted_by_max = sorted(diffs, key=lambda d: d.max_diff, reverse=True)
-    print(f"\nTop 5 parameters by max difference:")
+    print(f"\nTop 5 parameters by max difference (+ = model1 larger, - = model2 larger):")
     for diff in sorted_by_max[:5]:
-        print(f"  {diff.name}: max={diff.max_diff:.6e}, mean={diff.mean_diff:.6e}")
+        print(f"  {diff.direction} {diff.name}: max={diff.max_diff:.6e}, mean={diff.mean_diff:.6e}, m1>{diff.pct_model1_larger:.1f}% m2>{diff.pct_model2_larger:.1f}%")
 
     if args.min_diff is not None:
         exceeding = [d for d in diffs if d.any_exceeds_threshold]
