@@ -57,7 +57,7 @@ class CheckpointerConfig(Config):
     pre_download: bool = False
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
-    save_process_count: Optional[int] = None
+    #  save_process_count: Optional[int] = None
     throttle_uploads: bool = False
 
     def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
@@ -89,7 +89,7 @@ class Checkpointer:
     process_group: Optional[dist.ProcessGroup] = None
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
-    save_process_count: Optional[int] = None
+    #  save_process_count: Optional[int] = None  # TODO: leads to some MP issues, needs more investigating.
     throttle_uploads: bool = False
 
     def __post_init__(self):
@@ -115,7 +115,7 @@ class Checkpointer:
                 train_module.state_dict_to_save(),
                 process_group=self.process_group,
                 thread_count=self.save_thread_count,
-                process_count=self.save_process_count,
+                #  process_count=self.save_process_count,
                 throttle_uploads=self.throttle_uploads,
                 enable_plan_caching=True,
                 # NOTE: we've already checked and cleared the directory at this point so we can skip
@@ -151,7 +151,7 @@ class Checkpointer:
             train_module.state_dict_to_save(),
             process_group=self.process_group,
             thread_count=self.save_thread_count,
-            process_count=self.save_process_count,
+            #  process_count=self.save_process_count,
             throttle_uploads=self.throttle_uploads,
             enable_plan_caching=True,
             # NOTE: we've already checked and cleared the directory at this point so we can skip

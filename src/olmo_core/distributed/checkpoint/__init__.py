@@ -94,7 +94,8 @@ def save_state_dict(
     :param process_group: The process group to use for distributed collectives.
     :param save_overwrite: Overwrite existing files.
     :param thread_count: Set this to override the number of threads used while writing data.
-    :param process_count: Set this to use a process pool instead of a thread pool when possible.
+    :param process_count: Set this to use a process pool instead of a thread pool when possible
+        (currently not compatible with ``throttle_uploads``).
     :param throttle_uploads: If this is set to ``True`` and ``dir`` is a URL then only one
         rank from each node will upload data at a time.
     """
@@ -223,7 +224,8 @@ def save_model_and_optim_state(
         the setting used when loading the state dict and is needed in a distributed setting when
         the params in some param groups may differ between ranks, such as with pipeline parallelism.
     :param thread_count: Set this to override the number of threads used while writing data.
-    :param process_count: Set this to use a process pool instead of a thread pool when possible.
+    :param process_count: Set this to use a process pool instead of a thread pool when possible
+        (currently not compatible with ``throttle_uploads``).
     :param throttle_uploads: If this is set to ``True`` and ``dir`` is a URL then only one
         rank from each node will upload data at a time.
 
