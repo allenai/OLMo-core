@@ -50,6 +50,48 @@ def compute_inv_freqs(theta: int, dim: int, device: torch.device) -> "torch.Tens
     return inv_freq
 
 
+def compute_local_positions(
+    batch_size: int,
+    k_len: int,
+    q_abs_start: int,
+    q_len: int,
+    cu_doc_lens: torch.Tensor,
+    device: torch.device,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute per-document local positions from cumulative document lengths.
+
+    When packing multiple documents into a single sequence, this function computes
+    position indices that reset at each document boundary. For example, if two
+    10-token documents are packed together, instead of positions [0..19], this
+    returns [0..9, 0..9].
+
+    :param batch_size: Number of sequences in the batch.
+    :param k_len: Length of the key sequence (per batch element).
+    :param q_abs_start: Absolute start position of the query within the key sequence.
+    :param q_len: Length of the query sequence.
+    :param cu_doc_lens: Cumulative document lengths in flattened [B*T] space,
+        shape (num_docs + 1,). For example, [0, 10, 20, 30, 40] for B=2 with
+        two 10-token documents per batch element.
+    :param device: Device to create tensors on.
+
+    :returns: Tuple of (k_local_positions, q_local_positions) with shapes
+        (batch_size, k_len) and (batch_size, q_len) respectively.
+    """
+    batch_offsets = torch.arange(batch_size, device=device) * k_len
+    positions = torch.arange(k_len, device=device)
+    global_positions = batch_offsets[:, None] + positions[None, :]
+
+    doc_indices = torch.searchsorted(
+        cu_doc_lens[1:], global_positions.flatten(), side="right"
+    )
+    doc_starts = cu_doc_lens[doc_indices]
+    local_positions = global_positions.flatten() - doc_starts
+    k_local_positions = local_positions.view(batch_size, k_len)
+    q_local_positions = k_local_positions[:, q_abs_start : q_abs_start + q_len]
+    return k_local_positions, q_local_positions
+
+
 @dataclass
 class RoPEScalingConfig(Config):
     """
@@ -528,24 +570,13 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                 )
 
             if cu_doc_lens is not None:
-                B = q_.size(0)
-                batch_offsets = torch.arange(B, device=q_.device) * k_len
-                positions = torch.arange(k_len, device=q_.device)
-                global_positions = batch_offsets[:, None] + positions[None, :]
-
-                doc_indices = torch.searchsorted(
-                    cu_doc_lens[1:], global_positions.flatten(), side="right"
+                k_local_pos, q_local_pos = compute_local_positions(
+                    q_.size(0), k_len, q_abs_start, q_len, cu_doc_lens, q_.device
                 )
-                doc_starts = cu_doc_lens[doc_indices]
-                local_positions = global_positions.flatten() - doc_starts
-                local_positions = local_positions.view(B, k_len)
-
-                sin_k = pos_sin[local_positions, :]
-                cos_k = pos_cos[local_positions, :]
-
-                q_local_positions = local_positions[:, q_abs_start : q_abs_start + q_len]
-                sin_q = pos_sin[q_local_positions, :]
-                cos_q = pos_cos[q_local_positions, :]
+                sin_q = pos_sin[q_local_pos, :]
+                cos_q = pos_cos[q_local_pos, :]
+                sin_k = pos_sin[k_local_pos, :]
+                cos_k = pos_cos[k_local_pos, :]
 
                 if head_first:
                     sin_q = sin_q[:, None, :, :]
@@ -818,21 +849,11 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
             k_abs_start = start_pos if start_pos is not None else 0
 
             if cu_doc_lens is not None:
-                B = q_.size(0)
-                batch_offsets = torch.arange(B, device=q_.device) * k_len
-                positions = torch.arange(k_len, device=q_.device)
-                global_positions = batch_offsets[:, None] + positions[None, :]
-
-                doc_indices = torch.searchsorted(
-                    cu_doc_lens[1:], global_positions.flatten(), side="right"
+                k_local_pos, q_local_pos = compute_local_positions(
+                    q_.size(0), k_len, q_abs_start, q_len, cu_doc_lens, q_.device
                 )
-                doc_starts = cu_doc_lens[doc_indices]
-                local_positions = global_positions.flatten() - doc_starts
-                local_positions = local_positions.view(B, k_len)
-
-                freqs_cis_k = freqs_cis[local_positions, :]
-                q_local_positions = local_positions[:, q_abs_start : q_abs_start + q_len]
-                freqs_cis_q = freqs_cis[q_local_positions, :]
+                freqs_cis_q = freqs_cis[q_local_pos, :]
+                freqs_cis_k = freqs_cis[k_local_pos, :]
 
                 if head_first:
                     q_ = self._apply_rotary_pos_emb(freqs_cis_q[:, None, :, :], q_)
