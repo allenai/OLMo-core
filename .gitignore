@@ -61,5 +61,3 @@ site/
 core
 /dataset-cache/
 venv/
-*.md
-test_fingerprint*.py
