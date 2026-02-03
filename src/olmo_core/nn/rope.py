@@ -528,28 +528,35 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                 )
 
             if cu_doc_lens is not None:
+                B = q_.size(0)
+                batch_offsets = torch.arange(B, device=q_.device) * k_len
                 positions = torch.arange(k_len, device=q_.device)
-                doc_indices = torch.searchsorted(cu_doc_lens[1:], positions, side="right")
+                global_positions = batch_offsets[:, None] + positions[None, :]
+
+                doc_indices = torch.searchsorted(
+                    cu_doc_lens[1:], global_positions.flatten(), side="right"
+                )
                 doc_starts = cu_doc_lens[doc_indices]
-                local_positions = positions - doc_starts
+                local_positions = global_positions.flatten() - doc_starts
+                local_positions = local_positions.view(B, k_len)
 
                 sin_k = pos_sin[local_positions, :]
                 cos_k = pos_cos[local_positions, :]
 
-                q_local_positions = local_positions[q_abs_start : q_abs_start + q_len]
+                q_local_positions = local_positions[:, q_abs_start : q_abs_start + q_len]
                 sin_q = pos_sin[q_local_positions, :]
                 cos_q = pos_cos[q_local_positions, :]
 
                 if head_first:
-                    sin_q = sin_q[None, None, :, :]
-                    cos_q = cos_q[None, None, :, :]
-                    sin_k = sin_k[None, None, :, :]
-                    cos_k = cos_k[None, None, :, :]
+                    sin_q = sin_q[:, None, :, :]
+                    cos_q = cos_q[:, None, :, :]
+                    sin_k = sin_k[:, None, :, :]
+                    cos_k = cos_k[:, None, :, :]
                 else:
-                    sin_q = sin_q[None, :, None, :]
-                    cos_q = cos_q[None, :, None, :]
-                    sin_k = sin_k[None, :, None, :]
-                    cos_k = cos_k[None, :, None, :]
+                    sin_q = sin_q[:, :, None, :]
+                    cos_q = cos_q[:, :, None, :]
+                    sin_k = sin_k[:, :, None, :]
+                    cos_k = cos_k[:, :, None, :]
 
                 q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
                 k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
@@ -811,21 +818,28 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
             k_abs_start = start_pos if start_pos is not None else 0
 
             if cu_doc_lens is not None:
+                B = q_.size(0)
+                batch_offsets = torch.arange(B, device=q_.device) * k_len
                 positions = torch.arange(k_len, device=q_.device)
-                doc_indices = torch.searchsorted(cu_doc_lens[1:], positions, side="right")
+                global_positions = batch_offsets[:, None] + positions[None, :]
+
+                doc_indices = torch.searchsorted(
+                    cu_doc_lens[1:], global_positions.flatten(), side="right"
+                )
                 doc_starts = cu_doc_lens[doc_indices]
-                local_positions = positions - doc_starts
+                local_positions = global_positions.flatten() - doc_starts
+                local_positions = local_positions.view(B, k_len)
 
                 freqs_cis_k = freqs_cis[local_positions, :]
-                q_local_positions = local_positions[q_abs_start : q_abs_start + q_len]
+                q_local_positions = local_positions[:, q_abs_start : q_abs_start + q_len]
                 freqs_cis_q = freqs_cis[q_local_positions, :]
 
                 if head_first:
-                    q_ = self._apply_rotary_pos_emb(freqs_cis_q[None, None, :, :], q_)
-                    k_ = self._apply_rotary_pos_emb(freqs_cis_k[None, None, :, :], k_)
+                    q_ = self._apply_rotary_pos_emb(freqs_cis_q[:, None, :, :], q_)
+                    k_ = self._apply_rotary_pos_emb(freqs_cis_k[:, None, :, :], k_)
                 else:
-                    q_ = self._apply_rotary_pos_emb(freqs_cis_q[None, :, None, :], q_)
-                    k_ = self._apply_rotary_pos_emb(freqs_cis_k[None, :, None, :], k_)
+                    q_ = self._apply_rotary_pos_emb(freqs_cis_q[:, :, None, :], q_)
+                    k_ = self._apply_rotary_pos_emb(freqs_cis_k[:, :, None, :], k_)
             elif head_first:
                 q_ = self._apply_rotary_pos_emb(
                     freqs_cis[None, None, q_abs_start : q_abs_start + q_len, :], q_
