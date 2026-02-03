@@ -25,12 +25,13 @@ def main():
     print("Building OLMo-core model with Flash Attention...")
     config = TransformerConfig.olmo2_1B(vocab_size=100352)
     config.n_layers = 2
-    config.block.attention = AttentionConfig(
-        n_heads=config.block.attention.n_heads,
-        n_kv_heads=config.block.attention.n_kv_heads,
-        bias=config.block.attention.bias,
-        rope=config.block.attention.rope,
-        qk_norm=config.block.attention.qk_norm,
+    attn = config.block.sequence_mixer
+    config.block.sequence_mixer = AttentionConfig(
+        n_heads=attn.n_heads,
+        n_kv_heads=attn.n_kv_heads,
+        bias=attn.bias,
+        rope=attn.rope,
+        qk_norm=attn.qk_norm,
         backend="flash_2",
     )
     model = config.build().cuda().to(torch.bfloat16)
