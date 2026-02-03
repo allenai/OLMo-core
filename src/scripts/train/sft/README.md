@@ -127,7 +127,15 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     - Only install the project + extras you need (the image already has CUDA dependencies)
     - Beaker images follow the pattern `<user>/olmo-core-tch<torch>cu<cuda>-<date>`
 
-2. Launch evaluations using the submit_eval_jobs.sh script in `open-instruct` using a command such as:
+2. **Verify chat template and tokenizer settings before running evals.**
+
+    After converting to HuggingFace format, check that your model's `tokenizer_config.json` has the correct chat template configured. The HF conversion copies the tokenizer but does **not** automatically set the chat template—you may need to add or update it manually.
+
+    For OLMo 3 models, see the [OLMo 3 tokenizer and chat template settings](https://allenai.github.io/open-instruct/olmo3) in open-instruct for the recommended configuration. This includes the correct `chat_template`, `eos_token`, and other tokenizer settings required for evals to work properly.
+
+    > **Warning:** If you skip this step, evals may produce incorrect results due to mismatched chat formatting or token handling.
+
+3. Launch evaluations using the submit_eval_jobs.sh script in `open-instruct` using a command such as:
 
     ```bash
     python scripts/submit_eval_jobs.py \
