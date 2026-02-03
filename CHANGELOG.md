@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `lazy` option to `DownstreamEvaluatorCallbackConfig` for lazily loading each task which can decrease startup time.
 - `TrainingProgress` (from `Trainer.training_progress`) now includes `current_tokens`, `bps`, `tps`, and `mfu` fields.
 - `BeakerCallback` will include throughput metrics in the workload description.
+- Added `olmo_core.io.deterministic_glob_directory` function.
+- Added the option to cache the results of certain IO operations on remote files, like `get_file_size()` and `deterministic_glob_directory()` by setting the env var `OLMO_CORE_FS_CACHE_DIR` to a local directory.
 - Added `eval_on_finish` option to `EvaluatorCallback`.
 
 ### Fixed

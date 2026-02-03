@@ -241,7 +241,7 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
     def _expand_glob(cls, pattern: PathOrStr) -> List[str]:
         pattern = str(pattern)
         if "*" in pattern:
-            return sorted(io.glob_directory(pattern))
+            return io.deterministic_glob_directory(pattern)
         else:
             return [pattern]
 
