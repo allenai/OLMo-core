@@ -27,10 +27,10 @@ class Olmo3MoeConfig(PretrainedConfig):
         vocab_size=50304,
         hidden_size=4096,
         dense_mlp_intermediate_size=11008,
-        routed_expert_intermediate_size=2048,
+        moe_intermediate_size=2048,
         shared_expert_intermediate_size=2048,
-        num_routed_experts=64,
-        expert_top_k=4,
+        n_routed_experts =64,
+        num_experts_per_tok=4,
         num_hidden_layers=32,
         num_attention_heads=32,
         num_key_value_heads=None,
@@ -71,10 +71,10 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.dense_mlp_intermediate_size = dense_mlp_intermediate_size 
 
         # for sparse MLP layers
-        self.routed_expert_intermediate_size = routed_expert_intermediate_size
+        self.moe_intermediate_size = moe_intermediate_size
         self.shared_expert_intermediate_size = shared_expert_intermediate_size # if None, no shared experts
-        self.num_routed_experts = num_routed_experts
-        self.expert_top_k = expert_top_k
+        self.n_routed_experts  = n_routed_experts 
+        self.num_experts_per_tok = num_experts_per_tok
         assert gating_function in ["softmax", "sigmoid"], "supported gating function: 'softmax' or 'sigmoid'"
         self.gating_function = gating_function 
         self.normalize_expert_weights = normalize_expert_weights

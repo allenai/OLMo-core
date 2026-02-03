@@ -67,7 +67,7 @@ if __name__ == "__main__":
     # model = Olmo3MoeForCausalLM(config).to(device)
 
     # option 2: load a model from converted checkpoint
-    load_path = '/workspace/tmp/step10000_hf_model'
+    load_path = '/workspace/tmp/step10000_hf_model2'
     model = Olmo3MoeForCausalLM.from_pretrained(load_path).to(device).to(torch.bfloat16)
 
     input_ids = '/workspace/tmp/input_ids.pt'
@@ -109,6 +109,15 @@ if __name__ == "__main__":
     decoded_text = tokenizer.batch_decode(decode_ids, skip_special_tokens=True)
     print('Output text:')
     print(decoded_text[0])
+
+
+    # generate samples
+    input_prompt = "In a distant future, humanity has"
+    input_ids = tokenizer(input_prompt, return_tensors="pt").input_ids.to(device)
+    generated_ids = model.generate(input_ids, max_new_tokens=50, do_sample=True, top_k=50, top_p=0.95, temperature=1.0)
+    generated_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+    print('***** Generated text ******')
+    print(generated_text[0])
 
     print("****** SUMMARY ******")
 

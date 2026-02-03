@@ -11,11 +11,13 @@ import torch.distributed.checkpoint as dist_cp
 from olmo_core.distributed.checkpoint import RemoteFileSystemReader
 from olmo_core.aliases import PathOrStr
 from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
-from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM, Olmo3MoeModel
 from functools import partial
 import sys
 import importlib.util
 from pathlib import Path
+from transformers import AutoTokenizer
+
 
 def import_module_from_path(path: str, module_name: str):
     path = str(Path(path).resolve())
@@ -187,12 +189,12 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
             )
 
             # routed experts
-            for expert_idx in range(hf_model.config.num_routed_experts):
+            for expert_idx in range(hf_model.config.n_routed_experts):
                 mapping_hf_to_olmo[f'model.layers.{layer_idx}.mlp.experts.{expert_idx}.gate_proj.weight'] = (
                     f'module.blocks.{layer_idx}.routed_experts.w_up_gate.main',
                     partial(_extract_experts_up_gate_proj,
-                            num_experts=hf_model.config.num_routed_experts,
-                            expert_hidden_size=hf_model.config.routed_expert_intermediate_size,
+                            num_experts=hf_model.config.n_routed_experts,
+                            expert_hidden_size=hf_model.config.moe_intermediate_size,
                             d_model=hf_model.config.hidden_size,
                             weight_name='gate',
                             expert_idx=expert_idx)
@@ -200,8 +202,8 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
                 mapping_hf_to_olmo[f'model.layers.{layer_idx}.mlp.experts.{expert_idx}.up_proj.weight'] = (
                     f'module.blocks.{layer_idx}.routed_experts.w_up_gate.main',
                     partial(_extract_experts_up_gate_proj,
-                            num_experts=hf_model.config.num_routed_experts,
-                            expert_hidden_size=hf_model.config.routed_expert_intermediate_size,
+                            num_experts=hf_model.config.n_routed_experts,
+                            expert_hidden_size=hf_model.config.moe_intermediate_size,
                             d_model=hf_model.config.hidden_size,
                             weight_name='up',
                             expert_idx=expert_idx)
@@ -210,8 +212,8 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
                 mapping_hf_to_olmo[f'model.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.weight'] = (
                     f'module.blocks.{layer_idx}.routed_experts.w_down.main',
                     partial(_extract_expert_down_proj,
-                            num_experts=hf_model.config.num_routed_experts,
-                            expert_hidden_size=hf_model.config.routed_expert_intermediate_size,    
+                            num_experts=hf_model.config.n_routed_experts,
+                            expert_hidden_size=hf_model.config.moe_intermediate_size,    
                             d_model=hf_model.config.hidden_size,
                             expert_idx=expert_idx)
                 )
@@ -236,7 +238,7 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
 
 if __name__ == "__main__":
     CKPT_PATH = '/workspace/checkpoint/OLMoE3-abl-260102-018a_1024d1024a_12L768M768S_32E4K1S_abl/step10000'
-    output_path = '/workspace/tmp/step10000_hf_model'
+    output_path = '/workspace/tmp/step10000_hf_model2'
     main_sd = load_state_dict_direct(
         dir=os.path.join(CKPT_PATH, 'model_and_optim'),
         process_group=None, pre_download=True, work_dir='/workspace/tmp'
@@ -265,10 +267,10 @@ if __name__ == "__main__":
         vocab_size=olmo_model_cfg['vocab_size'],
         hidden_size=olmo_model_cfg['d_model'],
         dense_mlp_intermediate_size=dense_mlp_intermediate_size,
-        routed_expert_intermediate_size=olmo_model_cfg['block']['routed_experts']['hidden_size'],
+        moe_intermediate_size=olmo_model_cfg['block']['routed_experts']['hidden_size'],
         shared_expert_intermediate_size=olmo_model_cfg['block']['shared_experts']['hidden_size'],
-        num_routed_experts=olmo_model_cfg['block']['routed_experts']['num_experts'],
-        expert_top_k=olmo_model_cfg['block']['routed_experts_router']['top_k'],
+        n_routed_experts=olmo_model_cfg['block']['routed_experts']['num_experts'],
+        num_experts_per_tok=olmo_model_cfg['block']['routed_experts_router']['top_k'],
         num_hidden_layers=olmo_model_cfg['n_layers'],
         num_attention_heads=olmo_model_cfg['block']['attention']['n_heads'],
         num_key_value_heads=olmo_model_cfg['block']['attention']['n_kv_heads'],
@@ -301,7 +303,23 @@ if __name__ == "__main__":
 
     print("Loaded HF model from OLMo checkpoint.")
 
+    Olmo3MoeConfig.register_for_auto_class()  # AutoConfig
+    Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
+
+
+    # Olmo3MoeModel.register_for_auto_class("AutoModel") # this does not change config.json
+    # workaround: manually set auto_map in config to include AutoModel
+    auto_map = getattr(hf_model.config, "auto_map", None)
+    if auto_map is None:
+        hf_model.config.auto_map = {}
+    hf_model.config.auto_map["AutoModel"] = "modeling_olmo3moe.Olmo3MoeModel"
+
     hf_model.save_pretrained(output_path)
+
+    # save tokenizer
+    tok = AutoTokenizer.from_pretrained('allenai/dolma2-tokenizer', use_fast=True)
+    tok.save_pretrained(output_path)
+
     print(f"Saved HF model to {output_path}.")
 
 

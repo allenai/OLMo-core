@@ -106,13 +106,13 @@ class Olmo3MoeDenseMLP(nn.Module):
         return down_proj
 
 class Olmo3MoeExpert(nn.Module):
-    def __init__(self, hidden_size, intermediate_size, hidden_act):
+    def __init__(self, hidden_size, moe_intermediate_size, hidden_act):
         super().__init__()
         self.hidden_size = hidden_size
-        self.intermediate_size = intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        self.moe_intermediate_size = moe_intermediate_size
+        self.gate_proj = nn.Linear(self.hidden_size, self.moe_intermediate_size, bias=False)
+        self.up_proj = nn.Linear(self.hidden_size, self.moe_intermediate_size, bias=False)
+        self.down_proj = nn.Linear(self.moe_intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
@@ -120,23 +120,71 @@ class Olmo3MoeExpert(nn.Module):
         return down_proj
 
 
+
+class Olmo3MoeExperts(nn.ModuleList):
+    """Container for routed experts.
+
+    vLLM detects a child module named ``experts`` that is a ``ModuleList`` and
+    replaces it with a fused implementation at load time (TransformersFusedMoE).
+    This class provides an eager reference implementation, and a compile-safe
+    fallback (very slow) to avoid TorchDynamo graph breaks if it is ever traced.
+    """
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,  # (N, H)
+        top_k_weights: torch.Tensor,  # (N, K)
+        top_k_indices: torch.Tensor,  # (N, K)
+    ) -> torch.Tensor:
+        # Use a compile-safe fallback if TorchDynamo is tracing this module.
+        # NOTE: This is extremely slow because it runs every expert on every token.
+        try:
+            is_compiling = torch._dynamo.is_compiling()
+        except Exception:
+            is_compiling = False
+
+        if is_compiling:
+            out = hidden_states.new_zeros(hidden_states.shape)
+            for expert_id, expert in enumerate(self):
+                # Aggregate the routing weights for this expert across the K slots.
+                w = (top_k_weights * (top_k_indices == expert_id).to(top_k_weights.dtype)).sum(
+                    dim=1, keepdim=True
+                )  # (N, 1)
+                out = out + expert(hidden_states) * w
+            return out
+
+        # Eager reference routing (faster), but uses data-dependent shapes.
+        N, H = hidden_states.shape
+        out = hidden_states.new_zeros((N, H))
+        for expert_id, expert in enumerate(self):
+            mask = (top_k_indices == expert_id)  # (N, K) bool
+            if not mask.any():
+                continue
+            token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
+            x_sel = hidden_states.index_select(0, token_ids)  # (M, H)
+            y_sel = expert(x_sel)  # (M, H)
+            w_sel = top_k_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)  # (M, 1)
+            out.index_add_(0, token_ids, y_sel * w_sel)
+        return out
+
+
 class Olmo3MoeSparseMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.router = Olmo3MoeRouter(config)
-        self.experts = nn.ModuleList()
-        for _ in range(config.num_routed_experts):
+        self.experts = Olmo3MoeExperts()
+        for _ in range(config.n_routed_experts):
             expert = Olmo3MoeExpert(
                 hidden_size=config.hidden_size,
-                intermediate_size=config.routed_expert_intermediate_size,
+                moe_intermediate_size=config.moe_intermediate_size,
                 hidden_act=config.hidden_act,
             )
             self.experts.append(expert)
         if config.shared_expert_intermediate_size is not None:
             self.shared_expert = Olmo3MoeExpert(
                 hidden_size=config.hidden_size,
-                intermediate_size=config.shared_expert_intermediate_size,
+                moe_intermediate_size=config.shared_expert_intermediate_size,
                 hidden_act=config.hidden_act,
             )
         else:
@@ -150,35 +198,13 @@ class Olmo3MoeSparseMLP(nn.Module):
         # expert_weights: (batch_size, seq_len, top_k)
         # expert_indices: (batch_size, seq_len, top_k)
         expert_weights, expert_indices = self.router(x)
-
         K = expert_indices.size(-1)
-        E = self.config.num_routed_experts
-        # Flatten tokens: N = B*S
-        x_flat = x.reshape(B * S, H)                       # (N, H)
-        idx_flat = expert_indices.reshape(B * S, K)        # (N, K)
-        w_flat = expert_weights.reshape(B * S, K)          # (N, K)
+        # Flatten tokens: N = B*S. vLLM's fused experts expects (N, H), (N, K), (N, K).
+        x_flat = x.reshape(B * S, H)  # (N, H)
+        idx_flat = expert_indices.reshape(B * S, K)  # (N, K)
+        w_flat = expert_weights.reshape(B * S, K).to(dtype=x.dtype)  # (N, K)
 
-        out_flat = x.new_zeros((B * S, H))                 # (N, H)
-
-        # Route tokens to experts (slow, but correct)
-        for expert_id in range(E):
-            mask = (idx_flat == expert_id)                 # (N, K) bool
-            if not mask.any():
-                continue
-
-            token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
-            x_sel = x_flat.index_select(0, token_ids)       # (M, H)
-
-            # Run this expert on selected tokens
-            y_sel = self.experts[expert_id](x_sel)          # (M, H)
-
-            # Apply the gate weight for each (token, k-slot) occurrence
-            w_sel = w_flat[token_ids, k_ids].to(dtype=x.dtype).unsqueeze(-1)  # (M, 1)
-            y_sel = y_sel * w_sel                           # (M, H)
-
-            # Accumulate back into the correct token positions
-            out_flat.index_add_(0, token_ids, y_sel)
-
+        out_flat = self.experts(x_flat, w_flat, idx_flat)  # (N, H)
         routed_expert_out = out_flat.view(B, S, H)
 
         # shared expert
@@ -197,8 +223,8 @@ class Olmo3MoeRouter(nn.Module):
         self.config = config
         self.gating_function = config.gating_function
         self.hidden_size = config.hidden_size
-        self.top_k = config.expert_top_k
-        self.gate = nn.Linear(self.hidden_size, config.num_routed_experts, bias=False)
+        self.num_experts_per_tok = config.num_experts_per_tok
+        self.gate = nn.Linear(self.hidden_size, config.n_routed_experts, bias=False)
         self.normalize_expert_weights = config.normalize_expert_weights
         self.restore_weight_scale = config.restore_weight_scale
 
@@ -215,7 +241,7 @@ class Olmo3MoeRouter(nn.Module):
         else:
             raise NotImplementedError(self.gating_function)
 
-        expert_weights, expert_indices = torch.topk(scores, self.top_k, dim=-1)
+        expert_weights, expert_indices = torch.topk(scores, self.num_experts_per_tok, dim=-1)
 
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
@@ -228,7 +254,7 @@ class Olmo3MoeRouter(nn.Module):
             )
 
         if self.restore_weight_scale:
-            expert_weights = expert_weights * self.top_k
+            expert_weights = expert_weights * self.num_experts_per_tok
 
         return expert_weights, expert_indices
 
@@ -362,8 +388,8 @@ class Olmo3MoeAttention(nn.Module):
         value_states = value_states.view(hidden_shape).transpose(1, 2)   # (B, n_kv_heads, T, head_dim)
 
         if self.use_head_qk_norm:
-            query_states = self.q_norm(query_states)
-            key_states = self.k_norm(key_states)
+            query_states = self.q_norm(query_states.contiguous())
+            key_states = self.k_norm(key_states.contiguous())
 
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
