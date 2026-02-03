@@ -592,6 +592,7 @@ class Attention(SequenceMixer):
                 pos_sin=pos_sin,
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
+                cu_doc_lens=cu_doc_lens,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -854,6 +855,7 @@ class NormalizedAttention(Attention):
                 pos_sin=pos_sin,
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
+                cu_doc_lens=cu_doc_lens,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)

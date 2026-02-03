@@ -478,6 +478,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
@@ -490,6 +491,9 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         :param head_first: If the head dim comes before the sequence dim.
         :param start_pos: The absolute position of the first query token (eg for decoding
             where the first query token is just the most recently decoded token).
+        :param cu_doc_lens: Cumulative document lengths for per-document position computation.
+            When provided, positions are reset at document boundaries instead of using
+            global positions.
 
         :returns: The query and key matrices after RoPE has been applied.
         """
@@ -523,7 +527,33 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                     f"have {pos_sin.size(-2)}."
                 )
 
-            if head_first:
+            if cu_doc_lens is not None:
+                positions = torch.arange(k_len, device=q_.device)
+                doc_indices = torch.searchsorted(cu_doc_lens[1:], positions, side="right")
+                doc_starts = cu_doc_lens[doc_indices]
+                local_positions = positions - doc_starts
+
+                sin_k = pos_sin[local_positions, :]
+                cos_k = pos_cos[local_positions, :]
+
+                q_local_positions = local_positions[q_abs_start : q_abs_start + q_len]
+                sin_q = pos_sin[q_local_positions, :]
+                cos_q = pos_cos[q_local_positions, :]
+
+                if head_first:
+                    sin_q = sin_q[None, None, :, :]
+                    cos_q = cos_q[None, None, :, :]
+                    sin_k = sin_k[None, None, :, :]
+                    cos_k = cos_k[None, None, :, :]
+                else:
+                    sin_q = sin_q[None, :, None, :]
+                    cos_q = cos_q[None, :, None, :]
+                    sin_k = sin_k[None, :, None, :]
+                    cos_k = cos_k[None, :, None, :]
+
+                q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
+                k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
+            elif head_first:
                 sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
                 cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
                 sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
