@@ -82,9 +82,7 @@ def compute_local_positions(
     positions = torch.arange(k_len, device=device)
     global_positions = batch_offsets[:, None] + positions[None, :]
 
-    doc_indices = torch.searchsorted(
-        cu_doc_lens[1:], global_positions.flatten(), side="right"
-    )
+    doc_indices = torch.searchsorted(cu_doc_lens[1:], global_positions.flatten(), side="right")
     doc_starts = cu_doc_lens[doc_indices]
     local_positions = global_positions.flatten() - doc_starts
     k_local_positions = local_positions.view(batch_size, k_len)
