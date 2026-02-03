@@ -762,6 +762,7 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
@@ -774,6 +775,9 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         :param head_first: If the head dim comes before the sequence dim.
         :param start_pos: The absolute position of the first query token (eg for decoding
             where the first query token is just the most recently decoded token).
+        :param cu_doc_lens: Cumulative document lengths for per-document position computation.
+            When provided, positions are reset at document boundaries instead of using
+            global positions.
 
         :returns: The query and key matrices after RoPE has been applied.
         """
@@ -806,7 +810,23 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
             q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
             k_abs_start = start_pos if start_pos is not None else 0
 
-            if head_first:
+            if cu_doc_lens is not None:
+                positions = torch.arange(k_len, device=q_.device)
+                doc_indices = torch.searchsorted(cu_doc_lens[1:], positions, side="right")
+                doc_starts = cu_doc_lens[doc_indices]
+                local_positions = positions - doc_starts
+
+                freqs_cis_k = freqs_cis[local_positions, :]
+                q_local_positions = local_positions[q_abs_start : q_abs_start + q_len]
+                freqs_cis_q = freqs_cis[q_local_positions, :]
+
+                if head_first:
+                    q_ = self._apply_rotary_pos_emb(freqs_cis_q[None, None, :, :], q_)
+                    k_ = self._apply_rotary_pos_emb(freqs_cis_k[None, None, :, :], k_)
+                else:
+                    q_ = self._apply_rotary_pos_emb(freqs_cis_q[None, :, None, :], q_)
+                    k_ = self._apply_rotary_pos_emb(freqs_cis_k[None, :, None, :], k_)
+            elif head_first:
                 q_ = self._apply_rotary_pos_emb(
                     freqs_cis[None, None, q_abs_start : q_abs_start + q_len, :], q_
                 )
