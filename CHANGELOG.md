@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added documentation for verifying chat template settings before running evals after SFT.
 - Added `olmo_core.data.composable` module.
 - Added `PeriNormTransformerBlock`.
 - Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
@@ -39,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `olmo_core.io.deterministic_glob_directory` function.
 - Added the option to cache the results of certain IO operations on remote files, like `get_file_size()` and `deterministic_glob_directory()` by setting the env var `OLMO_CORE_FS_CACHE_DIR` to a local directory.
 - Added `eval_on_finish` option to `EvaluatorCallback`.
+- Added the option to use a process pool instead of a thread pool when writing checkpoints.
 
 ### Fixed
 
@@ -58,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix failing test_build_world_mesh_cpu for pytorch 2.10.
 - Fix failing convert_checkpoint_to_hf_test due by reducing total disk space required.
 - Ensure all metrics have been logged and bookkeeping ops complete before writing a checkpoint.
+- Minor improvements to make checkpointing more robust.
 
 ### Changed
 

@@ -61,13 +61,21 @@ def maybe_cache(*, condition: Callable[..., bool] | None = None) -> Callable[[F]
                         tmp_file = tempfile.NamedTemporaryFile(
                             mode="wb", dir=cache_dir, prefix=key, suffix=".tmp", delete=False
                         )
+                        tmp_path = Path(tmp_file.name)
                         try:
                             pickle.dump(result, tmp_file)
+
+                            # Ensure all data is written to disk.
+                            tmp_file.flush()
+                            if hasattr(os, "fdatasync"):  # only available on linux
+                                os.fdatasync(tmp_file)  # type: ignore
                             tmp_file.close()
-                            os.replace(tmp_file.name, cache_path)
+
+                            # Copy to final destination.
+                            tmp_path.replace(cache_path)
                         finally:
-                            if os.path.exists(tmp_file.name):
-                                os.remove(tmp_file.name)
+                            tmp_file.close()
+                            tmp_path.unlink(missing_ok=True)
                         return result
             else:
                 return user_function(*args, **kwargs)
