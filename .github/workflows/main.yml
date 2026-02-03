@@ -199,7 +199,7 @@ jobs:
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/optim*
 
-          - name: Test small model FSDP (GPU)
+          - name: Integration tests (GPU)
             image: *gpu_test_image
             gpus: 2
             run: |
