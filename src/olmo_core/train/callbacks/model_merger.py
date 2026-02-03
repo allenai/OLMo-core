@@ -530,7 +530,7 @@ class ModelMergeCallback(Callback):
         Save callback state for checkpointing.
 
         NOTE: Each rank saves its own shard of the accumulator.
-        This increases total checkpoint size by ~1x model sizeca.
+        This increases total checkpoint size by ~1x model size.
         This might cause issues with scalability. Could consider:
             - Not checkpointing accumulator (would lose ability to resume mid-window)
             - Making accumulator checkpointing configurable
