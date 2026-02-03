@@ -160,7 +160,15 @@ uv sync --extra beaker --extra transformers
     - Only install the project + extras you need (the image already has CUDA dependencies)
     - Beaker images follow the pattern `<user>/olmo-core-tch<torch>cu<cuda>-<date>`
 
-2. Launch evaluations using the submit_eval_jobs.sh script in `open-instruct` using a command such as:
+2. **Verify chat template and tokenizer settings before running evals.**
+
+    After converting to HuggingFace format, check that your model has the correct chat template for evaluation (either in `tokenizer_config.json` or as a separate `chat_template.jinja` file). The HF conversion copies whatever tokenizer was saved with the checkpoint, but that tokenizer's chat template may not be correct for evals—you may need to update it manually.
+
+    For OLMo 3 models, see the [OLMo 3 tokenizer and chat template settings](https://allenai.github.io/open-instruct/olmo3) in open-instruct for the recommended configuration. This includes the correct `chat_template`, `eos_token`, and other tokenizer settings required for evals to work properly.
+
+    **Example from OLMo 3:** Think models were trained with the Instruct chat template (to work around a `<think>` token masking issue during tokenization), but for evals required swapping in a chat template that includes `<think>` in `add_generation_prompt`—otherwise the model wouldn't start its response with `<think>`.
+
+3. Launch evaluations using the submit_eval_jobs.sh script in `open-instruct` using a command such as:
 
     ```bash
     python scripts/submit_eval_jobs.py \
