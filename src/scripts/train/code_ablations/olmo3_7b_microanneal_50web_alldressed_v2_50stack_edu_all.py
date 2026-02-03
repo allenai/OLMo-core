@@ -55,8 +55,8 @@ DATASET_CONFIG = SourceMixtureList(
             target_ratio=0.5,
             paths=[
                 f"s3://ai2-llm/preprocessed/stack-edu/{TOKENIZER_CONFIG.identifier}/C/*.npy",
-                f"s3://ai2-llm/preprocessed/stack-edu/{TOKENIZER_CONFIG.identifier}/C-Sharp/*.npy",
-                f"s3://ai2-llm/preprocessed/stack-edu/{TOKENIZER_CONFIG.identifier}/C++/*.npy",
+                f"s3://ai2-llm/preprocessed/stack-edu/{TOKENIZER_CONFIG.identifier}/CSharp/*.npy",
+                f"s3://ai2-llm/preprocessed/stack-edu/{TOKENIZER_CONFIG.identifier}/Cpp/*.npy",
                 f"s3://ai2-llm/preprocessed/stack-edu/{TOKENIZER_CONFIG.identifier}/Go/*.npy",
                 f"s3://ai2-llm/preprocessed/stack-edu/{TOKENIZER_CONFIG.identifier}/Java/*.npy",
                 f"s3://ai2-llm/preprocessed/stack-edu/{TOKENIZER_CONFIG.identifier}/JavaScript/*.npy",
