@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `olmo_core.io.deterministic_glob_directory` function.
 - Added the option to cache the results of certain IO operations on remote files, like `get_file_size()` and `deterministic_glob_directory()` by setting the env var `OLMO_CORE_FS_CACHE_DIR` to a local directory.
 - Added `eval_on_finish` option to `EvaluatorCallback`.
+- Added the option to use a process pool instead of a thread pool when writing checkpoints.
 
 ### Fixed
 

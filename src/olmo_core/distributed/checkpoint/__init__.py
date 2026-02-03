@@ -76,6 +76,7 @@ def save_state_dict(
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
     thread_count: Optional[int] = None,
+    process_count: Optional[int] = None,
     throttle_uploads: bool = False,
     enable_plan_caching: bool = False,
     _skip_prepare: bool = False,
@@ -93,6 +94,7 @@ def save_state_dict(
     :param process_group: The process group to use for distributed collectives.
     :param save_overwrite: Overwrite existing files.
     :param thread_count: Set this to override the number of threads used while writing data.
+    :param process_count: Set this to use a process pool instead of a thread pool when possible.
     :param throttle_uploads: If this is set to ``True`` and ``dir`` is a URL then only one
         rank from each node will upload data at a time.
     """
@@ -106,6 +108,7 @@ def save_state_dict(
         storage_writer=RemoteFileSystemWriter(
             dir,
             thread_count=thread_count,
+            process_count=process_count,
             process_group=process_group,
             throttle_uploads=throttle_uploads,
         ),
@@ -122,6 +125,7 @@ def async_save_state_dict(
     process_group: Optional[dist.ProcessGroup] = None,
     save_overwrite: bool = False,
     thread_count: Optional[int] = None,
+    process_count: Optional[int] = None,
     throttle_uploads: bool = False,
     enable_plan_caching: bool = False,
     _skip_prepare: bool = False,
@@ -141,6 +145,7 @@ def async_save_state_dict(
         storage_writer=RemoteFileSystemWriter(
             dir,
             thread_count=thread_count,
+            process_count=process_count,
             process_group=process_group,
             throttle_uploads=throttle_uploads,
         ),
@@ -189,6 +194,7 @@ def save_model_and_optim_state(
     save_overwrite: bool = False,
     flatten_optimizer_state: bool = False,
     thread_count: Optional[int] = None,
+    process_count: Optional[int] = None,
     throttle_uploads: bool = False,
     enable_plan_caching: bool = False,
 ) -> None:
@@ -217,6 +223,7 @@ def save_model_and_optim_state(
         the setting used when loading the state dict and is needed in a distributed setting when
         the params in some param groups may differ between ranks, such as with pipeline parallelism.
     :param thread_count: Set this to override the number of threads used while writing data.
+    :param process_count: Set this to use a process pool instead of a thread pool when possible.
     :param throttle_uploads: If this is set to ``True`` and ``dir`` is a URL then only one
         rank from each node will upload data at a time.
 
@@ -237,6 +244,7 @@ def save_model_and_optim_state(
         storage_writer=RemoteFileSystemWriter(
             dir,
             thread_count=thread_count,
+            process_count=process_count,
             process_group=process_group,
             throttle_uploads=throttle_uploads,
         ),
@@ -255,6 +263,7 @@ def async_save_model_and_optim_state(
     save_overwrite: bool = False,
     flatten_optimizer_state: bool = False,
     thread_count: Optional[int] = None,
+    process_count: Optional[int] = None,
     throttle_uploads: bool = False,
     enable_plan_caching: bool = False,
 ) -> Future[None]:
@@ -278,6 +287,7 @@ def async_save_model_and_optim_state(
         storage_writer=RemoteFileSystemWriter(
             dir,
             thread_count=thread_count,
+            process_count=process_count,
             process_group=process_group,
             throttle_uploads=throttle_uploads,
         ),
