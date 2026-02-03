@@ -67,7 +67,7 @@ if __name__ == "__main__":
     # model = Olmo3MoeForCausalLM(config).to(device)
 
     # option 2: load a model from converted checkpoint
-    load_path = '/workspace/tmp/step10000_hf_model2'
+    load_path = '/workspace/tmp/step10000_hf_model3'
     model = Olmo3MoeForCausalLM.from_pretrained(load_path).to(device).to(torch.bfloat16)
 
     input_ids = '/workspace/tmp/input_ids.pt'

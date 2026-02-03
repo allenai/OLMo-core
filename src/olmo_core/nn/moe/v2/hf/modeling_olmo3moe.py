@@ -173,14 +173,14 @@ class Olmo3MoeSparseMLP(nn.Module):
         super().__init__()
         self.config = config
         self.router = Olmo3MoeRouter(config)
-        self.experts = Olmo3MoeExperts()
+        self.experts_no_rep = Olmo3MoeExperts()
         for _ in range(config.n_routed_experts):
             expert = Olmo3MoeExpert(
                 hidden_size=config.hidden_size,
                 moe_intermediate_size=config.moe_intermediate_size,
                 hidden_act=config.hidden_act,
             )
-            self.experts.append(expert)
+            self.experts_no_rep.append(expert)
         if config.shared_expert_intermediate_size is not None:
             self.shared_expert = Olmo3MoeExpert(
                 hidden_size=config.hidden_size,
@@ -204,7 +204,7 @@ class Olmo3MoeSparseMLP(nn.Module):
         idx_flat = expert_indices.reshape(B * S, K)  # (N, K)
         w_flat = expert_weights.reshape(B * S, K).to(dtype=x.dtype)  # (N, K)
 
-        out_flat = self.experts(x_flat, w_flat, idx_flat)  # (N, H)
+        out_flat = self.experts_no_rep(x_flat, w_flat, idx_flat)  # (N, H)
         routed_expert_out = out_flat.view(B, S, H)
 
         # shared expert
