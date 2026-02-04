@@ -1,4 +1,3 @@
-from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Any, Dict
 
 import pytest
@@ -17,6 +16,7 @@ from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.testing import requires_gpu, run_distributed_test
 from olmo_core.testing.utils import requires_fla, requires_multi_gpu
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 
 
 @requires_fla
@@ -24,7 +24,7 @@ from olmo_core.utils import get_default_device, seed_all
     "recurrent_config",
     [
         pytest.param(GatedDeltaNetConfig(n_heads=8), id="default"),
-        pytest.param(GatedDeltaNetConfig(n_heads=8, n_v_heads=2), id="GVA"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8, n_v_heads=16), id="GVA"),
         pytest.param(GatedDeltaNetConfig(n_heads=8, head_dim=32), id="head_dim=32"),
         pytest.param(GatedDeltaNetConfig(n_heads=8, expand_v=1.0), id="expand_v=1.0"),
         pytest.param(GatedDeltaNetConfig(n_heads=8, conv_size=8, conv_bias=True), id="conv_bias"),
