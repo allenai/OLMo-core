@@ -111,6 +111,7 @@ class EnvironmentVariables:
                     secret_object = client.secret.get(
                         secret_name, workspace=workspace, is_upper=True
                     )
+                    print(f"WARNING: uppercase secret {secret_name} not found, trying lowercase...")
                 except BeakerSecretNotFound as e:
                     try:
                         secret_object = client.secret.get(
