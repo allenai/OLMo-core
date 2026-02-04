@@ -332,6 +332,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             workspace="ai2/oe-t-ladder",
             num_nodes=model_size_settings.num_nodes,
             nccl_debug=True,
+            step_soft_timeout=None,  # TODO: Set to 600 for hero run. Disabling allows --launch.follow=false to work.
         )
 
     # Dataset config
@@ -384,6 +385,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     trainer_config = (
         TrainerConfig(
             save_folder=save_folder,
+            work_dir=work_dir,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
