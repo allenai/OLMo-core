@@ -19,7 +19,7 @@ dependencies = [
     "filelock>=3.4,<4.0",
     "requests",
     "packaging",
-    "dataclass-extensions>=0.2.6",
+    "dataclass-extensions>=0.2.8",
     "pyyaml",
     "rich",
     "safetensors",
