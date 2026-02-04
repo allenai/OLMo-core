@@ -88,7 +88,7 @@ class GatedDeltaNet(SequenceMixer):
         # Consistency checks: ensure expand_v produces integer dimensions
         assert math.isclose(self.n_v_heads * self.head_dim * expand_v, self.value_dim, rel_tol=1e-5)
         assert math.isclose(self.head_dim * expand_v, self.head_v_dim, rel_tol=1e-5)
-        assert self.n_v_heads >= self.n_heads and self.n_v_heads % self.n_heads != 0
+        assert self.n_v_heads >= self.n_heads and self.n_v_heads % self.n_heads == 0
 
         self.w_q = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
         self.w_k = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
