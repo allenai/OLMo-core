@@ -61,7 +61,7 @@ dev = [
 beaker = ["beaker-py>=2.5.4,<3.0", "beaker-gantry>=3.4.3,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 dion = ["dion @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb2535239b ; sys_platform == 'linux'"]
-eval = ["ai2-olmo-eval @ git+https://github.com/allenai/OLMo-in-loop-evals.git@add-19-bpb-tasks"]
+eval = ["ai2-olmo-eval>=0.9.0"]
 fla = ["flash-linear-attention>=0.4.1"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers<5.0"]
