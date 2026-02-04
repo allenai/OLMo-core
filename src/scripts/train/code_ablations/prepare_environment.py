@@ -8,12 +8,12 @@
 # ///
 
 import argparse
-from contextlib import ExitStack
 import dataclasses as dt
-from typing import Self, Literal
 import os
 import subprocess
+from contextlib import ExitStack
 from pathlib import Path
+from typing import Literal, Self
 
 from beaker import Beaker
 from beaker.exceptions import BeakerSecretNotFound
@@ -80,9 +80,9 @@ class EnvironmentVariables:
     hugging_face_hub_token: str
     google_credentials: str
     beaker_token: str
-    comet_api_key: str | None = None
-    r2_endpoint_url: str | None = None
-    weka_endpoint_url: str | None = None
+    comet_api_key: str = ""
+    r2_endpoint_url: str = ""
+    weka_endpoint_url: str = ""
 
     @staticmethod
     def get_secret_name(field: dt.Field, client: Beaker | None = None) -> str:
@@ -107,7 +107,7 @@ class EnvironmentVariables:
                 try:
                     secret_object = client.secret.get(secret_name, workspace=workspace)
                 except BeakerSecretNotFound as e:
-                    if field.default is not dt.MISSING or field.default_factory is not dt.MISSING:
+                    if field.default is dt.MISSING and field.default_factory is dt.MISSING:
                         raise ValueError(
                             f"Secret {secret_name} not found in workspace {workspace.name}"
                         ) from e
