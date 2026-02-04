@@ -106,17 +106,14 @@ class EnvironmentVariables:
             workspace = client.workspace.get(workspace_name)
 
             for field in dt.fields(cls):
-                secret_name = cls.get_secret_name(field, client)
                 try:
-                    secret_object = client.secret.get(
-                        secret_name, workspace=workspace, is_upper=True
-                    )
+                    secret_name = cls.get_secret_name(field, client=client, is_upper=True)
+                    secret_object = client.secret.get(secret_name, workspace=workspace)
                     print(f"WARNING: uppercase secret {secret_name} not found, trying lowercase...")
                 except BeakerSecretNotFound as e:
                     try:
-                        secret_object = client.secret.get(
-                            secret_name, workspace=workspace, is_upper=False
-                        )
+                        secret_name = cls.get_secret_name(field, client=client, is_upper=False)
+                        secret_object = client.secret.get(secret_name, workspace=workspace)
                     except BeakerSecretNotFound as e:
                         if field.default is dt.MISSING and field.default_factory is dt.MISSING:
                             raise ValueError(
