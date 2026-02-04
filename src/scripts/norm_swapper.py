@@ -4,15 +4,18 @@ Swap q_norm and k_norm weights from one checkpoint into another.
 
 Usage:
     python -m scripts.norm_swapper \
-        --model /path/to/base_checkpoint/model_and_optim \
-        --norm_model /path/to/norm_checkpoint/model_and_optim \
+        --model /path/to/base_checkpoint \
+        --norm_model /path/to/norm_checkpoint \
         --output_dir /path/to/output
 """
 
 import argparse
+import json
 import logging
 import os
-from typing import Any, Dict, List
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import torch.distributed as dist
 from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadata
@@ -21,6 +24,7 @@ from olmo_core.distributed.checkpoint import get_checkpoint_metadata, save_state
 from olmo_core.distributed.checkpoint.filesystem import RemoteFileSystemReader
 from olmo_core.io import normalize_path
 from olmo_core.utils import prepare_cli_environment
+from olmo_core.version import VERSION
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +36,67 @@ def init_single_process_distributed():
     os.environ.setdefault("RANK", "0")
     os.environ.setdefault("WORLD_SIZE", "1")
     dist.init_process_group(backend="gloo", rank=0, world_size=1)
+
+
+def resolve_checkpoint_dir(checkpoint_dir: str) -> str:
+    """
+    Resolve the checkpoint directory to the model_and_optim subdirectory.
+    Handles both direct model_and_optim paths and parent checkpoint paths.
+    """
+    checkpoint_dir = normalize_path(checkpoint_dir)
+    model_and_optim = f"{checkpoint_dir.rstrip('/')}/model_and_optim"
+
+    # Check if model_and_optim subdirectory exists
+    if Path(model_and_optim).exists() or (
+        not checkpoint_dir.endswith("model_and_optim")
+        and Path(f"{model_and_optim}/.metadata").exists()
+    ):
+        return model_and_optim
+
+    return checkpoint_dir
+
+
+def get_checkpoint_parent(checkpoint_dir: str) -> str:
+    """Get the parent checkpoint directory from a model_and_optim path."""
+    checkpoint_dir = normalize_path(checkpoint_dir)
+    if checkpoint_dir.endswith("/model_and_optim"):
+        return checkpoint_dir[:-len("/model_and_optim")]
+    if checkpoint_dir.endswith("model_and_optim"):
+        return checkpoint_dir[:-len("model_and_optim")].rstrip("/")
+    return checkpoint_dir
+
+
+def save_checkpoint_metadata(output_dir: Path):
+    """Save .metadata.json with version info."""
+    metadata = {"version": VERSION}
+    metadata_path = output_dir / ".metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f)
+    log.info(f"Saved metadata to {metadata_path}")
+
+
+def copy_config(source_checkpoint: str, output_dir: Path, config_path: Optional[str] = None):
+    """Copy config.json to output directory."""
+    if config_path:
+        # Use provided config
+        src = Path(config_path)
+        if src.exists():
+            dst = output_dir / "config.json"
+            shutil.copy(src, dst)
+            log.info(f"Copied config from {src} to {dst}")
+            return
+        else:
+            log.warning(f"Provided config path does not exist: {config_path}")
+
+    # Try to copy from source checkpoint
+    parent = get_checkpoint_parent(source_checkpoint)
+    src = Path(parent) / "config.json"
+    if src.exists():
+        dst = output_dir / "config.json"
+        shutil.copy(src, dst)
+        log.info(f"Copied config from {src} to {dst}")
+    else:
+        log.warning(f"No config.json found at {src}, skipping")
 
 
 def load_model_weights(checkpoint_dir: str, keys: List[str] | None = None) -> Dict[str, Any]:
@@ -70,9 +135,12 @@ def load_model_weights(checkpoint_dir: str, keys: List[str] | None = None) -> Di
 
 
 def find_norm_keys(metadata: Metadata) -> List[str]:
-    """Find all q_norm and k_norm tensor keys in the checkpoint."""
+    """Find all q_norm and k_norm model tensor keys in the checkpoint."""
     norm_keys = []
     for key, value in metadata.state_dict_metadata.items():
+        # Only include model tensors, not optimizer state
+        if not key.startswith("model."):
+            continue
         # Only include actual tensors, not nested dict structures
         if isinstance(value, TensorStorageMetadata):
             if ".q_norm." in key or ".k_norm." in key:

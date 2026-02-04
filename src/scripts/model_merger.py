@@ -3,17 +3,20 @@
 Merge two OLMo-core distributed checkpoints by computing a weighted average of model weights.
 
 Usage:
-    python -m olmo_core.scripts.model_merger \
-        --model1 /path/to/checkpoint1/model_and_optim \
-        --model2 /path/to/checkpoint2/model_and_optim \
+    python -m scripts.model_merger \
+        --model1 /path/to/checkpoint1 \
+        --model2 /path/to/checkpoint2 \
         --output_dir /path/to/output \
         --percent_model1 0.5
 """
 
 import argparse
+import json
 import logging
 import os
-from typing import Any, Dict, List
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -22,6 +25,7 @@ from olmo_core.distributed.checkpoint import get_checkpoint_metadata, save_state
 from olmo_core.distributed.checkpoint.filesystem import RemoteFileSystemReader
 from olmo_core.io import normalize_path
 from olmo_core.utils import prepare_cli_environment
+from olmo_core.version import VERSION
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +37,67 @@ def init_single_process_distributed():
     os.environ.setdefault("RANK", "0")
     os.environ.setdefault("WORLD_SIZE", "1")
     dist.init_process_group(backend="gloo", rank=0, world_size=1)
+
+
+def resolve_checkpoint_dir(checkpoint_dir: str) -> str:
+    """
+    Resolve the checkpoint directory to the model_and_optim subdirectory.
+    Handles both direct model_and_optim paths and parent checkpoint paths.
+    """
+    checkpoint_dir = normalize_path(checkpoint_dir)
+    model_and_optim = f"{checkpoint_dir.rstrip('/')}/model_and_optim"
+
+    # Check if model_and_optim subdirectory exists
+    if Path(model_and_optim).exists() or (
+        not checkpoint_dir.endswith("model_and_optim")
+        and Path(f"{model_and_optim}/.metadata").exists()
+    ):
+        return model_and_optim
+
+    return checkpoint_dir
+
+
+def get_checkpoint_parent(checkpoint_dir: str) -> str:
+    """Get the parent checkpoint directory from a model_and_optim path."""
+    checkpoint_dir = normalize_path(checkpoint_dir)
+    if checkpoint_dir.endswith("/model_and_optim"):
+        return checkpoint_dir[:-len("/model_and_optim")]
+    if checkpoint_dir.endswith("model_and_optim"):
+        return checkpoint_dir[:-len("model_and_optim")].rstrip("/")
+    return checkpoint_dir
+
+
+def save_checkpoint_metadata(output_dir: Path):
+    """Save .metadata.json with version info."""
+    metadata = {"version": VERSION}
+    metadata_path = output_dir / ".metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f)
+    log.info(f"Saved metadata to {metadata_path}")
+
+
+def copy_config(source_checkpoint: str, output_dir: Path, config_path: Optional[str] = None):
+    """Copy config.json to output directory."""
+    if config_path:
+        # Use provided config
+        src = Path(config_path)
+        if src.exists():
+            dst = output_dir / "config.json"
+            shutil.copy(src, dst)
+            log.info(f"Copied config from {src} to {dst}")
+            return
+        else:
+            log.warning(f"Provided config path does not exist: {config_path}")
+
+    # Try to copy from source checkpoint
+    parent = get_checkpoint_parent(source_checkpoint)
+    src = Path(parent) / "config.json"
+    if src.exists():
+        dst = output_dir / "config.json"
+        shutil.copy(src, dst)
+        log.info(f"Copied config from {src} to {dst}")
+    else:
+        log.warning(f"No config.json found at {src}, skipping")
 
 
 def load_model_weights(checkpoint_dir: str) -> Dict[str, Any]:
@@ -120,13 +185,13 @@ def main():
         "--model1",
         type=str,
         required=True,
-        help="Path to first model checkpoint (model_and_optim directory)",
+        help="Path to first model checkpoint (checkpoint dir or model_and_optim subdirectory)",
     )
     parser.add_argument(
         "--model2",
         type=str,
         required=True,
-        help="Path to second model checkpoint (model_and_optim directory)",
+        help="Path to second model checkpoint (checkpoint dir or model_and_optim subdirectory)",
     )
     parser.add_argument(
         "--output_dir",
@@ -140,6 +205,12 @@ def main():
         default=0.5,
         help="Weight for model1 (default: 0.5). Model2 weight = 1 - percent_model1",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to config.json to include in output. If not provided, copies from model1.",
+    )
     args = parser.parse_args()
 
     # Validate percent_model1
@@ -148,16 +219,27 @@ def main():
 
     log.info(f"Merging checkpoints with weights: model1={args.percent_model1}, model2={1 - args.percent_model1}")
 
+    # Resolve checkpoint directories
+    model1_dir = resolve_checkpoint_dir(args.model1)
+    model2_dir = resolve_checkpoint_dir(args.model2)
+    log.info(f"Model1 checkpoint: {model1_dir}")
+    log.info(f"Model2 checkpoint: {model2_dir}")
+
+    # Prepare output directory structure
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model_and_optim_dir = output_dir / "model_and_optim"
+
     # Initialize distributed for saving
     init_single_process_distributed()
 
     try:
         # Load both checkpoints
         log.info("Loading model1...")
-        state_dict1 = load_model_weights(args.model1)
+        state_dict1 = load_model_weights(model1_dir)
 
         log.info("Loading model2...")
-        state_dict2 = load_model_weights(args.model2)
+        state_dict2 = load_model_weights(model2_dir)
 
         # Merge weights
         log.info("Merging weights...")
@@ -167,15 +249,21 @@ def main():
         del state_dict1
         del state_dict2
 
-        # Save merged checkpoint
-        log.info(f"Saving merged checkpoint to {args.output_dir}")
+        # Save merged checkpoint to model_and_optim subdirectory
+        log.info(f"Saving merged checkpoint to {model_and_optim_dir}")
         save_state_dict(
-            args.output_dir,
+            str(model_and_optim_dir),
             merged_state_dict,
             save_overwrite=True,
         )
 
-        log.info("Done!")
+        # Save checkpoint metadata
+        save_checkpoint_metadata(output_dir)
+
+        # Copy config.json
+        copy_config(args.model1, output_dir, args.config)
+
+        log.info(f"Done! Checkpoint saved to {output_dir}")
 
     finally:
         dist.destroy_process_group()
