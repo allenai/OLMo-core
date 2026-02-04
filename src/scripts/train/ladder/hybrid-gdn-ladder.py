@@ -27,7 +27,6 @@ from olmo_core.train.train_module import (
     TransformerTrainModule,
     TransformerTrainModuleConfig,
 )
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of, warn_once
 
 log = logging.getLogger(__name__)
@@ -89,7 +88,7 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
         elif num_params <= 190e6:
             mbz = 8 * 4096
         elif num_params <= 370e6:
-            mbz = 6 * 4096
+            mbz = 4 * 4096
         elif num_params <= 760e6:
             mbz = 6 * 4096
         elif num_params <= 1e9:
@@ -152,7 +151,11 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
         model.block.name = TransformerBlockType.fla_hybrid
 
         # Every Nth layer is a quadratic attention layer (N = transformer_ratio).
-        attention_indices = [i for i in range(model.n_layers) if i % self.transformer_ratio == self.transformer_ratio - 1]
+        attention_indices = [
+            i
+            for i in range(model.n_layers)
+            if i % self.transformer_ratio == self.transformer_ratio - 1
+        ]
         # Force full attention on the last layer
         if model.n_layers - 1 not in attention_indices:
             attention_indices.append(model.n_layers - 1)
@@ -240,9 +243,11 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925_official
-                    if args.cluster == "lambda"
-                    else DataMix.OLMo_mix_0925,
+                    mix=(
+                        DataMix.OLMo_mix_0925_official
+                        if args.cluster == "lambda"
+                        else DataMix.OLMo_mix_0925
+                    ),
                     mix_base_dir=get_mix_base_dir(args.cluster),
                 )
             ],
