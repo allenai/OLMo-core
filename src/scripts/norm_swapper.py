@@ -81,21 +81,39 @@ def find_norm_keys(metadata: Metadata) -> List[str]:
 
 
 def get_nested_value(d: Dict[str, Any], key: str) -> Any:
-    """Get a value from a nested dict using a dotted key path."""
-    parts = key.split(".")
-    current = d
-    for part in parts:
-        current = current[part]
-    return current
+    """Get a value from a dict using a dotted key path. Handles flat or nested structures."""
+    # First check if flat key exists
+    if key in d:
+        return d[key]
+
+    # Otherwise navigate nested structure
+    if "." not in key:
+        raise KeyError(key)
+
+    root, rest = key.split(".", 1)
+    if root not in d:
+        raise KeyError(root)
+
+    return get_nested_value(d[root], rest)
 
 
 def set_nested_value(d: Dict[str, Any], key: str, value: Any):
-    """Set a value in a nested dict using a dotted key path."""
-    parts = key.split(".")
-    current = d
-    for part in parts[:-1]:
-        current = current[part]
-    current[parts[-1]] = value
+    """Set a value in a dict using a dotted key path. Handles flat or nested structures."""
+    # First check if flat key exists
+    if key in d:
+        d[key] = value
+        return
+
+    # Otherwise navigate nested structure
+    if "." not in key:
+        d[key] = value
+        return
+
+    root, rest = key.split(".", 1)
+    if root not in d:
+        raise KeyError(root)
+
+    set_nested_value(d[root], rest, value)
 
 
 def swap_norms(
