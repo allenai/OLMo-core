@@ -227,7 +227,7 @@ def parse_model_size(run_name: str) -> RicursiveOlmoV1:
     """
     normalized = run_name.lower().strip().replace("1p3b", "1.3b").replace("1p3", "1.3")
 
-    for size in RicursiveOlmoV1:
+    for size in sorted(RicursiveOlmoV1, key=lambda s: len(s.value), reverse=True):
         if size.value.lower() in normalized:
             return size
 
