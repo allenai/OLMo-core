@@ -12,9 +12,10 @@ Usage:
 import argparse
 import logging
 import os
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
 import torch.distributed as dist
+from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadata
 
 from olmo_core.distributed.checkpoint import get_checkpoint_metadata, save_state_dict
 from olmo_core.distributed.checkpoint.filesystem import RemoteFileSystemReader
@@ -68,13 +69,33 @@ def load_model_weights(checkpoint_dir: str, keys: List[str] | None = None) -> Di
     return state_dict
 
 
-def find_norm_keys(metadata_keys: Set[str]) -> List[str]:
-    """Find all q_norm and k_norm keys in the checkpoint."""
-    norm_keys = [
-        key for key in metadata_keys
-        if "q_norm" in key or "k_norm" in key
-    ]
+def find_norm_keys(metadata: Metadata) -> List[str]:
+    """Find all q_norm and k_norm tensor keys in the checkpoint."""
+    norm_keys = []
+    for key, value in metadata.state_dict_metadata.items():
+        # Only include actual tensors, not nested dict structures
+        if isinstance(value, TensorStorageMetadata):
+            if ".q_norm." in key or ".k_norm." in key:
+                norm_keys.append(key)
     return sorted(norm_keys)
+
+
+def get_nested_value(d: Dict[str, Any], key: str) -> Any:
+    """Get a value from a nested dict using a dotted key path."""
+    parts = key.split(".")
+    current = d
+    for part in parts:
+        current = current[part]
+    return current
+
+
+def set_nested_value(d: Dict[str, Any], key: str, value: Any):
+    """Set a value in a nested dict using a dotted key path."""
+    parts = key.split(".")
+    current = d
+    for part in parts[:-1]:
+        current = current[part]
+    current[parts[-1]] = value
 
 
 def swap_norms(
@@ -83,24 +104,16 @@ def swap_norms(
     norm_keys: List[str],
 ) -> Dict[str, Any]:
     """Replace norm weights in base_state_dict with values from norm_state_dict."""
-    result = base_state_dict.copy()
-
     for key in norm_keys:
-        if key not in norm_state_dict:
+        try:
+            norm_value = get_nested_value(norm_state_dict, key)
+        except KeyError:
             raise ValueError(f"Key '{key}' not found in norm_model checkpoint")
 
-        # Navigate nested dict structure
-        parts = key.split(".")
-
-        # Set value in result
-        current = result
-        for part in parts[:-1]:
-            current = current[part]
-        current[parts[-1]] = norm_state_dict[key]
-
+        set_nested_value(base_state_dict, key, norm_value)
         log.info(f"Swapped: {key}")
 
-    return result
+    return base_state_dict
 
 
 def main():
@@ -136,9 +149,9 @@ def main():
         base_metadata = get_checkpoint_metadata(normalize_path(args.model))
         norm_metadata = get_checkpoint_metadata(normalize_path(args.norm_model))
 
-        # Find norm keys in both checkpoints
-        base_norm_keys = find_norm_keys(set(base_metadata.state_dict_metadata.keys()))
-        norm_model_keys = find_norm_keys(set(norm_metadata.state_dict_metadata.keys()))
+        # Find norm keys in both checkpoints (only actual tensors)
+        base_norm_keys = find_norm_keys(base_metadata)
+        norm_model_keys = find_norm_keys(norm_metadata)
 
         if not base_norm_keys:
             raise ValueError("No q_norm or k_norm keys found in base model")
