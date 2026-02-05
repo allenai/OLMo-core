@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added 60M, 14M, and 1M model sizes.
 - `SpeedMonitorCallback` will log Chinchilla multiple number of tokens during training with a `TransformerTrainModule`.
 - Added utilities for fitting, evaluating, and visualizing chinchilla-style scaling laws.
+- Added support for flash-attn 4 (CUTE implementation).
+- Added `Callback.pre_log_metrics()` method.
+- Added `SequenceMixer` base class that both attention and recurrent layers inherit from.
+- Added `GatedDeltaNet` layer implementation.
+- Added `CuTeRMSNorm`, a CuTe-based RMSNorm implementation from the QuACK library.
+- Added `lazy` option to `DownstreamEvaluatorCallbackConfig` for lazily loading each task which can decrease startup time.
+- `TrainingProgress` (from `Trainer.training_progress`) now includes `current_tokens`, `bps`, `tps`, and `mfu` fields.
+- `BeakerCallback` will include throughput metrics in the workload description.
+- Added `eval_on_finish` option to `EvaluatorCallback`.
 
 ### Fixed
 

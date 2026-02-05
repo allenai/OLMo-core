@@ -585,9 +585,13 @@ class Trainer:
 
         # Get current speed in batches per second.
         bps: Optional[float] = None
+        tps: Optional[float] = None
+        mfu: Optional[float] = None
         for callback in self._iter_callbacks():
             if isinstance(callback, SpeedMonitorCallback):
                 bps = callback.bps_avg
+                tps = callback.tps_avg
+                mfu = callback.mfu_avg
                 break
 
         # Estimate the remaining time.
@@ -604,8 +608,12 @@ class Trainer:
 
         return TrainingProgress(
             current_step=self.global_step,
+            current_tokens=self.global_train_tokens_seen,
             total_steps=total_steps,
             time_remaining=time_remaining,
+            bps=bps,
+            tps=tps,
+            mfu=mfu,
         )
 
     def cancel_run(self, reason: str, no_sync: bool = False):
@@ -919,7 +927,6 @@ class Trainer:
     def save_checkpoint(self) -> PathOrStr:
         """
         Save a checkpoint for the current step to the :data:`save_folder`.
-
 
         :returns: The path/URL to the checkpoint.
         """
@@ -1315,6 +1322,8 @@ class Trainer:
                     raise RuntimeError(f"{ce_loss} loss encountered at step {step}")
                 if ce_loss < 10:
                     metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
+            for callback in self._iter_callbacks():
+                callback.pre_log_metrics(step, metrics[step])
             for callback in self._iter_callbacks():
                 callback.log_metrics(step, metrics[step])
 

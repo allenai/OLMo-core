@@ -18,8 +18,9 @@ dependencies = [
     "cached-path>=1.7.2",
     "requests",
     "packaging",
+    "dataclass-extensions>=0.2.6",
+    "pyyaml",
     "rich",
-    "omegaconf",
     "safetensors",
     "importlib_resources",
     "bettermap",
@@ -49,23 +50,27 @@ dev = [
     "pytest-xdist",
     "ruff",
     "setuptools",
+    "wheel",
+    "build",
+    "boto3",
+    "google-cloud-compute",
+    "google-cloud-storage",
     "Sphinx>=6.0,<=8.1.3",
     "sphinx-autobuild",
     "sphinx-autodoc-typehints==1.23.3",
     "sphinx-copybutton",
     "sphinx-inline-tabs",
     "twine>=1.11.0",
-    "wheel",
 ]
 beaker = ["beaker-py>=2.5.4,<3.0", "beaker-gantry>=3.4.3,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 dion = ["dion @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb2535239b ; sys_platform == 'linux'"]
-eval = ["ai2-olmo-eval==0.8.5"]
+eval = ["ai2-olmo-eval==0.8.7"]
+fla = ["flash-linear-attention>=0.4.1"]
 torchao = ["torchao==0.15.0"]
-transformers = ["transformers"]
+transformers = ["transformers<5.0"]
 wandb = ["wandb"]
-all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,torchao,transformers,wandb]"]
-
+all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fla,torchao,transformers,wandb]"]
 
 [tool.setuptools]
 include-package-data = true

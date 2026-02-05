@@ -357,12 +357,14 @@ def get_default_ladder_factory(
             max_devices=args.max_gpus,
             device_type=get_gpu_type(args.cluster),
             model_configurator=configure_model(args),
-            run_configurator=configure_run(args)
-            if configure_run is not None
-            else WSDSChinchillaRunConfigurator(
-                chinchilla_multiple=args.chinchilla_multiple,
-                lr_multiplier=args.lr_multiplier,
-                stepped_schedule=args.stepped_schedule,
+            run_configurator=(
+                configure_run(args)
+                if configure_run is not None
+                else WSDSChinchillaRunConfigurator(
+                    chinchilla_multiple=args.chinchilla_multiple,
+                    lr_multiplier=args.lr_multiplier,
+                    stepped_schedule=args.stepped_schedule,
+                )
             ),
             sequence_length=args.sequence_length,
             tokenizer=tokenizer,

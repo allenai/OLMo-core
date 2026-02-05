@@ -10,8 +10,9 @@ from torch.distributed import DeviceMesh
 from olmo_core.config import StrEnum
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
-    all_to_all_cp2hp_qkvpacked,
-    all_to_all_hp2cp,
+    all_to_all_single_cp2hp,
+    all_to_all_single_cp2hp_qkvpacked,
+    all_to_all_single_hp2cp,
 )
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.buffer_cache import BufferCache
@@ -21,12 +22,14 @@ from .flash_attn_api import (
     dispatch_flash_attn_3,
     dispatch_flash_attn_3_qkvpacked,
     dispatch_flash_attn_3_with_kvcache,
+    dispatch_flash_attn_4,
     dispatch_flash_attn_qkvpacked,
     dispatch_flash_attn_with_kvcache,
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
     has_flash_attn_2,
     has_flash_attn_3,
+    has_flash_attn_4,
     has_ring_flash_attn,
 )
 from .ring import (
@@ -57,6 +60,11 @@ class AttentionBackendName(StrEnum):
     Flash attention 3 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
     library ``hopper/`` subdirectory. Only supports H100/H800 GPUs. ➡️ :class:`FlashAttention3Backend`
     """
+    flash_4 = "flash_4"
+    """
+    Flash attention 4 (beta), the CUTE implementation from `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
+    in the ``flash_attn/cute`` subdirectory. ➡️ :class:`FlashAttention4Backend`
+    """
     te = "te"
     """
     Transformer Engine attention ➡️ :class:`TEAttentionBackend`.
@@ -69,6 +77,8 @@ class AttentionBackendName(StrEnum):
             return FlashAttention2Backend
         elif self == self.flash_3:
             return FlashAttention3Backend
+        elif self == self.flash_4:
+            return FlashAttention4Backend
         elif self == self.te:
             return TEAttentionBackend
         else:
@@ -332,9 +342,8 @@ class TorchAttentionBackend(AttentionBackend):
             assert self.cp_pg is not None
             # Transform from context-parallel to head-parallel partitioning
             # [B, T/CP, H, D] -> [B, T, H/CP, D]
-            q = all_to_all_cp2hp(q, self.cp_pg)
-            k = all_to_all_cp2hp(k, self.cp_pg)
-            v = all_to_all_cp2hp(v, self.cp_pg)
+            q = all_to_all_single_cp2hp(q, self.cp_pg)
+            k, v = all_to_all_cp2hp([k, v], self.cp_pg)
 
         # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
         n_rep = self.n_heads // self.n_kv_heads
@@ -366,7 +375,7 @@ class TorchAttentionBackend(AttentionBackend):
             assert self.cp_pg is not None
             # Transform back from head-parallel to context-parallel partitioning
             # [B, T, H/CP, D] -> [B, T/CP, H, D]
-            att = all_to_all_hp2cp(att, self.cp_pg)
+            att = all_to_all_single_hp2cp(att, self.cp_pg)
 
         return att.contiguous()
 
@@ -439,7 +448,9 @@ class FlashAttention2Backend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_flash_attn_2():
-            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn package.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the flash-attn package or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):
@@ -504,7 +515,7 @@ class FlashAttention2Backend(AttentionBackend):
                 elif self.uly is not None:
                     # Transform packed qkv from context-parallel to head-parallel partitioning
                     # [B, T/CP, 3, H, D] -> [B, T, 3, H/CP, D]
-                    qkv = all_to_all_cp2hp_qkvpacked(qkv, self.cp_pg)
+                    qkv = all_to_all_single_cp2hp_qkvpacked(qkv, self.cp_pg)
                     B, T, _, H_local, D = qkv.shape
 
                     # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -523,7 +534,7 @@ class FlashAttention2Backend(AttentionBackend):
 
                     # Transform back from head-parallel to context-parallel partitioning
                     # [B, T, H/CP, D] -> [B, T/CP, H, D]
-                    return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                    return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
                 else:
                     raise RuntimeError("One of ring or uly must be specified")
             else:
@@ -585,9 +596,8 @@ class FlashAttention2Backend(AttentionBackend):
             elif self.uly is not None:
                 # Transform from context-parallel to head-parallel partitioning
                 # [B, T/CP, H, D] -> [B, T, H/CP, D]
-                q = all_to_all_cp2hp(q, self.cp_pg)
-                k = all_to_all_cp2hp(k, self.cp_pg)
-                v = all_to_all_cp2hp(v, self.cp_pg)
+                q = all_to_all_single_cp2hp(q, self.cp_pg)
+                k, v = all_to_all_cp2hp([k, v], self.cp_pg)
                 B, T, H_local, D = q.shape
 
                 # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -613,7 +623,7 @@ class FlashAttention2Backend(AttentionBackend):
 
                 # Transform back from head-parallel to context-parallel partitioning
                 # [B, T, H/CP, D] -> [B, T/CP, H, D]
-                return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
             else:
                 raise RuntimeError("One of ring or uly must be specified")
 
@@ -665,7 +675,9 @@ class FlashAttention3Backend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_flash_attn_3():
-            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn 3 package.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the flash-attn 3 package or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):
@@ -719,7 +731,7 @@ class FlashAttention3Backend(AttentionBackend):
                 elif self.uly is not None:
                     # Transform packed qkv from context-parallel to head-parallel partitioning
                     # [B, T/CP, 3, H, D] -> [B, T, 3, H/CP, D]
-                    qkv = all_to_all_cp2hp_qkvpacked(qkv, self.cp_pg)
+                    qkv = all_to_all_single_cp2hp_qkvpacked(qkv, self.cp_pg)
                     B, T, _, H_local, D = qkv.shape
 
                     # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -737,7 +749,7 @@ class FlashAttention3Backend(AttentionBackend):
 
                     # Transform back from head-parallel to context-parallel partitioning
                     # [B, T, H/CP, D] -> [B, T/CP, H, D]
-                    return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                    return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
                 else:
                     raise RuntimeError("One of ring or uly must be specified")
 
@@ -782,9 +794,8 @@ class FlashAttention3Backend(AttentionBackend):
 
                 # Transform from context-parallel to head-parallel partitioning
                 # [B, T/CP, H, D] -> [B, T, H/CP, D]
-                q = all_to_all_cp2hp(q, self.cp_pg)
-                k = all_to_all_cp2hp(k, self.cp_pg)
-                v = all_to_all_cp2hp(v, self.cp_pg)
+                q = all_to_all_single_cp2hp(q, self.cp_pg)
+                k, v = all_to_all_cp2hp([k, v], self.cp_pg)
                 B, T, H_local, D = q.shape
 
                 # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -809,11 +820,140 @@ class FlashAttention3Backend(AttentionBackend):
 
                 # Transform back from head-parallel to context-parallel partitioning
                 # [B, T, H/CP, D] -> [B, T/CP, H, D]
-                return all_to_all_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
             else:
                 raise RuntimeError("One of ring or uly must be specified")
 
         return dispatch_flash_attn_3(
+            q,
+            k,
+            v,
+            cu_seqlens=cu_doc_lens,
+            cu_seqlens_q=cu_doc_lens_q,
+            cu_seqlens_k=cu_doc_lens_k,
+            max_seqlen=max_doc_len,
+            max_seqlen_q=max_doc_len_q,
+            max_seqlen_k=max_doc_len_k,
+            softmax_scale=self.scale,
+            causal=True,
+            window_size=self.window_size,
+        )
+
+
+class FlashAttention4Backend(AttentionBackend):
+    """
+    SDPA from flash-attn 4 (CUTE implementation).
+    """
+
+    def __init__(
+        self,
+        *,
+        head_dim: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        scale: Optional[float] = None,
+        dropout_p: float = 0.0,
+        window_size: Tuple[int, int] = (-1, -1),
+        cache: Optional[BufferCache] = None,
+    ):
+        if dropout_p > 0.0:
+            raise RuntimeError("dropout_p > 0.0 is not supported for flash-attn 4")
+        super().__init__(
+            head_dim=head_dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            scale=scale,
+            dropout_p=dropout_p,
+            window_size=window_size,
+            cache=cache,
+        )
+
+    @classmethod
+    def assert_supported(cls):
+        if not has_flash_attn_4():
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the flash-attn CUTE implementation or is not supported on this platform."
+            )
+
+    @classmethod
+    def assert_supports_swa(cls):
+        pass
+
+    @classmethod
+    def assert_supports_ring_cp(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support ring context parallelism")
+
+    @classmethod
+    def assert_supports_ulysses_cp(cls):
+        pass
+
+    @classmethod
+    def assert_supports_packed_qkv(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support packed QKV")
+
+    @classmethod
+    def assert_supports_kv_cache(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support QK cache")
+
+    def forward(
+        self,
+        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+    ) -> torch.Tensor:
+        assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
+        assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
+        assert kv_cache_manager is None, f"'{self.__class__.__name__}' doesn't support KV caching"
+
+        q, k, v = qkv
+
+        if self.cp_enabled:
+            if self.ring is not None:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support ring context parallelism"
+                )
+            elif self.uly is not None:
+                assert self.cp_pg is not None
+
+                # Transform from context-parallel to head-parallel partitioning
+                # [B, T/CP, H, D] -> [B, T, H/CP, D]
+                q = all_to_all_single_cp2hp(q, self.cp_pg)
+                k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+                B, T, H_local, D = q.shape
+
+                # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                # (same on all CP ranks), so we use them directly after gathering the full sequence.
+                # This is the default state of cu_doc_lens and max_doc_len before a load balancer is applied.
+
+                # Run attention with full sequence, partitioned heads
+                out = dispatch_flash_attn_4(
+                    q,
+                    k,
+                    v,
+                    cu_seqlens=cu_doc_lens,
+                    cu_seqlens_q=cu_doc_lens_q,
+                    cu_seqlens_k=cu_doc_lens_k,
+                    max_seqlen=max_doc_len,
+                    max_seqlen_q=max_doc_len_q,
+                    max_seqlen_k=max_doc_len_k,
+                    softmax_scale=self.scale,
+                    causal=True,
+                    window_size=self.window_size,
+                )
+
+                # Transform back from head-parallel to context-parallel partitioning
+                # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+            else:
+                raise RuntimeError("One of ring or uly must be specified")
+
+        return dispatch_flash_attn_4(
             q,
             k,
             v,
@@ -867,7 +1007,9 @@ class TEAttentionBackend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_te_attn():
-            raise RuntimeError(f"'{cls.__name__}' requires NVIDIA's TransformerEngine package.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the TransformerEngine package or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):

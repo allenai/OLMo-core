@@ -23,7 +23,7 @@ import torch.nn as nn
 
 from olmo_core.nn.transformer import Transformer
 
-from ..config import Config
+from ..config import Config, Registrable
 from ..exceptions import OLMoConfigurationError
 from ..utils import get_default_device, move_to_device
 
@@ -54,7 +54,7 @@ class OptimGroupOverride(Config):
 
 
 @dataclass
-class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
+class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
     """
     Base class for :class:`~torch.optim.Optimizer` configs.
     """

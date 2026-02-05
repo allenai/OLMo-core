@@ -41,3 +41,27 @@ def all_to_all_single(
         input_split_sizes=input_split_sizes,
         group=group,
     )
+
+
+def all_to_all(
+    group: torch.distributed.ProcessGroup,
+    input_tensor_list: list[torch.Tensor],
+) -> list[torch.Tensor]:
+    """
+    Autograd-compatible all-to-all collective operation with tensor lists.
+
+    Each process scatters the list of input tensors to all processes in a group,
+    and receives one tensor from each process.
+
+    :param group: The process group to use for the collective.
+    :param input_tensor_list: List of tensors to send (one per rank).
+    :returns: The list of received tensors.
+    """
+    # Allocate output tensors with same shapes as input tensors
+    output_tensor_list = [torch.empty_like(t) for t in input_tensor_list]
+
+    return dist_nn.all_to_all(  # type: ignore[return-value]
+        output_tensor_list,
+        [t.contiguous() for t in input_tensor_list],
+        group=group,
+    )

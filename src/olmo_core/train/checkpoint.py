@@ -326,12 +326,19 @@ class Checkpointer:
         :raises FileNotFoundError: If no checkpoints are found.
         """
         dir = normalize_path(dir)
+        log.info(f"Searching for latest checkpoint in '{dir}'...")
         latest_step: Optional[int] = None
         latest_checkpoint: Optional[str] = None
+        checkpoint_count = 0
         for step, path in cls.find_checkpoints(dir):
+            checkpoint_count += 1
+            log.debug(f"Found checkpoint at step {step}: '{path}'")
             if latest_step is None or step > latest_step:
                 latest_step = step
                 latest_checkpoint = path
+        log.info(f"Found {checkpoint_count} checkpoint(s) in '{dir}'")
+        if latest_checkpoint is not None:
+            log.info(f"Latest checkpoint is at step {latest_step}: '{latest_checkpoint}'")
 
         if latest_checkpoint is None:
             raise FileNotFoundError(f"No checkpoints found in '{dir}'")

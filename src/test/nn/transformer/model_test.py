@@ -1,6 +1,5 @@
 import logging
 from dataclasses import replace
-from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
 
 import pytest
@@ -31,6 +30,7 @@ from olmo_core.nn.attention.ring import (
     UlyssesContextParallelStyle,
 )
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
+from olmo_core.nn.fla import FLAConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
@@ -55,6 +55,8 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
+from test.nn.attention_test import BF16_ATOL, BF16_RTOL
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +170,7 @@ def test_ngpt_with_fsdp2():
 def get_transformer_config(
     architecture: str,
     dtype: torch.dtype = torch.float32,
+    attn_backend: Optional[AttentionBackendName] = None,
     swa: Optional[SlidingWindowAttentionConfig] = None,
 ) -> TransformerConfig:
     config: TransformerConfig
@@ -176,29 +179,63 @@ def get_transformer_config(
             vocab_size=16_000,
             n_layers=2,
             fused_ops=False,
-            use_flash=False,
+            attn_backend=attn_backend,
             dtype=DType.from_pt(dtype),
+            sliding_window=swa,
         )
     elif architecture == "llama":
         config = TransformerConfig.llama2_271M(
             vocab_size=16_000,
             n_layers=2,
             fused_ops=False,
-            use_flash=False,
+            attn_backend=attn_backend,
             dtype=DType.from_pt(dtype),
+            sliding_window=swa,
         )
     else:
         raise NotImplementedError(architecture)
-
-    if swa is not None:
-        config.block.attention.sliding_window = swa
-        config.block.attention.use_flash = True
 
     return config
 
 
 def get_transformer_inputs() -> torch.Tensor:
     return torch.arange(0, 128).unsqueeze(0)
+
+
+def _fla_available():
+    try:
+        import fla  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def get_fla_transformer_config(dtype: torch.dtype = torch.float32) -> TransformerConfig:
+    """Get a transformer config with FLA blocks."""
+    config = TransformerConfig.olmo2_190M(
+        vocab_size=16_000,
+        n_layers=2,
+        fused_ops=False,
+        use_flash=False,
+        dtype=DType.from_pt(dtype),
+    )
+
+    # Update the config to use FLA blocks
+    n_heads = 4
+    config.block.name = TransformerBlockType.fla
+    config.block.sequence_mixer = AttentionConfig(n_heads=n_heads)  # n_heads needed for FLA
+    config.block.fla = FLAConfig(
+        name="GatedDeltaNet",
+        dtype=DType.from_pt(dtype),
+        fla_layer_kwargs={
+            "head_dim": int(config.d_model / n_heads),
+            "use_gate": True,
+            "allow_neg_eigval": False,
+        },
+    )
+
+    return config
 
 
 def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):
@@ -256,8 +293,9 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
 
 def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
-    config = get_transformer_config(architecture, dtype=torch.bfloat16)
-    config.block.attention.use_flash = True
+    config = get_transformer_config(
+        architecture, dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
+    )
 
     mesh = init_device_mesh(
         device.type,
@@ -286,8 +324,9 @@ def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architec
 def test_context_parallel_transformer_ring(architecture: str, tmp_path):
     seed_all(0)
     device = torch.device("cuda")
-    config = get_transformer_config(architecture, dtype=torch.bfloat16)
-    config.block.attention.use_flash = True
+    config = get_transformer_config(
+        architecture, dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
+    )
 
     model = config.build()
     model.init_weights(device=device, max_seq_len=512)
@@ -316,8 +355,7 @@ def run_context_parallel_transformer_ulysses(
     checkpoint_dir, outputs_path, architecture: str, backend_name: AttentionBackendName
 ):
     device = get_default_device()
-    config = get_transformer_config(architecture, dtype=torch.bfloat16)
-    config.block.attention.backend = backend_name
+    config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
 
     mesh = init_device_mesh(
         device.type,
@@ -337,7 +375,10 @@ def run_context_parallel_transformer_ulysses(
     og_logits = torch.load(outputs_path, map_location=device)
     tol_scale = 2.0  # requires slightly more tolerance than default
     torch.testing.assert_close(
-        og_logits, get_full_tensor(logits), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
+        og_logits,
+        get_full_tensor(logits),
+        rtol=BF16_RTOL * tol_scale,
+        atol=BF16_ATOL * tol_scale,
     )
 
 
@@ -356,8 +397,7 @@ def test_context_parallel_transformer_ulysses(
 ):
     seed_all(0)
     device = torch.device("cuda")
-    config = get_transformer_config(architecture, dtype=torch.bfloat16)
-    config.block.attention.backend = backend_name
+    config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
 
     model = config.build()
     model.init_weights(device=device, max_seq_len=512)
@@ -479,10 +519,12 @@ def run_moe_hybrid_combined_forward(
 
 @requires_multi_gpu
 @pytest.mark.parametrize(
-    "dropless", [pytest.param(True, id="dropless"), pytest.param(False, id="default-router")]
+    "dropless",
+    [pytest.param(True, id="dropless"), pytest.param(False, id="default-router")],
 )
 @pytest.mark.parametrize(
-    "shared_experts", [pytest.param(True, id="shared-experts"), pytest.param(False, id="no-shared")]
+    "shared_experts",
+    [pytest.param(True, id="shared-experts"), pytest.param(False, id="no-shared")],
 )
 @pytest.mark.parametrize(
     "reordered_norm",
@@ -593,9 +635,11 @@ def test_gemma3_builder_configs(config_builder, expected_d_model):
     assert config.block.feed_forward is not None
     assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
 
-    assert config.block.attention.qk_norm is not None
-    assert config.block.attention.rope is not None
-    assert config.block.attention.rope.theta == 10_000
+    sequence_mixer = config.block.sequence_mixer
+    assert isinstance(sequence_mixer, AttentionConfig)
+    assert sequence_mixer.qk_norm is not None
+    assert sequence_mixer.rope is not None
+    assert sequence_mixer.rope.theta == 10_000
 
     # Use meta device to avoid allocating large amounts of memory for big models.
     model = config.build(init_device="meta")
@@ -615,13 +659,17 @@ def test_gemma3_block_overrides_rope_theta():
     for layer_idx in range(config.n_layers):
         if layer_idx in config.block_overrides:
             global_block = config.block_overrides[layer_idx]
-            assert global_block.attention.rope is not None
-            assert global_block.attention.rope.theta == 1_000_000
-            assert global_block.attention.sliding_window is None
+            attention = global_block.sequence_mixer
+            assert isinstance(attention, AttentionConfig)
+            assert attention.rope is not None
+            assert attention.rope.theta == 1_000_000
+            assert attention.sliding_window is None
             global_count += 1
         else:
-            assert config.block.attention.rope is not None
-            assert config.block.attention.rope.theta == 10_000
+            attention = config.block.sequence_mixer
+            assert isinstance(attention, AttentionConfig)
+            assert attention.rope is not None
+            assert attention.rope.theta == 10_000
             local_count += 1
 
     assert global_count == 2
@@ -631,7 +679,10 @@ def test_gemma3_block_overrides_rope_theta():
 def test_gemma3_sliding_window_pattern():
     config = TransformerConfig.gemma3_1B(n_layers=12)
 
-    swa = config.block.attention.sliding_window
+    attention = config.block.sequence_mixer
+    assert isinstance(attention, AttentionConfig)
+
+    swa = attention.sliding_window
     assert swa is not None
     assert swa.pattern == [1024, 1024, 1024, 1024, 1024, -1]
     assert swa.force_full_attention_on_first_layer is False
@@ -653,8 +704,11 @@ def test_qwen3_builder_configs(config_builder, expected_d_model):
     config = config_builder(vocab_size=151936, n_layers=2)
     assert config.d_model == expected_d_model
     assert config.n_layers == 2
-    assert config.block.attention.n_kv_heads == 8
-    assert config.block.attention.rope.theta == 1_000_000
+    attention = config.block.sequence_mixer
+    assert isinstance(attention, AttentionConfig)
+    assert attention.n_kv_heads == 8
+    assert attention.rope is not None
+    assert attention.rope.theta == 1_000_000
 
     # Use meta device to avoid allocating large amounts of memory for big models.
     model = config.build(init_device="meta")

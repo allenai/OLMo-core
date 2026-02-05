@@ -12,9 +12,10 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
+from olmo_core.nn.fla import FLAConfig
 from olmo_core.ops import attach_auxiliary_loss
 
-from ..attention import AttentionConfig
+from ..attention.base import SequenceMixerConfig
 from ..attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
@@ -62,7 +63,11 @@ class TransformerBlockBase(nn.Module):
 
     @abstractmethod
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         raise NotImplementedError
 
@@ -99,7 +104,7 @@ class TransformerBlock(TransformerBlockBase):
 
     :param d_model: The model dimensionality.
     :param block_idx: The index/position of the block within the model. Ranges from 0 to ``n_layers - 1``.
-    :param attention: The attention module config.
+    :param sequence_mixer: The sequence mixer module config (e.g. attention, recurrent, convolution, etc.).
     :param feed_forward: The feed forward module config.
     :param layer_norm: The layer norm config for both the attention LN and the feed forward LN.
     :param dropout: Dropout probability.
@@ -112,7 +117,7 @@ class TransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -124,7 +129,11 @@ class TransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
@@ -149,7 +158,11 @@ class TransformerBlock(TransformerBlockBase):
         return self.feed_forward_residual_stream(h, self.feed_forward(self.feed_forward_norm(h)))
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         parallelize_module(
             self,
@@ -161,7 +174,9 @@ class TransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(
-            self.attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.attention_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
         parallelize_module(
             self.attention_residual_stream.dropout,
@@ -178,7 +193,9 @@ class TransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(
-            self.feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.feed_forward_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
         parallelize_module(
             self.feed_forward_residual_stream.dropout,
@@ -242,7 +259,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -255,7 +272,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
             d_model=d_model,
             block_idx=block_idx,
             n_layers=n_layers,
-            attention=attention,
+            sequence_mixer=sequence_mixer,
             feed_forward=feed_forward,
             layer_norm=layer_norm,
             dropout=dropout,
@@ -316,7 +333,7 @@ class PeriNormTransformerBlock(TransformerBlock):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -329,7 +346,7 @@ class PeriNormTransformerBlock(TransformerBlock):
             d_model=d_model,
             block_idx=block_idx,
             n_layers=n_layers,
-            attention=attention,
+            sequence_mixer=sequence_mixer,
             feed_forward=feed_forward,
             layer_norm=layer_norm,
             dropout=dropout,
@@ -350,21 +367,30 @@ class PeriNormTransformerBlock(TransformerBlock):
     ) -> torch.Tensor:
         del loss_div_factor
         h = self.attention_residual_stream(
-            x, self.post_attention_norm(self.attention(self.attention_norm(x), **kwargs))
+            x,
+            self.post_attention_norm(self.attention(self.attention_norm(x), **kwargs)),
         )
         return self.feed_forward_residual_stream(
             h, self.post_feed_forward_norm(self.feed_forward(self.feed_forward_norm(h)))
         )
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         super().apply_tp(tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled)
         parallelize_module(
-            self.post_feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.post_feed_forward_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
         parallelize_module(
-            self.post_attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.post_attention_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
 
 
@@ -381,7 +407,7 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -389,7 +415,11 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
@@ -439,7 +469,11 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         )
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         del tp_mesh, input_layout, float8_enabled
 
@@ -513,7 +547,7 @@ class MoETransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward_moe: MoEConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -523,7 +557,11 @@ class MoETransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
@@ -591,7 +629,11 @@ class MoETransformerBlock(TransformerBlockBase):
         self._ep_enabled = True
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         parallelize_module(
             self,
@@ -603,7 +645,9 @@ class MoETransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(
-            self.attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.attention_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
 
         self.attention.apply_tp(
@@ -615,7 +659,9 @@ class MoETransformerBlock(TransformerBlockBase):
         )
 
         parallelize_module(
-            self.feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.feed_forward_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
 
         self.feed_forward_moe.apply_tp(
@@ -649,7 +695,8 @@ class MoETransformerBlock(TransformerBlockBase):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             fsdp_att = cast(FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs))
             fsdp_moe = cast(
-                FSDPModule, fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs)
+                FSDPModule,
+                fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs),
             )
             fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
             if prefetch_factor > 0:
@@ -694,7 +741,8 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             fsdp_att = cast(FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs))
             fsdp_moe = cast(
-                FSDPModule, fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs)
+                FSDPModule,
+                fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs),
             )
             fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
             if prefetch_factor > 0:
@@ -711,6 +759,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         *,
         d_model: int,
         n_layers: int,
+        sequence_mixer: SequenceMixerConfig,
         layer_norm: LayerNormConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
@@ -719,6 +768,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         super().__init__(
             d_model=d_model,
             n_layers=n_layers,
+            sequence_mixer=sequence_mixer,
             layer_norm=layer_norm,
             init_device=init_device,
             **kwargs,
@@ -750,7 +800,10 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
 
     @abstractmethod
     def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     ) -> torch.Tensor:
         raise NotImplementedError
 
@@ -788,7 +841,11 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
             return self.combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_tp(
-        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
     ):
         super().apply_tp(tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled)
 
@@ -800,7 +857,9 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         )
 
         parallelize_module(
-            self.feed_forward_moe_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            self.feed_forward_moe_norm,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
 
     def apply_fsdp(
@@ -828,10 +887,12 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                     FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs)
                 )
                 fsdp_mlp = cast(
-                    FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
+                    FSDPModule,
+                    fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs),
                 )
                 fsdp_moe = cast(
-                    FSDPModule, fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs)
+                    FSDPModule,
+                    fully_shard(self.feed_forward_moe, mesh=dp_mesh, **fsdp_kwargs),
                 )
                 fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
                 if prefetch_factor > 0:
@@ -842,7 +903,8 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                     FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs)
                 )
                 fsdp_mlp = cast(
-                    FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
+                    FSDPModule,
+                    fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs),
                 )
                 #  fsdp_moe = cast(
                 #      FSDPModule,
@@ -853,7 +915,11 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                     if self.feed_forward_moe.shared_mlp is None
                     else cast(
                         FSDPModule,
-                        fully_shard(self.feed_forward_moe.shared_mlp, mesh=dp_mesh, **fsdp_kwargs),
+                        fully_shard(
+                            self.feed_forward_moe.shared_mlp,
+                            mesh=dp_mesh,
+                            **fsdp_kwargs,
+                        ),
                     )
                 )
                 fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
@@ -876,7 +942,10 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     ) -> torch.Tensor:
         return self.dropout(
             self.feed_forward_moe(self.feed_forward_moe_norm(x), loss_div_factor=loss_div_factor)
@@ -982,7 +1051,10 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
     def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     ) -> torch.Tensor:
         return self.dropout(
             self.feed_forward_moe_norm(self.feed_forward_moe(x, loss_div_factor=loss_div_factor))
@@ -1079,3 +1151,134 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
         return h + self.dropout(self.feed_forward_moe_norm(x_moe))
+
+
+class FLABlock(TransformerBlockBase):
+    def __init__(
+        self,
+        *,
+        n_heads: int,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        fla: FLAConfig,
+        layer_norm: LayerNormConfig,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        dropout: float = 0.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(n_layers=n_layers)
+        self.d_model = d_model
+        self.block_idx = block_idx
+        self.fla = fla.build(d_model, n_heads, init_device=init_device)
+        self.fla_norm = layer_norm.build(d_model, init_device=init_device)
+        if feed_forward is not None:
+            self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
+            self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        else:
+            self.feed_forward = None
+            self.feed_forward_norm = None
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        h = x + self.dropout(self.fla(self.fla_norm(x), **kwargs))
+
+        if self.feed_forward is None or self.feed_forward_norm is None:
+            assert self.feed_forward is None and self.feed_forward_norm is None
+            return h
+        else:
+            return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+
+    def apply_compile(self):
+        return self.compile(fullgraph=False, dynamic=False)
+
+    def apply_fsdp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_fla = cast(FSDPModule, fully_shard(self.fla, mesh=dp_mesh, **fsdp_kwargs))
+            if self.feed_forward is not None:
+                fsdp_mlp = cast(
+                    FSDPModule,
+                    fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs),
+                )
+            else:
+                fsdp_mlp = None
+            fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
+            if prefetch_factor > 0:
+                fsdp_root.set_modules_to_forward_prefetch([fsdp_fla])
+                if self.feed_forward is not None:
+                    fsdp_fla.set_modules_to_forward_prefetch([fsdp_mlp])  # type: ignore
+        else:
+            fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        *,
+        input_layout: Placement,
+        float8_enabled: bool = False,
+    ):
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=PrepareModuleInput(
+                input_layouts=(input_layout,),
+                desired_input_layouts=(Shard(1),),
+            ),
+        )
+
+        parallelize_module(self.fla_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
+        parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
+
+        self.fla.apply_tp(
+            tp_mesh,
+            input_layout=Shard(1),
+            output_layout=Shard(1),
+            use_local_output=False,
+            float8_enabled=float8_enabled,
+        )
+
+        if self.feed_forward is not None:
+            assert self.feed_forward_norm is not None
+            parallelize_module(
+                self.feed_forward_norm,
+                device_mesh=tp_mesh,
+                parallelize_plan=SequenceParallel(),
+            )
+            self.feed_forward.apply_tp(
+                tp_mesh,
+                input_layout=Shard(1),
+                output_layout=Shard(1),
+                use_local_output=False,
+                float8_enabled=float8_enabled,
+            )
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
+    ):
+        self.fla.apply_cp(cp_mesh, ring=ring, uly=uly)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        attn_flops = self.fla.num_flops_per_token(seq_len)
+        if self.feed_forward is not None:
+            ff_flops = self.feed_forward.num_flops_per_token(seq_len)
+        else:
+            ff_flops = 0
+        return attn_flops + ff_flops
