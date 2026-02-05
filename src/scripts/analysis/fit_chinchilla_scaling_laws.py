@@ -199,7 +199,7 @@ def load_ladder_data(
     loss_column: Optional[str] = None,
     verbose: bool = True,
     use_all_checkpoints: bool = True,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[str]]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
     """
     Load ladder results from pickle files for Chinchilla fitting.
 
@@ -215,14 +215,16 @@ def load_ladder_data(
         N: Array of parameter counts (corrected non-embedding counts if available)
         D: Array of token counts
         L: Array of loss values
+        F: Array of FLOPs (in petaflops, from throughput/total petaflops column)
         sizes: List of size names (e.g., ["190M", "370M", ...] or ["190M@20", "190M@40", ...])
     """
     pkl_files = sorted(ladder_dir.glob("metrics_*.pkl"))
     if not pkl_files:
         raise FileNotFoundError(f"No metrics_*.pkl files found in {ladder_dir}")
 
-    N_list, D_list, L_list, sizes = [], [], [], []
+    N_list, D_list, L_list, F_list, sizes = [], [], [], [], []
     used_loss_col = None
+    flops_col = "throughput/total petaflops"
 
     for pkl_path in pkl_files:
         size = pkl_path.stem.replace("metrics_", "")
@@ -267,6 +269,7 @@ def load_ladder_data(
             for _, row in df.iterrows():
                 tokens = row.get("tokens")
                 loss = row.get(used_loss_col)
+                flops = row.get(flops_col)
 
                 if tokens is None or pd.isna(tokens):
                     continue
@@ -276,6 +279,13 @@ def load_ladder_data(
                 N_list.append(float(num_params))
                 D_list.append(float(tokens))
                 L_list.append(float(loss))
+                # FLOPs: use measured value if available, otherwise estimate as 6*N*D
+                if flops is not None and not pd.isna(flops):
+                    # Convert from petaflops to raw FLOPs
+                    F_list.append(float(flops) * 1e15)
+                else:
+                    # Estimate FLOPs as 6*N*D (standard approximation)
+                    F_list.append(6.0 * float(num_params) * float(tokens))
                 # Label with D/N ratio for identification
                 dn_ratio = int(round(tokens / num_params))
                 sizes.append(f"{size}@{dn_ratio}")
@@ -299,9 +309,16 @@ def load_ladder_data(
                     print(f"  Warning: No loss value for {size}, skipping")
                 continue
 
+            flops = final_row.get(flops_col)
+
             N_list.append(float(num_params))
             D_list.append(float(tokens))
             L_list.append(float(loss))
+            # FLOPs: use measured value if available, otherwise estimate as 6*N*D
+            if flops is not None and not pd.isna(flops):
+                F_list.append(float(flops) * 1e15)
+            else:
+                F_list.append(6.0 * float(num_params) * float(tokens))
             sizes.append(size)
 
             if verbose:
@@ -313,7 +330,7 @@ def load_ladder_data(
     if verbose:
         print(f"  Total data points: {len(N_list)}")
 
-    return np.array(N_list), np.array(D_list), np.array(L_list), sizes
+    return np.array(N_list), np.array(D_list), np.array(L_list), np.array(F_list), sizes
 
 
 def fit_ladder(
@@ -331,6 +348,7 @@ def fit_ladder(
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    np.ndarray,
     List[str],
     Optional[ChinchillaParametricBootstrappedFit],
 ]:
@@ -339,7 +357,7 @@ def fit_ladder(
 
     Returns:
         fit: The fitted scaling law
-        N, D, L: The data arrays used for fitting
+        N, D, L, F: The data arrays used for fitting (params, tokens, loss, FLOPs)
         sizes: List of size names
         bootstrap_fit: Bootstrap fit if requested, else None
     """
@@ -348,7 +366,7 @@ def fit_ladder(
     print(f"Directory: {ladder_dir}")
     print(f"{'='*60}")
 
-    N, D, L, sizes = load_ladder_data(
+    N, D, L, F, sizes = load_ladder_data(
         ladder_dir, name, loss_column, verbose, use_all_checkpoints=use_all_checkpoints
     )
 
@@ -376,7 +394,7 @@ def fit_ladder(
             progress_bar=verbose,
         )
         # Return the point estimate for consistency
-        return bootstrap_fit.point_estimate, N, D, L, sizes, bootstrap_fit
+        return bootstrap_fit.point_estimate, N, D, L, F, sizes, bootstrap_fit
     else:
         fit = ChinchillaParametricFit.fit(
             N,
@@ -385,7 +403,7 @@ def fit_ladder(
             weights=weights,
             overestimate_penalty=overestimate_penalty,
         )
-        return fit, N, D, L, sizes, None
+        return fit, N, D, L, F, sizes, None
 
 
 def fit_rollout(
@@ -561,7 +579,7 @@ def print_comparison(fits: Dict[str, Tuple]):
     print(f"\n{'Ladder':<20} {'E':>8} {'α':>8} {'β':>8} {'a_opt':>8} {'b_opt':>8}")
     print("-" * 60)
 
-    for name, (fit, N, D, L, sizes, bootstrap) in fits.items():
+    for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
         p = fit.fitted_params
         print(
             f"{name:<20} {p.E:>8.4f} {p.alpha:>8.4f} {p.beta:>8.4f} {p.a_opt:>8.4f} {p.b_opt:>8.4f}"
@@ -850,7 +868,7 @@ def plot_isoflop_curves(
 
     # Left: Loss vs N for different FLOP budgets
     ax = axes[0]
-    for idx, (name, (fit, N, D, L, sizes, bootstrap)) in enumerate(fits.items()):
+    for idx, (name, (fit, N, D, L, F, sizes, bootstrap)) in enumerate(fits.items()):
         for flop_idx, flops in enumerate(flop_budgets):
             N_range = np.logspace(7, 11, 100)
             D_range = flops / (6 * N_range)
@@ -882,7 +900,7 @@ def plot_isoflop_curves(
     ax = axes[1]
     flop_range = np.logspace(17, 23, 100)
 
-    for idx, (name, (fit, N, D, L, sizes, bootstrap)) in enumerate(fits.items()):
+    for idx, (name, (fit, N, D, L, F, sizes, bootstrap)) in enumerate(fits.items()):
         params = fit.fitted_params
         # Compute-optimal: N_opt ∝ C^a_opt, where C = 6*N*D
         # For a given FLOP budget F = 6*N*D, optimal N scales as F^a_opt
@@ -921,6 +939,106 @@ def plot_isoflop_curves(
         plt.close(fig)
 
 
+def plot_loss_vs_flops(
+    fits: Dict[str, Tuple],
+    output_path: Optional[Path] = None,
+    show: bool = True,
+):
+    """Plot loss vs FLOPs for all models across all ladders."""
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.lines import Line2D
+    except ImportError:
+        print("Warning: matplotlib not installed, skipping loss vs FLOPs plot")
+        return
+
+    if not fits:
+        return
+
+    # Use a nice style
+    plt.style.use("seaborn-v0_8-whitegrid")
+
+    # Color palette - distinct colors for each ladder
+    color_palette = ["#2ecc71", "#e74c3c", "#3498db", "#9b59b6", "#f39c12", "#1abc9c", "#e67e22", "#34495e", "#e91e63", "#00bcd4"]
+    colors = {name: color_palette[i % len(color_palette)] for i, name in enumerate(fits.keys())}
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig.suptitle("Loss vs Training FLOPs", fontsize=16, fontweight="bold", y=0.98)
+
+    # ============================================================
+    # Left: Loss vs FLOPs (scatter plot with all data points)
+    # ============================================================
+    ax = axes[0]
+
+    for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
+        color = colors[name]
+        # F is in raw FLOPs, convert to PetaFLOPs for plotting
+        F_peta = F / 1e15
+        ax.scatter(F_peta, L, color=color, s=40, alpha=0.6, edgecolors="white", linewidth=0.5, label=name)
+
+    ax.set_xscale("log")
+    ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=12)
+    ax.set_ylabel("Loss", fontsize=12)
+    ax.set_title("All Checkpoints", fontsize=13, fontweight="bold")
+    ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
+    ax.tick_params(labelsize=10)
+    ax.grid(True, alpha=0.3)
+
+    # ============================================================
+    # Right: Loss vs FLOPs with fitted lines per model size
+    # ============================================================
+    ax = axes[1]
+
+    for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
+        color = colors[name]
+        F_peta = F / 1e15
+
+        # Group by unique N values and plot loss vs FLOPs for each size
+        unique_N = np.unique(N)
+        for n_val in unique_N:
+            mask = N == n_val
+            F_subset = F_peta[mask]
+            L_subset = L[mask]
+
+            # Sort by FLOPs for cleaner lines
+            sort_idx = np.argsort(F_subset)
+            ax.plot(
+                F_subset[sort_idx],
+                L_subset[sort_idx],
+                color=color,
+                linewidth=1.5,
+                alpha=0.7,
+                marker='o',
+                markersize=4,
+            )
+
+    # Create legend manually (one entry per ladder)
+    legend_handles = [
+        Line2D([0], [0], marker="o", color=colors[name], markersize=8, label=name, linewidth=1.5)
+        for name in fits.keys()
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=9, framealpha=0.9)
+
+    ax.set_xscale("log")
+    ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=12)
+    ax.set_ylabel("Loss", fontsize=12)
+    ax.set_title("Per Model Size", fontsize=13, fontweight="bold")
+    ax.tick_params(labelsize=10)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+    if output_path:
+        save_path = output_path / "loss_vs_flops.png"
+        fig.savefig(str(save_path), dpi=200, bbox_inches="tight", facecolor="white")
+        print(f"\nSaved loss vs FLOPs plot to: {save_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
 def predict_loss_for_target(
     fits: Dict[str, Tuple],
     target_n: float,
@@ -932,7 +1050,7 @@ def predict_loss_for_target(
     print(f"(Chinchilla ratio: D/N = {target_d/target_n:.1f})")
     print(f"{'='*60}")
 
-    for name, (fit, N, D, L, sizes, bootstrap) in fits.items():
+    for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
         pred = fit.predict_loss(target_n, target_d)
         print(f"\n{name}:")
         print(f"  Predicted loss: {pred:.4f}")
@@ -1014,6 +1132,11 @@ def main():
         help="Generate iso-FLOP curve plots",
     )
     parser.add_argument(
+        "--plot-flops",
+        action="store_true",
+        help="Generate loss vs FLOPs plots",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -1060,8 +1183,8 @@ def main():
                 verbose=not args.quiet,
                 use_all_checkpoints=not args.final_checkpoints_only,
             )
-            fit, N, D, L, sizes, bootstrap = result
-            fits[name] = (fit, N, D, L, sizes, bootstrap)
+            fit, N, D, L, F, sizes, bootstrap = result
+            fits[name] = (fit, N, D, L, F, sizes, bootstrap)
 
             print_fit_results(name, fit, N, D, L, sizes, bootstrap)
 
@@ -1115,6 +1238,10 @@ def main():
     if args.plot_isoflop:
         plot_isoflop_curves(fits, args.output, show=(args.output is None))
 
+    # Generate loss vs FLOPs plots
+    if args.plot_flops:
+        plot_loss_vs_flops(fits, args.output, show=(args.output is None))
+
     # Generate 3D plots
     if args.plot_3d:
         if not rollouts:
@@ -1126,7 +1253,7 @@ def main():
     if args.output:
         # Save fitted parameters as CSV
         rows = []
-        for name, (fit, N, D, L, sizes, bootstrap) in fits.items():
+        for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
             p = fit.fitted_params
             rows.append(
                 {
@@ -1146,7 +1273,7 @@ def main():
 
         # Save per-point data
         all_data = []
-        for name, (fit, N, D, L, sizes, bootstrap) in fits.items():
+        for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
             predicted = fit.predict_loss(N, D)
             for i in range(len(N)):
                 all_data.append(
@@ -1155,6 +1282,8 @@ def main():
                         "size": sizes[i],
                         "N": N[i],
                         "D": D[i],
+                        "FLOPs": F[i],
+                        "FLOPs_petaflops": F[i] / 1e15,
                         "actual_loss": L[i],
                         "predicted_loss": predicted[i],
                         "error": L[i] - predicted[i],
