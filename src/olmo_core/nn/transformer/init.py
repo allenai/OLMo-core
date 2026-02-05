@@ -107,7 +107,12 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized, InitMethod.claude):
+        if self in (
+            InitMethod.llama,
+            InitMethod.llama_depth,
+            InitMethod.normalized,
+            InitMethod.claude,
+        ):
             std = d_model**-0.5
         self._init_linear(m, std=std, generator=generator)
 
