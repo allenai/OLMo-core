@@ -50,6 +50,14 @@ class InitMethod(StrEnum):
     dependent on either ``d_model`` or the layer index.
     """
 
+    claude = "claude"
+    """
+    Per-layer fan-in initialization where each weight matrix is initialized with
+    ``std = 1/√d_in`` where ``d_in`` is the fan-in (number of input features) of that
+    specific layer. Embeddings use ``std = 1.0`` with normal distribution.
+    This provides variance-preserving initialization adapted to each layer's specific dimensions.
+    """
+
     def _init_linear(
         self, m: nn.Linear, *, std: float = 0.02, generator: Optional[torch.Generator] = None
     ):
@@ -77,6 +85,9 @@ class InitMethod(StrEnum):
             _apply_init(nn.init.normal_, m.weight, generator=generator)
         elif self == InitMethod.normalized:
             _apply_init(nn.init.normal_, m.weight, generator=generator, std=d_model**-0.5)
+        elif self == InitMethod.claude:
+            # Claude init uses std = 1.0 for embeddings with normal distribution
+            _apply_init(nn.init.normal_, m.weight, generator=generator, std=1.0)
         else:
             _apply_init(
                 nn.init.trunc_normal_,
@@ -96,7 +107,7 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
+        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized, InitMethod.claude):
             std = d_model**-0.5
         self._init_linear(m, std=std, generator=generator)
 
@@ -111,6 +122,9 @@ class InitMethod(StrEnum):
         generator: Optional[torch.Generator] = None,
     ):
         if self == InitMethod.normalized:
+            std = d_model**-0.5
+        elif self == InitMethod.claude:
+            # For claude, Q/K/V use 1/√d_model
             std = d_model**-0.5
 
         # NOTE: isinstance checks could fail with AC wrappers
@@ -130,6 +144,9 @@ class InitMethod(StrEnum):
             std = std / (2 * (block_idx + 1)) ** 0.5
         elif self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.claude:
+            # For claude, w_out uses 1/√d_model (since d_in = d_model for fused weights)
+            std = d_model**-0.5
 
         self._init_linear(m.w_out, std=std, generator=generator)
 
@@ -145,6 +162,9 @@ class InitMethod(StrEnum):
     ):
         if self == InitMethod.normalized:
             std = d_model**-0.5
+        elif self == InitMethod.claude:
+            # For claude, w1 uses 1/√d_model (d_in = d_model)
+            std = m.w1.in_features**-0.5
 
         self._init_linear(m.w1, std=std, generator=generator)
 
@@ -152,11 +172,17 @@ class InitMethod(StrEnum):
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.claude:
+            # For claude, w3 uses 1/√d_model (d_in = d_model)
+            std = m.w3.in_features**-0.5
 
         self._init_linear(m.w3, std=std, generator=generator)
 
         if self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.claude:
+            # For claude, w2 uses 1/√hidden_size (d_in = hidden_size)
+            std = m.w2.in_features**-0.5
 
         self._init_linear(m.w2, std=std, generator=generator)
 
@@ -176,6 +202,12 @@ class InitMethod(StrEnum):
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.claude:
+            # For claude, router weight uses 1/√d_model (d_in = d_model)
+            router_weight = cast(MoELinearRouter, m.router).weight
+            # Router weight is flattened (num_experts * d_model,) -> (num_experts, d_model)
+            d_in = router_weight.numel() // cast(MoELinearRouter, m.router).num_experts
+            std = d_in**-0.5
 
         _apply_init(
             nn.init.trunc_normal_,
@@ -186,6 +218,15 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
+        # Initialize w1
+        if self == InitMethod.claude:
+            # w1 has shape (num_experts * d_model, hidden_size)
+            # d_in for each expert is d_model
+            w1 = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1
+            d_in = w1.shape[0] // cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).num_experts
+            std = d_in**-0.5
+
         _apply_init(
             nn.init.trunc_normal_,
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
@@ -195,6 +236,15 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
+        # Initialize w2
+        if self == InitMethod.claude:
+            # w2 has shape (num_experts * hidden_size, d_model)
+            # d_in for each expert is hidden_size
+            w2 = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w2
+            d_in = w2.shape[0] // cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).num_experts
+            std = d_in**-0.5
+
         _apply_init(
             nn.init.trunc_normal_,
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w2,
@@ -204,6 +254,15 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
+        # Initialize w3
+        if self == InitMethod.claude:
+            # w3 has shape (num_experts * d_model, hidden_size)
+            # d_in for each expert is d_model
+            w3 = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w3
+            d_in = w3.shape[0] // cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).num_experts
+            std = d_in**-0.5
+
         _apply_init(
             nn.init.trunc_normal_,
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w3,
