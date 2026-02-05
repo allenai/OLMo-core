@@ -25,6 +25,8 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
+    "scipy",
+    "plotly>=6.5.2",
 ]
 
 [project.urls]
