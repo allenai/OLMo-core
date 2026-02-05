@@ -109,7 +109,7 @@ class Config:
 
         def iter_fields(d) -> Generator[Tuple[str, Any], None, None]:
             for field in dataclasses.fields(d):
-                if field.name in exclude_set:
+                if field.name in exclude_set or not field.init:
                     continue
                 value = getattr(d, field.name)
                 if exclude_none and value is None:
