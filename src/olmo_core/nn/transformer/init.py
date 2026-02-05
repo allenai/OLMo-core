@@ -126,28 +126,41 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        # Compute std for Q/K/V initialization
-        if self == InitMethod.claude:
-            # For claude, Q/K/V use 1/√d_model (ignores base std parameter)
-            std = d_model**-0.5
-        elif self == InitMethod.normalized:
-            std = d_model**-0.5
-
         # NOTE: isinstance checks could fail with AC wrappers
         if isinstance(m, Attention) or hasattr(m, "w_q"):
             m = cast(Attention, m)
-            for w in (m.w_q, m.w_k, m.w_v):
-                self._init_linear(w, std=std, generator=generator)
+
+            # Compute std for Q/K/V initialization
+            if self == InitMethod.claude:
+                # For claude, use 1/√d_in based on actual weight shape (ignores base std parameter)
+                # Each projection may have different output dims (n_heads * head_dim vs n_kv_heads * head_dim)
+                # but they all have the same input dim
+                for w in (m.w_q, m.w_k, m.w_v):
+                    w_std = w.in_features**-0.5
+                    self._init_linear(w, std=w_std, generator=generator)
+            else:
+                if self == InitMethod.normalized:
+                    std = d_model**-0.5
+                for w in (m.w_q, m.w_k, m.w_v):
+                    self._init_linear(w, std=std, generator=generator)
         elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
             m = cast(FusedAttention, m)
+
+            # Compute std for fused QKV initialization
+            if self == InitMethod.claude:
+                # For claude, use 1/√d_in based on actual weight shape
+                std = m.w_qkv.in_features**-0.5
+            elif self == InitMethod.normalized:
+                std = d_model**-0.5
+
             self._init_linear(m.w_qkv, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
 
         # Compute std for w_out initialization
         if self == InitMethod.claude:
-            # For claude, w_out uses 1/√d_model (since d_in = d_model for fused weights)
-            std = d_model**-0.5
+            # For claude, w_out uses 1/√d_in based on actual weight shape
+            std = m.w_out.in_features**-0.5
         elif self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
