@@ -126,10 +126,11 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        if self == InitMethod.normalized:
+        # Compute std for Q/K/V initialization
+        if self == InitMethod.claude:
+            # For claude, Q/K/V use 1/√d_model (ignores base std parameter)
             std = d_model**-0.5
-        elif self == InitMethod.claude:
-            # For claude, Q/K/V use 1/√d_model
+        elif self == InitMethod.normalized:
             std = d_model**-0.5
 
         # NOTE: isinstance checks could fail with AC wrappers
@@ -143,15 +144,16 @@ class InitMethod(StrEnum):
         else:
             raise NotImplementedError(m)
 
-        if self == InitMethod.llama:
+        # Compute std for w_out initialization
+        if self == InitMethod.claude:
+            # For claude, w_out uses 1/√d_model (since d_in = d_model for fused weights)
+            std = d_model**-0.5
+        elif self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
         elif self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
-        elif self == InitMethod.claude:
-            # For claude, w_out uses 1/√d_model (since d_in = d_model for fused weights)
-            std = d_model**-0.5
 
         self._init_linear(m.w_out, std=std, generator=generator)
 
@@ -165,29 +167,32 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        if self == InitMethod.normalized:
-            std = d_model**-0.5
-        elif self == InitMethod.claude:
-            # For claude, w1 uses 1/√d_model (d_in = d_model)
+        # Compute std for w1 initialization
+        if self == InitMethod.claude:
+            # For claude, w1 uses 1/√d_in where d_in = d_model (ignores base std parameter)
             std = m.w1.in_features**-0.5
+        elif self == InitMethod.normalized:
+            std = d_model**-0.5
 
         self._init_linear(m.w1, std=std, generator=generator)
 
-        if self == InitMethod.llama:
+        # Compute std for w3 initialization
+        if self == InitMethod.claude:
+            # For claude, w3 uses 1/√d_in where d_in = d_model
+            std = m.w3.in_features**-0.5
+        elif self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
-        elif self == InitMethod.claude:
-            # For claude, w3 uses 1/√d_model (d_in = d_model)
-            std = m.w3.in_features**-0.5
 
         self._init_linear(m.w3, std=std, generator=generator)
 
-        if self == InitMethod.normalized:
-            std = std / (2 * num_blocks) ** 0.5
-        elif self == InitMethod.claude:
-            # For claude, w2 uses 1/√hidden_size (d_in = hidden_size)
+        # Compute std for w2 initialization
+        if self == InitMethod.claude:
+            # For claude, w2 uses 1/√d_in where d_in = hidden_size
             std = m.w2.in_features**-0.5
+        elif self == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
 
         self._init_linear(m.w2, std=std, generator=generator)
 
