@@ -40,7 +40,7 @@ DATASET_CONFIG = SourceMixtureList(
             source_name="cc_addons",
             target_ratio=1.0,
             paths=[
-                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5_addons/dolma2-tokenizer/**/*.npy"
+                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5_addons/topic_vigintiles/dolma2-tokenizer/**/*.npy"
             ],
         )
     ]
