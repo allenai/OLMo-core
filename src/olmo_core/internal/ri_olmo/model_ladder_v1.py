@@ -359,8 +359,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         ),
         scheduler=CosWithWarmupAndLinearDecay(
             units=SchedulerUnits.tokens,
-            warmup=2000 * INITIAL_BATCH_SIZE,
-            decay=2000 * INITIAL_BATCH_SIZE,
+            warmup=2000 * stepfun_base_global_batch_size,   # using stepfun batch size for this to get the same amount of warmup
+            decay=2000 * stepfun_base_global_batch_size,    # using stepfun batch size for this to get the same amount of decay
             decay_fraction=None
         ),
         compile_model=True,
