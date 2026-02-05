@@ -50,10 +50,9 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
 )
 from olmo_core.optim import (
-    CosWithWarmup,
     OptimGroupOverride,
     SchedulerUnits,
-    SkipStepAdamWConfig,
+    SkipStepAdamWConfig, CosWithWarmupAndLinearDecay,
 )
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -357,9 +356,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        scheduler=CosWithWarmup(
+        scheduler=CosWithWarmupAndLinearDecay(
             units=SchedulerUnits.steps,
             warmup=2000,
+            decay=2000,
+            decay_fraction=None
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
