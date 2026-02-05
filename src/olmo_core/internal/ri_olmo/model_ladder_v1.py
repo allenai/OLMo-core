@@ -57,6 +57,7 @@ from olmo_core.optim import (
 )
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
+    BatchSizeSchedulerCallback,
     CheckpointerCallback,
     CometCallback,
     DownstreamEvaluatorCallbackConfig,
@@ -73,6 +74,7 @@ from olmo_core.train.train_module import (
 )
 
 DEFAULT_SEQUENCE_LENGTH = 8192
+INITIAL_BATCH_SIZE = 4 * 1024 * 1024
 
 
 @dataclass
@@ -135,7 +137,6 @@ def handle_custom_args(
     parser.add_argument("--work-dir", type=str, default="")
     parser.add_argument("--save-folder", type=str, default="")
     parser.add_argument("--lr-multiplier", type=float, default=1.0)
-    parser.add_argument("--batch-multiplier", type=float, default=1.0)
     parser.add_argument("--chinchilla-multiple", type=float, default=4.0)  # Default is 4xC
     parser.add_argument("--no-beaker-launch", action="store_true", default=False)
     parser.add_argument(
@@ -251,7 +252,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     Standard config overrides:
         --train_module.optim.lr=0.001                     Override learning rate
         --data_loader.global_batch_size=1000              Override batch size
-        --train_module.scheduler.warmup=1000000           Override warmup (in tokens)
+        --train_module.scheduler.warmup=1000              Override warmup (in steps)
         --trainer.callbacks.comet.enabled=false           Disable Comet logging
         --trainer.callbacks.wandb.enabled=true            Enable WandB logging
         --launch.num_nodes=2                              Override node count
@@ -259,8 +260,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     Convenience multipliers (for quick hyperparameter sweeps):
         --lr-multiplier=2.0                                Multiply computed learning rate
-        --batch-multiplier=0.5                             Multiply computed batch size
-        --chinchilla-multiple=1                          Multiply Chinchilla training tokens
+        --chinchilla-multiple=1                            Multiply Chinchilla training tokens
         --no-beaker-launch                                 Skip setting beaker launch config
 
     """
@@ -278,7 +278,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     mix_base_dir = custom_args.mix_base_dir
     data_mix = custom_args.data_mix
     lr_multiplier = custom_args.lr_multiplier
-    batch_multiplier = custom_args.batch_multiplier
     chinchilla_multiple = custom_args.chinchilla_multiple
     no_beaker_launch = custom_args.no_beaker_launch
 
@@ -302,25 +301,22 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     training_tokens = train_duration.value
 
-    learning_rate = get_learning_rate(model_active_params, training_tokens)
-    base_global_batch_size = get_global_batch_size(
+    stepfun_learning_rate = get_learning_rate(model_active_params, training_tokens)
+    stepfun_base_global_batch_size = get_global_batch_size(
         model_params=model_active_params,
         training_tokens=training_tokens,
         sequence_length=sequence_length,
-        round_nearest=model_size_settings.batch_size_round_nearest,
+        round_nearest=1,
     )
+    stepfun_training_temperature = stepfun_learning_rate**2 / stepfun_base_global_batch_size
+    adjusted_learning_rate = math.sqrt(stepfun_training_temperature * INITIAL_BATCH_SIZE)
 
     # Apply custom multipliers
-    adjusted_learning_rate = learning_rate * lr_multiplier
-    global_batch_size = int(base_global_batch_size * batch_multiplier)
     if lr_multiplier != 1.0:
-        print(
-            f"Applied LR multiplier: {lr_multiplier}, LR: {learning_rate} -> {adjusted_learning_rate}"
-        )
-    if batch_multiplier != 1.0:
-        print(
-            f"Applied batch multiplier: {batch_multiplier}, batch: {base_global_batch_size} -> {global_batch_size}"
-        )
+        old_lr = adjusted_learning_rate
+        adjusted_learning_rate = adjusted_learning_rate * lr_multiplier
+        print(f"Applied LR multiplier: {lr_multiplier}, LR: {old_lr} -> {adjusted_learning_rate}")
+        del old_lr
 
     beaker_launch_config: Optional[BeakerLaunchConfig] = None
     if not no_beaker_launch:
@@ -346,7 +342,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=global_batch_size, seed=34521, num_workers=8
+        global_batch_size=INITIAL_BATCH_SIZE, seed=34521, num_workers=8
     )
 
     # Train module config
@@ -362,8 +358,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             ],
         ),
         scheduler=CosWithWarmup(
-            units=SchedulerUnits.tokens,
-            warmup=2000 * global_batch_size,
+            units=SchedulerUnits.steps,
+            warmup=2000,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -398,6 +394,21 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 save_interval=1000,
                 ephemeral_save_interval=None,
                 save_async=True,
+            ),
+        )
+        .with_callback(
+            "batchwup",
+            BatchSizeSchedulerCallback(
+                batch_sizes=[
+                    INITIAL_BATCH_SIZE,
+                    INITIAL_BATCH_SIZE * 2,
+                    INITIAL_BATCH_SIZE * 4,
+                ],
+                schedule=[
+                    Duration.tokens(0),
+                    Duration.tokens(167_772_160_000),
+                    Duration.tokens(503_316_480_000),
+                ],
             ),
         )
         .with_callback("speed_monitor", SpeedMonitorCallback())
