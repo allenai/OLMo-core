@@ -3,6 +3,7 @@ from typing import Callable, Literal, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
+from tqdm import trange
 
 from .scaling_laws import ScalingLawModel
 
@@ -232,7 +233,7 @@ class ScalingLawRollout:
 
         splits: list[RolloutSplit] = []
 
-        for i in range(min_groups_train, len(unique_vals)):
+        for i in trange(min_groups_train, len(unique_vals)):
             cutoff = unique_vals[i - 1]
 
             train_mask = split_var <= cutoff
