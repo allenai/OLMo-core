@@ -228,6 +228,12 @@ class BeakerLaunchConfig(Config):
     Allow running with uncommitted changed.
     """
 
+    timeout: Optional[str] = None
+    """
+    The job timeout as a duration string (e.g. "24h", "2d", "30m").
+    If a job runs longer than this it will be canceled by Beaker.
+    """
+
     host_networking: Optional[bool] = None
 
     git: Optional[GitConfig] = field(default_factory=GitConfig.from_env)
@@ -424,6 +430,7 @@ class BeakerLaunchConfig(Config):
                 propagate_failure=True if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
+                timeout=self.timeout,
                 resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
                 result_path=self.result_dir,
             )
