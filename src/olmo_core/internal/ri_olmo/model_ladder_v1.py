@@ -50,9 +50,10 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
 )
 from olmo_core.optim import (
+    CosWithWarmupAndLinearDecay,
     OptimGroupOverride,
     SchedulerUnits,
-    SkipStepAdamWConfig, CosWithWarmupAndLinearDecay,
+    SkipStepAdamWConfig,
 )
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -357,10 +358,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             ],
         ),
         scheduler=CosWithWarmupAndLinearDecay(
-            units=SchedulerUnits.steps,
-            warmup=2000,
-            decay=2000,
-            decay_fraction=None
+            units=SchedulerUnits.steps, warmup=2000, decay=2000, decay_fraction=None
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
