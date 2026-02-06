@@ -235,7 +235,10 @@ def build_model_config(vocab_size: int) -> TransformerConfig:
         vocab_size=vocab_size,
         # See README for how to override with flash_3 using CLI.
         attn_backend=AttentionBackendName.flash_2,
+    ).with_rope_scaling(
+        YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
     )
+    # NOTE: rope scaling added by nathanl, ONLY for the yarn model version
 
     # Remove heads (and scale down d_model) to compensate for extra params.
     config.d_model -= (  # Lets not do this anymore, 32 heads is easier to work with
