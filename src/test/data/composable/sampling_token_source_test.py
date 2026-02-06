@@ -66,12 +66,12 @@ def test_sampling_token_source_with_sampling_token_source(tmp_path):
     # Down-sample from the up-sampled source.
     source = SamplingTokenSource(
         up_sampled_source,
-        max_tokens=8,
+        max_tokens=9,
         work_dir=tmp_path,
         seed=None,
     )
-    assert source.num_tokens == 8
-    assert list(source[:]["input_ids"]) == (list(range(6)) + list(range(2)))
+    assert source.num_tokens == 9
+    assert list(source[:]["input_ids"]) == (list(range(6)) + list(range(3)))
 
 
 def test_sampling_token_source_with_repetition(tmp_path: Path):
