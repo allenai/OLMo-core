@@ -101,9 +101,9 @@ class SamplingTokenSource(TokenSource):
 
             # Unwind any mixing token sources into their sampling token sources,
             # and sampling token sources into their children so that we sample directly from each
-            # the children in order to maintain the desired ratios.
-            # However we'd never to handle sampling/mixing document sources differently.
-            # For now we'll just disallow it.
+            # child directly in order to maintain the desired ratios.
+            # However we'd have to handle sampling/mixing document sources differently, so for
+            # now we'll just disallow it.
             if isinstance(source, (SamplingDocumentSource, MixingDocumentSource)):
                 raise NotImplementedError(
                     "Sampling/mixing document sources are not supported as children of SamplingTokenSource."
@@ -113,7 +113,7 @@ class SamplingTokenSource(TokenSource):
             elif isinstance(source, SamplingTokenSource):
                 frontier.extend(source.sources)
             else:
-                # Determine how many tokens to sample from source such that while keeping the same
+                # Determine how many tokens to sample from source while keeping the same
                 # ratios between sources. For example, suppose source A makes up 75% of the
                 # `total_tokens` available across all sources. Then we want the number of tokens
                 # we sample from A to make up 75% of `max_tokens`. In other words, we want
