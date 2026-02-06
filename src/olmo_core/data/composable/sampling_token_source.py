@@ -119,7 +119,7 @@ class SamplingTokenSource(TokenSource):
                 # we sample from A to make up 75% of `max_tokens`. In other words, we want
                 # `len(source) / total_tokens ~= source_sample_size / max_tokens`,
                 # so `source_sample_size = max_tokens * (source.num_tokens / total_tokens)`.
-                source_sample_size = int(max_tokens * (len(source) / total_tokens))
+                source_sample_size = round(max_tokens * (len(source) / total_tokens))
 
                 # Determine number of repetitions and sampling start/end offsets for each source.
                 n_repetitions = source_sample_size // source.num_tokens
