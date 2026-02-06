@@ -2,7 +2,6 @@ import dataclasses
 import functools as ft
 import hashlib
 import warnings
-from collections import deque
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -95,8 +94,6 @@ class SamplingInstanceSource(InstanceSource):
         seed: Optional[int] = SEED_NOT_SET,
         label: Optional[str] = None,
     ):
-        from .mixing_instance_source import MixingInstanceSource
-
         if not sources:
             raise OLMoConfigurationError("At least one source must be provided.")
 
@@ -134,33 +131,23 @@ class SamplingInstanceSource(InstanceSource):
             )
 
         # Determine how many instances to sample from each source.
-        frontier = deque([(s, len(s)) for s in sources])
         total_instances = sum(len(source) for source in sources)
         chunk_size = self.max_sequence_length // self.sequence_length
         source_sample_sizes: List[int] = []
-        unwound_sources: List[InstanceSource] = []
-        while frontier:
-            source, source_size = frontier.popleft()
+        for source in sources:
             if source.sequence_length != sequence_length:
                 raise OLMoConfigurationError("All sources must have the same sequence length.")
             if source.max_sequence_length != max_sequence_length:
                 raise OLMoConfigurationError("All sources must have the same max sequence length.")
 
-            # Unwind any MixingInstanceSources into its SamplingInstanceSources
-            # and any SamplingInstanceSource into its children so that we sample directly from each
-            # of their sources in order to maintain the ratios.
-            if isinstance(source, MixingInstanceSource):
-                frontier.extend([(s, len(s)) for s in source.sampled_sources])
-            else:
-                # We want `len(source) / total_instances ~= source_sample_size / max_instances`,
-                # so `source_sample_size = max_instances * (len(source) / total_instances)`.
-                source_sample_size = int(max_instances * (source_size / total_instances))
-                # Adjust to be a multiple of chunk_size.
-                source_sample_size = chunk_size * (source_sample_size // chunk_size)
-                source_sample_sizes.append(source_sample_size)
-                unwound_sources.append(source)
+            # We want `len(source) / total_instances ~= source_sample_size / max_instances`,
+            # so `source_sample_size = max_instances * (len(source) / total_instances)`.
+            sample_size = int(max_instances * (len(source) / total_instances))
+            # Adjust to be a multiple of chunk_size.
+            sample_size = chunk_size * (sample_size // chunk_size)
+            source_sample_sizes.append(sample_size)
 
-        self._sources = tuple(unwound_sources)
+        self._sources = sources
         self._source_sample_sizes = tuple(source_sample_sizes)
 
         # Sample indices from each source.
