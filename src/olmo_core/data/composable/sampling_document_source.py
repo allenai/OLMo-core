@@ -94,20 +94,19 @@ class SamplingDocumentSource(DocumentSource):
 
         super().__init__(work_dir=work_dir, label=label)
 
-        unwound_sources: List[DocumentSource] = []
         for s in sources:
-            # Unwind any mixing sources so that we sample directly from each of their
-            # sources in order to maintain the ratios.
+            # TODO: we'd need to be careful when dealing with other sampling or mixing sources in
+            # to sample in a way that preserves the desired ratios of their underlying sources.
             if isinstance(s, MixingDocumentSource):
-                unwound_sources.extend(s.sampled_sources)
-            else:
-                unwound_sources.append(s)
+                raise NotImplementedError(
+                    "SamplingDocumentSource doesn't currently support sampling from other sampling or mixing sources."
+                )
 
         source: DocumentSource
-        if len(unwound_sources) > 1:
-            source = ConcatenatedDocumentSource(*unwound_sources, work_dir=work_dir)
+        if len(sources) > 1:
+            source = ConcatenatedDocumentSource(*sources, work_dir=work_dir)
         else:
-            source = unwound_sources[0]
+            source = sources[0]
 
         self._og_sources = sources
         self._source = source

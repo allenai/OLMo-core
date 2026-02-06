@@ -3,6 +3,7 @@ import functools as ft
 import hashlib
 import logging
 import typing
+from collections import deque
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
@@ -80,6 +81,8 @@ class SamplingTokenSource(TokenSource):
     ):
         from .mixing_document_source import MixingDocumentSource
         from .mixing_token_source import MixingTokenSource
+        from .sampling_document_source import SamplingDocumentSource
+        from .sliced_token_source import SlicedTokenSource
 
         if not sources:
             raise ValueError("At least one source must be provided.")
@@ -87,64 +90,70 @@ class SamplingTokenSource(TokenSource):
 
         super().__init__(work_dir=work_dir, label=label)
 
-        unwound_sources: List[TokenSource] = []
-        for source in sources:
-            # Unwind any mixing sources so that we sample directly from each of their
-            # sources in order to maintain the ratios.
-            if isinstance(source, (MixingTokenSource, MixingDocumentSource)):
-                unwound_sources.extend(source.sampled_sources)
-            else:
-                unwound_sources.append(source)
-
         # Determine how many tokens to sample from each source.
-        total_tokens = sum(source.num_tokens for source in unwound_sources)
-        source_sample_sizes: List[int] = []
-        for source in unwound_sources:
-            # We want `source.num_tokens / total_tokens ~= source_sample_size / max_tokens`,
-            # so `source_sample_size = max_tokens * (source.num_tokens / total_tokens)`.
-            source_sample_sizes.append(int(max_tokens * (source.num_tokens / total_tokens)))
-
-        # Determine number of repetitions and sampling start/end offsets for each source.
+        frontier = deque(sources)
+        total_tokens = sum(source.num_tokens for source in sources)
         seed = resolve_seed(seed)
         rng = None if seed is None else get_rng(seed)
         final_sources: List[TokenSource] = []
-        source_sampling_offsets: List[Tuple[int, int]] = []
-        for source, source_sample_size in zip(unwound_sources, source_sample_sizes):
-            n_repetitions = source_sample_size // source.num_tokens
-            final_sources.extend([source] * n_repetitions)
-            source_sampling_offsets.extend([(0, source.num_tokens)] * n_repetitions)
+        while frontier:
+            source = frontier.popleft()
 
-            remaining_sample_size = source_sample_size % source.num_tokens
-            if remaining_sample_size > 0:
-                if rng is None:
-                    source_sampling_offsets.append((0, remaining_sample_size))
-                else:
-                    start_idx = rng.integers(0, source.num_tokens - remaining_sample_size)
-                    source_sampling_offsets.append((start_idx, start_idx + remaining_sample_size))
-                final_sources.append(source)
+            # Unwind any mixing token sources into their sampling token sources,
+            # and sampling token sources into their children so that we sample directly from each
+            # the children in order to maintain the desired ratios.
+            # However we'd never to handle sampling/mixing document sources differently.
+            # For now we'll just disallow it.
+            if isinstance(source, (SamplingDocumentSource, MixingDocumentSource)):
+                raise NotImplementedError(
+                    "Sampling/mixing document sources are not supported as children of SamplingTokenSource."
+                )
+            elif isinstance(source, MixingTokenSource):
+                frontier.extend(source.sampled_sources)
+            elif isinstance(source, SamplingTokenSource):
+                frontier.extend(source.sources)
+            else:
+                # Determine how many tokens to sample from source such that while keeping the same
+                # ratios between sources. For example, suppose source A makes up 75% of the
+                # `total_tokens` available across all sources. Then we want the number of tokens
+                # we sample from A to make up 75% of `max_tokens`. In other words, we want
+                # `len(source) / total_tokens ~= source_sample_size / max_tokens`,
+                # so `source_sample_size = max_tokens * (source.num_tokens / total_tokens)`.
+                source_sample_size = int(max_tokens * (len(source) / total_tokens))
+
+                # Determine number of repetitions and sampling start/end offsets for each source.
+                n_repetitions = source_sample_size // source.num_tokens
+                final_sources.extend([source] * n_repetitions)
+
+                remaining_sample_size = source_sample_size % source.num_tokens
+                if remaining_sample_size > 0:
+                    start_idx = (
+                        0
+                        if rng is None
+                        else rng.integers(0, source.num_tokens - remaining_sample_size)
+                    )
+                    end_idx = start_idx + remaining_sample_size
+                    final_sources.append(
+                        SlicedTokenSource(source, slice(start_idx, end_idx), work_dir=self.work_dir)
+                    )
 
         self._og_sources = sources
         self._sources = tuple(final_sources)
-        self._source_sampling_offsets = tuple(source_sampling_offsets)
 
     @property
     def sources(self) -> Tuple[TokenSource, ...]:
         return self._sources
 
-    @property
-    def source_sampling_offsets(self) -> Tuple[Tuple[int, int], ...]:
-        return self._source_sampling_offsets
-
     @ft.cached_property
     def num_tokens(self) -> int:
-        return sum((end_idx - start_idx) for (start_idx, end_idx) in self._source_sampling_offsets)
+        return sum(source.num_tokens for source in self.sources)
 
     @ft.cached_property
     def fingerprint(self) -> str:
         sha256_hash = hashlib.sha256()
         sha256_hash.update((f"class={self.__class__.__name__},").encode())
-        for source, sampling_offsets in zip(self.sources, self.source_sampling_offsets):
-            sha256_hash.update(f"source={source.fingerprint}{sampling_offsets},".encode())
+        for source in self.sources:
+            sha256_hash.update(f"source={source.fingerprint},".encode())
         return sha256_hash.hexdigest()
 
     def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
@@ -153,22 +162,19 @@ class SamplingTokenSource(TokenSource):
         token_chunks: List[np.ndarray] = []
         mask_chunks: List[np.ndarray] = []
         source_start_offset = 0
-        for source, (source_sample_start, source_sample_end) in zip(
-            self.sources, self._source_sampling_offsets
-        ):
-            source_sample_size = source_sample_end - source_sample_start
-            source_end_offset = source_start_offset + source_sample_size
+        for source in self.sources:
+            source_end_offset = source_start_offset + len(source)
 
             if source_start_offset <= start_idx < source_end_offset:
                 token_rng = source.get_token_range(
-                    start_idx - source_start_offset + source_sample_start,
-                    min(end_idx - source_start_offset + source_sample_start, source_sample_end),
+                    start_idx - source_start_offset,
+                    min(end_idx - source_start_offset, len(source)),
                 )
                 token_chunks.append(as_ndarray(token_rng["input_ids"]))
                 if "label_mask" in token_rng:
                     mask_chunks.append(as_ndarray(token_rng["label_mask"]))
 
-                if end_idx - source_start_offset + source_sample_start <= source_sample_end:
+                if end_idx <= source_end_offset:
                     break
                 else:
                     start_idx = source_end_offset
