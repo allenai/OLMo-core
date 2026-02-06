@@ -1,6 +1,7 @@
 import dataclasses
 import functools as ft
 import hashlib
+import warnings
 from collections import deque
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -75,6 +76,10 @@ class SamplingInstanceSource(InstanceSource):
       ``max_tokens``.
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` instances are taken
       from each source where ``N_s`` is proportional to the size of the source.
+
+    .. warning::
+        It's recommend to set a seed to ensure that the distribution of instances in child sources
+        are preserved.
     """
 
     Config = SamplingInstanceSourceConfig
@@ -117,6 +122,17 @@ class SamplingInstanceSource(InstanceSource):
             label=label,
         )
 
+        self._og_sources = sources
+        self._max_instances = max_instances
+        self._seed = resolve_seed(seed)
+        self._dtype = np.uint32
+        if self.seed is None:
+            warnings.warn(
+                "No seed provided for SamplingInstanceSource. "
+                "It's recommended to set a seed to ensure that the distribution of instances in "
+                "child sources are preserved."
+            )
+
         # Determine how many instances to sample from each source.
         frontier = deque([(s, len(s)) for s in sources])
         total_instances = sum(len(source) for source in sources)
@@ -135,9 +151,6 @@ class SamplingInstanceSource(InstanceSource):
             # of their sources in order to maintain the ratios.
             if isinstance(source, MixingInstanceSource):
                 frontier.extend([(s, len(s)) for s in source.sampled_sources])
-            elif isinstance(source, SamplingInstanceSource):
-                for source, sample_size in zip(source.sources, source.source_sample_sizes):
-                    frontier.append((source, round(sample_size / source_size)))
             else:
                 # We want `len(source) / total_instances ~= source_sample_size / max_instances`,
                 # so `source_sample_size = max_instances * (len(source) / total_instances)`.
@@ -147,12 +160,8 @@ class SamplingInstanceSource(InstanceSource):
                 source_sample_sizes.append(source_sample_size)
                 unwound_sources.append(source)
 
-        self._og_sources = sources
         self._sources = tuple(unwound_sources)
         self._source_sample_sizes = tuple(source_sample_sizes)
-        self._max_instances = max_instances
-        self._seed = resolve_seed(seed)
-        self._dtype = np.uint32
 
         # Sample indices from each source.
         source_sample_paths: List[PathOrStr] = []

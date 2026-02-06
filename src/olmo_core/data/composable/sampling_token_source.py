@@ -139,6 +139,7 @@ class SamplingTokenSource(TokenSource):
 
         self._og_sources = sources
         self._sources = tuple(final_sources)
+        self._seed = seed
 
     @property
     def sources(self) -> Tuple[TokenSource, ...]:
@@ -155,6 +156,10 @@ class SamplingTokenSource(TokenSource):
         for source in self.sources:
             sha256_hash.update(f"source={source.fingerprint},".encode())
         return sha256_hash.hexdigest()
+
+    @property
+    def seed(self) -> Optional[int]:
+        return self._seed
 
     def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
         start_idx, end_idx = self.validate_indices(start_idx, end_idx)

@@ -3,6 +3,7 @@ import functools as ft
 import hashlib
 import logging
 import typing
+import warnings
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence
 
@@ -72,6 +73,10 @@ class SamplingDocumentSource(DocumentSource):
         at most this many tokens, but potentially less because only whole documents are sampled.
     :param seed: A optional seed for sampling documents. If ``None``, no shuffling is done and
         the first documents are taken up to ``max_tokens``.
+
+    .. warning::
+        It's recommend to set a seed to ensure that the distribution of documents in child sources
+        are preserved.
     """
 
     Config = SamplingDocumentSourceConfig
@@ -86,21 +91,11 @@ class SamplingDocumentSource(DocumentSource):
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
-        from .mixing_document_source import MixingDocumentSource
-
         assert max_tokens > 0
         if not sources:
             raise ValueError("At least one source must be provided.")
 
         super().__init__(work_dir=work_dir, label=label)
-
-        for s in sources:
-            # TODO: we'd need to be careful when dealing with other sampling or mixing sources in
-            # to sample in a way that preserves the desired ratios of their underlying sources.
-            if isinstance(s, MixingDocumentSource):
-                raise NotImplementedError(
-                    "SamplingDocumentSource doesn't currently support sampling from other sampling or mixing sources."
-                )
 
         source: DocumentSource
         if len(sources) > 1:
@@ -112,6 +107,12 @@ class SamplingDocumentSource(DocumentSource):
         self._source = source
         self._max_tokens = max_tokens
         self._seed = resolve_seed(seed)
+        if self.seed is None:
+            warnings.warn(
+                "No seed provided for SamplingDocumentSource. "
+                "It's recommended to set a seed to ensure that the distribution of documents in "
+                "child sources are preserved."
+            )
 
         # Sample tokens from the source.
         log.info(f"Sampling documents from {self.source}...")
