@@ -65,6 +65,11 @@ class SamplingTokenSource(TokenSource):
     :param max_tokens: The maximum number of tokens to sample.
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` tokens are taken
         from each source where ``N_s`` is proportional to the size of the source.
+
+    .. warning::
+        Generally you should prefer to use :class:`SamplingDocumentSource` with random sampling
+        (a seed provided) to preserve the distribution of child sources.
+        This is a quick and dirty alternatively.
     """
 
     Config = SamplingTokenSourceConfig
@@ -79,9 +84,7 @@ class SamplingTokenSource(TokenSource):
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
-        from .mixing_document_source import MixingDocumentSource
         from .mixing_token_source import MixingTokenSource
-        from .sampling_document_source import SamplingDocumentSource
         from .sliced_token_source import SlicedTokenSource
 
         if not sources:
@@ -91,6 +94,10 @@ class SamplingTokenSource(TokenSource):
         super().__init__(work_dir=work_dir, label=label)
 
         # Determine how many tokens to sample from each source.
+        # NOTE: We do our best to "unwind" child sources that are mixing or sampling sources
+        # themselves in order to preserve the distribution of their child sources.
+        # But this doesn't cover all edge cases, so it's generally better to do sampling/mixing
+        # at the document level.
         frontier = deque(sources)
         total_tokens = sum(source.num_tokens for source in sources)
         seed = resolve_seed(seed)
@@ -102,13 +109,7 @@ class SamplingTokenSource(TokenSource):
             # Unwind any mixing token sources into their sampling token sources,
             # and sampling token sources into their children so that we sample directly from each
             # child directly in order to maintain the desired ratios.
-            # However we'd have to handle sampling/mixing document sources differently, so for
-            # now we'll just disallow it.
-            if isinstance(source, (SamplingDocumentSource, MixingDocumentSource)):
-                raise NotImplementedError(
-                    "Sampling/mixing document sources are not supported as children of SamplingTokenSource."
-                )
-            elif isinstance(source, MixingTokenSource):
+            if isinstance(source, MixingTokenSource):
                 frontier.extend(source.sampled_sources)
             elif isinstance(source, SamplingTokenSource):
                 frontier.extend(source.sources)
