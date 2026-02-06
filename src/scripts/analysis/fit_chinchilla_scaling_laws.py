@@ -147,6 +147,35 @@ CORRECTED_PARAM_COUNTS = {
     },
 }
 
+# Human-readable display names for each ladder.
+# Used in plots, tables, and printed output.
+DISPLAY_NAMES: Dict[str, str] = {
+    "olmo3": "Olmo 3",
+    "olmo3-1": "Olmo 3 v1",
+    "olmo3-2": "Olmo 3 v2",
+    "olmo3-3": "Olmo 3 v3",
+    "pure-gdn": "Pure GDN",
+    "hybrid-gdn": "Hybrid GDN (1/4)",
+    "hybrid-gdn-half": "Hybrid GDN (1/2)",
+    "hybrid-gdn-eight": "Hybrid GDN (1/8)",
+    "hybrid-gdn-middle": "Hybrid GDN (Middle)",
+    "pure-mamba": "Pure Mamba",
+    "hybrid-mamba": "Hybrid Mamba",
+}
+
+
+def get_display_name(ladder_name: str) -> str:
+    """Return a human-readable display name for a ladder, falling back to the raw name."""
+    return DISPLAY_NAMES.get(ladder_name.lower(), ladder_name)
+
+
+def shade_color(hex_color: str, fraction: float) -> Tuple[float, float, float]:
+    """Blend a hex color with white. fraction=0 → white, fraction=1 → original color."""
+    r = int(hex_color[1:3], 16) / 255.0
+    g = int(hex_color[3:5], 16) / 255.0
+    b = int(hex_color[5:7], 16) / 255.0
+    return (1 - fraction + fraction * r, 1 - fraction + fraction * g, 1 - fraction + fraction * b)
+
 
 def get_corrected_param_count(ladder_name: str, size: str) -> Optional[int]:
     """
@@ -199,6 +228,8 @@ def load_ladder_data(
     loss_column: Optional[str] = None,
     verbose: bool = True,
     use_all_checkpoints: bool = True,
+    simple_flops: bool = False,
+    post_decay_only: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
     """
     Load ladder results from pickle files for Chinchilla fitting.
@@ -210,12 +241,15 @@ def load_ladder_data(
         verbose: Print loading progress
         use_all_checkpoints: If True, use all checkpoints from each model size.
             If False, only use the final checkpoint (legacy behavior).
+        simple_flops: If True, use 6*N*D approximation for FLOPs instead of logged values.
+        post_decay_only: If True (default), only use post-decay checkpoints
+            (D/N = 10, 20, 40, 80, 160, ...). If False, also include pre-decay.
 
     Returns:
         N: Array of parameter counts (corrected non-embedding counts if available)
         D: Array of token counts
         L: Array of loss values
-        F: Array of FLOPs (in petaflops, from throughput/total petaflops column)
+        F: Array of FLOPs (raw FLOPs, either from logged values or 6*N*D approximation)
         sizes: List of size names (e.g., ["190M", "370M", ...] or ["190M@20", "190M@40", ...])
     """
     pkl_files = sorted(ladder_dir.glob("metrics_*.pkl"))
@@ -253,6 +287,7 @@ def load_ladder_data(
             if verbose:
                 print(f"  Warning: No num_params for {size}, skipping")
             continue
+        original_num_params = num_params
 
         # Apply correction for non-embedding parameter count if available
         corrected_params = get_corrected_param_count(ladder_name, size)
@@ -262,6 +297,14 @@ def load_ladder_data(
                     f"  {size}: Using corrected non-embedding params: {corrected_params/1e6:.1f}M (was {num_params/1e6:.1f}M)"
                 )
             num_params = corrected_params
+
+        # Canonical D/N values for snapping (absorb batch-size rounding jitter).
+        # Always snap against the full set so pre-decay checkpoints don't get
+        # mis-snapped to post-decay values.  Then filter by post_decay_only.
+        _POST_DECAY_DN = [10, 20, 40, 80, 160]
+        _PRE_DECAY_DN = [9, 19, 38, 76, 152]
+        _ALL_DN = sorted(_POST_DECAY_DN + _PRE_DECAY_DN)
+        _KEEP_DN = set(_POST_DECAY_DN) if post_decay_only else set(_ALL_DN)
 
         if use_all_checkpoints:
             # Use all checkpoints from this model size
@@ -276,18 +319,39 @@ def load_ladder_data(
                 if loss is None or pd.isna(loss):
                     continue
 
+                # Snap D/N to nearest canonical value, then keep only desired checkpoints.
+                raw_dn = tokens / original_num_params if original_num_params else 0
+                if raw_dn <= 0:
+                    continue
+                dn_ratio = min(_ALL_DN, key=lambda c: abs(c - raw_dn))
+                if dn_ratio not in _KEEP_DN:
+                    if verbose:
+                        print(
+                            f"    SKIP {size}: step={row.get('step')}, "
+                            f"tokens={tokens:.3e}, raw_dn={raw_dn:.2f}, "
+                            f"snapped={dn_ratio}, loss={loss:.4f} (not in _KEEP_DN)"
+                        )
+                    continue
+
+                if verbose:
+                    print(
+                        f"    KEEP {size}: step={row.get('step')}, "
+                        f"tokens={tokens:.3e}, raw_dn={raw_dn:.2f}, "
+                        f"snapped={dn_ratio}, loss={loss:.4f}"
+                    )
+
                 N_list.append(float(num_params))
                 D_list.append(float(tokens))
                 L_list.append(float(loss))
-                # FLOPs: use measured value if available, otherwise estimate as 6*N*D
-                if flops is not None and not pd.isna(flops):
+                # FLOPs: use 6*N*D approximation if requested, otherwise use measured value
+                if simple_flops:
+                    F_list.append(6.0 * float(num_params) * float(tokens))
+                elif flops is not None and not pd.isna(flops):
                     # Convert from petaflops to raw FLOPs
                     F_list.append(float(flops) * 1e15)
                 else:
                     # Estimate FLOPs as 6*N*D (standard approximation)
                     F_list.append(6.0 * float(num_params) * float(tokens))
-                # Label with D/N ratio for identification
-                dn_ratio = int(round(tokens / num_params))
                 sizes.append(f"{size}@{dn_ratio}")
                 checkpoints_added += 1
 
@@ -314,8 +378,10 @@ def load_ladder_data(
             N_list.append(float(num_params))
             D_list.append(float(tokens))
             L_list.append(float(loss))
-            # FLOPs: use measured value if available, otherwise estimate as 6*N*D
-            if flops is not None and not pd.isna(flops):
+            # FLOPs: use 6*N*D approximation if requested, otherwise use measured value
+            if simple_flops:
+                F_list.append(6.0 * float(num_params) * float(tokens))
+            elif flops is not None and not pd.isna(flops):
                 F_list.append(float(flops) * 1e15)
             else:
                 F_list.append(6.0 * float(num_params) * float(tokens))
@@ -343,6 +409,9 @@ def fit_ladder(
     overestimate_penalty: float = 1.0,
     verbose: bool = True,
     use_all_checkpoints: bool = True,
+    simple_flops: bool = False,
+    num_slices: int = 4,
+    post_decay_only: bool = True,
 ) -> Tuple[
     ChinchillaParametricFit,
     np.ndarray,
@@ -361,13 +430,20 @@ def fit_ladder(
         sizes: List of size names
         bootstrap_fit: Bootstrap fit if requested, else None
     """
+    display = get_display_name(name)
     print(f"\n{'='*60}")
-    print(f"Fitting: {name}")
+    print(f"Fitting: {display}")
     print(f"Directory: {ladder_dir}")
     print(f"{'='*60}")
 
     N, D, L, F, sizes = load_ladder_data(
-        ladder_dir, name, loss_column, verbose, use_all_checkpoints=use_all_checkpoints
+        ladder_dir,
+        name,
+        loss_column,
+        verbose,
+        use_all_checkpoints=use_all_checkpoints,
+        simple_flops=simple_flops,
+        post_decay_only=post_decay_only,
     )
 
     # Compute weights
@@ -391,6 +467,7 @@ def fit_ladder(
             num_bootstraps=num_bootstraps,
             weights=weights,
             overestimate_penalty=overestimate_penalty,
+            num_slices=num_slices,
             progress_bar=verbose,
         )
         # Return the point estimate for consistency
@@ -402,6 +479,7 @@ def fit_ladder(
             L,
             weights=weights,
             overestimate_penalty=overestimate_penalty,
+            num_slices=num_slices,
         )
         return fit, N, D, L, F, sizes, None
 
@@ -416,6 +494,7 @@ def fit_rollout(
     weight_by_compute: bool = True,
     overestimate_penalty: float = 1.0,
     verbose: bool = True,
+    num_slices: int = 4,
 ) -> ScalingLawRollout:
     """
     Fit scaling law with rollout cross-validation.
@@ -424,7 +503,7 @@ def fit_rollout(
         ScalingLawRollout with multiple splits for evaluation.
     """
     if verbose:
-        print(f"\n  Fitting rollout cross-validation for {name}...")
+        print(f"\n  Fitting rollout cross-validation for {get_display_name(name)}...")
 
     weights = None
     if weight_by_compute:
@@ -435,6 +514,7 @@ def fit_rollout(
     )
     fit_kwargs = {
         "overestimate_penalty": overestimate_penalty,
+        "num_slices": num_slices,
         "progress_bar": True,
     }
     if use_bootstrap:
@@ -470,8 +550,9 @@ def print_fit_results(
     """Print detailed results from a scaling law fit."""
     params = fit.fitted_params
 
+    display = get_display_name(name)
     print(f"\n{'─'*60}")
-    print(f"Results for: {name}")
+    print(f"Results for: {display}")
     print(f"{'─'*60}")
 
     print("\nFitted Chinchilla Parameters:")
@@ -544,8 +625,9 @@ def print_rollout_evaluation(name: str, rollout: ScalingLawRollout):
     """Print rollout cross-validation evaluation results."""
     evaluation = evaluate_rollout(rollout)
 
+    display = get_display_name(name)
     print(f"\n{'─'*60}")
-    print(f"Rollout Cross-Validation: {name}")
+    print(f"Rollout Cross-Validation: {display}")
     print(f"{'─'*60}")
 
     print("\nOverall Metrics:")
@@ -576,13 +658,16 @@ def print_comparison(fits: Dict[str, Tuple]):
     print(f"{'='*60}")
 
     # Table header
-    print(f"\n{'Ladder':<20} {'E':>8} {'α':>8} {'β':>8} {'a_opt':>8} {'b_opt':>8}")
-    print("-" * 60)
+    display_names = {name: get_display_name(name) for name in fits}
+    max_name_len = max(len(d) for d in display_names.values())
+    col_w = max(max_name_len, 20)
+    print(f"\n{'Ladder':<{col_w}} {'E':>8} {'α':>8} {'β':>8} {'a_opt':>8} {'b_opt':>8}")
+    print("-" * (col_w + 40))
 
     for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
         p = fit.fitted_params
         print(
-            f"{name:<20} {p.E:>8.4f} {p.alpha:>8.4f} {p.beta:>8.4f} {p.a_opt:>8.4f} {p.b_opt:>8.4f}"
+            f"{display_names[name]:<{col_w}} {p.E:>8.4f} {p.alpha:>8.4f} {p.beta:>8.4f} {p.a_opt:>8.4f} {p.b_opt:>8.4f}"
         )
 
     # Compare predictions at a common scale
@@ -596,7 +681,7 @@ def print_comparison(fits: Dict[str, Tuple]):
 
     print(f"{'Scale':<20}", end="")
     for name in fits.keys():
-        print(f" {name:>15}", end="")
+        print(f" {display_names[name]:>15}", end="")
     print()
     print("-" * (20 + 16 * len(fits)))
 
@@ -627,6 +712,9 @@ def plot_fits_2d(
 
     # Use a nice style
     plt.style.use("seaborn-v0_8-whitegrid")
+
+    # Human-readable display names
+    display_names = {name: get_display_name(name) for name in fits}
 
     # Color palette - distinct colors for each ladder
     color_palette = ["#2ecc71", "#e74c3c", "#3498db", "#9b59b6", "#f39c12", "#1abc9c", "#e67e22"]
@@ -660,7 +748,14 @@ def plot_fits_2d(
         # Plot smooth fitted curve using average D/N ratio
         D_curve = N_range * overall_dn_ratio
         loss_curve = fit.predict_loss(N_range, D_curve)
-        ax.plot(N_range, loss_curve, color=color, linewidth=2.5, alpha=0.8, label=f"{name} (fit)")
+        ax.plot(
+            N_range,
+            loss_curve,
+            color=color,
+            linewidth=2.5,
+            alpha=0.8,
+            label=f"{display_names[name]} (fit)",
+        )
 
         # Plot actual data points (scatter only, no lines)
         ax.scatter(N, L, color=color, s=40, alpha=0.6, edgecolors="white", linewidth=0.5, zorder=5)
@@ -678,11 +773,16 @@ def plot_fits_2d(
     ax = axes[0, 1]
 
     for name, (fit, N, D, L, *_) in fits.items():
-        color = colors[name]
+        base_color = colors[name]
 
         # Group by unique N values and plot loss vs D
-        unique_N = np.unique(N)
-        for n_val in unique_N:
+        unique_N = np.sort(np.unique(N))
+        n_sizes = len(unique_N)
+        for size_idx, n_val in enumerate(unique_N):
+            # Gradient: lightest for smallest model, full color for largest
+            frac = 0.3 + 0.7 * size_idx / max(n_sizes - 1, 1)
+            shade = shade_color(base_color, frac)
+
             mask = N == n_val
             D_subset = D[mask]
             L_subset = L[mask]
@@ -692,20 +792,79 @@ def plot_fits_2d(
             ax.scatter(
                 D_subset[sort_idx],
                 L_subset[sort_idx],
-                color=color,
+                color=shade,
                 s=30,
-                alpha=0.6,
+                alpha=0.7,
                 edgecolors="white",
                 linewidth=0.3,
             )
-        del fit  # unused in this loop
 
-    # Create legend manually (one entry per ladder)
-    legend_handles = [
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=colors[name], markersize=10, label=name)
+            # Fitted curve spanning the data range
+            D_curve = np.logspace(np.log10(D_subset.min()), np.log10(D_subset.max()), 100)
+            L_curve = fit.predict_loss(n_val, D_curve)
+            ax.plot(D_curve, L_curve, color=shade, linewidth=1.5, alpha=0.8)
+
+    # Primary legend: one entry per ladder
+    ladder_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=colors[name],
+            markersize=10,
+            label=display_names[name],
+        )
         for name in fits.keys()
     ]
-    ax.legend(handles=legend_handles, loc="upper right", fontsize=10, framealpha=0.9)
+    first_legend = ax.legend(handles=ladder_handles, loc="upper right", fontsize=9, framealpha=0.9)
+    ax.add_artist(first_legend)
+
+    # Secondary legend: gradient key using canonical size buckets (60M, 100M, etc.)
+    canonical_sizes = ["60M", "100M", "190M", "370M", "600M", "760M"]
+    # Determine which canonical sizes appear in the data
+    present_sizes = []
+    for _, (_, N_data, *_) in fits.items():
+        for n_val in np.unique(N_data):
+            # Snap to nearest canonical bucket
+            n_m = n_val / 1e6
+            if n_m < 80:
+                label = "60M"
+            elif n_m < 150:
+                label = "100M"
+            elif n_m < 280:
+                label = "190M"
+            elif n_m < 480:
+                label = "370M"
+            elif n_m < 680:
+                label = "600M"
+            else:
+                label = "760M"
+            if label not in present_sizes:
+                present_sizes.append(label)
+    # Sort by canonical order
+    present_sizes = [s for s in canonical_sizes if s in present_sizes]
+    n_all = len(present_sizes)
+    size_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=shade_color("#555555", 0.3 + 0.7 * i / max(n_all - 1, 1)),
+            markersize=7,
+            label=present_sizes[i],
+        )
+        for i in range(n_all)
+    ]
+    ax.legend(
+        handles=size_handles,
+        loc="lower left",
+        fontsize=8,
+        framealpha=0.9,
+        title="Model size",
+        title_fontsize=8,
+    )
 
     ax.set_xscale("log")
     ax.set_xlabel("Tokens", fontsize=12)
@@ -729,7 +888,7 @@ def plot_fits_2d(
             N_range_compute,
             loss_pred,
             linewidth=2.5,
-            label=f"{name} (α={fit.fitted_params.alpha:.2f}, β={fit.fitted_params.beta:.2f})",
+            label=f"{display_names[name]} (α={fit.fitted_params.alpha:.2f}, β={fit.fitted_params.beta:.2f})",
             color=color,
         )
 
@@ -756,7 +915,16 @@ def plot_fits_2d(
         color = colors[name]
         predicted = fit.predict_loss(N, D)
         residuals_pct = (L - predicted) / L * 100
-        ax.scatter(N, residuals_pct, s=40, label=name, color=color, alpha=0.6, edgecolors="white", linewidth=0.5)
+        ax.scatter(
+            N,
+            residuals_pct,
+            s=40,
+            label=display_names[name],
+            color=color,
+            alpha=0.6,
+            edgecolors="white",
+            linewidth=0.5,
+        )
 
     ax.axhline(y=0, color="black", linestyle="-", linewidth=1.5, alpha=0.8)
     ax.axhline(y=1, color="gray", linestyle="--", linewidth=1, alpha=0.5)
@@ -773,14 +941,17 @@ def plot_fits_2d(
     ylim = ax.get_ylim()
     max_abs = max(abs(ylim[0]), abs(ylim[1]))
     ax.set_ylim(-max_abs * 1.1, max_abs * 1.1)
-    ax.fill_between(
-        ax.get_xlim(), -1, 1, alpha=0.1, color="green", label="±1% zone"
-    )
+    ax.fill_between(ax.get_xlim(), -1, 1, alpha=0.1, color="green", label="±1% zone")
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     if output_path:
-        fig.savefig(output_path / "chinchilla_scaling_fits_2d.png", dpi=200, bbox_inches="tight", facecolor="white")
+        fig.savefig(
+            output_path / "chinchilla_scaling_fits_2d.png",
+            dpi=200,
+            bbox_inches="tight",
+            facecolor="white",
+        )
         print(f"\nSaved 2D plot to: {output_path / 'chinchilla_scaling_fits_2d.png'}")
 
     if show:
@@ -808,7 +979,7 @@ def plot_fits_3d(
         save_path = output_path / f"{safe_name}_3d.html" if output_path else None
         fig = plot_scaling_law_3d(
             rollout,
-            subtitle=name,
+            subtitle=get_display_name(name),
             save_path=save_path,
         )
         if show:
@@ -820,8 +991,8 @@ def plot_fits_3d(
     elif len(rollout_list) == 2:
         (name_a, rollout_a), (name_b, rollout_b) = rollout_list
         fig = plot_scaling_law_3d_comparison(
-            (name_a, rollout_a),
-            (name_b, rollout_b),
+            (get_display_name(name_a), rollout_a),
+            (get_display_name(name_b), rollout_b),
             subtitle="Scaling Law Comparison",
             save_path=output_path / "scaling_comparison_3d.html" if output_path else None,
         )
@@ -836,7 +1007,7 @@ def plot_fits_3d(
             safe_name = name.lower().replace(" ", "_")
             fig = plot_scaling_law_3d(
                 rollout,
-                subtitle=name,
+                subtitle=get_display_name(name),
                 save_path=output_path / f"{safe_name}_3d.html" if output_path else None,
             )
             if show:
@@ -853,6 +1024,7 @@ def plot_isoflop_curves(
     """Plot iso-FLOP curves showing optimal N vs D tradeoffs."""
     try:
         import matplotlib.pyplot as plt
+        from matplotlib.lines import Line2D
     except ImportError:
         print("Warning: matplotlib not installed, skipping iso-FLOP plots")
         return
@@ -860,15 +1032,36 @@ def plot_isoflop_curves(
     if not fits:
         return
 
+    plt.style.use("seaborn-v0_8-whitegrid")
+
+    display_names = {name: get_display_name(name) for name in fits}
+    color_palette = [
+        "#2ecc71",
+        "#e74c3c",
+        "#3498db",
+        "#9b59b6",
+        "#f39c12",
+        "#1abc9c",
+        "#e67e22",
+        "#34495e",
+        "#e91e63",
+        "#00bcd4",
+    ]
+    colors = {name: color_palette[i % len(color_palette)] for i, name in enumerate(fits.keys())}
+
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    colors = plt.cm.tab10(np.linspace(0, 1, len(fits)))
 
     # FLOPs = 6 * N * D (approximate)
     flop_budgets = [1e18, 1e19, 1e20, 1e21, 1e22]  # 1e18 to 1e22 FLOPs
+    n_budgets = len(flop_budgets)
+    # Gradient fractions: lightest (0.25) for smallest budget, full color (1.0) for largest
+    gradient_fractions = [0.25 + 0.75 * i / (n_budgets - 1) for i in range(n_budgets)]
 
     # Left: Loss vs N for different FLOP budgets
     ax = axes[0]
-    for idx, (name, (fit, N, D, L, F, sizes, bootstrap)) in enumerate(fits.items()):
+
+    for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
+        base_color = colors[name]
         for flop_idx, flops in enumerate(flop_budgets):
             N_range = np.logspace(7, 11, 100)
             D_range = flops / (6 * N_range)
@@ -878,29 +1071,54 @@ def plot_isoflop_curves(
                 continue
 
             loss_pred = fit.predict_loss(N_range[valid], D_range[valid])
-            alpha = 0.3 + 0.7 * (flop_idx / len(flop_budgets))
-            label = f"{name} ({flops:.0e} FLOPs)" if flop_idx == len(flop_budgets) - 1 else None
+            curve_color = shade_color(base_color, gradient_fractions[flop_idx])
+            lw = 1.0 + 1.5 * (flop_idx / (n_budgets - 1))  # thinner for small budgets
             ax.plot(
                 N_range[valid],
                 loss_pred,
-                color=colors[idx],
-                alpha=alpha,
-                linewidth=2 if flop_idx == len(flop_budgets) - 1 else 1,
-                label=label,
+                color=curve_color,
+                linewidth=lw,
             )
+
+    # Primary legend: one entry per ladder
+    ladder_handles = [
+        Line2D([0], [0], color=colors[name], linewidth=2, label=display_names[name])
+        for name in fits.keys()
+    ]
+    # Secondary legend: gradient key showing FLOP budgets (use gray gradient)
+    budget_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=shade_color("#555555", gradient_fractions[i]),
+            linewidth=1.0 + 1.5 * (i / (n_budgets - 1)),
+            label=f"{flop_budgets[i]:.0e} FLOPs",
+        )
+        for i in range(n_budgets)
+    ]
+    first_legend = ax.legend(handles=ladder_handles, loc="upper right", fontsize=9, framealpha=0.9)
+    ax.add_artist(first_legend)
+    ax.legend(
+        handles=budget_handles,
+        loc="lower left",
+        fontsize=8,
+        framealpha=0.9,
+        title="Compute budget",
+        title_fontsize=8,
+    )
 
     ax.set_xscale("log")
     ax.set_xlabel("Parameters (N)", fontsize=11)
     ax.set_ylabel("Loss", fontsize=11)
-    ax.set_title("Iso-FLOP Curves\n(lighter = less compute)", fontsize=12)
-    ax.legend(loc="upper right", fontsize=9)
+    ax.set_title("Iso-FLOP Curves", fontsize=12)
     ax.grid(True, alpha=0.3)
 
     # Right: Optimal N vs FLOP budget
     ax = axes[1]
     flop_range = np.logspace(17, 23, 100)
 
-    for idx, (name, (fit, N, D, L, F, sizes, bootstrap)) in enumerate(fits.items()):
+    for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
+        color = colors[name]
         params = fit.fitted_params
         # Compute-optimal: N_opt ∝ C^a_opt, where C = 6*N*D
         # For a given FLOP budget F = 6*N*D, optimal N scales as F^a_opt
@@ -911,8 +1129,8 @@ def plot_isoflop_curves(
             flop_range,
             N_opt,
             linewidth=2,
-            label=f"{name} (a={params.a_opt:.3f})",
-            color=colors[idx],
+            label=f"{display_names[name]} (a={params.a_opt:.3f})",
+            color=color,
         )
 
     # Add Chinchilla reference line
@@ -959,14 +1177,28 @@ def plot_loss_vs_flops(
     plt.style.use("seaborn-v0_8-whitegrid")
 
     # Color palette - distinct colors for each ladder
-    color_palette = ["#2ecc71", "#e74c3c", "#3498db", "#9b59b6", "#f39c12", "#1abc9c", "#e67e22", "#34495e", "#e91e63", "#00bcd4"]
+    # Human-readable display names
+    display_names = {name: get_display_name(name) for name in fits}
+
+    color_palette = [
+        "#2ecc71",
+        "#e74c3c",
+        "#3498db",
+        "#9b59b6",
+        "#f39c12",
+        "#1abc9c",
+        "#e67e22",
+        "#34495e",
+        "#e91e63",
+        "#00bcd4",
+    ]
     colors = {name: color_palette[i % len(color_palette)] for i, name in enumerate(fits.keys())}
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     fig.suptitle("Loss vs Training FLOPs", fontsize=16, fontweight="bold", y=0.98)
 
     # ============================================================
-    # Left: Loss vs FLOPs (scatter plot with all data points)
+    # Left: Loss vs FLOPs (scatter + fitted curve per ladder)
     # ============================================================
     ax = axes[0]
 
@@ -974,7 +1206,26 @@ def plot_loss_vs_flops(
         color = colors[name]
         # F is in raw FLOPs, convert to PetaFLOPs for plotting
         F_peta = F / 1e15
-        ax.scatter(F_peta, L, color=color, s=40, alpha=0.6, edgecolors="white", linewidth=0.5, label=name)
+        ax.scatter(F_peta, L, color=color, s=40, alpha=0.5, edgecolors="white", linewidth=0.5)
+
+        # Fitted curve: sweep FLOPs using the ladder's average D/N ratio
+        # Correct for measured vs 6*N*D FLOPs difference
+        unique_N = np.unique(N)
+        mean_dn_ratios = [np.mean(D[N == n_val]) / n_val for n_val in unique_N]
+        overall_dn_ratio = np.mean(mean_dn_ratios)
+        flop_ratio = np.median(F / (6.0 * N * D))
+        N_sweep = np.logspace(np.log10(N.min()), np.log10(N.max()), 200)
+        D_sweep = N_sweep * overall_dn_ratio
+        F_sweep_peta = (6.0 * N_sweep * D_sweep * flop_ratio) / 1e15
+        L_sweep = fit.predict_loss(N_sweep, D_sweep)
+        ax.plot(
+            F_sweep_peta,
+            L_sweep,
+            color=color,
+            linewidth=2.5,
+            alpha=0.8,
+            label=f"{display_names[name]} (fit)",
+        )
 
     ax.set_xscale("log")
     ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=12)
@@ -985,36 +1236,58 @@ def plot_loss_vs_flops(
     ax.grid(True, alpha=0.3)
 
     # ============================================================
-    # Right: Loss vs FLOPs with fitted lines per model size
+    # Right: Loss vs FLOPs per model size (scatter + fitted curves)
     # ============================================================
     ax = axes[1]
 
     for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
-        color = colors[name]
+        base_color = colors[name]
         F_peta = F / 1e15
 
-        # Group by unique N values and plot loss vs FLOPs for each size
-        unique_N = np.unique(N)
-        for n_val in unique_N:
+        # Group by unique N values: scatter data + fitted curve per size
+        unique_N = np.sort(np.unique(N))
+        n_sizes = len(unique_N)
+        for size_idx, n_val in enumerate(unique_N):
+            frac = 0.3 + 0.7 * size_idx / max(n_sizes - 1, 1)
+            cur_shade = shade_color(base_color, frac)
+
             mask = N == n_val
             F_subset = F_peta[mask]
             L_subset = L[mask]
+            D_subset = D[mask]
 
-            # Sort by FLOPs for cleaner lines
-            sort_idx = np.argsort(F_subset)
-            ax.plot(
-                F_subset[sort_idx],
-                L_subset[sort_idx],
-                color=color,
-                linewidth=1.5,
+            ax.scatter(
+                F_subset,
+                L_subset,
+                color=cur_shade,
+                s=25,
                 alpha=0.7,
-                marker='o',
-                markersize=4,
+                edgecolors="white",
+                linewidth=0.3,
             )
+
+            # Fitted curve: sweep D over the data range, use actual F/D ratio to
+            # compute FLOPs on the x-axis so the curve aligns with the data points
+            D_range = np.logspace(np.log10(D_subset.min()), np.log10(D_subset.max()), 100)
+            # Use the median measured-F / (6*N*D) ratio to correct for architecture differences
+            f_measured = F[mask]
+            f_approx = 6.0 * n_val * D_subset
+            flop_ratio = np.median(f_measured / f_approx)
+            F_curve_peta = (6.0 * n_val * D_range * flop_ratio) / 1e15
+            L_curve = fit.predict_loss(n_val, D_range)
+            ax.plot(F_curve_peta, L_curve, color=cur_shade, linewidth=1.5, alpha=0.8)
 
     # Create legend manually (one entry per ladder)
     legend_handles = [
-        Line2D([0], [0], marker="o", color=colors[name], markersize=8, label=name, linewidth=1.5)
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color=colors[name],
+            markersize=8,
+            label=display_names[name],
+            linewidth=1.5,
+        )
         for name in fits.keys()
     ]
     ax.legend(handles=legend_handles, loc="upper right", fontsize=9, framealpha=0.9)
@@ -1052,7 +1325,7 @@ def predict_loss_for_target(
 
     for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
         pred = fit.predict_loss(target_n, target_d)
-        print(f"\n{name}:")
+        print(f"\n{get_display_name(name)}:")
         print(f"  Predicted loss: {pred:.4f}")
 
         if bootstrap is not None:
@@ -1153,6 +1426,26 @@ def main():
         help="Only use final checkpoint from each model size (legacy behavior). "
         "By default, all checkpoints are used for better fitting.",
     )
+    parser.add_argument(
+        "--include-pre-decay",
+        action="store_true",
+        help="Include pre-decay checkpoints in addition to post-decay. "
+        "By default, only post-decay checkpoints (D/N = 10, 20, 40, 80, 160, ...) are used.",
+    )
+    parser.add_argument(
+        "--simple-flops",
+        action="store_true",
+        help="Use simple 6*N*D approximation for FLOPs instead of logged values. "
+        "This can be useful when comparing models with different architectures.",
+    )
+    parser.add_argument(
+        "--num-slices",
+        type=int,
+        default=4,
+        help="Number of grid slices per dimension for optimizer initialization. "
+        "Total initializations = num_slices^5 (default: 4 → 1024 inits). "
+        "Increase to 5-8 for more thorough search at higher compute cost.",
+    )
 
     args = parser.parse_args()
 
@@ -1182,6 +1475,9 @@ def main():
                 overestimate_penalty=args.overestimate_penalty,
                 verbose=not args.quiet,
                 use_all_checkpoints=not args.final_checkpoints_only,
+                simple_flops=args.simple_flops,
+                num_slices=args.num_slices,
+                post_decay_only=not args.include_pre_decay,
             )
             fit, N, D, L, F, sizes, bootstrap = result
             fits[name] = (fit, N, D, L, F, sizes, bootstrap)
@@ -1200,12 +1496,13 @@ def main():
                     weight_by_compute=not args.no_weight,
                     overestimate_penalty=args.overestimate_penalty,
                     verbose=not args.quiet,
+                    num_slices=args.num_slices,
                 )
                 rollouts[name] = rollout
                 print_rollout_evaluation(name, rollout)
 
         except Exception as e:
-            print(f"\nError fitting {name}: {e}")
+            print(f"\nError fitting {get_display_name(name)}: {e}")
             import traceback
 
             traceback.print_exc()

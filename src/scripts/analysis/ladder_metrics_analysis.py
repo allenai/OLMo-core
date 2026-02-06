@@ -33,6 +33,128 @@ except ImportError:
     PLOTTING_AVAILABLE = False
 
 
+# Corrected non-embedding parameter counts for each model type and size.
+# These override the values from pickle files which may include embedding params.
+# Imported from fit_chinchilla_scaling_laws.py conventions.
+# Human-readable display names for each ladder.
+# Used in plots, tables, and printed output.
+DISPLAY_NAMES: Dict[str, str] = {
+    "olmo3": "Olmo 3",
+    "olmo3-1": "Olmo 3 v1",
+    "olmo3-2": "Olmo 3 v2",
+    "olmo3-3": "Olmo 3 v3",
+    "pure-gdn": "Pure GDN",
+    "hybrid-gdn": "Hybrid GDN (1/4)",
+    "hybrid-gdn-half": "Hybrid GDN (1/2)",
+    "hybrid-gdn-eight": "Hybrid GDN (1/8)",
+    "hybrid-gdn-middle": "Hybrid GDN (Middle)",
+    "pure-mamba": "Pure Mamba",
+    "hybrid-mamba": "Hybrid Mamba",
+}
+
+
+def get_display_name(ladder_name: str) -> str:
+    """Return a human-readable display name for a ladder, falling back to the raw name."""
+    return DISPLAY_NAMES.get(ladder_name.lower(), ladder_name)
+
+
+CORRECTED_PARAM_COUNTS: Dict[str, Dict[str, int]] = {
+    "olmo3-1": {
+        "60M": 57_422_208,
+        "100M": 101_736_960,
+        "190M": 190_354_176,
+        "370M": 371_262_464,
+        "600M": 547_964_160,
+        "760M": 758_220_288,
+    },
+    "olmo3-2": {
+        "60M": 57_422_208,
+        "100M": 101_736_960,
+        "190M": 190_354_176,
+        "370M": 371_262_464,
+        "600M": 547_964_160,
+        "760M": 758_220_288,
+    },
+    "olmo3-3": {
+        "60M": 57_422_208,
+        "100M": 101_736_960,
+        "190M": 190_354_176,
+        "370M": 371_262_464,
+        "600M": 547_964_160,
+        "760M": 758_220_288,
+    },
+    "pure-gdn": {
+        "60M": 78_045_696,
+        "100M": 139_771_584,
+        "190M": 275_789_856,
+        "370M": 573_609_472,
+        "600M": 779_794_176,
+    },
+    "hybrid-gdn": {
+        "60M": 72_889_824,
+        "100M": 130_262_928,
+        "190M": 254_430_936,
+        "370M": 523_022_720,
+        "600M": 721_836_672,
+        "760M": 947_913_600,
+        "1B": 1_481_856_384,
+    },
+    "hybrid-gdn-middle": {
+        "60M": 70_311_888,
+        "100M": 127_093_376,
+        "190M": 247_311_296,
+        "370M": 510_376_032,
+        "600M": 707_347_296,
+    },
+    "hybrid-gdn-half": {
+        "60M": 67_733_952,
+        "100M": 120_754_272,
+        "190M": 233_072_016,
+        "370M": 472_435_968,
+        "600M": 663_879_168,
+    },
+    "hybrid-gdn-eight": {
+        "60M": 75_467_760,
+        "100M": 133_432_480,
+        "190M": 261_550_576,
+        "370M": 548_316_096,
+        "600M": 750_815_424,
+        "760M": 979_529_152,
+    },
+    "pure-mamba": {
+        "60M": 59_837_760,
+        "100M": 109_746_048,
+        "190M": 207_115_584,
+    },
+    "hybrid-mamba": {
+        "60M": 59_837_760,
+        "100M": 107_743_776,
+        "190M": 202_925_232,
+    },
+}
+
+
+def get_corrected_param_count(ladder_name: str, size: str) -> Optional[int]:
+    """
+    Look up the corrected non-embedding parameter count for a given ladder and size.
+    """
+    ladder_lower = ladder_name.lower()
+
+    # Try exact match first
+    if ladder_lower in CORRECTED_PARAM_COUNTS:
+        size_map = CORRECTED_PARAM_COUNTS[ladder_lower]
+        if size in size_map:
+            return size_map[size]
+
+    # Try substring matches
+    for pattern, size_map in CORRECTED_PARAM_COUNTS.items():
+        if pattern in ladder_lower:
+            if size in size_map:
+                return size_map[size]
+
+    return None
+
+
 # =============================================================================
 # OlmoBaseEval Base Easy Suite (Table 45) - BPB metrics for small-scale decisions
 # BPB = Bits Per Byte (lower is better)
@@ -501,9 +623,22 @@ def aggregate_all_clusters(
 # Ladder Analysis
 # =============================================================================
 
-def analyze_ladder(ladder_dir: Path) -> Dict[str, Dict[str, Any]]:
+def analyze_ladder(
+    ladder_dir: Path,
+    ladder_name: str = "",
+    use_all_checkpoints: bool = False,
+    post_decay_only: bool = True,
+) -> Dict[str, Dict[str, Any]]:
     """
     Analyze all metrics files in a ladder directory.
+
+    Args:
+        ladder_dir: Directory containing metrics_*.pkl files.
+        ladder_name: Name of the ladder (used for corrected parameter count lookup).
+        use_all_checkpoints: If True, include all checkpoints from each model size
+            (keyed as "size@D/N_ratio"). If False, only use the final checkpoint.
+        post_decay_only: If True (default), only include post-decay checkpoints
+            (D/N = 10, 20, 40, 80, 160, ...). If False, also include pre-decay.
 
     Returns:
         Dict mapping size -> {
@@ -533,39 +668,115 @@ def analyze_ladder(ladder_dir: Path) -> Dict[str, Dict[str, Any]]:
         if df.empty:
             continue
 
-        final_row = df[df["step"] == df["step"].max()].iloc[0]
-        final_step = int(final_row.get("step", 0))
-        final_tokens = int(final_row.get("tokens", 0))
+        # Get corrected parameter count
+        raw_num_params = df["num_params"].iloc[0] if "num_params" in df.columns else 0
+        corrected_params = get_corrected_param_count(ladder_name, size)
+        num_params = corrected_params if corrected_params is not None else raw_num_params
+        if corrected_params is not None and raw_num_params:
+            print(
+                f"  {size}: Using corrected non-embedding params: "
+                f"{corrected_params/1e6:.1f}M (was {raw_num_params/1e6:.1f}M)"
+            )
 
-        # Aggregate all OlmoBaseEval clusters
-        cluster_results = aggregate_all_clusters(df)
+        # Canonical D/N values from WSDS Chinchilla schedule with tokens_per_param=20.
+        # Post-decay: end of cooldown at each period (0.5xC, 1xC, 2xC, ...).
+        # Pre-decay: ~90% through each period (decay_fraction=0.1).
+        # Always snap against the full set so pre-decay checkpoints don't get
+        # mis-snapped to post-decay values.  Then filter by post_decay_only.
+        _POST_DECAY_DN = [10, 20, 40, 80, 160]
+        _PRE_DECAY_DN = [9, 19, 38, 76, 152]
+        _ALL_DN = sorted(_POST_DECAY_DN + _PRE_DECAY_DN)
+        _KEEP_DN = set(_POST_DECAY_DN) if post_decay_only else set(_ALL_DN)
 
-        # Get LM metrics
-        lm_cols = find_lm_columns(df)
-        lm_metrics: Dict[str, Dict[str, float]] = {}
-        for task, (ce_col, ppl_col) in lm_cols.items():
-            lm_metrics[task] = {}
-            if ce_col and pd.notna(final_row.get(ce_col)):
-                lm_metrics[task]["CE loss"] = float(final_row[ce_col])
-            if ppl_col and pd.notna(final_row.get(ppl_col)):
-                lm_metrics[task]["PPL"] = float(final_row[ppl_col])
+        if use_all_checkpoints:
+            # Process each checkpoint row
+            for _, row in df.iterrows():
+                tokens = row.get("tokens")
+                step = row.get("step")
+                if tokens is None or pd.isna(tokens):
+                    continue
 
-        # Store raw metrics
-        metric_cols = [
-            c for c in df.columns if c not in ["name", "step", "tokens", "size", "num_params"]
-        ]
-        raw_metrics = {col: final_row[col] for col in metric_cols if pd.notna(final_row.get(col))}
+                # D/N = tokens / original params (token schedule is based on original count).
+                raw_dn = tokens / raw_num_params if raw_num_params else 0
+                dn_ratio = min(_ALL_DN, key=lambda c: abs(c - raw_dn)) if raw_dn > 0 else 0
+                if dn_ratio not in _KEEP_DN:
+                    print(
+                        f"    SKIP {size}: step={step}, "
+                        f"tokens={tokens:.3e}, raw_dn={raw_dn:.2f}, "
+                        f"snapped={dn_ratio} (not in _KEEP_DN)"
+                    )
+                    continue
+                print(
+                    f"    KEEP {size}: step={step}, "
+                    f"tokens={tokens:.3e}, raw_dn={raw_dn:.2f}, "
+                    f"snapped={dn_ratio}"
+                )
+                checkpoint_key = f"{size}@{dn_ratio}"
 
-        results[size] = {
-            "base_easy": cluster_results["base_easy"],
-            "base_main": cluster_results["base_main"],
-            "heldout": cluster_results["heldout"],
-            "lm_metrics": lm_metrics,
-            "raw": raw_metrics,
-            "step": final_step,
-            "tokens": final_tokens,
-            "num_params": final_row.get("num_params", 0),
-        }
+                # Build a single-row DataFrame for aggregation
+                row_df = pd.DataFrame([row])
+                row_df["step"] = row.get("step", 0)
+
+                cluster_results = aggregate_all_clusters(row_df)
+
+                # Get LM metrics
+                lm_cols = find_lm_columns(row_df)
+                lm_metrics: Dict[str, Dict[str, float]] = {}
+                for task, (ce_col, ppl_col) in lm_cols.items():
+                    lm_metrics[task] = {}
+                    if ce_col and pd.notna(row.get(ce_col)):
+                        lm_metrics[task]["CE loss"] = float(row[ce_col])
+                    if ppl_col and pd.notna(row.get(ppl_col)):
+                        lm_metrics[task]["PPL"] = float(row[ppl_col])
+
+                results[checkpoint_key] = {
+                    "base_easy": cluster_results["base_easy"],
+                    "base_main": cluster_results["base_main"],
+                    "heldout": cluster_results["heldout"],
+                    "lm_metrics": lm_metrics,
+                    "raw": {},
+                    "step": int(step) if step is not None and not pd.isna(step) else 0,
+                    "tokens": int(tokens),
+                    "num_params": num_params,
+                    "size_label": size,
+                }
+        else:
+            final_row = df[df["step"] == df["step"].max()].iloc[0]
+            final_step = int(final_row.get("step", 0))
+            final_tokens = int(final_row.get("tokens", 0))
+
+            # Aggregate all OlmoBaseEval clusters
+            cluster_results = aggregate_all_clusters(df)
+
+            # Get LM metrics
+            lm_cols = find_lm_columns(df)
+            lm_metrics_final: Dict[str, Dict[str, float]] = {}
+            for task, (ce_col, ppl_col) in lm_cols.items():
+                lm_metrics_final[task] = {}
+                if ce_col and pd.notna(final_row.get(ce_col)):
+                    lm_metrics_final[task]["CE loss"] = float(final_row[ce_col])
+                if ppl_col and pd.notna(final_row.get(ppl_col)):
+                    lm_metrics_final[task]["PPL"] = float(final_row[ppl_col])
+
+            # Store raw metrics
+            metric_cols = [
+                c for c in df.columns if c not in ["name", "step", "tokens", "size", "num_params"]
+            ]
+            raw_metrics = {
+                col: final_row[col] for col in metric_cols if pd.notna(final_row.get(col))
+            }
+
+            results[size] = {
+                "base_easy": cluster_results["base_easy"],
+                "base_main": cluster_results["base_main"],
+                "heldout": cluster_results["heldout"],
+                "lm_metrics": lm_metrics_final,
+                "raw": raw_metrics,
+                "step": final_step,
+                "tokens": final_tokens,
+                "num_params": num_params,
+                "size_label": size,
+            }
 
     return results
 
@@ -590,9 +801,9 @@ SIZE_ORDER = {
 
 
 def _sort_by_size(df: pd.DataFrame, group_by_size: bool = True) -> pd.DataFrame:
-    """Sort dataframe by model size."""
+    """Sort dataframe by model size. Handles checkpoint keys like '190M@20'."""
     df = df.copy()
-    df["_size_order"] = df["Size"].map(lambda x: SIZE_ORDER.get(x, 99))
+    df["_size_order"] = df["Size"].map(lambda x: SIZE_ORDER.get(get_size_label(x), 99))
     if group_by_size:
         df = df.sort_values(["_size_order", "Ladder"]).drop("_size_order", axis=1)
     else:
@@ -609,11 +820,11 @@ def create_base_main_table(
 
     for ladder_name, size_results in ladder_results.items():
         for size, data in size_results.items():
-            if sizes and size not in sizes:
+            if sizes and get_size_label(size) not in sizes:
                 continue
 
             row: Dict[str, Any] = {
-                "Ladder": ladder_name,
+                "Ladder": get_display_name(ladder_name),
                 "Size": size,
             }
 
@@ -638,11 +849,11 @@ def create_base_easy_table(
 
     for ladder_name, size_results in ladder_results.items():
         for size, data in size_results.items():
-            if sizes and size not in sizes:
+            if sizes and get_size_label(size) not in sizes:
                 continue
 
             row: Dict[str, Any] = {
-                "Ladder": ladder_name,
+                "Ladder": get_display_name(ladder_name),
                 "Size": size,
             }
 
@@ -667,11 +878,11 @@ def create_heldout_table(
 
     for ladder_name, size_results in ladder_results.items():
         for size, data in size_results.items():
-            if sizes and size not in sizes:
+            if sizes and get_size_label(size) not in sizes:
                 continue
 
             row: Dict[str, Any] = {
-                "Ladder": ladder_name,
+                "Ladder": get_display_name(ladder_name),
                 "Size": size,
             }
 
@@ -696,11 +907,11 @@ def create_lm_table(
 
     for ladder_name, size_results in ladder_results.items():
         for size, data in size_results.items():
-            if sizes and size not in sizes:
+            if sizes and get_size_label(size) not in sizes:
                 continue
 
             row: Dict[str, Any] = {
-                "Ladder": ladder_name,
+                "Ladder": get_display_name(ladder_name),
                 "Size": size,
             }
             # Add average PPL across domains
@@ -902,8 +1113,17 @@ def get_ladder_colors(ladder_names: List[str]) -> Dict[str, str]:
     return {name: colors[i % len(colors)] for i, name in enumerate(ladder_names)}
 
 
+def get_size_label(size_key: str) -> str:
+    """Extract the human-readable size label from a key like '190M' or '190M@20'."""
+    return size_key.split("@")[0]
+
+
 def get_size_numeric(size: str) -> float:
-    """Convert size string to numeric value for x-axis positioning."""
+    """Convert size string to numeric value for x-axis positioning.
+
+    Handles both plain sizes ('190M') and checkpoint keys ('190M@20').
+    """
+    base_size = size.split("@")[0]
     size_to_num = {
         "60M": 60,
         "100M": 100,
@@ -917,7 +1137,210 @@ def get_size_numeric(size: str) -> float:
         "13B": 13000,
         "32B": 32000,
     }
-    return size_to_num.get(size, 0)
+    return size_to_num.get(base_size, 0)
+
+
+def shade_color(hex_color: str, fraction: float) -> Tuple[float, float, float]:
+    """Blend a hex color with white. fraction=0 -> white, fraction=1 -> original color."""
+    r = int(hex_color[1:3], 16) / 255.0
+    g = int(hex_color[3:5], 16) / 255.0
+    b = int(hex_color[5:7], 16) / 255.0
+    return (1 - fraction + fraction * r, 1 - fraction + fraction * g, 1 - fraction + fraction * b)
+
+
+def _get_dn_ratio(size_key: str) -> Optional[int]:
+    """Extract D/N ratio from a checkpoint key like '190M@20'. Returns None for plain keys."""
+    if "@" in size_key:
+        try:
+            return int(size_key.split("@")[1])
+        except (ValueError, IndexError):
+            pass
+    return None
+
+
+def _has_checkpoints(size_results: Dict[str, Dict[str, Any]]) -> bool:
+    """Check if any key in the results uses the checkpoint format (size@ratio)."""
+    return any("@" in k for k in size_results.keys())
+
+
+def _get_x_value(size_key: str, data: Dict[str, Any]) -> float:
+    """Get x-axis value: use corrected num_params if available, else size bucket."""
+    num_params = data.get("num_params", 0)
+    if num_params and num_params > 0:
+        return float(num_params) / 1e6  # In millions
+    return get_size_numeric(size_key)
+
+
+def _get_x_label(size_key: str, data: Dict[str, Any]) -> str:
+    """Get human-readable x-axis label."""
+    return data.get("size_label", get_size_label(size_key))
+
+
+def _plot_ladder_on_axis(
+    ax,
+    size_results: Dict[str, Dict[str, Any]],
+    extract_y,
+    ladder_name: str,
+    color: str,
+    sizes: Optional[List[str]] = None,
+    added_dn_labels: Optional[set] = None,
+    use_final_checkpoint: bool = False,
+) -> None:
+    """
+    Plot a single ladder's data on an axis.
+
+    When the data contains checkpoint keys (size@ratio), draws:
+      - Scatter points gradient-colored by Chinchilla multiple (D/N ratio),
+        with lighter shades for smaller D/N and full color for the largest.
+      - A single curve (line) through the mean of each model size's checkpoints.
+
+    When the data is final-checkpoint-only, draws the classic "o-" line plot.
+
+    Args:
+        ax: Matplotlib axis.
+        size_results: The ladder's {size_key: data} dict.
+        extract_y: Callable(data) -> Optional[float] that pulls the y value.
+        ladder_name: Label for the legend.
+        color: Hex colour string for this ladder.
+        sizes: Optional filter on base size labels.
+        added_dn_labels: Mutable set tracking which D/N legend entries have
+            already been added (shared across ladders on the same axis).
+        use_final_checkpoint: If True, draw the curve through the final
+            (highest D/N) checkpoint per model size instead of the mean.
+    """
+    from matplotlib.lines import Line2D
+
+    multi = _has_checkpoints(size_results)
+
+    if not multi:
+        # Simple case: one point per model size -> line plot
+        points = []
+        for size_key, data in size_results.items():
+            if sizes and get_size_label(size_key) not in sizes:
+                continue
+            y = extract_y(data)
+            if y is not None:
+                points.append((_get_x_value(size_key, data), y))
+        if points:
+            points.sort(key=lambda p: p[0])
+            x_vals, y_vals = zip(*points)
+            ax.plot(
+                x_vals, y_vals, "o-",
+                label=ladder_name, color=color, linewidth=2, markersize=6,
+            )
+        return
+
+    # ------------------------------------------------------------------
+    # Multi-checkpoint case
+    # ------------------------------------------------------------------
+
+    # Collect all points with their D/N ratio
+    # points_by_size: {base_size_label: [(x, y, dn_ratio), ...]}
+    points_by_size: Dict[str, List[Tuple[float, float, int]]] = {}
+    all_dn_ratios: set = set()
+
+    for size_key, data in size_results.items():
+        if sizes and get_size_label(size_key) not in sizes:
+            continue
+        y = extract_y(data)
+        if y is None:
+            continue
+        dn = _get_dn_ratio(size_key)
+        if dn is None:
+            dn = 0
+        x_val = _get_x_value(size_key, data)
+        label = _get_x_label(size_key, data)
+        points_by_size.setdefault(label, []).append((x_val, y, dn))
+        all_dn_ratios.add(dn)
+
+    if not points_by_size:
+        return
+
+    sorted_dn = sorted(all_dn_ratios)
+    dn_min, dn_max = sorted_dn[0], sorted_dn[-1]
+    dn_span = max(dn_max - dn_min, 1)
+
+    # Scatter all checkpoints, gradient-coloured by D/N
+    for _label, pts in points_by_size.items():
+        for x_val, y_val, dn in pts:
+            frac = 0.25 + 0.75 * (dn - dn_min) / dn_span
+            pt_color = shade_color(color, frac)
+            ax.scatter(
+                x_val, y_val,
+                color=pt_color, s=30, alpha=0.7,
+                edgecolors="white", linewidth=0.3, zorder=4,
+            )
+
+    # Curve through each model size's checkpoints (mean or final)
+    curve_points = []
+    for _label, pts in points_by_size.items():
+        if use_final_checkpoint:
+            # Use the checkpoint with the highest D/N ratio (final)
+            final_pt = max(pts, key=lambda p: p[2])
+            curve_points.append((final_pt[0], final_pt[1]))
+        else:
+            mean_x = sum(p[0] for p in pts) / len(pts)
+            mean_y = sum(p[1] for p in pts) / len(pts)
+            curve_points.append((mean_x, mean_y))
+    curve_points.sort(key=lambda p: p[0])
+
+    if curve_points:
+        cx, cy = zip(*curve_points)
+        ax.plot(
+            cx, cy,
+            color=color, linewidth=2.5, alpha=0.8, zorder=5,
+            label=ladder_name,
+        )
+
+    # Add gradient legend entries (shared across ladders on the same axis)
+    if added_dn_labels is None:
+        added_dn_labels = set()
+
+    # Pick a few representative D/N values for the legend
+    if len(sorted_dn) <= 5:
+        legend_dns = sorted_dn
+    else:
+        step = max(1, len(sorted_dn) // 4)
+        legend_dns = sorted_dn[::step]
+        if sorted_dn[-1] not in legend_dns:
+            legend_dns.append(sorted_dn[-1])
+
+    dn_handles = []
+    for dn in legend_dns:
+        if dn in added_dn_labels:
+            continue
+        added_dn_labels.add(dn)
+        frac = 0.25 + 0.75 * (dn - dn_min) / dn_span
+        dn_handles.append(
+            Line2D(
+                [0], [0], marker="o", color="w",
+                markerfacecolor=shade_color("#555555", frac),
+                markersize=7, label=f"D/N={dn}",
+            )
+        )
+
+    if dn_handles:
+        # Add a secondary legend for D/N gradient
+        existing_legend = ax.get_legend()
+        if existing_legend is None:
+            # Will be added after all ladders are plotted
+            pass
+        ax._dn_legend_handles = getattr(ax, "_dn_legend_handles", []) + dn_handles
+
+
+def _finalize_legends(ax, has_checkpoints: bool) -> None:
+    """Add primary + D/N gradient legends to an axis if checkpoint data was plotted."""
+    dn_handles = getattr(ax, "_dn_legend_handles", [])
+    if has_checkpoints and dn_handles:
+        # Primary legend (ladder names) is already set; add secondary for D/N
+        first_legend = ax.legend(loc="best", fontsize=8)
+        ax.add_artist(first_legend)
+        ax.legend(
+            handles=dn_handles, loc="lower right", fontsize=7,
+            framealpha=0.9, title="Chinchilla mult.", title_fontsize=7,
+        )
+    else:
+        ax.legend(loc="best", fontsize=8)
 
 
 def plot_base_main_metrics(
@@ -925,10 +1348,13 @@ def plot_base_main_metrics(
     sizes: Optional[List[str]] = None,
     output_path: Optional[Path] = None,
     show: bool = True,
+    use_final_checkpoint: bool = False,
 ) -> None:
     """
     Plot Base Main Suite metrics comparison across ladders.
     Matches OLMo 3 paper Figure 29 style.
+    Uses corrected num_params for x-axis positioning when available.
+    With --all-checkpoints: scatter + gradient by D/N ratio, curve through final checkpoints.
     """
     if not PLOTTING_AVAILABLE:
         print("Warning: matplotlib not available, skipping plots")
@@ -945,51 +1371,32 @@ def plot_base_main_metrics(
     ladder_names = list(ladder_results.keys())
     colors = get_ladder_colors(ladder_names)
 
+    any_checkpoints = any(_has_checkpoints(sr) for sr in ladder_results.values())
+
     for idx, cluster in enumerate(clusters):
         ax = axes[idx]
+        dn_labels: set = set()
 
-        for ladder_name, size_results in ladder_results.items():
-            points = []
+        def _extract(data, _c=cluster):
+            bm = data.get("base_main", {})
+            if _c in bm:
+                return bm[_c]["avg"] * 100
+            return None
 
-            for size, data in size_results.items():
-                if sizes and size not in sizes:
-                    continue
-                base_main = data.get("base_main", {})
-                if cluster in base_main:
-                    points.append((get_size_numeric(size), base_main[cluster]["avg"] * 100))
+        for ladder_name in ladder_names:
+            _plot_ladder_on_axis(
+                ax, ladder_results[ladder_name], _extract,
+                get_display_name(ladder_name), colors[ladder_name], sizes,
+                added_dn_labels=dn_labels,
+                use_final_checkpoint=use_final_checkpoint,
+            )
 
-            if points:
-                points.sort(key=lambda p: p[0])
-                x_vals, y_vals = zip(*points)
-                ax.plot(
-                    x_vals,
-                    y_vals,
-                    "o-",
-                    label=ladder_name,
-                    color=colors[ladder_name],
-                    linewidth=2,
-                    markersize=6,
-                )
-
-        ax.set_xlabel("Model Size", fontsize=10)
+        ax.set_xlabel("Non-embedding Parameters (M)", fontsize=10)
         ax.set_ylabel("Accuracy (%)" if cluster != "FIM" else "pass@1 (%)", fontsize=10)
         ax.set_title(f"Base Main {cluster}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="best", fontsize=8)
-
-        # Format x-axis
-        all_sizes = sorted(
-            set(
-                size
-                for size_results in ladder_results.values()
-                for size in size_results.keys()
-                if not sizes or size in sizes
-            ),
-            key=get_size_numeric,
-        )
-        ax.set_xticks([get_size_numeric(s) for s in all_sizes])
-        ax.set_xticklabels(all_sizes, fontsize=8, rotation=45)
+        _finalize_legends(ax, any_checkpoints)
 
     # Hide unused subplots
     for idx in range(n_clusters, len(axes)):
@@ -1013,10 +1420,13 @@ def plot_base_easy_metrics(
     sizes: Optional[List[str]] = None,
     output_path: Optional[Path] = None,
     show: bool = True,
+    use_final_checkpoint: bool = False,
 ) -> None:
     """
     Plot Base Easy Suite metrics (BPB) comparison across ladders.
     Matches OLMo 3 paper Figure 30 style (bottom row).
+    Uses corrected num_params for x-axis positioning when available.
+    With --all-checkpoints: scatter + gradient by D/N ratio, curve through final checkpoints.
     """
     if not PLOTTING_AVAILABLE:
         print("Warning: matplotlib not available, skipping plots")
@@ -1031,51 +1441,32 @@ def plot_base_easy_metrics(
     ladder_names = list(ladder_results.keys())
     colors = get_ladder_colors(ladder_names)
 
+    any_checkpoints = any(_has_checkpoints(sr) for sr in ladder_results.values())
+
     for idx, cluster in enumerate(clusters):
         ax = axes_list[idx]
+        dn_labels: set = set()
 
-        for ladder_name, size_results in ladder_results.items():
-            points = []
+        def _extract(data, _c=cluster):
+            be = data.get("base_easy", {})
+            if _c in be:
+                return be[_c]["avg"]
+            return None
 
-            for size, data in size_results.items():
-                if sizes and size not in sizes:
-                    continue
-                base_easy = data.get("base_easy", {})
-                if cluster in base_easy:
-                    points.append((get_size_numeric(size), base_easy[cluster]["avg"]))
+        for ladder_name in ladder_names:
+            _plot_ladder_on_axis(
+                ax, ladder_results[ladder_name], _extract,
+                get_display_name(ladder_name), colors[ladder_name], sizes,
+                added_dn_labels=dn_labels,
+                use_final_checkpoint=use_final_checkpoint,
+            )
 
-            if points:
-                points.sort(key=lambda p: p[0])
-                x_vals, y_vals = zip(*points)
-                ax.plot(
-                    x_vals,
-                    y_vals,
-                    "o-",
-                    label=ladder_name,
-                    color=colors[ladder_name],
-                    linewidth=2,
-                    markersize=6,
-                )
-
-        ax.set_xlabel("Model Size", fontsize=10)
+        ax.set_xlabel("Non-embedding Parameters (M)", fontsize=10)
         ax.set_ylabel("Bits-per-byte", fontsize=10)
         ax.set_title(f"Base Easy {cluster.replace('_BPB', '')}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="best", fontsize=8)
-
-        # Format x-axis
-        all_sizes = sorted(
-            set(
-                size
-                for size_results in ladder_results.values()
-                for size in size_results.keys()
-                if not sizes or size in sizes
-            ),
-            key=get_size_numeric,
-        )
-        ax.set_xticks([get_size_numeric(s) for s in all_sizes])
-        ax.set_xticklabels(all_sizes, fontsize=8, rotation=45)
+        _finalize_legends(ax, any_checkpoints)
 
     fig.suptitle(
         "OlmoBaseEval Base Easy Suite (BPB - lower is better)", fontsize=14, fontweight="bold", y=1.02
@@ -1126,8 +1517,8 @@ def plot_scaling_analysis(
             easy_vals = []
             main_vals = []
 
-            for size, data in size_results.items():
-                if sizes and size not in sizes:
+            for size_key, data in size_results.items():
+                if sizes and get_size_label(size_key) not in sizes:
                     continue
 
                 base_easy = data.get("base_easy", {})
@@ -1151,7 +1542,7 @@ def plot_scaling_analysis(
                 ax.scatter(
                     easy_vals,
                     main_vals,
-                    label=ladder_name,
+                    label=get_display_name(ladder_name),
                     color=colors[ladder_name],
                     s=80,
                     marker="x",
@@ -1185,10 +1576,15 @@ def plot_summary_comparison(
     sizes: Optional[List[str]] = None,
     output_path: Optional[Path] = None,
     show: bool = True,
+    include_main: bool = False,
+    use_final_checkpoint: bool = False,
 ) -> None:
     """
     Create a comprehensive summary comparison figure.
     Matches OLMo 3 paper Table 2/3 style visualization.
+
+    When include_main=False, panels 1 & 2 show Easy Suite metrics instead of Main Suite,
+    and the relative comparison (panel 4) uses Easy Suite BPB.
     """
     if not PLOTTING_AVAILABLE:
         print("Warning: matplotlib not available, skipping plots")
@@ -1197,97 +1593,150 @@ def plot_summary_comparison(
     ladder_names = list(ladder_results.keys())
     colors = get_ladder_colors(ladder_names)
 
-    all_sizes = sorted(
+    # Collect unique size labels across all ladders (use human-readable labels for bar charts)
+    all_size_labels = sorted(
         set(
-            size
+            _get_x_label(size_key, data)
             for size_results in ladder_results.values()
-            for size in size_results.keys()
-            if not sizes or size in sizes
+            for size_key, data in size_results.items()
+            if not sizes or get_size_label(size_key) in sizes
         ),
         key=get_size_numeric,
     )
 
-    if not all_sizes:
+    if not all_size_labels:
         print("No sizes to plot")
         return
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    n_rows = 2 if include_main else 1
+    n_cols = 2
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 6 * n_rows))
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
 
-    # 1. Base Main clusters average across sizes
-    ax = axes[0, 0]
-    x = list(range(len(all_sizes)))
+    # Helper: find data for a given size label within a ladder's results
+    def _find_by_label(size_results: Dict[str, Dict[str, Any]], label: str) -> Optional[Dict[str, Any]]:
+        """Find the data entry matching a human-readable size label.
+
+        When use_final_checkpoint=True, picks the checkpoint with the most tokens.
+        Otherwise, averages the suite metrics across all matching checkpoints.
+        """
+        matches = [
+            (size_key, data)
+            for size_key, data in size_results.items()
+            if _get_x_label(size_key, data) == label
+        ]
+        if not matches:
+            return None
+        if len(matches) == 1 or use_final_checkpoint:
+            # Pick the one with most tokens (final)
+            return max(matches, key=lambda m: m[1].get("tokens", 0))[1]
+        # Average suite metrics across all checkpoints for this size
+        averaged: Dict[str, Any] = dict(matches[0][1])  # shallow copy from first match
+        for suite_key in ("base_easy", "base_main", "heldout"):
+            # Collect cluster averages across all checkpoints
+            all_cluster_names: set = set()
+            for _, data in matches:
+                all_cluster_names.update(data.get(suite_key, {}).keys())
+            if not all_cluster_names:
+                continue
+            merged_suite: Dict[str, Dict[str, Any]] = {}
+            for cluster in all_cluster_names:
+                vals = [
+                    data[suite_key][cluster]["avg"]
+                    for _, data in matches
+                    if cluster in data.get(suite_key, {})
+                ]
+                if vals:
+                    merged_suite[cluster] = {"avg": sum(vals) / len(vals)}
+            averaged[suite_key] = merged_suite
+        return averaged
+
+    x = list(range(len(all_size_labels)))
     width = 0.8 / len(ladder_names)
 
-    for i, ladder_name in enumerate(ladder_names):
-        size_results = ladder_results[ladder_name]
-        y_vals = []
-        for size in all_sizes:
-            if size in size_results:
-                base_main = size_results[size].get("base_main", {})
-                if base_main:
-                    y_vals.append(sum(c["avg"] for c in base_main.values()) / len(base_main) * 100)
-                else:
-                    y_vals.append(0)
-            else:
-                y_vals.append(0)
+    if include_main:
+        # Panel 1: Base Main clusters average across sizes
+        ax = axes[0, 0]
 
-        offset = (i - len(ladder_names) / 2 + 0.5) * width
-        ax.bar([xi + offset for xi in x], y_vals, width, label=ladder_name, color=colors[ladder_name])
-
-    ax.set_xlabel("Model Size", fontsize=11)
-    ax.set_ylabel("Average Accuracy (%)", fontsize=11)
-    ax.set_title("OlmoBaseEval Main Suite Average", fontsize=12, fontweight="bold")
-    ax.set_xticks(x)
-    ax.set_xticklabels(all_sizes, fontsize=10)
-    ax.legend(loc="best", fontsize=9)
-    ax.grid(True, alpha=0.3, axis="y")
-
-    # 2. Cluster breakdown at largest size
-    ax = axes[0, 1]
-    main_clusters = list(BASE_MAIN_SUITE.keys())
-    largest_size = all_sizes[-1] if all_sizes else None
-
-    if largest_size:
-        x_clusters = list(range(len(main_clusters)))
         for i, ladder_name in enumerate(ladder_names):
             size_results = ladder_results[ladder_name]
             y_vals = []
-            if largest_size in size_results:
-                base_main = size_results[largest_size].get("base_main", {})
-                for cluster in main_clusters:
-                    if cluster in base_main:
-                        y_vals.append(base_main[cluster]["avg"] * 100)
+            for label in all_size_labels:
+                data = _find_by_label(size_results, label)
+                if data:
+                    base_main = data.get("base_main", {})
+                    if base_main:
+                        y_vals.append(sum(c["avg"] for c in base_main.values()) / len(base_main) * 100)
                     else:
                         y_vals.append(0)
-            else:
-                y_vals = [0] * len(main_clusters)
+                else:
+                    y_vals.append(0)
 
             offset = (i - len(ladder_names) / 2 + 0.5) * width
-            ax.bar(
-                [xi + offset for xi in x_clusters],
-                y_vals,
-                width,
-                label=ladder_name,
-                color=colors[ladder_name],
-            )
+            ax.bar([xi + offset for xi in x], y_vals, width, label=get_display_name(ladder_name), color=colors[ladder_name])
 
-        ax.set_xlabel("Metric Cluster", fontsize=11)
-        ax.set_ylabel("Accuracy (%)", fontsize=11)
-        ax.set_title(f"Main Suite Breakdown at {largest_size}", fontsize=12, fontweight="bold")
-        ax.set_xticks(x_clusters)
-        ax.set_xticklabels(main_clusters, fontsize=9, rotation=30, ha="right")
+        ax.set_xlabel("Model Size", fontsize=11)
+        ax.set_ylabel("Average Accuracy (%)", fontsize=11)
+        ax.set_title("OlmoBaseEval Main Suite Average", fontsize=12, fontweight="bold")
+        ax.set_xticks(x)
+        ax.set_xticklabels(all_size_labels, fontsize=10)
         ax.legend(loc="best", fontsize=9)
         ax.grid(True, alpha=0.3, axis="y")
 
-    # 3. Base Easy BPB comparison
-    ax = axes[1, 0]
+        # Panel 2: Cluster breakdown at largest size
+        ax = axes[0, 1]
+        main_clusters = list(BASE_MAIN_SUITE.keys())
+        largest_label = all_size_labels[-1] if all_size_labels else None
+
+        if largest_label:
+            x_clusters = list(range(len(main_clusters)))
+            for i, ladder_name in enumerate(ladder_names):
+                size_results = ladder_results[ladder_name]
+                data = _find_by_label(size_results, largest_label)
+                y_vals = []
+                if data:
+                    base_main = data.get("base_main", {})
+                    for cluster in main_clusters:
+                        if cluster in base_main:
+                            y_vals.append(base_main[cluster]["avg"] * 100)
+                        else:
+                            y_vals.append(0)
+                else:
+                    y_vals = [0] * len(main_clusters)
+
+                offset = (i - len(ladder_names) / 2 + 0.5) * width
+                ax.bar(
+                    [xi + offset for xi in x_clusters],
+                    y_vals,
+                    width,
+                    label=get_display_name(ladder_name),
+                    color=colors[ladder_name],
+                )
+
+            ax.set_xlabel("Metric Cluster", fontsize=11)
+            ax.set_ylabel("Accuracy (%)", fontsize=11)
+            ax.set_title(f"Main Suite Breakdown at {largest_label}", fontsize=12, fontweight="bold")
+            ax.set_xticks(x_clusters)
+            ax.set_xticklabels(main_clusters, fontsize=9, rotation=30, ha="right")
+            ax.legend(loc="best", fontsize=9)
+            ax.grid(True, alpha=0.3, axis="y")
+
+        # Easy suite and relative comparison go in row 1
+        easy_row = 1
+    else:
+        easy_row = 0
+
+    # Base Easy BPB comparison
+    ax = axes[easy_row, 0]
 
     for i, ladder_name in enumerate(ladder_names):
         size_results = ladder_results[ladder_name]
         y_vals = []
-        for size in all_sizes:
-            if size in size_results:
-                base_easy = size_results[size].get("base_easy", {})
+        for label in all_size_labels:
+            data = _find_by_label(size_results, label)
+            if data:
+                base_easy = data.get("base_easy", {})
                 if base_easy:
                     y_vals.append(sum(c["avg"] for c in base_easy.values()) / len(base_easy))
                 else:
@@ -1296,39 +1745,51 @@ def plot_summary_comparison(
                 y_vals.append(0)
 
         offset = (i - len(ladder_names) / 2 + 0.5) * width
-        ax.bar([xi + offset for xi in x], y_vals, width, label=ladder_name, color=colors[ladder_name])
+        ax.bar([xi + offset for xi in x], y_vals, width, label=get_display_name(ladder_name), color=colors[ladder_name])
 
     ax.set_xlabel("Model Size", fontsize=11)
     ax.set_ylabel("Average BPB", fontsize=11)
     ax.set_title("OlmoBaseEval Easy Suite Average (lower is better)", fontsize=12, fontweight="bold")
-    ax.set_xticks(list(range(len(all_sizes))))
-    ax.set_xticklabels(all_sizes, fontsize=10)
+    ax.set_xticks(list(range(len(all_size_labels))))
+    ax.set_xticklabels(all_size_labels, fontsize=10)
     ax.legend(loc="best", fontsize=9)
     ax.grid(True, alpha=0.3, axis="y")
 
-    # 4. Relative performance comparison
-    ax = axes[1, 1]
+    # Relative performance comparison
+    ax = axes[easy_row, 1]
     if len(ladder_names) > 1:
         baseline_ladder = ladder_names[0]
-        x = list(range(len(all_sizes)))
+        x = list(range(len(all_size_labels)))
+
+        # Choose suite for relative comparison based on include_main flag
+        suite_key = "base_main" if include_main else "base_easy"
 
         for i, ladder_name in enumerate(ladder_names[1:], start=1):
             y_vals = []
-            for size in all_sizes:
-                baseline_data = ladder_results[baseline_ladder].get(size, {})
-                compare_data = ladder_results[ladder_name].get(size, {})
+            for label in all_size_labels:
+                baseline_data = _find_by_label(ladder_results[baseline_ladder], label)
+                compare_data = _find_by_label(ladder_results[ladder_name], label)
 
-                baseline_main = baseline_data.get("base_main", {})
-                compare_main = compare_data.get("base_main", {})
+                baseline_suite = baseline_data.get(suite_key, {}) if baseline_data else {}
+                compare_suite = compare_data.get(suite_key, {}) if compare_data else {}
 
-                if baseline_main and compare_main:
-                    baseline_avg = sum(c["avg"] for c in baseline_main.values()) / len(baseline_main)
-                    compare_avg = sum(c["avg"] for c in compare_main.values()) / len(compare_main)
-                    if baseline_avg > 0:
-                        diff = ((compare_avg - baseline_avg) / baseline_avg) * 100
-                        y_vals.append(diff)
+                if baseline_suite and compare_suite:
+                    baseline_avg = sum(c["avg"] for c in baseline_suite.values()) / len(baseline_suite)
+                    compare_avg = sum(c["avg"] for c in compare_suite.values()) / len(compare_suite)
+                    if include_main:
+                        # For accuracy: relative difference as percentage
+                        if baseline_avg > 0:
+                            diff = ((compare_avg - baseline_avg) / baseline_avg) * 100
+                        else:
+                            diff = 0
                     else:
-                        y_vals.append(0)
+                        # For BPB: percentage difference (compare - baseline) / baseline * 100
+                        # More negative = better (lower BPB is better)
+                        if baseline_avg > 0:
+                            diff = ((compare_avg - baseline_avg) / baseline_avg) * 100
+                        else:
+                            diff = 0
+                    y_vals.append(diff)
                 else:
                     y_vals.append(0)
 
@@ -1336,16 +1797,24 @@ def plot_summary_comparison(
                 [xi + (i - 1) * width for xi in x],
                 y_vals,
                 width,
-                label=f"{ladder_name} vs {baseline_ladder}",
+                label=f"{get_display_name(ladder_name)} vs {get_display_name(baseline_ladder)}",
                 color=colors[ladder_name],
             )
 
         ax.axhline(y=0, color="black", linestyle="-", linewidth=0.5)
         ax.set_xlabel("Model Size", fontsize=11)
-        ax.set_ylabel("Relative Accuracy Difference (%)", fontsize=11)
-        ax.set_title(f"Main Suite Accuracy Relative to {baseline_ladder}", fontsize=12, fontweight="bold")
-        ax.set_xticks(list(range(len(all_sizes))))
-        ax.set_xticklabels(all_sizes, fontsize=10)
+        if include_main:
+            ax.set_ylabel("Relative Accuracy Difference (%)", fontsize=11)
+            ax.set_title(
+                f"Main Suite Accuracy Relative to {get_display_name(baseline_ladder)}", fontsize=12, fontweight="bold"
+            )
+        else:
+            ax.set_ylabel("BPB Difference (%, more negative = better)", fontsize=11)
+            ax.set_title(
+                f"Easy Suite BPB % Difference vs {get_display_name(baseline_ladder)}", fontsize=12, fontweight="bold"
+            )
+        ax.set_xticks(list(range(len(all_size_labels))))
+        ax.set_xticklabels(all_size_labels, fontsize=10)
         ax.legend(loc="best", fontsize=9)
         ax.grid(True, alpha=0.3, axis="y")
     else:
@@ -1378,6 +1847,7 @@ def plot_lm_metrics(
     sizes: Optional[List[str]] = None,
     output_path: Optional[Path] = None,
     show: bool = True,
+    use_final_checkpoint: bool = False,
 ) -> None:
     """Plot language modeling metrics (perplexity) comparison."""
     if not PLOTTING_AVAILABLE:
@@ -1406,82 +1876,61 @@ def plot_lm_metrics(
     ladder_names = list(ladder_results.keys())
     colors = get_ladder_colors(ladder_names)
 
+    any_checkpoints = any(_has_checkpoints(sr) for sr in ladder_results.values())
+
     # Plot average PPL first
     ax = axes_list[0]
-    for ladder_name, size_results in ladder_results.items():
-        points = []
+    dn_labels: set = set()
 
-        for size, data in size_results.items():
-            if sizes and size not in sizes:
-                continue
-            lm = data.get("lm_metrics", {})
-            ppls = [v.get("PPL") for v in lm.values() if v.get("PPL") is not None]
-            if ppls:
-                points.append((get_size_numeric(size), sum(ppls) / len(ppls)))
+    def _extract_avg_ppl(data):
+        lm = data.get("lm_metrics", {})
+        ppls = [v.get("PPL") for v in lm.values() if v.get("PPL") is not None]
+        if ppls:
+            return sum(ppls) / len(ppls)
+        return None
 
-        if points:
-            points.sort(key=lambda p: p[0])
-            x_vals, y_vals = zip(*points)
-            ax.plot(
-                x_vals, y_vals, "o-", label=ladder_name, color=colors[ladder_name], linewidth=2, markersize=8
-            )
+    for ladder_name in ladder_names:
+        _plot_ladder_on_axis(
+            ax, ladder_results[ladder_name], _extract_avg_ppl,
+            get_display_name(ladder_name), colors[ladder_name], sizes,
+            added_dn_labels=dn_labels,
+            use_final_checkpoint=use_final_checkpoint,
+        )
 
-    ax.set_xlabel("Model Size", fontsize=10)
+    ax.set_xlabel("Non-embedding Parameters (M)", fontsize=10)
     ax.set_ylabel("Perplexity", fontsize=10)
     ax.set_title("Average PPL", fontsize=12, fontweight="bold")
     ax.set_xscale("log")
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", fontsize=9)
-
-    all_sizes = sorted(
-        set(
-            size
-            for size_results in ladder_results.values()
-            for size in size_results.keys()
-            if not sizes or size in sizes
-        ),
-        key=get_size_numeric,
-    )
-    ax.set_xticks([get_size_numeric(s) for s in all_sizes])
-    ax.set_xticklabels(all_sizes, fontsize=9, rotation=45)
+    _finalize_legends(ax, any_checkpoints)
 
     # Plot individual task PPLs
     for idx, task in enumerate(tasks_to_plot, start=1):
         if idx >= len(axes_list):
             break
         ax = axes_list[idx]
+        dn_labels_task: set = set()
 
-        for ladder_name, size_results in ladder_results.items():
-            points = []
+        def _extract_task_ppl(data, _t=task):
+            lm = data.get("lm_metrics", {})
+            if _t in lm and "PPL" in lm[_t]:
+                return lm[_t]["PPL"]
+            return None
 
-            for size, data in size_results.items():
-                if sizes and size not in sizes:
-                    continue
-                lm = data.get("lm_metrics", {})
-                if task in lm and "PPL" in lm[task]:
-                    points.append((get_size_numeric(size), lm[task]["PPL"]))
+        for ladder_name in ladder_names:
+            _plot_ladder_on_axis(
+                ax, ladder_results[ladder_name], _extract_task_ppl,
+                get_display_name(ladder_name), colors[ladder_name], sizes,
+                added_dn_labels=dn_labels_task,
+                use_final_checkpoint=use_final_checkpoint,
+            )
 
-            if points:
-                points.sort(key=lambda p: p[0])
-                x_vals, y_vals = zip(*points)
-                ax.plot(
-                    x_vals,
-                    y_vals,
-                    "o-",
-                    label=ladder_name,
-                    color=colors[ladder_name],
-                    linewidth=2,
-                    markersize=8,
-                )
-
-        ax.set_xlabel("Model Size", fontsize=10)
+        ax.set_xlabel("Non-embedding Parameters (M)", fontsize=10)
         ax.set_ylabel("Perplexity", fontsize=10)
         ax.set_title(f"{task}", fontsize=12, fontweight="bold")
         ax.set_xscale("log")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="best", fontsize=9)
-        ax.set_xticks([get_size_numeric(s) for s in all_sizes])
-        ax.set_xticklabels(all_sizes, fontsize=9, rotation=45)
+        _finalize_legends(ax, any_checkpoints)
 
     for idx in range(n_tasks, len(axes_list)):
         axes_list[idx].set_visible(False)
@@ -1504,6 +1953,8 @@ def plot_all(
     sizes: Optional[List[str]] = None,
     output_path: Optional[Path] = None,
     show: bool = True,
+    include_main: bool = False,
+    use_final_checkpoint: bool = False,
 ) -> None:
     """Generate all OlmoBaseEval-style plots."""
     if not PLOTTING_AVAILABLE:
@@ -1511,11 +1962,13 @@ def plot_all(
         return
 
     print("\nGenerating OlmoBaseEval plots...")
-    plot_base_main_metrics(ladder_results, sizes, output_path, show)
-    plot_base_easy_metrics(ladder_results, sizes, output_path, show)
-    plot_scaling_analysis(ladder_results, sizes, output_path, show)
-    plot_summary_comparison(ladder_results, sizes, output_path, show)
-    plot_lm_metrics(ladder_results, sizes, output_path, show)
+    if include_main:
+        plot_base_main_metrics(ladder_results, sizes, output_path, show, use_final_checkpoint=use_final_checkpoint)
+    plot_base_easy_metrics(ladder_results, sizes, output_path, show, use_final_checkpoint=use_final_checkpoint)
+    if include_main:
+        plot_scaling_analysis(ladder_results, sizes, output_path, show)
+    plot_summary_comparison(ladder_results, sizes, output_path, show, include_main=include_main, use_final_checkpoint=use_final_checkpoint)
+    plot_lm_metrics(ladder_results, sizes, output_path, show, use_final_checkpoint=use_final_checkpoint)
     print("Done generating plots.")
 
 
@@ -1606,11 +2059,10 @@ def generate_latex_table(
 def generate_comparison_latex(
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
     sizes: Optional[List[str]] = None,
+    include_main: bool = False,
 ) -> str:
     """Generate LaTeX tables comparing all ladders in OlmoBaseEval format."""
-    main_df = create_base_main_table(ladder_results, sizes)
     easy_df = create_base_easy_table(ladder_results, sizes)
-    heldout_df = create_heldout_table(ladder_results, sizes)
     lm_df = create_lm_table(ladder_results, sizes)
 
     latex_parts = []
@@ -1619,20 +2071,22 @@ def generate_comparison_latex(
     latex_parts.append("")
 
     # Base Main Suite
-    if not main_df.empty:
-        main_cols = [c for c in BASE_MAIN_SUITE.keys() if c in main_df.columns]
-        if main_cols:
-            latex_parts.append(
-                generate_latex_table(
-                    main_df,
-                    caption="OlmoBaseEval Base Main Suite comparison (higher is better)",
-                    label="tab:olmobaseeval_main",
-                    metric_cols=main_cols,
-                    format_pct=True,
-                    higher_is_better=True,
-                    group_by_size=True,
+    if include_main:
+        main_df = create_base_main_table(ladder_results, sizes)
+        if not main_df.empty:
+            main_cols = [c for c in BASE_MAIN_SUITE.keys() if c in main_df.columns]
+            if main_cols:
+                latex_parts.append(
+                    generate_latex_table(
+                        main_df,
+                        caption="OlmoBaseEval Base Main Suite comparison (higher is better)",
+                        label="tab:olmobaseeval_main",
+                        metric_cols=main_cols,
+                        format_pct=True,
+                        higher_is_better=True,
+                        group_by_size=True,
+                    )
                 )
-            )
 
     # Base Easy Suite
     if not easy_df.empty:
@@ -1651,20 +2105,22 @@ def generate_comparison_latex(
             )
 
     # Held-out Suite
-    if not heldout_df.empty:
-        heldout_cols = [c for c in heldout_df.columns if c not in ["Ladder", "Size"]]
-        if heldout_cols:
-            latex_parts.append(
-                generate_latex_table(
-                    heldout_df,
-                    caption="OlmoBaseEval Held-out Suite comparison (higher is better)",
-                    label="tab:olmobaseeval_heldout",
-                    metric_cols=heldout_cols,
-                    format_pct=True,
-                    higher_is_better=True,
-                    group_by_size=True,
+    if include_main:
+        heldout_df = create_heldout_table(ladder_results, sizes)
+        if not heldout_df.empty:
+            heldout_cols = [c for c in heldout_df.columns if c not in ["Ladder", "Size"]]
+            if heldout_cols:
+                latex_parts.append(
+                    generate_latex_table(
+                        heldout_df,
+                        caption="OlmoBaseEval Held-out Suite comparison (higher is better)",
+                        label="tab:olmobaseeval_heldout",
+                        metric_cols=heldout_cols,
+                        format_pct=True,
+                        higher_is_better=True,
+                        group_by_size=True,
+                    )
                 )
-            )
 
     # LM comparison
     if not lm_df.empty:
@@ -1693,12 +2149,20 @@ def export_results(
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
     output_path: Path,
     sizes: Optional[List[str]] = None,
+    include_main: bool = False,
 ) -> None:
     """Export results to various formats."""
-    main_df = create_base_main_table(ladder_results, sizes)
     easy_df = create_base_easy_table(ladder_results, sizes)
-    heldout_df = create_heldout_table(ladder_results, sizes)
     lm_df = create_lm_table(ladder_results, sizes)
+
+    pkl_data: Dict[str, Any] = {
+        "base_easy": easy_df,
+        "lm": lm_df,
+        "raw": ladder_results,
+    }
+
+    main_df = create_base_main_table(ladder_results, sizes) if include_main else pd.DataFrame()
+    heldout_df = create_heldout_table(ladder_results, sizes) if include_main else pd.DataFrame()
 
     # Save as CSV
     if not main_df.empty:
@@ -1712,36 +2176,29 @@ def export_results(
 
     # Save full data as pickle
     pkl_path = output_path / "olmobaseeval_full.pkl"
-    pd.to_pickle(
-        {
-            "base_main": main_df,
-            "base_easy": easy_df,
-            "heldout": heldout_df,
-            "lm": lm_df,
-            "raw": ladder_results,
-        },
-        pkl_path,
-    )
+    pkl_data["base_main"] = main_df
+    pkl_data["heldout"] = heldout_df
+    pd.to_pickle(pkl_data, pkl_path)
 
     # Generate markdown
     md_path = output_path / "olmobaseeval_results.md"
     with open(md_path, "w") as f:
         f.write("# OlmoBaseEval Results\n\n")
 
-        f.write("## Base Main Suite (accuracy/pass@k, higher is better)\n\n")
         if not main_df.empty:
+            f.write("## Base Main Suite (accuracy/pass@k, higher is better)\n\n")
             f.write(main_df.to_markdown(index=False))
-        f.write("\n\n")
+            f.write("\n\n")
 
         f.write("## Base Easy Suite (BPB, lower is better)\n\n")
         if not easy_df.empty:
             f.write(easy_df.to_markdown(index=False))
         f.write("\n\n")
 
-        f.write("## Held-out Suite (accuracy, higher is better)\n\n")
         if not heldout_df.empty:
+            f.write("## Held-out Suite (accuracy, higher is better)\n\n")
             f.write(heldout_df.to_markdown(index=False))
-        f.write("\n\n")
+            f.write("\n\n")
 
         f.write("## Language Modeling (perplexity, lower is better)\n\n")
         if not lm_df.empty:
@@ -1749,15 +2206,16 @@ def export_results(
         f.write("\n")
 
     # Generate LaTeX
-    latex_output = generate_comparison_latex(ladder_results, sizes)
+    latex_output = generate_comparison_latex(ladder_results, sizes, include_main=include_main)
     latex_path = output_path / "olmobaseeval_tables.tex"
     with open(latex_path, "w") as f:
         f.write(latex_output)
 
     print(f"\nExported OlmoBaseEval results to: {output_path}")
-    print(
-        f"  CSV files: olmobaseeval_main.csv, olmobaseeval_easy.csv, olmobaseeval_heldout.csv, lm_comparison.csv"
-    )
+    csv_files = "olmobaseeval_easy.csv, lm_comparison.csv"
+    if include_main:
+        csv_files = "olmobaseeval_main.csv, " + csv_files + ", olmobaseeval_heldout.csv"
+    print(f"  CSV files: {csv_files}")
     print(f"  LaTeX tables: {latex_path}")
     print(f"  Markdown: {md_path}")
     print(f"  Full data: {pkl_path}")
@@ -1836,20 +2294,64 @@ Examples:
         action="store_true",
         help="Print LaTeX tables (booktabs format) to stdout",
     )
+    parser.add_argument(
+        "--all-checkpoints",
+        action="store_true",
+        help="Use all checkpoints from each model size (not just the final one). "
+        "This gives more data points for scaling analysis.",
+    )
+    parser.add_argument(
+        "--include-pre-decay",
+        action="store_true",
+        help="Include pre-decay checkpoints in addition to post-decay. "
+        "By default, only post-decay checkpoints (D/N = 10, 20, 40, 80, 160, ...) are used.",
+    )
+    parser.add_argument(
+        "--curve-final",
+        action="store_true",
+        help="Draw the scaling curve through the final (highest D/N) checkpoint per model size "
+        "instead of the mean of all checkpoints. Only affects --all-checkpoints mode.",
+    )
+    parser.add_argument(
+        "--main",
+        action="store_true",
+        help="Include Base Main Suite results (accuracy/pass@k metrics). "
+        "By default only the Easy Suite (BPB) is shown since most main metrics "
+        "are unavailable for ladder runs.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Directory to save figures to (creates it if needed)",
+    )
 
     args = parser.parse_args()
 
     if not args.ladder_dir and not args.compare:
         parser.error("Either --ladder-dir or --compare must be specified")
 
+    # Determine figure output directory
+    figure_output = None
+    if args.output:
+        figure_output = Path(args.output).expanduser()
+        figure_output.mkdir(parents=True, exist_ok=True)
+    elif args.export:
+        figure_output = Path(args.export).expanduser()
+        figure_output.mkdir(parents=True, exist_ok=True)
+
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     if args.ladder_dir:
         ladder_dir = Path(args.ladder_dir).expanduser()
         ladder_name = ladder_dir.name
-        print(f"\nAnalyzing ladder: {ladder_name}")
+        print(f"\nAnalyzing ladder: {get_display_name(ladder_name)}")
         print(f"Directory: {ladder_dir}")
-        ladder_results[ladder_name] = analyze_ladder(ladder_dir)
+        ladder_results[ladder_name] = analyze_ladder(
+            ladder_dir,
+            ladder_name=ladder_name,
+            use_all_checkpoints=args.all_checkpoints,
+            post_decay_only=not args.include_pre_decay,
+        )
 
     if args.compare:
         for spec in args.compare:
@@ -1860,39 +2362,132 @@ Examples:
                 name = Path(path).name
 
             ladder_dir = Path(path).expanduser()
-            print(f"\nAnalyzing ladder: {name}")
+            print(f"\nAnalyzing ladder: {get_display_name(name)}")
             print(f"Directory: {ladder_dir}")
-            ladder_results[name] = analyze_ladder(ladder_dir)
+            ladder_results[name] = analyze_ladder(
+                ladder_dir,
+                ladder_name=name,
+                use_all_checkpoints=args.all_checkpoints,
+                post_decay_only=not args.include_pre_decay,
+            )
 
     group_by_size = not args.group_by_ladder
 
     # Create and display tables
-    main_df = create_base_main_table(ladder_results, args.sizes)
+    include_main = args.main
     easy_df = create_base_easy_table(ladder_results, args.sizes)
-    heldout_df = create_heldout_table(ladder_results, args.sizes)
     lm_df = create_lm_table(ladder_results, args.sizes)
 
-    print_base_main_table(main_df, group_by_size=group_by_size)
+    if include_main:
+        main_df = create_base_main_table(ladder_results, args.sizes)
+        heldout_df = create_heldout_table(ladder_results, args.sizes)
+        print_base_main_table(main_df, group_by_size=group_by_size)
+
     print_base_easy_table(easy_df, group_by_size=group_by_size)
-    print_heldout_table(heldout_df, group_by_size=group_by_size)
+
+    if include_main:
+        print_heldout_table(heldout_df, group_by_size=group_by_size)  # defined above in same guard
+
     print_lm_table(lm_df, group_by_size=group_by_size)
+
+    # Print relative Easy Suite improvement summary when comparing multiple ladders
+    ladder_names = list(ladder_results.keys())
+    if len(ladder_names) > 1:
+        baseline_name = ladder_names[0]
+        baseline_results = ladder_results[baseline_name]
+
+        # Collect all size labels across ladders
+        all_size_labels = sorted(
+            set(
+                get_size_label(sk)
+                for sr in ladder_results.values()
+                for sk in sr.keys()
+                if not args.sizes or get_size_label(sk) in args.sizes
+            ),
+            key=get_size_numeric,
+        )
+
+        print("\n" + "=" * 100)
+        print(f"EASY SUITE RELATIVE IMPROVEMENT vs baseline ({get_display_name(baseline_name)})")
+        print("  (positive = better, i.e. lower BPB)")
+        print("=" * 100)
+
+        easy_clusters = list(BASE_EASY_SUITE.keys())
+        header = f"{'Size':<8} {'Ladder':<25}"
+        for c in easy_clusters:
+            header += f" {c:>14}"
+        header += f" {'Avg':>14}"
+        print(header)
+        print("-" * 100)
+
+        for size_label in all_size_labels:
+            # Find baseline data for this size
+            baseline_data = None
+            for sk, sd in baseline_results.items():
+                if get_size_label(sk) == size_label:
+                    baseline_data = sd
+                    break
+
+            if baseline_data is None:
+                continue
+
+            baseline_easy = baseline_data.get("base_easy", {})
+            if not baseline_easy:
+                continue
+
+            for ladder_name in ladder_names[1:]:
+                compare_data = None
+                for sk, sd in ladder_results[ladder_name].items():
+                    if get_size_label(sk) == size_label:
+                        compare_data = sd
+                        break
+
+                if compare_data is None:
+                    continue
+
+                compare_easy = compare_data.get("base_easy", {})
+                line = f"{size_label:<8} {get_display_name(ladder_name):<25}"
+                diffs = []
+                for cluster in easy_clusters:
+                    b_val = baseline_easy.get(cluster, {}).get("avg")
+                    c_val = compare_easy.get(cluster, {}).get("avg")
+                    if b_val is not None and c_val is not None and b_val > 0:
+                        # Lower BPB is better, so positive diff = improvement
+                        diff_pct = ((b_val - c_val) / b_val) * 100
+                        diffs.append(diff_pct)
+                        sign = "+" if diff_pct >= 0 else ""
+                        line += f" {sign}{diff_pct:>12.2f}%"
+                    else:
+                        line += f" {'-':>14}"
+                if diffs:
+                    avg_diff = sum(diffs) / len(diffs)
+                    sign = "+" if avg_diff >= 0 else ""
+                    line += f" {sign}{avg_diff:>12.2f}%"
+                else:
+                    line += f" {'-':>14}"
+                print(line)
+            print()
+
+        print("=" * 100)
 
     # Print raw metrics if requested
     if args.raw:
         print("\n\nRAW METRICS:")
         print("-" * 50)
         for ladder_name, sizes_data in ladder_results.items():
-            print(f"\n{ladder_name}:")
-            for size, data in sizes_data.items():
-                if args.sizes and size not in args.sizes:
+            print(f"\n{get_display_name(ladder_name)}:")
+            for size_key, data in sizes_data.items():
+                size_label = get_size_label(size_key)
+                if args.sizes and size_label not in args.sizes:
                     continue
-                print(f"\n  {size} (step {data['step']}, {data['tokens']:,} tokens):")
+                print(f"\n  {size_key} (step {data['step']}, {data['tokens']:,} tokens):")
 
-                print("    Base Main Suite:")
-                for cluster, cluster_data in data.get("base_main", {}).items():
-                    print(f"      {cluster}: {cluster_data['avg']*100:.1f}%")
-                    for task, val in cluster_data.get("tasks", {}).items():
-                        print(f"        - {task}: {val*100:.1f}%")
+                if include_main:
+                    print("    Base Main Suite:")
+                    for cluster, cluster_data in data.get("base_main", {}).items():
+                        print(f"      {cluster}: {cluster_data['avg']*100:.1f}%")
+                        for task, val in cluster_data.get("tasks", {}).items():
+                            print(f"        - {task}: {val*100:.1f}%")
 
                 print("    Base Easy Suite (BPB):")
                 for cluster, cluster_data in data.get("base_easy", {}).items():
@@ -1905,22 +2500,22 @@ Examples:
         print("=" * 80)
         print("\n% Add to preamble: \\usepackage{booktabs}\n")
 
-        latex_output = generate_comparison_latex(ladder_results, args.sizes)
+        latex_output = generate_comparison_latex(ladder_results, args.sizes, include_main=include_main)
         print(latex_output)
 
     # Generate plots if requested
     if args.plot:
-        output_path = Path(args.export).expanduser() if args.export else None
-        show_plots = args.export is None
-        if output_path:
-            output_path.mkdir(parents=True, exist_ok=True)
-        plot_all(ladder_results, args.sizes, output_path, show=show_plots)
+        show_plots = figure_output is None
+        plot_all(
+            ladder_results, args.sizes, figure_output, show=show_plots,
+            include_main=include_main, use_final_checkpoint=args.curve_final,
+        )
 
     # Export if requested
     if args.export:
         export_path = Path(args.export).expanduser()
         export_path.mkdir(parents=True, exist_ok=True)
-        export_results(ladder_results, export_path, args.sizes)
+        export_results(ladder_results, export_path, args.sizes, include_main=include_main)
 
 
 if __name__ == "__main__":
