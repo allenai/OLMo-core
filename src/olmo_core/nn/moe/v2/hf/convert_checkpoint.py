@@ -190,7 +190,7 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
 
             # routed experts
             for expert_idx in range(hf_model.config.n_routed_experts):
-                mapping_hf_to_olmo[f'model.layers.{layer_idx}.mlp.experts_no_rep.{expert_idx}.gate_proj.weight'] = (
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.mlp.experts.{expert_idx}.gate_proj.weight'] = (
                     f'module.blocks.{layer_idx}.routed_experts.w_up_gate.main',
                     partial(_extract_experts_up_gate_proj,
                             num_experts=hf_model.config.n_routed_experts,
@@ -199,7 +199,7 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
                             weight_name='gate',
                             expert_idx=expert_idx)
                 )
-                mapping_hf_to_olmo[f'model.layers.{layer_idx}.mlp.experts_no_rep.{expert_idx}.up_proj.weight'] = (
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.mlp.experts.{expert_idx}.up_proj.weight'] = (
                     f'module.blocks.{layer_idx}.routed_experts.w_up_gate.main',
                     partial(_extract_experts_up_gate_proj,
                             num_experts=hf_model.config.n_routed_experts,
@@ -209,7 +209,7 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
                             expert_idx=expert_idx)
                 )
 
-                mapping_hf_to_olmo[f'model.layers.{layer_idx}.mlp.experts_no_rep.{expert_idx}.down_proj.weight'] = (
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.weight'] = (
                     f'module.blocks.{layer_idx}.routed_experts.w_down.main',
                     partial(_extract_expert_down_proj,
                             num_experts=hf_model.config.n_routed_experts,
@@ -238,7 +238,7 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
 
 if __name__ == "__main__":
     CKPT_PATH = '/workspace/checkpoint/OLMoE3-abl-260102-018a_1024d1024a_12L768M768S_32E4K1S_abl/step10000'
-    output_path = '/workspace/tmp/step10000_hf_model3'
+    output_path = '/workspace/tmp/step10000_hf_model_rep'
     main_sd = load_state_dict_direct(
         dir=os.path.join(CKPT_PATH, 'model_and_optim'),
         process_group=None, pre_download=True, work_dir='/workspace/tmp'

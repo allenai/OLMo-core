@@ -1,7 +1,8 @@
 import torch
 import transformers
-from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
-from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+from transformers import AutoModelForCausalLM
+# from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
+# from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
 
 
 @torch.no_grad()
@@ -68,7 +69,7 @@ if __name__ == "__main__":
 
     # option 2: load a model from converted checkpoint
     load_path = '/workspace/tmp/step10000_hf_model3'
-    model = Olmo3MoeForCausalLM.from_pretrained(load_path).to(device).to(torch.bfloat16)
+    model = AutoModelForCausalLM.from_pretrained(load_path, trust_remote_code=True).to(device).to(torch.bfloat16)
 
     input_ids = '/workspace/tmp/input_ids.pt'
     with open(input_ids, 'rb') as f:

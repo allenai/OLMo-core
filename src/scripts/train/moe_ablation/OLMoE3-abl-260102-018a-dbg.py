@@ -86,7 +86,7 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
     return new_num_layers, split_points
 
 
-SEQUENCE_LENGTH = 512
+SEQUENCE_LENGTH = 8192
 
 
 
@@ -142,7 +142,7 @@ else:
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=False
+USE_COMPILE=True
 USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
@@ -496,7 +496,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=2,
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=4,
         ignore_fingerprint_mismatch=True,
     )
 
