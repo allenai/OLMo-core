@@ -37,8 +37,7 @@ uv run gantry run \
     --gpus 0 \
     --yes \
     --allow-dirty \
-    --timeout -1 \
-    --show-logs \
+    --timeout 0 \
     --aws-config-secret "${BEAKER_USERNAME}_AWS_CONFIG" \
     --aws-credentials-secret "${BEAKER_USERNAME}_AWS_CREDENTIALS" \
     --exec-method bash \
