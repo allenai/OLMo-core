@@ -85,13 +85,16 @@ class EnvironmentVariables:
     weka_endpoint_url: str = ""
 
     @staticmethod
-    def get_secret_name(field: dt.Field, client: Beaker | None = None) -> str:
+    def get_secret_name(
+        field: dt.Field, client: Beaker | None = None, is_upper: bool = True
+    ) -> str:
         with ExitStack() as stack:
             client = stack.enter_context(Beaker.from_env() if client is None else client)
+            user_name = client.user_name.upper() if is_upper else client.user_name.lower()
             assert client is not None, "Client shouldn't be None here"
 
             if field.name != "google_credentials":
-                return f"{client.user_name.upper()}_{field.name.upper()}"
+                return f"{user_name}_{field.name.upper()}"
             else:
                 return "GOOGLE_CREDENTIALS"
 
@@ -103,19 +106,24 @@ class EnvironmentVariables:
             workspace = client.workspace.get(workspace_name)
 
             for field in dt.fields(cls):
-                secret_name = cls.get_secret_name(field, client)
                 try:
+                    secret_name = cls.get_secret_name(field, client=client, is_upper=True)
                     secret_object = client.secret.get(secret_name, workspace=workspace)
+                    print(f"WARNING: uppercase secret {secret_name} not found, trying lowercase...")
                 except BeakerSecretNotFound as e:
-                    if field.default is dt.MISSING and field.default_factory is dt.MISSING:
-                        raise ValueError(
-                            f"Secret {secret_name} not found in workspace {workspace.name}"
-                        ) from e
-                    else:
-                        print(
-                            f"Secret {secret_name} not found in workspace {workspace.name}; skipping..."
-                        )
-                        continue
+                    try:
+                        secret_name = cls.get_secret_name(field, client=client, is_upper=False)
+                        secret_object = client.secret.get(secret_name, workspace=workspace)
+                    except BeakerSecretNotFound as e:
+                        if field.default is dt.MISSING and field.default_factory is dt.MISSING:
+                            raise ValueError(
+                                f"Secret {secret_name} not found in workspace {workspace.name}"
+                            ) from e
+                        else:
+                            print(
+                                f"Secret {secret_name} not found in workspace {workspace.name}; skipping..."
+                            )
+                            continue
 
                 secret_value = client.secret.read(secret_object, workspace=workspace)
                 env_vars[field.name] = secret_value
