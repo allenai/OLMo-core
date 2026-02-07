@@ -309,7 +309,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         round_nearest=1,
     )
     stepfun_training_temperature = stepfun_learning_rate**2 / stepfun_base_global_batch_size
-    adjusted_learning_rate = math.sqrt(stepfun_training_temperature * INITIAL_BATCH_SIZE)
+    adjusted_learning_rate = math.sqrt(stepfun_training_temperature * INITIAL_BATCH_SIZE // 4)
 
     # Apply custom multipliers
     if lr_multiplier != 1.0:
@@ -342,7 +342,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=INITIAL_BATCH_SIZE, seed=34521, num_workers=8
+        global_batch_size=INITIAL_BATCH_SIZE // 4, seed=34521, num_workers=8
     )
 
     # Train module config
@@ -402,12 +402,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             "batchwup",
             BatchSizeSchedulerCallback(
                 batch_sizes=[
+                    INITIAL_BATCH_SIZE // 4,
+                    INITIAL_BATCH_SIZE // 2,
                     INITIAL_BATCH_SIZE,
                     INITIAL_BATCH_SIZE * 2,
                     INITIAL_BATCH_SIZE * 4,
                 ],
                 schedule=[
                     Duration.tokens(0),
+                    Duration.tokens(167_772_160_000 // 4),
+                    Duration.tokens(167_772_160_000 // 2),
                     Duration.tokens(167_772_160_000),
                     Duration.tokens(503_316_480_000),
                 ],
