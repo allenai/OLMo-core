@@ -25,6 +25,7 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
+    "mamba-ssm>=2.3.0",
 ]
 
 [project.urls]
