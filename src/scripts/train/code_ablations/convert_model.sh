@@ -33,6 +33,7 @@ uv run gantry run \
     --priority high \
     --description "Converting ${MODEL_PATH} to HuggingFace format" \
     --cluster 'ai2/*-cirrascale' \
+    --no-logs \
     --gpus 0 \
     --yes \
     --allow-dirty \
