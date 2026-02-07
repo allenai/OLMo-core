@@ -224,6 +224,12 @@ def main():
         required=True,
         help="Output directory for modified checkpoint",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to config.json to include in output. If not provided, copies from base model.",
+    )
     args = parser.parse_args()
 
     # Initialize distributed for saving
@@ -270,15 +276,26 @@ def main():
         del base_state_dict
         del norm_state_dict
 
-        # Save result
-        log.info(f"Saving modified checkpoint to {args.output_dir}")
+        # Prepare output directory structure
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        model_and_optim_dir = output_dir / "model_and_optim"
+
+        # Save result to model_and_optim subdirectory
+        log.info(f"Saving modified checkpoint to {model_and_optim_dir}")
         save_state_dict(
-            args.output_dir,
+            str(model_and_optim_dir),
             result_state_dict,
             save_overwrite=True,
         )
 
-        log.info("Done!")
+        # Save checkpoint metadata
+        save_checkpoint_metadata(output_dir)
+
+        # Copy config.json
+        copy_config(args.model, output_dir, args.config)
+
+        log.info(f"Done! Checkpoint saved to {output_dir}")
 
     finally:
         dist.destroy_process_group()
