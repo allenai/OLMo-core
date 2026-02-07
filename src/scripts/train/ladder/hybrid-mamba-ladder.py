@@ -95,17 +95,17 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
         num_params = size_spec.approx_num_params
         mbz: int
         if num_params <= 100e6:
-            mbz = 2 * 4096
-        elif num_params <= 190e6:
-            mbz = 2 * 4096
-        elif num_params <= 370e6:
-            mbz = 2 * 4096
-        elif num_params <= 760e6:
-            mbz = 2 * 4096
-        elif num_params <= 1e9:
             mbz = 4 * 4096
+        elif num_params <= 190e6:
+            mbz = 8 * 4096
+        elif num_params <= 370e6:
+            mbz = 4 * 4096
+        elif num_params <= 760e6:
+            mbz = 6 * 4096
+        elif num_params <= 1e9:
+            mbz = 8 * 4096
         elif num_params <= 3e9:
-            mbz = 2 * 4096
+            mbz = 4 * 4096
         elif num_params <= 7e9:
             mbz = 2 * 4096
         else:
@@ -168,6 +168,10 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
         if model.n_layers - 1 not in attention_indices:
             attention_indices.append(model.n_layers - 1)
         model.block.fla_hybrid_attention_indices = sorted(attention_indices)
+
+        # Mamba2 has its own internal expansion/gating, so strip the redundant
+        # feed-forward from FLA layers while keeping it for attention layers.
+        model.block.fla_hybrid_strip_fla_feed_forward = True
 
         # Configure the non-attention part of the block to be Mamba2.
         model.block.fla = FLAConfig(

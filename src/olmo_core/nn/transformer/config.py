@@ -195,6 +195,13 @@ class TransformerBlockConfig(ModuleConfig):
     If None, defaults to alternating pattern (even indices use attention).
     Can be a list of specific indices, e.g., [0, 2, 5, 7] or [0, -1] for first and last.
     """
+    fla_hybrid_strip_fla_feed_forward: bool = False
+    """
+    For fla_hybrid blocks, if True, FLA layers will not include a feed-forward sub-layer.
+    This is appropriate for FLA layer types like Mamba2 that already have their own internal
+    expansion/gating (in_proj → gate + SSM → out_proj), making an additional MLP redundant.
+    Attention layers in the hybrid will still keep their feed-forward.
+    """
     name: TransformerBlockType = TransformerBlockType.default
     """
     The block type.
@@ -251,6 +258,7 @@ class TransformerBlockConfig(ModuleConfig):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.pop("fla_hybrid_attention_indices", None)
+        kwargs.pop("fla_hybrid_strip_fla_feed_forward", None)
         kwargs.update(
             d_model=d_model,
             block_idx=block_idx,
@@ -302,6 +310,8 @@ class TransformerBlockConfig(ModuleConfig):
                 else:
                     n_heads = self.sequence_mixer.n_heads
                     kwargs.pop("sequence_mixer")
+                    if self.fla_hybrid_strip_fla_feed_forward:
+                        kwargs.pop("feed_forward", None)
                     return FLABlock(n_heads=n_heads, **kwargs)
             else:
                 raise NotImplementedError(self.name)
