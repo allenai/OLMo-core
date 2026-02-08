@@ -273,6 +273,11 @@ class Config:
                     if (ignore_fields := getattr(cls_o, "_IGNORE_FIELDS", None)) is not None:
                         new_dict = {k: v for k, v in new_dict.items() if k not in ignore_fields}
 
+                    # Remove the "type" field since the class is already resolved via _CLASS_.
+                    # This avoids a registry lookup on the resolved subclass, whose own
+                    # _registry may be empty (registrations live on the parent class).
+                    new_dict.pop("type", None)
+
                     try:
                         return decode(cls_o, new_dict)  # type: ignore[arg-type]
                     except Exception as e:
