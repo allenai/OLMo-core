@@ -309,7 +309,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         round_nearest=1,
     )
     stepfun_training_temperature = stepfun_learning_rate**2 / stepfun_base_global_batch_size
-    adjusted_learning_rate = math.sqrt(stepfun_training_temperature * INITIAL_BATCH_SIZE // 4)
+    adjusted_learning_rate = math.sqrt(stepfun_training_temperature * INITIAL_BATCH_SIZE / 4)
 
     # Apply custom multipliers
     if lr_multiplier != 1.0:
