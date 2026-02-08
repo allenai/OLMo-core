@@ -56,7 +56,7 @@ from olmo_core.model_ladder.analysis import (
     plot_scaling_law_3d,
     plot_scaling_law_3d_comparison,
 )
-from olmo_core.model_ladder.analysis.model_specs import compute_specs_for_size
+from olmo_core.model_ladder.analysis.model_specs import OLMO3_SPECS_BY_NAME, compute_specs_for_size
 from olmo_core.model_ladder.analysis.model_specs import fmt as fmt_number
 
 # Default loss column to use for fitting
@@ -888,25 +888,74 @@ def fit_domain_ladders(
 # =============================================================================
 
 
+def _param_ci_str(bootstrap, param_name: str, point_value: float, fmt: str = ".4f") -> str:
+    """Format a parameter value with bootstrap CI below in smaller font using makecell."""
+    val_str = f"{point_value:{fmt}}"
+    if bootstrap is None:
+        ci_line = r"{\color{red}$\pm$ 0.0}"
+    else:
+        bootstrap_values = [getattr(f.fitted_params, param_name) for f in bootstrap.fits]
+        lo = np.percentile(bootstrap_values, 2.5)
+        hi = np.percentile(bootstrap_values, 97.5)
+        ci_half = (hi - lo) / 2
+        ci_line = f"$\\pm$ {ci_half:{fmt}}"
+    return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
+
+
+def _param_ci_str_sci(bootstrap, param_name: str, point_value: float) -> str:
+    """Format a parameter value (scientific notation) with bootstrap CI below in smaller font."""
+    val_str = f"{point_value:.2e}"
+    if bootstrap is None:
+        ci_line = r"{\color{red}$\pm$ 0.0}"
+    else:
+        bootstrap_values = [getattr(f.fitted_params, param_name) for f in bootstrap.fits]
+        lo = np.percentile(bootstrap_values, 2.5)
+        hi = np.percentile(bootstrap_values, 97.5)
+        ci_half = (hi - lo) / 2
+        ci_line = f"$\\pm$ {ci_half:.2e}"
+    return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
+
+
+def _derived_ci_str(bootstrap, attr_name: str, point_value: float, fmt: str = ".4f") -> str:
+    """Format a derived property (a_opt/b_opt) with bootstrap CI below in smaller font."""
+    val_str = f"{point_value:{fmt}}"
+    if bootstrap is None:
+        ci_line = r"{\color{red}$\pm$ 0.0}"
+    else:
+        bootstrap_values = [getattr(f.fitted_params, attr_name) for f in bootstrap.fits]
+        lo = np.percentile(bootstrap_values, 2.5)
+        hi = np.percentile(bootstrap_values, 97.5)
+        ci_half = (hi - lo) / 2
+        ci_line = f"$\\pm$ {ci_half:{fmt}}"
+    return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
+
+
 def generate_scaling_params_latex_table(fits: Dict[str, Tuple]) -> str:
     """
     Generate LaTeX table of fitted scaling law parameters (Table 1).
 
     Columns: Architecture, E, A, α, B, β, a_opt, b_opt, R²
+    With bootstrap confidence intervals when available.
     """
     lines = []
-    lines.append(r"\begin{table}[htbp]")
+    lines.append(r"\begin{table*}[htbp]")
     lines.append(r"    \centering")
     lines.append(
         r"    \caption{Fitted Chinchilla scaling law parameters for "
-        r"$L(N, D) = E + A/N^\alpha + B/D^\beta$.}"
+        r"$L(N, D) = E + A/N^\alpha + B/D^\beta$."
+    )
+    lines.append(
+        r"    95\% bootstrap CI shown below each estimate "
+        r"({\color{red}red} placeholders indicate no bootstrap was run).}"
     )
     lines.append(r"    \label{tab:scaling-law-parameters}")
-    lines.append(r"    \begin{tabular}{lrrrrrrr}")
+    lines.append(r"    \small")
+    lines.append(r"    \renewcommand{\arraystretch}{1.2}")
+    lines.append(r"    \begin{tabular}{l*{8}{c}}")
     lines.append(r"        \toprule")
     lines.append(
         r"        Architecture & $E$ & $A$ & $\alpha$ & $B$ & $\beta$ "
-        r"& $a_\text{opt}$ & $R^2$ \\"
+        r"& $a_\text{opt}$ & $b_\text{opt}$ & $R^2$ \\"
     )
     lines.append(r"        \midrule")
 
@@ -915,9 +964,18 @@ def generate_scaling_params_latex_table(fits: Dict[str, Tuple]) -> str:
         r2 = fit.r_squared
         r2_str = f"{r2:.4f}" if r2 is not None else "---"
         display = get_display_name(name)
+
+        E_str = _param_ci_str(bootstrap, "E", p.E)
+        A_str = _param_ci_str_sci(bootstrap, "A", p.A)
+        alpha_str = _param_ci_str(bootstrap, "alpha", p.alpha)
+        B_str = _param_ci_str_sci(bootstrap, "B", p.B)
+        beta_str = _param_ci_str(bootstrap, "beta", p.beta)
+        a_opt_str = _derived_ci_str(bootstrap, "a_opt", p.a_opt)
+        b_opt_str = _derived_ci_str(bootstrap, "b_opt", p.b_opt)
+
         lines.append(
-            f"        {display} & {p.E:.4f} & {p.A:.2e} & {p.alpha:.4f} "
-            f"& {p.B:.2e} & {p.beta:.4f} & {p.a_opt:.4f} & {r2_str} \\\\"
+            f"        {display} & {E_str} & {A_str} & {alpha_str} "
+            f"& {B_str} & {beta_str} & {a_opt_str} & {b_opt_str} & {r2_str} \\\\"
         )
 
     # Add efficiency ratio row if exactly 2 ladders
@@ -933,18 +991,21 @@ def generate_scaling_params_latex_table(fits: Dict[str, Tuple]) -> str:
             f"        Ratio ({get_display_name(ladder_names[0])} / "
             f"{get_display_name(ladder_names[1])}) "
             f"& --- & {a_ratio:.2f}$\\times$ & --- "
-            f"& {b_ratio:.2f}$\\times$ & --- & --- & --- \\\\"
+            f"& {b_ratio:.2f}$\\times$ & --- & --- & --- & --- \\\\"
         )
 
     lines.append(r"        \bottomrule")
     lines.append(r"    \end{tabular}")
-    lines.append(r"\end{table}")
+    lines.append(r"\end{table*}")
     return "\n".join(lines)
 
 
 def generate_model_config_latex_table(ladder_names: List[str]) -> str:
     """
     Generate LaTeX table of model configurations for scaling ladder (Table 2).
+
+    Includes architecture-independent config (d_model, n_heads, n_layers)
+    plus per-ladder non-embedding parameter counts.
     """
     # Collect all sizes across ladders by probing which sizes are computable
     all_sizes = set()
@@ -965,23 +1026,29 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
     lines.append(r"    \caption{Model configurations used in scaling ladder experiments.}")
     lines.append(r"    \label{tab:scaling-ladder-configs}")
 
-    # Build column spec: Size + one params column per ladder + tokens column
+    # Build column spec: Size + 3 config cols + one params column per ladder + D/N
     n_ladders = len(ladder_names)
-    col_spec = "l" + "r" * n_ladders + "r"
+    col_spec = "l" + "rrr" + "r" * n_ladders + "r"
     lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
     lines.append(r"        \toprule")
 
     # Header
-    header_parts = [r"Size"]
+    header_parts = [r"Size", r"$d$", r"$h$", r"$l$"]
     for name in ladder_names:
         display = get_display_name(name).replace("_", r"\_")
-        header_parts.append(f"Params ({display})")
-    header_parts.append("Max D/N")
+        header_parts.append(f"$N$ ({display})")
+    header_parts.append("D/N")
     lines.append("        " + " & ".join(header_parts) + r" \\")
     lines.append(r"        \midrule")
 
     for size in sizes:
-        row_parts = [size]
+        # Model config columns (shared across architectures)
+        spec = OLMO3_SPECS_BY_NAME.get(size)
+        if spec is not None:
+            row_parts = [size, str(spec.d_model), str(spec.n_heads), str(spec.n_layers)]
+        else:
+            row_parts = [size, "---", "---", "---"]
+
         for name in ladder_names:
             params = get_corrected_param_count(name, size)
             if params is not None:
@@ -1024,7 +1091,10 @@ def generate_efficiency_latex_table(
     lines = []
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"    \centering")
-    lines.append(r"    \caption{Projected efficiency gains at key loss milestones.}")
+    lines.append(
+        r"    \caption{Projected efficiency gains at key loss milestones. "
+        r"Loss targets are 5 linearly-spaced values spanning the range of observed training losses.}"
+    )
     lines.append(r"    \label{tab:scaling-efficiency-gains}")
     lines.append(r"    \begin{tabular}{r" + "rr" * len(ladder_names) + r"r}")
     lines.append(r"        \toprule")
@@ -1034,13 +1104,13 @@ def generate_efficiency_latex_table(
     for name in ladder_names:
         display = get_display_name(name).replace("_", r"\_")
         header1_parts.append(r"\multicolumn{2}{c}{" + display + "}")
-    header1_parts.append("Data")
+    header1_parts.append("")
     lines.append("        " + " & ".join(header1_parts) + r" \\")
 
     # Header row 2
     header2_parts = [r"Loss"]
     for _ in ladder_names:
-        header2_parts.extend(["Tokens (B)", r"$N$ (M)"])
+        header2_parts.extend(["$D$ (M)", "$N$ (M)"])
     header2_parts.append("Savings")
     lines.append("        " + " & ".join(header2_parts) + r" \\")
     lines.append(r"        \midrule")
@@ -1054,7 +1124,7 @@ def generate_efficiency_latex_table(
             n_needed = solve_n_for_target_loss(fit, target_loss, 20 * reference_n)
             d_values.append(d_needed)
             if np.isfinite(d_needed):
-                row_parts.append(f"{d_needed/1e9:.0f}")
+                row_parts.append(f"{d_needed/1e6:.0f}")
             else:
                 row_parts.append(r"$\infty$")
             if np.isfinite(n_needed):
@@ -1096,78 +1166,99 @@ def _escape_latex(s: str) -> str:
 try:
     from ladder_metrics_analysis import LATEX_PLOT_STYLES, _get_latex_style
 except ImportError:
-    # Fallback styles if ladder_metrics_analysis is not importable
+    # Fallback styles if ladder_metrics_analysis is not importable (AI2 color scheme)
     LATEX_PLOT_STYLES: Dict[str, Dict[str, str]] = {  # type: ignore[no-redef]
+        "olmo3": {
+            "color_def": r"\definecolor{clrTransformer}{HTML}{012E59}",
+            "color_name": "clrTransformer",
+            "mark": "square*",
+            "mark_options": "fill=clrTransformer",
+            "line_style": "",
+        },
         "olmo3-1": {
-            "color_def": r"\definecolor{clrTransformer}{HTML}{2563EB}",
+            "color_def": r"\definecolor{clrTransformer}{HTML}{012E59}",
             "color_name": "clrTransformer",
             "mark": "square*",
             "mark_options": "fill=clrTransformer",
             "line_style": "",
         },
         "olmo3-2": {
-            "color_def": r"\definecolor{clrTransformerV2}{HTML}{3B82F6}",
+            "color_def": r"\definecolor{clrTransformerV2}{HTML}{265ED4}",
             "color_name": "clrTransformerV2",
             "mark": "square*",
             "mark_options": "fill=clrTransformerV2",
             "line_style": "",
         },
         "olmo3-3": {
-            "color_def": r"\definecolor{clrTransformerV3}{HTML}{60A5FA}",
+            "color_def": r"\definecolor{clrTransformerV3}{HTML}{00D5FF}",
             "color_name": "clrTransformerV3",
             "mark": "square*",
             "mark_options": "fill=clrTransformerV3",
             "line_style": "",
         },
         "pure-gdn": {
-            "color_def": r"\definecolor{clrGDN}{HTML}{DC2626}",
+            "color_def": r"\definecolor{clrGDN}{HTML}{FF9100}",
             "color_name": "clrGDN",
             "mark": "triangle*",
             "mark_options": "fill=clrGDN",
             "line_style": "",
         },
+        "pure-mamba": {
+            "color_def": r"\definecolor{clrMamba}{HTML}{B86800}",
+            "color_name": "clrMamba",
+            "mark": "diamond*",
+            "mark_options": "fill=clrMamba",
+            "line_style": "",
+        },
         "hybrid-gdn": {
-            "color_def": r"\definecolor{clrHybGDN}{HTML}{7C3AED}",
+            "color_def": r"\definecolor{clrHybGDN}{HTML}{F0529C}",
             "color_name": "clrHybGDN",
             "mark": "*",
             "mark_options": "fill=clrHybGDN",
             "line_style": "",
         },
         "hybrid-gdn-half": {
-            "color_def": r"\definecolor{clrHybGDNHalf}{HTML}{A78BFA}",
+            "color_def": r"\definecolor{clrHybGDNHalf}{HTML}{C4387E}",
             "color_name": "clrHybGDNHalf",
-            "mark": "o",
-            "mark_options": "",
+            "mark": "square",
+            "mark_options": "draw=clrHybGDNHalf, thick",
             "line_style": "dashed",
         },
         "hybrid-gdn-eight": {
-            "color_def": r"\definecolor{clrHybGDNEight}{HTML}{5B21B6}",
+            "color_def": r"\definecolor{clrHybGDNEight}{HTML}{A02060}",
             "color_name": "clrHybGDNEight",
             "mark": "triangle",
-            "mark_options": "",
-            "line_style": "dashed",
+            "mark_options": "draw=clrHybGDNEight, thick",
+            "line_style": "densely dashed",
         },
-        "pure-mamba": {
-            "color_def": r"\definecolor{clrMamba}{HTML}{D97706}",
-            "color_name": "clrMamba",
-            "mark": "diamond*",
-            "mark_options": "fill=clrMamba",
-            "line_style": "",
+        "hybrid-gdn-middle": {
+            "color_def": r"\definecolor{clrHybGDNMid}{HTML}{009BB8}",
+            "color_name": "clrHybGDNMid",
+            "mark": "pentagon*",
+            "mark_options": "fill=clrHybGDNMid",
+            "line_style": "densely dotted",
         },
         "hybrid-mamba": {
-            "color_def": r"\definecolor{clrHybMamba}{HTML}{0891B2}",
+            "color_def": r"\definecolor{clrHybMamba}{HTML}{265ED4}",
             "color_name": "clrHybMamba",
-            "mark": "pentagon*",
-            "mark_options": "fill=clrHybMamba",
+            "mark": "diamond",
+            "mark_options": "draw=clrHybMamba, thick",
+            "line_style": "densely dotted",
+        },
+        "hybrid-gdn-middle-no-final": {
+            "color_def": r"\definecolor{clrHybGDNMidNoFinal}{HTML}{007A94}",
+            "color_name": "clrHybGDNMidNoFinal",
+            "mark": "pentagon",
+            "mark_options": "draw=clrHybGDNMidNoFinal, thick",
             "line_style": "densely dotted",
         },
     }
 
     _FALLBACK_COLORS = [
-        ("clrFallbackA", "9333EA"),
-        ("clrFallbackB", "0EA5E9"),
-        ("clrFallbackC", "10B981"),
-        ("clrFallbackD", "F59E0B"),
+        ("clrFallbackA", "012E59"),
+        ("clrFallbackB", "FF9100"),
+        ("clrFallbackC", "F0529C"),
+        ("clrFallbackD", "265ED4"),
     ]
     _FALLBACK_MARKS = ["*", "square*", "triangle*", "diamond*"]
 
@@ -1207,7 +1298,7 @@ def _make_coordinate_table(xs: np.ndarray, ys: np.ndarray) -> str:
     return " ".join(pairs)
 
 
-def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
+def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> str:
     """
     Generate Figure 1: Main Scaling Law Fits (2x2 pgfplots groupplot).
 
@@ -1217,10 +1308,18 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
     Panel B: Loss vs Parameters (all architectures)
     Panel C: Loss vs Tokens / data budget (all architectures)
     Panel D: Residuals (all architectures)
+
+    Args:
+        fits: Dict mapping ladder name to (fit, N, D, L, F, sizes, bootstrap).
+        log_loss: If True, use log scale on the y-axis for loss panels (a-c),
+            making the power-law relationships appear linear.
     """
     ladder_names = list(fits.keys())
+    loss_label = "Loss (log)" if log_loss else "Loss"
+    ymode_str = "    ymode=log,\n" if log_loss else ""
+    fig_suffix = "-log" if log_loss else ""
     lines = []
-    lines.append("% Figure 1: Main Scaling Law Fits")
+    lines.append(f"% Figure 1{fig_suffix}: Main Scaling Law Fits")
     lines.append("% Generated by fit_chinchilla_scaling_laws.py")
     lines.append(r"% Requires: \usepackage{pgfplots}, \usepgfplotslibrary{groupplots}")
     lines.append("")
@@ -1241,7 +1340,15 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
     lines.append(r"    grid style={gray!30},")
     lines.append(r"    tick label style={font=\small},")
     lines.append(r"    label style={font=\small},")
-    lines.append(r"    legend style={font=\footnotesize, cells={anchor=west}},")
+    legend_name = f"scalinglegend{fig_suffix.replace('-', '')}"
+    lines.append(f"    legend to name={legend_name},")
+    lines.append(r"    legend style={")
+    lines.append(r"        font=\footnotesize,")
+    lines.append(r"        cells={anchor=west},")
+    lines.append(f"        legend columns={len(ladder_names)},")
+    lines.append(r"        draw=none,")
+    lines.append(r"        column sep=8pt,")
+    lines.append(r"    },")
     lines.append(r"]")
 
     # Panel A: Loss vs FLOPs (all architectures overlaid)
@@ -1249,10 +1356,11 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
     lines.append("% Panel A: Loss vs FLOPs")
     lines.append(r"\nextgroupplot[")
     lines.append(r"    xmode=log,")
+    if ymode_str:
+        lines.append(ymode_str.rstrip("\n"))
     lines.append(r"    xlabel={FLOPs (PetaFLOPs)},")
-    lines.append(r"    ylabel={Loss},")
+    lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(a) Loss vs Compute},")
-    lines.append(r"    legend pos=north east,")
     lines.append(r"]")
 
     for idx, name in enumerate(ladder_names):
@@ -1290,16 +1398,16 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
     lines.append("% Panel B: Loss vs Parameters")
     lines.append(r"\nextgroupplot[")
     lines.append(r"    xmode=log,")
+    if log_loss:
+        lines.append(r"    ymode=log,")
     lines.append(r"    xlabel={Parameters},")
-    lines.append(r"    ylabel={Loss},")
+    lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(b) Loss vs Parameters},")
-    lines.append(r"    legend pos=north east,")
     lines.append(r"]")
 
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
         style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
 
         unique_N = np.unique(N)
         mean_dn = np.mean([np.mean(D[N == n]) / n for n in unique_N])
@@ -1314,23 +1422,23 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
             f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
             f"coordinates {{{_make_coordinate_table(N, L)}}};"
         )
-        # Fitted curve
+        # Fitted curve (forget plot — legend already added in panel A)
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
         lines.append(
-            f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
+            f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
             f"coordinates {{{_make_coordinate_table(N_range, L_curve)}}};"
         )
-        lines.append(f"\\addlegendentry{{{display}}}")
 
     # Panel C: Loss vs Tokens (all overlaid, data efficiency comparison)
     lines.append("")
     lines.append("% Panel C: Loss vs Tokens (data efficiency comparison)")
     lines.append(r"\nextgroupplot[")
     lines.append(r"    xmode=log,")
+    if log_loss:
+        lines.append(r"    ymode=log,")
     lines.append(r"    xlabel={Training Tokens},")
-    lines.append(r"    ylabel={Loss},")
+    lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(c) Loss vs Data Budget},")
-    lines.append(r"    legend pos=north east,")
     lines.append(r"]")
 
     # Use a shared median N across all ladders for fair comparison
@@ -1342,7 +1450,6 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
         style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
 
         L_curve = fit.predict_loss(shared_median_N, D_range)
 
@@ -1353,13 +1460,12 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
             f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
             f"coordinates {{{_make_coordinate_table(D, L)}}};"
         )
-        # Fitted curve
+        # Fitted curve (forget plot — legend already added in panel A)
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
         lines.append(
-            f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
+            f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
             f"coordinates {{{_make_coordinate_table(D_range, L_curve)}}};"
         )
-        lines.append(f"\\addlegendentry{{{display}}}")
 
     # Panel D: Residuals (all architectures)
     lines.append("")
@@ -1369,7 +1475,6 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
     lines.append(r"    xlabel={Parameters},")
     lines.append(r"    ylabel={Relative Error (\%)},")
     lines.append(r"    title={(d) Fit Residuals},")
-    lines.append(r"    legend pos=north east,")
     lines.append(r"]")
 
     lines.append(
@@ -1380,24 +1485,26 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
         style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
 
         predicted = fit.predict_loss(N, D)
         residuals_pct = (L - predicted) / L * 100
 
+        # forget plot — legend already added in panel A
         lines.append(
             f"\\addplot[only marks, mark={style['mark']}, "
             f"{style['color_name']}, mark size=1.5pt, "
-            f"mark options={{{style['mark_options']}}}, opacity=0.6] "
+            f"mark options={{{style['mark_options']}}}, opacity=0.6, forget plot] "
             f"coordinates {{{_make_coordinate_table(N, residuals_pct)}}};"
         )
-        lines.append(f"\\addlegendentry{{{display}}}")
 
     lines.append("")
     lines.append(r"\end{groupplot}")
     lines.append(r"\end{tikzpicture}")
+    lines.append(r"\vspace{0.2em}\\")
+    lines.append(f"\\ref{{{legend_name}}}")
 
     # Build caption with fitted parameter annotations
+    log_note = " Loss axes use log scale." if log_loss else ""
     caption_parts = [
         r"\caption{Scaling law fits $L(N,D) = E + A/N^\alpha + B/D^\beta$ "
         r"for all architectures. "
@@ -1415,10 +1522,12 @@ def generate_paper_figure_1(fits: Dict[str, Tuple]) -> str:
         r"\textbf{(a)} Loss vs compute. "
         r"\textbf{(b)} Loss vs parameter count. "
         r"\textbf{(c)} Loss vs data budget. "
-        r"\textbf{(d)} Fit residuals.}"
+        r"\textbf{(d)} Fit residuals."
+        + log_note
+        + "}"
     )
     lines.append("".join(caption_parts))
-    lines.append(r"\label{fig:scaling-law-fit}")
+    lines.append(f"\\label{{fig:scaling-law-fit{fig_suffix}}}")
     lines.append(r"\end{figure*}")
     return "\n".join(lines)
 
@@ -1461,7 +1570,15 @@ def generate_paper_figure_2(
     lines.append(f"    ylabel={{Tokens to reach loss $={target_loss:.3f}$}},")
     lines.append(r"    grid=major,")
     lines.append(r"    grid style={gray!30},")
-    lines.append(r"    legend pos=north west,")
+    lines.append(r"    legend style={")
+    lines.append(r"        font=\footnotesize,")
+    lines.append(r"        cells={anchor=west},")
+    lines.append(r"        at={(0.5,-0.15)},")
+    lines.append(r"        anchor=north,")
+    lines.append(f"        legend columns={len(ladder_names)},")
+    lines.append(r"        draw=none,")
+    lines.append(r"        column sep=8pt,")
+    lines.append(r"    },")
     lines.append(r"    tick label style={font=\small},")
     lines.append(r"    label style={font=\small},")
     lines.append(r"]")
@@ -1518,7 +1635,9 @@ def generate_paper_figure_2(
     lines.append(r"\end{axis}")
     lines.append(r"\end{tikzpicture}")
     lines.append(
-        r"\caption{Projected data requirements across scales. "
+        r"\caption{Projected data requirements across scales "
+        f"(target loss $= {target_loss:.3f}$, "
+        r"selected as the median of all observed training losses). "
         r"Extrapolating from scaling ladder experiments, the hybrid architecture "
         r"requires substantially fewer training tokens to reach equivalent loss. "
         r"Shaded region shows the data savings.}"
@@ -1568,7 +1687,14 @@ def generate_paper_figure_3(
     lines.append(r"    grid style={gray!30},")
     lines.append(r"    tick label style={font=\tiny},")
     lines.append(r"    label style={font=\small},")
-    lines.append(r"    legend style={font=\tiny},")
+    lines.append(r"    legend to name=domainlegend,")
+    lines.append(r"    legend style={")
+    lines.append(r"        font=\footnotesize,")
+    lines.append(r"        cells={anchor=west},")
+    lines.append(f"        legend columns={len(ladder_names)},")
+    lines.append(r"        draw=none,")
+    lines.append(r"        column sep=8pt,")
+    lines.append(r"    },")
     lines.append(r"]")
 
     for domain_idx, domain in enumerate(domains):
@@ -1576,12 +1702,11 @@ def generate_paper_figure_3(
         lines.append("")
         lines.append(f"% Panel: {domain_clean}")
         lines.append(r"\nextgroupplot[")
+        lines.append(r"    ymode=log,")
         lines.append(r"    xlabel={Training Tokens},")
         if domain_idx == 0:
             lines.append(r"    ylabel={BPB},")
         lines.append(f"    title={{{_escape_latex(domain_clean)}}},")
-        if domain_idx == n_panels - 1:
-            lines.append(r"    legend pos=north east,")
         lines.append(r"]")
 
         for ladder_idx, name in enumerate(ladder_names):
@@ -1593,25 +1718,30 @@ def generate_paper_figure_3(
 
             fit, N, D, L, F, sizes = domain_fits[name][domain]
 
-            # Scatter
+            # Scatter (always forget plot)
             lines.append(
                 f"\\addplot[only marks, mark={style['mark']}, "
                 f"{style['color_name']}, mark size=1pt, "
-                f"mark options={{{style['mark_options']}}}, opacity=0.5] "
+                f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
                 f"coordinates {{{_make_coordinate_table(D, L)}}};"
             )
 
-            # Fitted curve
+            # Fitted curve — add legend entry only in the first panel
             D_range = np.logspace(np.log10(D.min()), np.log10(D.max()), 100)
             median_N = np.median(np.unique(N))
             L_curve = fit.predict_loss(median_N, D_range)
             line_style = f", {style['line_style']}" if style.get("line_style") else ""
-            lines.append(
-                f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
-                f"coordinates {{{_make_coordinate_table(D_range, L_curve)}}};"
-            )
-            if domain_idx == n_panels - 1:
+            if domain_idx == 0:
+                lines.append(
+                    f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
+                    f"coordinates {{{_make_coordinate_table(D_range, L_curve)}}};"
+                )
                 lines.append(f"\\addlegendentry{{{display}}}")
+            else:
+                lines.append(
+                    f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
+                    f"coordinates {{{_make_coordinate_table(D_range, L_curve)}}};"
+                )
 
         # Annotate domain-specific B coefficients for all ladders
         b_parts = []
@@ -1629,6 +1759,8 @@ def generate_paper_figure_3(
     lines.append("")
     lines.append(r"\end{groupplot}")
     lines.append(r"\end{tikzpicture}")
+    lines.append(r"\vspace{0.2em}\\")
+    lines.append(r"\ref{domainlegend}")
     lines.append(
         r"\caption{Domain-specific scaling laws show the hybrid advantage is consistent "
         r"across Math, Code, and QA domains.}"
@@ -1667,7 +1799,14 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
     lines.append(r"    grid style={gray!30},")
     lines.append(r"    tick label style={font=\small},")
     lines.append(r"    label style={font=\small},")
-    lines.append(r"    legend style={font=\footnotesize, cells={anchor=west}},")
+    lines.append(r"    legend to name=residuallegend,")
+    lines.append(r"    legend style={")
+    lines.append(r"        font=\footnotesize,")
+    lines.append(r"        cells={anchor=west},")
+    lines.append(f"        legend columns={len(ladder_names)},")
+    lines.append(r"        draw=none,")
+    lines.append(r"        column sep=8pt,")
+    lines.append(r"    },")
     lines.append(r"]")
 
     # Panel A: Residual scatter
@@ -1677,7 +1816,6 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
     lines.append(r"    xlabel={Predicted Loss},")
     lines.append(r"    ylabel={Relative Error (\%)},")
     lines.append(r"    title={(a) Fit Residuals},")
-    lines.append(r"    legend pos=north east,")
     lines.append(r"]")
 
     # Zero line
@@ -1710,14 +1848,12 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
     lines.append(r"    ylabel={Mean $|$Relative Error$|$ (\%)},")
     lines.append(r"    title={(b) Error by Scale},")
     lines.append(r"    ymin=0,")
-    lines.append(r"    legend pos=north east,")
     lines.append(r"    xmode=log,")
     lines.append(r"]")
 
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
         style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
 
         predicted = fit.predict_loss(N, D)
         abs_rel_err = np.abs((L - predicted) / L) * 100
@@ -1737,12 +1873,12 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
             n_arr = np.array(n_vals)
             err_arr = np.array(err_vals)
             line_style = f", {style['line_style']}" if style.get("line_style") else ""
+            # forget plot — legend already added in panel A
             lines.append(
                 f"\\addplot[{style['color_name']}, thick, mark={style['mark']}, "
-                f"mark size=2pt, mark options={{{style['mark_options']}}}{line_style}] "
+                f"mark size=2pt, mark options={{{style['mark_options']}}}{line_style}, forget plot] "
                 f"coordinates {{{_make_coordinate_table(n_arr, err_arr)}}};"
             )
-            lines.append(f"\\addlegendentry{{{display}}}")
 
     # Reference line at 1%
     lines.append(
@@ -1757,6 +1893,8 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
     lines.append("")
     lines.append(r"\end{groupplot}")
     lines.append(r"\end{tikzpicture}")
+    lines.append(r"\vspace{0.2em}\\")
+    lines.append(r"\ref{residuallegend}")
 
     # Caption with overall R² values
     r2_parts = []
@@ -1781,8 +1919,17 @@ def plot_fits_2d(
     fits: Dict[str, Tuple],
     output_path: Optional[Path] = None,
     show: bool = True,
+    log_loss: bool = False,
 ):
-    """Generate 2D matplotlib plots for scaling law fits."""
+    """Generate 2D matplotlib plots for scaling law fits.
+
+    Args:
+        fits: Dict mapping ladder name to (fit, N, D, L, F, sizes, bootstrap).
+        output_path: Directory to save the plot to.
+        show: Whether to display the plot interactively.
+        log_loss: If True, use log scale on the y-axis for loss panels,
+            making the power-law relationships appear linear.
+    """
     try:
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
@@ -1806,7 +1953,8 @@ def plot_fits_2d(
 
     # Create a cleaner 2x2 layout
     fig, axes = plt.subplots(2, 2, figsize=(14, 11))
-    fig.suptitle("Chinchilla Scaling Law Analysis", fontsize=16, fontweight="bold", y=0.98)
+    title_suffix = " (log-loss)" if log_loss else ""
+    fig.suptitle(f"Chinchilla Scaling Law Analysis{title_suffix}", fontsize=16, fontweight="bold", y=0.98)
 
     # ============================================================
     # Top Left: Loss vs Parameters (all ladders, with fitted curves)
@@ -1845,6 +1993,8 @@ def plot_fits_2d(
         ax.scatter(N, L, color=color, s=40, alpha=0.6, edgecolors="white", linewidth=0.5, zorder=5)
 
     ax.set_xscale("log")
+    if log_loss:
+        ax.set_yscale("log")
     ax.set_xlabel("Non-embedding Parameters", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("Scaling Laws: Loss vs Parameters", fontsize=13, fontweight="bold")
@@ -1951,6 +2101,8 @@ def plot_fits_2d(
     )
 
     ax.set_xscale("log")
+    if log_loss:
+        ax.set_yscale("log")
     ax.set_xlabel("Tokens", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("Loss vs Training Tokens", fontsize=13, fontweight="bold")
@@ -1977,6 +2129,8 @@ def plot_fits_2d(
         )
 
     ax.set_xscale("log")
+    if log_loss:
+        ax.set_yscale("log")
     ax.set_xlabel("Non-embedding Parameters", fontsize=12)
     ax.set_ylabel("Loss (at Chinchilla-optimal D=20N)", fontsize=12)
     ax.set_title("Compute-Optimal Scaling Comparison", fontsize=13, fontweight="bold")
@@ -2030,13 +2184,15 @@ def plot_fits_2d(
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     if output_path:
+        suffix = "_log" if log_loss else ""
+        save_name = f"chinchilla_scaling_fits_2d{suffix}.png"
         fig.savefig(
-            output_path / "chinchilla_scaling_fits_2d.png",
+            output_path / save_name,
             dpi=200,
             bbox_inches="tight",
             facecolor="white",
         )
-        print(f"\nSaved 2D plot to: {output_path / 'chinchilla_scaling_fits_2d.png'}")
+        print(f"\nSaved 2D plot to: {output_path / save_name}")
 
     if show:
         plt.show()
@@ -2245,6 +2401,7 @@ def plot_loss_vs_flops(
     fits: Dict[str, Tuple],
     output_path: Optional[Path] = None,
     show: bool = True,
+    log_loss: bool = False,
 ):
     """Plot loss vs FLOPs for all models across all ladders."""
     try:
@@ -2279,7 +2436,8 @@ def plot_loss_vs_flops(
     colors = {name: color_palette[i % len(color_palette)] for i, name in enumerate(fits.keys())}
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle("Loss vs Training FLOPs", fontsize=16, fontweight="bold", y=0.98)
+    title_suffix = " (log-loss)" if log_loss else ""
+    fig.suptitle(f"Loss vs Training FLOPs{title_suffix}", fontsize=16, fontweight="bold", y=0.98)
 
     # ============================================================
     # Left: Loss vs FLOPs (scatter + fitted curve per ladder)
@@ -2312,6 +2470,8 @@ def plot_loss_vs_flops(
         )
 
     ax.set_xscale("log")
+    if log_loss:
+        ax.set_yscale("log")
     ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("All Checkpoints", fontsize=13, fontweight="bold")
@@ -2377,6 +2537,8 @@ def plot_loss_vs_flops(
     ax.legend(handles=legend_handles, loc="upper right", fontsize=9, framealpha=0.9)
 
     ax.set_xscale("log")
+    if log_loss:
+        ax.set_yscale("log")
     ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("Per Model Size", fontsize=13, fontweight="bold")
@@ -2386,7 +2548,8 @@ def plot_loss_vs_flops(
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     if output_path:
-        save_path = output_path / "loss_vs_flops.png"
+        suffix = "_log" if log_loss else ""
+        save_path = output_path / f"loss_vs_flops{suffix}.png"
         fig.savefig(str(save_path), dpi=200, bbox_inches="tight", facecolor="white")
         print(f"\nSaved loss vs FLOPs plot to: {save_path}")
 
@@ -2745,6 +2908,7 @@ def main():
     # Generate 2D plots
     if args.plot:
         plot_fits_2d(fits, args.output, show=(args.output is None))
+        plot_fits_2d(fits, args.output, show=(args.output is None), log_loss=True)
 
     # Generate iso-FLOP plots
     if args.plot_isoflop:
@@ -2753,6 +2917,7 @@ def main():
     # Generate loss vs FLOPs plots
     if args.plot_flops:
         plot_loss_vs_flops(fits, args.output, show=(args.output is None))
+        plot_loss_vs_flops(fits, args.output, show=(args.output is None), log_loss=True)
 
     # Generate 3D plots
     if args.plot_3d:
@@ -2796,12 +2961,18 @@ def main():
         figures_dir = output_dir / "figures"
         figures_dir.mkdir(parents=True, exist_ok=True)
 
-        # Figure 1: Main Scaling Law Fits
+        # Figure 1: Main Scaling Law Fits (linear and log-loss versions)
         fig1 = generate_paper_figure_1(fits)
         fig1_path = figures_dir / "scaling-law-fit.tex"
         with open(fig1_path, "w") as f:
             f.write(fig1)
         print(f"\nSaved Figure 1 to: {fig1_path}")
+
+        fig1_log = generate_paper_figure_1(fits, log_loss=True)
+        fig1_log_path = figures_dir / "scaling-law-fit-log.tex"
+        with open(fig1_log_path, "w") as f:
+            f.write(fig1_log)
+        print(f"Saved Figure 1 (log-loss) to: {fig1_log_path}")
 
         # Figure 2: Efficiency Projections
         fig2 = generate_paper_figure_2(fits)

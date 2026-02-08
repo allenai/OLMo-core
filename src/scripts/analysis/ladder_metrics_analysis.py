@@ -154,8 +154,18 @@ CORRECTED_PARAM_COUNTS: Dict[str, Dict[str, int]] = {
 
 def get_corrected_param_count(ladder_name: str, size: str) -> Optional[int]:
     """
-    Look up the corrected non-embedding parameter count for a given ladder and size.
+    Get the non-embedding parameter count for a given ladder and size.
+
+    First tries to compute from architecture specs via :func:`compute_specs_for_size`.
+    Falls back to ``CORRECTED_PARAM_COUNTS`` for architectures that cannot be computed
+    (e.g., Mamba variants).
     """
+    # Try computing from architecture specs first
+    computed = compute_specs_for_size(ladder_name, size)
+    if computed is not None:
+        return computed["non_embed_params"]
+
+    # Fallback to legacy hardcoded values
     ladder_lower = ladder_name.lower()
 
     # Try exact match first
@@ -612,9 +622,7 @@ def analyze_ladder(
 
                 # Training FLOPs = 3 * tokens * fwd_flops_per_token (fwd + bwd)
                 train_flops = (
-                    3.0 * float(tokens) * flops_per_token
-                    if flops_per_token is not None
-                    else None
+                    3.0 * float(tokens) * flops_per_token if flops_per_token is not None else None
                 )
 
                 results[checkpoint_key] = {
@@ -657,9 +665,7 @@ def analyze_ladder(
 
             # Training FLOPs = 3 * tokens * fwd_flops_per_token (fwd + bwd)
             train_flops_final = (
-                3.0 * float(final_tokens) * flops_per_token
-                if flops_per_token is not None
-                else None
+                3.0 * float(final_tokens) * flops_per_token if flops_per_token is not None else None
             )
 
             results[size] = {
@@ -996,20 +1002,40 @@ def print_lm_table(df: pd.DataFrame, group_by_size: bool = True) -> None:
 
 
 def get_ladder_colors(ladder_names: List[str]) -> Dict[str, str]:
-    """Get distinct colors for each ladder (OLMo 3 paper color scheme)."""
-    colors = [
-        "#00838F",  # Teal (OLMo 3)
-        "#E65100",  # Orange
-        "#1565C0",  # Blue
-        "#2E7D32",  # Green
-        "#6A1B9A",  # Purple
-        "#C62828",  # Red
-        "#4527A0",  # Deep purple
-        "#00695C",  # Dark teal
-        "#EF6C00",  # Dark orange
-        "#1976D2",  # Lighter blue
+    """Get distinct colors for each ladder (AI2 color scheme)."""
+    # Map known ladders to AI2 colors
+    ai2_map = {
+        "olmo3": "#012E59",  # olmoDarkBlue
+        "olmo3-1": "#012E59",
+        "olmo3-2": "#265ED4",  # olmoBlue
+        "olmo3-3": "#00D5FF",  # olmoTeal
+        "pure-gdn": "#FF9100",  # olmoOrange
+        "pure-mamba": "#B86800",  # warm brown
+        "hybrid-gdn": "#F0529C",  # ai2pink
+        "hybrid-gdn-half": "#C4387E",  # deep magenta
+        "hybrid-gdn-eight": "#A02060",  # dark rose
+        "hybrid-gdn-middle": "#009BB8",  # shifted teal
+        "hybrid-gdn-middle-no-final": "#007A94",  # darker teal
+        "hybrid-mamba": "#265ED4",  # olmoBlue
+    }
+    fallback_colors = [
+        "#012E59",
+        "#FF9100",
+        "#F0529C",
+        "#265ED4",
+        "#00D5FF",
+        "#B86800",
+        "#C4387E",
+        "#A02060",
     ]
-    return {name: colors[i % len(colors)] for i, name in enumerate(ladder_names)}
+    result = {}
+    for i, name in enumerate(ladder_names):
+        key = name.lower()
+        if key in ai2_map:
+            result[name] = ai2_map[key]
+        else:
+            result[name] = fallback_colors[i % len(fallback_colors)]
+    return result
 
 
 def get_size_label(size_key: str) -> str:
@@ -1055,6 +1081,41 @@ def _get_dn_ratio(size_key: str) -> Optional[int]:
         except (ValueError, IndexError):
             pass
     return None
+
+
+# Chinchilla-optimal D/N ratio (tokens_per_param = 20).
+_CHINCHILLA_DN = 20
+
+# Mapping from raw D/N values (post-decay) to Chinchilla multiples.
+# Standard schedule: 10, 20, 40, 80, 160  →  0.5x, 1x, 2x, 4x, 8x
+# 760M schedule:      9, 18, 36, 72, 144  →  0.5x, 1x, 2x, 4x, 8x
+_DN_TO_CHINCHILLA_MULT: Dict[int, float] = {
+    9: 0.5,
+    10: 0.5,
+    18: 1.0,
+    20: 1.0,
+    36: 2.0,
+    40: 2.0,
+    72: 4.0,
+    80: 4.0,
+    144: 8.0,
+    160: 8.0,
+}
+
+
+def _dn_to_chinchilla_label(dn: int) -> str:
+    """Convert a raw D/N ratio to a Chinchilla-multiple label like '0.5x C'."""
+    mult = _DN_TO_CHINCHILLA_MULT.get(dn)
+    if mult is not None:
+        # Format nicely: 0.5x, 1x, 2x, 4x, 8x
+        if mult == int(mult):
+            return f"{int(mult)}x C"
+        return f"{mult}x C"
+    # Fallback: compute from raw ratio
+    mult = dn / _CHINCHILLA_DN
+    if mult == int(mult):
+        return f"{int(mult)}x C"
+    return f"{mult:.1f}x C"
 
 
 def _has_checkpoints(size_results: Dict[str, Dict[str, Any]]) -> bool:
@@ -1117,8 +1178,13 @@ def _plot_ladder_on_axis_flops(
             points.sort(key=lambda p: p[0])
             x_vals, y_vals = zip(*points)
             ax.plot(
-                x_vals, y_vals, "o-",
-                label=ladder_name, color=color, linewidth=2, markersize=6,
+                x_vals,
+                y_vals,
+                "o-",
+                label=ladder_name,
+                color=color,
+                linewidth=2,
+                markersize=6,
             )
         return
 
@@ -1153,8 +1219,14 @@ def _plot_ladder_on_axis_flops(
             frac = 0.25 + 0.75 * (dn - dn_min) / dn_span
             pt_color = shade_color(color, frac)
             ax.scatter(
-                f_val, y_val, color=pt_color, s=30, alpha=0.7,
-                edgecolors="white", linewidth=0.3, zorder=4,
+                f_val,
+                y_val,
+                color=pt_color,
+                s=30,
+                alpha=0.7,
+                edgecolors="white",
+                linewidth=0.3,
+                zorder=4,
             )
 
     # Curve through each model size's checkpoints (final or mean)
@@ -1177,25 +1249,28 @@ def _plot_ladder_on_axis_flops(
     if added_dn_labels is None:
         added_dn_labels = set()
 
-    if len(sorted_dn) <= 5:
-        legend_dns = sorted_dn
-    else:
-        step = max(1, len(sorted_dn) // 4)
-        legend_dns = sorted_dn[::step]
-        if sorted_dn[-1] not in legend_dns:
-            legend_dns.append(sorted_dn[-1])
+    # Map to unique Chinchilla multiples for legend
+    chinchilla_mults: Dict[str, Tuple[int, float]] = {}  # label -> (representative_dn, frac)
+    for dn in sorted_dn:
+        label = _dn_to_chinchilla_label(dn)
+        if label not in chinchilla_mults:
+            frac = 0.25 + 0.75 * (dn - dn_min) / dn_span
+            chinchilla_mults[label] = (dn, frac)
 
     dn_handles = []
-    for dn in legend_dns:
-        if dn in added_dn_labels:
+    for label, (_dn_val, frac) in chinchilla_mults.items():
+        if label in added_dn_labels:
             continue
-        added_dn_labels.add(dn)
-        frac = 0.25 + 0.75 * (dn - dn_min) / dn_span
+        added_dn_labels.add(label)
         dn_handles.append(
             Line2D(
-                [0], [0], marker="o", color="w",
+                [0],
+                [0],
+                marker="o",
+                color="w",
                 markerfacecolor=shade_color("#555555", frac),
-                markersize=7, label=f"D/N={dn}",
+                markersize=7,
+                label=label,
             )
         )
 
@@ -1337,21 +1412,19 @@ def _plot_ladder_on_axis(
     if added_dn_labels is None:
         added_dn_labels = set()
 
-    # Pick a few representative D/N values for the legend
-    if len(sorted_dn) <= 5:
-        legend_dns = sorted_dn
-    else:
-        step = max(1, len(sorted_dn) // 4)
-        legend_dns = sorted_dn[::step]
-        if sorted_dn[-1] not in legend_dns:
-            legend_dns.append(sorted_dn[-1])
+    # Map to unique Chinchilla multiples for legend
+    chinchilla_mults: Dict[str, Tuple[int, float]] = {}  # label -> (representative_dn, frac)
+    for dn in sorted_dn:
+        label = _dn_to_chinchilla_label(dn)
+        if label not in chinchilla_mults:
+            frac = 0.25 + 0.75 * (dn - dn_min) / dn_span
+            chinchilla_mults[label] = (dn, frac)
 
     dn_handles = []
-    for dn in legend_dns:
-        if dn in added_dn_labels:
+    for label, (_dn_val, frac) in chinchilla_mults.items():
+        if label in added_dn_labels:
             continue
-        added_dn_labels.add(dn)
-        frac = 0.25 + 0.75 * (dn - dn_min) / dn_span
+        added_dn_labels.add(label)
         dn_handles.append(
             Line2D(
                 [0],
@@ -1360,16 +1433,11 @@ def _plot_ladder_on_axis(
                 color="w",
                 markerfacecolor=shade_color("#555555", frac),
                 markersize=7,
-                label=f"D/N={dn}",
+                label=label,
             )
         )
 
     if dn_handles:
-        # Add a secondary legend for D/N gradient
-        existing_legend = ax.get_legend()
-        if existing_legend is None:
-            # Will be added after all ladders are plotted
-            pass
         ax._dn_legend_handles = getattr(ax, "_dn_legend_handles", []) + dn_handles
 
 
@@ -1377,8 +1445,13 @@ def _finalize_legends(ax, has_checkpoints: bool) -> None:
     """Add primary + D/N gradient legends to an axis if checkpoint data was plotted."""
     dn_handles = getattr(ax, "_dn_legend_handles", [])
     if has_checkpoints and dn_handles:
-        # Primary legend (ladder names) is already set; add secondary for D/N
-        first_legend = ax.legend(loc="best", fontsize=8)
+        # Primary legend (ladder names) placed outside the plot area to avoid overlap
+        first_legend = ax.legend(
+            loc="upper left",
+            fontsize=8,
+            framealpha=0.9,
+            bbox_to_anchor=(0, 1),
+        )
         ax.add_artist(first_legend)
         ax.legend(
             handles=dn_handles,
@@ -1389,7 +1462,7 @@ def _finalize_legends(ax, has_checkpoints: bool) -> None:
             title_fontsize=7,
         )
     else:
-        ax.legend(loc="best", fontsize=8)
+        ax.legend(loc="best", fontsize=8, framealpha=0.9)
 
 
 def plot_base_main_metrics(
@@ -1477,6 +1550,7 @@ def plot_base_easy_metrics(
     show: bool = True,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
+    log_loss: bool = False,
 ) -> None:
     """
     Plot Base Easy Suite metrics (BPB) comparison across ladders.
@@ -1525,12 +1599,15 @@ def plot_base_easy_metrics(
         ax.set_ylabel("Bits-per-byte", fontsize=10)
         ax.set_title(f"Base Easy {cluster.replace('_BPB', '')}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
+        if log_loss:
+            ax.set_yscale("log")
         ax.grid(True, alpha=0.3)
         if idx == 0:
             _finalize_legends(ax, any_checkpoints)
 
+    log_suffix = " (log scale)" if log_loss else ""
     fig.suptitle(
-        "OlmoBaseEval Base Easy Suite (BPB - lower is better)",
+        f"OlmoBaseEval Base Easy Suite (BPB{log_suffix} - lower is better)",
         fontsize=14,
         fontweight="bold",
         y=1.02,
@@ -1538,8 +1615,9 @@ def plot_base_easy_metrics(
     plt.tight_layout()
 
     if output_path:
-        fig.savefig(output_path / "olmobaseeval_easy.png", dpi=150, bbox_inches="tight")
-        print(f"Saved: {output_path / 'olmobaseeval_easy.png'}")
+        fname = "olmobaseeval_easy_log.png" if log_loss else "olmobaseeval_easy.png"
+        fig.savefig(output_path / fname, dpi=150, bbox_inches="tight")
+        print(f"Saved: {output_path / fname}")
 
     if show:
         plt.show()
@@ -1943,6 +2021,7 @@ def plot_lm_metrics(
     show: bool = True,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
+    log_loss: bool = False,
 ) -> None:
     """Plot language modeling metrics (perplexity) comparison."""
     if not PLOTTING_AVAILABLE:
@@ -2000,6 +2079,8 @@ def plot_lm_metrics(
     ax.set_ylabel("Perplexity", fontsize=10)
     ax.set_title("Average PPL", fontsize=12, fontweight="bold")
     ax.set_xscale("log")
+    if log_loss:
+        ax.set_yscale("log")
     ax.grid(True, alpha=0.3)
     _finalize_legends(ax, any_checkpoints)
 
@@ -2032,19 +2113,26 @@ def plot_lm_metrics(
         ax.set_ylabel("Perplexity", fontsize=10)
         ax.set_title(f"{task}", fontsize=12, fontweight="bold")
         ax.set_xscale("log")
+        if log_loss:
+            ax.set_yscale("log")
         ax.grid(True, alpha=0.3)
 
     for idx in range(n_tasks, len(axes_list)):
         axes_list[idx].set_visible(False)
 
+    log_suffix = " (log scale)" if log_loss else ""
     fig.suptitle(
-        "Language Modeling - Perplexity (lower is better)", fontsize=14, fontweight="bold", y=1.02
+        f"Language Modeling - Perplexity{log_suffix} (lower is better)",
+        fontsize=14,
+        fontweight="bold",
+        y=1.02,
     )
     plt.tight_layout()
 
     if output_path:
-        fig.savefig(output_path / "lm_comparison.png", dpi=150, bbox_inches="tight")
-        print(f"Saved: {output_path / 'lm_comparison.png'}")
+        fname = "lm_comparison_log.png" if log_loss else "lm_comparison.png"
+        fig.savefig(output_path / fname, dpi=150, bbox_inches="tight")
+        print(f"Saved: {output_path / fname}")
 
     if show:
         plt.show()
@@ -2059,6 +2147,7 @@ def plot_base_easy_metrics_vs_flops(
     show: bool = True,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
+    log_loss: bool = False,
 ) -> None:
     """
     Plot Base Easy Suite metrics (BPB) with training FLOPs on the x-axis.
@@ -2105,12 +2194,15 @@ def plot_base_easy_metrics_vs_flops(
         ax.set_ylabel("Bits-per-byte", fontsize=10)
         ax.set_title(f"Base Easy {cluster.replace('_BPB', '')}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
+        if log_loss:
+            ax.set_yscale("log")
         ax.grid(True, alpha=0.3)
         if idx == 0:
             _finalize_legends(ax, any_checkpoints)
 
+    log_suffix = " (log scale)" if log_loss else ""
     fig.suptitle(
-        "OlmoBaseEval Base Easy Suite vs FLOPs (BPB - lower is better)",
+        f"OlmoBaseEval Base Easy Suite vs FLOPs (BPB{log_suffix} - lower is better)",
         fontsize=14,
         fontweight="bold",
         y=1.02,
@@ -2118,8 +2210,11 @@ def plot_base_easy_metrics_vs_flops(
     plt.tight_layout()
 
     if output_path:
-        fig.savefig(output_path / "olmobaseeval_easy_vs_flops.png", dpi=150, bbox_inches="tight")
-        print(f"Saved: {output_path / 'olmobaseeval_easy_vs_flops.png'}")
+        fname = (
+            "olmobaseeval_easy_vs_flops_log.png" if log_loss else "olmobaseeval_easy_vs_flops.png"
+        )
+        fig.savefig(output_path / fname, dpi=150, bbox_inches="tight")
+        print(f"Saved: {output_path / fname}")
 
     if show:
         plt.show()
@@ -2208,6 +2303,7 @@ def plot_lm_metrics_vs_flops(
     show: bool = True,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
+    log_loss: bool = False,
 ) -> None:
     """Plot language modeling metrics (perplexity) with training FLOPs on the x-axis."""
     if not PLOTTING_AVAILABLE:
@@ -2265,6 +2361,8 @@ def plot_lm_metrics_vs_flops(
     ax.set_ylabel("Perplexity", fontsize=10)
     ax.set_title("Average PPL", fontsize=12, fontweight="bold")
     ax.set_xscale("log")
+    if log_loss:
+        ax.set_yscale("log")
     ax.grid(True, alpha=0.3)
     _finalize_legends(ax, any_checkpoints)
 
@@ -2297,13 +2395,16 @@ def plot_lm_metrics_vs_flops(
         ax.set_ylabel("Perplexity", fontsize=10)
         ax.set_title(f"{task}", fontsize=12, fontweight="bold")
         ax.set_xscale("log")
+        if log_loss:
+            ax.set_yscale("log")
         ax.grid(True, alpha=0.3)
 
     for idx in range(n_tasks, len(axes_list)):
         axes_list[idx].set_visible(False)
 
+    log_suffix = " (log scale)" if log_loss else ""
     fig.suptitle(
-        "Language Modeling vs FLOPs (Perplexity, lower is better)",
+        f"Language Modeling vs FLOPs (Perplexity{log_suffix}, lower is better)",
         fontsize=14,
         fontweight="bold",
         y=1.02,
@@ -2311,8 +2412,9 @@ def plot_lm_metrics_vs_flops(
     plt.tight_layout()
 
     if output_path:
-        fig.savefig(output_path / "lm_comparison_vs_flops.png", dpi=150, bbox_inches="tight")
-        print(f"Saved: {output_path / 'lm_comparison_vs_flops.png'}")
+        fname = "lm_comparison_vs_flops_log.png" if log_loss else "lm_comparison_vs_flops.png"
+        fig.savefig(output_path / fname, dpi=150, bbox_inches="tight")
+        print(f"Saved: {output_path / fname}")
 
     if show:
         plt.show()
@@ -2353,6 +2455,15 @@ def plot_all(
         use_final_checkpoint=use_final_checkpoint,
         star_ladder=star_ladder,
     )
+    plot_base_easy_metrics(
+        ladder_results,
+        sizes,
+        output_path,
+        show,
+        use_final_checkpoint=use_final_checkpoint,
+        star_ladder=star_ladder,
+        log_loss=True,
+    )
     if include_main:
         plot_scaling_analysis(ladder_results, sizes, output_path, show, star_ladder=star_ladder)
     plot_summary_comparison(
@@ -2372,6 +2483,15 @@ def plot_all(
         use_final_checkpoint=use_final_checkpoint,
         star_ladder=star_ladder,
     )
+    plot_lm_metrics(
+        ladder_results,
+        sizes,
+        output_path,
+        show,
+        use_final_checkpoint=use_final_checkpoint,
+        star_ladder=star_ladder,
+        log_loss=True,
+    )
 
     # FLOPs-based plots (metric vs training compute)
     if plot_flops:
@@ -2382,6 +2502,15 @@ def plot_all(
             show,
             use_final_checkpoint=use_final_checkpoint,
             star_ladder=star_ladder,
+        )
+        plot_base_easy_metrics_vs_flops(
+            ladder_results,
+            sizes,
+            output_path,
+            show,
+            use_final_checkpoint=use_final_checkpoint,
+            star_ladder=star_ladder,
+            log_loss=True,
         )
         if include_main:
             plot_base_main_metrics_vs_flops(
@@ -2399,6 +2528,15 @@ def plot_all(
             show,
             use_final_checkpoint=use_final_checkpoint,
             star_ladder=star_ladder,
+        )
+        plot_lm_metrics_vs_flops(
+            ladder_results,
+            sizes,
+            output_path,
+            show,
+            use_final_checkpoint=use_final_checkpoint,
+            star_ladder=star_ladder,
+            log_loss=True,
         )
 
     print("Done generating plots.")
@@ -2658,20 +2796,21 @@ def generate_ablation_latex_table(
     metric_clusters: Optional[List[str]] = None,
 ) -> str:
     """
-    Generate a publication-ready ablation table comparing architectures across scales.
+    Generate publication-ready ablation tables comparing architectures across scales.
 
-    Layout: architectures as rows (grouped), model sizes as column groups,
-    with sub-columns for each metric cluster plus an average.
+    Produces two tables:
+      - **Table A (averages):** Architecture × size, one average BPB column per size.
+      - **Table B (per-domain):** Architecture × size, with Math/Code/QA sub-columns per size.
 
     Args:
         ladder_results: {ladder_name: {size_key: {base_easy/base_main/...}}}
         sizes: Which sizes to include as column groups (e.g. ["190M", "370M", "760M"]).
             If None, auto-detects from data.
         star_ladder: Ladder name to mark with a star (e.g. "hybrid-gdn").
-        metric_clusters: Which Base Easy clusters to show (default: all three BPB clusters).
+        metric_clusters: Which Base Easy clusters to show (default: Math, Code, QA).
     """
     if metric_clusters is None:
-        metric_clusters = ["Math_BPB", "Code_BPB"]  # Math, Code (QA excluded to match paper table)
+        metric_clusters = ["Math_BPB", "Code_BPB", "QA_BPB"]
 
     # Short display names for sub-columns
     cluster_short = {
@@ -2801,121 +2940,163 @@ def generate_ablation_latex_table(
             else:
                 second_idx[size_label][mi] = None
 
-    # --- Build LaTeX ---
+    # --- Helpers ---
     def _escape(s: str) -> str:
         return s.replace("_", r"\_").replace("%", r"\%").replace("&", r"\&")
 
-    lines: List[str] = []
-    lines.append(r"\begin{table*}[t]")
-    lines.append(r"\centering")
+    def _fmt_val(val: Optional[float], arch_idx: int, size_label: str, mi: int) -> str:
+        if val is None:
+            return "--"
+        if format_pct:
+            formatted = f"{val * 100:.1f}"
+        else:
+            formatted = f"{val:.4f}"
+        if best_idx[size_label].get(mi) == arch_idx:
+            formatted = r"\textbf{" + formatted + "}"
+        elif second_idx[size_label].get(mi) == arch_idx:
+            formatted = r"\underline{" + formatted + "}"
+        return formatted
 
     suite_label = "\\olmothreeeval" if suite_key == "base_easy" else "Base Main"
-    lines.append(r"\caption{")
-    lines.append(r"    \textbf{Architecture ablation results.}")
-    lines.append(
-        f"    Average {suite_label} score for pure and hybrid architectures at {'three' if n_sizes == 3 else str(n_sizes)} representative scales."
-    )
-    lines.append(
-        r"    All models are trained with identical data and hyperparameters at each scale "
-        r"(see \Cref{sec:scaling-laws} for methodology)."
-    )
-    lines.append(
-        r"    \textbf{Bold} indicates best performance per scale; "
-        r"\underline{underline} indicates second best."
-    )
-    lines.append(r"    $\bigstar$ marks our selected architecture.")
-    lines.append(r"}")
-    lines.append(r"\label{tab:ablation-evals}")
-    lines.append(r"\small")
-    lines.append(r"\resizebox{\textwidth}{!}{%")
+    shared_note = [
+        r"\vspace{0.5em}",
+        r"{\footnotesize",
+        r"\textit{Note:} ``Interleaved'' places attention layers at regular intervals "
+        r"(e.g., 1/4 = every 4th layer).",
+        r"``Middle'' concentrates attention layers in the middle of the network; "
+        r"``no final A'' omits the final attention layer.",
+        r"All models at each scale share the same number of total layers, "
+        r"with layer types substituted according to the configuration.",
+        r"}",
+    ]
 
-    # Column spec: l c | (n_sub columns) per size
-    col_spec = "@{}l c" + (" " + "c" * n_sub) * n_sizes + "@{}"
-    lines.append(r"\begin{tabular}{" + col_spec + "}")
-    lines.append(r"\toprule")
+    def _build_arch_rows_latex(col_count: int, row_fn) -> List[str]:
+        """Build grouped architecture body rows using row_fn(arch_idx, arch) -> parts list."""
+        body: List[str] = []
+        prev_group = None
+        for arch_idx, arch in enumerate(arch_rows):
+            group = arch["group"]
+            if group != prev_group:
+                if prev_group is not None:
+                    body.append(r"\midrule")
+                body.append(r"\multicolumn{" + str(col_count) + r"}{l}{\textit{" + group + r"}} \\")
+                prev_group = group
 
-    # Header row 1: size names spanning sub-columns
-    h1_parts = ["", ""]
-    for size_label in show_sizes:
-        h1_parts.append(r"\multicolumn{" + str(n_sub) + r"}{c}{\textbf{" + size_label + r"}}")
-    lines.append(" & ".join(h1_parts) + r" \\")
+            display = arch["display"]
+            if arch["star"]:
+                display += r"$^\bigstar$"
+            row_parts = [r"\quad " + display, arch["attn_pct"]]
+            row_parts.extend(row_fn(arch_idx, arch))
+            body.append(" & ".join(row_parts) + r" \\")
+        return body
+
+    # =========================================================================
+    # Table A: Average BPB per size (compact)
+    # =========================================================================
+    lines_a: List[str] = []
+    lines_a.append(r"\begin{table*}[t]")
+    lines_a.append(r"\centering")
+    lines_a.append(r"\caption{")
+    lines_a.append(r"    \textbf{Architecture ablation results --- averages.}")
+    lines_a.append(
+        f"    Average {suite_label} BPB (across Math, Code, QA) for pure and hybrid "
+        f"architectures at {n_sizes} representative scales."
+    )
+    lines_a.append(r"    \textbf{Bold} indicates best; \underline{underline} second best.")
+    lines_a.append(r"    $\bigstar$ marks our selected architecture.")
+    lines_a.append(r"}")
+    lines_a.append(r"\label{tab:ablation-evals-avg}")
+    lines_a.append(r"\small")
+
+    # Column spec: l c + one col per size
+    col_spec_a = "@{}l c" + " c" * n_sizes + "@{}"
+    lines_a.append(r"\begin{tabular}{" + col_spec_a + "}")
+    lines_a.append(r"\toprule")
+
+    # Header
+    h_parts_a = [r"\textbf{Architecture}", r"\textbf{Attn \%}"]
+    for sl in show_sizes:
+        h_parts_a.append(r"\textbf{" + sl + "}")
+    lines_a.append(" & ".join(h_parts_a) + r" \\")
+    lines_a.append(r"\midrule")
+
+    # Body
+    def _avg_row(arch_idx, _arch):
+        parts = []
+        for sl in show_sizes:
+            parts.append(
+                _fmt_val(cell_values[arch_idx].get(sl, {}).get(n_metrics), arch_idx, sl, n_metrics)
+            )
+        return parts
+
+    lines_a.extend(_build_arch_rows_latex(2 + n_sizes, _avg_row))
+
+    lines_a.append(r"\bottomrule")
+    lines_a.append(r"\end{tabular}")
+    lines_a.extend(shared_note)
+    lines_a.append(r"\end{table*}")
+
+    # =========================================================================
+    # Table B: Per-domain breakdown (Math, Code, QA sub-columns per size)
+    # =========================================================================
+    lines_b: List[str] = []
+    lines_b.append(r"\begin{table*}[t]")
+    lines_b.append(r"\centering")
+    lines_b.append(r"\caption{")
+    lines_b.append(r"    \textbf{Architecture ablation results --- per-domain breakdown.}")
+    lines_b.append(f"    Per-domain {suite_label} BPB for pure and hybrid architectures.")
+    lines_b.append(r"    \textbf{Bold} indicates best; \underline{underline} second best.")
+    lines_b.append(r"    $\bigstar$ marks our selected architecture.")
+    lines_b.append(r"}")
+    lines_b.append(r"\label{tab:ablation-evals-detail}")
+    lines_b.append(r"\small")
+    lines_b.append(r"\resizebox{\textwidth}{!}{%")
+
+    # Column spec: l c | (n_metrics columns) per size
+    col_spec_b = "@{}l c" + (" " + "c" * n_metrics) * n_sizes + "@{}"
+    lines_b.append(r"\begin{tabular}{" + col_spec_b + "}")
+    lines_b.append(r"\toprule")
+
+    # Header row 1: size names spanning metric sub-columns
+    h1_parts_b = ["", ""]
+    for sl in show_sizes:
+        h1_parts_b.append(r"\multicolumn{" + str(n_metrics) + r"}{c}{\textbf{" + sl + r"}}")
+    lines_b.append(" & ".join(h1_parts_b) + r" \\")
 
     # cmidrule for each size group
-    cmidrules = []
-    col_start = 3  # first two are Architecture and Attn %
+    cmidrules_b = []
+    col_start = 3
     for _ in show_sizes:
-        col_end = col_start + n_sub - 1
-        cmidrules.append(f"\\cmidrule(lr){{{col_start}-{col_end}}}")
+        col_end = col_start + n_metrics - 1
+        cmidrules_b.append(f"\\cmidrule(lr){{{col_start}-{col_end}}}")
         col_start = col_end + 1
-    lines.append(" ".join(cmidrules))
+    lines_b.append(" ".join(cmidrules_b))
 
-    # Header row 2: sub-column names
-    h2_parts = [r"\textbf{Architecture}", r"\textbf{Attn \%}"]
+    # Header row 2: metric names
+    h2_parts_b = [r"\textbf{Architecture}", r"\textbf{Attn \%}"]
     for _ in show_sizes:
         for cluster in metric_clusters:
-            h2_parts.append(cluster_short.get(cluster, _escape(cluster)))
-        h2_parts.append("Avg")
-    lines.append(" & ".join(h2_parts) + r" \\")
-    lines.append(r"\midrule")
+            h2_parts_b.append(cluster_short.get(cluster, _escape(cluster)))
+    lines_b.append(" & ".join(h2_parts_b) + r" \\")
+    lines_b.append(r"\midrule")
 
-    # Body rows
-    prev_group = None
-    for arch_idx, arch in enumerate(arch_rows):
-        group = arch["group"]
-        if group != prev_group:
-            if prev_group is not None:
-                lines.append(r"\midrule")
-            lines.append(
-                r"\multicolumn{" + str(2 + n_sub * n_sizes) + r"}{l}{\textit{" + group + r"}} \\"
-            )
-            prev_group = group
+    # Body
+    def _detail_row(arch_idx, _arch):
+        parts = []
+        for sl in show_sizes:
+            for mi in range(n_metrics):
+                parts.append(_fmt_val(cell_values[arch_idx].get(sl, {}).get(mi), arch_idx, sl, mi))
+        return parts
 
-        # Architecture name
-        display = arch["display"]
-        if arch["star"]:
-            display += r"$^\bigstar$"
-        row_parts = [r"\quad " + display, arch["attn_pct"]]
+    lines_b.extend(_build_arch_rows_latex(2 + n_metrics * n_sizes, _detail_row))
 
-        # Values per size
-        for size_label in show_sizes:
-            for mi in range(n_sub):
-                val = cell_values[arch_idx].get(size_label, {}).get(mi)
-                if val is not None:
-                    if format_pct:
-                        formatted = f"{val * 100:.1f}"
-                    else:
-                        formatted = f"{val:.4f}"
-                    if best_idx[size_label].get(mi) == arch_idx:
-                        formatted = r"\textbf{" + formatted + "}"
-                    elif second_idx[size_label].get(mi) == arch_idx:
-                        formatted = r"\underline{" + formatted + "}"
-                    row_parts.append(formatted)
-                else:
-                    row_parts.append("--")
+    lines_b.append(r"\bottomrule")
+    lines_b.append(r"\end{tabular}%")
+    lines_b.append(r"}")
+    lines_b.extend(shared_note)
+    lines_b.append(r"\end{table*}")
 
-        lines.append(" & ".join(row_parts) + r" \\")
-
-    lines.append(r"\bottomrule")
-    lines.append(r"\end{tabular}%")
-    lines.append(r"}")
-    lines.append("")
-    lines.append(r"\vspace{0.5em}")
-    lines.append(r"{\footnotesize")
-    lines.append(
-        r"\textit{Note:} ``Interleaved'' places attention layers at regular intervals "
-        r"(e.g., 1/4 = every 4th layer)."
-    )
-    lines.append(
-        r"``Middle'' concentrates attention layers in the middle of the network; ``no final A'' omits the final attention layer."
-    )
-    lines.append(
-        r"All models at each scale share the same number of total layers, "
-        r"with layer types substituted according to the configuration."
-    )
-    lines.append(r"}")
-    lines.append(r"\end{table*}")
-
-    return "\n".join(lines)
+    return "\n".join(lines_a) + "\n\n" + "\n".join(lines_b)
 
 
 # =============================================================================
@@ -2925,102 +3106,102 @@ def generate_ablation_latex_table(
 # Color palette for LaTeX plots - semantically grouped, colorblind-friendly.
 # Each entry: (pgfplots color definition string, mark style, line style)
 LATEX_PLOT_STYLES: Dict[str, Dict[str, str]] = {
-    # Pure architectures — solid lines, filled marks
+    # Pure architectures — solid lines, filled marks (AI2 color scheme)
     "olmo3": {
-        "color_def": "\\definecolor{clrTransformer}{HTML}{2563EB}",
+        "color_def": "\\definecolor{clrTransformer}{HTML}{012E59}",  # olmoDarkBlue
         "color_name": "clrTransformer",
         "mark": "square*",
         "mark_options": "fill=clrTransformer",
         "line_style": "",
     },
     "olmo3-1": {
-        "color_def": "\\definecolor{clrTransformer}{HTML}{2563EB}",
+        "color_def": "\\definecolor{clrTransformer}{HTML}{012E59}",  # olmoDarkBlue
         "color_name": "clrTransformer",
         "mark": "square*",
         "mark_options": "fill=clrTransformer",
         "line_style": "",
     },
     "olmo3-2": {
-        "color_def": "\\definecolor{clrTransformerV2}{HTML}{3B82F6}",
+        "color_def": "\\definecolor{clrTransformerV2}{HTML}{265ED4}",  # olmoBlue
         "color_name": "clrTransformerV2",
         "mark": "square*",
         "mark_options": "fill=clrTransformerV2",
         "line_style": "",
     },
     "olmo3-3": {
-        "color_def": "\\definecolor{clrTransformerV3}{HTML}{60A5FA}",
+        "color_def": "\\definecolor{clrTransformerV3}{HTML}{00D5FF}",  # olmoTeal
         "color_name": "clrTransformerV3",
         "mark": "square*",
         "mark_options": "fill=clrTransformerV3",
         "line_style": "",
     },
     "pure-gdn": {
-        "color_def": "\\definecolor{clrGDN}{HTML}{DC2626}",
+        "color_def": "\\definecolor{clrGDN}{HTML}{FF9100}",  # olmoOrange
         "color_name": "clrGDN",
         "mark": "triangle*",
         "mark_options": "fill=clrGDN",
         "line_style": "",
     },
     "pure-mamba": {
-        "color_def": "\\definecolor{clrMamba}{HTML}{D97706}",
+        "color_def": "\\definecolor{clrMamba}{HTML}{B86800}",  # warm brown
         "color_name": "clrMamba",
         "mark": "diamond*",
         "mark_options": "fill=clrMamba",
         "line_style": "",
     },
-    # Hybrids — dashed/dotted lines, open or half-filled marks
+    # Hybrids — distinct colors, varied marks and line styles
     "hybrid-gdn": {
-        "color_def": "\\definecolor{clrHybGDN}{HTML}{7C3AED}",
+        "color_def": "\\definecolor{clrHybGDN}{HTML}{F0529C}",  # ai2pink
         "color_name": "clrHybGDN",
         "mark": "*",
         "mark_options": "fill=clrHybGDN",
         "line_style": "",
     },
     "hybrid-gdn-half": {
-        "color_def": "\\definecolor{clrHybGDNHalf}{HTML}{A78BFA}",
+        "color_def": "\\definecolor{clrHybGDNHalf}{HTML}{C4387E}",  # deep magenta
         "color_name": "clrHybGDNHalf",
-        "mark": "o",
-        "mark_options": "",
+        "mark": "square",
+        "mark_options": "draw=clrHybGDNHalf, thick",
         "line_style": "dashed",
     },
     "hybrid-gdn-eight": {
-        "color_def": "\\definecolor{clrHybGDNEight}{HTML}{5B21B6}",
+        "color_def": "\\definecolor{clrHybGDNEight}{HTML}{A02060}",  # dark rose
         "color_name": "clrHybGDNEight",
         "mark": "triangle",
-        "mark_options": "",
-        "line_style": "dashed",
+        "mark_options": "draw=clrHybGDNEight, thick",
+        "line_style": "densely dashed",
     },
     "hybrid-gdn-middle": {
-        "color_def": "\\definecolor{clrHybGDNMid}{HTML}{059669}",
+        "color_def": "\\definecolor{clrHybGDNMid}{HTML}{009BB8}",  # shifted teal
         "color_name": "clrHybGDNMid",
         "mark": "pentagon*",
         "mark_options": "fill=clrHybGDNMid",
         "line_style": "densely dotted",
     },
     "hybrid-mamba": {
-        "color_def": "\\definecolor{clrHybMamba}{HTML}{0891B2}",
+        "color_def": "\\definecolor{clrHybMamba}{HTML}{265ED4}",  # olmoBlue
         "color_name": "clrHybMamba",
-        "mark": "pentagon*",
-        "mark_options": "fill=clrHybMamba",
+        "mark": "diamond",
+        "mark_options": "draw=clrHybMamba, thick",
         "line_style": "densely dotted",
     },
     "hybrid-gdn-middle-no-final": {
-        "color_def": "\\definecolor{clrHybGDNMidNoFinal}{HTML}{059669}",
+        "color_def": "\\definecolor{clrHybGDNMidNoFinal}{HTML}{007A94}",  # darker teal
         "color_name": "clrHybGDNMidNoFinal",
         "mark": "pentagon",
-        "mark_options": "fill=white",
+        "mark_options": "draw=clrHybGDNMidNoFinal, thick",
         "line_style": "densely dotted",
     },
 }
 
-# Fallback styles when a ladder name is not in LATEX_PLOT_STYLES
+# Fallback styles when a ladder name is not in LATEX_PLOT_STYLES (AI2 palette)
 _FALLBACK_COLORS = [
-    ("clrFallbackA", "9333EA"),
-    ("clrFallbackB", "0EA5E9"),
-    ("clrFallbackC", "10B981"),
-    ("clrFallbackD", "F59E0B"),
-    ("clrFallbackE", "EF4444"),
-    ("clrFallbackF", "6366F1"),
+    ("clrFallbackA", "012E59"),  # olmoDarkBlue
+    ("clrFallbackB", "FF9100"),  # olmoOrange
+    ("clrFallbackC", "F0529C"),  # ai2pink
+    ("clrFallbackD", "265ED4"),  # olmoBlue
+    ("clrFallbackE", "00D5FF"),  # olmoTeal
+    ("clrFallbackF", "B86800"),  # warm brown
 ]
 _FALLBACK_MARKS = ["*", "square*", "triangle*", "diamond*", "pentagon*", "o"]
 
@@ -3063,6 +3244,7 @@ def generate_latex_plot(
     legend_columns: int = 3,
     star_ladder: Optional[str] = None,
     emit_color_defs: bool = False,
+    log_y: bool = False,
 ) -> str:
     """
     Generate a single TikZ/pgfplots figure showing metric vs parameter count.
@@ -3210,11 +3392,14 @@ def generate_latex_plot(
     lines.append(f"    width={width},")
     lines.append(f"    height={height},")
     lines.append("    xmode=log,")
+    if log_y:
+        lines.append("    ymode=log,")
     lines.append("    log basis x=10,")
     lines.append("    xlabel={Parameters},")
     lines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
     lines.append(f"    xmin={x_min:.0f}, xmax={x_max:.0f},")
-    lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
+    if not log_y:
+        lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
     lines.append(f"    xtick={{{xtick_str}}},")
     lines.append(f"    xticklabels={{{xticklabels_str}}},")
     lines.append(r"    legend style={")
@@ -3609,7 +3794,6 @@ def generate_latex_plots(
     Generate publication-ready LaTeX/TikZ plots for all metric suites.
 
     Produces pgfplots code for:
-      - Base Easy Suite average BPB bar chart (grouped by size)
       - Base Easy Suite average BPB vs parameters (line plot)
       - Each Base Easy cluster (Math_BPB, Code_BPB, QA_BPB) vs parameters
       - Base Main Suite average accuracy vs parameters (if include_main)
@@ -3653,29 +3837,8 @@ def generate_latex_plots(
             return sum(c["avg"] for c in be.values()) / len(be)
         return None
 
-    # Bar chart version (grouped by size)
-    parts.append("% --- Base Easy Suite: Average BPB Bar Chart ---")
-    parts.append(r"\begin{figure}[htbp]")
-    parts.append(r"    \centering")
-    parts.append(
-        generate_latex_bar_chart(
-            ladder_results,
-            "base_easy_avg_bar",
-            _extract_easy_avg,
-            ylabel="Average BPB",
-            title="Base Easy Suite Average",
-            sizes=sizes,
-            higher_is_better=False,
-            use_final_checkpoint=use_final_checkpoint,
-            star_ladder=star_ladder,
-        )
-    )
-    parts.append(
-        r"    \caption{Base Easy Suite average BPB comparison across model sizes (lower is better).}"
-    )
-    parts.append(r"    \label{fig:base_easy_avg_bar}")
-    parts.append(r"\end{figure}")
-    parts.append("")
+    # Bar chart generation skipped — parameter count differences make bar charts
+    # less informative than line plots. generate_latex_bar_chart() preserved for manual use.
 
     # Line plot version (vs parameters)
     parts.append("% --- Base Easy Suite: Average BPB vs Parameters ---")
@@ -3725,6 +3888,7 @@ def generate_latex_plots(
                 higher_is_better=False,
                 use_final_checkpoint=use_final_checkpoint,
                 star_ladder=star_ladder,
+                log_y=True,
             )
         )
         parts.append(
@@ -3845,117 +4009,117 @@ def generate_latex_plots(
                 averaged[sk] = merged_suite
             return averaged
 
-        # Build relative comparison data for each non-baseline ladder
-        relative_data: Dict[str, List[float]] = {}
-        all_diffs: List[float] = []
+        # # Build relative comparison data for each non-baseline ladder
+        # relative_data: Dict[str, List[float]] = {}
+        # all_diffs: List[float] = []
 
-        for ladder_name in ladder_names[1:]:
-            diffs = []
-            for label in all_size_labels:
-                baseline_data = _find_by_label(ladder_results[baseline_ladder], label)
-                compare_data = _find_by_label(ladder_results[ladder_name], label)
+        # for ladder_name in ladder_names[1:]:
+        #     diffs = []
+        #     for label in all_size_labels:
+        #         baseline_data = _find_by_label(ladder_results[baseline_ladder], label)
+        #         compare_data = _find_by_label(ladder_results[ladder_name], label)
 
-                baseline_suite = baseline_data.get(suite_key, {}) if baseline_data else {}
-                compare_suite = compare_data.get(suite_key, {}) if compare_data else {}
+        #         baseline_suite = baseline_data.get(suite_key, {}) if baseline_data else {}
+        #         compare_suite = compare_data.get(suite_key, {}) if compare_data else {}
 
-                if baseline_suite and compare_suite:
-                    baseline_avg = sum(c["avg"] for c in baseline_suite.values()) / len(
-                        baseline_suite
-                    )
-                    compare_avg = sum(c["avg"] for c in compare_suite.values()) / len(compare_suite)
-                    if baseline_avg > 0:
-                        diff = ((compare_avg - baseline_avg) / baseline_avg) * 100
-                    else:
-                        diff = 0
-                    diffs.append(diff)
-                    all_diffs.append(diff)
-                else:
-                    diffs.append(0)
-            relative_data[ladder_name] = diffs
+        #         if baseline_suite and compare_suite:
+        #             baseline_avg = sum(c["avg"] for c in baseline_suite.values()) / len(
+        #                 baseline_suite
+        #             )
+        #             compare_avg = sum(c["avg"] for c in compare_suite.values()) / len(compare_suite)
+        #             if baseline_avg > 0:
+        #                 diff = ((compare_avg - baseline_avg) / baseline_avg) * 100
+        #             else:
+        #                 diff = 0
+        #             diffs.append(diff)
+        #             all_diffs.append(diff)
+        #         else:
+        #             diffs.append(0)
+        #     relative_data[ladder_name] = diffs
 
-        if all_diffs:
-            # Generate bar chart for relative comparison
-            parts.append("% --- Relative Performance Comparison ---")
-            parts.append(r"\begin{figure}[htbp]")
-            parts.append(r"    \centering")
+        # if all_diffs:
+        #     # Generate bar chart for relative comparison
+        #     parts.append("% --- Relative Performance Comparison ---")
+        #     parts.append(r"\begin{figure}[htbp]")
+        #     parts.append(r"    \centering")
 
-            # Build the bar chart manually
-            y_range = max(all_diffs) - min(all_diffs) if len(all_diffs) > 1 else 1.0
-            y_pad = y_range * 0.1
-            y_min = min(all_diffs) - y_pad
-            y_max = max(all_diffs) + y_pad
+        #     # Build the bar chart manually
+        #     y_range = max(all_diffs) - min(all_diffs) if len(all_diffs) > 1 else 1.0
+        #     y_pad = y_range * 0.1
+        #     y_min = min(all_diffs) - y_pad
+        #     y_max = max(all_diffs) + y_pad
 
-            # Get styles
-            compare_ladders = ladder_names[1:]
-            bar_lines: List[str] = []
-            bar_lines.append(r"\begin{tikzpicture}")
-            bar_lines.append(r"\begin{axis}[")
-            bar_lines.append(r"    width=0.95\linewidth,")
-            bar_lines.append(r"    height=0.55\linewidth,")
-            bar_lines.append(r"    ybar,")
-            bar_lines.append(f"    bar width={0.8 / len(compare_ladders):.3f}cm,")
-            bar_lines.append(r"    xlabel={Model Size},")
-            if include_main:
-                bar_lines.append(r"    ylabel={Relative Accuracy Difference (\%)},")
-            else:
-                bar_lines.append(r"    ylabel={BPB Difference (\%, more negative = better)},")
-            bar_lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
-            bar_lines.append("    symbolic x coords={" + ", ".join(all_size_labels) + "},")
-            bar_lines.append(r"    xtick=data,")
-            bar_lines.append(r"    legend style={")
-            bar_lines.append(r"        at={(0.5,-0.22)},")
-            bar_lines.append(r"        anchor=north,")
-            bar_lines.append(r"        font=\scriptsize,")
-            bar_lines.append(r"        cells={anchor=west},")
-            bar_lines.append(r"        draw=none,")
-            bar_lines.append(r"        legend columns=2,")
-            bar_lines.append(r"        column sep=6pt,")
-            bar_lines.append(r"        row sep=1pt,")
-            bar_lines.append(r"    },")
-            bar_lines.append(r"    grid=major,")
-            bar_lines.append(r"    grid style={gray!15},")
-            bar_lines.append(r"    enlarge x limits=0.15,")
-            bar_lines.append(r"    extra y ticks={0},")
-            bar_lines.append(r"    extra y tick style={grid=major, grid style={black, thick}},")
-            bar_lines.append(r"]")
-            bar_lines.append("")
+        #     # Get styles
+        #     compare_ladders = ladder_names[1:]
+        #     bar_lines: List[str] = []
+        #     bar_lines.append(r"\begin{tikzpicture}")
+        #     bar_lines.append(r"\begin{axis}[")
+        #     bar_lines.append(r"    width=0.95\linewidth,")
+        #     bar_lines.append(r"    height=0.55\linewidth,")
+        #     bar_lines.append(r"    ybar,")
+        #     bar_lines.append(f"    bar width={0.8 / len(compare_ladders):.3f}cm,")
+        #     bar_lines.append(r"    xlabel={Model Size},")
+        #     if include_main:
+        #         bar_lines.append(r"    ylabel={Relative Accuracy Difference (\%)},")
+        #     else:
+        #         bar_lines.append(r"    ylabel={BPB Difference (\%, more negative = better)},")
+        #     bar_lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
+        #     bar_lines.append("    symbolic x coords={" + ", ".join(all_size_labels) + "},")
+        #     bar_lines.append(r"    xtick=data,")
+        #     bar_lines.append(r"    legend style={")
+        #     bar_lines.append(r"        at={(0.5,-0.22)},")
+        #     bar_lines.append(r"        anchor=north,")
+        #     bar_lines.append(r"        font=\scriptsize,")
+        #     bar_lines.append(r"        cells={anchor=west},")
+        #     bar_lines.append(r"        draw=none,")
+        #     bar_lines.append(r"        legend columns=2,")
+        #     bar_lines.append(r"        column sep=6pt,")
+        #     bar_lines.append(r"        row sep=1pt,")
+        #     bar_lines.append(r"    },")
+        #     bar_lines.append(r"    grid=major,")
+        #     bar_lines.append(r"    grid style={gray!15},")
+        #     bar_lines.append(r"    enlarge x limits=0.15,")
+        #     bar_lines.append(r"    extra y ticks={0},")
+        #     bar_lines.append(r"    extra y tick style={grid=major, grid style={black, thick}},")
+        #     bar_lines.append(r"]")
+        #     bar_lines.append("")
 
-            for idx, ladder_name in enumerate(compare_ladders, start=1):
-                diffs = relative_data[ladder_name]
-                style = _get_latex_style(ladder_name, idx)
+        #     for idx, ladder_name in enumerate(compare_ladders, start=1):
+        #         diffs = relative_data[ladder_name]
+        #         style = _get_latex_style(ladder_name, idx)
 
-                coords = " ".join(
-                    f"({label},{diff:.4f})" for label, diff in zip(all_size_labels, diffs)
-                )
-                bar_lines.append(
-                    f"\\addplot[fill={style['color_name']}, draw={style['color_name']}]"
-                )
-                bar_lines.append(f"    coordinates {{{coords}}};")
+        #         coords = " ".join(
+        #             f"({label},{diff:.4f})" for label, diff in zip(all_size_labels, diffs)
+        #         )
+        #         bar_lines.append(
+        #             f"\\addplot[fill={style['color_name']}, draw={style['color_name']}]"
+        #         )
+        #         bar_lines.append(f"    coordinates {{{coords}}};")
 
-                display = get_display_name(ladder_name)
-                if star_ladder and ladder_name.lower() == star_ladder.lower():
-                    display += r" $\bigstar$"
-                bar_lines.append(
-                    f"\\addlegendentry{{{_escape_latex_text(display)} vs {_escape_latex_text(get_display_name(baseline_ladder))}}}"
-                )
-                bar_lines.append("")
+        #         display = get_display_name(ladder_name)
+        #         if star_ladder and ladder_name.lower() == star_ladder.lower():
+        #             display += r" $\bigstar$"
+        #         bar_lines.append(
+        #             f"\\addlegendentry{{{_escape_latex_text(display)} vs {_escape_latex_text(get_display_name(baseline_ladder))}}}"
+        #         )
+        #         bar_lines.append("")
 
-            bar_lines.append(r"\end{axis}")
-            bar_lines.append(r"\end{tikzpicture}")
+        #     bar_lines.append(r"\end{axis}")
+        #     bar_lines.append(r"\end{tikzpicture}")
 
-            parts.append("\n".join(bar_lines))
+        #     parts.append("\n".join(bar_lines))
 
-            if include_main:
-                parts.append(
-                    f"    \\caption{{Main Suite accuracy relative to {_escape_latex_text(get_display_name(baseline_ladder))} (percentage difference).}}"
-                )
-            else:
-                parts.append(
-                    f"    \\caption{{Easy Suite BPB percentage difference vs {_escape_latex_text(get_display_name(baseline_ladder))} (more negative = better).}}"
-                )
-            parts.append(r"    \label{fig:relative_comparison}")
-            parts.append(r"\end{figure}")
-            parts.append("")
+        #     if include_main:
+        #         parts.append(
+        #             f"    \\caption{{Main Suite accuracy relative to {_escape_latex_text(get_display_name(baseline_ladder))} (percentage difference).}}"
+        #         )
+        #     else:
+        #         parts.append(
+        #             f"    \\caption{{Easy Suite BPB percentage difference vs {_escape_latex_text(get_display_name(baseline_ladder))} (more negative = better).}}"
+        #         )
+        #     parts.append(r"    \label{fig:relative_comparison}")
+        #     parts.append(r"\end{figure}")
+        #     parts.append("")
 
     # --- LM Perplexity ---
     def _extract_avg_ppl(data):
@@ -4176,13 +4340,13 @@ def export_results(
 
     # Generate LaTeX tables
     latex_output = generate_comparison_latex(ladder_results, sizes, include_main=include_main)
-    latex_path = output_path / "olmobaseeval_tables.tex"
+    latex_path = output_path / "full-results.tex"
     with open(latex_path, "w") as f:
         f.write(latex_output)
 
     # Generate ablation table
     ablation_output = generate_ablation_latex_table(ladder_results, sizes)
-    ablation_path = output_path / "olmobaseeval_ablation.tex"
+    ablation_path = output_path / "ablation-evals.tex"
     with open(ablation_path, "w") as f:
         f.write(ablation_output)
 
@@ -4195,7 +4359,7 @@ def export_results(
         star_ladder=star_ladder,
         plot_flops=plot_flops,
     )
-    plots_path = output_path / "olmobaseeval_plots.tex"
+    plots_path = output_path / "ablation-scaling-plot.tex"
     with open(plots_path, "w") as f:
         f.write(latex_plots)
 
