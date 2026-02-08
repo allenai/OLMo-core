@@ -24,14 +24,13 @@ log = logging.getLogger(__name__)
 # use my project for testing
 DEFAULT_PROJECT = "bailey-testing"
 
-
 class ModelMergingLadder(ModelLadder):
     """ModelLadder that includes ModelMergeCallback for weight averaging."""
 
     def _configure_trainer(self, size_spec: str, for_benchmarking: bool = False):
         config = super()._configure_trainer(size_spec, for_benchmarking)
         config.callbacks["model_merger"] = callbacks.ModelMergeCallback(
-            merge_last_n_steps=250,
+            merge_last_n_steps=500,
             enabled=not for_benchmarking,
         )
         return config
