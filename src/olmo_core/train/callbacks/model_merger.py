@@ -5,10 +5,9 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed
-import torch.distributed.checkpoint.state_dict as dist_cp_sd
 
 from olmo_core.distributed.checkpoint import save_state_dict
-from olmo_core.distributed.utils import barrier, get_rank
+from olmo_core.distributed.utils import barrier, get_local_tensor, get_rank
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import clear_directory, dir_is_empty, file_exists, is_url, join_path
 from olmo_core.optim.scheduler import WSDS, Scheduler
@@ -396,15 +395,17 @@ class ModelMergeCallback(Callback):
 
         Each rank accumulates its own shard of the weights (sharded approach).
 
-        NOTE(large-scale): For larger models, calling state_dict() and moving to CPU at every
-        step in the merge window may cause significant throughput overhead.
-        Might want to consider sparse sampling (accumulate every Nth step instead of every step)
-        or doing this one time (moving to CPU only at the end)
+        NOTE(large-scale): For larger models, moving to CPU at every step in the merge window
+        may cause significant throughput overhead. Might want to consider sparse sampling
+        (accumulate every Nth step instead of every step) or async CPU transfers.
         """
-        sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
-        model_state = dist_cp_sd.get_model_state_dict(
-            self.trainer.train_module.model, options=sd_options
-        )
+        model = self.trainer.train_module.model
+
+        # Collect local shards directly from parameters (avoids dist_cp overhead)
+        model_state = {
+            k: get_local_tensor(p.data.detach()).to("cpu")
+            for k, p in model.named_parameters()
+        }
 
         if self._accumulator is None:
             log.info(f"Starting model weight averaging at step {self.step}")
@@ -486,24 +487,25 @@ class ModelMergeCallback(Callback):
             return
 
         model = self.trainer.train_module.model
+        params_dict = dict(model.named_parameters())
 
-        # Store original weights using get_model_state_dict for proper FSDP support
-        # Use cpu_offload=True to avoid doubling GPU memory usage
+        # Store original weights (local shards, on CPU to avoid doubling GPU memory)
         log.info("Storing original model weights for merged model evaluation...")
-        sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
-        original_state = dist_cp_sd.get_model_state_dict(model, options=sd_options)
+        original_state = {
+            k: get_local_tensor(p.data.detach()).to("cpu").clone()
+            for k, p in params_dict.items()
+        }
 
         # Ensure all ranks are ready before loading merged weights
         barrier()
 
-        # Load merged weights using set_model_state_dict for proper FSDP support
-        # Use full_state_dict=False since averaged_state is sharded (each rank has its shard)
+        # Load merged weights into model
         log.info("Loading merged weights for evaluation...")
-        dist_cp_sd.set_model_state_dict(
-            model,
-            averaged_state,
-            options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True),
-        )
+        with torch.no_grad():
+            for name, param in params_dict.items():
+                if name in averaged_state:
+                    local_param = get_local_tensor(param.data)
+                    local_param.copy_(averaged_state[name].to(local_param.device, local_param.dtype))
 
         # Ensure all ranks have loaded merged weights before evaluation
         barrier()
@@ -514,14 +516,13 @@ class ModelMergeCallback(Callback):
                 log.info(f"Running merged model evaluation via {callback.__class__.__name__}...")
                 callback._perform_eval(prefix="eval/merged")
         finally:
-            # Restore original weights using set_model_state_dict for proper FSDP support
-            # Use full_state_dict=False since original_state is sharded
+            # Restore original weights
             log.info("Restoring original model weights...")
-            dist_cp_sd.set_model_state_dict(
-                model,
-                original_state,
-                options=dist_cp_sd.StateDictOptions(full_state_dict=False, strict=True),
-            )
+            with torch.no_grad():
+                for name, param in params_dict.items():
+                    if name in original_state:
+                        local_param = get_local_tensor(param.data)
+                        local_param.copy_(original_state[name].to(local_param.device, local_param.dtype))
             # Ensure all ranks have restored before continuing training
             barrier()
 
