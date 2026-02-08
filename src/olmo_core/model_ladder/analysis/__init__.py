@@ -8,6 +8,24 @@ from .eval import (
     perplexity_ratio,
     relative_bpb_error,
 )
+from .metrics import (
+    BASE_EASY_SUITE,
+    aggregate_base_easy_cluster,
+    aggregate_base_easy_cluster_for_row,
+    find_bpb_columns,
+    find_metric_columns,
+    normalize_task_name,
+)
+from .model_specs import (
+    LADDER_ARCH_CONFIGS,
+    OLMO3_SPECS,
+    OLMO3_SPECS_BY_NAME,
+    LadderArchConfig,
+    ModelSpec,
+    compute_hybrid_specs,
+    compute_olmo3_specs,
+    compute_specs_for_size,
+)
 from .plotting import plot_scaling_law_3d, plot_scaling_law_3d_comparison
 from .scaling_laws import (
     ChinchillaParametricBootstrappedFit,
@@ -31,4 +49,18 @@ __all__ = [
     "ChinchillaParametricBootstrappedFit",
     "plot_scaling_law_3d",
     "plot_scaling_law_3d_comparison",
+    "BASE_EASY_SUITE",
+    "aggregate_base_easy_cluster",
+    "aggregate_base_easy_cluster_for_row",
+    "find_bpb_columns",
+    "find_metric_columns",
+    "normalize_task_name",
+    "ModelSpec",
+    "OLMO3_SPECS",
+    "OLMO3_SPECS_BY_NAME",
+    "LadderArchConfig",
+    "LADDER_ARCH_CONFIGS",
+    "compute_hybrid_specs",
+    "compute_olmo3_specs",
+    "compute_specs_for_size",
 ]

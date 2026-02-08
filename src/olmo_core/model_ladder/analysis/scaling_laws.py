@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 from functools import partial
 from itertools import product
-from typing import NamedTuple, Optional, Protocol, Tuple, runtime_checkable
+from typing import Dict, NamedTuple, Optional, Protocol, Tuple, runtime_checkable
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -117,6 +117,41 @@ class ChinchillaParametricFit:
         if self.train_L is None or self.train_N is None or self.train_D is None:
             return None
         return np.log(self.train_L) - np.log(self.predict_loss(self.train_N, self.train_D))
+
+    @property
+    def r_squared(self) -> Optional[float]:
+        """Coefficient of determination (R²) of the fit on log-transformed data."""
+        if self.train_L is None or self.train_N is None or self.train_D is None:
+            return None
+        log_actual = np.log(self.train_L)
+        log_predicted = np.log(self.predict_loss(self.train_N, self.train_D))
+        ss_res = np.sum((log_actual - log_predicted) ** 2)
+        ss_tot = np.sum((log_actual - np.mean(log_actual)) ** 2)
+        if ss_tot == 0:
+            return 1.0
+        return float(1.0 - ss_res / ss_tot)
+
+    def r_squared_by_group(self, group_labels: np.ndarray) -> Dict[str, float]:
+        """
+        Compute R² broken down by group (e.g., model size).
+
+        :param group_labels: Array of group labels, same length as training data.
+        :returns: Dict mapping group label to R² for that subset.
+        """
+        if self.train_L is None or self.train_N is None or self.train_D is None:
+            return {}
+        log_actual = np.log(self.train_L)
+        log_predicted = np.log(self.predict_loss(self.train_N, self.train_D))
+        results: Dict[str, float] = {}
+        for label in np.unique(group_labels):
+            mask = group_labels == label
+            ss_res = np.sum((log_actual[mask] - log_predicted[mask]) ** 2)
+            ss_tot = np.sum((log_actual[mask] - np.mean(log_actual[mask])) ** 2)
+            if ss_tot == 0:
+                results[str(label)] = 1.0
+            else:
+                results[str(label)] = float(1.0 - ss_res / ss_tot)
+        return results
 
     @staticmethod
     def _optimize_single_init(

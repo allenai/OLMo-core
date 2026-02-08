@@ -24,6 +24,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from olmo_core.model_ladder.analysis.metrics import (
+    BASE_EASY_SUITE,
+    aggregate_base_easy_cluster,
+    aggregate_base_easy_cluster_for_row,  # noqa: F401
+    find_bpb_columns,  # noqa: F401
+    find_metric_columns,
+    normalize_task_name,
+)
+from olmo_core.model_ladder.analysis.model_specs import compute_specs_for_size
+
 # Optional plotting imports
 try:
     import matplotlib.pyplot as plt
@@ -163,83 +173,7 @@ def get_corrected_param_count(ladder_name: str, size: str) -> Optional[int]:
     return None
 
 
-# =============================================================================
-# OlmoBaseEval Base Easy Suite (Table 45) - BPB metrics for small-scale decisions
-# BPB = Bits Per Byte (lower is better)
-# =============================================================================
-
-BASE_EASY_SUITE = {
-    "Math_BPB": {
-        "tasks": [
-            "minerva_math_algebra",
-            "minerva_math_counting",
-            "minerva_math_geometry",
-            "minerva_math_intermediate_algebra",
-            "minerva_math_number_theory",
-            "minerva_math_prealgebra",
-            "minerva_math_precalculus",
-        ],
-        "metric_type": "bpb",
-        "icl": 4,  # 4-shot with human-written examples
-    },
-    "Code_BPB": {
-        "tasks": [
-            "humaneval",
-            "codex_humaneval",
-            "mbpp",
-            "codex_mbpp",
-            # MT MBPP (17 languages)
-            "mt_mbpp_rust",
-            "mt_mbpp_java",
-            "mt_mbpp_cpp",
-            "mt_mbpp_python",
-            "mt_mbpp_javascript",
-            "mt_mbpp_typescript",
-            "mt_mbpp_go",
-            "mt_mbpp_ruby",
-            "mt_mbpp_swift",
-            "mt_mbpp_kotlin",
-            "mt_mbpp_scala",
-            "mt_mbpp_php",
-            "mt_mbpp_perl",
-            "mt_mbpp_r",
-            "mt_mbpp_julia",
-            "mt_mbpp_lua",
-            "mt_mbpp_d",
-        ],
-        "metric_type": "bpb",
-        "icl": 3,
-    },
-    "QA_BPB": {
-        "tasks": [
-            "arc_challenge",
-            "arc_easy",
-            "mmlu",
-            "csqa",
-            "hellaswag",
-            "winogrande",
-            "socialiqa",
-            "piqa",
-            "coqa",
-            "drop",
-            "jeopardy",
-            "naturalqs",
-            "squad",
-            "sciq",
-            "qasper",
-            "basic_skills",
-            "dbqa",
-            "protocolqa",
-            "lambada",
-            "medmcqa",
-            "medqa",
-            "sciriff",
-        ],
-        "metric_type": "bpb",
-        "icl": 5,
-    },
-}
-
+# BASE_EASY_SUITE is imported from olmo_core.model_ladder.analysis.metrics
 
 # =============================================================================
 # OlmoBaseEval Base Main Suite (Table 46) - Accuracy/pass@k for in-loop evaluation
@@ -410,78 +344,9 @@ LM_TASKS = [
 
 # =============================================================================
 # Column Matching Utilities
+# normalize_task_name, find_metric_columns, find_bpb_columns are imported from
+# olmo_core.model_ladder.analysis.metrics
 # =============================================================================
-
-
-def normalize_task_name(name: str) -> str:
-    """Normalize task name for matching."""
-    return name.lower().replace("-", "_").replace(" ", "_")
-
-
-def find_metric_columns(
-    df: pd.DataFrame,
-    task_patterns: List[str],
-    metric_types: List[str],
-    prefer_v2: bool = True,
-) -> Dict[str, str]:
-    """
-    Find columns matching task patterns and metric types.
-
-    Args:
-        df: DataFrame with evaluation results
-        task_patterns: List of task name patterns to search for
-        metric_types: List of metric types (e.g., ["acc", "accuracy", "pass@1"])
-        prefer_v2: Prefer v2 versions of tasks
-
-    Returns:
-        Dict mapping task name to column name
-    """
-    task_to_col: Dict[str, Tuple[str, int]] = {}
-
-    for col in df.columns:
-        col_lower = col.lower()
-        col_normalized = normalize_task_name(col)
-
-        # Check if column contains any of the metric types
-        has_metric = any(m.lower() in col_lower for m in metric_types)
-        if not has_metric:
-            continue
-
-        for pattern in task_patterns:
-            pattern_normalized = normalize_task_name(pattern)
-
-            if pattern_normalized in col_normalized:
-                # Score this column for preference
-                score = 0
-
-                # Prefer v2 versions
-                if prefer_v2 and "v2" in col_lower:
-                    score += 10
-
-                # Prefer rc over mc for certain tasks
-                if "_rc_" in col_lower:
-                    score += 5
-
-                # Prefer length-normalized accuracy
-                if "length" in col_lower and "norm" in col_lower:
-                    score += 3
-
-                # Prefer pass@1 over other pass@k
-                if "pass@1" in col_lower:
-                    score += 2
-
-                # Prefer 5shot over other shot counts for consistency
-                if "5shot" in col_lower:
-                    score += 1
-
-                if (
-                    pattern_normalized not in task_to_col
-                    or score > task_to_col[pattern_normalized][1]
-                ):
-                    task_to_col[pattern_normalized] = (col, score)
-                break
-
-    return {k: v[0] for k, v in task_to_col.items()}
 
 
 def find_accuracy_columns(df: pd.DataFrame, task_patterns: List[str]) -> Dict[str, str]:
@@ -508,15 +373,6 @@ def find_f1_columns(df: pd.DataFrame, task_patterns: List[str]) -> Dict[str, str
         df,
         task_patterns,
         metric_types=["f1", "f1_score"],
-    )
-
-
-def find_bpb_columns(df: pd.DataFrame, task_patterns: List[str]) -> Dict[str, str]:
-    """Find BPB (bits per byte) columns for tasks."""
-    return find_metric_columns(
-        df,
-        task_patterns,
-        metric_types=["bpb", "bits_per_byte", "bits-per-byte"],
     )
 
 
@@ -549,34 +405,8 @@ def find_lm_columns(df: pd.DataFrame) -> Dict[str, Tuple[Optional[str], Optional
 
 # =============================================================================
 # Cluster Aggregation
+# aggregate_base_easy_cluster is imported from olmo_core.model_ladder.analysis.metrics
 # =============================================================================
-
-
-def aggregate_base_easy_cluster(
-    df: pd.DataFrame,
-    cluster_name: str,
-    cluster_config: Dict[str, Any],
-) -> Tuple[Optional[float], Dict[str, float]]:
-    """
-    Aggregate BPB metrics for a Base Easy cluster.
-    Returns (average_bpb, {task: bpb_value}).
-    """
-    task_patterns = cluster_config["tasks"]
-    task_to_col = find_bpb_columns(df, task_patterns)
-
-    if not task_to_col:
-        return None, {}
-
-    final_row = df[df["step"] == df["step"].max()].iloc[0]
-
-    values: Dict[str, float] = {}
-    for task, col in task_to_col.items():
-        if col in final_row and pd.notna(final_row[col]):
-            values[task] = float(final_row[col])
-
-    if values:
-        return sum(values.values()) / len(values), values
-    return None, {}
 
 
 def aggregate_base_main_cluster(
@@ -721,13 +551,21 @@ def analyze_ladder(
                 f"{corrected_params/1e6:.1f}M (was {raw_num_params/1e6:.1f}M)"
             )
 
+        # Compute FLOPs per token from architecture specs
+        computed_specs = compute_specs_for_size(ladder_name, size)
+        flops_per_token = computed_specs["total_flops_per_token"] if computed_specs else None
+
         # Canonical D/N values from WSDS Chinchilla schedule with tokens_per_param=20.
         # Post-decay: end of cooldown at each period (0.5xC, 1xC, 2xC, ...).
         # Pre-decay: ~90% through each period (decay_fraction=0.1).
         # Always snap against the full set so pre-decay checkpoints don't get
         # mis-snapped to post-decay values.  Then filter by post_decay_only.
-        _POST_DECAY_DN = [10, 20, 40, 80, 160]
-        _PRE_DECAY_DN = [9, 19, 38, 76, 152]
+        if ladder_name in ["hybrid-gdn", "hybrid-gdn-eight", "hybrid-gdn-half"] and size == "760M":
+            _POST_DECAY_DN = [9, 18, 36, 72, 144]
+            _PRE_DECAY_DN = [8, 17, 34, 68, 137]
+        else:
+            _POST_DECAY_DN = [10, 20, 40, 80, 160]
+            _PRE_DECAY_DN = [9, 19, 38, 76, 152]
         _ALL_DN = sorted(_POST_DECAY_DN + _PRE_DECAY_DN)
         _KEEP_DN = set(_POST_DECAY_DN) if post_decay_only else set(_ALL_DN)
 
@@ -772,6 +610,13 @@ def analyze_ladder(
                     if ppl_col and pd.notna(row.get(ppl_col)):
                         lm_metrics[task]["PPL"] = float(row[ppl_col])
 
+                # Training FLOPs = 3 * tokens * fwd_flops_per_token (fwd + bwd)
+                train_flops = (
+                    3.0 * float(tokens) * flops_per_token
+                    if flops_per_token is not None
+                    else None
+                )
+
                 results[checkpoint_key] = {
                     "base_easy": cluster_results["base_easy"],
                     "base_main": cluster_results["base_main"],
@@ -781,6 +626,7 @@ def analyze_ladder(
                     "step": int(step) if step is not None and not pd.isna(step) else 0,
                     "tokens": int(tokens),
                     "num_params": num_params,
+                    "flops": train_flops,
                     "size_label": size,
                 }
         else:
@@ -809,6 +655,13 @@ def analyze_ladder(
                 col: final_row[col] for col in metric_cols if pd.notna(final_row.get(col))
             }
 
+            # Training FLOPs = 3 * tokens * fwd_flops_per_token (fwd + bwd)
+            train_flops_final = (
+                3.0 * float(final_tokens) * flops_per_token
+                if flops_per_token is not None
+                else None
+            )
+
             results[size] = {
                 "base_easy": cluster_results["base_easy"],
                 "base_main": cluster_results["base_main"],
@@ -818,6 +671,7 @@ def analyze_ladder(
                 "step": final_step,
                 "tokens": final_tokens,
                 "num_params": num_params,
+                "flops": train_flops_final,
                 "size_label": size,
             }
 
@@ -1219,6 +1073,134 @@ def _get_x_value(size_key: str, data: Dict[str, Any]) -> float:
 def _get_x_label(size_key: str, data: Dict[str, Any]) -> str:
     """Get human-readable x-axis label."""
     return data.get("size_label", get_size_label(size_key))
+
+
+def _get_flops_value(data: Dict[str, Any]) -> Optional[float]:
+    """Get training FLOPs in PetaFLOPs for x-axis positioning."""
+    flops = data.get("flops")
+    if flops is not None and flops > 0:
+        return float(flops) / 1e15  # Convert to PetaFLOPs
+    return None
+
+
+def _plot_ladder_on_axis_flops(
+    ax,
+    size_results: Dict[str, Dict[str, Any]],
+    extract_y,
+    ladder_name: str,
+    color: str,
+    sizes: Optional[List[str]] = None,
+    added_dn_labels: Optional[set] = None,
+    use_final_checkpoint: bool = False,
+) -> None:
+    """
+    Plot a single ladder's data on an axis with FLOPs on the x-axis.
+
+    When the data contains checkpoint keys (size@ratio), draws scatter points
+    gradient-colored by D/N ratio and a curve through the final checkpoint per size.
+    Otherwise draws the classic "o-" line plot.
+    """
+    from matplotlib.lines import Line2D
+
+    multi = _has_checkpoints(size_results)
+
+    if not multi:
+        points = []
+        for size_key, data in size_results.items():
+            if sizes and get_size_label(size_key) not in sizes:
+                continue
+            y = extract_y(data)
+            f = _get_flops_value(data)
+            if y is not None and f is not None:
+                points.append((f, y))
+        if points:
+            points.sort(key=lambda p: p[0])
+            x_vals, y_vals = zip(*points)
+            ax.plot(
+                x_vals, y_vals, "o-",
+                label=ladder_name, color=color, linewidth=2, markersize=6,
+            )
+        return
+
+    # Multi-checkpoint case
+    points_by_size: Dict[str, List[Tuple[float, float, int]]] = {}
+    all_dn_ratios: set = set()
+
+    for size_key, data in size_results.items():
+        if sizes and get_size_label(size_key) not in sizes:
+            continue
+        y = extract_y(data)
+        f = _get_flops_value(data)
+        if y is None or f is None:
+            continue
+        dn = _get_dn_ratio(size_key)
+        if dn is None:
+            dn = 0
+        label = _get_x_label(size_key, data)
+        points_by_size.setdefault(label, []).append((f, y, dn))
+        all_dn_ratios.add(dn)
+
+    if not points_by_size:
+        return
+
+    sorted_dn = sorted(all_dn_ratios)
+    dn_min, dn_max = sorted_dn[0], sorted_dn[-1]
+    dn_span = max(dn_max - dn_min, 1)
+
+    # Scatter all checkpoints, gradient-coloured by D/N
+    for _label, pts in points_by_size.items():
+        for f_val, y_val, dn in pts:
+            frac = 0.25 + 0.75 * (dn - dn_min) / dn_span
+            pt_color = shade_color(color, frac)
+            ax.scatter(
+                f_val, y_val, color=pt_color, s=30, alpha=0.7,
+                edgecolors="white", linewidth=0.3, zorder=4,
+            )
+
+    # Curve through each model size's checkpoints (final or mean)
+    curve_points = []
+    for _label, pts in points_by_size.items():
+        if use_final_checkpoint:
+            final_pt = max(pts, key=lambda p: p[2])
+            curve_points.append((final_pt[0], final_pt[1]))
+        else:
+            mean_f = sum(p[0] for p in pts) / len(pts)
+            mean_y = sum(p[1] for p in pts) / len(pts)
+            curve_points.append((mean_f, mean_y))
+    curve_points.sort(key=lambda p: p[0])
+
+    if curve_points:
+        cx, cy = zip(*curve_points)
+        ax.plot(cx, cy, color=color, linewidth=2.5, alpha=0.8, zorder=5, label=ladder_name)
+
+    # Add gradient legend entries (shared across ladders)
+    if added_dn_labels is None:
+        added_dn_labels = set()
+
+    if len(sorted_dn) <= 5:
+        legend_dns = sorted_dn
+    else:
+        step = max(1, len(sorted_dn) // 4)
+        legend_dns = sorted_dn[::step]
+        if sorted_dn[-1] not in legend_dns:
+            legend_dns.append(sorted_dn[-1])
+
+    dn_handles = []
+    for dn in legend_dns:
+        if dn in added_dn_labels:
+            continue
+        added_dn_labels.add(dn)
+        frac = 0.25 + 0.75 * (dn - dn_min) / dn_span
+        dn_handles.append(
+            Line2D(
+                [0], [0], marker="o", color="w",
+                markerfacecolor=shade_color("#555555", frac),
+                markersize=7, label=f"D/N={dn}",
+            )
+        )
+
+    if dn_handles:
+        ax._dn_legend_handles = getattr(ax, "_dn_legend_handles", []) + dn_handles
 
 
 def _plot_ladder_on_axis(
@@ -2070,6 +2052,274 @@ def plot_lm_metrics(
         plt.close(fig)
 
 
+def plot_base_easy_metrics_vs_flops(
+    ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
+    sizes: Optional[List[str]] = None,
+    output_path: Optional[Path] = None,
+    show: bool = True,
+    use_final_checkpoint: bool = False,
+    star_ladder: Optional[str] = None,
+) -> None:
+    """
+    Plot Base Easy Suite metrics (BPB) with training FLOPs on the x-axis.
+    Allows iso-compute comparison across architectures with different per-token costs.
+    """
+    if not PLOTTING_AVAILABLE:
+        print("Warning: matplotlib not available, skipping FLOP plots")
+        return
+
+    clusters = list(BASE_EASY_SUITE.keys())
+    n_clusters = len(clusters)
+
+    fig, axes = plt.subplots(1, n_clusters, figsize=(5 * n_clusters, 4))
+    axes_list = axes if n_clusters > 1 else [axes]
+
+    ladder_names = list(ladder_results.keys())
+    colors = get_ladder_colors(ladder_names)
+
+    any_checkpoints = any(_has_checkpoints(sr) for sr in ladder_results.values())
+
+    for idx, cluster in enumerate(clusters):
+        ax = axes_list[idx]
+        dn_labels: set = set()
+
+        def _extract(data, _c=cluster):
+            be = data.get("base_easy", {})
+            if _c in be:
+                return be[_c]["avg"]
+            return None
+
+        for ladder_name in ladder_names:
+            _plot_ladder_on_axis_flops(
+                ax,
+                ladder_results[ladder_name],
+                _extract,
+                _starred_display_name(ladder_name, star_ladder),
+                colors[ladder_name],
+                sizes,
+                added_dn_labels=dn_labels,
+                use_final_checkpoint=use_final_checkpoint,
+            )
+
+        ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=10)
+        ax.set_ylabel("Bits-per-byte", fontsize=10)
+        ax.set_title(f"Base Easy {cluster.replace('_BPB', '')}", fontsize=11, fontweight="bold")
+        ax.set_xscale("log")
+        ax.grid(True, alpha=0.3)
+        if idx == 0:
+            _finalize_legends(ax, any_checkpoints)
+
+    fig.suptitle(
+        "OlmoBaseEval Base Easy Suite vs FLOPs (BPB - lower is better)",
+        fontsize=14,
+        fontweight="bold",
+        y=1.02,
+    )
+    plt.tight_layout()
+
+    if output_path:
+        fig.savefig(output_path / "olmobaseeval_easy_vs_flops.png", dpi=150, bbox_inches="tight")
+        print(f"Saved: {output_path / 'olmobaseeval_easy_vs_flops.png'}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def plot_base_main_metrics_vs_flops(
+    ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
+    sizes: Optional[List[str]] = None,
+    output_path: Optional[Path] = None,
+    show: bool = True,
+    use_final_checkpoint: bool = False,
+    star_ladder: Optional[str] = None,
+) -> None:
+    """
+    Plot Base Main Suite metrics (accuracy) with training FLOPs on the x-axis.
+    """
+    if not PLOTTING_AVAILABLE:
+        print("Warning: matplotlib not available, skipping FLOP plots")
+        return
+
+    clusters = list(BASE_MAIN_SUITE.keys())
+    n_clusters = len(clusters)
+    n_cols = 3
+    n_rows = (n_clusters + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    axes = axes.flatten() if n_clusters > 1 else [axes]
+
+    ladder_names = list(ladder_results.keys())
+    colors = get_ladder_colors(ladder_names)
+
+    any_checkpoints = any(_has_checkpoints(sr) for sr in ladder_results.values())
+
+    for idx, cluster in enumerate(clusters):
+        ax = axes[idx]
+        dn_labels: set = set()
+
+        def _extract(data, _c=cluster):
+            bm = data.get("base_main", {})
+            if _c in bm:
+                return bm[_c]["avg"] * 100
+            return None
+
+        for ladder_name in ladder_names:
+            _plot_ladder_on_axis_flops(
+                ax,
+                ladder_results[ladder_name],
+                _extract,
+                _starred_display_name(ladder_name, star_ladder),
+                colors[ladder_name],
+                sizes,
+                added_dn_labels=dn_labels,
+                use_final_checkpoint=use_final_checkpoint,
+            )
+
+        ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=10)
+        ax.set_ylabel("Accuracy (%)" if cluster != "FIM" else "pass@1 (%)", fontsize=10)
+        ax.set_title(f"Base Main {cluster}", fontsize=11, fontweight="bold")
+        ax.set_xscale("log")
+        ax.grid(True, alpha=0.3)
+        if idx == 0:
+            _finalize_legends(ax, any_checkpoints)
+
+    for idx in range(n_clusters, len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle("OlmoBaseEval Base Main Suite vs FLOPs", fontsize=14, fontweight="bold", y=1.02)
+    plt.tight_layout()
+
+    if output_path:
+        fig.savefig(output_path / "olmobaseeval_main_vs_flops.png", dpi=150, bbox_inches="tight")
+        print(f"Saved: {output_path / 'olmobaseeval_main_vs_flops.png'}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def plot_lm_metrics_vs_flops(
+    ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
+    sizes: Optional[List[str]] = None,
+    output_path: Optional[Path] = None,
+    show: bool = True,
+    use_final_checkpoint: bool = False,
+    star_ladder: Optional[str] = None,
+) -> None:
+    """Plot language modeling metrics (perplexity) with training FLOPs on the x-axis."""
+    if not PLOTTING_AVAILABLE:
+        print("Warning: matplotlib not available, skipping FLOP plots")
+        return
+
+    all_tasks: set = set()
+    for size_results in ladder_results.values():
+        for data in size_results.values():
+            all_tasks.update(data.get("lm_metrics", {}).keys())
+
+    key_tasks = ["c4_en", "pile", "wikitext_103", "dolma_common-crawl", "dolma_wiki"]
+    tasks_to_plot = [t for t in key_tasks if t in all_tasks]
+
+    if not tasks_to_plot:
+        print("No LM metrics to plot vs FLOPs")
+        return
+
+    n_tasks = len(tasks_to_plot) + 1
+    n_cols = min(3, n_tasks)
+    n_rows = (n_tasks + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 4 * n_rows))
+    axes_list = axes.flatten() if n_tasks > 1 else [axes]
+
+    ladder_names = list(ladder_results.keys())
+    colors = get_ladder_colors(ladder_names)
+
+    any_checkpoints = any(_has_checkpoints(sr) for sr in ladder_results.values())
+
+    # Plot average PPL first
+    ax = axes_list[0]
+    dn_labels: set = set()
+
+    def _extract_avg_ppl(data):
+        lm = data.get("lm_metrics", {})
+        ppls = [v.get("PPL") for v in lm.values() if v.get("PPL") is not None]
+        if ppls:
+            return sum(ppls) / len(ppls)
+        return None
+
+    for ladder_name in ladder_names:
+        _plot_ladder_on_axis_flops(
+            ax,
+            ladder_results[ladder_name],
+            _extract_avg_ppl,
+            _starred_display_name(ladder_name, star_ladder),
+            colors[ladder_name],
+            sizes,
+            added_dn_labels=dn_labels,
+            use_final_checkpoint=use_final_checkpoint,
+        )
+
+    ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=10)
+    ax.set_ylabel("Perplexity", fontsize=10)
+    ax.set_title("Average PPL", fontsize=12, fontweight="bold")
+    ax.set_xscale("log")
+    ax.grid(True, alpha=0.3)
+    _finalize_legends(ax, any_checkpoints)
+
+    # Plot individual task PPLs
+    for idx, task in enumerate(tasks_to_plot, start=1):
+        if idx >= len(axes_list):
+            break
+        ax = axes_list[idx]
+        dn_labels_task: set = set()
+
+        def _extract_task_ppl(data, _t=task):
+            lm = data.get("lm_metrics", {})
+            if _t in lm and "PPL" in lm[_t]:
+                return lm[_t]["PPL"]
+            return None
+
+        for ladder_name in ladder_names:
+            _plot_ladder_on_axis_flops(
+                ax,
+                ladder_results[ladder_name],
+                _extract_task_ppl,
+                _starred_display_name(ladder_name, star_ladder),
+                colors[ladder_name],
+                sizes,
+                added_dn_labels=dn_labels_task,
+                use_final_checkpoint=use_final_checkpoint,
+            )
+
+        ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=10)
+        ax.set_ylabel("Perplexity", fontsize=10)
+        ax.set_title(f"{task}", fontsize=12, fontweight="bold")
+        ax.set_xscale("log")
+        ax.grid(True, alpha=0.3)
+
+    for idx in range(n_tasks, len(axes_list)):
+        axes_list[idx].set_visible(False)
+
+    fig.suptitle(
+        "Language Modeling vs FLOPs (Perplexity, lower is better)",
+        fontsize=14,
+        fontweight="bold",
+        y=1.02,
+    )
+    plt.tight_layout()
+
+    if output_path:
+        fig.savefig(output_path / "lm_comparison_vs_flops.png", dpi=150, bbox_inches="tight")
+        print(f"Saved: {output_path / 'lm_comparison_vs_flops.png'}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
 def plot_all(
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
     sizes: Optional[List[str]] = None,
@@ -2078,6 +2328,7 @@ def plot_all(
     include_main: bool = False,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
+    plot_flops: bool = False,
 ) -> None:
     """Generate all OlmoBaseEval-style plots."""
     if not PLOTTING_AVAILABLE:
@@ -2087,11 +2338,19 @@ def plot_all(
     print("\nGenerating OlmoBaseEval plots...")
     if include_main:
         plot_base_main_metrics(
-            ladder_results, sizes, output_path, show, use_final_checkpoint=use_final_checkpoint,
+            ladder_results,
+            sizes,
+            output_path,
+            show,
+            use_final_checkpoint=use_final_checkpoint,
             star_ladder=star_ladder,
         )
     plot_base_easy_metrics(
-        ladder_results, sizes, output_path, show, use_final_checkpoint=use_final_checkpoint,
+        ladder_results,
+        sizes,
+        output_path,
+        show,
+        use_final_checkpoint=use_final_checkpoint,
         star_ladder=star_ladder,
     )
     if include_main:
@@ -2106,9 +2365,42 @@ def plot_all(
         star_ladder=star_ladder,
     )
     plot_lm_metrics(
-        ladder_results, sizes, output_path, show, use_final_checkpoint=use_final_checkpoint,
+        ladder_results,
+        sizes,
+        output_path,
+        show,
+        use_final_checkpoint=use_final_checkpoint,
         star_ladder=star_ladder,
     )
+
+    # FLOPs-based plots (metric vs training compute)
+    if plot_flops:
+        plot_base_easy_metrics_vs_flops(
+            ladder_results,
+            sizes,
+            output_path,
+            show,
+            use_final_checkpoint=use_final_checkpoint,
+            star_ladder=star_ladder,
+        )
+        if include_main:
+            plot_base_main_metrics_vs_flops(
+                ladder_results,
+                sizes,
+                output_path,
+                show,
+                use_final_checkpoint=use_final_checkpoint,
+                star_ladder=star_ladder,
+            )
+        plot_lm_metrics_vs_flops(
+            ladder_results,
+            sizes,
+            output_path,
+            show,
+            use_final_checkpoint=use_final_checkpoint,
+            star_ladder=star_ladder,
+        )
+
     print("Done generating plots.")
 
 
@@ -2976,6 +3268,157 @@ def generate_latex_plot(
     return "\n".join(lines)
 
 
+def generate_latex_flops_plot(
+    ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
+    metric_name: str,
+    extract_fn,
+    ylabel: str,
+    title: str,
+    sizes: Optional[List[str]] = None,
+    higher_is_better: bool = True,
+    width: str = "0.95\\linewidth",
+    height: str = "0.55\\linewidth",
+    use_final_checkpoint: bool = False,
+    legend_columns: int = 3,
+    star_ladder: Optional[str] = None,
+    emit_color_defs: bool = False,
+) -> str:
+    """
+    Generate a TikZ/pgfplots figure showing metric vs training FLOPs.
+
+    Same interface as generate_latex_plot() but uses FLOPs (PetaFLOPs) on the x-axis
+    instead of parameter count, enabling iso-compute comparison across architectures.
+    """
+    ladder_names = list(ladder_results.keys())
+
+    # Collect all data points per ladder (x = FLOPs in PetaFLOPs)
+    ladder_data: Dict[str, List[Tuple[float, float]]] = {}
+    all_x: List[float] = []
+    all_y: List[float] = []
+
+    for ladder_name in ladder_names:
+        points = []
+        size_results = ladder_results[ladder_name]
+
+        # Group by base size label to handle multi-checkpoint data
+        by_size: Dict[str, List[Tuple[float, float, int]]] = {}
+        for size_key, data in size_results.items():
+            if sizes and get_size_label(size_key) not in sizes:
+                continue
+            y = extract_fn(data)
+            f = _get_flops_value(data)
+            if y is None or f is None:
+                continue
+            dn = _get_dn_ratio(size_key)
+            base_label = get_size_label(size_key)
+            by_size.setdefault(base_label, []).append((f, y, dn if dn is not None else 0))
+
+        # Reduce to one point per size
+        for _label, pts in by_size.items():
+            if use_final_checkpoint or not _has_checkpoints(size_results):
+                best = max(pts, key=lambda p: p[2])
+                points.append((best[0], best[1]))
+            else:
+                avg_f = sum(p[0] for p in pts) / len(pts)
+                avg_y = sum(p[1] for p in pts) / len(pts)
+                points.append((avg_f, avg_y))
+
+        points.sort(key=lambda p: p[0])
+        if points:
+            ladder_data[ladder_name] = points
+            all_x.extend(p[0] for p in points)
+            all_y.extend(p[1] for p in points)
+
+    if not all_x:
+        return f"% No data available for {metric_name}\n"
+
+    # Compute axis limits with padding
+    x_min = min(all_x) * 0.8
+    x_max = max(all_x) * 1.2
+    y_range = max(all_y) - min(all_y) if len(all_y) > 1 else 1.0
+    y_pad = y_range * 0.1
+    y_min = min(all_y) - y_pad
+    y_max = max(all_y) + y_pad
+
+    # Collect styles
+    styles: Dict[str, Dict[str, str]] = {}
+    seen_colors: set = set()
+    color_defs: List[str] = []
+    for idx, ladder_name in enumerate(ladder_names):
+        if ladder_name not in ladder_data:
+            continue
+        style = _get_latex_style(ladder_name, idx)
+        styles[ladder_name] = style
+        if emit_color_defs and style["color_name"] not in seen_colors:
+            seen_colors.add(style["color_name"])
+            color_defs.append(style["color_def"])
+
+    # Build the TikZ code
+    lines: List[str] = []
+    direction = "higher is better" if higher_is_better else "lower is better"
+    lines.append(f"% {_escape_latex_text(title)} ({direction})")
+    if color_defs:
+        for cdef in color_defs:
+            lines.append(cdef)
+        lines.append("")
+    lines.append(r"\begin{tikzpicture}")
+    lines.append(r"\begin{axis}[")
+    lines.append(f"    width={width},")
+    lines.append(f"    height={height},")
+    lines.append("    xmode=log,")
+    lines.append("    log basis x=10,")
+    lines.append("    xlabel={Training FLOPs (PetaFLOPs)},")
+    lines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
+    lines.append(f"    xmin={x_min:.4f}, xmax={x_max:.4f},")
+    lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
+    lines.append(r"    legend style={")
+    lines.append(r"        at={(0.5,-0.22)},")
+    lines.append(r"        anchor=north,")
+    lines.append(r"        font=\scriptsize,")
+    lines.append(r"        cells={anchor=west},")
+    lines.append(r"        draw=none,")
+    lines.append(f"        legend columns={legend_columns},")
+    lines.append(r"        column sep=6pt,")
+    lines.append(r"        row sep=1pt,")
+    lines.append(r"    },")
+    lines.append(r"    grid=major,")
+    lines.append(r"    grid style={gray!15},")
+    lines.append(r"    every axis plot/.append style={thick, mark size=2.5pt, smooth},")
+    lines.append(r"]")
+    lines.append("")
+
+    # Add plot lines for each ladder
+    for ladder_name in ladder_names:
+        if ladder_name not in ladder_data:
+            continue
+        points = ladder_data[ladder_name]
+        style = styles[ladder_name]
+
+        plot_opts = [f"color={style['color_name']}"]
+        if style["mark_options"]:
+            plot_opts.append(f"mark={style['mark']}")
+            plot_opts.append(f"mark options={{{style['mark_options']}}}")
+        else:
+            plot_opts.append(f"mark={style['mark']}")
+
+        plot_opts_str = ", ".join(plot_opts)
+
+        coords = " ".join(f"({p[0]:.4f},{p[1]:.4f})" for p in points)
+        lines.append(f"\\addplot[{plot_opts_str}]")
+        lines.append(f"    coordinates {{{coords}}};")
+
+        display = get_display_name(ladder_name)
+        if star_ladder and ladder_name.lower() == star_ladder.lower():
+            display += r" $\bigstar$"
+        lines.append(f"\\addlegendentry{{{_escape_latex_text(display)}}}")
+        lines.append("")
+
+    lines.append(r"\end{axis}")
+    lines.append(r"\end{tikzpicture}")
+
+    return "\n".join(lines)
+
+
 def generate_latex_bar_chart(
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
     metric_name: str,
@@ -3160,6 +3603,7 @@ def generate_latex_plots(
     include_main: bool = False,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
+    plot_flops: bool = False,
 ) -> str:
     """
     Generate publication-ready LaTeX/TikZ plots for all metric suites.
@@ -3171,6 +3615,7 @@ def generate_latex_plots(
       - Base Main Suite average accuracy vs parameters (if include_main)
       - Each Base Main cluster vs parameters (if include_main)
       - Average LM perplexity vs parameters
+      - All of the above vs training FLOPs (if plot_flops)
 
     Args:
         ladder_results: The standard {ladder_name: {size_key: data}} dict.
@@ -3178,6 +3623,7 @@ def generate_latex_plots(
         include_main: Include Base Main Suite plots.
         use_final_checkpoint: Use final checkpoint per size instead of mean.
         star_ladder: Ladder name to highlight with a star in the legend.
+        plot_flops: Include FLOPs-based plots (metric vs training compute).
 
     Returns:
         Complete LaTeX string with all plots as separate figures.
@@ -3542,6 +3988,121 @@ def generate_latex_plots(
     parts.append(r"\end{figure}")
     parts.append("")
 
+    # --- FLOPs-based plots (metric vs training compute) ---
+    if plot_flops:
+        # Base Easy Suite average BPB vs FLOPs
+        parts.append("% --- Base Easy Suite: Average BPB vs FLOPs ---")
+        parts.append(r"\begin{figure}[htbp]")
+        parts.append(r"    \centering")
+        parts.append(
+            generate_latex_flops_plot(
+                ladder_results,
+                "base_easy_avg_flops",
+                _extract_easy_avg,
+                ylabel="Average BPB",
+                title="Base Easy Suite Average vs FLOPs",
+                sizes=sizes,
+                higher_is_better=False,
+                use_final_checkpoint=use_final_checkpoint,
+                star_ladder=star_ladder,
+            )
+        )
+        parts.append(
+            r"    \caption{Base Easy Suite average BPB vs.\ training FLOPs (lower is better).}"
+        )
+        parts.append(r"    \label{fig:base_easy_avg_flops}")
+        parts.append(r"\end{figure}")
+        parts.append("")
+
+        # Per-cluster BPB vs FLOPs
+        for cluster_name in BASE_EASY_SUITE.keys():
+
+            def _extract_cluster_flops(data, _c=cluster_name):
+                be = data.get("base_easy", {})
+                if _c in be:
+                    return be[_c]["avg"]
+                return None
+
+            clean_name = cluster_name.replace("_BPB", "")
+            parts.append(f"% --- Base Easy: {clean_name} BPB vs FLOPs ---")
+            parts.append(r"\begin{figure}[htbp]")
+            parts.append(r"    \centering")
+            parts.append(
+                generate_latex_flops_plot(
+                    ladder_results,
+                    f"base_easy_{cluster_name}_flops",
+                    _extract_cluster_flops,
+                    ylabel=f"{clean_name} BPB",
+                    title=f"Base Easy {clean_name} vs FLOPs",
+                    sizes=sizes,
+                    higher_is_better=False,
+                    use_final_checkpoint=use_final_checkpoint,
+                    star_ladder=star_ladder,
+                )
+            )
+            parts.append(
+                f"    \\caption{{Base Easy {_escape_latex_text(clean_name)} BPB vs.\\ training FLOPs.}}"
+            )
+            parts.append(f"    \\label{{fig:base_easy_{cluster_name.lower()}_flops}}")
+            parts.append(r"\end{figure}")
+            parts.append("")
+
+        # Base Main Suite vs FLOPs (if requested)
+        if include_main:
+
+            def _extract_main_avg_flops(data):
+                bm = data.get("base_main", {})
+                if bm:
+                    return sum(c["avg"] for c in bm.values()) / len(bm) * 100
+                return None
+
+            parts.append("% --- Base Main Suite: Average Accuracy vs FLOPs ---")
+            parts.append(r"\begin{figure}[htbp]")
+            parts.append(r"    \centering")
+            parts.append(
+                generate_latex_flops_plot(
+                    ladder_results,
+                    "base_main_avg_flops",
+                    _extract_main_avg_flops,
+                    ylabel="Average Accuracy (\\%)",
+                    title="Base Main Suite Average vs FLOPs",
+                    sizes=sizes,
+                    higher_is_better=True,
+                    use_final_checkpoint=use_final_checkpoint,
+                    star_ladder=star_ladder,
+                )
+            )
+            parts.append(
+                r"    \caption{Base Main Suite average accuracy vs.\ training FLOPs (higher is better).}"
+            )
+            parts.append(r"    \label{fig:base_main_avg_flops}")
+            parts.append(r"\end{figure}")
+            parts.append("")
+
+        # Average LM Perplexity vs FLOPs
+        parts.append("% --- Average LM Perplexity vs FLOPs ---")
+        parts.append(r"\begin{figure}[htbp]")
+        parts.append(r"    \centering")
+        parts.append(
+            generate_latex_flops_plot(
+                ladder_results,
+                "lm_avg_ppl_flops",
+                _extract_avg_ppl,
+                ylabel="Perplexity",
+                title="Average LM Perplexity vs FLOPs",
+                sizes=sizes,
+                higher_is_better=False,
+                use_final_checkpoint=use_final_checkpoint,
+                star_ladder=star_ladder,
+            )
+        )
+        parts.append(
+            r"    \caption{Average language modeling perplexity vs.\ training FLOPs (lower is better).}"
+        )
+        parts.append(r"    \label{fig:lm_avg_ppl_flops}")
+        parts.append(r"\end{figure}")
+        parts.append("")
+
     return "\n".join(parts)
 
 
@@ -3555,6 +4116,9 @@ def export_results(
     output_path: Path,
     sizes: Optional[List[str]] = None,
     include_main: bool = False,
+    use_final_checkpoint: bool = False,
+    star_ladder: Optional[str] = None,
+    plot_flops: bool = False,
 ) -> None:
     """Export results to various formats."""
     easy_df = create_base_easy_table(ladder_results, sizes)
@@ -3623,7 +4187,14 @@ def export_results(
         f.write(ablation_output)
 
     # Generate LaTeX/TikZ plots
-    latex_plots = generate_latex_plots(ladder_results, sizes, include_main=include_main)
+    latex_plots = generate_latex_plots(
+        ladder_results,
+        sizes,
+        include_main=include_main,
+        use_final_checkpoint=use_final_checkpoint,
+        star_ladder=star_ladder,
+        plot_flops=plot_flops,
+    )
     plots_path = output_path / "olmobaseeval_plots.tex"
     with open(plots_path, "w") as f:
         f.write(latex_plots)
@@ -3709,6 +4280,12 @@ Examples:
         "--plot",
         action="store_true",
         help="Generate OlmoBaseEval-style visualization plots",
+    )
+    parser.add_argument(
+        "--plot-flops",
+        action="store_true",
+        help="Generate plots with training FLOPs on the x-axis (iso-compute comparison). "
+        "Requires architecture specs to compute FLOPs per token.",
     )
     parser.add_argument(
         "--group-by-ladder",
@@ -3963,7 +4540,7 @@ Examples:
         )
         print(ablation_output)
 
-    # Generate LaTeX/TikZ plots if requested
+    # Generate LaTeX/TikZ plots if requested (print to stdout; file output handled by --export)
     if args.latex_plots:
         latex_plots = generate_latex_plots(
             ladder_results,
@@ -3971,21 +4548,16 @@ Examples:
             include_main=include_main,
             use_final_checkpoint=args.curve_final,
             star_ladder=args.star_ladder,
+            plot_flops=args.plot_flops,
         )
-        if figure_output:
-            plots_path = figure_output / "olmobaseeval_plots.tex"
-            with open(plots_path, "w") as f:
-                f.write(latex_plots)
-            print(f"\nSaved LaTeX plots to: {plots_path}")
-        else:
-            print("\n" + "=" * 80)
-            print("LATEX/TIKZ PLOTS (pgfplots)")
-            print("=" * 80)
-            print()
-            print(latex_plots)
+        print("\n" + "=" * 80)
+        print("LATEX/TIKZ PLOTS (pgfplots)")
+        print("=" * 80)
+        print()
+        print(latex_plots)
 
     # Generate plots if requested
-    if args.plot:
+    if args.plot or args.plot_flops:
         show_plots = figure_output is None
         plot_all(
             ladder_results,
@@ -3995,13 +4567,22 @@ Examples:
             include_main=include_main,
             use_final_checkpoint=args.curve_final,
             star_ladder=args.star_ladder,
+            plot_flops=args.plot_flops,
         )
 
     # Export if requested
     if args.export:
         export_path = Path(args.export).expanduser()
         export_path.mkdir(parents=True, exist_ok=True)
-        export_results(ladder_results, export_path, args.sizes, include_main=include_main)
+        export_results(
+            ladder_results,
+            export_path,
+            args.sizes,
+            include_main=include_main,
+            use_final_checkpoint=args.curve_final,
+            star_ladder=args.star_ladder,
+            plot_flops=args.plot_flops,
+        )
 
 
 if __name__ == "__main__":
