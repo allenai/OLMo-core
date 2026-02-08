@@ -133,8 +133,8 @@ class Olmo3MoeExperts(nn.ModuleList):
     def forward(
         self,
         hidden_states: torch.Tensor,  # (N, H)
-        top_k_weights: torch.Tensor,  # (N, K)
-        top_k_indices: torch.Tensor,  # (N, K)
+        topk_ids: torch.Tensor,  # (N, K)
+        topk_weights: torch.Tensor,  # (N, K)
     ) -> torch.Tensor:
         # Use a compile-safe fallback if TorchDynamo is tracing this module.
         # NOTE: This is extremely slow because it runs every expert on every token.
@@ -147,7 +147,7 @@ class Olmo3MoeExperts(nn.ModuleList):
             out = hidden_states.new_zeros(hidden_states.shape)
             for expert_id, expert in enumerate(self):
                 # Aggregate the routing weights for this expert across the K slots.
-                w = (top_k_weights * (top_k_indices == expert_id).to(top_k_weights.dtype)).sum(
+                w = (topk_weights * (topk_ids == expert_id).to(topk_weights.dtype)).sum(
                     dim=1, keepdim=True
                 )  # (N, 1)
                 out = out + expert(hidden_states) * w
@@ -157,13 +157,13 @@ class Olmo3MoeExperts(nn.ModuleList):
         N, H = hidden_states.shape
         out = hidden_states.new_zeros((N, H))
         for expert_id, expert in enumerate(self):
-            mask = (top_k_indices == expert_id)  # (N, K) bool
+            mask = (topk_ids == expert_id)  # (N, K) bool
             if not mask.any():
                 continue
             token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
             x_sel = hidden_states.index_select(0, token_ids)  # (M, H)
             y_sel = expert(x_sel)  # (M, H)
-            w_sel = top_k_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)  # (M, 1)
+            w_sel = topk_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)  # (M, 1)
             out.index_add_(0, token_ids, y_sel * w_sel)
         return out
 
@@ -204,7 +204,7 @@ class Olmo3MoeSparseMLP(nn.Module):
         idx_flat = expert_indices.reshape(B * S, K)  # (N, K)
         w_flat = expert_weights.reshape(B * S, K).to(dtype=x.dtype)  # (N, K)
 
-        out_flat = self.experts(x_flat, w_flat, idx_flat)  # (N, H)
+        out_flat = self.experts(x_flat, topk_ids=idx_flat, topk_weights=w_flat)  # (N, H)
         routed_expert_out = out_flat.view(B, S, H)
 
         # shared expert
@@ -525,6 +525,11 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
         position_embeddings = self.rotary_embs(hidden_states, position_ids)
 
         for decoder_layer in self.layers:
+            # if used in vllm with PP, a few layers will be replaced by PPMissingLayer(), which just passes the inputs through, so we need to skip the attention mask and position embeddings in that case
+            if not isinstance(decoder_layer, Olmo3MoeDecoderLayer):
+                hidden_states = decoder_layer(hidden_states)
+                continue
+
             decoder_layer = cast(Olmo3MoeDecoderLayer, decoder_layer)
             attention_mask = causal_mask_mapping[decoder_layer.self_attn.attention_type]
             hidden_states = decoder_layer(

@@ -238,7 +238,7 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
 
 if __name__ == "__main__":
     CKPT_PATH = '/workspace/checkpoint/OLMoE3-abl-260102-018a_1024d1024a_12L768M768S_32E4K1S_abl/step10000'
-    output_path = '/workspace/tmp/step10000_hf_model_rep'
+    output_path = '/workspace/tmp/step10000_hf_model_rep_fix'
     main_sd = load_state_dict_direct(
         dir=os.path.join(CKPT_PATH, 'model_and_optim'),
         process_group=None, pre_download=True, work_dir='/workspace/tmp'
