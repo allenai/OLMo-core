@@ -57,7 +57,17 @@ class FLA(nn.Module):
             if self._inner_supports_cu_seqlens:
                 return self.inner(x, cu_seqlens=cu_doc_lens)[0]  # returns out, ?, cache
             else:
-                return self.inner(x)[0]
+                return self._call_inner_no_compile(x)
+
+    @torch.compiler.disable
+    def _call_inner_no_compile(self, x: torch.Tensor) -> torch.Tensor:
+        """Call inner layer with torch.compile disabled.
+
+        Layers like Mamba2 use custom Triton/CUDA kernels that are already optimized
+        and can cause Inductor codegen errors (e.g., NameError: 'math' is not defined)
+        when wrapped by torch.compile.
+        """
+        return self.inner(x)[0]
 
     def apply_tp(
         self,
