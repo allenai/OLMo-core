@@ -1336,8 +1336,7 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
             making the power-law relationships appear linear.
     """
     ladder_names = list(fits.keys())
-    loss_label = "Loss (log)" if log_loss else "Loss"
-    ymode_str = "    ymode=log,\n" if log_loss else ""
+    loss_label = "Loss"
     fig_suffix = "-log" if log_loss else ""
     lines = []
     lines.append(f"% Figure 1{fig_suffix}: Main Scaling Law Fits")
@@ -1377,11 +1376,13 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append("% Panel A: Loss vs FLOPs")
     lines.append(r"\nextgroupplot[")
     lines.append(r"    xmode=log,")
-    if ymode_str:
-        lines.append(ymode_str.rstrip("\n"))
+    if log_loss:
+        lines.append(r"    ymode=log,")
+        lines.append(r"    log ticks with fixed point,")
     lines.append(r"    xlabel={FLOPs (PetaFLOPs)},")
     lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(a) Loss vs Compute},")
+
     lines.append(r"]")
 
     for idx, name in enumerate(ladder_names):
@@ -1421,9 +1422,11 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(r"    xmode=log,")
     if log_loss:
         lines.append(r"    ymode=log,")
+        lines.append(r"    log ticks with fixed point,")
     lines.append(r"    xlabel={Parameters},")
     lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(b) Loss vs Parameters},")
+
     lines.append(r"]")
 
     for idx, name in enumerate(ladder_names):
@@ -1457,9 +1460,11 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(r"    xmode=log,")
     if log_loss:
         lines.append(r"    ymode=log,")
+        lines.append(r"    log ticks with fixed point,")
     lines.append(r"    xlabel={Training Tokens},")
     lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(c) Loss vs Data Budget},")
+
     lines.append(r"]")
 
     # Use a shared median N across all ladders for fair comparison
@@ -1525,7 +1530,7 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(f"\\ref{{{legend_name}}}")
 
     # Build caption with fitted parameter annotations
-    log_note = " Loss axes use log scale." if log_loss else ""
+    log_note = " Loss axes are plotted on a logarithmic scale so that the power-law relationships appear linear." if log_loss else ""
     caption_parts = [
         r"\caption{Scaling law fits $L(N,D) = E + A/N^\alpha + B/D^\beta$ "
         r"for all architectures. "
@@ -1554,21 +1559,32 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
 def generate_paper_figure_2(
     fits: Dict[str, Tuple],
     target_loss: Optional[float] = None,
+    loss_strategy: str = "median",
+    fig_suffix: str = "",
 ) -> str:
     """
     Generate Figure 2: Efficiency Projections.
 
     Shows tokens-to-target-loss vs model size for both architectures,
     with shaded savings region.
+
+    Args:
+        fits: {ladder_name: (fit, N, D, L, F, sizes)}
+        target_loss: explicit target loss; if None, auto-determined via loss_strategy
+        loss_strategy: "median" or "min" — how to pick target loss when not given explicitly
+        fig_suffix: appended to the LaTeX label, e.g. "-min"
     """
     ladder_names = list(fits.keys())
     if len(ladder_names) < 2:
         return "% Need at least 2 ladders for efficiency projection"
 
-    # Auto-determine target loss (median of observed losses across all ladders)
+    # Auto-determine target loss
     if target_loss is None:
         all_L = np.concatenate([fits[n][3] for n in ladder_names])
-        target_loss = float(np.median(all_L))
+        if loss_strategy == "min":
+            target_loss = float(np.min(all_L))
+        else:
+            target_loss = float(np.median(all_L))
 
     lines = []
     lines.append("% Figure 2: Efficiency Projections")
@@ -1653,15 +1669,16 @@ def generate_paper_figure_2(
 
     lines.append(r"\end{axis}")
     lines.append(r"\end{tikzpicture}")
+    strategy_desc = "minimum" if loss_strategy == "min" else "median"
     lines.append(
         r"\caption{Projected data requirements across scales "
         f"(target loss $= {target_loss:.3f}$, "
-        r"selected as the median of all observed training losses). "
+        f"selected as the {strategy_desc} of all observed training losses). "
         r"Extrapolating from scaling ladder experiments, the hybrid architecture "
         r"requires substantially fewer training tokens to reach equivalent loss. "
         r"Shaded region shows the data savings.}"
     )
-    lines.append(r"\label{fig:scaling-efficiency-projections}")
+    lines.append(f"\\label{{fig:scaling-efficiency-projections{fig_suffix}}}")
     lines.append(r"\end{figure}")
     return "\n".join(lines)
 
@@ -2999,12 +3016,19 @@ def main():
             f.write(fig1_log)
         print(f"Saved Figure 1 (log-loss) to: {fig1_log_path}")
 
-        # Figure 2: Efficiency Projections
-        fig2 = generate_paper_figure_2(fits)
+        # Figure 2: Efficiency Projections (median target loss)
+        fig2 = generate_paper_figure_2(fits, loss_strategy="median")
         fig2_path = figures_dir / "scaling-efficiency-projections.tex"
         with open(fig2_path, "w") as f:
             f.write(fig2)
-        print(f"Saved Figure 2 to: {fig2_path}")
+        print(f"Saved Figure 2 (median) to: {fig2_path}")
+
+        # Figure 2b: Efficiency Projections (minimum target loss)
+        fig2_min = generate_paper_figure_2(fits, loss_strategy="min", fig_suffix="-min")
+        fig2_min_path = figures_dir / "scaling-efficiency-projections-min.tex"
+        with open(fig2_min_path, "w") as f:
+            f.write(fig2_min)
+        print(f"Saved Figure 2 (min) to: {fig2_min_path}")
 
         # Figure 3: Per-Domain Scaling Laws
         if domain_fits_all:
