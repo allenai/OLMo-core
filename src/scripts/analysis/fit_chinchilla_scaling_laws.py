@@ -266,7 +266,9 @@ def load_ladder_data(
             # Use all checkpoints from this model size
             checkpoints_added = 0
             num_params = computed["non_embed_params"]
-            flops_per_token = computed["total_flops_per_token"]  # forward-pass FLOPs per token (2 * MACs)
+            flops_per_token = computed[
+                "total_flops_per_token"
+            ]  # forward-pass FLOPs per token (2 * MACs)
 
             for _, row in df.iterrows():
                 tokens = row.get("tokens")
@@ -888,6 +890,25 @@ def fit_domain_ladders(
 # =============================================================================
 
 
+def _fmt_latex_num(value: float, decimal_places: int = 2) -> str:
+    """Format a number for LaTeX tables: no scientific notation.
+
+    * |value| <= 10_000  → plain decimal  (e.g. ``1234.56``)
+    * |value| >  10_000  → ``$x \\cdot 10^{n}$``  (e.g. ``$1.23 \\cdot 10^{4}$``)
+
+    Handles negative values and zero gracefully.
+    """
+    if value == 0:
+        return "0"
+    abs_val = abs(value)
+    sign = "-" if value < 0 else ""
+    if abs_val <= 1e4:
+        return f"{value:.{decimal_places}f}"
+    exp = int(np.floor(np.log10(abs_val)))
+    mantissa = abs_val / 10**exp
+    return f"${sign}{mantissa:.{decimal_places}f} \\cdot 10^{{{exp}}}$"
+
+
 def _param_ci_str(bootstrap, param_name: str, point_value: float, fmt: str = ".4f") -> str:
     """Format a parameter value with bootstrap CI below in smaller font using makecell."""
     val_str = f"{point_value:{fmt}}"
@@ -903,8 +924,8 @@ def _param_ci_str(bootstrap, param_name: str, point_value: float, fmt: str = ".4
 
 
 def _param_ci_str_sci(bootstrap, param_name: str, point_value: float) -> str:
-    """Format a parameter value (scientific notation) with bootstrap CI below in smaller font."""
-    val_str = f"{point_value:.2e}"
+    """Format a parameter value (large numbers) with bootstrap CI below in smaller font."""
+    val_str = _fmt_latex_num(point_value)
     if bootstrap is None:
         ci_line = r"{\color{red}$\pm$ 0.0}"
     else:
@@ -912,7 +933,7 @@ def _param_ci_str_sci(bootstrap, param_name: str, point_value: float) -> str:
         lo = np.percentile(bootstrap_values, 2.5)
         hi = np.percentile(bootstrap_values, 97.5)
         ci_half = (hi - lo) / 2
-        ci_line = f"$\\pm$ {ci_half:.2e}"
+        ci_line = f"$\\pm$ {_fmt_latex_num(ci_half)}"
     return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
 
 
@@ -1522,9 +1543,7 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
         r"\textbf{(a)} Loss vs compute. "
         r"\textbf{(b)} Loss vs parameter count. "
         r"\textbf{(c)} Loss vs data budget. "
-        r"\textbf{(d)} Fit residuals."
-        + log_note
-        + "}"
+        r"\textbf{(d)} Fit residuals." + log_note + "}"
     )
     lines.append("".join(caption_parts))
     lines.append(f"\\label{{fig:scaling-law-fit{fig_suffix}}}")
@@ -1749,7 +1768,11 @@ def generate_paper_figure_3(
             if domain in domain_fits.get(lname, {}):
                 b_val = domain_fits[lname][domain][0].fitted_params.B
                 short = _escape_latex(get_display_name(lname))
-                b_parts.append(f"$B_{{{short}}}={b_val:.2e}$")
+                b_fmt = _fmt_latex_num(b_val)
+                # Strip surrounding $…$ if present so we stay inside one math env
+                if b_fmt.startswith("$") and b_fmt.endswith("$"):
+                    b_fmt = b_fmt[1:-1]
+                b_parts.append(f"$B_{{{short}}}={b_fmt}$")
         if len(b_parts) >= 2:
             lines.append(
                 f"\\node[font=\\tiny, anchor=south east, align=right] "
@@ -1954,7 +1977,9 @@ def plot_fits_2d(
     # Create a cleaner 2x2 layout
     fig, axes = plt.subplots(2, 2, figsize=(14, 11))
     title_suffix = " (log-loss)" if log_loss else ""
-    fig.suptitle(f"Chinchilla Scaling Law Analysis{title_suffix}", fontsize=16, fontweight="bold", y=0.98)
+    fig.suptitle(
+        f"Chinchilla Scaling Law Analysis{title_suffix}", fontsize=16, fontweight="bold", y=0.98
+    )
 
     # ============================================================
     # Top Left: Loss vs Parameters (all ladders, with fitted curves)
@@ -2870,7 +2895,7 @@ def main():
                     D=D,
                     L=L,
                     use_bootstrap=args.bootstrap > 0,
-                    num_bootstraps=max(args.bootstrap, 5),  # At least 50 for rollout
+                    num_bootstraps=max(args.bootstrap, 50),  # At least 50 for rollout
                     weight_by_compute=not args.no_weight,
                     overestimate_penalty=args.overestimate_penalty,
                     verbose=not args.quiet,

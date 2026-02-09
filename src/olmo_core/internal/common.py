@@ -125,11 +125,7 @@ def build_launch_config(
         ),
     ]
 
-    env_vars: List[BeakerEnvVar] = [
-        # Skip building CUDA extensions for mamba-ssm during install.
-        # The Mamba2 SSD ops are Triton kernels and don't need CUDA compilation.
-        BeakerEnvVar(name="MAMBA_SKIP_CUDA_BUILD", value="TRUE"),
-    ]
+    env_vars: List[BeakerEnvVar] = []
     if isinstance(nccl_debug, str):
         env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value=nccl_debug))
     else:
