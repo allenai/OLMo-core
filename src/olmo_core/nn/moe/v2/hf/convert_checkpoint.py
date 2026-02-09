@@ -1,4 +1,5 @@
 
+import argparse
 import json
 import os
 from dataclasses import replace
@@ -224,8 +225,9 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
 
     # apply rules ##############
 
-    # direct mapping
+    # map
     for hf_name, olmo_name in mapping_hf_to_olmo.items():
+        print(f"{olmo_name} --> {hf_name}")
         _update_param(hf_name, olmo_name)
 
 
@@ -237,12 +239,37 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
 
 
 if __name__ == "__main__":
-    CKPT_PATH = '/workspace/checkpoint/OLMoE3-abl-260102-018a_1024d1024a_12L768M768S_32E4K1S_abl/step10000'
-    output_path = '/workspace/tmp/step10000_hf_model_rep_fix'
+    parser = argparse.ArgumentParser(description="Convert OLMo checkpoint to HuggingFace format")
+    parser.add_argument(
+        "--ckpt-path",
+        type=str,
+        required=True,
+        help="Path to the OLMo checkpoint directory"
+    )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        required=True,
+        help="Path to save the converted HuggingFace model"
+    )
+    parser.add_argument(
+        "--work-dir",
+        type=str,
+        default="/workspace/tmp",
+        help="Working directory for pre-downloads (default: /workspace/tmp)"
+    )
+    args = parser.parse_args()
+
+    CKPT_PATH = args.ckpt_path
+    output_path = args.output_path
+    work_dir = args.work_dir
+
+    print(f"Loading OLMo checkpoint from {CKPT_PATH}...")
     main_sd = load_state_dict_direct(
         dir=os.path.join(CKPT_PATH, 'model_and_optim'),
-        process_group=None, pre_download=True, work_dir='/workspace/tmp'
+        process_group=None, pre_download=True, work_dir=work_dir
     )
+    print("Loaded OLMo checkpoint state dict.")
 
     olmo_config_path = os.path.join(CKPT_PATH, 'config.json')
     with open(olmo_config_path, 'r') as f:
@@ -298,9 +325,9 @@ if __name__ == "__main__":
 
     # create HF model
     hf_model = Olmo3MoeForCausalLM(hf_config)
+    print("Created HF model - Done.")
 
     load_hf_model_from_olmo_checkpoint(hf_model, main_sd)
-
     print("Loaded HF model from OLMo checkpoint.")
 
     Olmo3MoeConfig.register_for_auto_class()  # AutoConfig
