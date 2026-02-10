@@ -739,7 +739,9 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_moe_norm = layer_norm.build(d_model, init_device=init_device)
-        self._use_combined_forward: Optional[bool] = None
+        # self._use_combined_forward: Optional[bool] = None
+        ## TODO @margsli this needs to be edited to allow for hetMoE implementation
+        self._use_combined_forward: Optional[bool] = False
 
     @property
     def use_combined_forward(self) -> bool:
@@ -905,6 +907,9 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
     ) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
+
+        ## TODO @margsli this needs to be edited to allow for hetMoE implementation
+
         B, _, D = x.shape
 
         x_moe = get_local_tensor(self.feed_forward_moe_norm(x))
@@ -1011,6 +1016,10 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
     ) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
         # dense operations while we wait on expert parallel all-to-all comms.
+
+        ## TODO @margsli this needs to be edited to allow for hetMoE implementation
+
+
         B, _, D = x.shape
 
         x_moe = get_local_tensor(x)

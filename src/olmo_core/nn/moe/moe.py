@@ -1,7 +1,7 @@
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -61,10 +61,10 @@ class MoEConfig(ModuleConfig):
     """
     The name of the implementation.
     """
-    num_experts: int = 1
-    hidden_size: int = 256
+    num_experts_list: List[int] = field(default_factory=lambda: [1])
+    hidden_sizes_list: List[int] = field(default_factory=lambda: [1])
     capacity_factor: Optional[float] = None
-    router: MoERouterConfig = field(default_factory=MoERouterConfig)
+    routers_list: List[MoERouterConfig] = field(default_factory=lambda: [MoERouterConfig])
     shared_mlp: Optional[FeedForwardConfig] = None
     lb_loss_weight: Optional[float] = 0.01
     lb_loss_granularity: MoELoadBalancingLossGranularity = (
@@ -76,18 +76,27 @@ class MoEConfig(ModuleConfig):
 
     def num_params(self, d_model: int) -> int:
         num_params = 0
-        num_params += self.router.num_params(d_model, self.num_experts)
-        num_params += 3 * d_model * self.hidden_size * self.num_experts
+        for i in range(len(self.num_experts_list)):
+            router = self.routers_list[i]
+            num_experts = self.num_experts_list[i]
+            hidden_size = self.hidden_sizes_list[i]
+            num_params += router.num_params(d_model, num_experts)
+            num_params += (
+                3 * d_model * hidden_size * num_experts
+            )
         if self.shared_mlp is not None:
             num_params += self.shared_mlp.num_params(d_model)
         return num_params
 
     def num_active_params(self, d_model: int) -> int:
-        return (
-            self.num_params(d_model)
-            - (3 * d_model * self.hidden_size * self.num_experts)
-            + (3 * d_model * self.hidden_size * self.router.top_k)
-        )
+        active_params = self.num_params(d_model)
+        for i in range(len(self.num_experts_list)):
+            router = self.routers_list[i]
+            num_experts = self.num_experts_list[i]
+            hidden_size = self.hidden_sizes_list[i]
+            active_params -= (3 * d_model * hidden_size * num_experts)
+            active_parms += + (3 * d_model * hidden_size * router.top_k)
+        return active_params
 
     def build(
         self,
@@ -129,9 +138,9 @@ class MoEBase(nn.Module):
         self,
         *,
         d_model: int,
-        num_experts: int,
-        hidden_size: int,
-        router: MoERouterConfig,
+        num_experts_list: List[int],
+        hidden_sizes_list: List[int],
+        routers_list: List[MoERouterConfig],
         shared_mlp: Optional[FeedForwardConfig] = None,
         init_device: str = "cpu",
         lb_loss_weight: Optional[float] = None,
@@ -150,24 +159,31 @@ class MoEBase(nn.Module):
             if z_loss_weight is not None:
                 z_loss_weight = z_loss_weight / n_layers
 
-        self.router = router.build(
-            d_model,
-            num_experts,
-            lb_loss_weight=lb_loss_weight,
-            lb_loss_granularity=lb_loss_granularity,
-            z_loss_weight=z_loss_weight,
-            dtype=dtype,
-            init_device=init_device,
-        )
-        self.experts = self._init_parallel_mlp(
-            d_model=d_model,
-            num_experts=num_experts,
-            hidden_size=hidden_size,
-            dtype=dtype,
-            init_device=init_device,
-            cache=cache,
-            **kwargs,
-        )
+        self.routers_list = nn.ModuleList()
+        self.experts_list = nn.ModuleList()
+        for i in range(len(num_experts_list)):
+            num_experts = num_experts_list[i]
+            hidden_size = hidden_sizes_list[i]
+            router = routers_list[i]
+            self.routers_list.append(router.build(
+                d_model,
+                num_experts,
+                lb_loss_weight=lb_loss_weight,
+                lb_loss_granularity=lb_loss_granularity,
+                z_loss_weight=z_loss_weight,
+                dtype=dtype,
+                init_device=init_device,
+            ))
+            self.experts_list.append(self._init_parallel_mlp(
+                d_model=d_model,
+                num_experts=num_experts,
+                hidden_size=hidden_size,
+                router=router,
+                dtype=dtype,
+                init_device=init_device,
+                cache=cache,
+                **kwargs,
+            ))
         self.shared_mlp = (
             None
             if shared_mlp is None
@@ -177,32 +193,43 @@ class MoEBase(nn.Module):
 
     @property
     def num_experts(self) -> int:
-        return self.router.num_experts
+        # return self.router.num_experts
+        return sum(router.num_experts for router in self.routers_list)
 
     @property
-    def top_k(self) -> int:
-        return self.router.top_k
+    def top_k_sum(self) -> int:
+        # return self.router.top_k
+        return sum(router.top_k for router in self.routers_list)
 
     @property
     def ep_enabled(self) -> bool:
         return self._ep_enabled
 
     def warmup_cache(self, max_local_microbatch_size: int):
-        self.experts.warmup_cache(max_local_microbatch_size)
+        for experts in self.experts_list:
+            experts.warmup_cache(max_local_microbatch_size)
 
     def compute_metrics(
         self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        return self.router.compute_metrics(reset=reset)
+        for i, router in enumerate(self.routers_list):
+            metrics = router.compute_metrics(reset=reset, prefix=f"router {i}")
+            return metrics
+        # return 
+        # return self.router.compute_metrics(reset=reset)
 
     def reset_metrics(self):
-        self.router.reset_metrics()
+        # self.router.reset_metrics()
+        for router in self.routers_list:
+            router.reset_metrics()
 
     def post_batch(self, dry_run: bool = False):
         """
         Should be called right after the final backward of a complete batch but before the optimizer step.
         """
-        self.router.post_batch(dry_run=dry_run)
+        for router in self.routers_list:
+            router.post_batch(dry_run=dry_run)
+        # self.router.post_batch(dry_run=dry_run)
 
     @abstractmethod
     def _init_parallel_mlp(
@@ -211,6 +238,7 @@ class MoEBase(nn.Module):
         d_model: int,
         num_experts: int,
         hidden_size: int,
+        router: MoERouterConfig,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         **kwargs,
@@ -231,23 +259,27 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
-        expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x, loss_div_factor=loss_div_factor
-        )
+        outs = []
+        weights = []
+        for i in range(len(self.routers_list)):
+            router = self.routers_list[i]
+            experts = self.experts_list[i]
+            expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = router(
+                x, loss_div_factor=loss_div_factor
+            )
 
-        if router_aux_loss is not None:
-            x = attach_auxiliary_loss(x, router_aux_loss)
+            if router_aux_loss is not None:
+                x = attach_auxiliary_loss(x, router_aux_loss)
 
-        shared_out: Optional[torch.Tensor] = None
+            experts_out = experts(x, expert_weights, expert_indices, batch_size_per_expert)
+            outs.append(experts_out * router.top_k)
+            weights.append(router.top_k)
+
         if self.shared_mlp is not None:
-            shared_out = self.shared_mlp(x)
+            outs.append(self.shared_mlp(x))
+            weights.append(1)
 
-        out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert)
-
-        if shared_out is not None:
-            shared_out = shared_out / (self.top_k + 1)
-            out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))
-
+        out = sum(outs) / sum(weights)
         return out
 
     def apply_pp(self, pp_mesh: DeviceMesh):
@@ -255,29 +287,40 @@ class MoEBase(nn.Module):
         assert world_mesh is not None
         stage_mesh = get_pp_stage_mesh(world_mesh, pp_mesh)
         group = flatten_mesh(stage_mesh).get_group()
-        self.router.group = group
+        # self.router.group = group
+        for router in self.routers_list:
+            router.group = group
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         """
         Apply expert parallelism.
         """
-        self.experts.apply_ep(ep_mesh, **kwargs)
+        # self.experts.apply_ep(ep_mesh, **kwargs)
+        # self._ep_enabled = True
+        for experts in self.experts_list:
+            experts.apply_ep(ep_mesh, **kwargs)
         self._ep_enabled = True
 
     def prepare_experts_for_fsdp(self, **kwargs):
         """
         Should be called before wrapping this module with FSDP2.
         """
-        self.experts.prepare_experts_for_fsdp(**kwargs)
+        # self.experts.prepare_experts_for_fsdp(**kwargs)
+        for experts in self.experts_list:
+            experts.prepare_experts_for_fsdp(**kwargs)
 
     def prepare_experts_for_ddp(self, **kwargs):
         """
         Should be called before wrapping this module with DDP2.
         """
-        self.experts.prepare_experts_for_ddp(**kwargs)
+        # self.experts.prepare_experts_for_ddp(**kwargs)
+        for experts in self.experts_list:
+            experts.prepare_experts_for_ddp(**kwargs)
 
     def apply_cp(self, cp_mesh: DeviceMesh):
-        self.router.apply_cp(cp_mesh)
+        # self.router.apply_cp(cp_mesh)
+        for router in self.routers_list:
+            router.apply_cp(cp_mesh)
 
     def apply_tp(
         self,
@@ -299,10 +342,26 @@ class MoEBase(nn.Module):
         )
 
         # Sequence parallel.
-        self.router.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        for router in self.routers_list:
+            router.apply_tp(
+                tp_mesh,
+                input_layout=input_layout,
+                output_layout=output_layout,
+                use_local_output=use_local_output,
+                float8_enabled=float8_enabled,
+            )
+        # self.router.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
         # Expert parallel.
-        self.experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+        for experts in self.experts_list:
+            experts.apply_tp(
+                tp_mesh,
+                input_layout=input_layout,
+                output_layout=output_layout,
+                use_local_output=use_local_output,
+                float8_enabled=float8_enabled,
+            )
+        # self.experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
 
         # Model parallel.
         if self.shared_mlp is not None:
@@ -342,9 +401,9 @@ class MoE(MoEBase):
         self,
         *,
         d_model: int,
-        num_experts: int,
-        hidden_size: int,
-        router: MoERouterConfig,
+        num_experts_list: List[int],
+        hidden_sizes_list: List[int],
+        routers_list: List[MoERouterConfig],
         shared_mlp: Optional[FeedForwardConfig] = None,
         capacity_factor: float = 1.2,
         init_device: str = "cpu",
@@ -358,9 +417,9 @@ class MoE(MoEBase):
     ):
         super().__init__(
             d_model=d_model,
-            num_experts=num_experts,
-            hidden_size=hidden_size,
-            router=router,
+            num_experts_list=num_experts_list,
+            hidden_sizes_list=hidden_sizes_list,
+            routers_list=routers_list,
             shared_mlp=shared_mlp,
             init_device=init_device,
             lb_loss_weight=lb_loss_weight,
@@ -380,6 +439,7 @@ class MoE(MoEBase):
         num_experts: int,
         hidden_size: int,
         capacity_factor: float,
+        router: MoERouterConfig,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -392,7 +452,7 @@ class MoE(MoEBase):
                 dtype=dtype,
                 init_device=init_device,
             ),
-            top_k=self.router.top_k,
+            top_k=router.top_k,
             capacity_factor=capacity_factor,
             cache=cache,
         )
@@ -409,6 +469,7 @@ class DroplessMoE(MoEBase):
         d_model: int,
         num_experts: int,
         hidden_size: int,
+        router: MoERouterConfig,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -421,6 +482,6 @@ class DroplessMoE(MoEBase):
                 dtype=dtype,
                 init_device=init_device,
             ),
-            top_k=self.router.top_k,
+            top_k=router.top_k,
             cache=cache,
         )

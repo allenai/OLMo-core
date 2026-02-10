@@ -369,27 +369,27 @@ class MoERouter(nn.Module):
 
     @torch.no_grad()
     def compute_metrics(
-        self, reset: bool = True
+        self, reset: bool = True, prefix: Optional[str] = None
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         from olmo_core.train.common import ReduceType
 
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        prefix = "" if prefix is None else f"{prefix} "
 
         # Load imbalance.
         batch_size_per_expert = self.batch_size_per_expert
-        out["load imbalance"] = (
+        out[f"{prefix}load imbalance"] = (
             batch_size_per_expert.max() / batch_size_per_expert.mean(dtype=torch.float),
             ReduceType.max,
         )
-
         # Load balancing loss.
         if self.lb_loss_weight is not None:
             assert self.load_balancing_loss is not None
-            out["load balancing loss"] = (
+            out[f"{prefix}load balancing loss"] = (
                 self.lb_loss_weight * self.load_balancing_loss,
                 ReduceType.mean,
             )
-            out["load balancing loss unscaled"] = (
+            out[f"{prefix}load balancing loss unscaled"] = (
                 self.load_balancing_loss.clone(),
                 ReduceType.mean,
             )
@@ -397,8 +397,8 @@ class MoERouter(nn.Module):
         # Router Z loss.
         if self.z_loss_weight is not None:
             assert self.z_loss is not None
-            out["router Z loss"] = (self.z_loss_weight * self.z_loss, ReduceType.mean)
-            out["router Z loss unscaled"] = (self.z_loss.clone(), ReduceType.mean)
+            out[f"{prefix}router Z loss"] = (self.z_loss_weight * self.z_loss, ReduceType.mean)
+            out[f"{prefix}router Z loss unscaled"] = (self.z_loss.clone(), ReduceType.mean)
 
         if reset:
             self.reset_metrics()

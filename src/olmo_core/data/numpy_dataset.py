@@ -974,6 +974,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                 for path, future in zip(paths_needed, futures):
                     _, total_instances = future.result()
                     log.info(
+                        
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
                     )

@@ -40,6 +40,12 @@ git clone https://github.com/allenai/OLMo-core.git
 cd OLMo-core
 pip install -e .[all]
 ```
+For dropless MoEs, use https://github.com/sneha-rk/grouped_gemm to use most GPUs. Simply pip install . from source
+```
+git clone https://github.com/sneha-rk/grouped_gemm.git
+pip install .
+```
+
 Or you can install from PyPI with:
 
 ```bash

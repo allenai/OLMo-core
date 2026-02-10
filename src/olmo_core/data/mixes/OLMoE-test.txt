@@ -1,0 +1,5 @@
+######### NON WEB DATA #########
+# ~> GUTENBERG BOOKS (5.256 GT)
+gutenberg-books,preprocessed/olmo-mix/v1_6-decontaminated/books/{TOKENIZER}/part-0-00000.npy
+gutenberg-books,preprocessed/olmo-mix/v1_6-decontaminated/books/{TOKENIZER}/part-1-00000.npy
+gutenberg-books,preprocessed/olmo-mix/v1_6-decontaminated/books/{TOKENIZER}/part-2-00000.npy

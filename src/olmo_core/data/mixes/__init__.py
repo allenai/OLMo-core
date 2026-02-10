@@ -37,6 +37,7 @@ class DataMix(DataMixBase):
 
     # Pretraining mixes
     OLMoE_mix_0824 = "OLMoE-mix-0824"
+    OLMoE_test = "OLMoE-test"
     dolma17 = "dolma17"
     OLMo_mix_0625 = "OLMo-mix-0625"
     OLMo_mix_0625_150Bsample = "OLMo-mix-0625-150Bsample"
@@ -56,6 +57,7 @@ class DataMix(DataMixBase):
 
     # Validation mixes
     v3_small_ppl_validation = "v3-small-ppl-validation"
+    OLMoE_mix_1124 = "OLMoE-mix-1124"
 
     @classmethod
     def _missing_(cls, value: object) -> "DataMix | None":

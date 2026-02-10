@@ -521,6 +521,7 @@ class Transformer(nn.Module):
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
+        
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
         if self.embeddings is not None and self.embed_scale is not None:
             h = h * self.embed_scale

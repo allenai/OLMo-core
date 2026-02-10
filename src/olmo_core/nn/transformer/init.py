@@ -177,39 +177,40 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
 
-        _apply_init(
-            nn.init.trunc_normal_,
-            cast(MoELinearRouter, m.router).weight,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
-        _apply_init(
-            nn.init.trunc_normal_,
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
-        _apply_init(
-            nn.init.trunc_normal_,
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w2,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
-        _apply_init(
-            nn.init.trunc_normal_,
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w3,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
+        for i in range(len(m.experts_list)):
+            _apply_init(
+                nn.init.trunc_normal_,
+                cast(MoELinearRouter, m.routers_list[i]).weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                cast(Union[MoEMLP, DroplessMoEMLP], m.experts_list[i].mlp).w1,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                cast(Union[MoEMLP, DroplessMoEMLP], m.experts_list[i].mlp).w2,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                cast(Union[MoEMLP, DroplessMoEMLP], m.experts_list[i].mlp).w3,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
