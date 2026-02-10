@@ -1,5 +1,5 @@
 """
-Tests for the claude InitMethod.
+Tests for the fan_in InitMethod.
 """
 
 import math
@@ -21,9 +21,9 @@ from olmo_core.nn.transformer.init import InitMethod
         pytest.param("cpu", "cpu", id="cpu->cpu"),
     ],
 )
-def test_claude_init_embeddings(init_device, device):
-    """Test that claude init uses std=1.0 for embeddings."""
-    config = TransformerConfig.llama2_271M(vocab_size=50257, init_method=InitMethod.claude)
+def test_fan_in_init_embeddings(init_device, device):
+    """Test that fan_in init uses std=1.0 for embeddings."""
+    config = TransformerConfig.llama2_271M(vocab_size=50257, init_method=InitMethod.fan_in)
     model = config.build(init_device=init_device)
     model.init_weights(device=torch.device(device))
 
@@ -39,11 +39,11 @@ def test_claude_init_embeddings(init_device, device):
         pytest.param("cpu", "cpu", id="cpu->cpu"),
     ],
 )
-def test_claude_init_attention(init_device, device):
-    """Test that claude init uses 1/√d_model for attention weights."""
+def test_fan_in_init_attention(init_device, device):
+    """Test that fan_in init uses 1/√d_model for attention weights."""
     d_model = 512
     config = TransformerConfig.llama2_271M(
-        vocab_size=50257, d_model=d_model, init_method=InitMethod.claude
+        vocab_size=50257, d_model=d_model, init_method=InitMethod.fan_in
     )
     model = config.build(init_device=init_device)
     model.init_weights(device=torch.device(device))
@@ -75,15 +75,15 @@ def test_claude_init_attention(init_device, device):
         pytest.param("cpu", "cpu", id="cpu->cpu"),
     ],
 )
-def test_claude_init_feed_forward(init_device, device):
-    """Test that claude init uses correct std for feed-forward weights."""
+def test_fan_in_init_feed_forward(init_device, device):
+    """Test that fan_in init uses correct std for feed-forward weights."""
     d_model = 512
     hidden_size = 2048
     config = TransformerConfig.llama2_271M(
         vocab_size=50257,
         d_model=d_model,
         mlp_hidden_size=hidden_size,
-        init_method=InitMethod.claude,
+        init_method=InitMethod.fan_in,
     )
     model = config.build(init_device=init_device)
     model.init_weights(device=torch.device(device))
@@ -120,11 +120,11 @@ def test_claude_init_feed_forward(init_device, device):
         pytest.param("cpu", "cpu", id="cpu->cpu"),
     ],
 )
-def test_claude_init_final_w_out(init_device, device):
-    """Test that claude init uses 1/√d_model for final LM head."""
+def test_fan_in_init_final_w_out(init_device, device):
+    """Test that fan_in init uses 1/√d_model for final LM head."""
     d_model = 512
     config = TransformerConfig.llama2_271M(
-        vocab_size=50257, d_model=d_model, init_method=InitMethod.claude
+        vocab_size=50257, d_model=d_model, init_method=InitMethod.fan_in
     )
     model = config.build(init_device=init_device)
     model.init_weights(device=torch.device(device))
@@ -147,35 +147,35 @@ def test_claude_init_final_w_out(init_device, device):
         pytest.param("cpu", "cpu", id="cpu->cpu"),
     ],
 )
-def test_claude_init_different_from_normal(init_device, device):
-    """Test that claude init produces different results from normal init."""
+def test_fan_in_init_different_from_normal(init_device, device):
+    """Test that fan_in init produces different results from normal init."""
     # Build two identical models with different init methods
-    config_claude = TransformerConfig.llama2_271M(vocab_size=50257, init_method=InitMethod.claude)
+    config_fan_in = TransformerConfig.llama2_271M(vocab_size=50257, init_method=InitMethod.fan_in)
     config_normal = TransformerConfig.llama2_271M(vocab_size=50257, init_method=InitMethod.normal)
 
-    model_claude = config_claude.build(init_device=init_device)
+    model_fan_in = config_fan_in.build(init_device=init_device)
     model_normal = config_normal.build(init_device=init_device)
 
     # Use different seeds to ensure they're initialized differently
     torch.manual_seed(42)
-    model_claude.init_weights(device=torch.device(device))
+    model_fan_in.init_weights(device=torch.device(device))
 
     torch.manual_seed(42)
     model_normal.init_weights(device=torch.device(device))
 
     # Check that feed-forward w2 has different std (most obvious difference)
-    claude_w2_std = model_claude.blocks["0"].feed_forward.w2.weight.std().item()
+    fan_in_w2_std = model_fan_in.blocks["0"].feed_forward.w2.weight.std().item()
     normal_w2_std = model_normal.blocks["0"].feed_forward.w2.weight.std().item()
 
     # These should be significantly different
-    assert abs(claude_w2_std - normal_w2_std) > 0.01, (
-        f"Claude and normal init should produce different stds for w2, "
-        f"but got claude={claude_w2_std}, normal={normal_w2_std}"
+    assert abs(fan_in_w2_std - normal_w2_std) > 0.01, (
+        f"fan_in and normal init should produce different stds for w2, "
+        f"but got fan_in={fan_in_w2_std}, normal={normal_w2_std}"
     )
 
 
-def test_claude_init_moe():
-    """Test that claude init works with MoE layers."""
+def test_fan_in_init_moe():
+    """Test that fan_in init works with MoE layers."""
     d_model = 256
     hidden_size = 512
     num_experts = 8
@@ -187,7 +187,7 @@ def test_claude_init_moe():
         n_layers=2,
         vocab_size=1000,
         mlp_hidden_size=hidden_size,
-        init_method=InitMethod.claude,
+        init_method=InitMethod.fan_in,
         moe=MoEConfig(num_experts=num_experts, hidden_size=hidden_size),
     )
 
