@@ -132,7 +132,7 @@ class OLMoCoreBeakerImage(StrEnum):
     Official Beaker images that work well for OLMo-core.
 
     You can find the full list at
-    `beaker.org/ws/ai2/OLMo-core/images <https://beaker.org/ws/ai2/OLMo-core/images>`_, which
+    `beaker.org/orgs/ai2/workspaces/olmo-core/images <https://beaker.org/orgs/ai2/workspaces/olmo-core/images>`_, which
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
@@ -374,20 +374,20 @@ class BeakerLaunchConfig(Config):
 
     launch_timeout: int | None = None
     """
-    A timeout in seconds to wait for the job to start after submitting it.
+    A timeout in seconds to wait for the job to start after submission.
     If the job doesn't start in time a timeout error will be raised.
     """
 
     step_timeout: int | None = None
     """
-    A timeout in seconds to wait for the first training step when ``follow=True``.
-    If a step isn't detected in a time a timeout error will be raised.
+    A timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
+    If no new logs are detected in a time a timeout error will be raised.
     """
 
     step_soft_timeout: int | None = None
     """
-    A soft timeout in seconds to wait for the first training step when ``follow=True``.
-    If a step isn't detected in a time warning will be issued.
+    A soft timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
+    If no new logs are detected in a time warning will be issued.
     """
 
     _beaker = None
@@ -480,7 +480,7 @@ class BeakerLaunchConfig(Config):
         Arguments are the same as :meth:`launch()`.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
-            recipe = self._build_recipe(
+            recipe, _ = self._build_recipe(
                 beaker,
                 follow=follow,
                 slack_notifications=slack_notifications,
@@ -504,19 +504,21 @@ class BeakerLaunchConfig(Config):
         Launch a Beaker experiment using this config.
 
         :param follow: Stream the logs and follow the experiment until completion.
-        :param torchrun: Launch the target command with ``torchrun``. This will default to ``True``
-            if ``num_gpus > 1`` and ``False`` otherwise.
-        :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
-            Defaults to 'python'.
         :param slack_notifications: If ``follow=True``, send Slack notifications when the run launches,
             fails, or succeeds. This requires the env var ``SLACK_WEBHOOK_URL``.
         :param launch_timeout: A timeout in seconds to wait for the job to start after submitting it.
             If the job doesn't start in time a timeout error will be raised.
+        :param step_timeout: A timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
+            If no new logs are detected in a time a timeout error will be raised.
+        :param step_soft_timeout: A soft timeout in seconds to wait for new steps (and new logs) when ``follow=True``.
+            If no new logs are detected in a time warning will be issued.
+        :param torchrun: Launch the target command with ``torchrun``. This will default to ``True``
+            if ``num_gpus > 1`` and ``False`` otherwise.
 
         :returns: The Beaker workload.
         """
         with get_beaker_client(workspace=self.workspace) as beaker:
-            recipe = self._build_recipe(
+            recipe, recipe_launch_kwargs = self._build_recipe(
                 beaker,
                 follow=follow,
                 slack_notifications=slack_notifications,
@@ -528,11 +530,8 @@ class BeakerLaunchConfig(Config):
 
             try:
                 return recipe.launch(
-                    show_logs=follow,
-                    start_timeout=launch_timeout,
-                    inactive_timeout=step_timeout,
-                    inactive_soft_timeout=step_soft_timeout,
                     client=beaker,
+                    **recipe_launch_kwargs,
                 )
             except ExperimentFailedError as exc:
                 raise OLMoBeakerExperimentFailedError(str(exc))
@@ -546,7 +545,7 @@ class BeakerLaunchConfig(Config):
         step_timeout: int | None = None,
         step_soft_timeout: int | None = None,
         torchrun: bool | None = None,
-    ) -> GantryRecipe:
+    ) -> tuple[GantryRecipe, dict[str, Any]]:
         follow = follow if follow is not None else self.follow
         slack_notifications = (
             slack_notifications if slack_notifications is not None else self.slack_notifications
@@ -557,6 +556,14 @@ class BeakerLaunchConfig(Config):
             step_soft_timeout if step_soft_timeout is not None else self.step_soft_timeout
         )
         torchrun = torchrun if torchrun is not None else self.torchrun
+
+        recipe_launch_kwargs = {
+            "show_logs": follow,
+            "start_timeout": launch_timeout,
+            "inactive_timeout": step_timeout,
+            "inactive_soft_timeout": step_soft_timeout,
+        }
+
         if torchrun is None:
             if self.num_gpus > 1 or (self.num_gpus >= 1 and self.num_nodes > 1):
                 torchrun = True
@@ -580,7 +587,9 @@ class BeakerLaunchConfig(Config):
             else:
                 # Pull from secret if available.
                 for env_secret in self.env_secrets:
-                    if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR:
+                    if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR and self._secret_exists(
+                        env_secret
+                    ):
                         secret = beaker.secret.get(env_secret.secret)
                         slack_webhook_url = beaker.secret.read(secret)
                         break
@@ -657,7 +666,7 @@ class BeakerLaunchConfig(Config):
             ],
         )
 
-        return recipe
+        return recipe, recipe_launch_kwargs
 
 
 # Regex for detecting training (and eval) steps in logs.
@@ -670,6 +679,7 @@ class GantryMonitorCallback(GantryCallback):
     slack_webhook_url: str | None
     step_timeout: int | None = None
     step_soft_timeout: int | None = None
+    warning_frequency: int = 3600  # seconds
 
     _start_time: float = dataclasses.field(repr=False, default_factory=time.monotonic)
     _first_step_detected: bool = dataclasses.field(repr=False, default=False)
@@ -687,23 +697,15 @@ class GantryMonitorCallback(GantryCallback):
     def on_start(self, job: BeakerJob):
         del job
         self._start_time = time.monotonic()
-        if self.slack_webhook_url is not None:
-            requests.post(
-                self.slack_webhook_url,
-                json={
-                    "text": f":check: Workload <{self.workload_url}|*{self.workload_name}*> has started! :runner:"
-                },
-            )
+        self._maybe_send_slack_message(
+            f":check: Workload <{self.workload_url}|*{self.workload_name}*> has started! :runner:"
+        )
 
     def on_start_timeout(self, job: BeakerJob):
         del job
-        if self.slack_webhook_url is not None:
-            requests.post(
-                self.slack_webhook_url,
-                json={
-                    "text": f":warning: Workload <{self.workload_url}|*{self.workload_name}*> failed to start in time!"
-                },
-            )
+        self._maybe_send_slack_message(
+            f":warning: Workload <{self.workload_url}|*{self.workload_name}*> failed to start in time!"
+        )
 
     def on_log(self, job: BeakerJob, log_line: str, log_time: float):
         del job, log_time
@@ -711,9 +713,13 @@ class GantryMonitorCallback(GantryCallback):
             if _STEP_REGEX.search(log_line) is not None:
                 self._first_step_detected = True
                 self._last_step_time = time.monotonic()
+            self._check_timeouts()
 
     def on_no_new_logs(self, job: BeakerJob):
         del job
+        self._check_timeouts()
+
+    def _check_timeouts(self):
         cur_time = time.monotonic()
 
         # If (a) we've detected training steps already or (b) the run has been up for over 30 min,
@@ -726,16 +732,13 @@ class GantryMonitorCallback(GantryCallback):
                 or (cur_time - self._start_time) > max(self.step_soft_timeout, 1800)
             )
             and (cur_time - self._last_step_time) > self.step_soft_timeout
-            and (cur_time - self._last_inactivity_warning) > 3600
+            and (cur_time - self._last_inactivity_warning) > self.warning_frequency
         ):
-            if self.slack_webhook_url is not None:
-                requests.post(
-                    self.slack_webhook_url,
-                    json={
-                        "text": f":zzz: Workload <{self.workload_url}|*{self.workload_name}*> hasn't stepped recently!"
-                    },
-                )
-                self._last_inactivity_warning = time.monotonic()
+            self._maybe_send_slack_message(
+                f":zzz: Workload <{self.workload_url}|*{self.workload_name}*> hasn't stepped recently!"
+            )
+            log.warning("Workload hasn't stepped recently!")
+            self._last_inactivity_warning = time.monotonic()
 
         # If (a) we've detected training steps already or (b) the run has been up for over 60 min,
         # then we kill the job if we haven't detected new steps within the past `step_timeout` seconds.
@@ -747,65 +750,45 @@ class GantryMonitorCallback(GantryCallback):
             )
             and (cur_time - self._last_step_time) > self.step_timeout
         ):
-            if self.slack_webhook_url is not None:
-                requests.post(
-                    self.slack_webhook_url,
-                    json={
-                        "text": f":warning: Workload <{self.workload_url}|*{self.workload_name}*> failed to step in time!"
-                    },
-                )
+            self._maybe_send_slack_message(
+                f":warning: Workload <{self.workload_url}|*{self.workload_name}*> failed to step in time!"
+            )
+            log.error("Workload has failed to step in time, stopping...")
             self.interrupt_workload()
 
     def on_timeout(self, job: BeakerJob):
         del job
-        if self.slack_webhook_url is not None:
-            requests.post(
-                self.slack_webhook_url,
-                json={
-                    "text": f":warning: Workload <{self.workload_url}|*{self.workload_name}*> failed to complete in time!"
-                },
-            )
+        self._maybe_send_slack_message(
+            f":warning: Workload <{self.workload_url}|*{self.workload_name}*> failed to complete in time!"
+        )
 
     def on_inactive_timeout(self, job: BeakerJob):
         del job
-        if self.slack_webhook_url is not None:
-            requests.post(
-                self.slack_webhook_url,
-                json={
-                    "text": f":zzz: Workload <{self.workload_url}|*{self.workload_name}*> appears to be inactive!"
-                },
+        if (time.monotonic() - self._last_inactivity_warning) > self.warning_frequency:
+            self._maybe_send_slack_message(
+                f":zzz: Workload <{self.workload_url}|*{self.workload_name}*> appears to be inactive!"
             )
+            self._last_inactivity_warning = time.monotonic()
 
     def on_inactive_soft_timeout(self, job: BeakerJob):
         del job
-        if self.slack_webhook_url is not None:
-            requests.post(
-                self.slack_webhook_url,
-                json={
-                    "text": f":zzz: Workload <{self.workload_url}|*{self.workload_name}*> appears to be inactive!"
-                },
+        if (time.monotonic() - self._last_inactivity_warning) > self.warning_frequency:
+            self._maybe_send_slack_message(
+                f":zzz: Workload <{self.workload_url}|*{self.workload_name}*> appears to be inactive!"
             )
             self._last_inactivity_warning = time.monotonic()
 
     def on_preemption(self, job: BeakerJob):
         del job
-        if self.slack_webhook_url is not None:
-            requests.post(
-                self.slack_webhook_url,
-                json={
-                    "text": f":warning: Workload <{self.workload_url}|*{self.workload_name}*> was preempted!"
-                },
-            )
+        self._maybe_send_slack_message(
+            f":warning: Workload <{self.workload_url}|*{self.workload_name}*> was preempted!"
+        )
 
     def on_cancellation(self, job: BeakerJob | None):
         del job
-        if self.slack_webhook_url is not None:
-            requests.post(
-                self.slack_webhook_url,
-                json={
-                    "text": f":warning: Workload <{self.workload_url}|*{self.workload_name}*> was canceled!"
-                },
-            )
+        self._maybe_send_slack_message(
+            f":warning: Workload <{self.workload_url}|*{self.workload_name}*> was canceled!"
+        )
 
     def on_failure(
         self,
@@ -815,13 +798,9 @@ class GantryMonitorCallback(GantryCallback):
         results_ds: BeakerDataset | None = None,
     ):
         del job, metrics, results_ds
-        if self.slack_webhook_url is not None:
-            requests.post(
-                self.slack_webhook_url,
-                json={
-                    "text": f":check-failed: Workload <{self.workload_url}|*{self.workload_name}*> failed!"
-                },
-            )
+        self._maybe_send_slack_message(
+            f":check-failed: Workload <{self.workload_url}|*{self.workload_name}*> failed!"
+        )
 
     def on_success(
         self,
@@ -831,13 +810,13 @@ class GantryMonitorCallback(GantryCallback):
         results_ds: BeakerDataset | None = None,
     ):
         del job, metrics, results_ds
+        self._maybe_send_slack_message(
+            f":check: Workload <{self.workload_url}|*{self.workload_name}*> succeeded!"
+        )
+
+    def _maybe_send_slack_message(self, msg: str):
         if self.slack_webhook_url is not None:
-            requests.post(
-                self.slack_webhook_url,
-                json={
-                    "text": f":check: Workload <{self.workload_url}|*{self.workload_name}*> succeeded!"
-                },
-            )
+            requests.post(self.slack_webhook_url, json={"text": msg})
 
 
 def _parse_args():

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `ModelMergeCallback` for averaging model weights over the last N steps before a merge step.
+- Added documentation for verifying chat template settings before running evals after SFT.
 - Added `olmo_core.data.composable` module.
 - Added `PeriNormTransformerBlock`.
 - Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
@@ -37,7 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `lazy` option to `DownstreamEvaluatorCallbackConfig` for lazily loading each task which can decrease startup time.
 - `TrainingProgress` (from `Trainer.training_progress`) now includes `current_tokens`, `bps`, `tps`, and `mfu` fields.
 - `BeakerCallback` will include throughput metrics in the workload description.
+- Added `olmo_core.io.deterministic_glob_directory` function.
+- Added the option to cache the results of certain IO operations on remote files, like `get_file_size()` and `deterministic_glob_directory()` by setting the env var `OLMO_CORE_FS_CACHE_DIR` to a local directory.
 - Added `eval_on_finish` option to `EvaluatorCallback`.
+- Added the option to use a process pool instead of a thread pool when writing checkpoints.
+- Added `max_document_length` and `long_doc_strategy` options to `NumpyDocumentSource` in composable data API.
 
 ### Fixed
 
@@ -55,10 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed a bug where final metrics might not get logged.
 - Fix failing test_build_world_mesh_cpu for pytorch 2.10.
 - Fix failing convert_checkpoint_to_hf_test due by reducing total disk space required.
-
+- Ensure all metrics have been logged and bookkeeping ops complete before writing a checkpoint.
+- Minor improvements to make checkpointing more robust.
 
 ### Changed
 
+- Updated SFT documentation with alternative tokenization approach and tips for new base models.
 - Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
 - Updated stable torch version to 2.9.1, updated versions of underlying libraries in Beaker Images.
 - `olmo_core.io.join_path()` now accepts an arbitrary number of components to join.

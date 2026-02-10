@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import math
 import signal
@@ -744,6 +745,7 @@ class Trainer:
     def _shutdown(self, gracefully: bool = True):
         if gracefully:
             self._log_metrics()
+            self._join_bookkeeping_ops()
             if self._multi_thread_pool is not None:
                 self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
                 self._multi_thread_pool = None
@@ -933,7 +935,13 @@ class Trainer:
         """
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)
         path = join_path(self.save_folder, dirname)
+
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
+        # Some state (e.g. in a callback) might be tied to metrics, or depend on another bookkeeping
+        # operation to be finished first.
+        self._log_metrics()
+        self._join_bookkeeping_ops()
+
         self.checkpointer.save(path, self.train_module, cast(Dict[str, Any], self.state_dict()))
         for callback in self._iter_callbacks():
             callback.post_checkpoint_saved(path)
@@ -952,6 +960,11 @@ class Trainer:
         path = join_path(self.save_folder, dirname)
 
         log.info(f"Saving checkpoint for step {step} to '{path}' asynchronously...")
+        # Some state (e.g. in a callback) might be tied to metrics, or depend on another bookkeeping
+        # operation to be finished first.
+        self._log_metrics()
+        self._join_bookkeeping_ops()
+
         fut = self.checkpointer.save_async(
             path, self.train_module, cast(Dict[str, Any], self.state_dict())
         )
@@ -1253,6 +1266,20 @@ class Trainer:
             result = wrapped_op(*args, **kwargs)
             if cb is not None:
                 cb(result)
+
+    def _join_bookkeeping_ops(self, timeout: Optional[float] = None):
+        """
+        Block until all queued bookkeeping operations are done.
+        """
+        futures: List[Future] = []
+        for op_name, futures_dict in self._bookkeeping_queue.items():
+            if futures_dict:
+                log.info(
+                    f"Waiting for bookkeeping ops to finish: '{op_name}' ({len(futures_dict)} ops)..."
+                )
+                futures.extend(futures_dict.values())
+        concurrent.futures.wait(futures, timeout=timeout)
+        log.info("All bookkeeping ops complete")
 
     def _check_if_canceled(self):
         if self._canceled:

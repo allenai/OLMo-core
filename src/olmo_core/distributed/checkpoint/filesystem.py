@@ -2,10 +2,17 @@ import dataclasses
 import io
 import logging
 import operator
+import os
 import pickle
 import tempfile
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    Executor,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    as_completed,
+)
+from contextlib import ExitStack
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -14,6 +21,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, cast
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
+import torch.multiprocessing as mp
 from bettermap import ordered_map_per_thread
 from torch.distributed.checkpoint.filesystem import WriteResult
 from torch.distributed.checkpoint.metadata import Metadata, MetadataIndex, StorageMeta
@@ -99,40 +107,64 @@ def _write_items(
 ) -> List[WriteResult]:
     results: List[WriteResult] = []
 
-    tmp_path = Path(
-        tempfile.mktemp(suffix=".distcp", dir=None if is_url(path) else Path(path).parent)
+    tmp_file = tempfile.NamedTemporaryFile(
+        mode="w+b", suffix=".distcp", dir=None if is_url(path) else Path(path).parent, delete=False
     )
+    tmp_path = Path(tmp_file.name)
     try:
-        with tmp_path.open("wb") as tmp_file:
-            for write_item in items:
-                offset = tmp_file.tell()
-                data = planner.resolve_data(write_item)
+        for write_item in items:
+            offset = tmp_file.tell()
+            data = planner.resolve_data(write_item)
 
-                if write_item.type == WriteItemType.BYTE_IO:
-                    assert isinstance(data, io.BytesIO)
-                    tmp_file.write(data.getbuffer())
-                else:
-                    assert isinstance(data, torch.Tensor)
-                    data = data.cpu()  # should already be on CPU, but just in case
-                    torch.save(data, tmp_file)
+            if write_item.type == WriteItemType.BYTE_IO:
+                assert isinstance(data, io.BytesIO)
+                tmp_file.write(data.getbuffer())
+            else:
+                assert isinstance(data, torch.Tensor)
+                data = data.cpu()  # should already be on CPU, but just in case
+                torch.save(data, tmp_file)
 
-                length = tmp_file.tell() - offset
+            length = tmp_file.tell() - offset
 
-                results.append(
-                    WriteResult(
-                        index=write_item.index,
-                        size_in_bytes=length,
-                        storage_data=_StorageInfo(storage_key, offset, length),
-                    )
+            results.append(
+                WriteResult(
+                    index=write_item.index,
+                    size_in_bytes=length,
+                    storage_data=_StorageInfo(storage_key, offset, length),
                 )
+            )
 
+        # Ensure all data is written to disk.
+        tmp_file.flush()
+        if hasattr(os, "fdatasync"):  # only available on linux
+            os.fdatasync(tmp_file)  # type: ignore
+        tmp_file.close()
+
+        # Copy to final destination.
         if is_url(path):
             upload(tmp_path, path, save_overwrite=True)
         else:
-            tmp_path.rename(path)
+            tmp_path.replace(path)
     finally:
+        tmp_file.close()
         tmp_path.unlink(missing_ok=True)
 
+    return results
+
+
+def _write_buckets(
+    buckets: List[List[WriteItem]], paths: List[str], planner: dist_cp.SavePlanner
+) -> List[WriteResult]:
+    results: List[WriteResult] = []
+    for bucket, path in zip(buckets, paths):
+        key = os.path.basename(path)
+        try:
+            results.extend(_write_items(path, key, bucket, planner))
+        except BaseException:
+            # NOTE: we might get an error here that can't be pickled, which causes a different failure
+            # later when PyTorch tries to reduce that error across ranks. So here we just make
+            # sure we're raising a simple error type that can be pickled.
+            raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
     return results
 
 
@@ -162,6 +194,7 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         self,
         path: PathOrStr,
         thread_count: Optional[int] = None,
+        process_count: Optional[int] = None,
         process_group: Optional[dist.ProcessGroup] = None,
         throttle_uploads: bool = False,
     ) -> None:
@@ -170,6 +203,7 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             raise ValueError("thread count must be at least 1")
         self.path = normalize_path(path)
         self.thread_count = thread_count or get_default_thread_count()
+        self.process_count = process_count
         self.process_group = process_group
         self.throttle_uploads = throttle_uploads
         self.save_id = generate_uuid()
@@ -211,37 +245,37 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             nonlocal file_count
             file_name = f"{storage_plan.prefix}{file_count}.distcp"
             file_count += 1
-            return file_name
-
-        def write_items(buckets: List[List[WriteItem]]) -> List[WriteResult]:
-            results: List[WriteResult] = []
-            for bucket in buckets:
-                file_name = gen_file_name()
-                path = f"{self.path}/{file_name}"
-                try:
-                    results.extend(_write_items(path, file_name, bucket, planner))
-                except BaseException:
-                    # NOTE: we might get an error here that can't be pickled, which causes a different failure
-                    # later when PyTorch tries to reduce that error across ranks. So here we just make
-                    # sure we're raising a simple error type that can be pickled.
-                    raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
-            return results
+            return f"{self.path}/{file_name}"
 
         results: List[WriteResult]
         if self.throttle_uploads and is_url(self.path):
             buckets = _split_by_size_and_type(1, plan.items)
+            paths = [gen_file_name() for _ in buckets]
             results = do_n_at_a_time(
-                partial(write_items, buckets),
+                partial(_write_buckets, buckets, paths, planner),
                 process_group=self.process_group,
                 n=max(get_num_nodes() // 4, 1),
             )
         else:
             buckets = _split_by_size_and_type(self.thread_count, plan.items)
+            paths = [gen_file_name() for _ in buckets]
             results = []
-            with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
+            with ExitStack() as stack:
+                executor: Executor
+                if self.process_count is not None and self.process_count > 1:
+                    executor = stack.enter_context(
+                        ProcessPoolExecutor(
+                            max_workers=self.process_count, mp_context=mp.get_context("spawn")
+                        )
+                    )
+                else:
+                    executor = stack.enter_context(
+                        ThreadPoolExecutor(max_workers=self.thread_count)
+                    )
+
                 futures = []
-                for bucket in buckets:
-                    futures.append(executor.submit(write_items, [bucket]))
+                for bucket, path in zip(buckets, paths):
+                    futures.append(executor.submit(_write_buckets, [bucket], [path], planner))
                 for f in as_completed(futures):
                     results.extend(f.result())
 
@@ -256,21 +290,29 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         metadata.storage_data = storage_md
         metadata.storage_meta = self.storage_meta()
 
-        tmp_path = Path(
-            tempfile.mktemp(
-                suffix=".tmp",
-                dir=None if is_url(self.metadata_path) else Path(self.metadata_path).parent,
-            )
+        tmp_file = tempfile.NamedTemporaryFile(
+            mode="w+b",
+            suffix=".tmp",
+            dir=None if is_url(self.metadata_path) else Path(self.metadata_path).parent,
+            delete=False,
         )
+        tmp_path = Path(tmp_file.name)
         try:
-            with tmp_path.open("wb") as tmp_file:
-                pickle.dump(metadata, tmp_file)
+            pickle.dump(metadata, tmp_file)
 
+            # Ensure all data is written to disk.
+            tmp_file.flush()
+            if hasattr(os, "fdatasync"):  # only available on linux
+                os.fdatasync(tmp_file)  # type: ignore
+            tmp_file.close()
+
+            # Copy to final destination.
             if is_url(self.metadata_path):
                 upload(tmp_path, self.metadata_path, save_overwrite=True)
             else:
-                tmp_path.rename(self.metadata_path)
+                tmp_path.replace(self.metadata_path)
         finally:
+            tmp_file.close()
             tmp_path.unlink(missing_ok=True)
 
     def storage_meta(self) -> Optional[StorageMeta]:
