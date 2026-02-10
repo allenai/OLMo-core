@@ -1214,7 +1214,14 @@ class Trainer:
             start_time = time.perf_counter()
             assert soft_timeout is not None  # for mypy
             try:
-                return op(*args, **kwargs)
+                result = op(*args, **kwargs)
+                # NOTE: invoke cb inside wrapped_op (before the future is marked as FINISHED)
+                # so that _join_bookkeeping_ops() waits for it to complete. Previously cb was
+                # invoked via future.add_done_callback() which runs *after* the future is
+                # FINISHED, causing a race where state_dict() could capture stale callback state.
+                if cb is not None:
+                    cb(result)
+                return result
             finally:
                 if (runtime := int(time.perf_counter() - start_time)) > soft_timeout:
                     log.warning(
@@ -1251,8 +1258,7 @@ class Trainer:
 
             def callback(fut: Future[T]):
                 try:
-                    if cb is not None:
-                        cb(fut.result())  # type: ignore[misc]
+                    fut.result()  # re-raise any exception from the op or cb
                 except BaseException as e:
                     log.exception(e)
                     self._error = e
@@ -1263,9 +1269,7 @@ class Trainer:
 
             future.add_done_callback(callback)
         else:
-            result = wrapped_op(*args, **kwargs)
-            if cb is not None:
-                cb(result)
+            wrapped_op(*args, **kwargs)
 
     def _join_bookkeeping_ops(self, timeout: Optional[float] = None):
         """
