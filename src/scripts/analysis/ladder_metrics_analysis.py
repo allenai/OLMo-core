@@ -3467,6 +3467,7 @@ def generate_latex_flops_plot(
     legend_columns: int = 3,
     star_ladder: Optional[str] = None,
     emit_color_defs: bool = False,
+    log_y: bool = False,
 ) -> str:
     """
     Generate a TikZ/pgfplots figure showing metric vs training FLOPs.
@@ -3551,21 +3552,25 @@ def generate_latex_flops_plot(
     lines.append(f"    width={width},")
     lines.append(f"    height={height},")
     lines.append("    xmode=log,")
+    if log_y:
+        lines.append("    ymode=log,")
     lines.append("    log basis x=10,")
     lines.append("    xlabel={Training FLOPs (PetaFLOPs)},")
     lines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
     lines.append(f"    xmin={x_min:.4f}, xmax={x_max:.4f},")
-    lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
-    lines.append(r"    legend style={")
-    lines.append(r"        at={(0.5,-0.22)},")
-    lines.append(r"        anchor=north,")
-    lines.append(r"        font=\scriptsize,")
-    lines.append(r"        cells={anchor=west},")
-    lines.append(r"        draw=none,")
-    lines.append(f"        legend columns={legend_columns},")
-    lines.append(r"        column sep=6pt,")
-    lines.append(r"        row sep=1pt,")
-    lines.append(r"    },")
+    if not log_y:
+        lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
+    if legend_columns > 0:
+        lines.append(r"    legend style={")
+        lines.append(r"        at={(0.5,-0.22)},")
+        lines.append(r"        anchor=north,")
+        lines.append(r"        font=\scriptsize,")
+        lines.append(r"        cells={anchor=west},")
+        lines.append(r"        draw=none,")
+        lines.append(f"        legend columns={legend_columns},")
+        lines.append(r"        column sep=6pt,")
+        lines.append(r"        row sep=1pt,")
+        lines.append(r"    },")
     lines.append(r"    grid=major,")
     lines.append(r"    grid style={gray!15},")
     lines.append(r"    every axis plot/.append style={thick, mark size=2.5pt, smooth},")
@@ -3592,10 +3597,11 @@ def generate_latex_flops_plot(
         lines.append(f"\\addplot[{plot_opts_str}]")
         lines.append(f"    coordinates {{{coords}}};")
 
-        display = get_display_name(ladder_name)
-        if star_ladder and ladder_name.lower() == star_ladder.lower():
-            display += r" $\bigstar$"
-        lines.append(f"\\addlegendentry{{{_escape_latex_text(display)}}}")
+        if legend_columns > 0:
+            display = get_display_name(ladder_name)
+            if star_ladder and ladder_name.lower() == star_ladder.lower():
+                display += r" $\bigstar$"
+            lines.append(f"\\addlegendentry{{{_escape_latex_text(display)}}}")
         lines.append("")
 
     lines.append(r"\end{axis}")
@@ -3788,18 +3794,20 @@ def generate_latex_plots(
     include_main: bool = False,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
-    plot_flops: bool = False,
 ) -> str:
     """
     Generate publication-ready LaTeX/TikZ plots for all metric suites.
 
+    All plots use training FLOPs on the x-axis and log-scale y-axes.
+    The Base Easy Suite average is a large standalone figure, while
+    the per-cluster plots (Math, Code, QA) are arranged in a single row.
+
     Produces pgfplots code for:
-      - Base Easy Suite average BPB vs parameters (line plot)
-      - Each Base Easy cluster (Math_BPB, Code_BPB, QA_BPB) vs parameters
-      - Base Main Suite average accuracy vs parameters (if include_main)
-      - Each Base Main cluster vs parameters (if include_main)
-      - Average LM perplexity vs parameters
-      - All of the above vs training FLOPs (if plot_flops)
+      - Base Easy Suite average BPB vs FLOPs (large plot)
+      - Each Base Easy cluster (Math_BPB, Code_BPB, QA_BPB) vs FLOPs (small, single row)
+      - Base Main Suite average accuracy vs FLOPs (if include_main)
+      - Each Base Main cluster vs FLOPs (if include_main)
+      - Average LM perplexity vs FLOPs
 
     Args:
         ladder_results: The standard {ladder_name: {size_key: data}} dict.
@@ -3807,7 +3815,6 @@ def generate_latex_plots(
         include_main: Include Base Main Suite plots.
         use_final_checkpoint: Use final checkpoint per size instead of mean.
         star_ladder: Ladder name to highlight with a star in the legend.
-        plot_flops: Include FLOPs-based plots (metric vs training compute).
 
     Returns:
         Complete LaTeX string with all plots as separate figures.
@@ -3837,35 +3844,37 @@ def generate_latex_plots(
             return sum(c["avg"] for c in be.values()) / len(be)
         return None
 
-    # Bar chart generation skipped — parameter count differences make bar charts
-    # less informative than line plots. generate_latex_bar_chart() preserved for manual use.
-
-    # Line plot version (vs parameters)
-    parts.append("% --- Base Easy Suite: Average BPB vs Parameters ---")
+    # Large plot: Base Easy Suite Average BPB vs FLOPs (log-log)
+    parts.append("% --- Base Easy Suite: Average BPB vs FLOPs (large) ---")
     parts.append(r"\begin{figure}[htbp]")
     parts.append(r"    \centering")
     parts.append(
-        generate_latex_plot(
+        generate_latex_flops_plot(
             ladder_results,
-            "base_easy_avg",
+            "base_easy_avg_flops",
             _extract_easy_avg,
             ylabel="Average BPB",
-            title="Base Easy Suite Average",
+            title="Base Easy Suite Average vs FLOPs",
             sizes=sizes,
             higher_is_better=False,
             use_final_checkpoint=use_final_checkpoint,
             star_ladder=star_ladder,
+            log_y=True,
         )
     )
     parts.append(
-        r"    \caption{Base Easy Suite average BPB vs.\ parameter count (lower is better).}"
+        r"    \caption{Base Easy Suite average BPB vs.\ training FLOPs (lower is better).}"
     )
     parts.append(r"    \label{fig:base_easy_avg}")
     parts.append(r"\end{figure}")
     parts.append("")
 
-    # --- Base Easy Suite: Per-cluster ---
-    for cluster_name in BASE_EASY_SUITE.keys():
+    # Small plots: Per-cluster BPB vs FLOPs (3 in one row)
+    cluster_names = list(BASE_EASY_SUITE.keys())
+    parts.append("% --- Base Easy Suite: Per-cluster BPB vs FLOPs (small, single row) ---")
+    parts.append(r"\begin{figure}[htbp]")
+    parts.append(r"    \centering")
+    for i, cluster_name in enumerate(cluster_names):
 
         def _extract_cluster(data, _c=cluster_name):
             be = data.get("base_easy", {})
@@ -3874,29 +3883,36 @@ def generate_latex_plots(
             return None
 
         clean_name = cluster_name.replace("_BPB", "")
-        parts.append(f"% --- Base Easy: {clean_name} BPB vs Parameters ---")
-        parts.append(r"\begin{figure}[htbp]")
-        parts.append(r"    \centering")
+        # Use minipage for side-by-side layout; legend only on last subplot
+        col_width = f"{0.95 / len(cluster_names):.2f}"
+        parts.append(f"    \\begin{{minipage}}{{{col_width}\\linewidth}}")
+        parts.append(r"        \centering")
         parts.append(
-            generate_latex_plot(
+            generate_latex_flops_plot(
                 ladder_results,
-                f"base_easy_{cluster_name}",
+                f"base_easy_{cluster_name}_flops",
                 _extract_cluster,
                 ylabel=f"{clean_name} BPB",
-                title=f"Base Easy {clean_name}",
+                title=clean_name,
                 sizes=sizes,
                 higher_is_better=False,
+                width="\\linewidth",
+                height="0.8\\linewidth",
                 use_final_checkpoint=use_final_checkpoint,
                 star_ladder=star_ladder,
+                legend_columns=1 if i == len(cluster_names) - 1 else 0,
                 log_y=True,
             )
         )
-        parts.append(
-            f"    \\caption{{Base Easy {_escape_latex_text(clean_name)} BPB vs.\\ parameter count.}}"
-        )
-        parts.append(f"    \\label{{fig:base_easy_{cluster_name.lower()}}}")
-        parts.append(r"\end{figure}")
-        parts.append("")
+        parts.append(r"    \end{minipage}")
+        if i < len(cluster_names) - 1:
+            parts.append(r"    \hfill")
+    parts.append(
+        r"    \caption{Base Easy Suite per-cluster BPB vs.\ training FLOPs (lower is better).}"
+    )
+    parts.append(r"    \label{fig:base_easy_clusters}")
+    parts.append(r"\end{figure}")
+    parts.append("")
 
     # --- Base Main Suite (if requested) ---
     if include_main:
@@ -3907,24 +3923,25 @@ def generate_latex_plots(
                 return sum(c["avg"] for c in bm.values()) / len(bm) * 100
             return None
 
-        parts.append("% --- Base Main Suite: Average Accuracy vs Parameters ---")
+        parts.append("% --- Base Main Suite: Average Accuracy vs FLOPs ---")
         parts.append(r"\begin{figure}[htbp]")
         parts.append(r"    \centering")
         parts.append(
-            generate_latex_plot(
+            generate_latex_flops_plot(
                 ladder_results,
                 "base_main_avg",
                 _extract_main_avg,
                 ylabel="Average Accuracy (\\%)",
-                title="Base Main Suite Average",
+                title="Base Main Suite Average vs FLOPs",
                 sizes=sizes,
                 higher_is_better=True,
                 use_final_checkpoint=use_final_checkpoint,
                 star_ladder=star_ladder,
+                log_y=True,
             )
         )
         parts.append(
-            r"    \caption{Base Main Suite average accuracy vs.\ parameter count (higher is better).}"
+            r"    \caption{Base Main Suite average accuracy vs.\ training FLOPs (higher is better).}"
         )
         parts.append(r"    \label{fig:base_main_avg}")
         parts.append(r"\end{figure}")
@@ -3938,24 +3955,25 @@ def generate_latex_plots(
                     return bm[_c]["avg"] * 100
                 return None
 
-            parts.append(f"% --- Base Main: {cluster_name} vs Parameters ---")
+            parts.append(f"% --- Base Main: {cluster_name} vs FLOPs ---")
             parts.append(r"\begin{figure}[htbp]")
             parts.append(r"    \centering")
             parts.append(
-                generate_latex_plot(
+                generate_latex_flops_plot(
                     ladder_results,
                     f"base_main_{cluster_name}",
                     _extract_main_cluster,
                     ylabel="Accuracy (\\%)" if cluster_name != "FIM" else "pass@1 (\\%)",
-                    title=f"Base Main {cluster_name}",
+                    title=f"Base Main {cluster_name} vs FLOPs",
                     sizes=sizes,
                     higher_is_better=True,
                     use_final_checkpoint=use_final_checkpoint,
                     star_ladder=star_ladder,
+                    log_y=True,
                 )
             )
             parts.append(
-                f"    \\caption{{Base Main {_escape_latex_text(cluster_name)} vs.\\ parameter count.}}"
+                f"    \\caption{{Base Main {_escape_latex_text(cluster_name)} vs.\\ training FLOPs.}}"
             )
             parts.append(f"    \\label{{fig:base_main_{cluster_name.lower()}}}")
             parts.append(r"\end{figure}")
@@ -4129,143 +4147,29 @@ def generate_latex_plots(
             return sum(ppls) / len(ppls)
         return None
 
-    parts.append("% --- Average LM Perplexity vs Parameters ---")
+    parts.append("% --- Average LM Perplexity vs FLOPs ---")
     parts.append(r"\begin{figure}[htbp]")
     parts.append(r"    \centering")
     parts.append(
-        generate_latex_plot(
+        generate_latex_flops_plot(
             ladder_results,
             "lm_avg_ppl",
             _extract_avg_ppl,
             ylabel="Perplexity",
-            title="Average LM Perplexity",
+            title="Average LM Perplexity vs FLOPs",
             sizes=sizes,
             higher_is_better=False,
             use_final_checkpoint=use_final_checkpoint,
             star_ladder=star_ladder,
+            log_y=True,
         )
     )
     parts.append(
-        r"    \caption{Average language modeling perplexity vs.\ parameter count (lower is better).}"
+        r"    \caption{Average language modeling perplexity vs.\ training FLOPs (lower is better).}"
     )
     parts.append(r"    \label{fig:lm_avg_ppl}")
     parts.append(r"\end{figure}")
     parts.append("")
-
-    # --- FLOPs-based plots (metric vs training compute) ---
-    if plot_flops:
-        # Base Easy Suite average BPB vs FLOPs
-        parts.append("% --- Base Easy Suite: Average BPB vs FLOPs ---")
-        parts.append(r"\begin{figure}[htbp]")
-        parts.append(r"    \centering")
-        parts.append(
-            generate_latex_flops_plot(
-                ladder_results,
-                "base_easy_avg_flops",
-                _extract_easy_avg,
-                ylabel="Average BPB",
-                title="Base Easy Suite Average vs FLOPs",
-                sizes=sizes,
-                higher_is_better=False,
-                use_final_checkpoint=use_final_checkpoint,
-                star_ladder=star_ladder,
-            )
-        )
-        parts.append(
-            r"    \caption{Base Easy Suite average BPB vs.\ training FLOPs (lower is better).}"
-        )
-        parts.append(r"    \label{fig:base_easy_avg_flops}")
-        parts.append(r"\end{figure}")
-        parts.append("")
-
-        # Per-cluster BPB vs FLOPs
-        for cluster_name in BASE_EASY_SUITE.keys():
-
-            def _extract_cluster_flops(data, _c=cluster_name):
-                be = data.get("base_easy", {})
-                if _c in be:
-                    return be[_c]["avg"]
-                return None
-
-            clean_name = cluster_name.replace("_BPB", "")
-            parts.append(f"% --- Base Easy: {clean_name} BPB vs FLOPs ---")
-            parts.append(r"\begin{figure}[htbp]")
-            parts.append(r"    \centering")
-            parts.append(
-                generate_latex_flops_plot(
-                    ladder_results,
-                    f"base_easy_{cluster_name}_flops",
-                    _extract_cluster_flops,
-                    ylabel=f"{clean_name} BPB",
-                    title=f"Base Easy {clean_name} vs FLOPs",
-                    sizes=sizes,
-                    higher_is_better=False,
-                    use_final_checkpoint=use_final_checkpoint,
-                    star_ladder=star_ladder,
-                )
-            )
-            parts.append(
-                f"    \\caption{{Base Easy {_escape_latex_text(clean_name)} BPB vs.\\ training FLOPs.}}"
-            )
-            parts.append(f"    \\label{{fig:base_easy_{cluster_name.lower()}_flops}}")
-            parts.append(r"\end{figure}")
-            parts.append("")
-
-        # Base Main Suite vs FLOPs (if requested)
-        if include_main:
-
-            def _extract_main_avg_flops(data):
-                bm = data.get("base_main", {})
-                if bm:
-                    return sum(c["avg"] for c in bm.values()) / len(bm) * 100
-                return None
-
-            parts.append("% --- Base Main Suite: Average Accuracy vs FLOPs ---")
-            parts.append(r"\begin{figure}[htbp]")
-            parts.append(r"    \centering")
-            parts.append(
-                generate_latex_flops_plot(
-                    ladder_results,
-                    "base_main_avg_flops",
-                    _extract_main_avg_flops,
-                    ylabel="Average Accuracy (\\%)",
-                    title="Base Main Suite Average vs FLOPs",
-                    sizes=sizes,
-                    higher_is_better=True,
-                    use_final_checkpoint=use_final_checkpoint,
-                    star_ladder=star_ladder,
-                )
-            )
-            parts.append(
-                r"    \caption{Base Main Suite average accuracy vs.\ training FLOPs (higher is better).}"
-            )
-            parts.append(r"    \label{fig:base_main_avg_flops}")
-            parts.append(r"\end{figure}")
-            parts.append("")
-
-        # Average LM Perplexity vs FLOPs
-        parts.append("% --- Average LM Perplexity vs FLOPs ---")
-        parts.append(r"\begin{figure}[htbp]")
-        parts.append(r"    \centering")
-        parts.append(
-            generate_latex_flops_plot(
-                ladder_results,
-                "lm_avg_ppl_flops",
-                _extract_avg_ppl,
-                ylabel="Perplexity",
-                title="Average LM Perplexity vs FLOPs",
-                sizes=sizes,
-                higher_is_better=False,
-                use_final_checkpoint=use_final_checkpoint,
-                star_ladder=star_ladder,
-            )
-        )
-        parts.append(
-            r"    \caption{Average language modeling perplexity vs.\ training FLOPs (lower is better).}"
-        )
-        parts.append(r"    \label{fig:lm_avg_ppl_flops}")
-        parts.append(r"\end{figure}")
-        parts.append("")
 
     return "\n".join(parts)
 
@@ -4282,7 +4186,6 @@ def export_results(
     include_main: bool = False,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
-    plot_flops: bool = False,
 ) -> None:
     """Export results to various formats."""
     easy_df = create_base_easy_table(ladder_results, sizes)
@@ -4357,7 +4260,6 @@ def export_results(
         include_main=include_main,
         use_final_checkpoint=use_final_checkpoint,
         star_ladder=star_ladder,
-        plot_flops=plot_flops,
     )
     plots_path = output_path / "ablation-scaling-plot.tex"
     with open(plots_path, "w") as f:
@@ -4712,7 +4614,6 @@ Examples:
             include_main=include_main,
             use_final_checkpoint=args.curve_final,
             star_ladder=args.star_ladder,
-            plot_flops=args.plot_flops,
         )
         print("\n" + "=" * 80)
         print("LATEX/TIKZ PLOTS (pgfplots)")
@@ -4745,7 +4646,6 @@ Examples:
             include_main=include_main,
             use_final_checkpoint=args.curve_final,
             star_ladder=args.star_ladder,
-            plot_flops=args.plot_flops,
         )
 
 

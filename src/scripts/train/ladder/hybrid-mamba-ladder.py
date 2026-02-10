@@ -50,6 +50,14 @@ def add_hybrid_args(_cmd: str, parser: argparse.ArgumentParser):
         default=4,
         help="Ratio of layers between transformer blocks (e.g., 4 means every 4th layer is transformer, 2 means every other layer).",
     )
+    parser.add_argument(
+        "--with-mamba-ffn",
+        action="store_true",
+        default=False,
+        help="Keep the SwiGLU feed-forward layers on Mamba2 blocks (Mamba2-MLP variant). "
+        "Without this flag, FFNs are stripped from Mamba2 layers since Mamba2 has internal gating. "
+        "Attention layers always keep their FFN.",
+    )
 
 
 def get_mix_base_dir(cluster: str) -> str:
@@ -63,6 +71,7 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
     def __init__(
         self,
         transformer_ratio: int = 4,
+        with_mamba_ffn: bool = False,
         rank_microbatch_size: int | None = None,
     ):
         """
@@ -70,10 +79,12 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
             transformer_ratio: Ratio of layers between transformer blocks.
                 E.g., 4 means every 4th layer is transformer (1/4 transformer),
                 2 means every other layer is transformer (1/2 transformer).
+            with_mamba_ffn: If True, keep the SwiGLU feed-forward on Mamba2 layers too.
             rank_microbatch_size: Optional fixed rank micro-batch size in tokens.
         """
         super().__init__(rank_microbatch_size=rank_microbatch_size)
         self.transformer_ratio = transformer_ratio
+        self.with_mamba_ffn = with_mamba_ffn
 
     def configure_rank_microbatch_size(
         self,
@@ -171,7 +182,8 @@ class HybridMamba2TransformerModelConfigurator(TransformerModelConfigurator):
 
         # Mamba2 has its own internal expansion/gating, so strip the redundant
         # feed-forward from FLA layers while keeping it for attention layers.
-        model.block.fla_hybrid_strip_fla_feed_forward = True
+        # Use --with-mamba-ffn to override and keep FFNs on Mamba2 layers.
+        model.block.fla_hybrid_strip_fla_feed_forward = not self.with_mamba_ffn
 
         # Configure the non-attention part of the block to be Mamba2.
         model.block.fla = FLAConfig(
@@ -266,6 +278,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         device_type=get_gpu_type(args.cluster),
         model_configurator=HybridMamba2TransformerModelConfigurator(
             transformer_ratio=args.transformer_ratio,
+            with_mamba_ffn=args.with_mamba_ffn,
             rank_microbatch_size=(
                 None if args.rank_mbz is None else args.rank_mbz * args.sequence_length
             ),

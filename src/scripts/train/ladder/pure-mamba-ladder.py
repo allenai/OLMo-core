@@ -50,16 +50,28 @@ def get_mix_base_dir(cluster: str) -> str:
         return "gs://ai2-llm/"
 
 
+def add_mamba_args(_cmd: str, parser: argparse.ArgumentParser):
+    parser.add_argument(
+        "--with-ffn",
+        action="store_true",
+        default=False,
+        help="Keep the SwiGLU feed-forward layers alongside Mamba2 (Mamba2-MLP variant). "
+        "Without this flag, FFNs are stripped since Mamba2 has internal gating.",
+    )
+
+
 class Mamba2ModelConfigurator(TransformerModelConfigurator):
     """
     Model configurator for pure Mamba2.
 
     Args:
+        with_ffn: If True, keep the SwiGLU feed-forward layers alongside Mamba2 blocks.
         rank_microbatch_size: Optional fixed rank micro-batch size in tokens.
     """
 
-    def __init__(self, rank_microbatch_size: int | None = None):
+    def __init__(self, with_ffn: bool = False, rank_microbatch_size: int | None = None):
         super().__init__(rank_microbatch_size=rank_microbatch_size)
+        self.with_ffn = with_ffn
 
     def configure_rank_microbatch_size(
         self,
@@ -145,8 +157,8 @@ class Mamba2ModelConfigurator(TransformerModelConfigurator):
         model.block.name = TransformerBlockType.fla
         model.block.sequence_mixer = AttentionConfig(n_heads=n_heads)
 
-        model.block.feed_forward = None
-        model.block.feed_forward_norm = None
+        if not self.with_ffn:
+            model.block.feed_forward = None
 
         # Configure Mamba2
         model.block.fla = FLAConfig(
@@ -240,6 +252,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
         model_configurator=Mamba2ModelConfigurator(
+            with_ffn=args.with_ffn,
             rank_microbatch_size=(
                 None if args.rank_mbz is None else args.rank_mbz * args.sequence_length
             ),
@@ -258,4 +271,4 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
 
 if __name__ == "__main__":
-    main(configure_ladder)
+    main(configure_ladder, add_additional_args=add_mamba_args)
