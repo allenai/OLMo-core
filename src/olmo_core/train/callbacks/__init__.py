@@ -17,7 +17,6 @@ from .evaluator_callback import (
 from .gap_monitor import GAPMonitorCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
-from .gradient_dumper import GradientDumperCallback
 from .list_checkpointer import ListCheckpointerCallback
 from .metric_saver import MetricSaverCallback
 from .model_merger import ModelMergeCallback
@@ -57,7 +56,6 @@ __all__ = [
     "MetricSaverCallback",
     "ModelMergeCallback",
     "ListCheckpointerCallback",
-    "GradientDumperCallback",
 ]
 
 __doc__ += "\n"
