@@ -160,7 +160,7 @@ class GAPMonitorCallback(Callback):
             # Technically it might be better to compute global stats directly, but this way is
             # cheaper, much simpler, and probably good enough.
             tensor = get_local_tensor(tensor)
-            tensor = tensor.view(tensor.shape[0], -1)
+            tensor = tensor.reshape(tensor.shape[0], -1)
             max_ = tensor.abs().max()
             var, mean = var_mean(tensor, dim=-1)
             # NOTE: to handle gradient accumulation we divide by local batch size (in instances),
