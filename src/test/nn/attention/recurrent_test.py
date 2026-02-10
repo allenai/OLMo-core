@@ -24,7 +24,7 @@ from olmo_core.utils import get_default_device, seed_all
     "recurrent_config",
     [
         pytest.param(GatedDeltaNetConfig(n_heads=8), id="default"),
-        pytest.param(GatedDeltaNetConfig(n_heads=8, n_kv_heads=2), id="GQA"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8, n_v_heads=16), id="GVA"),
         pytest.param(GatedDeltaNetConfig(n_heads=8, head_dim=32), id="head_dim=32"),
         pytest.param(GatedDeltaNetConfig(n_heads=8, expand_v=1.0), id="expand_v=1.0"),
         pytest.param(GatedDeltaNetConfig(n_heads=8, conv_size=8, conv_bias=True), id="conv_bias"),
