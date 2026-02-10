@@ -15,7 +15,7 @@ uv run python src/scripts/train/sft/Olmo-3-Hybrid-7B-SFT.py launch \
     --num_nodes=8 \
     --budget ai2/oe-adapt \
     --workspace ai2/olmo-instruct \
-    --dataset_path /weka/oe-adapt-default/jacobm/olmo3-final-datasets/olmo3-32b-thinking-sft
+    --dataset_path /weka/oe-adapt-default/jacobm/olmo3-final-datasets/think-sft-32b/olmo3-32b-thinking-sft
 
 # # 2.5e-5 (2x smaller)
 uv run python src/scripts/train/sft/Olmo-3-Hybrid-7B-SFT.py launch \
@@ -30,5 +30,5 @@ uv run python src/scripts/train/sft/Olmo-3-Hybrid-7B-SFT.py launch \
     --num_nodes=8 \
     --budget ai2/oe-adapt \
     --workspace ai2/olmo-instruct \
-    --dataset_path /weka/oe-adapt-default/jacobm/olmo3-final-datasets/olmo3-32b-thinking-sft
+    --dataset_path /weka/oe-adapt-default/jacobm/olmo3-final-datasets/think-sft-32b/olmo3-32b-thinking-sft
 
