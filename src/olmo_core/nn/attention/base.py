@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Generic, Optional, TypeVar
 
 import torch
 import torch.nn as nn
@@ -12,6 +12,9 @@ from olmo_core.config import Registrable
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
 from .ring import RingContextParallelStyle, UlyssesContextParallelStyle
+
+if TYPE_CHECKING:
+    from olmo_core.nn.transformer.init import InitMethod
 
 
 class SequenceMixer(nn.Module):
