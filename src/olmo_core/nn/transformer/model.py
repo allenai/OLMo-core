@@ -37,7 +37,12 @@ from olmo_core.nn.attention.ring import (
 )
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import Attention, FusedAttention, RingAttentionLoadBalancer, SequenceMixer
+from ..attention import (
+    Attention,
+    FusedAttention,
+    RingAttentionLoadBalancer,
+    SequenceMixer,
+)
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig

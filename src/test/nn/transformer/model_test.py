@@ -1,5 +1,6 @@
 import logging
 from dataclasses import replace
+from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
 
 import pytest
@@ -56,7 +57,6 @@ from olmo_core.testing import (
 )
 from olmo_core.testing.utils import FLA_MARKS, has_fla
 from olmo_core.utils import get_default_device, seed_all
-from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 
 log = logging.getLogger(__name__)
 
