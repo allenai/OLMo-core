@@ -1,6 +1,5 @@
 import logging
 from dataclasses import replace
-from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
 
 import pytest
@@ -23,6 +22,7 @@ from olmo_core.distributed.utils import get_full_tensor, get_world_size
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
+    GatedDeltaNetConfig,
     RingAttentionLoadBalancerType,
     SlidingWindowAttentionConfig,
 )
@@ -54,7 +54,9 @@ from olmo_core.testing import (
     requires_multi_gpu,
     run_distributed_test,
 )
+from olmo_core.testing.utils import FLA_MARKS, has_fla
 from olmo_core.utils import get_default_device, seed_all
+from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 
 log = logging.getLogger(__name__)
 
@@ -190,6 +192,22 @@ def get_transformer_config(
             dtype=DType.from_pt(dtype),
             sliding_window=swa,
         )
+    elif architecture == "gdn":
+        assert has_fla, "GDN requires FLa"
+        assert attn_backend is None, "GDN does not support attention backends"
+        layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
+        config = TransformerConfig(
+            d_model=256,
+            vocab_size=16_000,
+            n_layers=2,
+            block=TransformerBlockConfig(
+                name=TransformerBlockType.reordered_norm,
+                sequence_mixer=GatedDeltaNetConfig(n_heads=8),
+                layer_norm=layer_norm,
+                feed_forward=FeedForwardConfig(hidden_size=512, bias=False),
+            ),
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+        )
     else:
         raise NotImplementedError(architecture)
 
@@ -314,7 +332,7 @@ def test_context_parallel_transformer_ring(architecture: str, tmp_path):
 
 
 def run_context_parallel_transformer_ulysses(
-    checkpoint_dir, outputs_path, architecture: str, backend_name: AttentionBackendName
+    checkpoint_dir, outputs_path, architecture: str, backend_name: Optional[AttentionBackendName]
 ):
     device = get_default_device()
     config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
@@ -342,17 +360,17 @@ def run_context_parallel_transformer_ulysses(
 
 
 @requires_multi_gpu
-@pytest.mark.parametrize("architecture", ["olmo2"])
 @pytest.mark.parametrize(
-    "backend_name",
+    "architecture, backend_name",
     [
-        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
-        pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
-        pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
+        pytest.param("olmo2", AttentionBackendName.flash_2, id="olmo2-fa2", marks=FLASH_2_MARKS),
+        pytest.param("olmo2", AttentionBackendName.flash_3, id="olmo2-fa3", marks=FLASH_3_MARKS),
+        pytest.param("olmo2", AttentionBackendName.te, id="olmo2-te-attn", marks=TE_MARKS),
+        pytest.param("gdn", None, id="gdn", marks=FLA_MARKS),
     ],
 )
 def test_context_parallel_transformer_ulysses(
-    architecture: str, backend_name: AttentionBackendName, tmp_path
+    architecture: str, backend_name: Optional[AttentionBackendName], tmp_path
 ):
     seed_all(0)
     device = torch.device("cuda")
@@ -382,12 +400,12 @@ def test_context_parallel_transformer_ulysses(
     )
 
 
-def run_init_with_hsdp():
+def run_init_with_hsdp(architecture: str):
     assert dist.get_world_size() == 4
     mesh = build_world_mesh(
         dp=DataParallelConfig(name=DataParallelType.hsdp, shard_degree=2, num_replicas=2)
     )
-    config = get_transformer_config("olmo2")
+    config = get_transformer_config(architecture)
     model = config.build(init_device="meta")
     model.apply_fsdp(mesh)
     model.init_weights(max_seq_len=512, device=get_default_device())
@@ -405,7 +423,8 @@ def run_init_with_hsdp():
 
 
 @requires_multi_gpu
-def test_init_with_hsdp():
+@pytest.mark.parametrize("architecture", ["olmo2", pytest.param("gdn", marks=FLA_MARKS)])
+def test_init_with_hsdp(architecture: str):
     if torch.cuda.device_count() < 4:
         pytest.skip("Requires 4 GPUs")
 
@@ -414,6 +433,7 @@ def test_init_with_hsdp():
         backend="nccl",
         start_method="spawn",
         world_size=4,
+        func_args=(architecture,),
     )
 
 
