@@ -425,9 +425,9 @@ class TransformerConfig(ModelConfig):
     init_std: float = 0.02
     embedding_init_std: Optional[float] = None
     freeze_params: Optional[List[str]] = None
-    block_overrides: Optional[Dict[int, BlockConfig]] = (
-        None  # NOTE: we recommend using HybridBlockConfig instead of using block_overrides
-    )
+    block_overrides: Optional[
+        Dict[int, BlockConfig]
+    ] = None  # NOTE: we recommend using HybridBlockConfig instead of using block_overrides
     embed_scale: Optional[float] = None
 
     def build(
@@ -1869,9 +1869,9 @@ class TransformerConfig(ModelConfig):
         new_config = self.copy()
         if isinstance(new_config.block, HybridBlockConfig):
             raise ValueError("Cannot apply RoPE scaling to a HybridBlockConfig directly.")
-        assert isinstance(new_config.block.sequence_mixer, AttentionConfig), (
-            "Sequence mixer must be an attention config for RoPE scaling"
-        )
+        assert isinstance(
+            new_config.block.sequence_mixer, AttentionConfig
+        ), "Sequence mixer must be an attention config for RoPE scaling"
         if new_config.block.sequence_mixer.rope is None:
             raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
         if new_config.block_overrides:
