@@ -1030,7 +1030,6 @@ class Trainer:
         self._store_metric(name, value, reduce_type, merge_strategy)
 
         if reduce_type == ReduceType.weighted_mean:
-            assert weight is not None
             weight_name = WEIGHTED_MEAN_WEIGHT_PREFIX + name
             self._store_metric(weight_name, weight, ReduceType.sum, merge_strategy)
 

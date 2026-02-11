@@ -12,10 +12,6 @@ from olmo_core.utils import get_default_device
 
 def run_reduce_metrics():
     device = get_default_device()
-    # For weighted_mean, the stored value is already value * weight.
-    # Rank 0: value=1.0, weight=3.0 → stored as 3.0 (1.0*3.0)
-    # Rank 1: value=2.0, weight=1.0 → stored as 2.0 (2.0*1.0)
-    # Expected: (3.0 + 2.0) / (3.0 + 1.0) = 1.25
     wm_weight_prefix = "__wm_weight__/"
     raw_metrics = {
         0: {
