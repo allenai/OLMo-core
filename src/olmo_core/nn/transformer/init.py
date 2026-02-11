@@ -79,6 +79,7 @@ class InitMethod(StrEnum):
         m: nn.Embedding,
         *,
         d_model: int,
+        embed_scale: Optional[float] = None,
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
@@ -87,8 +88,9 @@ class InitMethod(StrEnum):
         elif self == InitMethod.normalized:
             _apply_init(nn.init.normal_, m.weight, generator=generator, std=d_model**-0.5)
         elif self == InitMethod.fan_in:
-            # Fan-in init uses std = 1.0 for embeddings with normal distribution
-            _apply_init(nn.init.normal_, m.weight, generator=generator, std=1.0)
+            # Fan-in init uses std = 1.0 for embeddings, scaled down by embed_scale if set
+            emb_std = 1.0 / embed_scale if embed_scale is not None else 1.0
+            _apply_init(nn.init.normal_, m.weight, generator=generator, std=emb_std)
         else:
             _apply_init(
                 nn.init.trunc_normal_,
@@ -144,6 +146,14 @@ class InitMethod(StrEnum):
                     std = d_model**-0.5
                 for w in (m.w_q, m.w_k, m.w_v):
                     self._init_linear(w, std=std, generator=generator)
+
+            # Initialize attention gate projection if present
+            if m.w_g is not None:
+                if self == InitMethod.fan_in:
+                    g_std = m.w_g.in_features**-0.5
+                else:
+                    g_std = std
+                self._init_linear(m.w_g, std=g_std, generator=generator)
         elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
             m = cast(FusedAttention, m)
 
