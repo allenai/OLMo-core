@@ -37,7 +37,7 @@ from olmo_core.nn.attention.ring import (
 )
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import Attention, FusedAttention, RingAttentionLoadBalancer
+from ..attention import RingAttentionLoadBalancer, SequenceMixer
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
@@ -271,7 +271,7 @@ class Transformer(nn.Module):
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
-            att = cast(Union[Attention, FusedAttention], block.attention)
+            att = cast(SequenceMixer, block.attention)
 
             # Attention weights.
             self.init_method.init_attention(
