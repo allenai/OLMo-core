@@ -1,9 +1,8 @@
 import logging
 import math
 import warnings
-from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -18,7 +17,6 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedDeltaNetConfig
-from olmo_core.nn.transformer.init import InitMethod
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
@@ -50,6 +48,9 @@ from .ring import (
     UlyssesContextParallelStyle,
     UlyssesLoadBalancer,
 )
+
+if TYPE_CHECKING:
+    from olmo_core.nn.transformer.init import InitMethod
 
 __all__ = [
     "SlidingWindowAttentionConfig",

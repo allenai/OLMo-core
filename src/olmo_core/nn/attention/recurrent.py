@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from torch import nn
@@ -26,7 +26,9 @@ from olmo_core.nn.attention.ring import (
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
-from olmo_core.nn.transformer.init import InitMethod
+
+if TYPE_CHECKING:
+    from olmo_core.nn.transformer.init import InitMethod
 
 
 class GatedDeltaNet(SequenceMixer):

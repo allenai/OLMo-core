@@ -1,4 +1,4 @@
-from typing import Optional, Union, cast
+from typing import TYPE_CHECKING, Optional, Union, cast
 
 import torch
 import torch.nn as nn
@@ -7,9 +7,10 @@ from torch.distributed.tensor import DTensor
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import distribute_like, get_local_tensor
 
-from ..attention import SequenceMixer
-from ..feed_forward import FeedForward
-from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
+if TYPE_CHECKING:
+    from ..attention import SequenceMixer
+    from ..feed_forward import FeedForward
+    from ..moe import MoEBase
 
 
 def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
@@ -103,7 +104,7 @@ class InitMethod(StrEnum):
 
     def init_attention(
         self,
-        m: SequenceMixer,
+        m: "SequenceMixer",
         *,
         d_model: int,
         block_idx: int,
@@ -122,7 +123,7 @@ class InitMethod(StrEnum):
 
     def init_feed_forward(
         self,
-        m: FeedForward,
+        m: "FeedForward",
         *,
         d_model: int,
         block_idx: int,
@@ -149,7 +150,7 @@ class InitMethod(StrEnum):
 
     def init_feed_forward_moe(
         self,
-        m: MoEBase,
+        m: "MoEBase",
         *,
         d_model: int,
         block_idx: int,
@@ -157,6 +158,8 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
+        from ..moe import DroplessMoEMLP, MoELinearRouter, MoEMLP
+
         del d_model
 
         if self == InitMethod.llama:
