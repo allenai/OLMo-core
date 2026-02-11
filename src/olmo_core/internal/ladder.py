@@ -110,8 +110,8 @@ def parse_args(
         parser.add_argument(
             "--cluster",
             type=str,
-            choices=["ai2/augusta", "ai2/jupiter", "ai2/titan"],
-            default="ai2/augusta",
+            choices=["ai2/jupiter", "ai2/titan"],
+            default="ai2/jupiter",
             help="The Beaker cluster to launch each run on.",
         )
         parser.add_argument(
@@ -384,15 +384,15 @@ def main(
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
     if configure_ladder is None:
-        assert (
-            configure_model is not None
-        ), "configure_model is required if configure_ladder is unspecified"
+        assert configure_model is not None, (
+            "configure_model is required if configure_ladder is unspecified"
+        )
 
         configure_ladder = get_default_ladder_factory(configure_model, configure_run)
     else:
-        assert (
-            configure_model is None and configure_run is None
-        ), "configure_model / configure_run and mutually exclusive with configure_ladder"
+        assert configure_model is None and configure_run is None, (
+            "configure_model / configure_run and mutually exclusive with configure_ladder"
+        )
 
     args = parse_args(
         configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
