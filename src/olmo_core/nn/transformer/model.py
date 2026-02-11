@@ -261,6 +261,7 @@ class Transformer(nn.Module):
             self.init_method.init_embeddings(
                 self.embeddings,
                 d_model=self.d_model,
+                embed_scale=self.embed_scale,
                 std=self.embedding_init_std
                 if self.embedding_init_std is not None
                 else self.init_std,
