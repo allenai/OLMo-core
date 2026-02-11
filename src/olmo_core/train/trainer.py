@@ -1066,6 +1066,7 @@ class Trainer:
         else:
             raise NotImplementedError(merge_strategy)
 
+        # reduce type must be consistent to avoid issues
         if name in self._metrics_reduce_type and self._metrics_reduce_type[name] != reduce_type:
             raise RuntimeError(
                 f"expected '{self._metrics_reduce_type[name]}' reduce type for metric '{name}' "
