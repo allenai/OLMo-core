@@ -1,11 +1,12 @@
 import logging
 import math
+from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Dict, List, Optional, Union, cast
 
-from olmo_core.config import UNSET, DType, StrEnum
+from olmo_core.config import UNSET, DType, Registrable, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixerConfig
@@ -146,7 +147,15 @@ class TransformerBlockType(StrEnum):
 
 
 @dataclass
-class TransformerBlockConfig(ModuleConfig):
+class BlockConfig(ModuleConfig, Registrable):
+    @abstractmethod
+    def build(self, *args, **kwargs) -> "TransformerBlockBase":
+        raise NotImplementedError
+
+
+@BlockConfig.register("block")
+@dataclass
+class TransformerBlockConfig(BlockConfig):
     """
     A configuration class for easily building transformer blocks.
     """
@@ -190,7 +199,8 @@ class TransformerBlockConfig(ModuleConfig):
     A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
     """
 
-    def __post_init__(self, attention: Optional[AttentionConfig] = None):
+    def __post_init__(self, *, type: str | None, attention: Optional[AttentionConfig] = None):
+        del type
         # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
         if attention is not None:
             if self.sequence_mixer is not UNSET:
@@ -301,6 +311,91 @@ class TransformerBlockConfig(ModuleConfig):
         return num_params - num_inactive_params
 
 
+@BlockConfig.register("hybrid_block")
+@dataclass
+class HybridBlockConfig(BlockConfig):
+    """
+    A configuration class for hybrid transformer models with multiple block types.
+
+    The ``blocks_pattern`` is cycled over the layers. Its length must divide evenly
+    into ``n_layers``.
+
+    Example usage::
+
+        HybridBlockConfig(
+            blocks={
+                "attention": TransformerBlockConfig(...),
+                "recurrent": TransformerBlockConfig(...),
+            },
+            blocks_pattern=["attention", "recurrent"],
+        )
+    """
+
+    blocks: Dict[str, TransformerBlockConfig] = field(default_factory=dict)
+    """
+    Named block configurations.
+    """
+
+    blocks_pattern: List[str] = field(default_factory=list)
+    """
+    Pattern of block type names to cycle through. Each entry must be a key in :data:`blocks`.
+    ``len(blocks_pattern)`` must divide evenly into ``n_layers``.
+    """
+
+    def __post_init__(self, type: str | None):
+        del type
+        for key in self.blocks_pattern:
+            if key not in self.blocks:
+                raise OLMoConfigurationError(
+                    f"blocks_pattern references unknown block type '{key}', "
+                    f"available types: {list(self.blocks.keys())}"
+                )
+
+    def build(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> "TransformerBlockBase":
+        if n_layers % len(self.blocks_pattern) != 0:
+            raise OLMoConfigurationError(
+                f"len(blocks_pattern) ({len(self.blocks_pattern)}) must divide evenly "
+                f"into n_layers ({n_layers})"
+            )
+
+        pattern_key = self.blocks_pattern[block_idx % len(self.blocks_pattern)]
+        return self.blocks[pattern_key].build(
+            d_model=d_model,
+            block_idx=block_idx,
+            n_layers=n_layers,
+            init_device=init_device,
+            cache=cache,
+        )
+
+    def num_params(self, d_model: int, *, n_layers: int) -> int:
+        """
+        The total number of parameters across all layers.
+        """
+        total = 0
+        for block_idx in range(n_layers):
+            pattern_key = self.blocks_pattern[block_idx % len(self.blocks_pattern)]
+            total += self.blocks[pattern_key].num_params(d_model)
+        return total
+
+    def num_active_params(self, d_model: int, *, n_layers: int) -> int:
+        """
+        The total number of active parameters across all layers.
+        """
+        total = 0
+        for block_idx in range(n_layers):
+            pattern_key = self.blocks_pattern[block_idx % len(self.blocks_pattern)]
+            total += self.blocks[pattern_key].num_active_params(d_model)
+        return total
+
+
 @dataclass
 class TransformerConfig(ModelConfig):
     """
@@ -314,7 +409,7 @@ class TransformerConfig(ModelConfig):
     d_model: int
     vocab_size: int
     n_layers: int
-    block: TransformerBlockConfig
+    block: Union[TransformerBlockConfig, HybridBlockConfig]
     lm_head: LMHeadConfig
     embedding_norm: Optional[LayerNormConfig] = None
     name: TransformerType = TransformerType.default
@@ -430,15 +525,18 @@ class TransformerConfig(ModelConfig):
             num_params += self.embedding_norm.num_params(self.d_model)
 
         # All block params.
-        num_block_params = self.block.num_params(self.d_model)
-        if self.block_overrides is None:
-            num_params += self.n_layers * num_block_params
+        if isinstance(self.block, HybridBlockConfig):
+            num_params += self.block.num_params(self.d_model, n_layers=self.n_layers)
         else:
-            for idx in range(self.n_layers):
-                if idx in self.block_overrides:
-                    num_params += self.block_overrides[idx].num_params(self.d_model)
-                else:
-                    num_params += num_block_params
+            num_block_params = self.block.num_params(self.d_model)
+            if self.block_overrides is None:
+                num_params += self.n_layers * num_block_params
+            else:
+                for idx in range(self.n_layers):
+                    if idx in self.block_overrides:
+                        num_params += self.block_overrides[idx].num_params(self.d_model)
+                    else:
+                        num_params += num_block_params
 
         # LM head.
         num_params += self.lm_head.num_params(self.d_model, self.vocab_size)
@@ -458,15 +556,20 @@ class TransformerConfig(ModelConfig):
             num_active_params += self.embedding_norm.num_params(self.d_model)
 
         # All block active params.
-        num_active_block_params = self.block.num_active_params(self.d_model)
-        if self.block_overrides is None:
-            num_active_params += self.n_layers * num_active_block_params
+        if isinstance(self.block, HybridBlockConfig):
+            num_active_params += self.block.num_active_params(self.d_model, n_layers=self.n_layers)
         else:
-            for idx in range(self.n_layers):
-                if idx in self.block_overrides:
-                    num_active_params += self.block_overrides[idx].num_active_params(self.d_model)
-                else:
-                    num_active_params += num_active_block_params
+            num_active_block_params = self.block.num_active_params(self.d_model)
+            if self.block_overrides is None:
+                num_active_params += self.n_layers * num_active_block_params
+            else:
+                for idx in range(self.n_layers):
+                    if idx in self.block_overrides:
+                        num_active_params += self.block_overrides[idx].num_active_params(
+                            self.d_model
+                        )
+                    else:
+                        num_active_params += num_active_block_params
 
         # LM head.
         num_active_params += self.lm_head.num_params(self.d_model, self.vocab_size)
@@ -1754,9 +1857,11 @@ class TransformerConfig(ModelConfig):
         Return a copy of this config with the given RoPE scaling scheme applied.
         """
         new_config = self.copy()
-        assert isinstance(
-            new_config.block.sequence_mixer, AttentionConfig
-        ), "Sequence mixer must be an attention config for RoPE scaling"
+        if isinstance(new_config.block, HybridBlockConfig):
+            raise ValueError("Cannot apply RoPE scaling to a HybridBlockConfig directly.")
+        assert isinstance(new_config.block.sequence_mixer, AttentionConfig), (
+            "Sequence mixer must be an attention config for RoPE scaling"
+        )
         if new_config.block.sequence_mixer.rope is None:
             raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
         if new_config.block_overrides:

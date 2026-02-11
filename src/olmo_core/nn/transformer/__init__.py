@@ -12,6 +12,7 @@ from .block import (
     TransformerBlockBase,
 )
 from .config import (
+    HybridBlockConfig,
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
     TransformerBlockType,
@@ -33,6 +34,7 @@ __all__ = [
     "MoEHybridReorderedNormTransformerBlock",
     "TransformerBlockType",
     "TransformerBlockConfig",
+    "HybridBlockConfig",
     "TransformerBlockBase",
     "TransformerBlock",
     "ReorderedNormTransformerBlock",
