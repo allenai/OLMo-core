@@ -4,7 +4,7 @@ from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Dict, List, Optional, cast
 
 from olmo_core.config import UNSET, DType, Registrable, StrEnum
 from olmo_core.doc_utils import beta_feature
@@ -150,6 +150,12 @@ class TransformerBlockType(StrEnum):
 class BlockConfig(ModuleConfig, Registrable):
     @abstractmethod
     def build(self, *args, **kwargs) -> "TransformerBlockBase":
+        raise NotImplementedError
+
+    def num_params(self, d_model: int) -> int:
+        raise NotImplementedError
+
+    def num_active_params(self, d_model: int) -> int:
         raise NotImplementedError
 
 
@@ -409,7 +415,7 @@ class TransformerConfig(ModelConfig):
     d_model: int
     vocab_size: int
     n_layers: int
-    block: Union[TransformerBlockConfig, HybridBlockConfig]
+    block: BlockConfig
     lm_head: LMHeadConfig
     embedding_norm: Optional[LayerNormConfig] = None
     name: TransformerType = TransformerType.default
@@ -419,7 +425,9 @@ class TransformerConfig(ModelConfig):
     init_std: float = 0.02
     embedding_init_std: Optional[float] = None
     freeze_params: Optional[List[str]] = None
-    block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    block_overrides: Optional[Dict[int, BlockConfig]] = (
+        None  # NOTE: we recommend using HybridBlockConfig instead of using block_overrides
+    )
     embed_scale: Optional[float] = None
 
     def build(
@@ -1797,13 +1805,13 @@ class TransformerConfig(ModelConfig):
         )
 
         pattern = [local_window_size] * (global_layer_interval - 1) + [-1]
-        sliding_window = SlidingWindowAttentionConfig(
+        sliding_window = SlidingWindowAttentionConfig(  # TODO: would be nice to get rid of this config alltogether
             pattern=pattern,
             force_full_attention_on_first_layer=False,
             force_full_attention_on_last_layer=False,
         )
 
-        block = TransformerBlockConfig(
+        block_swa = TransformerBlockConfig(
             name=TransformerBlockType.peri_norm,
             sequence_mixer=AttentionConfig(
                 name=AttentionType.default,
@@ -1816,7 +1824,7 @@ class TransformerConfig(ModelConfig):
                 use_head_qk_norm=True,
                 use_flash=use_flash,
                 backend=attn_backend,
-                sliding_window=sliding_window,
+                sliding_window=sliding_window,  # TODO: would be nice to just pass window size directly
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(
@@ -1828,24 +1836,26 @@ class TransformerConfig(ModelConfig):
             layer_norm=layer_norm,
         )
 
-        block_overrides: Dict[int, TransformerBlockConfig] = {}
-        for layer_idx in range(n_layers):
-            if not sliding_window.should_use_swa(layer_idx, n_layers):
-                global_block = block.copy()
-                sequence_mixer = cast(AttentionConfig, block.sequence_mixer.copy())
-                sequence_mixer.rope = RoPEConfig(name=RoPEType.default, theta=global_rope_theta)
-                sequence_mixer.sliding_window = None
-                global_block.sequence_mixer = sequence_mixer
-                block_overrides[layer_idx] = global_block
+        block_global = block_swa.copy()
+        sequence_mixer = cast(AttentionConfig, block_swa.sequence_mixer.copy())
+        sequence_mixer.rope = RoPEConfig(name=RoPEType.default, theta=global_rope_theta)
+        sequence_mixer.sliding_window = None
+        block_global.sequence_mixer = sequence_mixer
+
+        blocks = {"swa": block_swa, "global": block_global}
+        blocks_pattern = [
+            "swa" if sliding_window.should_use_swa(i, n_layers) else "global"
+            for i in range(n_layers)
+        ]
+        hybrid_block = HybridBlockConfig(blocks=blocks, blocks_pattern=blocks_pattern)
 
         return cls(
             d_model=d_model,
             vocab_size=vocab_size,
             n_layers=n_layers,
-            block=block,
+            block=hybrid_block,
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
             dtype=dtype,
-            block_overrides=block_overrides if block_overrides else None,
             embed_scale=math.sqrt(d_model),
             **kwargs,
         )
