@@ -26,6 +26,7 @@ from olmo_core.nn.attention.ring import (
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
+from olmo_core.nn.transformer.init import InitMethod
 
 
 class GatedDeltaNet(SequenceMixer):
@@ -243,6 +244,35 @@ class GatedDeltaNet(SequenceMixer):
         self.q_conv1d.apply_cp(cp_mesh)
         self.k_conv1d.apply_cp(cp_mesh)
         self.v_conv1d.apply_cp(cp_mesh)
+
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        if init_method == InitMethod.normalized:
+            std = d_model**-0.5
+
+        for w in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g):
+            init_linear(w, std=std, generator=generator)
+        for w in (self.q_conv1d, self.k_conv1d, self.v_conv1d):
+            init_linear(w, std=std, generator=generator)
+
+        if self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
+
+        init_linear(self.w_out, std=std, generator=generator)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """

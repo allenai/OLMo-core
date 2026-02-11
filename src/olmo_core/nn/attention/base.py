@@ -2,6 +2,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Generic, Optional, TypeVar
 
+import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement
@@ -40,6 +41,19 @@ class SequenceMixer(nn.Module):
 
     @abstractmethod
     def num_flops_per_token(self, seq_len: int) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
         raise NotImplementedError
 
 

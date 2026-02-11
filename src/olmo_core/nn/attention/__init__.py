@@ -18,6 +18,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedDeltaNetConfig
+from olmo_core.nn.transformer.init import InitMethod
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
@@ -700,6 +701,35 @@ class Attention(SequenceMixer):
         """
         self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
 
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        if init_method == InitMethod.normalized:
+            std = d_model**-0.5
+
+        for w in (self.w_q, self.w_k, self.w_v):
+            init_linear(w, std=std, generator=generator)
+        if self.w_g is not None:
+            init_linear(self.w_g, std=std, generator=generator)
+
+        if self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
+
+        init_linear(self.w_out, std=std, generator=generator)
+
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         """
         Initialize the kv cache manager for attention. When the kv cache manager exists,
@@ -1048,6 +1078,32 @@ class FusedAttention(SequenceMixer):
         uly: Optional[UlyssesContextParallelStyle] = None,
     ):
         self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
+
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        if init_method == InitMethod.normalized:
+            std = d_model**-0.5
+
+        init_linear(self.w_qkv, std=std, generator=generator)
+
+        if self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
+
+        init_linear(self.w_out, std=std, generator=generator)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
