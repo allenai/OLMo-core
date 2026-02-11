@@ -102,6 +102,29 @@ DISPLAY_NAMES: Dict[str, str] = {
     "hybrid-mamba": "Hybrid Mamba",
 }
 
+# TODO: Replace placeholder values below with actual pretraining / evaluation results.
+# Each VALIDATION_POINTS entry: (N_non_embed_params, D_tokens, observed_loss)
+#   - N can be approximate; it is auto-corrected via compute_specs_for_size when possible.
+#   - Use None for any value that is not yet available (renders as {\color{red}TBD}).
+VALIDATION_POINTS: Dict[str, Dict[str, Tuple[float, Optional[float], Optional[float]]]] = {
+    "olmo3": {
+        "OLMo 3 7B (sanity)": (7e9, None, None),  # TODO: fill D and observed_loss
+        "OLMo 3 32B": (32e9, None, None),  # TODO: fill D and observed_loss
+    },
+    "hybrid-gdn": {
+        "Hybrid 7B": (7e9, None, None),  # TODO: fill D and observed_loss
+    },
+}
+
+# TODO: Replace placeholder values with actual downstream evaluation results.
+# Each entry: (tokens_trained, benchmark_score) — both can be None.
+EMPIRICAL_EFFICIENCY_DATA: Dict[str, Dict[str, Tuple[Optional[float], Optional[float]]]] = {
+    "MMLU (5-shot)": {
+        "olmo3": (None, None),  # TODO: (tokens_trained, MMLU_score)
+        "hybrid-gdn": (None, None),  # TODO: (tokens_trained, MMLU_score)
+    },
+}
+
 
 def get_display_name(ladder_name: str) -> str:
     """Return a human-readable display name for a ladder, falling back to the raw name."""
@@ -751,14 +774,23 @@ def load_ladder_domain_data(
         if df.empty:
             continue
 
-        num_params = df["num_params"].iloc[0]
-        if num_params is None or pd.isna(num_params):
-            continue
-        original_num_params = num_params
+        # Use compute_specs_for_size for consistent FLOPs (same as main loader)
+        computed = compute_specs_for_size(ladder_name, size)
+        if computed:
+            num_params = computed["non_embed_params"]
+            flops_per_token = computed["total_flops_per_token"]
+        else:
+            num_params = df["num_params"].iloc[0]
+            if num_params is None or pd.isna(num_params):
+                continue
+            corrected_params = get_corrected_param_count(ladder_name, size)
+            if corrected_params is not None:
+                num_params = corrected_params
+            flops_per_token = None
 
-        corrected_params = get_corrected_param_count(ladder_name, size)
-        if corrected_params is not None:
-            num_params = corrected_params
+        original_num_params = df["num_params"].iloc[0]
+        if original_num_params is None or pd.isna(original_num_params):
+            continue
 
         # Build column mappings on first file
         for domain in domains:
@@ -778,13 +810,12 @@ def load_ladder_domain_data(
             if dn_ratio not in _KEEP_DN:
                 continue
 
-            flops = row.get("throughput/total petaflops")
-            if simple_flops:
+            # Compute FLOPs consistently with main loader:
+            # 3 * forward_flops_per_token * tokens (1 fwd + ~2 bwd passes)
+            if simple_flops or flops_per_token is None:
                 f_val = 6.0 * float(num_params) * float(tokens)
-            elif flops is not None and not pd.isna(flops):
-                f_val = float(flops) * 1e15
             else:
-                f_val = 6.0 * float(num_params) * float(tokens)
+                f_val = 3.0 * flops_per_token * float(tokens)
 
             for domain in domains:
                 if domain not in BASE_EASY_SUITE:
@@ -1044,12 +1075,16 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
     lines = []
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"    \centering")
-    lines.append(r"    \caption{Model configurations used in scaling ladder experiments.}")
+    lines.append(
+        r"    \caption{Model configurations used in scaling ladder experiments. "
+        r"$d$: model dimension, $h$: number of attention heads, "
+        r"$l$: number of layers, $N$: non-embedding parameter count.}"
+    )
     lines.append(r"    \label{tab:scaling-ladder-configs}")
 
-    # Build column spec: Size + 3 config cols + one params column per ladder + D/N
+    # Build column spec: Size + 3 config cols + one params column per ladder
     n_ladders = len(ladder_names)
-    col_spec = "l" + "rrr" + "r" * n_ladders + "r"
+    col_spec = "l" + "rrr" + "r" * n_ladders
     lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
     lines.append(r"        \toprule")
 
@@ -1058,7 +1093,6 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
     for name in ladder_names:
         display = get_display_name(name).replace("_", r"\_")
         header_parts.append(f"$N$ ({display})")
-    header_parts.append("D/N")
     lines.append("        " + " & ".join(header_parts) + r" \\")
     lines.append(r"        \midrule")
 
@@ -1076,8 +1110,6 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
                 row_parts.append(f"{params/1e6:.1f}M")
             else:
                 row_parts.append("---")
-        # Max D/N ratio used
-        row_parts.append("160")
         lines.append("        " + " & ".join(row_parts) + r" \\")
 
     lines.append(r"        \bottomrule")
@@ -1103,10 +1135,9 @@ def generate_efficiency_latex_table(
 
     # Auto-determine target losses from the data if not provided
     if target_losses is None:
-        # Use a range of losses that span the data
         all_L = np.concatenate([L for (_, _, _, L, _, _, _) in fits.values()])
-        l_min, l_max = all_L.min(), all_L.max()
-        target_losses = np.linspace(l_max * 0.95, l_min * 1.05, 5).tolist()
+        p75, p100 = np.percentile(all_L, 25), all_L.min()
+        target_losses = np.linspace(p75, p100, 5).tolist()
         target_losses = [round(val, 3) for val in target_losses]
 
     lines = []
@@ -1164,6 +1195,479 @@ def generate_efficiency_latex_table(
             row_parts.append(f"{ratio:.1f}$\\times$")
         else:
             row_parts.append("---")
+
+        lines.append("        " + " & ".join(row_parts) + r" \\")
+
+    lines.append(r"        \bottomrule")
+    lines.append(r"    \end{tabular}")
+    lines.append(r"\end{table}")
+    return "\n".join(lines)
+
+
+def _fmt_tokens(d: float) -> str:
+    """Format a token count for display in LaTeX tables.
+
+    Uses T (trillions), B (billions), or M (millions) as appropriate.
+    """
+    if not np.isfinite(d) or d <= 0:
+        return r"$\infty$"
+    if d >= 1e12:
+        return f"{d / 1e12:.1f}T"
+    if d >= 1e9:
+        return f"{d / 1e9:.1f}B"
+    return f"{d / 1e6:.0f}M"
+
+
+def _fmt_model_size(n: float) -> str:
+    """Format a model size (number of parameters) for display."""
+    if n >= 1e9:
+        v = n / 1e9
+        return f"{v:.0f}B" if v == int(v) else f"{v:.1f}B"
+    if n >= 1e6:
+        v = n / 1e6
+        return f"{v:.0f}M" if v == int(v) else f"{v:.1f}M"
+    return f"{n:.0f}"
+
+
+def generate_token_savings_table(
+    fits: Dict[str, Tuple],
+    target_loss: Optional[float] = None,
+    loss_strategy: str = "median",
+    model_sizes: Optional[List[float]] = None,
+) -> str:
+    """
+    Generate LaTeX table of token savings across model scales at a fixed target loss.
+
+    For each model size, shows how many tokens each architecture needs to reach
+    the target loss, plus the savings ratio relative to the first architecture.
+
+    Args:
+        fits: {ladder_name: (fit, N, D, L, F, sizes, bootstrap)}
+        target_loss: explicit target loss; if None, auto-determined via loss_strategy
+        loss_strategy: "median" or "min" — how to pick target loss when not given
+        model_sizes: list of model sizes (in params) to evaluate
+    """
+    ladder_names = list(fits.keys())
+    if len(ladder_names) < 2:
+        return "% Need at least 2 ladders for token savings comparison"
+
+    # Auto-determine target loss (same logic as generate_paper_figure_2)
+    if target_loss is None:
+        all_L = np.concatenate([fits[n][3] for n in ladder_names])
+        if loss_strategy == "min":
+            target_loss = float(np.min(all_L))
+        else:
+            target_loss = float(np.median(all_L))
+
+    if model_sizes is None:
+        model_sizes = [1e9, 3e9, 7e9, 13e9, 30e9, 70e9]
+
+    ref_name = ladder_names[0]  # reference architecture (Transformer)
+
+    lines = []
+    lines.append(r"\begin{table}[htbp]")
+    lines.append(r"    \centering")
+    strategy_desc = "minimum" if loss_strategy == "min" else "median"
+    lines.append(
+        r"    \caption{Projected token requirements across model scales "
+        f"(target loss $= {target_loss:.3f}$, "
+        f"selected as the {strategy_desc} of all observed training losses). "
+        r"Savings $> 1\times$ means fewer tokens needed than "
+        + _escape_latex(get_display_name(ref_name))
+        + r".}"
+    )
+    lines.append(r"    \label{tab:token-savings-by-scale}")
+
+    # Column spec: Size + D per ladder + savings per non-reference ladder
+    n_ladders = len(ladder_names)
+    n_savings = n_ladders - 1
+    col_spec = "r" + "r" * n_ladders + "r" * n_savings
+    lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
+    lines.append(r"        \toprule")
+
+    # Header row 1: architecture names spanning D + savings columns
+    header1_parts = [""]
+    for idx, name in enumerate(ladder_names):
+        display = _escape_latex(get_display_name(name))
+        if idx == 0:
+            header1_parts.append(display)
+        else:
+            header1_parts.append(r"\multicolumn{2}{c}{" + display + "}")
+    lines.append("        " + " & ".join(header1_parts) + r" \\")
+
+    # Header row 2: Size, D columns, savings columns
+    header2_parts = [r"$N$"]
+    header2_parts.append("$D$")  # reference
+    for _ in ladder_names[1:]:
+        header2_parts.extend(["$D$", "Savings"])
+    lines.append("        " + " & ".join(header2_parts) + r" \\")
+    lines.append(r"        \midrule")
+
+    for n_size in model_sizes:
+        size_label = _fmt_model_size(n_size)
+        row_parts = [size_label]
+
+        # Compute D for reference architecture
+        ref_fit = fits[ref_name][0]
+        d_ref = solve_d_for_target_loss(ref_fit, target_loss, n_size)
+        row_parts.append(_fmt_tokens(d_ref))
+
+        # Compute D and savings for each other architecture
+        for name in ladder_names[1:]:
+            fit = fits[name][0]
+            d_needed = solve_d_for_target_loss(fit, target_loss, n_size)
+            row_parts.append(_fmt_tokens(d_needed))
+
+            # Savings ratio: ref / this (> 1 means this arch needs fewer tokens)
+            if np.isfinite(d_ref) and np.isfinite(d_needed) and d_needed > 0:
+                ratio = d_ref / d_needed
+                row_parts.append(f"{ratio:.2f}$\\times$")
+            else:
+                row_parts.append("---")
+
+        lines.append("        " + " & ".join(row_parts) + r" \\")
+
+    lines.append(r"        \bottomrule")
+    lines.append(r"    \end{tabular}")
+    lines.append(r"\end{table}")
+    return "\n".join(lines)
+
+
+def generate_compute_equivalent_table(
+    fits: Dict[str, Tuple],
+    flop_budgets: Optional[List[float]] = None,
+) -> str:
+    """
+    Generate LaTeX table comparing loss at compute-optimal allocation across architectures.
+
+    For each compute budget, uses the Chinchilla optimal allocation (D/N = a_opt/b_opt)
+    to find optimal N and D, then predicts loss via the fitted scaling law.
+
+    Uses FLOPs = 6*N*D approximation.
+    Given C = 6*N*D and D = (a_opt/b_opt)*N:
+        N_opt = sqrt(C * b_opt / (6 * a_opt))
+        D_opt = C / (6 * N_opt)
+
+    Args:
+        fits: {ladder_name: (fit, N, D, L, F, sizes, bootstrap)}
+        flop_budgets: list of compute budgets in FLOPs; auto-determined if None
+    """
+    ladder_names = list(fits.keys())
+    if len(ladder_names) < 2:
+        return "% Need at least 2 ladders for compute-equivalent comparison"
+
+    if flop_budgets is None:
+        # Span from ~190M Chinchilla-optimal to ~70B Chinchilla-optimal
+        # 190M at D/N=20 → C = 6 * 190e6 * 3.8e9 ≈ 4.3e18
+        # 70B at D/N=20 → C = 6 * 70e9 * 1.4e12 ≈ 5.9e23
+        flop_budgets = [1e19, 1e20, 1e21, 1e22, 1e23]
+
+    ref_name = ladder_names[0]
+
+    lines = []
+    lines.append(r"\begin{table}[htbp]")
+    lines.append(r"    \centering")
+    lines.append(
+        r"    \caption{Predicted loss at compute-optimal allocation for each architecture. "
+        r"Each architecture's fitted $a_\text{opt}, b_\text{opt}$ determine its optimal $N, D$ "
+        r"split for a given compute budget ($C = 6ND$). "
+        r"$\Delta$ shows loss reduction relative to "
+        + _escape_latex(get_display_name(ref_name))
+        + r".}"
+    )
+    lines.append(r"    \label{tab:compute-equivalent-loss}")
+
+    # Column spec: Compute + (Loss + Delta) per non-ref ladder + ref loss
+    n_others = len(ladder_names) - 1
+    col_spec = "r" + "r" + "rr" * n_others
+    lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
+    lines.append(r"        \toprule")
+
+    # Header row 1
+    header1_parts = [""]
+    ref_display = _escape_latex(get_display_name(ref_name))
+    header1_parts.append(ref_display)
+    for name in ladder_names[1:]:
+        display = _escape_latex(get_display_name(name))
+        header1_parts.append(r"\multicolumn{2}{c}{" + display + "}")
+    lines.append("        " + " & ".join(header1_parts) + r" \\")
+
+    # Header row 2
+    header2_parts = ["Compute (FLOPs)"]
+    header2_parts.append("Loss")
+    for _ in ladder_names[1:]:
+        header2_parts.extend(["Loss", r"$\Delta$"])
+    lines.append("        " + " & ".join(header2_parts) + r" \\")
+    lines.append(r"        \midrule")
+
+    for C in flop_budgets:
+        # Format compute budget
+        exp = int(np.floor(np.log10(C)))
+        mantissa = C / 10**exp
+        if mantissa == 1.0:
+            c_str = f"$10^{{{exp}}}$"
+        else:
+            c_str = f"${mantissa:.0f} \\cdot 10^{{{exp}}}$"
+
+        row_parts = [c_str]
+
+        # Compute loss for reference architecture
+        ref_fit = fits[ref_name][0]
+        ref_p = ref_fit.fitted_params
+        ref_n_opt = np.sqrt(C * ref_p.b_opt / (6.0 * ref_p.a_opt))
+        ref_d_opt = C / (6.0 * ref_n_opt)
+        ref_loss = ref_fit.predict_loss(np.array([ref_n_opt]), np.array([ref_d_opt]))[0]
+        row_parts.append(f"{ref_loss:.3f}")
+
+        # Compute loss for each other architecture
+        for name in ladder_names[1:]:
+            fit = fits[name][0]
+            p = fit.fitted_params
+            n_opt = np.sqrt(C * p.b_opt / (6.0 * p.a_opt))
+            d_opt = C / (6.0 * n_opt)
+            loss = fit.predict_loss(np.array([n_opt]), np.array([d_opt]))[0]
+            delta = loss - ref_loss
+            row_parts.append(f"{loss:.3f}")
+            row_parts.append(f"{delta:+.3f}")
+
+        lines.append("        " + " & ".join(row_parts) + r" \\")
+
+    lines.append(r"        \bottomrule")
+    lines.append(r"    \end{tabular}")
+    lines.append(r"\end{table}")
+    return "\n".join(lines)
+
+
+def generate_prediction_validation_table(
+    fits: Dict[str, Tuple],
+    validation_points: Optional[
+        Dict[str, Dict[str, Tuple[float, Optional[float], Optional[float]]]]
+    ] = None,
+) -> str:
+    """
+    Generate LaTeX table validating scaling law predictions against actual model results (Table 6).
+
+    For each architecture, plugs the final model's (N, D) into the fitted scaling law
+    and compares the predicted loss to the observed pretraining loss.
+
+    Args:
+        fits: {ladder_name: (fit, N, D, L, F, sizes, bootstrap)}
+        validation_points: {arch_key: {label: (N, D_or_None, loss_or_None)}}
+            Defaults to module-level VALIDATION_POINTS.
+    """
+    if validation_points is None:
+        validation_points = VALIDATION_POINTS
+
+    _TBD = r"{\color{red}TBD}"
+
+    lines = []
+    lines.append(r"\begin{table}[htbp]")
+    lines.append(r"    \centering")
+    lines.append(
+        r"    \caption{Scaling law prediction validation against final models. "
+        r"Predicted loss is computed from the fitted law "
+        r"$L(N, D) = E + A/N^\alpha + B/D^\beta$. "
+        + _TBD
+        + r" values are placeholders to be filled with actual results.}"
+    )
+    lines.append(r"    \label{tab:prediction-validation}")
+    lines.append(r"    \small")
+    lines.append(r"    \begin{tabular}{llrrrrr}")
+    lines.append(r"        \toprule")
+    lines.append(r"        Architecture & Model & $N$ & $D$ & Observed & Predicted & Error (\%) \\")
+    lines.append(r"        \midrule")
+
+    first_arch = True
+    for arch_name, (fit, *_rest) in fits.items():
+        points = validation_points.get(arch_name, validation_points.get(arch_name.lower(), {}))
+        if not points:
+            continue
+
+        if not first_arch:
+            lines.append(r"        \midrule")
+        first_arch = False
+
+        display = get_display_name(arch_name)
+
+        for label, (N, D, observed) in points.items():
+            # Format N
+            if N is not None:
+                n_str = _fmt_model_size(N)
+            else:
+                n_str = _TBD
+
+            # Format D
+            if D is not None:
+                d_str = _fmt_tokens(D)
+            else:
+                d_str = _TBD
+
+            # Format observed loss
+            if observed is not None:
+                obs_str = f"{observed:.4f}"
+            else:
+                obs_str = _TBD
+
+            # Compute predicted loss (only possible if both N and D are known)
+            if N is not None and D is not None:
+                predicted = fit.predict_loss(np.array([N]), np.array([D]))[0]
+                pred_str = f"{predicted:.4f}"
+                if observed is not None:
+                    error_pct = (predicted - observed) / observed * 100
+                    err_str = f"{error_pct:+.2f}"
+                else:
+                    err_str = _TBD
+            else:
+                pred_str = "---"
+                err_str = "---"
+
+            lines.append(
+                f"        {display} & {label} & {n_str} & {d_str} "
+                f"& {obs_str} & {pred_str} & {err_str} \\\\"
+            )
+
+    lines.append(r"        \bottomrule")
+    lines.append(r"    \end{tabular}")
+    lines.append(r"\end{table}")
+    return "\n".join(lines)
+
+
+def generate_data_efficiency_validation_table(
+    fits: Dict[str, Tuple],
+    empirical_efficiency: Optional[
+        Dict[str, Dict[str, Tuple[Optional[float], Optional[float]]]]
+    ] = None,
+) -> str:
+    """
+    Generate LaTeX table connecting the B coefficient ratio to empirical data efficiency (Table 7).
+
+    Compares the theoretical data efficiency implied by the scaling law's B coefficient
+    to the empirical observation from downstream benchmarks (MMLU).
+
+    Args:
+        fits: {ladder_name: (fit, N, D, L, F, sizes, bootstrap)}
+        empirical_efficiency: {benchmark: {arch_key: (tokens_trained, score)}}
+            Defaults to module-level EMPIRICAL_EFFICIENCY_DATA.
+    """
+    ladder_names = list(fits.keys())
+    if len(ladder_names) < 2:
+        return "% Need at least 2 ladders for data efficiency comparison"
+
+    if empirical_efficiency is None:
+        empirical_efficiency = EMPIRICAL_EFFICIENCY_DATA
+
+    _TBD = r"{\color{red}TBD}"
+    ref_name = ladder_names[0]
+    ref_fit = fits[ref_name][0]
+    ref_B = ref_fit.fitted_params.B
+
+    # Compute implied D ratio at 7B scale using solve_d_for_target_loss
+    # Target loss: median of all observed ladder losses
+    all_L = np.concatenate([fits[n][3] for n in ladder_names])
+    target_loss = float(np.median(all_L))
+    ref_n = 7e9
+    ref_d_needed = solve_d_for_target_loss(ref_fit, target_loss, ref_n)
+
+    # Collect benchmark names
+    benchmark_names = list(empirical_efficiency.keys())
+
+    lines = []
+    lines.append(r"\begin{table}[htbp]")
+    lines.append(r"    \centering")
+    lines.append(
+        r"    \caption{Data efficiency: theoretical (from $B$ coefficient) vs.\ empirical "
+        r"(from downstream benchmarks). "
+        r"The scaling law's $B$ coefficient governs how efficiently each architecture "
+        r"converts training data into loss reduction. "
+        r"Implied $D$ ratio is computed at $N = 7$B for target loss $= "
+        + f"{target_loss:.3f}"
+        + r"$ (median of observed ladder losses). "
+        + _TBD
+        + r" values are placeholders to be filled.}"
+    )
+    lines.append(r"    \label{tab:data-efficiency-validation}")
+    lines.append(r"    \small")
+
+    # Columns: Architecture | B | B ratio | Implied D ratio | (tokens + score + D ratio) per benchmark
+    n_bench = len(benchmark_names)
+    col_spec = "l" + "rrr" + "rrr" * n_bench
+    lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
+    lines.append(r"        \toprule")
+
+    # Header row 1
+    header1_parts = [""]
+    header1_parts.append(r"\multicolumn{3}{c}{Scaling Law ($B$ coefficient)}")
+    for bname in benchmark_names:
+        header1_parts.append(r"\multicolumn{3}{c}{" + bname + "}")
+    lines.append("        " + " & ".join(header1_parts) + r" \\")
+
+    # cmidrule
+    cmidrule = r"        \cmidrule(lr){2-4}"
+    for i, _ in enumerate(benchmark_names):
+        start = 5 + i * 3
+        end = start + 2
+        cmidrule += f" \\cmidrule(lr){{{start}-{end}}}"
+    lines.append(cmidrule)
+
+    # Header row 2
+    header2_parts = ["Architecture", "$B$", "$B$ ratio", "Implied $D$ ratio"]
+    for _ in benchmark_names:
+        header2_parts.extend(["Tokens", "Score", "$D$ ratio"])
+    lines.append("        " + " & ".join(header2_parts) + r" \\")
+    lines.append(r"        \midrule")
+
+    for name in ladder_names:
+        fit = fits[name][0]
+        B_val = fit.fitted_params.B
+        display = get_display_name(name)
+
+        b_str = _fmt_latex_num(B_val)
+
+        if name == ref_name:
+            b_ratio_str = r"1.00$\times$"
+            d_ratio_str = r"1.00$\times$"
+        else:
+            b_ratio = ref_B / B_val if B_val > 0 else float("inf")
+            b_ratio_str = f"{b_ratio:.2f}$\\times$" if np.isfinite(b_ratio) else r"$\infty$"
+
+            d_needed = solve_d_for_target_loss(fit, target_loss, ref_n)
+            if np.isfinite(ref_d_needed) and np.isfinite(d_needed) and d_needed > 0:
+                d_ratio = ref_d_needed / d_needed
+                d_ratio_str = f"{d_ratio:.2f}$\\times$"
+            else:
+                d_ratio_str = "---"
+
+        row_parts = [display, b_str, b_ratio_str, d_ratio_str]
+
+        # Empirical benchmark columns
+        for bname in benchmark_names:
+            bench_data = empirical_efficiency.get(bname, {})
+            arch_data = bench_data.get(name, bench_data.get(name.lower(), (None, None)))
+            tokens, score = arch_data
+
+            if tokens is not None:
+                tok_str = _fmt_tokens(tokens)
+            else:
+                tok_str = _TBD
+
+            if score is not None:
+                score_str = f"{score:.1f}"
+            else:
+                score_str = _TBD
+
+            # Empirical D ratio (ref tokens / this tokens)
+            if name == ref_name:
+                emp_ratio_str = "---"
+            else:
+                ref_bench = bench_data.get(ref_name, bench_data.get(ref_name.lower(), (None, None)))
+                ref_tokens = ref_bench[0]
+                if ref_tokens is not None and tokens is not None and tokens > 0:
+                    emp_ratio = ref_tokens / tokens
+                    emp_ratio_str = f"{emp_ratio:.2f}$\\times$"
+                else:
+                    emp_ratio_str = _TBD
+
+            row_parts.extend([tok_str, score_str, emp_ratio_str])
 
         lines.append("        " + " & ".join(row_parts) + r" \\")
 
@@ -1319,6 +1823,61 @@ def _make_coordinate_table(xs: np.ndarray, ys: np.ndarray) -> str:
     return " ".join(pairs)
 
 
+# D/N opacity mapping for scatter points (lighter = less data, darker = more data)
+_DN_VALUES = sorted({10, 20, 40, 80, 160})
+_DN_OPACITY = {dn: 0.25 + 0.65 * i / (len(_DN_VALUES) - 1) for i, dn in enumerate(_DN_VALUES)}
+
+
+def _scatter_by_dn(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    sizes_arr: List[str],
+    style: Dict[str, str],
+    forget: bool = True,
+    mark_size: str = "1.5pt",
+) -> List[str]:
+    """Emit one scatter addplot per D/N ratio with opacity varying by dataset size."""
+    dn_arr = np.array([int(s.split("@")[1]) for s in sizes_arr])
+    scatter_lines: List[str] = []
+    for dn_val in _DN_VALUES:
+        mask = dn_arr == dn_val
+        if not np.any(mask):
+            continue
+        op = _DN_OPACITY[dn_val]
+        forget_str = ", forget plot" if forget else ""
+        scatter_lines.append(
+            f"\\addplot[only marks, mark={style['mark']}, "
+            f"{style['color_name']}, mark size={mark_size}, "
+            f"mark options={{{style['mark_options']}}}, opacity={op:.2f}{forget_str}] "
+            f"coordinates {{{_make_coordinate_table(xs[mask], ys[mask])}}};"
+        )
+    return scatter_lines
+
+
+def _fmt_size(n: float) -> str:
+    """Format a parameter count for display (e.g. 190M, 1B)."""
+    if n >= 1e9:
+        return f"{n / 1e9:.0f}B"
+    return f"{n / 1e6:.0f}M"
+
+
+def _emit_arch_legend(ladder_names: List[str]) -> str:
+    """Build a manual tikz-based architecture color legend line."""
+    parts = []
+    for idx, name in enumerate(ladder_names):
+        style = _get_latex_style(name, idx)
+        display = _escape_latex(get_display_name(name))
+        line_style = style.get("line_style", "")
+        line_opt = f", {line_style}" if line_style else ""
+        part = (
+            f"\\tikz\\draw[{style['color_name']}, line width=2pt{line_opt}] "
+            f"(0,0) -- (1em,0);"
+            f"\\,{display}"
+        )
+        parts.append(part)
+    return r"{\footnotesize " + "\\qquad".join(parts) + r"}"
+
+
 def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> str:
     """
     Generate Figure 1: Main Scaling Law Fits (2x2 pgfplots groupplot).
@@ -1351,24 +1910,16 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(r"\begin{groupplot}[")
     lines.append(r"    group style={")
     lines.append(r"        group size=2 by 2,")
-    lines.append(r"        horizontal sep=1.8cm,")
-    lines.append(r"        vertical sep=1.8cm,")
+    lines.append(r"        horizontal sep=1.2cm,")
+    lines.append(r"        vertical sep=2.0cm,")
     lines.append(r"    },")
-    lines.append(r"    width=0.48\textwidth,")
+    lines.append(r"    width=0.54\textwidth,")
     lines.append(r"    height=0.38\textwidth,")
     lines.append(r"    grid=major,")
     lines.append(r"    grid style={gray!30},")
-    lines.append(r"    tick label style={font=\small},")
-    lines.append(r"    label style={font=\small},")
-    legend_name = f"scalinglegend{fig_suffix.replace('-', '')}"
-    lines.append(f"    legend to name={legend_name},")
-    lines.append(r"    legend style={")
-    lines.append(r"        font=\footnotesize,")
-    lines.append(r"        cells={anchor=west},")
-    lines.append(f"        legend columns={len(ladder_names)},")
-    lines.append(r"        draw=none,")
-    lines.append(r"        column sep=8pt,")
-    lines.append(r"    },")
+    lines.append(r"    tick label style={font=\scriptsize},")
+    lines.append(r"    label style={font=\scriptsize},")
+    lines.append(r"    title style={font=\small},")
     lines.append(r"]")
 
     # Panel A: Loss vs FLOPs (all architectures overlaid)
@@ -1378,7 +1929,7 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(r"    xmode=log,")
     if log_loss:
         lines.append(r"    ymode=log,")
-        lines.append(r"    log ticks with fixed point,")
+        lines.append(r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},")
     lines.append(r"    xlabel={FLOPs (PetaFLOPs)},")
     lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(a) Loss vs Compute},")
@@ -1388,17 +1939,11 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
         style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
 
         F_peta = F / 1e15
 
-        # Scatter: data points
-        lines.append(
-            f"\\addplot[only marks, mark={style['mark']}, "
-            f"{style['color_name']}, mark size=1.5pt, "
-            f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
-            f"coordinates {{{_make_coordinate_table(F_peta, L)}}};"
-        )
+        # Scatter: data points (opacity varies by D/N ratio)
+        lines.extend(_scatter_by_dn(F_peta, L, sizes, style))
 
         # Fitted curve
         unique_N = np.unique(N)
@@ -1410,10 +1955,9 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
         L_sweep = fit.predict_loss(N_sweep, D_sweep)
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
         lines.append(
-            f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
+            f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
             f"coordinates {{{_make_coordinate_table(F_sweep_peta, L_sweep)}}};"
         )
-        lines.append(f"\\addlegendentry{{{display}}}")
 
     # Panel B: Loss vs Parameters (all overlaid)
     lines.append("")
@@ -1422,7 +1966,7 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(r"    xmode=log,")
     if log_loss:
         lines.append(r"    ymode=log,")
-        lines.append(r"    log ticks with fixed point,")
+        lines.append(r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},")
     lines.append(r"    xlabel={Parameters},")
     lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(b) Loss vs Parameters},")
@@ -1434,18 +1978,13 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
         style = _get_latex_style(name, idx)
 
         unique_N = np.unique(N)
-        mean_dn = np.mean([np.mean(D[N == n]) / n for n in unique_N])
+        max_dn = max(np.mean(D[N == n]) / n for n in unique_N)
         N_range = np.logspace(np.log10(N.min() * 0.8), np.log10(N.max() * 1.2), 150)
-        D_curve = N_range * mean_dn
+        D_curve = N_range * max_dn
         L_curve = fit.predict_loss(N_range, D_curve)
 
-        # Scatter
-        lines.append(
-            f"\\addplot[only marks, mark={style['mark']}, "
-            f"{style['color_name']}, mark size=1.5pt, "
-            f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
-            f"coordinates {{{_make_coordinate_table(N, L)}}};"
-        )
+        # Scatter (opacity varies by D/N ratio)
+        lines.extend(_scatter_by_dn(N, L, sizes, style))
         # Fitted curve (forget plot — legend already added in panel A)
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
         lines.append(
@@ -1453,45 +1992,44 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
             f"coordinates {{{_make_coordinate_table(N_range, L_curve)}}};"
         )
 
-    # Panel C: Loss vs Tokens (all overlaid, data efficiency comparison)
+    # Panel C: Loss vs Tokens (one curve per model size)
     lines.append("")
-    lines.append("% Panel C: Loss vs Tokens (data efficiency comparison)")
+    lines.append("% Panel C: Loss vs Tokens (per model size)")
     lines.append(r"\nextgroupplot[")
     lines.append(r"    xmode=log,")
     if log_loss:
         lines.append(r"    ymode=log,")
-        lines.append(r"    log ticks with fixed point,")
+        lines.append(r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},")
     lines.append(r"    xlabel={Training Tokens},")
     lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(c) Loss vs Data Budget},")
 
     lines.append(r"]")
 
-    # Use a shared median N across all ladders for fair comparison
-    all_unique_N = np.unique(np.concatenate([np.unique(fits[n][1]) for n in ladder_names]))
-    shared_median_N = np.median(all_unique_N)
-    all_D = np.concatenate([fits[n][2] for n in ladder_names])
-    D_range = np.logspace(np.log10(all_D.min() * 0.8), np.log10(all_D.max() * 1.2), 150)
-
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
         style = _get_latex_style(name, idx)
 
-        L_curve = fit.predict_loss(shared_median_N, D_range)
+        unique_N = np.sort(np.unique(N))
+        n_sizes = len(unique_N)
 
-        # Scatter
-        lines.append(
-            f"\\addplot[only marks, mark={style['mark']}, "
-            f"{style['color_name']}, mark size=1.5pt, "
-            f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
-            f"coordinates {{{_make_coordinate_table(D, L)}}};"
-        )
-        # Fitted curve (forget plot — legend already added in panel A)
+        # Scatter: data points (opacity varies by D/N ratio)
+        lines.extend(_scatter_by_dn(D, L, sizes, style))
+
+        # One fitted curve per model size (opacity gradient: light for small, dark for large)
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
-        lines.append(
-            f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
-            f"coordinates {{{_make_coordinate_table(D_range, L_curve)}}};"
-        )
+        for size_idx, n_val in enumerate(unique_N):
+            opacity = 0.3 + 0.7 * size_idx / max(n_sizes - 1, 1)
+            mask = N == n_val
+            D_subset = D[mask]
+            D_curve = np.logspace(np.log10(D_subset.min()), np.log10(D_subset.max()), 100)
+            L_curve = fit.predict_loss(n_val, D_curve)
+
+            lines.append(
+                f"\\addplot[{style['color_name']}, thick, no markers{line_style}, "
+                f"opacity={opacity:.2f}, forget plot] "
+                f"coordinates {{{_make_coordinate_table(D_curve, L_curve)}}};"
+            )
 
     # Panel D: Residuals (all architectures)
     lines.append("")
@@ -1515,22 +2053,65 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
         predicted = fit.predict_loss(N, D)
         residuals_pct = (L - predicted) / L * 100
 
-        # forget plot — legend already added in panel A
-        lines.append(
-            f"\\addplot[only marks, mark={style['mark']}, "
-            f"{style['color_name']}, mark size=1.5pt, "
-            f"mark options={{{style['mark_options']}}}, opacity=0.6, forget plot] "
-            f"coordinates {{{_make_coordinate_table(N, residuals_pct)}}};"
-        )
+        # Scatter (opacity varies by D/N ratio; forget plot — legend already in panel A)
+        lines.extend(_scatter_by_dn(N, residuals_pct, sizes, style))
 
     lines.append("")
     lines.append(r"\end{groupplot}")
     lines.append(r"\end{tikzpicture}")
-    lines.append(r"\vspace{0.2em}\\")
-    lines.append(f"\\ref{{{legend_name}}}")
+    lines.append("")
+    # Architecture color legend (manual tikz — reliable across all LaTeX setups)
+    lines.append(r"\par\vspace{0.5em}")
+    lines.append(_emit_arch_legend(ladder_names))
+
+    # Model-size opacity legend for panel (c): show representative sizes from data
+    all_unique_N = set()
+    for name in ladder_names:
+        N = fits[name][1]
+        for n_val in np.unique(N):
+            all_unique_N.add(n_val)
+    sorted_sizes = sorted(all_unique_N)
+    n_sizes = len(sorted_sizes)
+
+    opacity_parts = []
+    if n_sizes > 0:
+        show_indices = [0, n_sizes - 1] if n_sizes >= 2 else [0]
+        if n_sizes >= 4:
+            show_indices = [0, n_sizes // 3, 2 * n_sizes // 3, n_sizes - 1]
+        elif n_sizes >= 3:
+            show_indices = [0, n_sizes // 2, n_sizes - 1]
+        for si in show_indices:
+            op = 0.3 + 0.7 * si / max(n_sizes - 1, 1)
+            size_label = _fmt_size(sorted_sizes[si])
+            part = (
+                f"\\tikz\\draw[black, line width=2pt, opacity={op:.1f}] (0,0) -- (0.5em,0);"
+                f"\\,{size_label}"
+            )
+            opacity_parts.append(part)
+    opacity_line = "\\enspace".join(opacity_parts)
+
+    # D/N ratio legend with matching opacity markers
+    dn_opacity_parts = []
+    for dn_val in _DN_VALUES:
+        op = _DN_OPACITY[dn_val]
+        dn_opacity_parts.append(
+            f"\\tikz\\fill[black, opacity={op:.2f}] (0,0) circle (2pt);"
+            f"\\,$D/N\\!=\\!{dn_val}$"
+        )
+    dn_line = "\\enspace".join(dn_opacity_parts)
+
+    lines.append(r"\par\vspace{0.3em}")
+    lines.append(
+        r"{\scriptsize Model size (panel c):\enspace " + opacity_line
+        + r"\qquad Dataset size:\enspace " + dn_line + r"}"
+    )
 
     # Build caption with fitted parameter annotations
-    log_note = " Loss axes are plotted on a logarithmic scale so that the power-law relationships appear linear." if log_loss else ""
+    log_note = (
+        " Loss axes are plotted on a logarithmic scale so that the power-law relationships appear linear."
+        if log_loss
+        else ""
+    )
     caption_parts = [
         r"\caption{Scaling law fits $L(N,D) = E + A/N^\alpha + B/D^\beta$ "
         r"for all architectures. "
@@ -1545,9 +2126,11 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
             f"{display}: $\\alpha={p.alpha:.3f}$, $\\beta={p.beta:.3f}$, $R^2={r2_str}$. "
         )
     caption_parts.append(
-        r"\textbf{(a)} Loss vs compute. "
-        r"\textbf{(b)} Loss vs parameter count. "
-        r"\textbf{(c)} Loss vs data budget. "
+        r"\textbf{(a)} Loss vs compute, with the fitted curve sweeping $N$ at the mean $D/N$ ratio. "
+        r"\textbf{(b)} Loss vs parameter count; the fitted curve is evaluated at the largest "
+        r"Chinchilla multiple ($D/N$ ratio) present in the data, tracing the lowest-loss envelope. "
+        r"\textbf{(c)} Loss vs data budget, with one fitted curve per model size "
+        r"(lighter\,=\,smaller, darker\,=\,larger). "
         r"\textbf{(d)} Fit residuals." + log_note + "}"
     )
     lines.append("".join(caption_parts))
@@ -1603,6 +2186,7 @@ def generate_paper_figure_2(
     lines.append(r"    height=0.55\textwidth,")
     lines.append(r"    xlabel={Model Size (Parameters)},")
     lines.append(f"    ylabel={{Tokens to reach loss $={target_loss:.3f}$}},")
+    lines.append(r"    ymax=1e19,")
     lines.append(r"    grid=major,")
     lines.append(r"    grid style={gray!30},")
     lines.append(r"    legend style={")
@@ -1627,7 +2211,7 @@ def generate_paper_figure_2(
         display = _escape_latex(get_display_name(name))
 
         d_needed = np.array([solve_d_for_target_loss(fit, target_loss, n) for n in N_range])
-        valid = np.isfinite(d_needed) & (d_needed > 0)
+        valid = np.isfinite(d_needed) & (d_needed > 0) & (d_needed <= 1e19)
         all_d_curves[name] = (N_range, d_needed, valid)
 
         if np.any(valid):
@@ -1715,22 +2299,15 @@ def generate_paper_figure_3(
     lines.append(r"\centering")
     lines.append(r"\begin{tikzpicture}")
     lines.append(r"\begin{groupplot}[")
-    lines.append(f"    group style={{group size={n_panels} by 1, horizontal sep=1.5cm}},")
-    lines.append(r"    width=0.33\textwidth,")
-    lines.append(r"    height=0.28\textwidth,")
+    lines.append(f"    group style={{group size={n_panels} by 1, horizontal sep=0.8cm}},")
+    lines.append(r"    width=0.37\textwidth,")
+    lines.append(r"    height=0.30\textwidth,")
     lines.append(r"    xmode=log,")
     lines.append(r"    grid=major,")
     lines.append(r"    grid style={gray!30},")
-    lines.append(r"    tick label style={font=\tiny},")
-    lines.append(r"    label style={font=\small},")
-    lines.append(r"    legend to name=domainlegend,")
-    lines.append(r"    legend style={")
-    lines.append(r"        font=\footnotesize,")
-    lines.append(r"        cells={anchor=west},")
-    lines.append(f"        legend columns={len(ladder_names)},")
-    lines.append(r"        draw=none,")
-    lines.append(r"        column sep=8pt,")
-    lines.append(r"    },")
+    lines.append(r"    tick label style={font=\scriptsize},")
+    lines.append(r"    label style={font=\scriptsize},")
+    lines.append(r"    title style={font=\small},")
     lines.append(r"]")
 
     for domain_idx, domain in enumerate(domains):
@@ -1739,7 +2316,8 @@ def generate_paper_figure_3(
         lines.append(f"% Panel: {domain_clean}")
         lines.append(r"\nextgroupplot[")
         lines.append(r"    ymode=log,")
-        lines.append(r"    xlabel={Training Tokens},")
+        lines.append(r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},")
+        lines.append(r"    xlabel={FLOPs (PetaFLOPs)},")
         if domain_idx == 0:
             lines.append(r"    ylabel={BPB},")
         lines.append(f"    title={{{_escape_latex(domain_clean)}}},")
@@ -1747,63 +2325,40 @@ def generate_paper_figure_3(
 
         for ladder_idx, name in enumerate(ladder_names):
             style = _get_latex_style(name, ladder_idx)
-            display = _escape_latex(get_display_name(name))
 
             if domain not in domain_fits.get(name, {}):
                 continue
 
             fit, N, D, L, F, sizes = domain_fits[name][domain]
 
-            # Scatter (always forget plot)
-            lines.append(
-                f"\\addplot[only marks, mark={style['mark']}, "
-                f"{style['color_name']}, mark size=1pt, "
-                f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
-                f"coordinates {{{_make_coordinate_table(D, L)}}};"
-            )
+            F_peta = F / 1e15
 
-            # Fitted curve — add legend entry only in the first panel
-            D_range = np.logspace(np.log10(D.min()), np.log10(D.max()), 100)
-            median_N = np.median(np.unique(N))
-            L_curve = fit.predict_loss(median_N, D_range)
+            # Scatter (opacity varies by D/N ratio)
+            lines.extend(_scatter_by_dn(F_peta, L, sizes, style, mark_size="1pt"))
+
+            # Fitted curve — sweep N at mean D/N ratio (matching fig 1 panel A)
+            unique_N = np.unique(N)
+            mean_dn = np.mean([np.mean(D[N == n]) / n for n in unique_N])
+            flop_ratio = np.median(F / (6.0 * N * D))
+            N_sweep = np.logspace(np.log10(N.min()), np.log10(N.max()), 150)
+            D_sweep = N_sweep * mean_dn
+            F_sweep_peta = (6.0 * N_sweep * D_sweep * flop_ratio) / 1e15
+            L_curve = fit.predict_loss(N_sweep, D_sweep)
             line_style = f", {style['line_style']}" if style.get("line_style") else ""
-            if domain_idx == 0:
-                lines.append(
-                    f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
-                    f"coordinates {{{_make_coordinate_table(D_range, L_curve)}}};"
-                )
-                lines.append(f"\\addlegendentry{{{display}}}")
-            else:
-                lines.append(
-                    f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
-                    f"coordinates {{{_make_coordinate_table(D_range, L_curve)}}};"
-                )
-
-        # Annotate domain-specific B coefficients for all ladders
-        b_parts = []
-        for lname in ladder_names:
-            if domain in domain_fits.get(lname, {}):
-                b_val = domain_fits[lname][domain][0].fitted_params.B
-                short = _escape_latex(get_display_name(lname))
-                b_fmt = _fmt_latex_num(b_val)
-                # Strip surrounding $…$ if present so we stay inside one math env
-                if b_fmt.startswith("$") and b_fmt.endswith("$"):
-                    b_fmt = b_fmt[1:-1]
-                b_parts.append(f"$B_{{{short}}}={b_fmt}$")
-        if len(b_parts) >= 2:
             lines.append(
-                f"\\node[font=\\tiny, anchor=south east, align=right] "
-                f"at (rel axis cs:0.95,0.05) {{{', '.join(b_parts)}}};"
+                f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
+                f"coordinates {{{_make_coordinate_table(F_sweep_peta, L_curve)}}};"
             )
+
 
     lines.append("")
     lines.append(r"\end{groupplot}")
     lines.append(r"\end{tikzpicture}")
-    lines.append(r"\vspace{0.2em}\\")
-    lines.append(r"\ref{domainlegend}")
+    lines.append(r"\par\vspace{0.5em}")
+    lines.append(_emit_arch_legend(ladder_names))
     lines.append(
-        r"\caption{Domain-specific scaling laws show the hybrid advantage is consistent "
-        r"across Math, Code, and QA domains.}"
+        r"\caption{Domain-specific scaling laws (BPB vs compute) show the hybrid advantage "
+        r"is consistent across Math, Code, and QA domains.}"
     )
     lines.append(r"\label{fig:scaling-law-domains}")
     lines.append(r"\end{figure}")
@@ -1832,21 +2387,14 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
     lines.append(r"\centering")
     lines.append(r"\begin{tikzpicture}")
     lines.append(r"\begin{groupplot}[")
-    lines.append(r"    group style={group size=2 by 1, horizontal sep=2cm},")
-    lines.append(r"    width=0.45\textwidth,")
-    lines.append(r"    height=0.35\textwidth,")
+    lines.append(r"    group style={group size=2 by 1, horizontal sep=1.2cm},")
+    lines.append(r"    width=0.52\textwidth,")
+    lines.append(r"    height=0.38\textwidth,")
     lines.append(r"    grid=major,")
     lines.append(r"    grid style={gray!30},")
-    lines.append(r"    tick label style={font=\small},")
-    lines.append(r"    label style={font=\small},")
-    lines.append(r"    legend to name=residuallegend,")
-    lines.append(r"    legend style={")
-    lines.append(r"        font=\footnotesize,")
-    lines.append(r"        cells={anchor=west},")
-    lines.append(f"        legend columns={len(ladder_names)},")
-    lines.append(r"        draw=none,")
-    lines.append(r"        column sep=8pt,")
-    lines.append(r"    },")
+    lines.append(r"    tick label style={font=\scriptsize},")
+    lines.append(r"    label style={font=\scriptsize},")
+    lines.append(r"    title style={font=\small},")
     lines.append(r"]")
 
     # Panel A: Residual scatter
@@ -1867,7 +2415,6 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
         style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
 
         predicted = fit.predict_loss(N, D)
         residuals_pct = (L - predicted) / L * 100
@@ -1875,10 +2422,9 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
         lines.append(
             f"\\addplot[only marks, mark={style['mark']}, "
             f"{style['color_name']}, mark size=1.5pt, "
-            f"mark options={{{style['mark_options']}}}, opacity=0.6] "
+            f"mark options={{{style['mark_options']}}}, opacity=0.6, forget plot] "
             f"coordinates {{{_make_coordinate_table(predicted, residuals_pct)}}};"
         )
-        lines.append(f"\\addlegendentry{{{display}}}")
 
     # Panel B: Mean absolute relative error (%) per model size
     lines.append("")
@@ -1933,8 +2479,8 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
     lines.append("")
     lines.append(r"\end{groupplot}")
     lines.append(r"\end{tikzpicture}")
-    lines.append(r"\vspace{0.2em}\\")
-    lines.append(r"\ref{residuallegend}")
+    lines.append(r"\par\vspace{0.5em}")
+    lines.append(_emit_arch_legend(ladder_names))
 
     # Caption with overall R² values
     r2_parts = []
@@ -1973,9 +2519,22 @@ def plot_fits_2d(
     try:
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
+        from matplotlib.ticker import LogFormatterMathtext, NullFormatter, ScalarFormatter
     except ImportError:
         print("Warning: matplotlib not installed, skipping 2D plots")
         return
+
+    def _format_log_yaxis(ax):
+        formatter = ScalarFormatter()
+        formatter.set_scientific(False)
+        ax.yaxis.set_major_formatter(formatter)
+        minor_formatter = ScalarFormatter()
+        minor_formatter.set_scientific(False)
+        ax.yaxis.set_minor_formatter(minor_formatter)
+
+    def _format_log_xaxis(ax):
+        ax.xaxis.set_major_formatter(LogFormatterMathtext())
+        ax.xaxis.set_minor_formatter(NullFormatter())
 
     n_fits = len(fits)
     if n_fits == 0:
@@ -2035,8 +2594,10 @@ def plot_fits_2d(
         ax.scatter(N, L, color=color, s=40, alpha=0.6, edgecolors="white", linewidth=0.5, zorder=5)
 
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     if log_loss:
         ax.set_yscale("log")
+        _format_log_yaxis(ax)
     ax.set_xlabel("Non-embedding Parameters", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("Scaling Laws: Loss vs Parameters", fontsize=13, fontweight="bold")
@@ -2143,8 +2704,10 @@ def plot_fits_2d(
     )
 
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     if log_loss:
         ax.set_yscale("log")
+        _format_log_yaxis(ax)
     ax.set_xlabel("Tokens", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("Loss vs Training Tokens", fontsize=13, fontweight="bold")
@@ -2171,8 +2734,10 @@ def plot_fits_2d(
         )
 
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     if log_loss:
         ax.set_yscale("log")
+        _format_log_yaxis(ax)
     ax.set_xlabel("Non-embedding Parameters", fontsize=12)
     ax.set_ylabel("Loss (at Chinchilla-optimal D=20N)", fontsize=12)
     ax.set_title("Compute-Optimal Scaling Comparison", fontsize=13, fontweight="bold")
@@ -2211,6 +2776,7 @@ def plot_fits_2d(
     ax.axhline(y=-1, color="gray", linestyle="--", linewidth=1, alpha=0.5)
 
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     ax.set_xlabel("Non-embedding Parameters", fontsize=12)
     ax.set_ylabel("Relative Error (%)", fontsize=12)
     ax.set_title("Fit Residuals: (Actual - Predicted) / Actual", fontsize=13, fontweight="bold")
@@ -2307,9 +2873,22 @@ def plot_isoflop_curves(
     try:
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
+        from matplotlib.ticker import LogFormatterMathtext, NullFormatter, ScalarFormatter
     except ImportError:
         print("Warning: matplotlib not installed, skipping iso-FLOP plots")
         return
+
+    def _format_log_yaxis(ax):
+        formatter = ScalarFormatter()
+        formatter.set_scientific(False)
+        ax.yaxis.set_major_formatter(formatter)
+        minor_formatter = ScalarFormatter()
+        minor_formatter.set_scientific(False)
+        ax.yaxis.set_minor_formatter(minor_formatter)
+
+    def _format_log_xaxis(ax):
+        ax.xaxis.set_major_formatter(LogFormatterMathtext())
+        ax.xaxis.set_minor_formatter(NullFormatter())
 
     if not fits:
         return
@@ -2390,6 +2969,7 @@ def plot_isoflop_curves(
     )
 
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     ax.set_xlabel("Parameters (N)", fontsize=11)
     ax.set_ylabel("Loss", fontsize=11)
     ax.set_title("Iso-FLOP Curves", fontsize=12)
@@ -2420,7 +3000,9 @@ def plot_isoflop_curves(
     ax.plot(flop_range, N_chinchilla, "k--", linewidth=1, label="Chinchilla (a=0.5)", alpha=0.7)
 
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     ax.set_yscale("log")
+    _format_log_yaxis(ax)
     ax.set_xlabel("Compute Budget (FLOPs)", fontsize=11)
     ax.set_ylabel("Optimal Parameters (N)", fontsize=11)
     ax.set_title("Compute-Optimal Model Size", fontsize=12)
@@ -2449,9 +3031,22 @@ def plot_loss_vs_flops(
     try:
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
+        from matplotlib.ticker import LogFormatterMathtext, NullFormatter, ScalarFormatter
     except ImportError:
         print("Warning: matplotlib not installed, skipping loss vs FLOPs plot")
         return
+
+    def _format_log_yaxis(ax):
+        formatter = ScalarFormatter()
+        formatter.set_scientific(False)
+        ax.yaxis.set_major_formatter(formatter)
+        minor_formatter = ScalarFormatter()
+        minor_formatter.set_scientific(False)
+        ax.yaxis.set_minor_formatter(minor_formatter)
+
+    def _format_log_xaxis(ax):
+        ax.xaxis.set_major_formatter(LogFormatterMathtext())
+        ax.xaxis.set_minor_formatter(NullFormatter())
 
     if not fits:
         return
@@ -2512,8 +3107,10 @@ def plot_loss_vs_flops(
         )
 
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     if log_loss:
         ax.set_yscale("log")
+        _format_log_yaxis(ax)
     ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("All Checkpoints", fontsize=13, fontweight="bold")
@@ -2579,8 +3176,10 @@ def plot_loss_vs_flops(
     ax.legend(handles=legend_handles, loc="upper right", fontsize=9, framealpha=0.9)
 
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     if log_loss:
         ax.set_yscale("log")
+        _format_log_yaxis(ax)
     ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("Per Model Size", fontsize=13, fontweight="bold")
@@ -3074,6 +3673,40 @@ def main():
         with open(table3_path, "w") as f:
             f.write(table3)
         print(f"Saved Table 3 to: {table3_path}")
+
+        # Table 4: Token Savings by Scale
+        table4 = generate_token_savings_table(fits)
+        table4_path = tables_dir / "token-savings-by-scale.tex"
+        with open(table4_path, "w") as f:
+            f.write(table4)
+        print(f"Saved Table 4 to: {table4_path}")
+
+        table4_min = generate_token_savings_table(fits, loss_strategy="min")
+        table4_min_path = tables_dir / "token-savings-by-scale-min.tex"
+        with open(table4_min_path, "w") as f:
+            f.write(table4_min)
+        print(f"Saved Table 4-min to: {table4_min_path}")
+
+        # Table 5: Compute-Equivalent Loss
+        table5 = generate_compute_equivalent_table(fits)
+        table5_path = tables_dir / "compute-equivalent-loss.tex"
+        with open(table5_path, "w") as f:
+            f.write(table5)
+        print(f"Saved Table 5 to: {table5_path}")
+
+        # # Table 6: Prediction Validation
+        # table6 = generate_prediction_validation_table(fits)
+        # table6_path = tables_dir / "prediction-validation.tex"
+        # with open(table6_path, "w") as f:
+        #     f.write(table6)
+        # print(f"Saved Table 6 to: {table6_path}")
+
+        # # Table 7: Data Efficiency Validation
+        # table7 = generate_data_efficiency_validation_table(fits)
+        # table7_path = tables_dir / "data-efficiency-validation.tex"
+        # with open(table7_path, "w") as f:
+        #     f.write(table7)
+        # print(f"Saved Table 7 to: {table7_path}")
 
     # Save results
     if args.output:

@@ -37,6 +37,21 @@ from olmo_core.model_ladder.analysis.model_specs import compute_specs_for_size
 # Optional plotting imports
 try:
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import LogFormatterMathtext, NullFormatter, ScalarFormatter
+
+    def _format_log_yaxis(ax):
+        """Format a log-scaled y-axis to show plain numbers instead of powers of 10."""
+        formatter = ScalarFormatter()
+        formatter.set_scientific(False)
+        ax.yaxis.set_major_formatter(formatter)
+        minor_formatter = ScalarFormatter()
+        minor_formatter.set_scientific(False)
+        ax.yaxis.set_minor_formatter(minor_formatter)
+
+    def _format_log_xaxis(ax):
+        """Format a log-scaled x-axis to show 10^n notation."""
+        ax.xaxis.set_major_formatter(LogFormatterMathtext())
+        ax.xaxis.set_minor_formatter(NullFormatter())
 
     PLOTTING_AVAILABLE = True
 except ImportError:
@@ -1522,6 +1537,7 @@ def plot_base_main_metrics(
         ax.set_ylabel("Accuracy (%)" if cluster != "FIM" else "pass@1 (%)", fontsize=10)
         ax.set_title(f"Base Main {cluster}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
+        _format_log_xaxis(ax)
         ax.grid(True, alpha=0.3)
         if idx == 0:
             _finalize_legends(ax, any_checkpoints)
@@ -1599,8 +1615,10 @@ def plot_base_easy_metrics(
         ax.set_ylabel("Bits-per-byte", fontsize=10)
         ax.set_title(f"Base Easy {cluster.replace('_BPB', '')}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
+        _format_log_xaxis(ax)
         if log_loss:
             ax.set_yscale("log")
+            _format_log_yaxis(ax)
         ax.grid(True, alpha=0.3)
         if idx == 0:
             _finalize_legends(ax, any_checkpoints)
@@ -2079,8 +2097,10 @@ def plot_lm_metrics(
     ax.set_ylabel("Perplexity", fontsize=10)
     ax.set_title("Average PPL", fontsize=12, fontweight="bold")
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     if log_loss:
         ax.set_yscale("log")
+        _format_log_yaxis(ax)
     ax.grid(True, alpha=0.3)
     _finalize_legends(ax, any_checkpoints)
 
@@ -2113,8 +2133,10 @@ def plot_lm_metrics(
         ax.set_ylabel("Perplexity", fontsize=10)
         ax.set_title(f"{task}", fontsize=12, fontweight="bold")
         ax.set_xscale("log")
+        _format_log_xaxis(ax)
         if log_loss:
             ax.set_yscale("log")
+            _format_log_yaxis(ax)
         ax.grid(True, alpha=0.3)
 
     for idx in range(n_tasks, len(axes_list)):
@@ -2194,8 +2216,10 @@ def plot_base_easy_metrics_vs_flops(
         ax.set_ylabel("Bits-per-byte", fontsize=10)
         ax.set_title(f"Base Easy {cluster.replace('_BPB', '')}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
+        _format_log_xaxis(ax)
         if log_loss:
             ax.set_yscale("log")
+            _format_log_yaxis(ax)
         ax.grid(True, alpha=0.3)
         if idx == 0:
             _finalize_legends(ax, any_checkpoints)
@@ -2276,6 +2300,7 @@ def plot_base_main_metrics_vs_flops(
         ax.set_ylabel("Accuracy (%)" if cluster != "FIM" else "pass@1 (%)", fontsize=10)
         ax.set_title(f"Base Main {cluster}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
+        _format_log_xaxis(ax)
         ax.grid(True, alpha=0.3)
         if idx == 0:
             _finalize_legends(ax, any_checkpoints)
@@ -2361,8 +2386,10 @@ def plot_lm_metrics_vs_flops(
     ax.set_ylabel("Perplexity", fontsize=10)
     ax.set_title("Average PPL", fontsize=12, fontweight="bold")
     ax.set_xscale("log")
+    _format_log_xaxis(ax)
     if log_loss:
         ax.set_yscale("log")
+        _format_log_yaxis(ax)
     ax.grid(True, alpha=0.3)
     _finalize_legends(ax, any_checkpoints)
 
@@ -2395,8 +2422,10 @@ def plot_lm_metrics_vs_flops(
         ax.set_ylabel("Perplexity", fontsize=10)
         ax.set_title(f"{task}", fontsize=12, fontweight="bold")
         ax.set_xscale("log")
+        _format_log_xaxis(ax)
         if log_loss:
             ax.set_yscale("log")
+            _format_log_yaxis(ax)
         ax.grid(True, alpha=0.3)
 
     for idx in range(n_tasks, len(axes_list)):
@@ -2890,12 +2919,13 @@ def generate_ablation_latex_table(
 
         for size_label in show_sizes:
             metrics: Dict[int, Optional[float]] = {}
-            # Find data for this size
+            # Find data for this size — pick the checkpoint with the most tokens
+            # so we don't grab an early checkpoint that may lack evals.
             data = None
             for sk, sd in results.items():
                 if get_size_label(sk) == size_label:
-                    data = sd
-                    break
+                    if data is None or sd.get("tokens", 0) > data.get("tokens", 0):
+                        data = sd
 
             vals = []
             for mi, cluster in enumerate(metric_clusters):
@@ -2958,17 +2988,6 @@ def generate_ablation_latex_table(
         return formatted
 
     suite_label = "\\olmothreeeval" if suite_key == "base_easy" else "Base Main"
-    shared_note = [
-        r"\vspace{0.5em}",
-        r"{\footnotesize",
-        r"\textit{Note:} ``Interleaved'' places attention layers at regular intervals "
-        r"(e.g., 1/4 = every 4th layer).",
-        r"``Middle'' concentrates attention layers in the middle of the network; "
-        r"``no final A'' omits the final attention layer.",
-        r"All models at each scale share the same number of total layers, "
-        r"with layer types substituted according to the configuration.",
-        r"}",
-    ]
 
     def _build_arch_rows_latex(col_count: int, row_fn) -> List[str]:
         """Build grouped architecture body rows using row_fn(arch_idx, arch) -> parts list."""
@@ -3004,6 +3023,11 @@ def generate_ablation_latex_table(
     )
     lines_a.append(r"    \textbf{Bold} indicates best; \underline{underline} second best.")
     lines_a.append(r"    $\bigstar$ marks our selected architecture.")
+    lines_a.append(
+        r"    Note that per-size comparisons should be interpreted with care, "
+        r"as architectures at the same nominal scale differ in actual parameter count "
+        r"(see \cref{tab:ablation-configs})."
+    )
     lines_a.append(r"}")
     lines_a.append(r"\label{tab:ablation-evals-avg}")
     lines_a.append(r"\small")
@@ -3033,7 +3057,6 @@ def generate_ablation_latex_table(
 
     lines_a.append(r"\bottomrule")
     lines_a.append(r"\end{tabular}")
-    lines_a.extend(shared_note)
     lines_a.append(r"\end{table*}")
 
     # =========================================================================
@@ -3047,6 +3070,11 @@ def generate_ablation_latex_table(
     lines_b.append(f"    Per-domain {suite_label} BPB for pure and hybrid architectures.")
     lines_b.append(r"    \textbf{Bold} indicates best; \underline{underline} second best.")
     lines_b.append(r"    $\bigstar$ marks our selected architecture.")
+    lines_b.append(
+        r"    Note that per-size comparisons should be interpreted with care, "
+        r"as architectures at the same nominal scale differ in actual parameter count "
+        r"(see \cref{tab:ablation-configs})."
+    )
     lines_b.append(r"}")
     lines_b.append(r"\label{tab:ablation-evals-detail}")
     lines_b.append(r"\small")
@@ -3093,10 +3121,54 @@ def generate_ablation_latex_table(
     lines_b.append(r"\bottomrule")
     lines_b.append(r"\end{tabular}%")
     lines_b.append(r"}")
-    lines_b.extend(shared_note)
     lines_b.append(r"\end{table*}")
 
-    return "\n".join(lines_a) + "\n\n" + "\n".join(lines_b)
+    # =========================================================================
+    # Table C: Architecture configurations (parameter counts per size)
+    # =========================================================================
+    lines_c: List[str] = []
+    lines_c.append(r"\begin{table*}[t]")
+    lines_c.append(r"\centering")
+    lines_c.append(r"\caption{")
+    lines_c.append(
+        r"    \textbf{Non-embedding parameter counts (millions) for each architecture and scale.}"
+    )
+    lines_c.append(
+        r"    Architectures at the same nominal scale can differ substantially in "
+        r"parameter count due to differences in layer composition."
+    )
+    lines_c.append(r"}")
+    lines_c.append(r"\label{tab:ablation-configs}")
+    lines_c.append(r"\small")
+
+    col_spec_c = "@{}l c" + " r" * n_sizes + "@{}"
+    lines_c.append(r"\begin{tabular}{" + col_spec_c + "}")
+    lines_c.append(r"\toprule")
+
+    h_parts_c = [r"\textbf{Architecture}", r"\textbf{Attn \%}"]
+    for sl in show_sizes:
+        h_parts_c.append(r"\textbf{" + sl + "}")
+    lines_c.append(" & ".join(h_parts_c) + r" \\")
+    lines_c.append(r"\midrule")
+
+    def _config_row(arch_idx, arch):
+        parts = []
+        mk = arch["matched_key"]
+        for sl in show_sizes:
+            params = get_corrected_param_count(mk, sl) if mk else None
+            if params is not None:
+                parts.append(f"{params / 1e6:.1f}")
+            else:
+                parts.append("--")
+        return parts
+
+    lines_c.extend(_build_arch_rows_latex(2 + n_sizes, _config_row))
+
+    lines_c.append(r"\bottomrule")
+    lines_c.append(r"\end{tabular}")
+    lines_c.append(r"\end{table*}")
+
+    return "\n".join(lines_a) + "\n\n" + "\n".join(lines_b) + "\n\n" + "\n".join(lines_c)
 
 
 # =============================================================================
@@ -3394,6 +3466,7 @@ def generate_latex_plot(
     lines.append("    xmode=log,")
     if log_y:
         lines.append("    ymode=log,")
+        lines.append("    log ticks with fixed point,")
     lines.append("    log basis x=10,")
     lines.append("    xlabel={Parameters},")
     lines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
@@ -3554,6 +3627,7 @@ def generate_latex_flops_plot(
     lines.append("    xmode=log,")
     if log_y:
         lines.append("    ymode=log,")
+        lines.append("    log ticks with fixed point,")
     lines.append("    log basis x=10,")
     lines.append("    xlabel={Training FLOPs (PetaFLOPs)},")
     lines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
@@ -3788,6 +3862,259 @@ def generate_latex_bar_chart(
     return "\n".join(lines)
 
 
+def generate_paper_eval_figure(
+    ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
+    sizes: Optional[List[str]] = None,
+    star_ladder: Optional[str] = None,
+) -> str:
+    """
+    Generate combined evaluation figure (pgfplots/TikZ) matching the style of
+    ``fig:scaling-law-fit-log``: all checkpoint data points shown as scatter,
+    nice colors from ``LATEX_PLOT_STYLES``, and a single shared legend at the
+    bottom.
+
+    Layout:
+        Top row (2 panels):   (a) Base Easy Avg BPB vs FLOPs,
+                              (b) Avg LM Perplexity vs FLOPs
+        Bottom row (3 panels): (c) Math BPB,  (d) Code BPB,  (e) QA BPB
+
+    All axes use log-log scales.  Each ladder is drawn with its branded color
+    and mark; every checkpoint (``size@D/N``) appears as a scatter point,
+    connected by lines within each model size.
+    """
+
+    ladder_names = list(ladder_results.keys())
+
+    # --- Extraction helpers ---------------------------------------------------
+
+    def _extract_easy_avg(data: Dict[str, Any]):
+        be = data.get("base_easy", {})
+        if be:
+            return sum(c["avg"] for c in be.values()) / len(be)
+        return None
+
+    def _extract_avg_ppl(data: Dict[str, Any]):
+        lm = data.get("lm_metrics", {})
+        ppls = [v.get("PPL") for v in lm.values() if v.get("PPL") is not None]
+        if ppls:
+            return sum(ppls) / len(ppls)
+        return None
+
+    def _make_cluster_extractor(cluster_name: str):
+        def _extract(data: Dict[str, Any]):
+            be = data.get("base_easy", {})
+            if cluster_name in be:
+                return be[cluster_name]["avg"]
+            return None
+
+        return _extract
+
+    cluster_names = list(BASE_EASY_SUITE.keys())  # Math_BPB, Code_BPB, QA_BPB
+
+    # Panel definitions: (label, extract_fn, ylabel, title)
+    top_panels = [
+        ("a", _extract_easy_avg, "Average BPB", "Base Easy Suite Average"),
+        ("b", _extract_avg_ppl, "Perplexity", "Avg LM Perplexity"),
+    ]
+    bottom_panels = [
+        (
+            chr(ord("c") + i),
+            _make_cluster_extractor(cn),
+            cn.replace("_BPB", "") + " BPB",
+            cn.replace("_BPB", ""),
+        )
+        for i, cn in enumerate(cluster_names)
+    ]
+
+    # --- Collect per-ladder, per-size ordered data ----------------------------
+    # Returns {ladder_name: [(flops, y, size_label), ...]} sorted by flops.
+
+    def _collect_allpoints(extract_fn):
+        """Collect ALL checkpoint points (no averaging) for each ladder."""
+        result: Dict[str, List[Tuple[float, float, str]]] = {}
+        for ladder_name in ladder_names:
+            pts = []
+            for size_key, data in ladder_results[ladder_name].items():
+                if sizes and get_size_label(size_key) not in sizes:
+                    continue
+                y = extract_fn(data)
+                f = _get_flops_value(data)
+                if y is None or f is None:
+                    continue
+                pts.append((f, y, get_size_label(size_key)))
+            pts.sort(key=lambda p: p[0])
+            if pts:
+                result[ladder_name] = pts
+        return result
+
+    # --- Emit LaTeX -----------------------------------------------------------
+    lines: List[str] = []
+    lines.append("% Combined evaluation figure (matches scaling-law-fit-log style)")
+    lines.append("% Generated by ladder_metrics_analysis.py")
+    lines.append(r"% Requires: \usepackage{pgfplots}, \usepgfplotslibrary{groupplots}")
+    lines.append("")
+
+    # Color definitions
+    seen_colors: set = set()
+    for idx, name in enumerate(ladder_names):
+        style = _get_latex_style(name, idx)
+        if style["color_name"] not in seen_colors:
+            seen_colors.add(style["color_name"])
+            lines.append(style["color_def"])
+    lines.append("")
+
+    lines.append(r"\begin{figure*}[htbp]")
+    lines.append(r"\centering")
+
+    # Shared axis options (used by both groupplots)
+    shared_axis = [
+        r"    grid=major,",
+        r"    grid style={gray!30},",
+        r"    tick label style={font=\scriptsize},",
+        r"    label style={font=\scriptsize},",
+        r"    title style={font=\small},",
+        r"    xmode=log,",
+        r"    ymode=log,",
+        r"    log ticks with fixed point,",
+    ]
+
+    legend_name = "evallegend"
+
+    # ---- Helper: emit one panel's plots ------------------------------------
+    def _emit_panel(extract_fn, ylabel: str, title: str, panel_label: str, add_legend: bool):
+        """Emit addplot commands for a single panel."""
+        plines: List[str] = []
+        allpts = _collect_allpoints(extract_fn)
+
+        plines.append(r"\nextgroupplot[")
+        plines.append(r"    xlabel={Training FLOPs (PetaFLOPs)},")
+        plines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
+        plines.append(f"    title={{({panel_label}) {_escape_latex_text(title)}}},")
+        plines.append(r"]")
+
+        for idx, name in enumerate(ladder_names):
+            if name not in allpts:
+                continue
+            pts = allpts[name]
+            style = _get_latex_style(name, idx)
+            display = _escape_latex_text(get_display_name(name))
+            if star_ladder and name.lower() == star_ladder.lower():
+                display += r" $\bigstar$"
+
+            # Group by model size so we can draw connecting lines per size
+            by_size: Dict[str, List[Tuple[float, float]]] = {}
+            for f, y, sl in pts:
+                by_size.setdefault(sl, []).append((f, y))
+
+            # All points as scatter (opacity matches scaling-law-fit-log)
+            all_f = [p[0] for p in pts]
+            all_y = [p[1] for p in pts]
+            coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in zip(all_f, all_y))
+            plines.append(
+                f"\\addplot[only marks, mark={style['mark']}, "
+                f"{style['color_name']}, mark size=1.5pt, "
+                f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
+                f"coordinates {{{coords}}};"
+            )
+
+            # Connecting line through per-size points (sorted by flops)
+            # Use the largest-D/N envelope: one point per size at highest flops
+            envelope = []
+            for sl in sorted(by_size, key=lambda s: get_size_numeric(s)):
+                size_pts = sorted(by_size[sl], key=lambda p: p[0])
+                # Take the point with highest FLOPs (= most tokens) per size
+                envelope.append(size_pts[-1])
+            envelope.sort(key=lambda p: p[0])
+            env_coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in envelope)
+            line_style_str = f", {style['line_style']}" if style.get("line_style") else ""
+            if add_legend:
+                plines.append(
+                    f"\\addplot[{style['color_name']}, thick, no markers{line_style_str}] "
+                    f"coordinates {{{env_coords}}};"
+                )
+                plines.append(f"\\addlegendentry{{{display}}}")
+            else:
+                plines.append(
+                    f"\\addplot[{style['color_name']}, thick, no markers{line_style_str}, forget plot] "
+                    f"coordinates {{{env_coords}}};"
+                )
+
+        return plines
+
+    # =========== Top row: 2 panels (BPB avg + Perplexity) ====================
+    lines.append(r"\begin{tikzpicture}")
+    lines.append(r"\begin{groupplot}[")
+    lines.append(r"    group style={")
+    lines.append(r"        group size=2 by 1,")
+    lines.append(r"        horizontal sep=1.2cm,")
+    lines.append(r"    },")
+    lines.append(r"    width=0.54\textwidth,")
+    lines.append(r"    height=0.36\textwidth,")
+    for sa in shared_axis:
+        lines.append(sa)
+    lines.append(f"    legend to name={legend_name},")
+    lines.append(r"    legend style={")
+    lines.append(r"        font=\footnotesize,")
+    lines.append(r"        cells={anchor=west},")
+    lines.append(f"        legend columns={len(ladder_names)},")
+    lines.append(r"        draw=none,")
+    lines.append(r"        column sep=8pt,")
+    lines.append(r"    },")
+    lines.append(r"]")
+
+    for i, (label, efn, yl, ttl) in enumerate(top_panels):
+        lines.append("")
+        lines.append(f"% Panel ({label}): {ttl}")
+        lines.extend(_emit_panel(efn, yl, ttl, label, add_legend=(i == 0)))
+
+    lines.append("")
+    lines.append(r"\end{groupplot}")
+    lines.append(r"\end{tikzpicture}")
+
+    lines.append(r"\vspace{0.6em}")
+    lines.append("")
+
+    # =========== Bottom row: 3 cluster panels ================================
+    lines.append(r"\begin{tikzpicture}")
+    lines.append(r"\begin{groupplot}[")
+    lines.append(r"    group style={")
+    lines.append(r"        group size=3 by 1,")
+    lines.append(r"        horizontal sep=0.8cm,")
+    lines.append(r"    },")
+    lines.append(r"    width=0.37\textwidth,")
+    lines.append(r"    height=0.28\textwidth,")
+    for sa in shared_axis:
+        lines.append(sa)
+    lines.append(r"]")
+
+    for label, efn, yl, ttl in bottom_panels:
+        lines.append("")
+        lines.append(f"% Panel ({label}): {ttl}")
+        lines.extend(_emit_panel(efn, yl, ttl, label, add_legend=False))
+
+    lines.append("")
+    lines.append(r"\end{groupplot}")
+    lines.append(r"\end{tikzpicture}")
+
+    # Shared legend
+    lines.append(r"\vspace{0.2em}\\")
+    lines.append(f"\\pgfplotslegendfromname{{{legend_name}}}")
+
+    # Caption
+    lines.append(
+        r"\caption{Downstream evaluation metrics vs.\ training FLOPs. "
+        r"\textbf{(a)} Base Easy Suite average BPB (lower is better). "
+        r"\textbf{(b)} Average language modeling perplexity (lower is better). "
+        r"\textbf{(c)--(e)} Per-cluster Base Easy BPB for Math, Code, and QA respectively. "
+        r"Each point is a single checkpoint; the connecting line traces the highest "
+        r"Chinchilla multiple per model size.}"
+    )
+    lines.append(r"\label{fig:base_easy_avg}")
+    lines.append(r"\end{figure*}")
+
+    return "\n".join(lines)
+
+
 def generate_latex_plots(
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
     sizes: Optional[List[str]] = None,
@@ -3799,15 +4126,14 @@ def generate_latex_plots(
     Generate publication-ready LaTeX/TikZ plots for all metric suites.
 
     All plots use training FLOPs on the x-axis and log-scale y-axes.
-    The Base Easy Suite average is a large standalone figure, while
-    the per-cluster plots (Math, Code, QA) are arranged in a single row.
 
     Produces pgfplots code for:
-      - Base Easy Suite average BPB vs FLOPs (large plot)
-      - Each Base Easy cluster (Math_BPB, Code_BPB, QA_BPB) vs FLOPs (small, single row)
-      - Base Main Suite average accuracy vs FLOPs (if include_main)
-      - Each Base Main cluster vs FLOPs (if include_main)
-      - Average LM perplexity vs FLOPs
+      - Combined evaluation figure (fig:base_easy_avg): 2-row layout matching
+        the style of the scaling-law-fit-log figure (all checkpoint scatter,
+        branded colors, single shared legend).
+        Top row:    (a) Base Easy Avg BPB, (b) Avg LM Perplexity
+        Bottom row: (c) Math BPB, (d) Code BPB, (e) QA BPB
+      - Base Main Suite figures (if include_main)
 
     Args:
         ladder_results: The standard {ladder_name: {size_key: data}} dict.
@@ -3817,7 +4143,7 @@ def generate_latex_plots(
         star_ladder: Ladder name to highlight with a star in the legend.
 
     Returns:
-        Complete LaTeX string with all plots as separate figures.
+        Complete LaTeX string with all plots as figures.
     """
     parts: List[str] = []
     parts.append("% ===================================================================")
@@ -3837,81 +4163,14 @@ def generate_latex_plots(
             parts.append(style["color_def"])
     parts.append("")
 
-    # --- Base Easy Suite: Average BPB ---
-    def _extract_easy_avg(data):
-        be = data.get("base_easy", {})
-        if be:
-            return sum(c["avg"] for c in be.values()) / len(be)
-        return None
-
-    # Large plot: Base Easy Suite Average BPB vs FLOPs (log-log)
-    parts.append("% --- Base Easy Suite: Average BPB vs FLOPs (large) ---")
-    parts.append(r"\begin{figure}[htbp]")
-    parts.append(r"    \centering")
+    # --- Combined eval figure: BPB avg + Perplexity (top) + 3 clusters (bottom) ---
     parts.append(
-        generate_latex_flops_plot(
+        generate_paper_eval_figure(
             ladder_results,
-            "base_easy_avg_flops",
-            _extract_easy_avg,
-            ylabel="Average BPB",
-            title="Base Easy Suite Average vs FLOPs",
             sizes=sizes,
-            higher_is_better=False,
-            use_final_checkpoint=use_final_checkpoint,
             star_ladder=star_ladder,
-            log_y=True,
         )
     )
-    parts.append(
-        r"    \caption{Base Easy Suite average BPB vs.\ training FLOPs (lower is better).}"
-    )
-    parts.append(r"    \label{fig:base_easy_avg}")
-    parts.append(r"\end{figure}")
-    parts.append("")
-
-    # Small plots: Per-cluster BPB vs FLOPs (3 in one row)
-    cluster_names = list(BASE_EASY_SUITE.keys())
-    parts.append("% --- Base Easy Suite: Per-cluster BPB vs FLOPs (small, single row) ---")
-    parts.append(r"\begin{figure}[htbp]")
-    parts.append(r"    \centering")
-    for i, cluster_name in enumerate(cluster_names):
-
-        def _extract_cluster(data, _c=cluster_name):
-            be = data.get("base_easy", {})
-            if _c in be:
-                return be[_c]["avg"]
-            return None
-
-        clean_name = cluster_name.replace("_BPB", "")
-        # Use minipage for side-by-side layout; legend only on last subplot
-        col_width = f"{0.95 / len(cluster_names):.2f}"
-        parts.append(f"    \\begin{{minipage}}{{{col_width}\\linewidth}}")
-        parts.append(r"        \centering")
-        parts.append(
-            generate_latex_flops_plot(
-                ladder_results,
-                f"base_easy_{cluster_name}_flops",
-                _extract_cluster,
-                ylabel=f"{clean_name} BPB",
-                title=clean_name,
-                sizes=sizes,
-                higher_is_better=False,
-                width="\\linewidth",
-                height="0.8\\linewidth",
-                use_final_checkpoint=use_final_checkpoint,
-                star_ladder=star_ladder,
-                legend_columns=1 if i == len(cluster_names) - 1 else 0,
-                log_y=True,
-            )
-        )
-        parts.append(r"    \end{minipage}")
-        if i < len(cluster_names) - 1:
-            parts.append(r"    \hfill")
-    parts.append(
-        r"    \caption{Base Easy Suite per-cluster BPB vs.\ training FLOPs (lower is better).}"
-    )
-    parts.append(r"    \label{fig:base_easy_clusters}")
-    parts.append(r"\end{figure}")
     parts.append("")
 
     # --- Base Main Suite (if requested) ---
@@ -4138,38 +4397,6 @@ def generate_latex_plots(
         #     parts.append(r"    \label{fig:relative_comparison}")
         #     parts.append(r"\end{figure}")
         #     parts.append("")
-
-    # --- LM Perplexity ---
-    def _extract_avg_ppl(data):
-        lm = data.get("lm_metrics", {})
-        ppls = [v.get("PPL") for v in lm.values() if v.get("PPL") is not None]
-        if ppls:
-            return sum(ppls) / len(ppls)
-        return None
-
-    parts.append("% --- Average LM Perplexity vs FLOPs ---")
-    parts.append(r"\begin{figure}[htbp]")
-    parts.append(r"    \centering")
-    parts.append(
-        generate_latex_flops_plot(
-            ladder_results,
-            "lm_avg_ppl",
-            _extract_avg_ppl,
-            ylabel="Perplexity",
-            title="Average LM Perplexity vs FLOPs",
-            sizes=sizes,
-            higher_is_better=False,
-            use_final_checkpoint=use_final_checkpoint,
-            star_ladder=star_ladder,
-            log_y=True,
-        )
-    )
-    parts.append(
-        r"    \caption{Average language modeling perplexity vs.\ training FLOPs (lower is better).}"
-    )
-    parts.append(r"    \label{fig:lm_avg_ppl}")
-    parts.append(r"\end{figure}")
-    parts.append("")
 
     return "\n".join(parts)
 
@@ -4508,12 +4735,12 @@ Examples:
         print("-" * 100)
 
         for size_label in all_size_labels:
-            # Find baseline data for this size
+            # Find baseline data for this size — pick the final checkpoint
             baseline_data = None
             for sk, sd in baseline_results.items():
                 if get_size_label(sk) == size_label:
-                    baseline_data = sd
-                    break
+                    if baseline_data is None or sd.get("tokens", 0) > baseline_data.get("tokens", 0):
+                        baseline_data = sd
 
             if baseline_data is None:
                 continue
@@ -4526,8 +4753,8 @@ Examples:
                 compare_data = None
                 for sk, sd in ladder_results[ladder_name].items():
                     if get_size_label(sk) == size_label:
-                        compare_data = sd
-                        break
+                        if compare_data is None or sd.get("tokens", 0) > compare_data.get("tokens", 0):
+                            compare_data = sd
 
                 if compare_data is None:
                     continue
