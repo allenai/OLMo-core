@@ -97,18 +97,8 @@ class GatedDeltaNet(SequenceMixer):
         self.w_a = nn.Linear(d_model, self.n_v_heads, bias=False, dtype=dtype, device=init_device)
         self.w_b = nn.Linear(d_model, self.n_v_heads, bias=False, dtype=dtype, device=init_device)
 
-        A = torch.empty(self.n_v_heads, dtype=torch.float32, device=init_device).uniform_(0, 16)
-        self.A_log = nn.Parameter(torch.log(A))  # recommended to not apply weight decay to A_log
-
-        dt_min, dt_max, dt_init_floor = 0.001, 0.1, 1e-4  # hard coded for now
-        dt = torch.exp(
-            torch.rand(self.n_v_heads, device=init_device) * (math.log(dt_max) - math.log(dt_min))
-            + math.log(dt_min),
-        )
-        dt = torch.clamp(dt, min=dt_init_floor)
-        # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
-        inv_dt = dt + torch.log(-torch.expm1(-dt))
-        self.dt_bias = nn.Parameter(inv_dt)  # bias param, recommended to not apply weight decay
+        self.A_log = nn.Parameter(torch.empty(self.n_v_heads, dtype=dtype, device=init_device))
+        self.dt_bias = nn.Parameter(torch.empty(self.n_v_heads, dtype=dtype, device=init_device))
 
         self.q_conv1d = CausalConv1d(
             hidden_size=self.key_dim,
@@ -264,6 +254,17 @@ class GatedDeltaNet(SequenceMixer):
             init_linear(w, std=std, generator=generator)
         for w in (self.q_conv1d, self.k_conv1d, self.v_conv1d):
             init_linear(w, std=std, generator=generator)
+        with torch.no_grad():
+            self.A_log.copy_(nn.init.uniform_(self.A_log, a=0, b=16, generator=generator).log())
+            dt_min, dt_max, dt_init_floor = 0.001, 0.1, 1e-4
+            dt = torch.exp(
+                nn.init.uniform_(self.dt_bias, generator=generator)
+                * (math.log(dt_max) - math.log(dt_min))
+                + math.log(dt_min),
+            ).clamp(min=dt_init_floor)
+            # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
+            inv_dt = dt + torch.log(-torch.expm1(-dt))
+            self.dt_bias.copy_(inv_dt)
 
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
