@@ -146,6 +146,14 @@ class InitMethod(StrEnum):
                     std = d_model**-0.5
                 for w in (m.w_q, m.w_k, m.w_v):
                     self._init_linear(w, std=std, generator=generator)
+
+            # Initialize attention gate projection if present
+            if m.w_g is not None:
+                if self == InitMethod.fan_in:
+                    g_std = m.w_g.in_features**-0.5
+                else:
+                    g_std = std
+                self._init_linear(m.w_g, std=g_std, generator=generator)
         elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
             m = cast(FusedAttention, m)
 

@@ -8,7 +8,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from olmo_core.nn.attention import AttentionConfig
+from olmo_core.nn.attention import AttentionConfig, GateConfig, GateGranularity
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.moe import MoEConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -208,6 +208,39 @@ def test_fan_in_init_moe():
         assert (
             abs(router_std - expected_router_std) < tolerance
         ), f"Router std: expected ~{expected_router_std}, got {router_std}"
+
+
+@pytest.mark.parametrize(
+    "granularity",
+    [
+        pytest.param(GateGranularity.headwise, id="headwise"),
+        pytest.param(GateGranularity.elementwise, id="elementwise"),
+    ],
+)
+def test_fan_in_init_attention_gate(granularity):
+    """Test that fan_in init initializes the attention gate projection."""
+    d_model = 256
+    config = TransformerConfig.llama_like(
+        d_model=d_model,
+        vocab_size=1000,
+        n_layers=2,
+        n_heads=4,
+        init_method=InitMethod.fan_in,
+        gate=GateConfig(granularity=granularity),
+    )
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"))
+
+    expected_std = 1.0 / math.sqrt(d_model)
+
+    block = model.blocks["0"]
+    assert block.attention.w_g is not None, "Expected attention gate w_g to be present"
+
+    g_std = block.attention.w_g.weight.std().item()
+    tolerance = expected_std * 0.2
+    assert (
+        abs(g_std - expected_std) < tolerance
+    ), f"w_g std: expected ~{expected_std}, got {g_std}"
 
 
 if __name__ == "__main__":
