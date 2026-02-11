@@ -217,6 +217,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         reduce_type: Optional[ReduceType] = None,
         namespace: Optional[str] = None,
         merge_strategy: MetricMergeStrategy = MetricMergeStrategy.warn,
+        weight: Optional[Union[float, torch.Tensor]] = None,
     ):
         """
         Record a metric. This is simply a convenience method that calls out to
@@ -226,7 +227,12 @@ class TrainModule(Stateful, metaclass=ABCMeta):
             Use :meth:`record_ce_loss()` to record the cross-entropy loss, specifically.
         """
         return self.trainer.record_metric(
-            name, value, reduce_type=reduce_type, namespace=namespace, merge_strategy=merge_strategy
+            name,
+            value,
+            reduce_type=reduce_type,
+            namespace=namespace,
+            merge_strategy=merge_strategy,
+            weight=weight,
         )
 
     def record_ce_loss(
