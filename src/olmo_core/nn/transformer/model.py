@@ -52,7 +52,7 @@ from .block import (
     TransformerBlockBase,
 )
 from .config import (
-    HybridBlockConfig,
+    BlockConfig,
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
     TransformerDataParallelWrappingStrategy,
@@ -94,7 +94,7 @@ class Transformer(nn.Module):
         d_model: int,
         vocab_size: int,
         n_layers: int,
-        block: Union[TransformerBlockConfig, HybridBlockConfig],
+        block: BlockConfig,
         lm_head: LMHeadConfig,
         embedding_norm: Optional[LayerNormConfig] = None,
         dtype: torch.dtype = torch.float32,
@@ -127,7 +127,7 @@ class Transformer(nn.Module):
         )
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
-            block_config: Union[TransformerBlockConfig, HybridBlockConfig] = block
+            block_config: BlockConfig = block
             if block_overrides is not None and block_idx in block_overrides:
                 block_config = block_overrides[block_idx]
             self.blocks[str(block_idx)] = self._validate_block(
@@ -924,7 +924,7 @@ class NormalizedTransformer(Transformer):
         d_model: int,
         vocab_size: int,
         n_layers: int,
-        block: Union[TransformerBlockConfig, HybridBlockConfig],
+        block: BlockConfig,
         lm_head: LMHeadConfig,
         dtype: torch.dtype = torch.float32,
         init_method: InitMethod = InitMethod.normalized,
