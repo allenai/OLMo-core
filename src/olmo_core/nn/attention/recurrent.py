@@ -237,6 +237,7 @@ class GatedDeltaNet(SequenceMixer):
         self.k_conv1d.apply_cp(cp_mesh)
         self.v_conv1d.apply_cp(cp_mesh)
 
+    @torch.no_grad()
     def init_weights(
         self,
         *,
@@ -256,17 +257,17 @@ class GatedDeltaNet(SequenceMixer):
             init_linear(w, std=std, generator=generator)
         for w in (self.q_conv1d, self.k_conv1d, self.v_conv1d):
             init_linear(w, std=std, generator=generator)
-        with torch.no_grad():
-            self.A_log.copy_(nn.init.uniform_(self.A_log, a=0, b=16, generator=generator).log())
-            dt_min, dt_max, dt_init_floor = 0.001, 0.1, 1e-4
-            dt = torch.exp(
-                nn.init.uniform_(self.dt_bias, generator=generator)
-                * (math.log(dt_max) - math.log(dt_min))
-                + math.log(dt_min),
-            ).clamp(min=dt_init_floor)
-            # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
-            inv_dt = dt + torch.log(-torch.expm1(-dt))
-            self.dt_bias.copy_(inv_dt)
+
+        self.A_log.copy_(nn.init.uniform_(self.A_log, a=0, b=16, generator=generator).log())
+        dt_min, dt_max, dt_init_floor = 0.001, 0.1, 1e-4
+        dt = torch.exp(
+            nn.init.uniform_(self.dt_bias, generator=generator)
+            * (math.log(dt_max) - math.log(dt_min))
+            + math.log(dt_min),
+        ).clamp(min=dt_init_floor)
+        # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
+        inv_dt = dt + torch.log(-torch.expm1(-dt))
+        self.dt_bias.copy_(inv_dt)
 
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
