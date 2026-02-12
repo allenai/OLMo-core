@@ -40,7 +40,7 @@ DATASET_CONFIG = SourceMixtureList(
             source_name="post_sa",
             target_ratio=1.0,
             paths=[
-                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools/suffix_arrays/full_pool_resharded/text_tokens/*.npy"
+                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools_decon/suffix_arrays/full_pool_resharded/text_tokens/*.npy"
             ],
         )
     ]
