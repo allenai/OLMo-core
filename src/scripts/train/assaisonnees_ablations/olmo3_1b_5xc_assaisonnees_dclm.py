@@ -46,7 +46,7 @@ DATASET_CONFIG = SourceMixtureList(
             source_name="dclm_baseline",
             target_ratio=1.0,
             paths=[
-                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools/dclm/5pct_subsample/dolma2-tokenizer/*.npy"
+                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools_decon/dclm/5pct_subsample/dolma2-tokenizer/*.npy"
             ],
         )
     ]
