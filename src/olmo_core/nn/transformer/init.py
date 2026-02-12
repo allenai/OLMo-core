@@ -1,4 +1,4 @@
-from typing import Optional, Union, cast
+from typing import TYPE_CHECKING, Optional, Union, cast
 
 import torch
 import torch.nn as nn
@@ -7,9 +7,10 @@ from torch.distributed.tensor import DTensor
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import distribute_like, get_local_tensor
 
-from ..attention import Attention, FusedAttention, SequenceMixer
-from ..feed_forward import FeedForward
-from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
+if TYPE_CHECKING:
+    from ..attention import SequenceMixer
+    from ..feed_forward import FeedForward
+    from ..moe import MoEBase
 
 
 def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
@@ -24,6 +25,22 @@ def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
 
     # Now copy over the corresponding shard of `full_x` into `x`.
     get_local_tensor(x).copy_(get_local_tensor(full_x))
+
+
+def init_linear(
+    m: nn.Linear | nn.Conv1d, *, std: float = 0.02, generator: Optional[torch.Generator] = None
+):
+    _apply_init(
+        nn.init.trunc_normal_,
+        m.weight,
+        mean=0.0,
+        std=std,
+        a=-3 * std,
+        b=3 * std,
+        generator=generator,
+    )
+    if m.bias is not None:
+        nn.init.zeros_(m.bias)
 
 
 class InitMethod(StrEnum):
@@ -49,21 +66,6 @@ class InitMethod(StrEnum):
     Like :data:`normal`, but "output" layers are initialized with a standard deviation that's
     dependent on either ``d_model`` or the layer index.
     """
-
-    def _init_linear(
-        self, m: nn.Linear, *, std: float = 0.02, generator: Optional[torch.Generator] = None
-    ):
-        _apply_init(
-            nn.init.trunc_normal_,
-            m.weight,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
 
     def init_embeddings(
         self,
@@ -98,11 +100,11 @@ class InitMethod(StrEnum):
     ):
         if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
             std = d_model**-0.5
-        self._init_linear(m, std=std, generator=generator)
+        init_linear(m, std=std, generator=generator)
 
     def init_attention(
         self,
-        m: SequenceMixer,
+        m: "SequenceMixer",
         *,
         d_model: int,
         block_idx: int,
@@ -110,32 +112,18 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        if self == InitMethod.normalized:
-            std = d_model**-0.5
-
-        # NOTE: isinstance checks could fail with AC wrappers
-        if isinstance(m, Attention) or hasattr(m, "w_q"):
-            m = cast(Attention, m)
-            for w in (m.w_q, m.w_k, m.w_v):
-                self._init_linear(w, std=std, generator=generator)
-        elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
-            m = cast(FusedAttention, m)
-            self._init_linear(m.w_qkv, std=std, generator=generator)
-        else:
-            raise NotImplementedError(m)
-
-        if self == InitMethod.llama:
-            std = std / (2 * num_blocks) ** 0.5
-        elif self == InitMethod.llama_depth:
-            std = std / (2 * (block_idx + 1)) ** 0.5
-        elif self == InitMethod.normalized:
-            std = std / (2 * num_blocks) ** 0.5
-
-        self._init_linear(m.w_out, std=std, generator=generator)
+        m.init_weights(
+            init_method=self,
+            d_model=d_model,
+            block_idx=block_idx,
+            num_blocks=num_blocks,
+            std=std,
+            generator=generator,
+        )
 
     def init_feed_forward(
         self,
-        m: FeedForward,
+        m: "FeedForward",
         *,
         d_model: int,
         block_idx: int,
@@ -146,23 +134,23 @@ class InitMethod(StrEnum):
         if self == InitMethod.normalized:
             std = d_model**-0.5
 
-        self._init_linear(m.w1, std=std, generator=generator)
+        init_linear(m.w1, std=std, generator=generator)
 
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
 
-        self._init_linear(m.w3, std=std, generator=generator)
+        init_linear(m.w3, std=std, generator=generator)
 
         if self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
-        self._init_linear(m.w2, std=std, generator=generator)
+        init_linear(m.w2, std=std, generator=generator)
 
     def init_feed_forward_moe(
         self,
-        m: MoEBase,
+        m: "MoEBase",
         *,
         d_model: int,
         block_idx: int,
@@ -170,6 +158,8 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
+        from ..moe import DroplessMoEMLP, MoELinearRouter, MoEMLP
+
         del d_model
 
         if self == InitMethod.llama:

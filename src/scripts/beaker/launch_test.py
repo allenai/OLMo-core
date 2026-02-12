@@ -25,7 +25,6 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
         beaker_image=OLMoCoreBeakerImage.stable,
         clusters=[
             "ai2/jupiter",
-            "ai2/augusta",
             "ai2/ceres",
         ],
         num_nodes=1,
