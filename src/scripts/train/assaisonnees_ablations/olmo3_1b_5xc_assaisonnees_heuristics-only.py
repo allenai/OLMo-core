@@ -40,7 +40,7 @@ DATASET_CONFIG = SourceMixtureList(
             source_name="heuristics_only",
             target_ratio=1.0,
             paths=[
-                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools/heuristics_only/dolma2-tokenizer/*.npy"
+                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools_decon/heuristics_only/data/dolma2-tokenizer/*.npy"
             ],
         )
     ]
