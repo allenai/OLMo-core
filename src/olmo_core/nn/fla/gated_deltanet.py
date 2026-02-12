@@ -262,7 +262,6 @@ class GatedDeltaNet(nn.Module):
         self.cp_enabled = False
         self.uly: Optional[UlyssesContextParallelStyle] = None
 
-    @torch._dynamo.disable
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -800,7 +799,6 @@ class ShortConvolution(nn.Conv1d):
         self._cp_channel_end = self._cp_channel_start + local_channels
 
 
-@torch._dynamo.disable()
 def _causal_conv1d(
     x: torch.Tensor,
     weight: torch.Tensor,

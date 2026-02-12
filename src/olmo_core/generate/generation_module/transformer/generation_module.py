@@ -33,7 +33,7 @@ from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import Attention, AttentionBackendName
-from olmo_core.nn.transformer import Transformer, TransformerConfig
+from olmo_core.nn.transformer import Transformer, TransformerBlock, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
@@ -110,17 +110,19 @@ class TransformerGenerationModule(GenerationModule):
         # is called "prepare_inference_cache" rather than "prepare_kv_cache".
         # For example, Mamba requires cache state but doesn't use a kv-cache.
         for block in self.model.blocks.values():
-            assert isinstance(block.attention, Attention)
-            attn = cast(Attention, block.attention)
-            if attn.kv_cache_manager is None:
-                attn.init_kv_cache_manager(batch_size, max_seq_len)
-            else:
-                attn.kv_cache_manager.reset(batch_size, max_seq_len)
+            if isinstance(block, TransformerBlock):
+                assert isinstance(block.attention, Attention)
+                attn = cast(Attention, block.attention)
+                if attn.kv_cache_manager is None:
+                    attn.init_kv_cache_manager(batch_size, max_seq_len)
+                else:
+                    attn.kv_cache_manager.reset(batch_size, max_seq_len)
 
     def free_inference_cache(self):
         for block in self.model.blocks.values():
-            assert isinstance(block.attention, Attention)
-            cast(Attention, block.attention).kv_cache_manager = None
+            if isinstance(block, TransformerBlock):
+                assert isinstance(block.attention, Attention)
+                cast(Attention, block.attention).kv_cache_manager = None
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:
