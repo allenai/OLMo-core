@@ -37,23 +37,17 @@ def test_empty_merge_step_raises_error():
         ModelMergeCallback(merge_step=[], merge_last_n_steps=10)
 
 
-def test_overlapping_merge_windows_raises_error():
-    with pytest.raises(OLMoConfigurationError, match="Windows would overlap"):
-        ModelMergeCallback(
-            merge_step=[100, 150],  # 50 step gap
-            merge_last_n_steps=100,  # 100 step window (does overlap)
-        )
-
-
 @pytest.mark.parametrize(
     "merge_step, merge_last_n_steps",
     [
-        ([100, 250], 100),  # 150 step gap > 100 window
-        ([100, 200], 100),  # exact boundary (gap == window)
-        (100, 100),         # single step, no overlap possible
+        ([100, 250], 100),  # non-overlapping
+        ([100, 200], 100),  # exact boundary
+        (100, 100),         # single step
+        ([100, 150], 100),  # overlapping windows (50 step gap < 100 window)
+        ([100, 110, 120], 50),  # multiple overlapping windows
     ],
 )
-def test_non_overlapping_merge_windows_ok(merge_step, merge_last_n_steps):
+def test_merge_windows_ok(merge_step, merge_last_n_steps):
     ModelMergeCallback(merge_step=merge_step, merge_last_n_steps=merge_last_n_steps)
 
 
@@ -85,8 +79,18 @@ def test_merge_interval_valid():
 
 
 def test_compute_merge_window_starts():
+    # Non-overlapping: each gets its own checkpoint
     assert compute_merge_window_starts([500, 1000], 100) == [401, 901]
-    assert compute_merge_window_starts([50], 100) == [0]  # clamp to 0
+    # Clamp to 0
+    assert compute_merge_window_starts([50], 100) == [0]
+    # Overlapping: only the earliest start in the group
+    # merge at 5000 (window 4501-5000) and 5200 (window 4701-5200)
+    # 4701 <= 5000, so only 4501 is needed
+    assert compute_merge_window_starts([5000, 5200], 500) == [4501]
+    # Three overlapping windows
+    assert compute_merge_window_starts([100, 150, 200], 100) == [1]
+    # Mixed: first two overlap, third is separate
+    assert compute_merge_window_starts([500, 550, 1000], 100) == [401, 901]
 
 
 def test_compute_merge_steps_from_wsds_with_fixed_decay():

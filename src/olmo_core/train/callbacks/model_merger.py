@@ -3,6 +3,7 @@ ModelMergeCallback that relies on external checkpoint coordination.
 
 This callback:
 - Supports explicit merge_step configuration or interval-based merging
+- Supports overlapping merge windows with per-window accumulators
 - Does NOT save accumulator state (no state_dict/load_state_dict)
 - Assumes checkpoints are saved at window start steps externally
 - On resume, recomputes accumulation from scratch
@@ -10,7 +11,7 @@ This callback:
 
 import logging
 from dataclasses import dataclass, field
-from typing import ClassVar, Dict, List, Optional, Union
+from typing import ClassVar, Dict, List, Optional, Set, Union
 
 import torch
 
@@ -55,10 +56,10 @@ class ModelMergeCallback(Callback):
     enabled: bool = False
 
     # Internal state (not checkpointed)
-    _accumulator: Optional[Dict[str, torch.Tensor]] = field(default=None, repr=False)
-    _n_accumulated: int = field(default=0, repr=False)
+    _accumulators: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=dict, repr=False)
+    _accumulator_counts: Dict[int, int] = field(default_factory=dict, repr=False)
     _merge_steps: List[int] = field(default_factory=list, repr=False)
-    _current_merge_idx: int = field(default=0, repr=False)
+    _completed_merges: Set[int] = field(default_factory=set, repr=False)
 
     def __post_init__(self):
         if self.merge_last_n_steps <= 0:
@@ -100,39 +101,17 @@ class ModelMergeCallback(Callback):
         if invalid:
             raise OLMoConfigurationError(f"merge_step values must be positive, got: {invalid}")
 
-        self._check_for_overlapping_windows()
+    def _window_start(self, merge_step: int) -> int:
+        return max(0, merge_step - self.merge_last_n_steps + 1)
 
-    def _check_for_overlapping_windows(self):
-        # TODO: Allow overlapping windows. Track multiple accumulators and 
-        # merge when each window completes.
-        for i in range(1, len(self._merge_steps)):
-            prev_step = self._merge_steps[i - 1]
-            curr_step = self._merge_steps[i]
-            gap = curr_step - prev_step
-
-            if gap < self.merge_last_n_steps:
-                raise OLMoConfigurationError(
-                    f"Merge steps {prev_step} and {curr_step} are only {gap} steps apart, "
-                    f"but merge_last_n_steps={self.merge_last_n_steps}. Windows would overlap."
-                )
-
-    @property
-    def _current_merge_step(self) -> Optional[int]:
-        if self._current_merge_idx >= len(self._merge_steps):
-            return None
-        return self._merge_steps[self._current_merge_idx]
-
-    @property
-    def _start_step(self) -> int:
-        if self._current_merge_step is None:
-            return -1
-        return max(0, self._current_merge_step - self.merge_last_n_steps + 1)
-
-    @property
-    def _is_accumulating(self) -> bool:
-        if self._current_merge_step is None:
-            return False
-        return self._start_step <= self.step <= self._current_merge_step
+    def _active_windows(self) -> List[int]:
+        """Return merge steps whose windows include the current step."""
+        current = self.step
+        return [
+            ms for ms in self._merge_steps
+            if ms not in self._completed_merges
+            and self._window_start(ms) <= current <= ms
+        ]
 
     def _merged_checkpoint_path(self, step: int) -> str:
         return str(join_path(self.trainer.save_folder, f"step{step}-{self.output_suffix}"))
@@ -165,30 +144,24 @@ class ModelMergeCallback(Callback):
                     f"max_steps={max_steps}"
                 )
                 return
-            self._check_for_overlapping_windows()
 
         log.info(f"ModelMergeCallback: merge_steps={self._merge_steps}")
 
         self._validate_checkpointer_config()
 
-        # Skip past merge steps we can no longer accumulate for
+        # Mark merge steps that are already past as completed
         current_step = self.step
-        while self._current_merge_idx < len(self._merge_steps):
-            target = self._merge_steps[self._current_merge_idx]
-
-            if target < current_step:
+        for ms in self._merge_steps:
+            if ms < current_step:
                 log.warning(
-                    f"Current step {current_step} is past merge step {target}. "
+                    f"Current step {current_step} is past merge step {ms}. "
                     "This merge will be skipped."
                 )
-                self._current_merge_idx += 1
-                continue
-
-            break
+                self._completed_merges.add(ms)
 
         # Log window start steps for verification
-        remaining = self._merge_steps[self._current_merge_idx:]
-        window_starts = [max(0, s - self.merge_last_n_steps + 1) for s in remaining]
+        remaining = [ms for ms in self._merge_steps if ms not in self._completed_merges]
+        window_starts = [self._window_start(ms) for ms in remaining]
         log.info(
             f"Remaining merge steps: {remaining}. "
             f"Ensure checkpoints exist at window starts: {window_starts}"
@@ -233,7 +206,7 @@ class ModelMergeCallback(Callback):
         ephemeral_interval = checkpointer.ephemeral_save_interval
         if ephemeral_interval is not None:
             for merge_step in self._merge_steps:
-                window_start = max(0, merge_step - self.merge_last_n_steps + 1)
+                window_start = self._window_start(merge_step)
                 for step in range(window_start + 1, merge_step + 1):
                     if step % ephemeral_interval == 0:
                         raise OLMoConfigurationError(
@@ -251,52 +224,65 @@ class ModelMergeCallback(Callback):
         )
 
     def post_train_batch(self):
-        if not self.enabled or self._current_merge_step is None:
+        if not self.enabled:
             return
 
-        if self._is_accumulating:
-            self._accumulate_weights()
+        active = self._active_windows()
+        if not active:
+            return
 
-        if self.step == self._current_merge_step:
-            self._save_merged_checkpoint()
-
-    def _accumulate_weights(self):
+        # Copy model weights to CPU once for all active windows
         model = self.trainer.train_module.model
-
         model_state = {
             k: get_local_tensor(p.data.detach()).to("cpu")
             for k, p in model.named_parameters()
         }
 
-        if self._accumulator is None:
-            log.info(f"Starting weight accumulation at step {self.step}")
-            self._accumulator = {
+        for ms in active:
+            self._accumulate_weights(ms, model_state)
+
+        # Save any windows that just completed
+        for ms in active:
+            if self.step == ms:
+                self._save_merged_checkpoint(ms)
+
+    def _accumulate_weights(self, merge_step: int, model_state: Dict[str, torch.Tensor]):
+        if merge_step not in self._accumulators:
+            log.info(f"Starting weight accumulation for merge step {merge_step} at step {self.step}")
+            self._accumulators[merge_step] = {
                 k: torch.zeros_like(v, dtype=torch.float32, device="cpu")
                 for k, v in model_state.items()
             }
+            self._accumulator_counts[merge_step] = 0
 
         for key, value in model_state.items():
-            self._accumulator[key].add_(value.float())
+            self._accumulators[merge_step][key].add_(value.float())
 
-        self._n_accumulated += 1
-        log.debug(f"Accumulated weights at step {self.step} ({self._n_accumulated} total)")
+        self._accumulator_counts[merge_step] += 1
+        log.debug(
+            f"Accumulated weights for merge step {merge_step} at step {self.step} "
+            f"({self._accumulator_counts[merge_step]} total)"
+        )
 
-    def _save_merged_checkpoint(self):
-        if self._accumulator is None or self._n_accumulated == 0:
-            log.warning("No weights accumulated, cannot save merged checkpoint")
+    def _save_merged_checkpoint(self, merge_step: int):
+        accumulator = self._accumulators.get(merge_step)
+        count = self._accumulator_counts.get(merge_step, 0)
+
+        if accumulator is None or count == 0:
+            log.warning(f"No weights accumulated for merge step {merge_step}, cannot save")
             return
 
         log.info(
-            f"Saving merged checkpoint (average of {self._n_accumulated} steps) "
-            f"at step {self.step}"
+            f"Saving merged checkpoint (average of {count} steps) "
+            f"at step {merge_step}"
         )
 
         averaged_state: Dict[str, torch.Tensor] = {
-            key: acc_val / self._n_accumulated
-            for key, acc_val in self._accumulator.items()
+            key: acc_val / count
+            for key, acc_val in accumulator.items()
         }
 
-        output_path = self._merged_checkpoint_path(self.step)
+        output_path = self._merged_checkpoint_path(merge_step)
 
         import os
         if get_rank() == 0:
@@ -318,10 +304,10 @@ class ModelMergeCallback(Callback):
 
         self._evaluate_merged(averaged_state)
 
-        # Clean up and advance
-        self._accumulator = None
-        self._n_accumulated = 0
-        self._current_merge_idx += 1
+        # Clean up
+        del self._accumulators[merge_step]
+        del self._accumulator_counts[merge_step]
+        self._completed_merges.add(merge_step)
 
     def _evaluate_merged(self, averaged_state: Dict[str, torch.Tensor]):
         evaluator_callbacks = [
@@ -409,9 +395,24 @@ def compute_merge_window_starts(
     merge_last_n_steps: int,
 ) -> List[int]:
     """
-    Compute the window start steps where checkpoints should be saved.
+    Compute the required checkpoint steps for merge windows.
 
-    These are the steps at which accumulation begins. If training resumes
-    from a checkpoint at a window start, accumulation can be recomputed.
+    For overlapping windows, only the earliest start in each overlapping group
+    is returned, since resuming from that checkpoint allows all overlapping
+    windows to re-accumulate correctly.
     """
-    return [max(0, step - merge_last_n_steps + 1) for step in merge_steps]
+    if not merge_steps:
+        return []
+
+    required_starts: List[int] = []
+    prev_merge_step = -1
+
+    for ms in sorted(merge_steps):
+        start = max(0, ms - merge_last_n_steps + 1)
+        # If this window starts after the previous merge step completed,
+        # it's a new group and needs its own checkpoint
+        if start > prev_merge_step:
+            required_starts.append(start)
+        prev_merge_step = ms
+
+    return required_starts

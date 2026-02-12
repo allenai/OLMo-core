@@ -18,21 +18,48 @@ from olmo_core.model_ladder import (
     WSDSChinchillaRunConfigurator,
 )
 from olmo_core.train import callbacks
+from olmo_core.train.callbacks.model_merger import compute_merge_window_starts
 
 log = logging.getLogger(__name__)
 
-# use my project for testing
-DEFAULT_PROJECT = "bailey-testing"
+MERGE_LAST_N_STEPS = 500
+
 
 class ModelMergingLadder(ModelLadder):
-    """ModelLadder that includes ModelMergeCallback for weight averaging."""
+    """ModelLadder that includes ModelMergeCallback for weight averaging at pre-decay steps."""
 
     def _configure_trainer(self, size_spec: str, for_benchmarking: bool = False):
         config = super()._configure_trainer(size_spec, for_benchmarking)
+
+        # Get pre-decay steps from checkpoint intervals (already computed by the base class)
+        num_params = self.get_num_params(size_spec)
+        global_batch_size, *_ = self._configure_batch_size_and_num_devices(size_spec, num_params)
+
+        checkpoint_intervals = self.run_configurator.configure_checkpoint_intervals(
+            num_params, global_batch_size
+        )
+        merge_steps = [
+            self._duration_to_steps(d, global_batch_size)
+            for d, name in checkpoint_intervals
+            if "pre-decay" in name
+        ]
+
+        window_starts = compute_merge_window_starts(merge_steps, MERGE_LAST_N_STEPS)
+
+        # Add window starts to checkpointer's fixed_steps
+        checkpointer = config.callbacks["checkpointer"]
+        checkpointer.fixed_steps = sorted(
+            set(checkpointer.fixed_steps or []) | set(window_starts)
+        )
+        # Disable ephemeral checkpoints to avoid interference with merge windows
+        checkpointer.ephemeral_save_interval = None
+
         config.callbacks["model_merger"] = callbacks.ModelMergeCallback(
-            merge_last_n_steps=500,
+            merge_step=merge_steps,
+            merge_last_n_steps=MERGE_LAST_N_STEPS,
             enabled=not for_benchmarking,
         )
+
         return config
 
 
@@ -40,7 +67,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
     return ModelMergingLadder(
         name=args.name,
-        project=args.project or DEFAULT_PROJECT,
+        project=args.project,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
