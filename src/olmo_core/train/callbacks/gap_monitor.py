@@ -34,6 +34,12 @@ class GAPMonitorCallback(Callback):
     """
 
     enabled: bool = True
+    """Master switch. When ``False``, all monitoring and gradient dumping is disabled."""
+
+    monitor: bool = True
+    """Whether to run GAP monitoring (forward/backward hooks, per-tensor stats).
+    Only takes effect when ``enabled=True``."""
+
     interval: int = 1
     """How often (in steps) to measure statistics. Default is every step."""
 
@@ -56,10 +62,14 @@ class GAPMonitorCallback(Callback):
             raise ValueError(
                 f"dump_gradients_save_first_n must be positive, got {self.dump_gradients_save_first_n}"
             )
-        if self.dump_gradients and not self.enabled:
+        if not self.enabled and self.dump_gradients:
             log.warning(
-                "dump_gradients=True has no effect when enabled=False. "
-                "Set enabled=True to enable gradient dumping."
+                "dump_gradients=True has no effect when enabled=False."
+            )
+        if self.enabled and not self.monitor and not self.dump_gradients:
+            raise ValueError(
+                "enabled=True but both monitor and dump_gradients are False. "
+                "Set at least one to True, or set enabled=False."
             )
 
     def post_attach(self):
@@ -69,7 +79,7 @@ class GAPMonitorCallback(Callback):
             raise ValueError(f"{type(self).__name__} only works with the TransformerTrainModule.")
 
     def pre_train(self):
-        if not self.enabled:
+        if not self.enabled or not self.monitor:
             return
 
         assert isinstance(self.trainer.train_module, TransformerTrainModule)
@@ -88,7 +98,7 @@ class GAPMonitorCallback(Callback):
         self._handles = handles  # type: ignore[assignment]
 
     def pre_step(self, batch: Dict[str, Any]):
-        if not self.enabled:
+        if not self.enabled or not self.monitor:
             return
 
         self._dry_run_complete = True
@@ -98,11 +108,12 @@ class GAPMonitorCallback(Callback):
         if not self.enabled:
             return
 
-        assert isinstance(self.trainer.train_module, TransformerTrainModule)
-        for n, p in self.trainer.train_module.model.named_parameters():
-            self.record_tensor_stats(n, p, "param")
-            if p.grad is not None:
-                self.record_tensor_stats(n, p.grad, "grad")
+        if self.monitor:
+            assert isinstance(self.trainer.train_module, TransformerTrainModule)
+            for n, p in self.trainer.train_module.model.named_parameters():
+                self.record_tensor_stats(n, p, "param")
+                if p.grad is not None:
+                    self.record_tensor_stats(n, p.grad, "grad")
 
         if self.dump_gradients:
             self._dump_gradients()
@@ -110,7 +121,7 @@ class GAPMonitorCallback(Callback):
     @torch._dynamo.disable()
     def forward_hook(self, module: nn.Module, args, output, module_name: str):
         del module, args
-        if not self.enabled:
+        if not self.enabled or not self.monitor:
             return
 
         if isinstance(output, tuple):
@@ -124,7 +135,7 @@ class GAPMonitorCallback(Callback):
     @torch._dynamo.disable()
     def backward_hook(self, module: nn.Module, grad_output, module_name: str):
         del module
-        if not self.enabled:
+        if not self.enabled or not self.monitor:
             return
 
         if isinstance(grad_output, tuple):
