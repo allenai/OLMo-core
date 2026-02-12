@@ -46,7 +46,7 @@ DATASET_CONFIG = SourceMixtureList(
             source_name="assaisonnes_random",
             target_ratio=1.0,
             paths=[
-                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools/qc_subsample/0.25200871_sub_0.14_sub/dolma2-tokenizer/*.npy"
+                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools_decon/qc_subsample/0.25200871_sub_0.14_sub/dolma2-tokenizer/*.npy"
             ],
         )
     ]
