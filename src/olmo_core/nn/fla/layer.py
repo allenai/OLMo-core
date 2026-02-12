@@ -20,25 +20,45 @@ class FLA(nn.Module):
     def __init__(self, inner: "fla.layers.ABCAttention"):
         super().__init__()
         self.inner = inner
-        self.kv_cache_manager = None
+        self.cache = None
 
-    def init_kv_cache_manager(self, batch_size: int):
-        raise NotImplementedError()
+    def init_cache(self):
+        """Initialize the FLA cache for inference.
+
+        Each FLA wrapper has its own cache, so the inner layer's ``layer_idx``
+        is set to 0 to index into this per-layer cache correctly.
+        """
+        from fla.models.utils import Cache
+
+        self.inner.layer_idx = 0
+        self.cache = Cache()
+
+    def reset_cache(self):
+        """Reset (re-initialize) the FLA cache."""
+        self.init_cache()
+
+    def free_cache(self):
+        """Free the FLA cache."""
+        self.cache = None
 
     def forward(
         self,
         x: torch.Tensor,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
         **_kwargs,
     ) -> torch.Tensor:
         # Note: For Ulysses CP, cu_doc_lens should already be the full unsharded
         # document lengths (set by the transformer model).
-        if self.kv_cache_manager is not None and self.kv_cache_manager.current_position() == 0:
-            raise NotImplementedError()  # prefill
-        elif self.kv_cache_manager is not None:
-            raise NotImplementedError()  # generate step
-        else:
-            return self.inner(x, cu_seqlens=cu_doc_lens)[0]  # returns out, ?, cache
+        output, _, cache = self.inner(
+            x,
+            cu_seqlens=cu_doc_lens,
+            past_key_values=self.cache,
+            use_cache=use_cache or self.cache is not None,
+        )
+        if cache is not None:
+            self.cache = cache
+        return output
 
     def apply_tp(
         self,
