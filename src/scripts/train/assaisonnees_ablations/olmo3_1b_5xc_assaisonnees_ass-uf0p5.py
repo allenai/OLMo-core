@@ -40,7 +40,7 @@ DATASET_CONFIG = SourceMixtureList(
             source_name="assaisonnes_uf0p5",  # metadata.ultrafineweb.__label__pos >= 0.5
             target_ratio=1.0,
             paths=[
-                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools/qc_subsample/uf0.5_filtered/dolma2-tokenizer/*.npy"
+                f"s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v5/ablation_pools_decon/qc_subsample/uf0.5_filtered/dolma2-tokenizer/*.npy"
             ],
         )
     ]
