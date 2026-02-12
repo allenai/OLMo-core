@@ -34,6 +34,7 @@ class AttentionSinkMonitor:
     token_idx: int = 4000  # Token position to analyze
     sink_range: Tuple[int, int] = (0, 100)  # Range of sink token indices
     local_range: Tuple[int, int] = (3900, 4000)  # Range of local token indices
+    saturation_threshold: float = 0.8  # Max attention weight above this = "saturated"
 
     # Internal state
     _handles: List[torch.utils.hooks.RemovableHandle] = field(default_factory=list)
@@ -150,6 +151,12 @@ class AttentionSinkMonitor:
         else:
             percent_local = 0.0
 
+        # Softmax saturation: how often does the max attention weight exceed the threshold?
+        # attn shape: [B, H, 1, t] — get max over keys per head
+        max_attn_per_head = attn.squeeze(-2).max(dim=-1).values  # [B, H]
+        pct_heads_saturated = float((max_attn_per_head > self.saturation_threshold).float().mean() * 100)
+        avg_max_attn = float(max_attn_per_head.mean() * 100)
+
         # A "sink layer" is one with full attention (no sliding window)
         is_sink_layer = 1 if window_size == (-1, -1) else 0
 
@@ -159,6 +166,8 @@ class AttentionSinkMonitor:
             'percent_sink': percent_sink,
             'percent_local': percent_local,
             'is_sink_layer': is_sink_layer,
+            'pct_heads_saturated': pct_heads_saturated,
+            'avg_max_attn': avg_max_attn,
         })
 
         self._current_layer += 1
@@ -175,6 +184,8 @@ class AttentionSinkMonitor:
 
         avg_sink = sum(r['percent_sink'] for r in self._results) / len(self._results)
         avg_local = sum(r['percent_local'] for r in self._results) / len(self._results)
+        avg_saturated = sum(r['pct_heads_saturated'] for r in self._results) / len(self._results)
+        avg_max_attn = sum(r['avg_max_attn'] for r in self._results) / len(self._results)
 
         print(f"\n{'='*60}")
         print(f"ATTENTION SINK SUMMARY")
@@ -184,6 +195,9 @@ class AttentionSinkMonitor:
         print(f"  Local tokens: {self.local_range[0]}-{self.local_range[1]}")
         print(f"  Avg % attention to sink: {avg_sink:.2f}%")
         print(f"  Avg % attention to local: {avg_local:.2f}%")
+        print(f"  Saturation threshold: {self.saturation_threshold*100:.0f}%")
+        print(f"  Avg % heads saturated: {avg_saturated:.2f}%")
+        print(f"  Avg max attention weight: {avg_max_attn:.2f}%")
         print(f"{'='*60}")
 
 
@@ -261,6 +275,12 @@ def parse_args():
         default=4000,
         help="Token index to compute attention at (also updates local_range and max_length)",
     )
+    parser.add_argument(
+        "--saturation_threshold",
+        type=float,
+        default=0.8,
+        help="A head is 'saturated' if its max softmax weight exceeds this (default: 0.8)",
+    )
     return parser.parse_args()
 
 
@@ -299,14 +319,14 @@ def main():
             continue
 
         # Results for this model, grouped by layer across all documents
-        # layer -> list of (percent_sink, percent_local, doc_id, is_sink_layer) tuples
-        layer_results: dict[int, List[Tuple[float, float, str, int]]] = defaultdict(list)
+        layer_results: dict[int, list] = defaultdict(list)
 
         # Create and attach the monitor once per model
         monitor = AttentionSinkMonitor(
             token_idx=token_idx,
             sink_range=(0, 100),
             local_range=local_range,
+            saturation_threshold=args.saturation_threshold,
         )
         monitor.attach(model.generation_module.model)
 
@@ -331,45 +351,52 @@ def main():
 
             # Collect results for this document
             for result in monitor.get_results():
-                layer_results[result['layer']].append(
-                    (result['percent_sink'], result['percent_local'], doc_id, result['is_sink_layer'])
-                )
+                layer_results[result['layer']].append({
+                    'percent_sink': result['percent_sink'],
+                    'percent_local': result['percent_local'],
+                    'doc_id': doc_id,
+                    'is_sink_layer': result['is_sink_layer'],
+                    'pct_heads_saturated': result['pct_heads_saturated'],
+                    'avg_max_attn': result['avg_max_attn'],
+                })
 
         # Detach hooks after processing all documents for this model
         monitor.detach()
 
         # Store individual and averaged results for this model
         for layer, results in sorted(layer_results.items()):
-            # is_sink_layer is the same for all results in this layer
-            is_sink_layer = results[0][3]
+            is_sink_layer = results[0]['is_sink_layer']
 
             # Individual results for each document
-            for percent_sink, percent_local, doc_id, _ in results:
+            for r in results:
                 all_results.append({
                     'model': model_name,
                     'layer': layer,
-                    'doc_id': doc_id,
-                    'percent_sink': percent_sink,
-                    'percent_local': percent_local,
+                    'doc_id': r['doc_id'],
+                    'percent_sink': r['percent_sink'],
+                    'percent_local': r['percent_local'],
                     'is_sink_layer': is_sink_layer,
+                    'pct_heads_saturated': r['pct_heads_saturated'],
+                    'avg_max_attn': r['avg_max_attn'],
                 })
 
             # Average across all documents for this layer
-            avg_sink = sum(r[0] for r in results) / len(results)
-            avg_local = sum(r[1] for r in results) / len(results)
+            n = len(results)
             all_results.append({
                 'model': model_name,
                 'layer': layer,
                 'doc_id': 'AVERAGE',
-                'percent_sink': avg_sink,
-                'percent_local': avg_local,
+                'percent_sink': sum(r['percent_sink'] for r in results) / n,
+                'percent_local': sum(r['percent_local'] for r in results) / n,
                 'is_sink_layer': is_sink_layer,
+                'pct_heads_saturated': sum(r['pct_heads_saturated'] for r in results) / n,
+                'avg_max_attn': sum(r['avg_max_attn'] for r in results) / n,
             })
 
     # Write all results to TSV file
     with open(output_file, 'w') as f:
         # Write header
-        f.write("model\tlayer\tdoc_id\tpercent_sink\tpercent_local\tis_sink_layer\n")
+        f.write("model\tlayer\tdoc_id\tpercent_sink\tpercent_local\tis_sink_layer\tpct_heads_saturated\tavg_max_attn\n")
 
         # Write all results
         for result in all_results:
@@ -379,7 +406,9 @@ def main():
                 f"{result['doc_id']}\t"
                 f"{result['percent_sink']:.2f}\t"
                 f"{result['percent_local']:.2f}\t"
-                f"{result['is_sink_layer']}\n"
+                f"{result['is_sink_layer']}\t"
+                f"{result['pct_heads_saturated']:.2f}\t"
+                f"{result['avg_max_attn']:.2f}\n"
             )
 
     print(f"\nResults written to: {output_file}")
