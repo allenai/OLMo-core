@@ -63,9 +63,7 @@ class GAPMonitorCallback(Callback):
                 f"dump_gradients_save_first_n must be positive, got {self.dump_gradients_save_first_n}"
             )
         if not self.enabled and self.dump_gradients:
-            log.warning(
-                "dump_gradients=True has no effect when enabled=False."
-            )
+            log.warning("dump_gradients=True has no effect when enabled=False.")
         if self.enabled and not self.monitor and not self.dump_gradients:
             raise ValueError(
                 "enabled=True but both monitor and dump_gradients are False. "
