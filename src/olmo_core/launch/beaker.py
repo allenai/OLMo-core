@@ -390,6 +390,16 @@ class BeakerLaunchConfig(Config):
     If no new logs are detected in a time warning will be issued.
     """
 
+    pre_setup: str | None = None
+    """
+    A command to run before the setup steps.
+    """
+
+    post_setup: str | None = None
+    """
+    A command to run after the setup steps.
+    """
+
     _beaker = None
 
     @property
@@ -634,6 +644,9 @@ class BeakerLaunchConfig(Config):
             # Python settings.
             system_python=self.system_python,
             torchrun=torchrun,
+            # Hooks.
+            pre_setup=self.pre_setup,
+            post_setup=self.post_setup,
             # Git settings.
             git_repo=self.git,
             allow_dirty=self.allow_dirty,
