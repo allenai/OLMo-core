@@ -22,7 +22,7 @@ from ..distributed.utils import (
     is_distributed,
 )
 from ..utils import cuda_sync_debug_mode, move_to_device
-from .common import ReduceType
+from .common import WEIGHTED_MEAN_WEIGHT_PREFIX, ReduceType
 
 log = logging.getLogger(__name__)
 
@@ -213,7 +213,14 @@ def reduce_metrics(
     if not is_distributed():
         for step, step_metrics in metrics.items():
             for name, value in step_metrics.items():
-                out[step][name] = value.item()
+                if name.startswith(WEIGHTED_MEAN_WEIGHT_PREFIX):
+                    continue
+                reduce_type = metrics_reduce_type.get(name)
+                if reduce_type == ReduceType.weighted_mean:
+                    weight_name = WEIGHTED_MEAN_WEIGHT_PREFIX + name
+                    out[step][name] = value.item() / step_metrics[weight_name].item()
+                else:
+                    out[step][name] = value.item()
         return out
 
     world_size = get_world_size(process_group)
@@ -258,7 +265,7 @@ def reduce_metrics(
         for name in sorted_metric_names:
             value = step_metrics.get(name)
             reduce_type = step_metrics_reduce_type[name]
-            if reduce_type in (ReduceType.mean, ReduceType.sum):
+            if reduce_type in (ReduceType.mean, ReduceType.sum, ReduceType.weighted_mean):
                 step_sum_metric_names.append(name)
                 if value is None:
                     step_sum_metric_values.append(move_to_device(torch.tensor(0.0), device))
@@ -334,11 +341,18 @@ def reduce_metrics(
         step_sum_metric_items = all_sum_metrics[i].tolist()
         step_max_metric_names = max_metric_names[i]
         step_max_metric_items = all_max_metrics[i].tolist()
-        for name, item in zip(step_sum_metric_names, step_sum_metric_items):
-            item = item * divide_factor
+        step_sum_items = {
+            n: v * divide_factor for n, v in zip(step_sum_metric_names, step_sum_metric_items)
+        }
+        for name, item in step_sum_items.items():
+            if name.startswith(WEIGHTED_MEAN_WEIGHT_PREFIX):
+                continue
             reduce_type = step_metrics_reduce_type[name]
             if reduce_type == ReduceType.mean:
                 item = item / all_steps_metric_world_sizes.get(step, {}).get(name, world_size)
+            elif reduce_type == ReduceType.weighted_mean:
+                weight_name = WEIGHTED_MEAN_WEIGHT_PREFIX + name
+                item = item / step_sum_items[weight_name]
             elif reduce_type == ReduceType.l2_norm:
                 item = math.sqrt(item)
             out[step][name] = item
