@@ -74,7 +74,7 @@ DATASET_CONFIG = SourceMixtureList(
         SourceMixtureConfig(
             source_name="stack-edu-redux",
             target_ratio=0.5,
-            path=[
+            paths=[
                 f"{SPRING2CODE_PREFIX}/{language}/quality_p{pct}/{TOKENIZER_CONFIG.identifier}/*.npy"
                 for language in STACK_EDU_LANGS
                 for pct in PERCENTILES
