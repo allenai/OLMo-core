@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from torch import nn
@@ -26,6 +26,9 @@ from olmo_core.nn.attention.ring import (
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
+
+if TYPE_CHECKING:
+    from olmo_core.nn.transformer.init import InitMethod
 
 
 class GatedDeltaNet(SequenceMixer):
@@ -96,18 +99,8 @@ class GatedDeltaNet(SequenceMixer):
         self.w_a = nn.Linear(d_model, self.n_v_heads, bias=False, dtype=dtype, device=init_device)
         self.w_b = nn.Linear(d_model, self.n_v_heads, bias=False, dtype=dtype, device=init_device)
 
-        A = torch.empty(self.n_v_heads, dtype=torch.float32, device=init_device).uniform_(0, 16)
-        self.A_log = nn.Parameter(torch.log(A))  # recommended to not apply weight decay to A_log
-
-        dt_min, dt_max, dt_init_floor = 0.001, 0.1, 1e-4  # hard coded for now
-        dt = torch.exp(
-            torch.rand(self.n_v_heads, device=init_device) * (math.log(dt_max) - math.log(dt_min))
-            + math.log(dt_min),
-        )
-        dt = torch.clamp(dt, min=dt_init_floor)
-        # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
-        inv_dt = dt + torch.log(-torch.expm1(-dt))
-        self.dt_bias = nn.Parameter(inv_dt)  # bias param, recommended to not apply weight decay
+        self.A_log = nn.Parameter(torch.empty(self.n_v_heads, dtype=dtype, device=init_device))
+        self.dt_bias = nn.Parameter(torch.empty(self.n_v_heads, dtype=dtype, device=init_device))
 
         self.q_conv1d = CausalConv1d(
             hidden_size=self.key_dim,
@@ -243,6 +236,47 @@ class GatedDeltaNet(SequenceMixer):
         self.q_conv1d.apply_cp(cp_mesh)
         self.k_conv1d.apply_cp(cp_mesh)
         self.v_conv1d.apply_cp(cp_mesh)
+
+    @torch.no_grad()
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        if init_method == InitMethod.normalized:
+            std = d_model**-0.5
+
+        for w in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g):
+            init_linear(w, std=std, generator=generator)
+        for w in (self.q_conv1d, self.k_conv1d, self.v_conv1d):
+            init_linear(w, std=std, generator=generator)
+
+        self.A_log.copy_(nn.init.uniform_(self.A_log, a=0, b=16, generator=generator).log())
+        dt_min, dt_max, dt_init_floor = 0.001, 0.1, 1e-4
+        dt = torch.exp(
+            nn.init.uniform_(self.dt_bias, generator=generator)
+            * (math.log(dt_max) - math.log(dt_min))
+            + math.log(dt_min),
+        ).clamp(min=dt_init_floor)
+        # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
+        inv_dt = dt + torch.log(-torch.expm1(-dt))
+        self.dt_bias.copy_(inv_dt)
+
+        if self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
+
+        init_linear(self.w_out, std=std, generator=generator)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
