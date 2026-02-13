@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `eval_on_finish` option to `EvaluatorCallback`.
 - Added the option to use a process pool instead of a thread pool when writing checkpoints.
 - Added `max_document_length` and `long_doc_strategy` options to `NumpyDocumentSource` in composable data API.
+- Mark ephemeral checkpoints with the `ephemeral` flag in their metadata.
+- Added `ephemeral: Optional[bool]` flag the `Checkpointer.find_checkpoints()` for filtering.
 
 ### Fixed
 
