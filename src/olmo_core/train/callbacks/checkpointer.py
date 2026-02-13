@@ -278,6 +278,7 @@ class CheckpointerCallback(Callback):
         elif (
             self.ephemeral_save_interval is not None
             and self.step % self.ephemeral_save_interval == 0
+            and not self.trainer.block_ephemeral_checkpoints
         ):
             # Maybe save ephemeral checkpoint.
             if (

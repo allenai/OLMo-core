@@ -242,6 +242,13 @@ class Trainer:
     training throughput.
     """
 
+    block_ephemeral_checkpoints: bool = False
+    """
+    When ``True``, the checkpointer will skip ephemeral checkpoint saves.
+    Used by :class:`~olmo_core.train.callbacks.ModelMergeCallback` to prevent
+    ephemeral checkpoints during merge windows.
+    """
+
     hard_stop: Optional[Duration] = None
     """
     Set a hard stopping point for the trainer. This is useful for ablations when you you don't
