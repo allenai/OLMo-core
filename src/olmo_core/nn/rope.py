@@ -50,6 +50,46 @@ def compute_inv_freqs(theta: int, dim: int, device: torch.device) -> "torch.Tens
     return inv_freq
 
 
+def compute_local_positions(
+    batch_size: int,
+    k_len: int,
+    q_abs_start: int,
+    q_len: int,
+    cu_doc_lens: torch.Tensor,
+    device: torch.device,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute per-document local positions from cumulative document lengths.
+
+    When packing multiple documents into a single sequence, this function computes
+    position indices that reset at each document boundary. For example, if two
+    10-token documents are packed together, instead of positions [0..19], this
+    returns [0..9, 0..9].
+
+    :param batch_size: Number of sequences in the batch.
+    :param k_len: Length of the key sequence (per batch element).
+    :param q_abs_start: Absolute start position of the query within the key sequence.
+    :param q_len: Length of the query sequence.
+    :param cu_doc_lens: Cumulative document lengths in flattened [B*T] space,
+        shape (num_docs + 1,). For example, [0, 10, 20, 30, 40] for B=2 with
+        two 10-token documents per batch element.
+    :param device: Device to create tensors on.
+
+    :returns: Tuple of (k_local_positions, q_local_positions) with shapes
+        (batch_size, k_len) and (batch_size, q_len) respectively.
+    """
+    batch_offsets = torch.arange(batch_size, device=device) * k_len
+    positions = torch.arange(k_len, device=device)
+    global_positions = batch_offsets[:, None] + positions[None, :]
+
+    doc_indices = torch.searchsorted(cu_doc_lens[1:], global_positions.flatten(), side="right")
+    doc_starts = cu_doc_lens[doc_indices]
+    local_positions = global_positions.flatten() - doc_starts
+    k_local_positions = local_positions.view(batch_size, k_len)
+    q_local_positions = k_local_positions[:, q_abs_start : q_abs_start + q_len]
+    return k_local_positions, q_local_positions
+
+
 @dataclass
 class RoPEScalingConfig(Config):
     """
@@ -478,6 +518,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
@@ -490,6 +531,9 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         :param head_first: If the head dim comes before the sequence dim.
         :param start_pos: The absolute position of the first query token (eg for decoding
             where the first query token is just the most recently decoded token).
+        :param cu_doc_lens: Cumulative document lengths for per-document position computation.
+            When provided, positions are reset at document boundaries instead of using
+            global positions.
 
         :returns: The query and key matrices after RoPE has been applied.
         """
@@ -523,7 +567,29 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                     f"have {pos_sin.size(-2)}."
                 )
 
-            if head_first:
+            if cu_doc_lens is not None:
+                k_local_pos, q_local_pos = compute_local_positions(
+                    q_.size(0), k_len, q_abs_start, q_len, cu_doc_lens, q_.device
+                )
+                sin_q = pos_sin[q_local_pos, :]
+                cos_q = pos_cos[q_local_pos, :]
+                sin_k = pos_sin[k_local_pos, :]
+                cos_k = pos_cos[k_local_pos, :]
+
+                if head_first:
+                    sin_q = sin_q[:, None, :, :]
+                    cos_q = cos_q[:, None, :, :]
+                    sin_k = sin_k[:, None, :, :]
+                    cos_k = cos_k[:, None, :, :]
+                else:
+                    sin_q = sin_q[:, :, None, :]
+                    cos_q = cos_q[:, :, None, :]
+                    sin_k = sin_k[:, :, None, :]
+                    cos_k = cos_k[:, :, None, :]
+
+                q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
+                k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
+            elif head_first:
                 sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
                 cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
                 sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
@@ -732,6 +798,7 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
@@ -744,6 +811,9 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         :param head_first: If the head dim comes before the sequence dim.
         :param start_pos: The absolute position of the first query token (eg for decoding
             where the first query token is just the most recently decoded token).
+        :param cu_doc_lens: Cumulative document lengths for per-document position computation.
+            When provided, positions are reset at document boundaries instead of using
+            global positions.
 
         :returns: The query and key matrices after RoPE has been applied.
         """
@@ -776,7 +846,20 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
             q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
             k_abs_start = start_pos if start_pos is not None else 0
 
-            if head_first:
+            if cu_doc_lens is not None:
+                k_local_pos, q_local_pos = compute_local_positions(
+                    q_.size(0), k_len, q_abs_start, q_len, cu_doc_lens, q_.device
+                )
+                freqs_cis_q = freqs_cis[q_local_pos, :]
+                freqs_cis_k = freqs_cis[k_local_pos, :]
+
+                if head_first:
+                    q_ = self._apply_rotary_pos_emb(freqs_cis_q[:, None, :, :], q_)
+                    k_ = self._apply_rotary_pos_emb(freqs_cis_k[:, None, :, :], k_)
+                else:
+                    q_ = self._apply_rotary_pos_emb(freqs_cis_q[:, :, None, :], q_)
+                    k_ = self._apply_rotary_pos_emb(freqs_cis_k[:, :, None, :], k_)
+            elif head_first:
                 q_ = self._apply_rotary_pos_emb(
                     freqs_cis[None, None, q_abs_start : q_abs_start + q_len, :], q_
                 )
