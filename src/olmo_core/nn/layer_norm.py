@@ -177,11 +177,13 @@ class LayerNorm(nn.Module):
         else:
             return f"eps={self.eps}"
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, residual: torch.Tensor | None = None) -> torch.Tensor:
         """
         Apply layer norm.
 
         :param x: The input.
+        :param residual: Optional residual tensor to add to the normalized output.
+            If provided, the result is norm(x) + residual.
         """
         with torch.autocast(enabled=False, device_type=x.device.type):
             og_dtype = x.dtype
@@ -195,9 +197,11 @@ class LayerNorm(nn.Module):
                 weight=None if self.weight is None else self.weight.type_as(x),
                 bias=None if self.bias is None else self.bias.type_as(x),
                 eps=self.eps,
-            )
+            ).to(og_dtype)
 
-            return x.to(og_dtype)
+            if residual is not None:
+                x = x + residual
+            return x
 
 
 class RMSNorm(LayerNorm):
@@ -205,11 +209,13 @@ class RMSNorm(LayerNorm):
     RMSNorm, a simplified layer norm implementation.
     """
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, residual: torch.Tensor | None = None) -> torch.Tensor:
         """
         Apply RMSNorm.
 
         :param x: The input.
+        :param residual: Optional residual tensor to add to the normalized output.
+            If provided, the result is rms_norm(x) + residual.
         """
         with torch.autocast(enabled=False, device_type=x.device.type):
             og_dtype = x.dtype
@@ -225,6 +231,9 @@ class RMSNorm(LayerNorm):
                     x = self.weight.type_as(x) * x + self.bias.type_as(x)
                 else:
                     x = self.weight.type_as(x) * x
+
+            if residual is not None:
+                x = x + residual
 
             return x.to(og_dtype)
 
@@ -268,14 +277,22 @@ class CuTeRMSNorm(RMSNorm):
         )
         self._rms_norm_fn = rms_norm_fn
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self._rms_norm_fn(
+    def forward(self, x: torch.Tensor, residual: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Apply CuTe-based RMSNorm.
+
+        :param x: The input.
+        :param residual: Optional residual tensor to add to the normalized output.
+            If provided, the result is rms_norm(x) + residual.
+        """
+        result = self._rms_norm_fn(
             x,
             weight=None if self.weight is None else self.weight.type_as(x),
             bias=None if self.bias is None else self.bias.type_as(x),
+            residual=residual,
             eps=self.eps,
-        ).to(x.dtype)
-
+        )
+        return result.to(x.dtype)
 
 class FusedRMSNorm(RMSNorm):
     """
@@ -322,16 +339,26 @@ class FusedRMSNorm(RMSNorm):
         )
         self._rms_norm_fn = rms_norm_fn
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, residual: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Apply fused Triton-based RMSNorm.
+
+        :param x: The input.
+        :param residual: Optional residual tensor to add to the normalized output.
+            If provided, the result is rms_norm(x) + residual.
+        """
         og_dtype = x.dtype
         if self.full_precision:
             x = x.float()
-        return self._rms_norm_fn(
+        result = self._rms_norm_fn(
             x,
             self.weight.type_as(x),
             None if self.bias is None else self.bias.type_as(x),
             eps=self.eps,
         ).to(og_dtype)
+        if residual is not None:
+            result = result + residual
+        return result
 
 
 class L2Norm(LayerNorm):
@@ -349,5 +376,15 @@ class L2Norm(LayerNorm):
     ):
         super().__init__(size=size, elementwise_affine=False, bias=False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return l2_normalize(x)
+    def forward(self, x: torch.Tensor, residual: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Apply L2 normalization.
+
+        :param x: The input.
+        :param residual: Optional residual tensor to add to the normalized output.
+            If provided, the result is l2_norm(x) + residual.
+        """
+        result = l2_normalize(x)
+        if residual is not None:
+            result = result + residual
+        return result
