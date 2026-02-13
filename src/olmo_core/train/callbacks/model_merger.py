@@ -1,12 +1,11 @@
 """
-ModelMergeCallback that relies on external checkpoint coordination.
+ModelMergeCallback for averaging model weights over a window of training steps.
 
 This callback:
 - Supports explicit merge_step configuration or interval-based merging
 - Supports overlapping merge windows with per-window accumulators
 - Does NOT save accumulator state (no state_dict/load_state_dict)
-- Assumes checkpoints are saved at window start steps externally
-- On resume, recomputes accumulation from scratch
+- On resume, recomputes accumulation from the last checkpoint
 """
 
 import logging
@@ -32,11 +31,8 @@ class ModelMergeCallback(Callback):
     Averages model weights over the last ``merge_last_n_steps`` before each ``merge_step``
     and saves the result as a merged checkpoint.
 
-    IMPORTANT: This callback requires external checkpoint coordination.
-    The checkpointer must be configured to save at each window start step
-    (merge_step - merge_last_n_steps) to enable clean recovery on resume.
-
-    Use ``compute_merge_window_starts()`` to get the required checkpoint steps.
+    Ephemeral checkpoints are blocked during merge windows to ensure the full
+    window is always re-accumulated on resume.
     """
 
     priority: ClassVar[int] = 2
@@ -147,8 +143,6 @@ class ModelMergeCallback(Callback):
 
         log.info(f"ModelMergeCallback: merge_steps={self._merge_steps}")
 
-        self._validate_checkpointer_config()
-
         # Mark merge steps that are already past as completed
         current_step = self.step
         for ms in self._merge_steps:
@@ -159,75 +153,19 @@ class ModelMergeCallback(Callback):
                 )
                 self._completed_merges.add(ms)
 
-        # Log window start steps for verification
         remaining = [ms for ms in self._merge_steps if ms not in self._completed_merges]
-        window_starts = [self._window_start(ms) for ms in remaining]
-        log.info(
-            f"Remaining merge steps: {remaining}. "
-            f"Ensure checkpoints exist at window starts: {window_starts}"
-        )
-
-    def _validate_checkpointer_config(self):
-        """
-        Validate that the checkpointer is configured correctly for model merging.
-
-        Requirements:
-        1. Checkpointer's fixed_steps must include window start steps
-        2. No ephemeral checkpoints should occur during merge windows
-
-        This callback does NOT save its own state, so proper checkpoint coordination
-        is required to ensure accumulation can be recomputed on resume.
-        """
-        from .checkpointer import CheckpointerCallback
-
-        checkpointer = self.trainer.callbacks.get("checkpointer")
-        if not isinstance(checkpointer, CheckpointerCallback):
-            log.warning(
-                "ModelMergeCallback: No CheckpointerCallback found. "
-                "Cannot validate checkpoint configuration."
-            )
-            return
-
-        # Compute required window start steps
-        window_starts = compute_merge_window_starts(self._merge_steps, self.merge_last_n_steps)
-
-        # Check that fixed_steps includes all window starts
-        fixed_steps = set(checkpointer.fixed_steps or [])
-        missing_starts = [s for s in window_starts if s not in fixed_steps]
-
-        if missing_starts:
-            raise OLMoConfigurationError(
-                f"ModelMergeCallback: Checkpointer's fixed_steps is missing window start steps: "
-                f"{missing_starts}. These checkpoints are required for proper resume behavior. "
-                f"Add them using compute_merge_window_starts() in your ladder configuration."
-            )
-
-        # Check that ephemeral checkpoints won't occur during merge windows
-        ephemeral_interval = checkpointer.ephemeral_save_interval
-        if ephemeral_interval is not None:
-            for merge_step in self._merge_steps:
-                window_start = self._window_start(merge_step)
-                for step in range(window_start + 1, merge_step + 1):
-                    if step % ephemeral_interval == 0:
-                        raise OLMoConfigurationError(
-                            f"ModelMergeCallback: Ephemeral checkpoint at step {step} "
-                            f"would occur during merge window [{window_start}, {merge_step}]. "
-                            f"This could cause partial accumulation on resume. Either:\n"
-                            f"  - Increase ephemeral_save_interval to > {self.merge_last_n_steps}, or\n"
-                            f"  - Disable ephemeral checkpoints (ephemeral_save_interval=None), or\n"
-                            f"  - Adjust merge_last_n_steps to avoid overlap"
-                        )
-
-        log.info(
-            f"ModelMergeCallback: Checkpointer configuration validated. "
-            f"Window starts {window_starts} are in fixed_steps."
-        )
+        log.info(f"Remaining merge steps: {remaining}")
 
     def post_train_batch(self):
         if not self.enabled:
             return
 
         active = self._active_windows()
+
+        # Block ephemeral checkpoints during merge windows to prevent
+        # mid-window resume points that would shorten the average.
+        self.trainer.block_ephemeral_checkpoints = len(active) > 0
+
         if not active:
             return
 
@@ -353,12 +291,8 @@ class ModelMergeCallback(Callback):
             barrier()
 
     # NO state_dict or load_state_dict - state is not checkpointed!
-    # On resume, accumulation starts fresh from the checkpoint at window start.
-
-
-# ============================================================================
-# Helper functions for ladder configuration
-# ============================================================================
+    # On resume, accumulation starts fresh from the last checkpoint.
+    
 
 def compute_merge_steps_from_wsds(
     period_lengths: List[int],

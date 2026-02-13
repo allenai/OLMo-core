@@ -172,6 +172,7 @@ def build_config(
             ModelMergeCallback(
                 merge_step=max_steps,
                 merge_last_n_steps=merge_last_n_steps,
+                enabled=True,
             ),
         )
         .with_callback("weight_capture", weight_capture)
@@ -194,6 +195,92 @@ def test_train_small_model_cpu(tmp_path):
 
     config = build_config(save_folder, work_dir)
     train(config)
+
+
+def test_ephemeral_blocked_during_merge_window(tmp_path):
+    """Verify that ephemeral checkpoints are blocked during the merge window."""
+    save_folder = tmp_path / "checkpoints"
+    work_dir = tmp_path / "work_dir"
+    save_folder.mkdir()
+    work_dir.mkdir()
+
+    max_steps = 8
+    merge_last_n_steps = 3  # merge window: steps 6, 7, 8
+    ephemeral_save_interval = 2  # would normally save at steps 2, 4, 6, 8
+
+    tokenizer_config = TokenizerConfig.gpt2()
+
+    config = ExperimentConfig(
+        model=TransformerConfig.olmo3_30M(vocab_size=tokenizer_config.padded_vocab_size()),
+        dataset=NumpyFSLDatasetConfig(
+            paths=[DATA_PATH],
+            sequence_length=64,
+            tokenizer=tokenizer_config,
+            work_dir=str(work_dir),
+        ),
+        data_loader=NumpyDataLoaderConfig(global_batch_size=64 * 4, seed=0, num_workers=0),
+        train_module=TransformerTrainModuleConfig(
+            rank_microbatch_size=64 * 2,
+            max_sequence_length=64,
+            optim=AdamWConfig(lr=1e-3),
+            compile_model=False,
+        ),
+        trainer=TrainerConfig(
+            save_folder=str(save_folder),
+            save_overwrite=True,
+            metrics_collect_interval=1,
+            cancel_check_interval=1,
+            max_duration=Duration.steps(max_steps),
+        )
+        .with_callback(
+            "checkpointer",
+            CheckpointerCallback(
+                save_interval=1000,
+                ephemeral_save_interval=ephemeral_save_interval,
+            ),
+        )
+        .with_callback(
+            "model_merger",
+            ModelMergeCallback(
+                merge_step=max_steps,
+                merge_last_n_steps=merge_last_n_steps,
+                enabled=True,
+            ),
+        ),
+    )
+
+    seed_all(42)
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model)
+    dataset = config.dataset.build()
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader)
+    trainer.fit()
+
+    # Check which checkpoints were saved
+    checkpoint_steps = set()
+    for path in save_folder.iterdir():
+        name = path.name
+        if name.startswith("step") and not name.endswith("-merged"):
+            step = int(name.replace("step", ""))
+            checkpoint_steps.add(step)
+
+    # Ephemeral checkpoints at steps 2 and 4 should exist (before window)
+    # Steps 6 and 8 fall inside the merge window [6, 8] and should be blocked
+    assert 2 in checkpoint_steps or 4 in checkpoint_steps, (
+        f"Expected ephemeral checkpoints before the merge window, got: {checkpoint_steps}"
+    )
+    # Step 6 is inside the merge window and should be blocked
+    assert 6 not in checkpoint_steps, (
+        f"Ephemeral checkpoint at step 6 should have been blocked during merge window, "
+        f"got checkpoints at: {checkpoint_steps}"
+    )
+
+    # Merged checkpoint should still exist and be correct
+    merged_path = save_folder / f"step{max_steps}-merged"
+    assert merged_path.exists(), f"Merged checkpoint not found at {merged_path}"
+
+    log.info(f"Ephemeral blocking test passed. Checkpoints at steps: {checkpoint_steps}")
 
 
 def _run_train_gpu(tmp_path: Path):
