@@ -25,6 +25,11 @@ jobs:
 
     - name: Check that CHANGELOG has been updated
       run: |
-        # If this step fails, this means you haven't updated the CHANGELOG.md
-        # file with notes on your contribution.
-        git diff --name-only $(git merge-base origin/main HEAD) | grep '^CHANGELOG.md$' && echo "Thanks for helping keep our CHANGELOG up-to-date!"
+        echo "We keep a CHANGELOG to document additions, changes, and fixes between releases."
+        echo "If this step fails that means you've made changes to source code but haven't updated the CHANGELOG.md file."
+        echo "It's OKAY to ignore this error in some cases. For example, if:"
+        echo "- Your changes only affect an internal (non-public) component."
+        echo "- Your changes only affect a feature that hasn't been released yet, and that feature has already been described in the CHANGELOG."
+        echo "- Your changes don't affect the behavior of the library, such as fixing a typo in the documentation."
+        echo ""
+        git diff --name-only $(git merge-base origin/main HEAD) | grep '^CHANGELOG.md$' >/dev/null && echo "Thanks for helping keep our CHANGELOG up-to-date!"
