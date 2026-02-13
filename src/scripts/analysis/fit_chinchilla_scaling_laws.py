@@ -392,6 +392,7 @@ def fit_ladder(
     simple_flops: bool = False,
     num_slices: int = 4,
     post_decay_only: bool = True,
+    fixed_params: Optional[Dict[str, float]] = None,
 ) -> Tuple[
     ChinchillaParametricFit,
     np.ndarray,
@@ -430,9 +431,11 @@ def fit_ladder(
     weights = None
     if weight_by_compute:
         # Weight by sqrt(compute) to emphasize larger-scale runs
-        weights = np.sqrt(6 * N * D)
+        # weights = np.sqrt(6 * N * D)
+        weights = 6 * N * D
         if verbose:
-            print(f"\n  Weighting by sqrt(compute)")
+            # print(f"\n  Weighting by sqrt(compute)")
+            print(f"\n  Weighting by compute")
 
     if verbose:
         print(f"\n  Fitting with {len(N)} data points...")
@@ -449,6 +452,7 @@ def fit_ladder(
             overestimate_penalty=overestimate_penalty,
             num_slices=num_slices,
             progress_bar=verbose,
+            fixed_params=fixed_params,
         )
         # Return the point estimate for consistency
         return bootstrap_fit.point_estimate, N, D, L, F, sizes, bootstrap_fit
@@ -460,6 +464,7 @@ def fit_ladder(
             weights=weights,
             overestimate_penalty=overestimate_penalty,
             num_slices=num_slices,
+            fixed_params=fixed_params,
         )
         return fit, N, D, L, F, sizes, None
 
@@ -487,7 +492,8 @@ def fit_rollout(
 
     weights = None
     if weight_by_compute:
-        weights = np.sqrt(6 * N * D)
+        # weights = np.sqrt(6 * N * D)
+        weights = 6 * N * D
 
     fit_fn = (
         ChinchillaParametricBootstrappedFit.fit if use_bootstrap else ChinchillaParametricFit.fit
@@ -892,7 +898,8 @@ def fit_domain_ladders(
         Tuple[ChinchillaParametricFit, np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]],
     ] = {}
     for domain, (N, D, L, F, sizes) in domain_data.items():
-        weights = np.sqrt(6 * N * D) if weight_by_compute else None
+        # weights = np.sqrt(6 * N * D) if weight_by_compute else None
+        weights = 6 * N * D if weight_by_compute else None
         try:
             fit = ChinchillaParametricFit.fit(
                 N,
@@ -1303,25 +1310,42 @@ def generate_token_savings_table(
     lines.append("        " + " & ".join(header2_parts) + r" \\")
     lines.append(r"        \midrule")
 
+    # Check if any ladder has bootstrap data
+    has_bootstrap = any(fits[n][6] is not None for n in ladder_names)
+
     for n_size in model_sizes:
         size_label = _fmt_model_size(n_size)
         row_parts = [size_label]
 
         # Compute D for reference architecture
         ref_fit = fits[ref_name][0]
+        ref_bootstrap = fits[ref_name][6]
         d_ref = solve_d_for_target_loss(ref_fit, target_loss, n_size)
         row_parts.append(_fmt_tokens(d_ref))
 
         # Compute D and savings for each other architecture
         for name in ladder_names[1:]:
             fit = fits[name][0]
+            bootstrap = fits[name][6]
             d_needed = solve_d_for_target_loss(fit, target_loss, n_size)
             row_parts.append(_fmt_tokens(d_needed))
 
             # Savings ratio: ref / this (> 1 means this arch needs fewer tokens)
             if np.isfinite(d_ref) and np.isfinite(d_needed) and d_needed > 0:
                 ratio = d_ref / d_needed
-                row_parts.append(f"{ratio:.2f}$\\times$")
+                # Compute bootstrap CI on savings ratio
+                ci_str = ""
+                if ref_bootstrap is not None and bootstrap is not None:
+                    ratios = []
+                    for rf, bf in zip(ref_bootstrap.fits, bootstrap.fits):
+                        d_r = solve_d_for_target_loss(rf, target_loss, n_size)
+                        d_b = solve_d_for_target_loss(bf, target_loss, n_size)
+                        if np.isfinite(d_r) and np.isfinite(d_b) and d_b > 0:
+                            ratios.append(d_r / d_b)
+                    if len(ratios) >= 3:
+                        lo, hi = np.percentile(ratios, [2.5, 97.5])
+                        ci_str = f" [{lo:.2f}, {hi:.2f}]"
+                row_parts.append(f"{ratio:.2f}$\\times${ci_str}")
             else:
                 row_parts.append("---")
 
@@ -1329,6 +1353,9 @@ def generate_token_savings_table(
 
     lines.append(r"        \bottomrule")
     lines.append(r"    \end{tabular}")
+    if has_bootstrap:
+        lines.append(r"    \vspace{1mm}")
+        lines.append(r"    {\footnotesize 95\% bootstrap CI shown in brackets where available.}")
     lines.append(r"\end{table}")
     return "\n".join(lines)
 
@@ -1400,6 +1427,15 @@ def generate_compute_equivalent_table(
     lines.append("        " + " & ".join(header2_parts) + r" \\")
     lines.append(r"        \midrule")
 
+    # Check if any ladder has bootstrap data
+    has_bootstrap = any(fits[n][6] is not None for n in ladder_names)
+
+    def _optimal_loss(fit: ChinchillaParametricFit, C: float) -> float:
+        p = fit.fitted_params
+        n_opt = np.sqrt(C * p.b_opt / (6.0 * p.a_opt))
+        d_opt = C / (6.0 * n_opt)
+        return float(fit.predict_loss(np.array([n_opt]), np.array([d_opt]))[0])
+
     for C in flop_budgets:
         # Format compute budget
         exp = int(np.floor(np.log10(C)))
@@ -1413,27 +1449,35 @@ def generate_compute_equivalent_table(
 
         # Compute loss for reference architecture
         ref_fit = fits[ref_name][0]
-        ref_p = ref_fit.fitted_params
-        ref_n_opt = np.sqrt(C * ref_p.b_opt / (6.0 * ref_p.a_opt))
-        ref_d_opt = C / (6.0 * ref_n_opt)
-        ref_loss = ref_fit.predict_loss(np.array([ref_n_opt]), np.array([ref_d_opt]))[0]
+        ref_bootstrap = fits[ref_name][6]
+        ref_loss = _optimal_loss(ref_fit, C)
         row_parts.append(f"{ref_loss:.3f}")
 
         # Compute loss for each other architecture
         for name in ladder_names[1:]:
             fit = fits[name][0]
-            p = fit.fitted_params
-            n_opt = np.sqrt(C * p.b_opt / (6.0 * p.a_opt))
-            d_opt = C / (6.0 * n_opt)
-            loss = fit.predict_loss(np.array([n_opt]), np.array([d_opt]))[0]
+            bootstrap = fits[name][6]
+            loss = _optimal_loss(fit, C)
             delta = loss - ref_loss
+            # Bootstrap CI on delta
+            ci_str = ""
+            if ref_bootstrap is not None and bootstrap is not None:
+                deltas = []
+                for rf, bf in zip(ref_bootstrap.fits, bootstrap.fits):
+                    deltas.append(_optimal_loss(bf, C) - _optimal_loss(rf, C))
+                if len(deltas) >= 3:
+                    lo, hi = np.percentile(deltas, [2.5, 97.5])
+                    ci_str = f" [{lo:+.3f}, {hi:+.3f}]"
             row_parts.append(f"{loss:.3f}")
-            row_parts.append(f"{delta:+.3f}")
+            row_parts.append(f"{delta:+.3f}{ci_str}")
 
         lines.append("        " + " & ".join(row_parts) + r" \\")
 
     lines.append(r"        \bottomrule")
     lines.append(r"    \end{tabular}")
+    if has_bootstrap:
+        lines.append(r"    \vspace{1mm}")
+        lines.append(r"    {\footnotesize 95\% bootstrap CI shown in brackets where available.}")
     lines.append(r"\end{table}")
     return "\n".join(lines)
 
@@ -1854,6 +1898,46 @@ def _scatter_by_dn(
     return scatter_lines
 
 
+def _scatter_by_model_size(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    sizes_arr: List[str],
+    style: Dict[str, str],
+    forget: bool = True,
+    mark_size: str = "1.5pt",
+) -> List[str]:
+    """Emit one scatter addplot per unique model size with opacity varying by model size."""
+    # Extract model-size label (e.g. "190M") and the raw param count for sorting
+    size_labels = [s.split("@")[0] for s in sizes_arr]
+    unique_sizes = sorted(set(size_labels), key=lambda s: _parse_size(s))
+    n_sizes = len(unique_sizes)
+    opacity_map = {sz: 0.25 + 0.65 * i / max(n_sizes - 1, 1) for i, sz in enumerate(unique_sizes)}
+    scatter_lines: List[str] = []
+    for sz in unique_sizes:
+        mask = np.array([sl == sz for sl in size_labels])
+        if not np.any(mask):
+            continue
+        op = opacity_map[sz]
+        forget_str = ", forget plot" if forget else ""
+        scatter_lines.append(
+            f"\\addplot[only marks, mark={style['mark']}, "
+            f"{style['color_name']}, mark size={mark_size}, "
+            f"mark options={{{style['mark_options']}}}, opacity={op:.2f}{forget_str}] "
+            f"coordinates {{{_make_coordinate_table(xs[mask], ys[mask])}}};"
+        )
+    return scatter_lines
+
+
+def _parse_size(s: str) -> float:
+    """Parse a size label like '190M' or '1B' into a float."""
+    s = s.strip().upper()
+    if s.endswith("B"):
+        return float(s[:-1]) * 1e9
+    if s.endswith("M"):
+        return float(s[:-1]) * 1e6
+    return float(s)
+
+
 def _fmt_size(n: float) -> str:
     """Format a parameter count for display (e.g. 190M, 1B)."""
     if n >= 1e9:
@@ -1878,21 +1962,25 @@ def _emit_arch_legend(ladder_names: List[str]) -> str:
     return r"{\footnotesize " + "\\qquad".join(parts) + r"}"
 
 
-def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> str:
+def generate_paper_figure_1(
+    fits: Dict[str, Tuple], log_loss: bool = False, use_lines: bool = False
+) -> str:
     """
-    Generate Figure 1: Main Scaling Law Fits (2x2 pgfplots groupplot).
+    Generate Figure 1: Main Scaling Law Fits (1x3 pgfplots groupplot).
 
     Supports any number of architectures (all overlaid in each panel).
 
-    Panel A: Loss vs FLOPs (all architectures)
+    Panel A: Loss vs FLOPs (all architectures, isoparam curves + bold fit)
     Panel B: Loss vs Parameters (all architectures)
     Panel C: Loss vs Tokens / data budget (all architectures)
-    Panel D: Residuals (all architectures)
 
     Args:
         fits: Dict mapping ladder name to (fit, N, D, L, F, sizes, bootstrap).
         log_loss: If True, use log scale on the y-axis for loss panels (a-c),
             making the power-law relationships appear linear.
+        use_lines: If True, show thin lines connecting data points (iso-param
+            curves) instead of scatter points in all three panels.  The fitted
+            curve in panels B and C is evaluated at the largest model only.
     """
     ladder_names = list(fits.keys())
     loss_label = "Loss"
@@ -1909,12 +1997,12 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(r"\begin{tikzpicture}")
     lines.append(r"\begin{groupplot}[")
     lines.append(r"    group style={")
-    lines.append(r"        group size=2 by 2,")
-    lines.append(r"        horizontal sep=1.2cm,")
-    lines.append(r"        vertical sep=2.0cm,")
+    lines.append(r"        group size=3 by 1,")
+    lines.append(r"        horizontal sep=0.1cm,")
+    lines.append(r"        y descriptions at=edge left,")
     lines.append(r"    },")
-    lines.append(r"    width=0.54\textwidth,")
-    lines.append(r"    height=0.38\textwidth,")
+    lines.append(r"    width=0.405\textwidth,")
+    lines.append(r"    height=0.35\textwidth,")
     lines.append(r"    grid=major,")
     lines.append(r"    grid style={gray!30},")
     lines.append(r"    tick label style={font=\scriptsize},")
@@ -1929,9 +2017,11 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(r"    xmode=log,")
     if log_loss:
         lines.append(r"    ymode=log,")
-        lines.append(r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},")
+        lines.append(
+            r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},"
+        )
     lines.append(r"    xlabel={FLOPs (PetaFLOPs)},")
-    lines.append(f"    ylabel={{{loss_label}}},")
+    # lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(a) Loss vs Compute},")
 
     lines.append(r"]")
@@ -1941,21 +2031,34 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
         style = _get_latex_style(name, idx)
 
         F_peta = F / 1e15
-
-        # Scatter: data points (opacity varies by D/N ratio)
-        lines.extend(_scatter_by_dn(F_peta, L, sizes, style))
-
-        # Fitted curve
         unique_N = np.unique(N)
+        line_style = f", {style['line_style']}" if style.get("line_style") else ""
+
+        if use_lines:
+            # Thin isoparam curves: connect data points sharing the same N, sorted by FLOPs
+            for n_val in unique_N:
+                mask = N == n_val
+                sort_idx = np.argsort(F_peta[mask])
+                F_sorted = F_peta[mask][sort_idx]
+                L_sorted = L[mask][sort_idx]
+                lines.append(
+                    f"\\addplot[{style['color_name']}, thin, no markers{line_style}, "
+                    f"opacity=0.5, forget plot] "
+                    f"coordinates {{{_make_coordinate_table(F_sorted, L_sorted)}}};"
+                )
+        else:
+            # Scatter: data points with opacity varying by model size
+            lines.extend(_scatter_by_model_size(F_peta, L, sizes, style))
+
+        # Bold fitted curve: sweep N at mean D/N ratio
         mean_dn = np.mean([np.mean(D[N == n]) / n for n in unique_N])
         flop_ratio = np.median(F / (6.0 * N * D))
         N_sweep = np.logspace(np.log10(N.min()), np.log10(N.max()), 150)
         D_sweep = N_sweep * mean_dn
         F_sweep_peta = (6.0 * N_sweep * D_sweep * flop_ratio) / 1e15
         L_sweep = fit.predict_loss(N_sweep, D_sweep)
-        line_style = f", {style['line_style']}" if style.get("line_style") else ""
         lines.append(
-            f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
+            f"\\addplot[{style['color_name']}, very thick, no markers{line_style}, forget plot] "
             f"coordinates {{{_make_coordinate_table(F_sweep_peta, L_sweep)}}};"
         )
 
@@ -1966,9 +2069,11 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(r"    xmode=log,")
     if log_loss:
         lines.append(r"    ymode=log,")
-        lines.append(r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},")
+        lines.append(
+            r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},"
+        )
     lines.append(r"    xlabel={Parameters},")
-    lines.append(f"    ylabel={{{loss_label}}},")
+    lines.append(r"    yticklabels={},")
     lines.append(r"    title={(b) Loss vs Parameters},")
 
     lines.append(r"]")
@@ -1977,31 +2082,60 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
         fit, N, D, L, F, sizes, bootstrap = fits[name]
         style = _get_latex_style(name, idx)
 
+        # Extract D/N ratio per data point
+        dn_arr = np.array([int(s.split("@")[1]) for s in sizes])
         unique_N = np.unique(N)
-        max_dn = max(np.mean(D[N == n]) / n for n in unique_N)
-        N_range = np.logspace(np.log10(N.min() * 0.8), np.log10(N.max() * 1.2), 150)
-        D_curve = N_range * max_dn
-        L_curve = fit.predict_loss(N_range, D_curve)
-
-        # Scatter (opacity varies by D/N ratio)
-        lines.extend(_scatter_by_dn(N, L, sizes, style))
-        # Fitted curve (forget plot — legend already added in panel A)
+        max_dn_global = int(np.max(dn_arr))
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
+
+        if use_lines:
+            # Thin iso-D/N curves: connect points with same D/N ratio across model sizes
+            unique_dn = sorted(np.unique(dn_arr))
+            for dn_val in unique_dn:
+                mask = dn_arr == dn_val
+                if np.sum(mask) < 2:
+                    continue
+                sort_idx = np.argsort(N[mask])
+                N_sorted = N[mask][sort_idx]
+                L_sorted = L[mask][sort_idx]
+                lines.append(
+                    f"\\addplot[{style['color_name']}, thin, no markers{line_style}, "
+                    f"opacity=0.5, forget plot] "
+                    f"coordinates {{{_make_coordinate_table(N_sorted, L_sorted)}}};"
+                )
+
+            # Fitted curve at max D/N, evaluated at N of the largest model only
+            largest_N = np.max(unique_N)
+            N_range = np.logspace(np.log10(N.min() * 0.8), np.log10(largest_N * 1.2), 150)
+            D_curve = N_range * max_dn_global
+            L_curve = fit.predict_loss(N_range, D_curve)
+        else:
+            # Scatter (opacity varies by D/N ratio)
+            lines.extend(_scatter_by_dn(N, L, sizes, style))
+
+            # Fitted curve uses only final-checkpoint D/N per model size
+            N_range = np.logspace(np.log10(N.min() * 0.8), np.log10(N.max() * 1.2), 150)
+            D_curve = N_range * max_dn_global
+            L_curve = fit.predict_loss(N_range, D_curve)
+
+        # Fitted curve at max chinchilla multiple (forget plot — legend already added in panel A)
         lines.append(
             f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
             f"coordinates {{{_make_coordinate_table(N_range, L_curve)}}};"
         )
 
-    # Panel C: Loss vs Tokens (one curve per model size)
+    # Panel C: Loss vs Tokens (single curve per architecture)
     lines.append("")
-    lines.append("% Panel C: Loss vs Tokens (per model size)")
+    lines.append("% Panel C: Loss vs Tokens")
     lines.append(r"\nextgroupplot[")
     lines.append(r"    xmode=log,")
     if log_loss:
         lines.append(r"    ymode=log,")
-        lines.append(r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},")
+        lines.append(
+            r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},"
+        )
     lines.append(r"    xlabel={Training Tokens},")
-    lines.append(f"    ylabel={{{loss_label}}},")
+    lines.append(r"    yticklabels={},")
     lines.append(r"    title={(c) Loss vs Data Budget},")
 
     lines.append(r"]")
@@ -2010,51 +2144,40 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
         fit, N, D, L, F, sizes, bootstrap = fits[name]
         style = _get_latex_style(name, idx)
 
-        unique_N = np.sort(np.unique(N))
-        n_sizes = len(unique_N)
-
-        # Scatter: data points (opacity varies by D/N ratio)
-        lines.extend(_scatter_by_dn(D, L, sizes, style))
-
-        # One fitted curve per model size (opacity gradient: light for small, dark for large)
+        unique_N = np.unique(N)
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
-        for size_idx, n_val in enumerate(unique_N):
-            opacity = 0.3 + 0.7 * size_idx / max(n_sizes - 1, 1)
-            mask = N == n_val
-            D_subset = D[mask]
-            D_curve = np.logspace(np.log10(D_subset.min()), np.log10(D_subset.max()), 100)
-            L_curve = fit.predict_loss(n_val, D_curve)
 
-            lines.append(
-                f"\\addplot[{style['color_name']}, thick, no markers{line_style}, "
-                f"opacity={opacity:.2f}, forget plot] "
-                f"coordinates {{{_make_coordinate_table(D_curve, L_curve)}}};"
-            )
+        if use_lines:
+            # Thin iso-N curves: connect data points with the same model size, sorted by D
+            for n_val in unique_N:
+                mask = N == n_val
+                sort_idx = np.argsort(D[mask])
+                D_sorted = D[mask][sort_idx]
+                L_sorted = L[mask][sort_idx]
+                lines.append(
+                    f"\\addplot[{style['color_name']}, thin, no markers{line_style}, "
+                    f"opacity=0.5, forget plot] "
+                    f"coordinates {{{_make_coordinate_table(D_sorted, L_sorted)}}};"
+                )
 
-    # Panel D: Residuals (all architectures)
-    lines.append("")
-    lines.append("% Panel D: Fit Residuals")
-    lines.append(r"\nextgroupplot[")
-    lines.append(r"    xmode=log,")
-    lines.append(r"    xlabel={Parameters},")
-    lines.append(r"    ylabel={Relative Error (\%)},")
-    lines.append(r"    title={(d) Fit Residuals},")
-    lines.append(r"]")
+            # Fitted curve at the largest model size
+            largest_N = np.max(unique_N)
+            D_range = np.logspace(np.log10(D.min() * 0.8), np.log10(D.max() * 1.2), 150)
+            L_curve = fit.predict_loss(largest_N, D_range)
+        else:
+            # Scatter: data points (opacity varies by model size)
+            lines.extend(_scatter_by_model_size(D, L, sizes, style))
 
-    lines.append(
-        r"\draw[black, thick] (axis cs:\pgfkeysvalueof{/pgfplots/xmin},0) -- "
-        r"(axis cs:\pgfkeysvalueof{/pgfplots/xmax},0);"
-    )
+            # Single fitted curve per architecture at max D/N ratio
+            max_dn = max(np.mean(D[N == n]) / n for n in unique_N)
+            D_range = np.logspace(np.log10(D.min() * 0.8), np.log10(D.max() * 1.2), 150)
+            N_curve = D_range / max_dn
+            L_curve = fit.predict_loss(N_curve, D_range)
 
-    for idx, name in enumerate(ladder_names):
-        fit, N, D, L, F, sizes, bootstrap = fits[name]
-        style = _get_latex_style(name, idx)
-
-        predicted = fit.predict_loss(N, D)
-        residuals_pct = (L - predicted) / L * 100
-
-        # Scatter (opacity varies by D/N ratio; forget plot — legend already in panel A)
-        lines.extend(_scatter_by_dn(N, residuals_pct, sizes, style))
+        lines.append(
+            f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
+            f"coordinates {{{_make_coordinate_table(D_range, L_curve)}}};"
+        )
 
     lines.append("")
     lines.append(r"\end{groupplot}")
@@ -2064,47 +2187,38 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
     lines.append(r"\par\vspace{0.5em}")
     lines.append(_emit_arch_legend(ladder_names))
 
-    # Model-size opacity legend for panel (c): show representative sizes from data
-    all_unique_N = set()
-    for name in ladder_names:
-        N = fits[name][1]
-        for n_val in np.unique(N):
-            all_unique_N.add(n_val)
-    sorted_sizes = sorted(all_unique_N)
-    n_sizes = len(sorted_sizes)
-
-    opacity_parts = []
-    if n_sizes > 0:
-        show_indices = [0, n_sizes - 1] if n_sizes >= 2 else [0]
-        if n_sizes >= 4:
-            show_indices = [0, n_sizes // 3, 2 * n_sizes // 3, n_sizes - 1]
-        elif n_sizes >= 3:
-            show_indices = [0, n_sizes // 2, n_sizes - 1]
-        for si in show_indices:
-            op = 0.3 + 0.7 * si / max(n_sizes - 1, 1)
-            size_label = _fmt_size(sorted_sizes[si])
-            part = (
-                f"\\tikz\\draw[black, line width=2pt, opacity={op:.1f}] (0,0) -- (0.5em,0);"
-                f"\\,{size_label}"
+    if not use_lines:
+        # D/N ratio legend (panel b opacity encoding) — only for scatter mode
+        dn_opacity_parts = []
+        for dn_val in _DN_VALUES:
+            op = _DN_OPACITY[dn_val]
+            dn_opacity_parts.append(
+                f"\\tikz\\fill[black, opacity={op:.2f}] (0,0) circle (2pt);"
+                f"\\,$D/N\\!=\\!{dn_val}$"
             )
-            opacity_parts.append(part)
-    opacity_line = "\\enspace".join(opacity_parts)
+        dn_line = "\\enspace".join(dn_opacity_parts)
 
-    # D/N ratio legend with matching opacity markers
-    dn_opacity_parts = []
-    for dn_val in _DN_VALUES:
-        op = _DN_OPACITY[dn_val]
-        dn_opacity_parts.append(
-            f"\\tikz\\fill[black, opacity={op:.2f}] (0,0) circle (2pt);"
-            f"\\,$D/N\\!=\\!{dn_val}$"
-        )
-    dn_line = "\\enspace".join(dn_opacity_parts)
+        lines.append(r"\par\vspace{0.3em}")
+        lines.append(r"{\scriptsize (b) Chinchilla multiple:\enspace " + dn_line + r"}")
 
-    lines.append(r"\par\vspace{0.3em}")
-    lines.append(
-        r"{\scriptsize Model size (panel c):\enspace " + opacity_line
-        + r"\qquad Dataset size:\enspace " + dn_line + r"}"
-    )
+        # Model size legend (panel c opacity encoding)
+        all_model_sizes: List[str] = []
+        for name in ladder_names:
+            sizes_list = fits[name][5]
+            all_model_sizes.extend(s.split("@")[0] for s in sizes_list)
+        unique_model_sizes = sorted(set(all_model_sizes), key=lambda s: _parse_size(s))
+        n_ms = len(unique_model_sizes)
+        ms_opacity_parts = []
+        for i, sz in enumerate(unique_model_sizes):
+            op = 0.25 + 0.65 * i / max(n_ms - 1, 1)
+            ms_opacity_parts.append(
+                f"\\tikz\\fill[black, opacity={op:.2f}] (0,0) circle (2pt);"
+                f"\\,{_escape_latex(sz)}"
+            )
+        ms_line = "\\enspace".join(ms_opacity_parts)
+
+        lines.append(r"\par\vspace{0.1em}")
+        lines.append(r"{\scriptsize (c) Model size:\enspace " + ms_line + r"}")
 
     # Build caption with fitted parameter annotations
     log_note = (
@@ -2125,14 +2239,28 @@ def generate_paper_figure_1(fits: Dict[str, Tuple], log_loss: bool = False) -> s
         caption_parts.append(
             f"{display}: $\\alpha={p.alpha:.3f}$, $\\beta={p.beta:.3f}$, $R^2={r2_str}$. "
         )
-    caption_parts.append(
-        r"\textbf{(a)} Loss vs compute, with the fitted curve sweeping $N$ at the mean $D/N$ ratio. "
-        r"\textbf{(b)} Loss vs parameter count; the fitted curve is evaluated at the largest "
-        r"Chinchilla multiple ($D/N$ ratio) present in the data, tracing the lowest-loss envelope. "
-        r"\textbf{(c)} Loss vs data budget, with one fitted curve per model size "
-        r"(lighter\,=\,smaller, darker\,=\,larger). "
-        r"\textbf{(d)} Fit residuals." + log_note + "}"
-    )
+    if use_lines:
+        caption_parts.append(
+            r"\textbf{(a)} Loss vs compute; thin lines connect checkpoints "
+            r"of the same model size and the bold curve shows the fitted scaling law "
+            r"at the mean $D/N$ ratio. "
+            r"\textbf{(b)} Loss vs parameter count; thin lines connect checkpoints "
+            r"at the same Chinchilla multiple ($D/N$ ratio) and the fitted curve is "
+            r"evaluated at the largest multiple. "
+            r"\textbf{(c)} Loss vs data budget; thin lines connect checkpoints "
+            r"of the same model size and the fitted curve is evaluated at the "
+            r"largest model size." + log_note + "}"
+        )
+    else:
+        caption_parts.append(
+            r"\textbf{(a)} Loss vs compute, with isoparam curves (thin) and "
+            r"the fitted scaling law at the mean $D/N$ ratio (bold). "
+            r"\textbf{(b)} Loss vs parameter count; point opacity reflects the Chinchilla multiple "
+            r"($D/N$ ratio) and the fitted curve is evaluated at the largest multiple, "
+            r"corresponding to the final checkpoint per model size. "
+            r"\textbf{(c)} Loss vs data budget; point opacity reflects the model size and "
+            r"the fitted curve is evaluated at the largest $D/N$ ratio." + log_note + "}"
+        )
     lines.append("".join(caption_parts))
     lines.append(f"\\label{{fig:scaling-law-fit{fig_suffix}}}")
     lines.append(r"\end{figure*}")
@@ -2316,7 +2444,9 @@ def generate_paper_figure_3(
         lines.append(f"% Panel: {domain_clean}")
         lines.append(r"\nextgroupplot[")
         lines.append(r"    ymode=log,")
-        lines.append(r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},")
+        lines.append(
+            r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},"
+        )
         lines.append(r"    xlabel={FLOPs (PetaFLOPs)},")
         if domain_idx == 0:
             lines.append(r"    ylabel={BPB},")
@@ -2349,7 +2479,6 @@ def generate_paper_figure_3(
                 f"\\addplot[{style['color_name']}, thick, no markers{line_style}, forget plot] "
                 f"coordinates {{{_make_coordinate_table(F_sweep_peta, L_curve)}}};"
             )
-
 
     lines.append("")
     lines.append(r"\end{groupplot}")
@@ -2497,6 +2626,121 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
         f"Overall: {'; '.join(r2_parts)}.}}"
     )
     lines.append(r"\label{fig:scaling-law-residuals}")
+    lines.append(r"\end{figure}")
+    return "\n".join(lines)
+
+
+def generate_savings_factor_figure(
+    fits: Dict[str, Tuple],
+    reference_name: Optional[str] = None,
+    reference_n: float = 7e9,
+    num_points: int = 100,
+) -> str:
+    """
+    Generate savings factor plot: projected data savings vs target loss.
+
+    X-axis: target loss (decreasing left-to-right, i.e. harder targets on the right)
+    Y-axis: savings factor = D_reference / D_arch (>1 means arch needs fewer tokens)
+    Horizontal dashed line at y=1 (reference/transformer baseline).
+    One curve per non-reference architecture.
+
+    Args:
+        fits: {ladder_name: (fit, N, D, L, F, sizes, bootstrap)}
+        reference_name: Name of the reference architecture (default: first ladder)
+        reference_n: Reference model size in parameters (default: 7B)
+        num_points: Number of target loss values to evaluate
+    """
+    ladder_names = list(fits.keys())
+    if len(ladder_names) < 2:
+        return "% Need at least 2 ladders for savings factor plot"
+
+    if reference_name is None:
+        reference_name = ladder_names[0]
+
+    ref_fit = fits[reference_name][0]
+
+    # Determine target loss range from all data
+    all_L = np.concatenate([fits[n][3] for n in ladder_names])
+    loss_max = float(np.percentile(all_L, 75))  # easy targets (high loss)
+    loss_min = float(np.min(all_L))  # hard targets (low loss)
+    target_losses = np.linspace(loss_max, loss_min, num_points)
+
+    other_names = [n for n in ladder_names if n != reference_name]
+
+    lines = []
+    lines.append("% Savings Factor Plot: data savings vs target loss")
+    lines.append("% Generated by fit_chinchilla_scaling_laws.py")
+    lines.append(r"% Requires: \usepackage{pgfplots}")
+    lines.append("")
+    lines.append(_emit_color_defs(ladder_names))
+    lines.append("")
+    lines.append(r"\begin{figure}[htbp]")
+    lines.append(r"\centering")
+    lines.append(r"\begin{tikzpicture}")
+    lines.append(r"\begin{axis}[")
+    lines.append(r"    width=0.85\textwidth,")
+    lines.append(r"    height=0.55\textwidth,")
+    lines.append(r"    xlabel={Target Loss},")
+    lines.append(f"    ylabel={{Projected Savings Factor ({_fmt_size(reference_n)})}},")
+    lines.append(r"    x dir=reverse,")
+    lines.append(r"    grid=major,")
+    lines.append(r"    grid style={gray!30},")
+    lines.append(r"    legend style={")
+    lines.append(r"        font=\footnotesize,")
+    lines.append(r"        cells={anchor=west},")
+    lines.append(r"        at={(0.03,0.97)},")
+    lines.append(r"        anchor=north west,")
+    lines.append(r"        draw=none,")
+    lines.append(r"    },")
+    lines.append(r"    tick label style={font=\small},")
+    lines.append(r"    label style={font=\small},")
+    lines.append(r"]")
+
+    # Horizontal baseline at y=1
+    ref_display = _escape_latex(get_display_name(reference_name))
+    lines.append(
+        r"\draw[dashed, gray, thick] (axis cs:\pgfkeysvalueof{/pgfplots/xmin},1) -- "
+        r"(axis cs:\pgfkeysvalueof{/pgfplots/xmax},1);"
+    )
+    lines.append(
+        r"\node[font=\footnotesize, gray, anchor=south west] at "
+        r"(axis cs:\pgfkeysvalueof{/pgfplots/xmin},1) "
+        f"{{{ref_display} ($1\\times$)}};"
+    )
+
+    for name in other_names:
+        arch_fit = fits[name][0]
+        style = _get_latex_style(name, ladder_names.index(name))
+        display = _escape_latex(get_display_name(name))
+
+        savings = []
+        valid_losses = []
+        for tl in target_losses:
+            d_ref = solve_d_for_target_loss(ref_fit, tl, reference_n)
+            d_arch = solve_d_for_target_loss(arch_fit, tl, reference_n)
+            if np.isfinite(d_ref) and np.isfinite(d_arch) and d_ref > 0 and d_arch > 0:
+                savings.append(d_ref / d_arch)
+                valid_losses.append(tl)
+
+        if valid_losses:
+            valid_losses_arr = np.array(valid_losses)
+            savings_arr = np.array(savings)
+            line_style = f", {style['line_style']}" if style.get("line_style") else ""
+            lines.append(
+                f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
+                f"coordinates {{{_make_coordinate_table(valid_losses_arr, savings_arr)}}};"
+            )
+            lines.append(f"\\addlegendentry{{{display}}}")
+
+    lines.append(r"\end{axis}")
+    lines.append(r"\end{tikzpicture}")
+    lines.append(
+        r"\caption{Projected data savings factor relative to "
+        + ref_display
+        + f" at {_fmt_size(reference_n)} scale. "
+        + r"Values above $1\times$ indicate fewer training tokens are needed to reach the target loss.}"
+    )
+    lines.append(r"\label{fig:savings-factor}")
     lines.append(r"\end{figure}")
     return "\n".join(lines)
 
@@ -3200,6 +3444,288 @@ def plot_loss_vs_flops(
         plt.close(fig)
 
 
+def plot_bootstrap_ci(
+    fits: Dict[str, Tuple],
+    output_path: Optional[Path] = None,
+    show: bool = True,
+):
+    """Generate bootstrap confidence interval plots for scaling law parameters.
+
+    Creates a multi-panel figure with:
+    - Top row: whisker plots for each fitted parameter (E, alpha, beta, a_opt, b_opt)
+    - Bottom row: whisker plots for A and B (log scale), plus predicted loss CIs at
+      representative compute budgets
+
+    Each architecture gets a point estimate with 95% CI error bars.
+
+    Args:
+        fits: Dict mapping ladder name to (fit, N, D, L, F, sizes, bootstrap).
+        output_path: Directory to save the plot to.
+        show: Whether to display the plot interactively.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("Warning: matplotlib not installed, skipping bootstrap CI plots")
+        return
+
+    # Filter to only ladders with bootstrap data
+    boot_fits = {name: v for name, v in fits.items() if v[6] is not None}
+    if not boot_fits:
+        print("Warning: no bootstrap data available, skipping bootstrap CI plots")
+        return
+
+    plt.style.use("seaborn-v0_8-whitegrid")
+
+    display_names = {name: get_display_name(name) for name in boot_fits}
+    color_palette = ["#2ecc71", "#e74c3c", "#3498db", "#9b59b6", "#f39c12", "#1abc9c", "#e67e22"]
+    colors = {
+        name: color_palette[i % len(color_palette)] for i, name in enumerate(boot_fits.keys())
+    }
+    ladder_names = list(boot_fits.keys())
+    n_ladders = len(ladder_names)
+
+    # --- Figure 1: Parameter estimates with CIs ---
+    param_specs = [
+        ("E", "E (entropy floor)", False),
+        ("alpha", r"$\alpha$", False),
+        ("beta", r"$\beta$", False),
+        ("a_opt", r"$a_\mathrm{opt}$", False),
+        ("b_opt", r"$b_\mathrm{opt}$", False),
+        ("A", "A", True),
+        ("B", "B", True),
+    ]
+    n_params = len(param_specs)
+    fig, axes = plt.subplots(1, n_params, figsize=(3 * n_params, 5))
+    fig.suptitle("Scaling Law Parameters with 95% Bootstrap CI", fontsize=14, fontweight="bold")
+
+    for ax_idx, (param_name, param_label, use_log) in enumerate(param_specs):
+        ax = axes[ax_idx]
+        x_positions = np.arange(n_ladders)
+
+        for i, name in enumerate(ladder_names):
+            fit, _, _, _, _, _, bootstrap = boot_fits[name]
+            point_val = getattr(fit.fitted_params, param_name)
+            boot_vals = np.array([getattr(f.fitted_params, param_name) for f in bootstrap.fits])
+            lo, hi = np.percentile(boot_vals, [2.5, 97.5])
+
+            # yerr must be non-negative; point estimate can fall outside bootstrap CI
+            err_lo = max(0.0, point_val - lo)
+            err_hi = max(0.0, hi - point_val)
+
+            ax.errorbar(
+                i,
+                point_val,
+                yerr=[[err_lo], [err_hi]],
+                fmt="o",
+                color=colors[name],
+                markersize=8,
+                capsize=5,
+                capthick=1.5,
+                linewidth=1.5,
+                zorder=3,
+            )
+
+        if use_log:
+            ax.set_yscale("log")
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(
+            [display_names[n] for n in ladder_names], rotation=45, ha="right", fontsize=9
+        )
+        ax.set_title(param_label, fontsize=12, fontweight="bold")
+        ax.grid(True, alpha=0.3, axis="y")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+
+    if output_path:
+        save_path = output_path / "bootstrap_parameters.png"
+        fig.savefig(str(save_path), dpi=200, bbox_inches="tight", facecolor="white")
+        print(f"\nSaved bootstrap parameter plot to: {save_path}")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    # --- Figure 2: Predicted loss CIs at compute-optimal allocation ---
+    flop_budgets = [1e19, 1e20, 1e21, 1e22, 1e23]
+    n_budgets = len(flop_budgets)
+
+    fig2, ax2 = plt.subplots(1, 1, figsize=(max(10, 2 * n_budgets), 6))
+    fig2.suptitle(
+        "Predicted Loss at Compute-Optimal Allocation (95% Bootstrap CI)",
+        fontsize=14,
+        fontweight="bold",
+    )
+
+    bar_width = 0.8 / n_ladders
+    x_positions = np.arange(n_budgets)
+
+    for ladder_idx, name in enumerate(ladder_names):
+        fit, _, _, _, _, _, bootstrap = boot_fits[name]
+        color = colors[name]
+
+        point_losses = []
+        ci_los = []
+        ci_his = []
+
+        for C in flop_budgets:
+            p = fit.fitted_params
+            n_opt = np.sqrt(C * p.b_opt / (6.0 * p.a_opt))
+            d_opt = C / (6.0 * n_opt)
+            point_loss = float(fit.predict_loss(np.array([n_opt]), np.array([d_opt]))[0])
+            point_losses.append(point_loss)
+
+            # Bootstrap distribution of optimal loss at this compute
+            boot_losses = []
+            for bf in bootstrap.fits:
+                bp = bf.fitted_params
+                bn = np.sqrt(C * bp.b_opt / (6.0 * bp.a_opt))
+                bd = C / (6.0 * bn)
+                boot_losses.append(float(bf.predict_loss(np.array([bn]), np.array([bd]))[0]))
+            lo, hi = np.percentile(boot_losses, [2.5, 97.5])
+            ci_los.append(max(0.0, point_loss - lo))
+            ci_his.append(max(0.0, hi - point_loss))
+
+        x_offset = x_positions + (ladder_idx - (n_ladders - 1) / 2) * bar_width
+        ax2.errorbar(
+            x_offset,
+            point_losses,
+            yerr=[ci_los, ci_his],
+            fmt="s",
+            color=color,
+            markersize=7,
+            capsize=4,
+            capthick=1.5,
+            linewidth=1.5,
+            label=display_names[name],
+        )
+
+    # Format x-axis with compute budgets
+    budget_labels = []
+    for C in flop_budgets:
+        exp = int(np.floor(np.log10(C)))
+        mantissa = C / 10**exp
+        if mantissa == 1.0:
+            budget_labels.append(f"$10^{{{exp}}}$")
+        else:
+            budget_labels.append(f"${mantissa:.0f}\\times 10^{{{exp}}}$")
+
+    ax2.set_xticks(x_positions)
+    ax2.set_xticklabels(budget_labels, fontsize=11)
+    ax2.set_xlabel("Compute Budget (FLOPs)", fontsize=12)
+    ax2.set_ylabel("Predicted Loss (BPB)", fontsize=12)
+    ax2.legend(fontsize=10)
+    ax2.grid(True, alpha=0.3, axis="y")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+
+    if output_path:
+        save_path = output_path / "bootstrap_predicted_loss.png"
+        fig2.savefig(str(save_path), dpi=200, bbox_inches="tight", facecolor="white")
+        print(f"Saved bootstrap predicted loss plot to: {save_path}")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig2)
+
+    # --- Figure 3: Token savings ratio CIs (if ≥2 ladders) ---
+    if n_ladders >= 2:
+        ref_name = ladder_names[0]
+        other_names = ladder_names[1:]
+        model_sizes = [1e9, 3e9, 7e9, 13e9, 30e9, 70e9]
+
+        # Auto-determine target loss (median of all observed)
+        all_L = np.concatenate([boot_fits[n][3] for n in ladder_names])
+        target_loss = float(np.median(all_L))
+
+        n_sizes = len(model_sizes)
+        n_others = len(other_names)
+        fig3, axes3 = plt.subplots(1, n_others, figsize=(max(8, 4 * n_others), 5), squeeze=False)
+        fig3.suptitle(
+            f"Token Savings Ratio vs {display_names[ref_name]} (95% CI, target loss={target_loss:.3f})",
+            fontsize=13,
+            fontweight="bold",
+        )
+
+        ref_bootstrap = boot_fits[ref_name][6]
+
+        for other_idx, other_name in enumerate(other_names):
+            ax = axes3[0, other_idx]
+            other_bootstrap = boot_fits[other_name][6]
+            color = colors[other_name]
+
+            x_pos = np.arange(n_sizes)
+            point_ratios = []
+            ci_los = []
+            ci_his = []
+
+            for size_idx, n_size in enumerate(model_sizes):
+                ref_fit = boot_fits[ref_name][0]
+                other_fit = boot_fits[other_name][0]
+                d_ref = solve_d_for_target_loss(ref_fit, target_loss, n_size)
+                d_other = solve_d_for_target_loss(other_fit, target_loss, n_size)
+
+                if np.isfinite(d_ref) and np.isfinite(d_other) and d_other > 0:
+                    ratio = d_ref / d_other
+                else:
+                    ratio = float("nan")
+                point_ratios.append(ratio)
+
+                # Bootstrap CIs
+                boot_ratios = []
+                for rf, bf in zip(ref_bootstrap.fits, other_bootstrap.fits):
+                    dr = solve_d_for_target_loss(rf, target_loss, n_size)
+                    db = solve_d_for_target_loss(bf, target_loss, n_size)
+                    if np.isfinite(dr) and np.isfinite(db) and db > 0:
+                        boot_ratios.append(dr / db)
+                if len(boot_ratios) >= 3:
+                    lo, hi = np.percentile(boot_ratios, [2.5, 97.5])
+                    ci_los.append(max(0.0, ratio - lo))
+                    ci_his.append(max(0.0, hi - ratio))
+                else:
+                    ci_los.append(0)
+                    ci_his.append(0)
+
+            # Filter out NaN values for plotting
+            valid = [not np.isnan(r) for r in point_ratios]
+            valid_x = [x for x, v in zip(x_pos, valid) if v]
+            valid_r = [r for r, v in zip(point_ratios, valid) if v]
+            valid_lo = [lo for lo, v in zip(ci_los, valid) if v]
+            valid_hi = [hi for hi, v in zip(ci_his, valid) if v]
+
+            ax.errorbar(
+                valid_x,
+                valid_r,
+                yerr=[valid_lo, valid_hi],
+                fmt="o-",
+                color=color,
+                markersize=8,
+                capsize=5,
+                capthick=1.5,
+                linewidth=1.5,
+                label=display_names[other_name],
+            )
+            ax.axhline(y=1.0, color="gray", linestyle="--", alpha=0.5, label="1x (no savings)")
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels([_fmt_model_size(s) for s in model_sizes], fontsize=10)
+            ax.set_xlabel("Model Size", fontsize=11)
+            ax.set_ylabel(f"Savings vs {display_names[ref_name]}", fontsize=11)
+            ax.set_title(display_names[other_name], fontsize=12, fontweight="bold")
+            ax.legend(fontsize=9)
+            ax.grid(True, alpha=0.3, axis="y")
+
+        plt.tight_layout(rect=[0, 0, 1, 0.91])
+
+        if output_path:
+            save_path = output_path / "bootstrap_token_savings.png"
+            fig3.savefig(str(save_path), dpi=200, bbox_inches="tight", facecolor="white")
+            print(f"Saved bootstrap token savings plot to: {save_path}")
+        if show:
+            plt.show()
+        else:
+            plt.close(fig3)
+
+
 def predict_loss_for_target(
     fits: Dict[str, Tuple],
     target_n: float,
@@ -3390,6 +3916,11 @@ def main():
         help="Generate loss vs FLOPs plots",
     )
     parser.add_argument(
+        "--plot-bootstrap",
+        action="store_true",
+        help="Generate bootstrap CI whisker plots (requires --bootstrap)",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -3438,6 +3969,12 @@ def main():
         help="Generate all paper figures (pgfplots/TikZ .tex files) for section 4.1",
     )
     parser.add_argument(
+        "--scatter",
+        action="store_true",
+        help="Use scatter points instead of connecting lines in paper figure 1. "
+        "Default is lines mode (iso-param curves in all three panels).",
+    )
+    parser.add_argument(
         "--paper-tables",
         action="store_true",
         help="Generate all paper tables (LaTeX .tex files) for section 4.1",
@@ -3460,6 +3997,14 @@ def main():
         default=None,
         help="Target losses for efficiency table (default: auto-determined from data)",
     )
+    parser.add_argument(
+        "--fix-params",
+        nargs="*",
+        default=None,
+        metavar="PARAM=VALUE",
+        help="Fix specific scaling law parameters during fitting. "
+        "Format: E=1.5 alpha=0.3. Valid params: E, A, alpha, B, beta.",
+    )
 
     args = parser.parse_args()
 
@@ -3472,6 +4017,16 @@ def main():
             path = spec
             name = Path(path).name
         ladders[name] = Path(path).expanduser()
+
+    # Parse fixed params
+    fixed_params: Optional[Dict[str, float]] = None
+    if args.fix_params:
+        fixed_params = {}
+        for spec in args.fix_params:
+            if "=" not in spec:
+                parser.error(f"Invalid --fix-params format: '{spec}'. Expected PARAM=VALUE.")
+            key, val = spec.split("=", 1)
+            fixed_params[key] = float(val)
 
     # Compare computed vs. logged specs if requested
     if args.compare_specs:
@@ -3497,6 +4052,7 @@ def main():
                 simple_flops=args.simple_flops,
                 num_slices=args.num_slices,
                 post_decay_only=not args.include_pre_decay,
+                fixed_params=fixed_params,
             )
             fit, N, D, L, F, sizes, bootstrap = result
             fits[name] = (fit, N, D, L, F, sizes, bootstrap)
@@ -3560,6 +4116,13 @@ def main():
         plot_loss_vs_flops(fits, args.output, show=(args.output is None))
         plot_loss_vs_flops(fits, args.output, show=(args.output is None), log_loss=True)
 
+    # Generate bootstrap CI plots
+    if args.plot_bootstrap:
+        if args.bootstrap <= 0:
+            print("\nWarning: --plot-bootstrap requires --bootstrap, skipping bootstrap plots")
+        else:
+            plot_bootstrap_ci(fits, args.output, show=(args.output is None))
+
     # Generate 3D plots
     if args.plot_3d:
         if not rollouts:
@@ -3573,7 +4136,7 @@ def main():
 
     # Domain-specific scaling law fitting
     domain_fits_all: Dict[str, Dict[str, Tuple]] = {}
-    if args.domain_fit or args.paper_figures:
+    if args.domain_fit:
         for name, ladder_dir in ladders.items():
             try:
                 domain_results = fit_domain_ladders(
@@ -3603,13 +4166,14 @@ def main():
         figures_dir.mkdir(parents=True, exist_ok=True)
 
         # Figure 1: Main Scaling Law Fits (linear and log-loss versions)
-        fig1 = generate_paper_figure_1(fits)
+        use_lines = not args.scatter
+        fig1 = generate_paper_figure_1(fits, use_lines=use_lines)
         fig1_path = figures_dir / "scaling-law-fit.tex"
         with open(fig1_path, "w") as f:
             f.write(fig1)
         print(f"\nSaved Figure 1 to: {fig1_path}")
 
-        fig1_log = generate_paper_figure_1(fits, log_loss=True)
+        fig1_log = generate_paper_figure_1(fits, log_loss=True, use_lines=use_lines)
         fig1_log_path = figures_dir / "scaling-law-fit-log.tex"
         with open(fig1_log_path, "w") as f:
             f.write(fig1_log)
@@ -3645,6 +4209,13 @@ def main():
         with open(fig4_path, "w") as f:
             f.write(fig4)
         print(f"Saved Figure 4 to: {fig4_path}")
+
+        # Figure 5: Savings Factor Plot
+        fig5 = generate_savings_factor_figure(fits)
+        fig5_path = figures_dir / "savings-factor.tex"
+        with open(fig5_path, "w") as f:
+            f.write(fig5)
+        print(f"Saved Figure 5 to: {fig5_path}")
 
     # Generate paper tables
     if args.paper_tables:
@@ -3710,45 +4281,61 @@ def main():
 
     # Save results
     if args.output:
-        # Save fitted parameters as CSV
+        # Save fitted parameters as CSV (with bootstrap CIs when available)
         rows = []
         for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
             p = fit.fitted_params
-            rows.append(
-                {
-                    "ladder": name,
-                    "E": p.E,
-                    "A": p.A,
-                    "alpha": p.alpha,
-                    "B": p.B,
-                    "beta": p.beta,
-                    "a_opt": p.a_opt,
-                    "b_opt": p.b_opt,
-                    "huber_loss": fit.huber_loss,
-                }
-            )
+            row: dict = {
+                "ladder": name,
+                "E": p.E,
+                "A": p.A,
+                "alpha": p.alpha,
+                "B": p.B,
+                "beta": p.beta,
+                "a_opt": p.a_opt,
+                "b_opt": p.b_opt,
+                "huber_loss": fit.huber_loss,
+                "r_squared": fit.r_squared,
+            }
+            if bootstrap is not None:
+                for param in ["E", "A", "alpha", "B", "beta", "a_opt", "b_opt"]:
+                    vals = np.array([getattr(f.fitted_params, param) for f in bootstrap.fits])
+                    lo, hi = np.percentile(vals, [2.5, 97.5])
+                    row[f"{param}_ci_lo"] = lo
+                    row[f"{param}_ci_hi"] = hi
+                row["n_bootstrap_samples"] = len(bootstrap.fits)
+            rows.append(row)
         pd.DataFrame(rows).to_csv(args.output / "chinchilla_fits.csv", index=False)
         print(f"\nSaved fit parameters to: {args.output / 'chinchilla_fits.csv'}")
 
-        # Save per-point data
+        # Save per-point data (with bootstrap prediction CIs when available)
         all_data = []
         for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
             predicted = fit.predict_loss(N, D)
-            for i in range(len(N)):
-                all_data.append(
-                    {
-                        "ladder": name,
-                        "size": sizes[i],
-                        "N": N[i],
-                        "D": D[i],
-                        "FLOPs": F[i],
-                        "FLOPs_petaflops": F[i] / 1e15,
-                        "actual_loss": L[i],
-                        "predicted_loss": predicted[i],
-                        "error": L[i] - predicted[i],
-                        "rel_error_pct": (L[i] - predicted[i]) / L[i] * 100,
-                    }
+            # Compute bootstrap prediction intervals if available
+            pred_ci_lo = pred_ci_hi = None
+            if bootstrap is not None:
+                loss_dist = bootstrap.predict_loss_distribution(
+                    N, D, include_observation_noise=False
                 )
+                pred_ci_lo, pred_ci_hi = np.percentile(loss_dist, [2.5, 97.5], axis=0)
+            for i in range(len(N)):
+                row: dict = {
+                    "ladder": name,
+                    "size": sizes[i],
+                    "N": N[i],
+                    "D": D[i],
+                    "FLOPs": F[i],
+                    "FLOPs_petaflops": F[i] / 1e15,
+                    "actual_loss": L[i],
+                    "predicted_loss": predicted[i],
+                    "error": L[i] - predicted[i],
+                    "rel_error_pct": (L[i] - predicted[i]) / L[i] * 100,
+                }
+                if pred_ci_lo is not None and pred_ci_hi is not None:
+                    row["predicted_loss_ci_lo"] = pred_ci_lo[i]
+                    row["predicted_loss_ci_hi"] = pred_ci_hi[i]
+                all_data.append(row)
         pd.DataFrame(all_data).to_csv(args.output / "chinchilla_predictions.csv", index=False)
         print(f"Saved predictions to: {args.output / 'chinchilla_predictions.csv'}")
 

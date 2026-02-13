@@ -237,6 +237,7 @@ class ChinchillaParametricFit:
         weights: Optional[ArrayLike] = None,
         overestimate_penalty: float = 1.0,
         num_slices: int = 4,
+        fixed_params: Optional[Dict[str, float]] = None,
     ) -> "ChinchillaParametricFit":
         """
         Fit the full parametric Chinchilla scaling law: L = E + A/N^alpha + B/D^beta.
@@ -257,6 +258,9 @@ class ChinchillaParametricFit:
             the goal is to capture the lower-bound of achievable L is to set this to 10.0.
             Default is 1.0 (symmetric loss).
         :param num_slices: Number of slices to use for grid search along each dimension.
+        :param fixed_params: Optional dict mapping parameter names to fixed values.
+            Valid keys: "E", "A", "alpha", "B", "beta". Fixed parameters are held
+            constant during optimization (only the remaining parameters are fitted).
         :returns: :class:`ChinchillaParametricFit` with fitted parameters.
         """
         N = np.asarray(N)
@@ -278,11 +282,25 @@ class ChinchillaParametricFit:
             weights_clean = np.asarray(weights)
             weights_clean = weights_clean * len(N) / weights_clean.sum()
 
+        # Validate fixed_params
+        _param_names = ["E", "A", "alpha", "B", "beta"]
+        _fixed = fixed_params or {}
+        for key in _fixed:
+            if key not in _param_names:
+                raise ValueError(
+                    f"Unknown parameter '{key}' in fixed_params. Valid names: {_param_names}"
+                )
+
         # Grid search over initializations to find the best fit
         L_min = float(L.min())  # E (entropy floor) must be <= minimum observed loss
         lower_bounds = ChinchillaParams(E=0.0, A=1e-10, alpha=0.01, B=1e-10, beta=0.01)
         upper_bounds = ChinchillaParams(E=L_min, A=1e10, alpha=2.0, B=1e10, beta=2.0)
         scipy_bounds = list(zip(lower_bounds, upper_bounds))
+
+        # Pin fixed params: set lower == upper so L-BFGS-B holds them constant
+        for i, pname in enumerate(_param_names):
+            if pname in _fixed:
+                scipy_bounds[i] = (_fixed[pname], _fixed[pname])
 
         # The fitted parametric model is sensitive to the initial parameter values so it is standard
         # to search over a grid. The original grid used by Chinchilla covers parameter ranges that
@@ -290,11 +308,16 @@ class ChinchillaParametricFit:
         # such as an entropy floor greater than the minimum observed loss. We refine the parameter
         # search space to allow for a more fine-grained search without searching an extremely large grid.
         # NOTE: random search with sobol noise may be a more efficient way to search the parameter space.
-        E_grid = np.linspace(0.0, L_min, num_slices)
-        A_grid = np.linspace(1, 20, num_slices)
-        alpha_grid = np.linspace(0.2, 0.8, num_slices)
-        B_grid = np.linspace(1, 20, num_slices)
-        beta_grid = np.linspace(0.2, 0.8, num_slices)
+        # For fixed params, collapse grid to single value.
+        E_grid = np.array([_fixed["E"]]) if "E" in _fixed else np.linspace(0.0, L_min, num_slices)
+        A_grid = np.array([_fixed["A"]]) if "A" in _fixed else np.linspace(1, 20, num_slices)
+        alpha_grid = (
+            np.array([_fixed["alpha"]]) if "alpha" in _fixed else np.linspace(0.2, 0.8, num_slices)
+        )
+        B_grid = np.array([_fixed["B"]]) if "B" in _fixed else np.linspace(1, 20, num_slices)
+        beta_grid = (
+            np.array([_fixed["beta"]]) if "beta" in _fixed else np.linspace(0.2, 0.8, num_slices)
+        )
         grid: list[ChinchillaParams] = [
             ChinchillaParams(E=E, A=A, alpha=alpha, B=B, beta=beta)
             for E, A, alpha, B, beta in product(E_grid, A_grid, alpha_grid, B_grid, beta_grid)
@@ -402,6 +425,7 @@ class ChinchillaParametricBootstrappedFit:
         num_slices: int = 4,
         seed: Optional[int] = None,
         progress_bar: bool = True,
+        fixed_params: Optional[Dict[str, float]] = None,
     ) -> "ChinchillaParametricBootstrappedFit":
         """
         Fit the Chinchilla scaling law with bootstrap uncertainty estimation.
@@ -416,6 +440,9 @@ class ChinchillaParametricBootstrappedFit:
         :param num_slices: Number of slices to use for grid search along each dimension.
         :param seed: Random seed for reproducibility.
         :param progress_bar: If True, show a progress bar for the bootstrap fits.
+        :param fixed_params: Optional dict mapping parameter names to fixed values.
+            Valid keys: "E", "A", "alpha", "B", "beta". Fixed parameters are held
+            constant during optimization (only the remaining parameters are fitted).
         :returns: A ChinchillaParametricBootstrappedFit with point estimate and bootstrap fits.
         """
         N = np.asarray(N)
@@ -432,6 +459,7 @@ class ChinchillaParametricBootstrappedFit:
             weights=weights,
             overestimate_penalty=overestimate_penalty,
             num_slices=num_slices,
+            fixed_params=fixed_params,
         )
 
         rng = np.random.default_rng(seed)
@@ -454,6 +482,7 @@ class ChinchillaParametricBootstrappedFit:
                     weights=weights_boot,
                     overestimate_penalty=overestimate_penalty,
                     num_slices=num_slices,
+                    fixed_params=fixed_params,
                 )
                 bootstrap_fits.append(boot_fit)
             except ValueError:
