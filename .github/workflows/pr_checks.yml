@@ -8,9 +8,9 @@ on:
   pull_request:
     branches:
       - main
-      - v2
     paths:
-      - 'src/**'
+      - 'src/olmo_core/**'
+      - '!src/olmo_core/internal/**'
 
 jobs:
   changelog:
