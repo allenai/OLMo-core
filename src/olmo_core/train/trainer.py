@@ -926,10 +926,13 @@ class Trainer:
         else:
             return False
 
-    def save_checkpoint(self) -> PathOrStr:
+    def save_checkpoint(self, ephemeral: bool = False) -> PathOrStr:
         """
         Save a checkpoint for the current step to the :data:`save_folder`.
 
+        :param ephemeral: Whether to mark the checkpoint as ephemeral in its metadata.
+          Note that the trainer itself won't remove ephemeral checkpoints.
+          That's up to the :class:`CheckpointerCallback`.
 
         :returns: The path/URL to the checkpoint.
         """
@@ -942,15 +945,24 @@ class Trainer:
         self._log_metrics()
         self._join_bookkeeping_ops()
 
-        self.checkpointer.save(path, self.train_module, cast(Dict[str, Any], self.state_dict()))
+        self.checkpointer.save(
+            path,
+            self.train_module,
+            cast(Dict[str, Any], self.state_dict()),
+            ephemeral=ephemeral,
+        )
         for callback in self._iter_callbacks():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
         return path
 
-    def save_checkpoint_async(self) -> Tuple[PathOrStr, Future]:
+    def save_checkpoint_async(self, ephemeral: bool = False) -> Tuple[PathOrStr, Future]:
         """
         Save a checkpoint for the current step to the :data:`save_folder` asynchronously.
+
+        :param ephemeral: Whether to mark the checkpoint as ephemeral in its metadata.
+          Note that the trainer itself won't remove ephemeral checkpoints.
+          That's up to the :class:`CheckpointerCallback`.
 
         :returns: The path/URL to the checkpoint and a future which will complete when the
             checkpoint is successfully saved.
@@ -966,7 +978,10 @@ class Trainer:
         self._join_bookkeeping_ops()
 
         fut = self.checkpointer.save_async(
-            path, self.train_module, cast(Dict[str, Any], self.state_dict())
+            path,
+            self.train_module,
+            cast(Dict[str, Any], self.state_dict()),
+            ephemeral=ephemeral,
         )
 
         def callback(future: Future):
