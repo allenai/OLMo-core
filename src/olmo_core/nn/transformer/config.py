@@ -314,7 +314,7 @@ class TransformerConfig(ModelConfig):
     d_model: int
     vocab_size: int
     n_layers: int
-    block: TransformerBlockConfig
+    block: TransformerBlockConfig | dict[str, TransformerBlockConfig]
     lm_head: LMHeadConfig
     embedding_norm: Optional[LayerNormConfig] = None
     name: TransformerType = TransformerType.default
@@ -324,8 +324,35 @@ class TransformerConfig(ModelConfig):
     init_std: float = 0.02
     embedding_init_std: Optional[float] = None
     freeze_params: Optional[List[str]] = None
+    block_pattern: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
+
+    def __post_init__(self):
+        # Validate the hybrid block configuration, if specified.
+        if isinstance(self.block, dict):
+            if not self.block_pattern:
+                raise OLMoConfigurationError(
+                    "`block_pattern` must be provided and non-empty when `block` is a dict of named blocks."
+                )
+            if self.block_overrides is not None:
+                raise OLMoConfigurationError(
+                    "`block_overrides` is not supported when `block` is a dict of named blocks; "
+                    "use `block_pattern` to control per-layer block selection."
+                )
+            available_block_names = set(self.block.keys())
+            missing_block_names = set(self.block_pattern) - available_block_names
+            if missing_block_names:
+                raise OLMoConfigurationError(
+                    "Every name in `block_pattern` must exist in `block`. "
+                    f"Unknown names: {missing_block_names}. Available names: {available_block_names}."
+                )
+            pattern_length = len(self.block_pattern)
+            if self.n_layers % pattern_length != 0:
+                raise OLMoConfigurationError(
+                    f"`n_layers` ({self.n_layers}) must be divisible by the length of `block_pattern` "
+                    f"({pattern_length})."
+                )
 
     def build(
         self,
@@ -360,6 +387,7 @@ class TransformerConfig(ModelConfig):
                 init_std=self.init_std,
                 embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
+                block_pattern=self.block_pattern,
                 embed_scale=self.embed_scale,
             )
         elif self.name == TransformerType.normalized:
@@ -377,6 +405,7 @@ class TransformerConfig(ModelConfig):
                 init_std=self.init_std,
                 embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
+                block_pattern=self.block_pattern,
             )
         elif self.name == TransformerType.moe:
             model = MoETransformer(
@@ -393,6 +422,7 @@ class TransformerConfig(ModelConfig):
                 init_std=self.init_std,
                 embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
+                block_pattern=self.block_pattern,
             )
         else:
             raise NotImplementedError(self.name)
@@ -1754,9 +1784,9 @@ class TransformerConfig(ModelConfig):
         Return a copy of this config with the given RoPE scaling scheme applied.
         """
         new_config = self.copy()
-        assert isinstance(
-            new_config.block.sequence_mixer, AttentionConfig
-        ), "Sequence mixer must be an attention config for RoPE scaling"
+        assert isinstance(new_config.block.sequence_mixer, AttentionConfig), (
+            "Sequence mixer must be an attention config for RoPE scaling"
+        )
         if new_config.block.sequence_mixer.rope is None:
             raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
         if new_config.block_overrides:
