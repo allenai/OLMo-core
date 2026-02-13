@@ -37,7 +37,7 @@ class ModelMergeCallback(Callback):
 
     priority: ClassVar[int] = 2
 
-    merge_step: Union[int, List[int]] = field(default_factory=list)
+    merge_step: Union[int, List[int]] = field(default_factory=list)  # type: ignore[assignment]
     """The step(s) at which to save merged checkpoint(s)."""
 
     merge_interval: Optional[int] = None
@@ -70,9 +70,8 @@ class ModelMergeCallback(Callback):
                     f"merge_interval must be positive, got {self.merge_interval}"
                 )
             # Can't set both merge_step and merge_interval
-            has_merge_step = (
-                (isinstance(self.merge_step, int) and self.merge_step > 0)
-                or (isinstance(self.merge_step, list) and len(self.merge_step) > 0)
+            has_merge_step = (isinstance(self.merge_step, int) and self.merge_step > 0) or (
+                isinstance(self.merge_step, list) and len(self.merge_step) > 0
             )
             if has_merge_step:
                 raise OLMoConfigurationError(
@@ -88,9 +87,7 @@ class ModelMergeCallback(Callback):
             self._merge_steps = sorted(self.merge_step)
 
         if not self._merge_steps:
-            raise OLMoConfigurationError(
-                "Either merge_step or merge_interval must be set."
-            )
+            raise OLMoConfigurationError("Either merge_step or merge_interval must be set.")
 
         # Validate
         invalid = [s for s in self._merge_steps if s <= 0]
@@ -104,9 +101,9 @@ class ModelMergeCallback(Callback):
         """Return merge steps whose windows include the current step."""
         current = self.step
         return [
-            ms for ms in self._merge_steps
-            if ms not in self._completed_merges
-            and self._window_start(ms) <= current <= ms
+            ms
+            for ms in self._merge_steps
+            if ms not in self._completed_merges and self._window_start(ms) <= current <= ms
         ]
 
     def _merged_checkpoint_path(self, step: int) -> str:
@@ -172,8 +169,7 @@ class ModelMergeCallback(Callback):
         # Copy model weights to CPU once for all active windows
         model = self.trainer.train_module.model
         model_state = {
-            k: get_local_tensor(p.data.detach()).to("cpu")
-            for k, p in model.named_parameters()
+            k: get_local_tensor(p.data.detach()).to("cpu") for k, p in model.named_parameters()
         }
 
         for ms in active:
@@ -186,7 +182,9 @@ class ModelMergeCallback(Callback):
 
     def _accumulate_weights(self, merge_step: int, model_state: Dict[str, torch.Tensor]):
         if merge_step not in self._accumulators:
-            log.info(f"Starting weight accumulation for merge step {merge_step} at step {self.step}")
+            log.info(
+                f"Starting weight accumulation for merge step {merge_step} at step {self.step}"
+            )
             self._accumulators[merge_step] = {
                 k: torch.zeros_like(v, dtype=torch.float32, device="cpu")
                 for k, v in model_state.items()
@@ -210,19 +208,16 @@ class ModelMergeCallback(Callback):
             log.warning(f"No weights accumulated for merge step {merge_step}, cannot save")
             return
 
-        log.info(
-            f"Saving merged checkpoint (average of {count} steps) "
-            f"at step {merge_step}"
-        )
+        log.info(f"Saving merged checkpoint (average of {count} steps) " f"at step {merge_step}")
 
         averaged_state: Dict[str, torch.Tensor] = {
-            key: acc_val / count
-            for key, acc_val in accumulator.items()
+            key: acc_val / count for key, acc_val in accumulator.items()
         }
 
         output_path = self._merged_checkpoint_path(merge_step)
 
         import os
+
         if get_rank() == 0:
             if not dir_is_empty(output_path):
                 clear_directory(output_path)
@@ -262,8 +257,7 @@ class ModelMergeCallback(Callback):
         # Store original weights on CPU to avoid doubling GPU memory
         log.info("Storing original model weights...")
         original_state = {
-            k: get_local_tensor(p.data.detach()).to("cpu").clone()
-            for k, p in params_dict.items()
+            k: get_local_tensor(p.data.detach()).to("cpu").clone() for k, p in params_dict.items()
         }
 
         barrier()
@@ -273,7 +267,9 @@ class ModelMergeCallback(Callback):
             for name, param in params_dict.items():
                 if name in averaged_state:
                     local_param = get_local_tensor(param.data)
-                    local_param.copy_(averaged_state[name].to(local_param.device, local_param.dtype))
+                    local_param.copy_(
+                        averaged_state[name].to(local_param.device, local_param.dtype)
+                    )
 
         barrier()
 
@@ -287,12 +283,14 @@ class ModelMergeCallback(Callback):
                 for name, param in params_dict.items():
                     if name in original_state:
                         local_param = get_local_tensor(param.data)
-                        local_param.copy_(original_state[name].to(local_param.device, local_param.dtype))
+                        local_param.copy_(
+                            original_state[name].to(local_param.device, local_param.dtype)
+                        )
             barrier()
 
     # NO state_dict or load_state_dict - state is not checkpointed!
     # On resume, accumulation starts fresh from the last checkpoint.
-    
+
 
 def compute_merge_steps_from_wsds(
     period_lengths: List[int],
@@ -312,10 +310,11 @@ def compute_merge_steps_from_wsds(
     for period_length in period_lengths:
         cumulative_tokens += period_length
 
-        decay_tokens = (
-            decay if decay is not None
-            else int(round(decay_fraction * period_length))
-        )
+        if decay is not None:
+            decay_tokens = decay
+        else:
+            assert decay_fraction is not None
+            decay_tokens = int(round(decay_fraction * period_length))
 
         pre_decay_tokens = cumulative_tokens - decay_tokens
         pre_decay_step = pre_decay_tokens // tokens_per_step

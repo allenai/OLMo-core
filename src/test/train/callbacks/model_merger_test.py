@@ -9,7 +9,6 @@ from olmo_core.train.callbacks.model_merger import (
     compute_merge_window_starts,
 )
 
-
 # ============================================================================
 # merge_step validation
 # ============================================================================
@@ -42,7 +41,7 @@ def test_empty_merge_step_raises_error():
     [
         ([100, 250], 100),  # non-overlapping
         ([100, 200], 100),  # exact boundary
-        (100, 100),         # single step
+        (100, 100),  # single step
         ([100, 150], 100),  # overlapping windows (50 step gap < 100 window)
         ([100, 110, 120], 50),  # multiple overlapping windows
     ],
@@ -100,7 +99,9 @@ def _make_cb_at_step(merge_steps, merge_last_n_steps, current_step, completed=No
     """Create a callback and simulate being at a given step."""
     cb = ModelMergeCallback(merge_step=merge_steps, merge_last_n_steps=merge_last_n_steps)
     # Patch the step property to return our test value
-    cb.__class__ = type("_TestMergeCallback", (ModelMergeCallback,), {"step": property(lambda self: current_step)})
+    cb.__class__ = type(
+        "_TestMergeCallback", (ModelMergeCallback,), {"step": property(lambda self: current_step)}
+    )
     if completed:
         cb._completed_merges = set(completed)
     return cb

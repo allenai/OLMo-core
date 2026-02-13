@@ -81,6 +81,7 @@ def train(config: ExperimentConfig):
     weight_capture = trainer.callbacks["weight_capture"]
     model_merger = trainer.callbacks["model_merger"]
     max_steps = trainer.max_steps
+    assert max_steps is not None
     merge_last_n_steps = model_merger.merge_last_n_steps
     capture_steps = set(range(max_steps - merge_last_n_steps + 1, max_steps + 1))  # steps 3,4,5
 
@@ -267,9 +268,9 @@ def test_ephemeral_blocked_during_merge_window(tmp_path):
 
     # Ephemeral checkpoints at steps 2 and 4 should exist (before window)
     # Steps 6 and 8 fall inside the merge window [6, 8] and should be blocked
-    assert 2 in checkpoint_steps or 4 in checkpoint_steps, (
-        f"Expected ephemeral checkpoints before the merge window, got: {checkpoint_steps}"
-    )
+    assert (
+        2 in checkpoint_steps or 4 in checkpoint_steps
+    ), f"Expected ephemeral checkpoints before the merge window, got: {checkpoint_steps}"
     # Step 6 is inside the merge window and should be blocked
     assert 6 not in checkpoint_steps, (
         f"Ephemeral checkpoint at step 6 should have been blocked during merge window, "
