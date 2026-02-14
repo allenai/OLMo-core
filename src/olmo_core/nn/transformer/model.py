@@ -56,11 +56,11 @@ from .block import (
     TransformerBlock,
     TransformerBlockBase,
 )
-from .block_resolution import resolve_block_configs
 from .config import (
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
     TransformerDataParallelWrappingStrategy,
+    resolve_block_configs,
 )
 from .init import InitMethod
 

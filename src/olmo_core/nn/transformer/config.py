@@ -430,7 +430,8 @@ class TransformerConfig(ModelConfig):
 
         return model
 
-    def _get_block_configs(self) -> List["TransformerBlockConfig"]:
+    @property
+    def resolved_block_configs(self) -> list[TransformerBlockConfig]:
         return resolve_block_configs(
             n_layers=self.n_layers,
             block=self.block,
@@ -451,7 +452,7 @@ class TransformerConfig(ModelConfig):
             num_params += self.embedding_norm.num_params(self.d_model)
 
         # All block params.
-        for block_config in self._get_block_configs():
+        for block_config in self.resolved_block_configs:
             num_params += block_config.num_params(self.d_model)
 
         # LM head.
@@ -472,7 +473,7 @@ class TransformerConfig(ModelConfig):
             num_active_params += self.embedding_norm.num_params(self.d_model)
 
         # All block active params.
-        for block_config in self._get_block_configs():
+        for block_config in self.resolved_block_configs:
             num_active_params += block_config.num_active_params(self.d_model)
 
         # LM head.
