@@ -715,7 +715,7 @@ class Attention(SequenceMixer):
         from olmo_core.nn.transformer.init import InitMethod, init_linear
 
         # Compute std for Q/K/V initialization
-        if self == InitMethod.fan_in:
+        if init_method == InitMethod.fan_in:
             # For fan_in, use 1/√d_in based on actual weight shape (ignores base std parameter)
             # Each projection may have different output dims (n_heads * head_dim vs n_kv_heads * head_dim)
             # but they all have the same input dim
@@ -723,27 +723,27 @@ class Attention(SequenceMixer):
                 w_std = w.in_features**-0.5
                 init_linear(w, std=w_std, generator=generator)
         else:
-            if self == InitMethod.normalized:
+            if init_method == InitMethod.normalized:
                 std = d_model**-0.5
             for w in (self.w_q, self.w_k, self.w_v):
                 init_linear(w, std=std, generator=generator)
 
         # Initialize attention gate projection if present
         if self.w_g is not None:
-            if self == InitMethod.fan_in:
+            if init_method == InitMethod.fan_in:
                 g_std = self.w_g.in_features**-0.5
             else:
                 g_std = std
             init_linear(self.w_g, std=g_std, generator=generator)
 
         # Compute std for w_out initialization
-        if self == InitMethod.fan_in:
+        if init_method == InitMethod.fan_in:
             std = self.w_out.in_features**-0.5
-        elif self == InitMethod.llama:
+        elif init_method == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
-        elif self == InitMethod.llama_depth:
+        elif init_method == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
-        elif self == InitMethod.normalized:
+        elif init_method == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
         init_linear(self.w_out, std=std, generator=generator)
@@ -1110,21 +1110,21 @@ class FusedAttention(SequenceMixer):
         from olmo_core.nn.transformer.init import InitMethod, init_linear
 
         # Compute std for fused QKV initialization
-        if self == InitMethod.fan_in:
+        if init_method == InitMethod.fan_in:
             std = self.w_qkv.in_features**-0.5
-        elif self == InitMethod.normalized:
+        elif init_method == InitMethod.normalized:
             std = d_model**-0.5
 
         init_linear(self.w_qkv, std=std, generator=generator)
 
         # Compute std for w_out initialization
-        if self == InitMethod.fan_in:
+        if init_method == InitMethod.fan_in:
             std = self.w_out.in_features**-0.5
-        elif self == InitMethod.llama:
+        elif init_method == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
-        elif self == InitMethod.llama_depth:
+        elif init_method == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
-        elif self == InitMethod.normalized:
+        elif init_method == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
         init_linear(self.w_out, std=std, generator=generator)
