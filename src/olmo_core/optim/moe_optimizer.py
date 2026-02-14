@@ -1185,6 +1185,7 @@ class MoEFusedV2Optimizer:
             reset_chunk_buffers()
 
     def zero_grad(self, set_to_none=True):
+        raise RuntimeError("zero_grad should be called by the MoE TrainModule on the models directly now.")
         for group in self.param_groups:
             for n, p in group["named_params"].items():
                 # clear bf16 grad

@@ -1298,10 +1298,10 @@ class MoEV2TransformerTrainModule(TrainModule):
         
 
     def zero_grads(self):
-        self.optim.zero_grad(set_to_none=True) # clear main grad
+        # self.optim.zero_grad(set_to_none=True) # clear main grad
         for m in self.model_parts:
-            m.zero_grad(set_to_none=True) # clear model grad
-            m.set_main_grads_to_none()  # clear main grad
+            m.zero_grad(set_to_none=False) # clear model grad
+            # m.set_main_grads_to_none()  # clear main grad
 
     def model_forward_no_pipeline(
         self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None, **kwargs

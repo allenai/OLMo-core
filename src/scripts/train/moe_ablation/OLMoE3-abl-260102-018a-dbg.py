@@ -410,12 +410,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                # entity="ai2-llm",
-                # project="tianhua-moe",
                 entity="ai2-llm",
-                project="olmoe-dev-v2",
+                project="tianhua-moe",
+                # entity="ai2-llm",
+                # project="olmoe-dev-v2",
                 # project="olmo3",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
