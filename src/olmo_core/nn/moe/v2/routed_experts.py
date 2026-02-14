@@ -17,6 +17,62 @@ from torch.distributed.device_mesh import DeviceMesh
 def gmm_no_compile(a, b, batch_sizes, trans_b=False):
     return grouped_gemm.ops.gmm(a, b, batch_sizes, trans_b)
 
+def gmm(a, b, batch_sizes, trans_b=False):
+    if use_torch_grouped_mm():
+        # torch.nn.functional.grouped_mm has no trans_b argument.
+        # It expects mat_b to be (num_groups, K, N), so we transpose when
+        # emulating grouped_gemm(..., trans_b=True).
+        b_grouped_mm = b.transpose(1, 2) if trans_b else b
+        offs = torch.cumsum(batch_sizes.to(dtype=torch.int32), dim=0, dtype=torch.int32)
+        return F.grouped_mm(a, b_grouped_mm, offs=offs)
+
+    return gmm_no_compile(a, b, batch_sizes, trans_b)
+
+# if env variable OLMO_USE_TORCH_GROUPED_MM is set, use its value to determine whether to use torch grouped_mm; 
+import os
+env_val = os.getenv("OLMO_USE_TORCH_GROUPED_MM")
+if env_val is not None:
+    if env_val.lower() in ("1", "true", "yes"):
+        USE_TORCH_GROUPED_MM = True
+    elif env_val.lower() in ("0", "false", "no"):
+        USE_TORCH_GROUPED_MM = False
+    else:
+        raise ValueError(f"Invalid value for OLMO_USE_TORCH_GROUPED_MM: {env_val}. Expected one of (1, 0, true, false, yes, no).")
+else:
+    # otherwise, use feature detection and version gate.
+    USE_TORCH_GROUPED_MM = None
+
+def use_torch_grouped_mm():
+    global USE_TORCH_GROUPED_MM
+    if USE_TORCH_GROUPED_MM is not None:
+        return USE_TORCH_GROUPED_MM
+
+    torch_version = torch.__version__.split("+")[0]  # strip local build suffix, e.g. +cu128
+    try:
+        major_str, minor_str, *_ = torch_version.split(".")
+        major, minor = int(major_str), int(minor_str)
+        meets_version_gate = major > 2 or (major == 2 and minor >= 10)
+    except (ValueError, TypeError):
+        # Fall back to feature detection on unusual version strings.
+        meets_version_gate = hasattr(F, "grouped_mm")
+
+    # grouped_mm was added in torch 2.10; hasattr keeps this robust to local builds.
+    USE_TORCH_GROUPED_MM = meets_version_gate and hasattr(F, "grouped_mm")
+    return USE_TORCH_GROUPED_MM
+
+REQUIRES_HOST_SIDE_SPLIT_SIZES = None # cache the result of whether host-side split sizes are required, since it does not change during runtime and checking it requires parsing torch version every time.
+def requires_host_side_split_sizes():
+    # read from cache if available
+    global REQUIRES_HOST_SIDE_SPLIT_SIZES
+    if REQUIRES_HOST_SIDE_SPLIT_SIZES is not None:
+        return REQUIRES_HOST_SIDE_SPLIT_SIZES
+    
+    # grouped_gemm cublas mode requires host-side split sizes, grouped_mm does not.
+    REQUIRES_HOST_SIDE_SPLIT_SIZES = not use_torch_grouped_mm()
+
+    return REQUIRES_HOST_SIDE_SPLIT_SIZES
+
+
 @dataclass
 class RoutedExpertsConfig(Config):
     """Configuration for routed experts in a MoE block."""
@@ -118,7 +174,7 @@ class RoutedExperts(nn.Module):
         self.ep_rank: int = 0
 
 
-    @torch.compiler.disable(recursive=False)
+    # @torch.compiler.disable(recursive=False)
     @nvtx.annotate("RoutedExperts.forward", color="blue")
     def forward(self, x: torch.Tensor, batch_size_per_expert: torch.Tensor) -> torch.Tensor:
         """
@@ -126,9 +182,17 @@ class RoutedExperts(nn.Module):
         """
 
         assert isinstance(batch_size_per_expert, torch.Tensor), "only accept Tensor for batch_size_per_expert"
-        assert batch_size_per_expert.device.type == 'cpu', "batch_size_per_expert must be on cpu"
 
-        batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int64)  # NOTE: int64 required for grouped_gemm
+        if requires_host_side_split_sizes():
+            # CPU-side split sizes are required by grouped_gemm cublas mode.
+            # grouped_gemm CUTLASS mode can accept device-side split sizes, but it is slow.
+            # Always assume grouped_gemm runs in cublas mode.
+            assert batch_size_per_expert.device.type == 'cpu', "batch_size_per_expert must be on cpu"
+            batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int64)  # int64 required for grouped_gemm
+        else:
+            assert batch_size_per_expert.device.type == 'cuda', "batch_size_per_expert expected to be on GPU"
+            # grouped_mm expects int32 offsets derived from split sizes.
+            batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int32)
 
         if x.numel() == 0:
             return x
@@ -137,14 +201,14 @@ class RoutedExperts(nn.Module):
         w_down = self.w_down # (E, H, D)
 
         # up + gate projection
-        up_gate = gmm_no_compile(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
+        up_gate = gmm(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
 
         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
 
         h = self.chunk_and_activate(up_gate) # -> (BS, H)
         
         # down projection
-        down = gmm_no_compile(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, D)
+        down = gmm(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, D)
 
         return cast(torch.Tensor, down)  # ensure type is Tensor
 
@@ -153,7 +217,7 @@ class RoutedExperts(nn.Module):
         # so that it apply activation checkpointing if needed
         h = self.chunk_and_activate(up_gate) # -> (BS, H)
         
-        down = gmm_no_compile(h, self.w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
+        down = gmm(h, self.w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
         return down
 
     @torch.compile

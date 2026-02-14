@@ -36,7 +36,7 @@ def async_copy_to_cpu(gpu_buf, event=None, return_event=True) -> Tuple[torch.Ten
     
     return cpu_buf, dtoh_stream, None
 
-@torch._dynamo.disable        # helper runs eagerly,
+@torch.compiler.disable        # helper runs eagerly,
 def wait_stream_no_compile(this_stream: torch.cuda.Stream, other_stream: torch.cuda.Stream):
     this_stream.wait_stream(other_stream)
     
