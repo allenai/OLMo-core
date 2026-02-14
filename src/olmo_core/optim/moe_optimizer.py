@@ -333,6 +333,8 @@ def assign_full_tensor_to_dtensor(dst: DTensor, src: torch.Tensor) -> None:
     dst.copy_(src_dt)
 
 class MoEFusedV2Optimizer:
+    LOSSES_STATE_DICT_KEY = "__moe_skip_step_losses"
+    GRAD_NORMS_STATE_DICT_KEY = "__moe_skip_step_grad_norms"
 
     def __init__(
         self,
@@ -1209,6 +1211,37 @@ class MoEFusedV2Optimizer:
     def _install_optim_from_cpu_dtensor(self, main_sd, state1_sd, state2_sd, distribute_ep_func):
         raise NotImplementedError("Removed function")
 
+    def _restore_rolling_stats(self, values: Any) -> List[torch.Tensor]:
+        if values is None:
+            print("No rolling stats found in checkpoint, skipping restore.")
+            return []
+
+        print(f"Restoring rolling stats from checkpoint ...")
+
+        if isinstance(values, torch.Tensor):
+            raw_values: List[Any]
+            if values.ndim == 0:
+                raw_values = [values]
+            else:
+                raw_values = [v for v in values.reshape(-1).unbind()]
+        elif isinstance(values, (list, tuple)):
+            raw_values = list(values)
+        else:
+            raw_values = [values]
+
+        restored: List[torch.Tensor] = []
+        for value in raw_values:
+            if isinstance(value, torch.Tensor):
+                tensor_value = value.detach().to(device=self.device, dtype=torch.float32)
+                tensor_value = tensor_value.reshape(-1)[0]
+            else:
+                tensor_value = move_to_device(
+                    torch.tensor(float(value), dtype=torch.float32), self.device
+                )
+            restored.append(tensor_value)
+
+        return restored[-(self.rolling_interval_length + 1):]
+
         
         
 
@@ -1250,6 +1283,10 @@ class MoEFusedV2Optimizer:
         step_count = sum(1 for k in sd.keys() if k.endswith('.step'))
         assert main_param_count == exp_avg_count == exp_avg_sq_count == step_count, f"State dict counts do not match: main {main_param_count}, exp_avg {exp_avg_count}, exp_avg_sq {exp_avg_sq_count}, step {step_count}"
 
+        # Store rolling skip-step statistics as plain lists so they can be checkpointed as a single BYTE_IO entry.
+        sd[self.LOSSES_STATE_DICT_KEY] = [float(v.detach().cpu().item()) for v in self._losses]
+        sd[self.GRAD_NORMS_STATE_DICT_KEY] = [float(v.detach().cpu().item()) for v in self._grad_norms]
+
         return sd       
     
 
@@ -1257,6 +1294,9 @@ class MoEFusedV2Optimizer:
     def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True) -> None:
         # the loaded state dict is already distributed over the DP mesh,
         # here we need to convert the DP sharded tensors to EP_MP + EP_DP sharded
+
+        loaded_losses = state_dict.pop(self.LOSSES_STATE_DICT_KEY, None)
+        loaded_grad_norms = state_dict.pop(self.GRAD_NORMS_STATE_DICT_KEY, None)
 
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():
@@ -1296,6 +1336,8 @@ class MoEFusedV2Optimizer:
                             ckpt_state = state_dict.pop(f'{name}.{suffix}').full_tensor()
                             state_dt.copy_(ckpt_state)  # step is a scalar, so no need to convert to local
 
+        self._losses = self._restore_rolling_stats(loaded_losses)
+        self._grad_norms = self._restore_rolling_stats(loaded_grad_norms)
 
 
         return

@@ -655,8 +655,16 @@ class MoEV2TransformerTrainModule(TrainModule):
             pre_download=pre_download, work_dir=work_dir
         )
 
-        # useful if metadata is needed
-        # metadata = reader.read_metadata()
+        metadata = reader.read_metadata()
+        checkpoint_keys = set(metadata.state_dict_metadata.keys())
+
+        # Backward compatibility: old checkpoints won't have rolling skip-step stats.
+        for optional_key in (
+            self.optim.LOSSES_STATE_DICT_KEY,
+            self.optim.GRAD_NORMS_STATE_DICT_KEY,
+        ):
+            if optional_key not in checkpoint_keys:
+                sd_to_load.pop(optional_key, None)
 
         dist_cp.state_dict_loader.load(
             sd_to_load,
