@@ -36,7 +36,7 @@ class GPUActivationOffloader:
         self.target_device = torch.device(target_device)
 
         # one dedicated memcpy stream per device we touch
-        self._stream = get_or_init_stream(id=6)
+        self._stream = get_or_init_stream(id='GPUActivationOffloader')
         self._context_manager: Optional[torch.autograd.graph.saved_tensors_hooks] = None
 
         # example: {"0F1": {id1: tensor1, id2: tensor2}, "0F2": {id3: tensor3}}

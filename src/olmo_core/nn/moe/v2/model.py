@@ -668,9 +668,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 x1_is_fresh = False # after the first TBO block, x1 is no longer fresh
                 self._log_debug_mem(f'{block_idx}')
 
-
-
-
             # if torch.is_grad_enabled() and self.offload_sync_func is not None:
             #     x0 = self.offload_sync_func(x0)
             #     x0 = cast(torch.Tensor, x0)
@@ -753,14 +750,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             # weighted sum of the shared experts and routed experts
             if last_block.shared_experts is not None:
                 assert mixed_shared_out1 is not None
-                # shared_out_factor1 = last_block.shared_experts.num_experts / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
-                # routed_out_factor1 = last_block.routed_experts_router.top_k / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
-                # mlp_out1 = last_block.merge_shared_and_routed_out(
-                #     shared_out= mixed_shared_out1,
-                #     shared_factor=shared_out_factor1,
-                #     routed_out=local_x1,
-                #     routed_factor=routed_out_factor1
-                # )
                 mlp_out1 = mixed_shared_out1 + local_x1
             else:
                 mlp_out1 = local_x1

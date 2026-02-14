@@ -7,7 +7,7 @@ from typing import cast
 def async_copy_to_cpu(gpu_buf, event=None, return_event=True) -> Tuple[torch.Tensor, torch.cuda.Stream, Optional[torch.cuda.Event]]:
     # *** async copy to CPU for future GroupedGEMM ***
     # start a new stream for the copy
-    dtoh_stream = get_or_init_stream(id=9, priority=-5) # TODO: check any id that's not 0?
+    dtoh_stream = get_or_init_stream(id='dtoh', priority=-5) # TODO: check any id that's not 0?
 
     # global LAST_STREAM_ID
     # if LAST_STREAM_ID is None:
