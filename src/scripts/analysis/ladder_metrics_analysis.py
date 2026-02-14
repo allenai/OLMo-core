@@ -32,7 +32,10 @@ from olmo_core.model_ladder.analysis.metrics import (
     find_metric_columns,
     normalize_task_name,
 )
-from olmo_core.model_ladder.analysis.model_specs import compute_specs_for_size
+from olmo_core.model_ladder.analysis.model_specs import (
+    OLMO3_SPECS_BY_NAME,
+    compute_specs_for_size,
+)
 
 # Optional plotting imports
 try:
@@ -155,7 +158,7 @@ CORRECTED_PARAM_COUNTS: Dict[str, Dict[str, int]] = {
         "760M": 979_529_152,
     },
     "pure-mamba": {
-        "60M": 59_837_760,
+        "60M": 60_642_944,
         "100M": 109_746_048,
         "190M": 207_115_584,
     },
@@ -2576,6 +2579,150 @@ def plot_all(
 # =============================================================================
 
 
+def generate_model_config_latex_table(ladder_names: List[str]) -> str:
+    """
+    Generate LaTeX table of model configurations for all ladders used in the analysis.
+
+    Ladders are grouped by architecture family (Transformer, GDN, Mamba2) with a
+    multicolumn header per group.  Within each group a short variant label (ratio,
+    placement, etc.) distinguishes individual ladders.
+    """
+    from olmo_core.model_ladder.analysis.model_specs import LADDER_ARCH_CONFIGS
+
+    size_order = ["60M", "100M", "190M", "370M", "600M", "760M", "1B"]
+
+    # Collect all sizes that exist across all ladders
+    all_sizes: set = set()
+    for name in ladder_names:
+        for size in size_order:
+            if get_corrected_param_count(name, size) is not None:
+                all_sizes.add(size)
+    sizes = [s for s in size_order if s in all_sizes]
+
+    if not sizes or not ladder_names:
+        return "% No model config data available"
+
+    def escape_latex(s: str) -> str:
+        return s.replace("_", r"\_").replace("%", r"\%").replace("&", r"\&")
+
+    # --- Group ladders by architecture family ---
+    # Each group: (group_display_name, [(ladder_name, short_variant_label), ...])
+    FAMILY_ORDER = ["transformer", "gdn", "mamba2"]
+    FAMILY_DISPLAY = {"transformer": "Transformer", "gdn": "GDN", "mamba2": "Mamba2"}
+
+    # Map ladder_name -> (family, variant_label, sort_key)
+    # sort_key: lower = more attention (appears first, left-to-right)
+    def _classify(name: str) -> Tuple[str, str, float]:
+        lower = name.lower()
+        cfg = LADDER_ARCH_CONFIGS.get(lower)
+        if cfg is None:
+            return ("other", name, 50)
+        if cfg.is_transformer:
+            return ("transformer", "100%", 0)
+        family = cfg.layer_type  # "gdn" or "mamba2"
+        if cfg.transformer_ratio == 0:
+            # Pure (no attention) -> sort last within its family
+            return (family, "Pure", 100)
+        # Sort by attention fraction descending: 1/2 (=0.5) before 1/4 (=0.25) before 1/8 (=0.125)
+        attn_frac = 1.0 / cfg.transformer_ratio
+        ratio_label = f"1/{cfg.transformer_ratio}"
+        sort_key = 1.0 - attn_frac  # lower = more attention
+        if cfg.placement == "middle":
+            ratio_label += " Mid"
+            sort_key += 0.001  # middle variant just after same-ratio interleaved
+        return (family, ratio_label, sort_key)
+
+    # Build ordered groups from the input ladder_names
+    # Each member: (name, label, sort_key)
+    groups_raw: List[Tuple[str, List[Tuple[str, str, float]]]] = []
+    seen_families: Dict[str, int] = {}
+    for name in ladder_names:
+        family, label, sort_key = _classify(name)
+        if family not in seen_families:
+            seen_families[family] = len(groups_raw)
+            groups_raw.append((family, []))
+        groups_raw[seen_families[family]][1].append((name, label, sort_key))
+
+    # Sort groups by FAMILY_ORDER
+    family_rank = {f: i for i, f in enumerate(FAMILY_ORDER)}
+    groups_raw.sort(key=lambda g: family_rank.get(g[0], 99))
+
+    # Sort members within each group by sort_key (most attention first)
+    for _, members in groups_raw:
+        members.sort(key=lambda m: m[2])
+
+    # Deduplicate variant labels within each group (e.g. multiple olmo3 runs)
+    groups: List[Tuple[str, List[Tuple[str, str]]]] = []
+    for family, members in groups_raw:
+        seen_labels: Dict[str, str] = {}
+        deduped: List[Tuple[str, str]] = []
+        for name, label, _ in members:
+            if label not in seen_labels:
+                seen_labels[label] = name
+                deduped.append((name, label))
+        groups.append((family, deduped))
+
+    n_cols = sum(len(members) for _, members in groups)
+
+    lines: List[str] = []
+    lines.append(r"\begin{table}[htbp]")
+    lines.append(r"    \centering")
+    lines.append(
+        r"    \caption{Model configurations used in ladder experiments. "
+        r"$d$: model dimension, $h$: number of attention heads, "
+        r"$l$: number of layers, $N$: non-embedding parameter count.}"
+    )
+    lines.append(r"    \label{tab:scaling-ladder-configs}")
+
+    col_spec = "l" + "rrr" + "r" * n_cols
+    lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
+    lines.append(r"        \toprule")
+
+    # Row 1: architecture family multicolumn headers
+    header_top = ["", "", "", ""]
+    col_idx = 5  # first data column (1-indexed)
+    cmidrules = []
+    for family, members in groups:
+        n = len(members)
+        display = FAMILY_DISPLAY.get(family, escape_latex(family))
+        header_top.append(f"\\multicolumn{{{n}}}{{c}}{{{display}}}")
+        cmidrules.append(f"\\cmidrule(lr){{{col_idx}-{col_idx + n - 1}}}")
+        col_idx += n
+    lines.append("        " + " & ".join(header_top) + r" \\")
+    lines.append("        " + " ".join(cmidrules))
+
+    # Row 2: Size d h l + variant labels
+    header_bot = [r"Size", r"$d$", r"$h$", r"$l$"]
+    for _, members in groups:
+        for _, label in members:
+            header_bot.append(escape_latex(label))
+    lines.append("        " + " & ".join(header_bot) + r" \\")
+    lines.append(r"        \midrule")
+
+    # Data rows
+    for size in sizes:
+        spec = OLMO3_SPECS_BY_NAME.get(size)
+        if spec is not None:
+            row_parts = [size, str(spec.d_model), str(spec.n_heads), str(spec.n_layers)]
+        else:
+            row_parts = [size, "---", "---", "---"]
+
+        for _, members in groups:
+            for name, _ in members:
+                params = get_corrected_param_count(name, size)
+                if params is not None:
+                    row_parts.append(f"{round(params / 1e6)}M")
+                else:
+                    row_parts.append("---")
+
+        lines.append("        " + " & ".join(row_parts) + r" \\")
+
+    lines.append(r"        \bottomrule")
+    lines.append(r"    \end{tabular}")
+    lines.append(r"\end{table}")
+    return "\n".join(lines)
+
+
 def generate_latex_table(
     df: pd.DataFrame,
     caption: str,
@@ -4480,6 +4627,12 @@ def export_results(
     with open(ablation_path, "w") as f:
         f.write(ablation_output)
 
+    # Generate model config table
+    config_output = generate_model_config_latex_table(list(ladder_results.keys()))
+    config_path = output_path / "model-configs.tex"
+    with open(config_path, "w") as f:
+        f.write(config_output)
+
     # Generate LaTeX/TikZ plots
     latex_plots = generate_latex_plots(
         ladder_results,
@@ -4499,6 +4652,7 @@ def export_results(
     print(f"  CSV files: {csv_files}")
     print(f"  LaTeX tables: {latex_path}")
     print(f"  LaTeX ablation: {ablation_path}")
+    print(f"  LaTeX configs: {config_path}")
     print(f"  LaTeX plots: {plots_path}")
     print(f"  Markdown: {md_path}")
     print(f"  Full data: {pkl_path}")
@@ -4595,6 +4749,12 @@ Examples:
         action="store_true",
         help="Print a publication-ready ablation table (architectures as rows, "
         "sizes as column groups) in LaTeX booktabs format to stdout.",
+    )
+    parser.add_argument(
+        "--latex-configs",
+        action="store_true",
+        help="Print a model configuration table (architecture specs, param counts, "
+        "FLOPs) in LaTeX booktabs format to stdout.",
     )
     parser.add_argument(
         "--latex-plots",
@@ -4832,6 +4992,16 @@ Examples:
             star_ladder=args.star_ladder,
         )
         print(ablation_output)
+
+    # Print model config table if requested
+    if args.latex_configs:
+        print("\n" + "=" * 80)
+        print("LATEX MODEL CONFIG TABLE")
+        print("=" * 80)
+        print("\n% Add to preamble: \\usepackage{booktabs}\n")
+
+        config_output = generate_model_config_latex_table(list(ladder_results.keys()))
+        print(config_output)
 
     # Generate LaTeX/TikZ plots if requested (print to stdout; file output handled by --export)
     if args.latex_plots:

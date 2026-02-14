@@ -331,10 +331,14 @@ def mamba2_macs_per_token(
     return macs
 
 
-def attention_macs_per_token(d_model: int, n_heads: int, seq_len: int) -> int:
+def attention_macs_per_token(
+    d_model: int, n_heads: int, seq_len: int, chinchilla_flops: bool = False
+) -> int:
     """
     MACs per token for attention (forward pass).
     Projections are O(1) per token; QK^T and attn*V are O(seq_len) per token.
+
+    If *chinchilla_flops* is True, includes softmax ops (3 non-MAC ops per score).
     """
     head_dim = d_model // n_heads
     macs = 0
@@ -344,6 +348,12 @@ def attention_macs_per_token(d_model: int, n_heads: int, seq_len: int) -> int:
 
     # QK^T: each token attends to seq_len keys -> n_heads * head_dim * seq_len
     macs += n_heads * head_dim * seq_len
+
+    if chinchilla_flops:
+        # Softmax: 3 non-MAC ops per score (subtract max, exp, divide by sum).
+        # Chinchilla counts 3 * num_heads * seq_len * seq_len FLOPs (no 2× factor).
+        # Since we convert MACs -> FLOPs via 2× later, store as 1.5 to get 3 after doubling.
+        macs += (3 * n_heads * seq_len + 1) // 2  # ceil(3/2) to stay integer
 
     # attn * V: n_heads * seq_len * head_dim
     macs += n_heads * seq_len * head_dim
@@ -365,6 +375,7 @@ def compute_hybrid_specs(
     seq_len: int = 4096,
     force_final_attention: bool = True,
     placement: str = "every_nth",
+    chinchilla_flops: bool = False,
 ) -> dict:
     """Compute params and FLOPs for a hybrid GDN model.
 
@@ -378,6 +389,8 @@ def compute_hybrid_specs(
         placement: How to place attention layers.
             ``"every_nth"``: attention at every *transformer_ratio*-th layer (default).
             ``"middle"``: attention layers are placed in a centered block.
+        chinchilla_flops: If True, include embedding and softmax FLOPs
+            following the Chinchilla accounting convention.
     """
     d = spec.d_model
     nh = spec.n_heads
@@ -430,11 +443,15 @@ def compute_hybrid_specs(
     non_embed_params = total_params - embed_params
 
     # --- FLOPs (using 2 * MACs convention) ---
+    embed_macs = d * V if chinchilla_flops else 0  # embedding lookup (counted by Chinchilla)
     head_macs = d * V
     gdn_layer_macs = gdn_macs_per_token(d, nh) + mlp_macs_per_token(d, mlp_h)
-    attn_layer_macs = attention_macs_per_token(d, nh, seq_len) + mlp_macs_per_token(d, mlp_h)
+    attn_layer_macs = (
+        attention_macs_per_token(d, nh, seq_len, chinchilla_flops=chinchilla_flops)
+        + mlp_macs_per_token(d, mlp_h)
+    )
 
-    total_macs = head_macs + n_gdn * gdn_layer_macs + n_attn * attn_layer_macs
+    total_macs = embed_macs + head_macs + n_gdn * gdn_layer_macs + n_attn * attn_layer_macs
     total_flops = 2 * total_macs
 
     return {
@@ -463,7 +480,8 @@ def compute_hybrid_mamba2_specs(
     transformer_ratio: int = 4,
     seq_len: int = 4096,
     force_final_attention: bool = True,
-    strip_mamba2_mlp: bool = True,
+    strip_mamba2_mlp: bool = False,
+    chinchilla_flops: bool = False,
 ) -> dict:
     """Compute params and FLOPs for a hybrid Mamba2-Transformer model.
 
@@ -474,9 +492,11 @@ def compute_hybrid_mamba2_specs(
         seq_len: Sequence length for FLOP calculation.
         force_final_attention: If True, the final layer is always attention.
             Set to False for pure-Mamba2 models.
-        strip_mamba2_mlp: If True, Mamba2 layers have no MLP (matching
-            ``fla_hybrid_strip_fla_feed_forward=True`` in the hybrid-mamba ladder).
-            Pure-Mamba2 models also have no MLP.
+        strip_mamba2_mlp: If True, Mamba2 layers have no MLP.
+            Default is False: Mamba2 layers include FFNs between layers,
+            the same way as GDN and Transformer layers.
+        chinchilla_flops: If True, include embedding and softmax FLOPs
+            following the Chinchilla accounting convention.
     """
     d = spec.d_model
     nh = spec.n_heads
@@ -527,13 +547,17 @@ def compute_hybrid_mamba2_specs(
     non_embed_params = total_params - embed_params
 
     # --- FLOPs (using 2 * MACs convention) ---
+    embed_macs = d * V if chinchilla_flops else 0  # embedding lookup (counted by Chinchilla)
     head_macs = d * V
     mamba2_layer_macs = mamba2_macs_per_token(d, nh)
     if not strip_mamba2_mlp:
         mamba2_layer_macs += mlp_macs_per_token(d, mlp_h)
-    attn_layer_macs = attention_macs_per_token(d, nh, seq_len) + mlp_macs_per_token(d, mlp_h)
+    attn_layer_macs = (
+        attention_macs_per_token(d, nh, seq_len, chinchilla_flops=chinchilla_flops)
+        + mlp_macs_per_token(d, mlp_h)
+    )
 
-    total_macs = head_macs + n_mamba2 * mamba2_layer_macs + n_attn * attn_layer_macs
+    total_macs = embed_macs + head_macs + n_mamba2 * mamba2_layer_macs + n_attn * attn_layer_macs
     total_flops = 2 * total_macs
 
     return {
@@ -558,7 +582,9 @@ def compute_hybrid_mamba2_specs(
     }
 
 
-def compute_olmo3_specs(spec: ModelSpec, seq_len: int = 4096) -> dict:
+def compute_olmo3_specs(
+    spec: ModelSpec, seq_len: int = 4096, chinchilla_flops: bool = False
+) -> dict:
     """Compute params and FLOPs for a pure OLMo3 (all-attention) model."""
     d = spec.d_model
     nh = spec.n_heads
@@ -575,9 +601,13 @@ def compute_olmo3_specs(spec: ModelSpec, seq_len: int = 4096) -> dict:
     total_params = embed_params + head_params + nl * attn_layer_params + final_norm_params
     non_embed_params = total_params - embed_params
 
-    attn_layer_macs = attention_macs_per_token(d, nh, seq_len) + mlp_macs_per_token(d, mlp_h)
+    embed_macs = d * V if chinchilla_flops else 0  # embedding lookup (counted by Chinchilla)
     head_macs = d * V
-    total_macs = head_macs + nl * attn_layer_macs
+    attn_layer_macs = (
+        attention_macs_per_token(d, nh, seq_len, chinchilla_flops=chinchilla_flops)
+        + mlp_macs_per_token(d, mlp_h)
+    )
+    total_macs = embed_macs + head_macs + nl * attn_layer_macs
     total_flops = 2 * total_macs
 
     return {
@@ -654,6 +684,7 @@ def compute_specs_for_size(
     ladder_name: str,
     size: str,
     seq_len: Optional[int] = None,
+    chinchilla_flops: bool = False,
 ) -> Optional[dict]:
     """
     Compute architecture specs for a given ladder name and model size.
@@ -673,13 +704,14 @@ def compute_specs_for_size(
     effective_seq_len = seq_len or config.seq_len
 
     if config.is_transformer:
-        return compute_olmo3_specs(spec, seq_len=effective_seq_len)
+        return compute_olmo3_specs(spec, seq_len=effective_seq_len, chinchilla_flops=chinchilla_flops)
     elif config.layer_type == "mamba2":
         return compute_hybrid_mamba2_specs(
             spec,
             transformer_ratio=config.transformer_ratio,
             seq_len=effective_seq_len,
             force_final_attention=config.force_final_attention,
+            chinchilla_flops=chinchilla_flops,
         )
     else:
         return compute_hybrid_specs(
@@ -688,4 +720,5 @@ def compute_specs_for_size(
             seq_len=effective_seq_len,
             force_final_attention=config.force_final_attention,
             placement=config.placement,
+            chinchilla_flops=chinchilla_flops,
         )

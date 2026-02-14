@@ -56,8 +56,12 @@ from olmo_core.model_ladder.analysis import (
     plot_scaling_law_3d,
     plot_scaling_law_3d_comparison,
 )
-from olmo_core.model_ladder.analysis.model_specs import OLMO3_SPECS_BY_NAME, compute_specs_for_size
-from olmo_core.model_ladder.analysis.model_specs import fmt as fmt_number
+from olmo_core.model_ladder.analysis.model_specs import (
+    LADDER_ARCH_CONFIGS,
+    OLMO3_SPECS_BY_NAME,
+    compute_specs_for_size,
+    fmt as fmt_number,
+)
 
 # Default loss column to use for fitting
 DEFAULT_LOSS_COLUMN = "eval/lm/c4_en/CE loss"
@@ -75,7 +79,7 @@ FALLBACK_LOSS_COLUMNS = [
 # hybrid-GDN, pure-GDN) are now computed dynamically via compute_specs_for_size().
 _LEGACY_PARAM_COUNTS = {
     "pure-mamba": {
-        "60M": 59_837_760,
+        "60M": 60_642_944,
         "100M": 109_746_048,
         "190M": 207_115_584,
     },
@@ -717,6 +721,150 @@ def solve_n_for_target_loss(fit: ChinchillaParametricFit, target_loss: float, D:
 
 
 # =============================================================================
+# Bootstrap CI envelope helpers
+# =============================================================================
+
+
+def _compute_ci_envelope(
+    bootstrap_fit: ChinchillaParametricBootstrappedFit,
+    target_loss: float,
+    N_range: np.ndarray,
+    ci_level: float = 0.95,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute lower/upper CI for D-to-target-loss across N_range.
+
+    For each bootstrap fit, solves D = f(N, target_loss) analytically.
+    Returns the percentile envelope.
+
+    Args:
+        bootstrap_fit: Bootstrap fit with list of ChinchillaParametricFit samples.
+        target_loss: The target loss to solve for.
+        N_range: Array of parameter counts to sweep.
+        ci_level: Confidence level (default 0.95 for 95% CI).
+
+    Returns:
+        N_valid: Subset of N_range where all bootstraps give finite D.
+        ci_lower: Lower CI bound on D.
+        ci_upper: Upper CI bound on D.
+    """
+    alpha = (1 - ci_level) / 2
+    d_samples = np.array(
+        [
+            [solve_d_for_target_loss(boot_fit, target_loss, n) for n in N_range]
+            for boot_fit in bootstrap_fit.fits
+        ]
+    )  # (num_bootstrap, len(N_range))
+    valid = np.all(np.isfinite(d_samples), axis=0)
+    if not np.any(valid):
+        return N_range[:0], np.array([]), np.array([])
+    ci_lower = np.percentile(d_samples[:, valid], alpha * 100, axis=0)
+    ci_upper = np.percentile(d_samples[:, valid], (1 - alpha) * 100, axis=0)
+    return N_range[valid], ci_lower, ci_upper
+
+
+def _compute_savings_ci_envelope(
+    ref_bootstrap: ChinchillaParametricBootstrappedFit,
+    arch_bootstrap: ChinchillaParametricBootstrappedFit,
+    target_loss: float,
+    N_range: np.ndarray,
+    ci_level: float = 0.95,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute CI on savings factor (D_ref / D_arch) vs model size.
+
+    Pairs bootstrap samples i-to-i and computes the ratio at each N.
+
+    Returns:
+        N_valid, ci_lower, ci_upper on the savings ratio.
+    """
+    alpha = (1 - ci_level) / 2
+    n_boot = min(len(ref_bootstrap.fits), len(arch_bootstrap.fits))
+    ratio_samples = []
+    for i in range(n_boot):
+        d_ref_row = np.array(
+            [solve_d_for_target_loss(ref_bootstrap.fits[i], target_loss, n) for n in N_range]
+        )
+        d_arch_row = np.array(
+            [solve_d_for_target_loss(arch_bootstrap.fits[i], target_loss, n) for n in N_range]
+        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio_row = np.where(
+                np.isfinite(d_ref_row) & np.isfinite(d_arch_row) & (d_arch_row > 0),
+                d_ref_row / d_arch_row,
+                np.inf,
+            )
+        ratio_samples.append(ratio_row)
+    ratio_matrix = np.array(ratio_samples)
+    valid = np.all(np.isfinite(ratio_matrix), axis=0)
+    if not np.any(valid):
+        return N_range[:0], np.array([]), np.array([])
+    ci_lower = np.percentile(ratio_matrix[:, valid], alpha * 100, axis=0)
+    ci_upper = np.percentile(ratio_matrix[:, valid], (1 - alpha) * 100, axis=0)
+    return N_range[valid], ci_lower, ci_upper
+
+
+def _compute_savings_vs_loss_ci_envelope(
+    ref_bootstrap: ChinchillaParametricBootstrappedFit,
+    arch_bootstrap: ChinchillaParametricBootstrappedFit,
+    target_losses: np.ndarray,
+    reference_n: float,
+    ci_level: float = 0.95,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute CI on savings factor (D_ref / D_arch) swept across target losses at fixed N.
+
+    Used for the savings-factor figure where X = target loss, Y = ratio.
+
+    Returns:
+        losses_valid, ci_lower, ci_upper on the savings ratio.
+    """
+    alpha = (1 - ci_level) / 2
+    n_boot = min(len(ref_bootstrap.fits), len(arch_bootstrap.fits))
+    ratio_samples = []
+    for i in range(n_boot):
+        row = []
+        for tl in target_losses:
+            dr = solve_d_for_target_loss(ref_bootstrap.fits[i], tl, reference_n)
+            da = solve_d_for_target_loss(arch_bootstrap.fits[i], tl, reference_n)
+            if np.isfinite(dr) and np.isfinite(da) and da > 0:
+                row.append(dr / da)
+            else:
+                row.append(float("inf"))
+        ratio_samples.append(row)
+    ratio_matrix = np.array(ratio_samples)
+    valid = np.all(np.isfinite(ratio_matrix), axis=0)
+    if not np.any(valid):
+        return target_losses[:0], np.array([]), np.array([])
+    ci_lower = np.percentile(ratio_matrix[:, valid], alpha * 100, axis=0)
+    ci_upper = np.percentile(ratio_matrix[:, valid], (1 - alpha) * 100, axis=0)
+    return target_losses[valid], ci_lower, ci_upper
+
+
+def _emit_ci_band(
+    xs_valid: np.ndarray,
+    ci_lower: np.ndarray,
+    ci_upper: np.ndarray,
+    color_name: str,
+    opacity: float = 0.15,
+) -> str:
+    """
+    Emit a filled CI polygon for pgfplots.
+
+    Creates a closed path: forward on the upper envelope, backward on the lower.
+    """
+    if len(xs_valid) == 0:
+        return ""
+    fill_xs = np.concatenate([xs_valid, xs_valid[::-1]])
+    fill_ys = np.concatenate([ci_upper, ci_lower[::-1]])
+    return (
+        f"\\addplot[fill={color_name}, opacity={opacity}, "
+        f"draw=none, forget plot] "
+        f"coordinates {{{_make_coordinate_table(fill_xs, fill_ys)}}} -- cycle;"
+    )
+
+
+# =============================================================================
 # Domain-specific data loading and fitting
 # =============================================================================
 
@@ -1063,8 +1211,9 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
     """
     Generate LaTeX table of model configurations for scaling ladder (Table 2).
 
-    Includes architecture-independent config (d_model, n_heads, n_layers)
-    plus per-ladder non-embedding parameter counts.
+    Ladders are grouped by architecture family (Transformer, GDN, Mamba2) with a
+    multicolumn header per group.  Within each group a short variant label (ratio,
+    placement, etc.) distinguishes individual ladders.
     """
     # Collect all sizes across ladders by probing which sizes are computable
     all_sizes = set()
@@ -1079,6 +1228,64 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
                 all_sizes.update(size_map.keys())
     sizes = [s for s in size_order if s in all_sizes]
 
+    def escape_latex(s: str) -> str:
+        return s.replace("_", r"\_").replace("%", r"\%").replace("&", r"\&")
+
+    # --- Group ladders by architecture family ---
+    FAMILY_ORDER = ["transformer", "gdn", "mamba2"]
+    FAMILY_DISPLAY = {"transformer": "Transformer", "gdn": "GDN", "mamba2": "Mamba2"}
+
+    # Map ladder_name -> (family, variant_label, sort_key)
+    # sort_key: lower = more attention (appears first, left-to-right)
+    def _classify(name: str) -> Tuple[str, str, float]:
+        lower = name.lower()
+        cfg = LADDER_ARCH_CONFIGS.get(lower)
+        if cfg is None:
+            return ("other", name, 50)
+        if cfg.is_transformer:
+            return ("transformer", "100%", 0)
+        family = cfg.layer_type  # "gdn" or "mamba2"
+        if cfg.transformer_ratio == 0:
+            return (family, "Pure", 100)
+        attn_frac = 1.0 / cfg.transformer_ratio
+        ratio_label = f"1/{cfg.transformer_ratio}"
+        sort_key = 1.0 - attn_frac
+        if cfg.placement == "middle":
+            ratio_label += " Mid"
+            sort_key += 0.001
+        return (family, ratio_label, sort_key)
+
+    # Build ordered groups from the input ladder_names
+    groups_raw: List[Tuple[str, List[Tuple[str, str, float]]]] = []
+    seen_families: Dict[str, int] = {}
+    for name in ladder_names:
+        family, label, sort_key = _classify(name)
+        if family not in seen_families:
+            seen_families[family] = len(groups_raw)
+            groups_raw.append((family, []))
+        groups_raw[seen_families[family]][1].append((name, label, sort_key))
+
+    # Sort groups by FAMILY_ORDER
+    family_rank = {f: i for i, f in enumerate(FAMILY_ORDER)}
+    groups_raw.sort(key=lambda g: family_rank.get(g[0], 99))
+
+    # Sort members within each group by sort_key (most attention first)
+    for _, members in groups_raw:
+        members.sort(key=lambda m: m[2])
+
+    # Deduplicate variant labels within each group (e.g. multiple olmo3 runs)
+    groups: List[Tuple[str, List[Tuple[str, str]]]] = []
+    for family, members in groups_raw:
+        seen_labels: Dict[str, str] = {}
+        deduped: List[Tuple[str, str]] = []
+        for name, label, _ in members:
+            if label not in seen_labels:
+                seen_labels[label] = name
+                deduped.append((name, label))
+        groups.append((family, deduped))
+
+    n_cols = sum(len(members) for _, members in groups)
+
     lines = []
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"    \centering")
@@ -1089,34 +1296,45 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
     )
     lines.append(r"    \label{tab:scaling-ladder-configs}")
 
-    # Build column spec: Size + 3 config cols + one params column per ladder
-    n_ladders = len(ladder_names)
-    col_spec = "l" + "rrr" + "r" * n_ladders
+    col_spec = "l" + "rrr" + "r" * n_cols
     lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
     lines.append(r"        \toprule")
 
-    # Header
-    header_parts = [r"Size", r"$d$", r"$h$", r"$l$"]
-    for name in ladder_names:
-        display = get_display_name(name).replace("_", r"\_")
-        header_parts.append(f"$N$ ({display})")
-    lines.append("        " + " & ".join(header_parts) + r" \\")
+    # Row 1: architecture family multicolumn headers
+    header_top = ["", "", "", ""]
+    col_idx = 5
+    cmidrules = []
+    for family, members in groups:
+        n = len(members)
+        display = FAMILY_DISPLAY.get(family, escape_latex(family))
+        header_top.append(f"\\multicolumn{{{n}}}{{c}}{{{display}}}")
+        cmidrules.append(f"\\cmidrule(lr){{{col_idx}-{col_idx + n - 1}}}")
+        col_idx += n
+    lines.append("        " + " & ".join(header_top) + r" \\")
+    lines.append("        " + " ".join(cmidrules))
+
+    # Row 2: Size d h l + variant labels
+    header_bot = [r"Size", r"$d$", r"$h$", r"$l$"]
+    for _, members in groups:
+        for _, label in members:
+            header_bot.append(escape_latex(label))
+    lines.append("        " + " & ".join(header_bot) + r" \\")
     lines.append(r"        \midrule")
 
     for size in sizes:
-        # Model config columns (shared across architectures)
         spec = OLMO3_SPECS_BY_NAME.get(size)
         if spec is not None:
             row_parts = [size, str(spec.d_model), str(spec.n_heads), str(spec.n_layers)]
         else:
             row_parts = [size, "---", "---", "---"]
 
-        for name in ladder_names:
-            params = get_corrected_param_count(name, size)
-            if params is not None:
-                row_parts.append(f"{params/1e6:.1f}M")
-            else:
-                row_parts.append("---")
+        for _, members in groups:
+            for name, _ in members:
+                params = get_corrected_param_count(name, size)
+                if params is not None:
+                    row_parts.append(f"{round(params / 1e6)}M")
+                else:
+                    row_parts.append("---")
         lines.append("        " + " & ".join(row_parts) + r" \\")
 
     lines.append(r"        \bottomrule")
@@ -2272,6 +2490,7 @@ def generate_paper_figure_2(
     target_loss: Optional[float] = None,
     loss_strategy: str = "median",
     fig_suffix: str = "",
+    plot_ci: bool = False,
 ) -> str:
     """
     Generate Figure 2: Efficiency Projections.
@@ -2335,12 +2554,24 @@ def generate_paper_figure_2(
 
     for idx, name in enumerate(ladder_names):
         fit = fits[name][0]
+        bootstrap = fits[name][6]
         style = _get_latex_style(name, idx)
         display = _escape_latex(get_display_name(name))
 
         d_needed = np.array([solve_d_for_target_loss(fit, target_loss, n) for n in N_range])
         valid = np.isfinite(d_needed) & (d_needed > 0) & (d_needed <= 1e19)
         all_d_curves[name] = (N_range, d_needed, valid)
+
+        # CI band (rendered before main curve for z-ordering)
+        if plot_ci and bootstrap is not None:
+            N_ci, ci_lo, ci_hi = _compute_ci_envelope(bootstrap, target_loss, N_range)
+            ci_valid = ci_hi <= 1e19
+            if len(N_ci) > 0 and np.any(ci_valid):
+                lines.append(
+                    _emit_ci_band(
+                        N_ci[ci_valid], ci_lo[ci_valid], ci_hi[ci_valid], style["color_name"]
+                    )
+                )
 
         if np.any(valid):
             line_style = f", {style['line_style']}" if style.get("line_style") else ""
@@ -2635,6 +2866,7 @@ def generate_savings_factor_figure(
     reference_name: Optional[str] = None,
     reference_n: float = 7e9,
     num_points: int = 100,
+    plot_ci: bool = False,
 ) -> str:
     """
     Generate savings factor plot: projected data savings vs target loss.
@@ -2708,8 +2940,11 @@ def generate_savings_factor_figure(
         f"{{{ref_display} ($1\\times$)}};"
     )
 
+    ref_bootstrap = fits[reference_name][6]
+
     for name in other_names:
         arch_fit = fits[name][0]
+        arch_bootstrap = fits[name][6]
         style = _get_latex_style(name, ladder_names.index(name))
         display = _escape_latex(get_display_name(name))
 
@@ -2721,6 +2956,14 @@ def generate_savings_factor_figure(
             if np.isfinite(d_ref) and np.isfinite(d_arch) and d_ref > 0 and d_arch > 0:
                 savings.append(d_ref / d_arch)
                 valid_losses.append(tl)
+
+        # CI band on savings ratio
+        if plot_ci and ref_bootstrap is not None and arch_bootstrap is not None:
+            tl_ci, ci_lo, ci_hi = _compute_savings_vs_loss_ci_envelope(
+                ref_bootstrap, arch_bootstrap, target_losses, reference_n
+            )
+            if len(tl_ci) > 0:
+                lines.append(_emit_ci_band(tl_ci, ci_lo, ci_hi, style["color_name"]))
 
         if valid_losses:
             valid_losses_arr = np.array(valid_losses)
@@ -2742,6 +2985,229 @@ def generate_savings_factor_figure(
     )
     lines.append(r"\label{fig:savings-factor}")
     lines.append(r"\end{figure}")
+    return "\n".join(lines)
+
+
+def generate_combined_savings_figure(
+    fits: Dict[str, Tuple],
+    target_loss: Optional[float] = None,
+    loss_strategy: str = "min",
+    reference_name: Optional[str] = None,
+    plot_ci: bool = False,
+) -> str:
+    """
+    Generate combined 2-panel figure: data requirements + savings factor side by side.
+
+    Panel (a): Tokens to reach target loss vs model size (log-log).
+        One curve per architecture, with shaded savings region.
+    Panel (b): Savings factor (D_ref / D_arch) vs model size (log X, linear Y).
+        One curve per non-reference architecture, dashed line at y=1.
+
+    Both panels share the X axis (model size in parameters).
+
+    Args:
+        fits: {ladder_name: (fit, N, D, L, F, sizes, bootstrap)}
+        target_loss: Explicit target loss; if None, auto-determined via loss_strategy.
+        loss_strategy: "min" or "median" — how to pick target loss when not given.
+        reference_name: Reference architecture (default: first ladder).
+        plot_ci: If True and bootstrap data is available, render 95% CI bands.
+    """
+    ladder_names = list(fits.keys())
+    if len(ladder_names) < 2:
+        return "% Need at least 2 ladders for combined savings figure"
+
+    if reference_name is None:
+        reference_name = ladder_names[0]
+
+    # Auto-determine target loss
+    if target_loss is None:
+        all_L = np.concatenate([fits[n][3] for n in ladder_names])
+        if loss_strategy == "min":
+            target_loss = float(np.min(all_L))
+        else:
+            target_loss = float(np.median(all_L))
+
+    ref_fit = fits[reference_name][0]
+    ref_bootstrap = fits[reference_name][6]
+    other_names = [n for n in ladder_names if n != reference_name]
+
+    N_range = np.logspace(7.5, 10.85, 200)  # ~30M to 70B
+
+    lines = []
+    lines.append("% Combined Savings Figure: data requirements + savings factor")
+    lines.append("% Generated by fit_chinchilla_scaling_laws.py")
+    lines.append(r"% Requires: \usepackage{pgfplots}, \usepgfplotslibrary{groupplots}")
+    lines.append("")
+    lines.append(_emit_color_defs(ladder_names))
+    lines.append("")
+    lines.append(r"\begin{figure*}[htbp]")
+    lines.append(r"\centering")
+    lines.append(r"\begin{tikzpicture}")
+    lines.append(r"\begin{groupplot}[")
+    lines.append(r"    group style={")
+    lines.append(r"        group size=2 by 1,")
+    lines.append(r"        horizontal sep=1.2cm,")
+    lines.append(r"    },")
+    lines.append(r"    width=0.50\textwidth,")
+    lines.append(r"    height=0.40\textwidth,")
+    lines.append(r"    xmode=log,")
+    lines.append(r"    grid=major,")
+    lines.append(r"    grid style={gray!30},")
+    lines.append(r"    tick label style={font=\scriptsize},")
+    lines.append(r"    label style={font=\scriptsize},")
+    lines.append(r"    title style={font=\small},")
+    lines.append(r"]")
+
+    # ── Panel (a): Tokens to reach target loss vs model size ──
+    lines.append("")
+    lines.append("% Panel (a): Projected Data Requirements")
+    lines.append(r"\nextgroupplot[")
+    lines.append(r"    ymode=log,")
+    lines.append(r"    xlabel={Model Size (Parameters)},")
+    lines.append(f"    ylabel={{Tokens to reach loss $= {target_loss:.3f}$}},")
+    lines.append(r"    ymax=1e19,")
+    lines.append(r"    title={(a) Projected Data Requirements},")
+    lines.append(r"]")
+
+    all_d_curves: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
+    for idx, name in enumerate(ladder_names):
+        fit = fits[name][0]
+        bootstrap = fits[name][6]
+        style = _get_latex_style(name, idx)
+        display = _escape_latex(get_display_name(name))
+        line_style = f", {style['line_style']}" if style.get("line_style") else ""
+
+        d_needed = np.array([solve_d_for_target_loss(fit, target_loss, n) for n in N_range])
+        valid = np.isfinite(d_needed) & (d_needed > 0) & (d_needed <= 1e19)
+        all_d_curves[name] = (N_range, d_needed, valid)
+
+        # CI band (rendered before main curve for z-ordering)
+        if plot_ci and bootstrap is not None:
+            N_valid, ci_lo, ci_hi = _compute_ci_envelope(bootstrap, target_loss, N_range)
+            ci_valid = ci_hi <= 1e19
+            if len(N_valid) > 0 and np.any(ci_valid):
+                lines.append(
+                    _emit_ci_band(
+                        N_valid[ci_valid], ci_lo[ci_valid], ci_hi[ci_valid], style["color_name"]
+                    )
+                )
+
+        if np.any(valid):
+            lines.append(
+                f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
+                f"coordinates {{{_make_coordinate_table(N_range[valid], d_needed[valid])}}};"
+            )
+            lines.append(f"\\addlegendentry{{{display}}}")
+
+    # Shaded savings region between first two curves
+    if len(all_d_curves) >= 2:
+        names_list = list(all_d_curves.keys())
+        N_a, d_a, valid_a = all_d_curves[names_list[0]]
+        N_b, d_b, valid_b = all_d_curves[names_list[1]]
+        both_valid = valid_a & valid_b
+        if np.any(both_valid):
+            style_a = _get_latex_style(names_list[0], 0)
+            N_fwd = N_a[both_valid]
+            d_upper = np.maximum(d_a[both_valid], d_b[both_valid])
+            d_lower = np.minimum(d_a[both_valid], d_b[both_valid])
+            fill_coords = np.concatenate([N_fwd, N_fwd[::-1]])
+            fill_d = np.concatenate([d_upper, d_lower[::-1]])
+            lines.append(
+                f"\\addplot[fill={style_a['color_name']}!15, draw=none, forget plot] "
+                f"coordinates {{{_make_coordinate_table(fill_coords, fill_d)}}} -- cycle;"
+            )
+
+    # Vertical line at 7B
+    lines.append(
+        r"\draw[dashed, gray] (axis cs:7e9,\pgfkeysvalueof{/pgfplots/ymin}) -- "
+        r"(axis cs:7e9,\pgfkeysvalueof{/pgfplots/ymax});"
+    )
+    lines.append(
+        r"\node[font=\footnotesize, anchor=south] at (axis cs:7e9,"
+        r"\pgfkeysvalueof{/pgfplots/ymax}) {7B};"
+    )
+
+    # ── Panel (b): Savings factor vs model size ──
+    lines.append("")
+    lines.append("% Panel (b): Projected Savings Factor")
+    lines.append(r"\nextgroupplot[")
+    lines.append(r"    xlabel={Model Size (Parameters)},")
+    ref_display = _escape_latex(get_display_name(reference_name))
+    lines.append(r"    ylabel={Savings Factor ($D_\mathrm{ref}/D_\mathrm{arch}$)},")
+    lines.append(r"    title={(b) Projected Savings Factor},")
+    lines.append(r"]")
+
+    # Horizontal baseline at y=1
+    lines.append(
+        r"\draw[dashed, gray, thick] (axis cs:\pgfkeysvalueof{/pgfplots/xmin},1) -- "
+        r"(axis cs:\pgfkeysvalueof{/pgfplots/xmax},1);"
+    )
+    lines.append(
+        r"\node[font=\footnotesize, gray, anchor=south west] at "
+        r"(axis cs:\pgfkeysvalueof{/pgfplots/xmin},1) "
+        f"{{{ref_display} ($1\\times$)}};"
+    )
+
+    for name in other_names:
+        arch_fit = fits[name][0]
+        arch_bootstrap = fits[name][6]
+        idx = ladder_names.index(name)
+        style = _get_latex_style(name, idx)
+        display = _escape_latex(get_display_name(name))
+        line_style = f", {style['line_style']}" if style.get("line_style") else ""
+
+        # Compute savings factor at each N
+        # Only include points where both D values are practical (<=1e19),
+        # matching panel (a) filtering.  At small N the required D diverges
+        # and the ratio becomes numerically meaningless.
+        savings = []
+        valid_N = []
+        for n in N_range:
+            d_ref = solve_d_for_target_loss(ref_fit, target_loss, n)
+            d_arch = solve_d_for_target_loss(arch_fit, target_loss, n)
+            if (
+                np.isfinite(d_ref)
+                and np.isfinite(d_arch)
+                and 0 < d_ref <= 1e19
+                and 0 < d_arch <= 1e19
+            ):
+                savings.append(d_ref / d_arch)
+                valid_N.append(n)
+
+        # CI band on savings ratio
+        if plot_ci and ref_bootstrap is not None and arch_bootstrap is not None:
+            N_ci, ci_lo, ci_hi = _compute_savings_ci_envelope(
+                ref_bootstrap, arch_bootstrap, target_loss, N_range
+            )
+            if len(N_ci) > 0:
+                lines.append(_emit_ci_band(N_ci, ci_lo, ci_hi, style["color_name"]))
+
+        if valid_N:
+            lines.append(
+                f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
+                f"coordinates {{{_make_coordinate_table(np.array(valid_N), np.array(savings))}}};"
+            )
+            lines.append(f"\\addlegendentry{{{display}}}")
+
+    lines.append("")
+    lines.append(r"\end{groupplot}")
+    lines.append(r"\end{tikzpicture}")
+    lines.append("")
+    lines.append(r"\par\vspace{0.5em}")
+    lines.append(_emit_arch_legend(ladder_names))
+    strategy_desc = "minimum" if loss_strategy == "min" else "median"
+    lines.append(
+        r"\caption{Projected data requirements and savings factor across scales "
+        f"(target loss $= {target_loss:.3f}$, "
+        f"selected as the {strategy_desc} of all observed training losses). "
+        r"\textbf{(a)} Tokens needed to reach the target loss for each architecture. "
+        r"Shaded region shows the data savings. "
+        r"\textbf{(b)} Savings factor ($D_\mathrm{ref}/D_\mathrm{arch}$) vs model size; "
+        r"values above $1\times$ indicate fewer training tokens are needed.}"
+    )
+    lines.append(r"\label{fig:combined-savings}")
+    lines.append(r"\end{figure*}")
     return "\n".join(lines)
 
 
@@ -3921,6 +4387,12 @@ def main():
         help="Generate bootstrap CI whisker plots (requires --bootstrap)",
     )
     parser.add_argument(
+        "--plot-ci",
+        action="store_true",
+        help="Include 95%% bootstrap CI bands in paper figures "
+        "(requires --bootstrap). Renders shaded envelopes in TikZ output.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -4180,14 +4652,16 @@ def main():
         print(f"Saved Figure 1 (log-loss) to: {fig1_log_path}")
 
         # Figure 2: Efficiency Projections (median target loss)
-        fig2 = generate_paper_figure_2(fits, loss_strategy="median")
+        fig2 = generate_paper_figure_2(fits, loss_strategy="median", plot_ci=args.plot_ci)
         fig2_path = figures_dir / "scaling-efficiency-projections.tex"
         with open(fig2_path, "w") as f:
             f.write(fig2)
         print(f"Saved Figure 2 (median) to: {fig2_path}")
 
         # Figure 2b: Efficiency Projections (minimum target loss)
-        fig2_min = generate_paper_figure_2(fits, loss_strategy="min", fig_suffix="-min")
+        fig2_min = generate_paper_figure_2(
+            fits, loss_strategy="min", fig_suffix="-min", plot_ci=args.plot_ci
+        )
         fig2_min_path = figures_dir / "scaling-efficiency-projections-min.tex"
         with open(fig2_min_path, "w") as f:
             f.write(fig2_min)
@@ -4211,11 +4685,18 @@ def main():
         print(f"Saved Figure 4 to: {fig4_path}")
 
         # Figure 5: Savings Factor Plot
-        fig5 = generate_savings_factor_figure(fits)
+        fig5 = generate_savings_factor_figure(fits, plot_ci=args.plot_ci)
         fig5_path = figures_dir / "savings-factor.tex"
         with open(fig5_path, "w") as f:
             f.write(fig5)
         print(f"Saved Figure 5 to: {fig5_path}")
+
+        # Figure 6: Combined Savings (data requirements + savings factor, shared X axis)
+        fig6 = generate_combined_savings_figure(fits, plot_ci=args.plot_ci)
+        fig6_path = figures_dir / "combined-savings.tex"
+        with open(fig6_path, "w") as f:
+            f.write(fig6)
+        print(f"Saved Combined Savings to: {fig6_path}")
 
     # Generate paper tables
     if args.paper_tables:
@@ -4231,12 +4712,12 @@ def main():
             f.write(table1)
         print(f"\nSaved Table 1 to: {table1_path}")
 
-        # Table 2: Model Configurations
-        table2 = generate_model_config_latex_table(list(ladders.keys()))
-        table2_path = tables_dir / "scaling-ladder-configs.tex"
-        with open(table2_path, "w") as f:
-            f.write(table2)
-        print(f"Saved Table 2 to: {table2_path}")
+        # # Table 2: Model Configurations
+        # table2 = generate_model_config_latex_table(list(ladders.keys()))
+        # table2_path = tables_dir / "scaling-ladder-configs.tex"
+        # with open(table2_path, "w") as f:
+        #     f.write(table2)
+        # print(f"Saved Table 2 to: {table2_path}")
 
         # Table 3: Efficiency Gains
         table3 = generate_efficiency_latex_table(fits, target_losses=args.target_losses)
