@@ -1,7 +1,6 @@
 import logging
 from collections import defaultdict
 from functools import cached_property
-from itertools import cycle, islice
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -57,6 +56,7 @@ from .block import (
     TransformerBlock,
     TransformerBlockBase,
 )
+from .block_resolution import resolve_block_configs
 from .config import (
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
@@ -138,16 +138,12 @@ class Transformer(nn.Module):
             )
         )
 
-        # Determine the block configuration for each layer.
-        if isinstance(block, dict):
-            assert block_pattern is not None
-            full_pattern = list(islice(cycle(block_pattern), n_layers))
-            block_configs = [block[name] for name in full_pattern]
-        else:
-            block_configs = [block] * n_layers
-            if block_overrides is not None:
-                for block_idx, override in block_overrides.items():
-                    block_configs[block_idx] = override
+        block_configs: List[TransformerBlockConfig] = resolve_block_configs(
+            n_layers=n_layers,
+            block=block,
+            block_pattern=block_pattern,
+            block_overrides=block_overrides,
+        )
 
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
