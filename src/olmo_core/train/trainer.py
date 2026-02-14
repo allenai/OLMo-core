@@ -926,10 +926,13 @@ class Trainer:
         else:
             return False
 
-    def save_checkpoint(self) -> PathOrStr:
+    def save_checkpoint(self, ephemeral: bool = False) -> PathOrStr:
         """
         Save a checkpoint for the current step to the :data:`save_folder`.
 
+        :param ephemeral: Whether to mark the checkpoint as ephemeral in its metadata.
+          Note that the trainer itself won't remove ephemeral checkpoints.
+          That's up to the :class:`CheckpointerCallback`.
 
         :returns: The path/URL to the checkpoint.
         """
@@ -942,15 +945,24 @@ class Trainer:
         self._log_metrics()
         self._join_bookkeeping_ops()
 
-        self.checkpointer.save(path, self.train_module, cast(Dict[str, Any], self.state_dict()))
+        self.checkpointer.save(
+            path,
+            self.train_module,
+            cast(Dict[str, Any], self.state_dict()),
+            ephemeral=ephemeral,
+        )
         for callback in self._iter_callbacks():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
         return path
 
-    def save_checkpoint_async(self) -> Tuple[PathOrStr, Future]:
+    def save_checkpoint_async(self, ephemeral: bool = False) -> Tuple[PathOrStr, Future]:
         """
         Save a checkpoint for the current step to the :data:`save_folder` asynchronously.
+
+        :param ephemeral: Whether to mark the checkpoint as ephemeral in its metadata.
+          Note that the trainer itself won't remove ephemeral checkpoints.
+          That's up to the :class:`CheckpointerCallback`.
 
         :returns: The path/URL to the checkpoint and a future which will complete when the
             checkpoint is successfully saved.
@@ -966,7 +978,10 @@ class Trainer:
         self._join_bookkeeping_ops()
 
         fut = self.checkpointer.save_async(
-            path, self.train_module, cast(Dict[str, Any], self.state_dict())
+            path,
+            self.train_module,
+            cast(Dict[str, Any], self.state_dict()),
+            ephemeral=ephemeral,
         )
 
         def callback(future: Future):
@@ -1214,7 +1229,14 @@ class Trainer:
             start_time = time.perf_counter()
             assert soft_timeout is not None  # for mypy
             try:
-                return op(*args, **kwargs)
+                result = op(*args, **kwargs)
+                # NOTE: invoke cb inside wrapped_op (before the future is marked as FINISHED)
+                # so that _join_bookkeeping_ops() waits for it to complete. Previously cb was
+                # invoked via future.add_done_callback() which runs *after* the future is
+                # FINISHED, causing a race where state_dict() could capture stale callback state.
+                if cb is not None:
+                    cb(result)
+                return result
             finally:
                 if (runtime := int(time.perf_counter() - start_time)) > soft_timeout:
                     log.warning(
@@ -1251,8 +1273,7 @@ class Trainer:
 
             def callback(fut: Future[T]):
                 try:
-                    if cb is not None:
-                        cb(fut.result())  # type: ignore[misc]
+                    fut.result()  # re-raise any exception from the op or cb
                 except BaseException as e:
                     log.exception(e)
                     self._error = e
@@ -1263,9 +1284,7 @@ class Trainer:
 
             future.add_done_callback(callback)
         else:
-            result = wrapped_op(*args, **kwargs)
-            if cb is not None:
-                cb(result)
+            wrapped_op(*args, **kwargs)
 
     def _join_bookkeeping_ops(self, timeout: Optional[float] = None):
         """

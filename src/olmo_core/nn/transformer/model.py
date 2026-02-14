@@ -37,7 +37,12 @@ from olmo_core.nn.attention.ring import (
 )
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import Attention, FusedAttention, RingAttentionLoadBalancer
+from ..attention import (
+    Attention,
+    FusedAttention,
+    RingAttentionLoadBalancer,
+    SequenceMixer,
+)
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
@@ -272,7 +277,7 @@ class Transformer(nn.Module):
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
-            att = cast(Union[Attention, FusedAttention], block.attention)
+            att = cast(SequenceMixer, block.attention)
 
             # Attention weights.
             self.init_method.init_attention(
@@ -309,13 +314,14 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
-            # Warm up attention backend cache.
-            if max_seq_len is not None and att.backend is not None:
-                att.backend.warmup_cache(max_seq_len, device)
+            if isinstance(att, (Attention, FusedAttention)):
+                # Warm up attention backend cache.
+                if max_seq_len is not None and att.backend is not None:
+                    att.backend.warmup_cache(max_seq_len, device)
 
-            # Warm up RoPE cache.
-            if max_seq_len is not None and att.rope is not None:
-                att.rope.warmup_cache(max_seq_len, device)
+                # Warm up RoPE cache.
+                if max_seq_len is not None and att.rope is not None:
+                    att.rope.warmup_cache(max_seq_len, device)
 
         if self.lm_head is not None:
             self.init_method.init_final_w_out(

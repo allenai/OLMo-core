@@ -1,9 +1,8 @@
 import logging
 import math
 import warnings
-from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -49,6 +48,9 @@ from .ring import (
     UlyssesContextParallelStyle,
     UlyssesLoadBalancer,
 )
+
+if TYPE_CHECKING:
+    from olmo_core.nn.transformer.init import InitMethod
 
 __all__ = [
     "SlidingWindowAttentionConfig",
@@ -700,6 +702,52 @@ class Attention(SequenceMixer):
         """
         self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
 
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        # Compute std for Q/K/V initialization
+        if self == InitMethod.fan_in:
+            # For fan_in, use 1/√d_in based on actual weight shape (ignores base std parameter)
+            # Each projection may have different output dims (n_heads * head_dim vs n_kv_heads * head_dim)
+            # but they all have the same input dim
+            for w in (self.w_q, self.w_k, self.w_v):
+                w_std = w.in_features**-0.5
+                init_linear(w, std=w_std, generator=generator)
+        else:
+            if self == InitMethod.normalized:
+                std = d_model**-0.5
+            for w in (self.w_q, self.w_k, self.w_v):
+                init_linear(w, std=std, generator=generator)
+
+        # Initialize attention gate projection if present
+        if self.w_g is not None:
+            if self == InitMethod.fan_in:
+                g_std = self.w_g.in_features**-0.5
+            else:
+                g_std = std
+            init_linear(self.w_g, std=g_std, generator=generator)
+
+        # Compute std for w_out initialization
+        if self == InitMethod.fan_in:
+            std = self.w_out.in_features**-0.5
+        elif self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
+
+        init_linear(self.w_out, std=std, generator=generator)
+
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         """
         Initialize the kv cache manager for attention. When the kv cache manager exists,
@@ -1048,6 +1096,38 @@ class FusedAttention(SequenceMixer):
         uly: Optional[UlyssesContextParallelStyle] = None,
     ):
         self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
+
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        # Compute std for fused QKV initialization
+        if self == InitMethod.fan_in:
+            std = self.w_qkv.in_features**-0.5
+        elif self == InitMethod.normalized:
+            std = d_model**-0.5
+
+        init_linear(self.w_qkv, std=std, generator=generator)
+
+        # Compute std for w_out initialization
+        if self == InitMethod.fan_in:
+            std = self.w_out.in_features**-0.5
+        elif self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
+
+        init_linear(self.w_out, std=std, generator=generator)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
