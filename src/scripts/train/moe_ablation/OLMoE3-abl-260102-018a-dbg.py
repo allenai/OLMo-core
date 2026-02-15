@@ -92,7 +92,7 @@ SEQUENCE_LENGTH = 8192
 
 MAX_DURATION = int(1200e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-SAVE_INTERVAL=10000
+SAVE_INTERVAL=100
 
 NUM_EXPERTS = 32
 TOP_K = 4
@@ -115,7 +115,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 MICRO_BSZ = 2
 # DP_DIM=2
-EP_DIM=1
+EP_DIM=2
 PP_DIM=1
 
 # ref
@@ -142,7 +142,7 @@ else:
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=True
+USE_COMPILE=False
 USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
@@ -198,6 +198,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
+            ep_no_sync=True,
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,

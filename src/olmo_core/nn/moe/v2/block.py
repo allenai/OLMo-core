@@ -1,40 +1,41 @@
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
+import math
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
+
+import nvtx
 import torch
+import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement, Shard
-from dataclasses import dataclass
+from torch.utils.checkpoint import checkpoint, CheckpointFunction
+
+import olmo_core.nn.transformer.block
+try:
+    import torch.distributed._symmetric_memory as _symm_mem
+except ImportError:
+    _symm_mem = None  # type: ignore[assignment]
+
+from olmo_core.config import Config, DType, StrEnum
+from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
 from olmo_core.ops import moe as ops
+from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
-from olmo_core.ops import attach_auxiliary_loss
-from olmo_core.utils import get_or_init_stream
 from olmo_core.exceptions import OLMoConfigurationError
-
-from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
-
+from olmo_core.utils import get_or_init_stream
 
 from ...attention import AttentionConfig, RingAttentionLoadBalancerType
 from ...buffer_cache import BufferCache
 from ...functional import l2_normalize
 from ...layer_norm import LayerNormConfig
-from ...moe import  MoERouterGatingFunction
+from ...moe import MoERouterGatingFunction
 from ...moe import MoERouterConfig as MoERouterConfigV1
 from ...moe.loss import MoELoadBalancingLossGranularity
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
-from .router import MoERouterV2
-from typing import List, Optional
-from torch.utils.checkpoint import checkpoint, CheckpointFunction
-import nvtx
-import torch.distributed as dist
-import olmo_core.nn.transformer.block
-from olmo_core.distributed.utils import get_local_rank, get_rank
-from olmo_core.config import Config, DType, StrEnum
-from typing import Callable
-from .router import MoERouterConfigV2
-from .shared_experts import SharedExpertsConfig
 from .routed_experts import RoutedExperts, RoutedExpertsConfig, requires_host_side_split_sizes
+from .router import MoERouterConfigV2, MoERouterV2
 from .shared_experts import SharedExperts
-    
+from .shared_experts import SharedExpertsConfig
 
 # backend: transformer_engine
 from ..utils import (
@@ -42,10 +43,136 @@ from ..utils import (
     moe_permute_no_compile,
     moe_sort_chunks_by_index_no_compile,
 )
-
 from olmo_core.nn.transformer.config import (
-    TransformerBlockType, TransformerBlockConfig
+    TransformerBlockConfig,
+    TransformerBlockType,
 )
+
+
+@dataclass
+class _NoSyncSymmBuffers:
+    dispatch_in: torch.Tensor
+    dispatch_in_splits: torch.Tensor
+    dispatch_out: torch.Tensor
+    dispatch_splits_offsets: torch.Tensor
+    combine_out: torch.Tensor
+    combine_splits_offsets: torch.Tensor
+
+
+class _DispatchVDev2DAutograd(torch.autograd.Function):
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx,
+        packed_input: torch.Tensor,
+        in_splits: torch.Tensor,
+        symm_input: torch.Tensor,
+        symm_in_splits: torch.Tensor,
+        symm_out: torch.Tensor,
+        symm_out_splits_offsets: torch.Tensor,
+        group_name: str,
+        major_align: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        packed_rows = packed_input.shape[0]
+        if packed_rows > symm_input.shape[0]:
+            raise RuntimeError(
+                f"packed input rows ({packed_rows}) exceed symmetric dispatch input capacity ({symm_input.shape[0]})"
+            )
+
+        symm_input.zero_()
+        if packed_rows > 0:
+            symm_input[:packed_rows].copy_(packed_input)
+        symm_in_splits.copy_(in_splits.to(dtype=torch.int64))
+        symm_out_splits_offsets.zero_()
+
+        torch.ops.symm_mem.all_to_all_vdev_2d(
+            symm_input,
+            symm_out,
+            symm_in_splits,
+            symm_out_splits_offsets,
+            group_name,
+            major_align=major_align,
+        )
+
+        ctx.group_name = group_name
+        ctx.packed_rows = packed_rows
+        ctx.symm_input_shape = symm_input.shape
+        out_splits_offsets = symm_out_splits_offsets.clone()
+        ctx.save_for_backward(out_splits_offsets)
+        ctx.mark_non_differentiable(out_splits_offsets)
+        return symm_out, out_splits_offsets
+
+    @staticmethod
+    def backward(ctx, grad_out: torch.Tensor, grad_out_splits_offsets: torch.Tensor):  # type: ignore[override]
+        del grad_out_splits_offsets
+        (forward_out_splits_offsets,) = ctx.saved_tensors
+
+        grad_symm_input = torch.empty(
+            ctx.symm_input_shape,
+            dtype=grad_out.dtype,
+            device=grad_out.device,
+        )
+        grad_input_splits_offsets = torch.empty_like(forward_out_splits_offsets)
+
+        torch.ops.symm_mem.all_to_all_vdev_2d_offset(
+            grad_out.contiguous(),
+            grad_symm_input,
+            forward_out_splits_offsets,
+            grad_input_splits_offsets,
+            ctx.group_name,
+        )
+        grad_packed_input = grad_symm_input[: ctx.packed_rows].clone()
+
+        return grad_packed_input, None, None, None, None, None, None, None
+
+
+class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx,
+        input: torch.Tensor,
+        in_splits_offsets: torch.Tensor,
+        symm_out: torch.Tensor,
+        symm_out_splits_offsets: torch.Tensor,
+        group_name: str,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        symm_out_splits_offsets.zero_()
+        torch.ops.symm_mem.all_to_all_vdev_2d_offset(
+            input,
+            symm_out,
+            in_splits_offsets,
+            symm_out_splits_offsets,
+            group_name,
+        )
+
+        ctx.group_name = group_name
+        ctx.input_shape = input.shape
+        out_splits_offsets = symm_out_splits_offsets.clone()
+        ctx.save_for_backward(out_splits_offsets)
+        ctx.mark_non_differentiable(out_splits_offsets)
+        return symm_out, out_splits_offsets
+
+    @staticmethod
+    def backward(ctx, grad_out: torch.Tensor, grad_out_splits_offsets: torch.Tensor):  # type: ignore[override]
+        del grad_out_splits_offsets
+        (forward_out_splits_offsets,) = ctx.saved_tensors
+
+        grad_input = torch.empty(
+            ctx.input_shape,
+            dtype=grad_out.dtype,
+            device=grad_out.device,
+        )
+        grad_input_splits_offsets = torch.empty_like(forward_out_splits_offsets)
+
+        torch.ops.symm_mem.all_to_all_vdev_2d_offset(
+            grad_out.contiguous(),
+            grad_input,
+            forward_out_splits_offsets,
+            grad_input_splits_offsets,
+            ctx.group_name,
+        )
+        return grad_input, None, None, None, None
+
+
 @dataclass
 class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     
@@ -61,6 +188,9 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     checkpoint_permute_moe_unpermute: bool = False
     checkpoint_combined_ep_tbo: bool = False
     checkpoint_second_unpermute: bool = False
+    ep_no_sync: bool = False
+    ep_no_sync_capacity_factor: float = 2.0
+    ep_no_sync_major_align: int = 1
         
     def build(
         self,
@@ -190,6 +320,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         checkpoint_permute_moe_unpermute = False,
         checkpoint_combined_ep_tbo = False,
         checkpoint_second_unpermute=False,
+        ep_no_sync: bool = False,
+        ep_no_sync_capacity_factor: float = 2.0,
+        ep_no_sync_major_align: int = 1,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -284,6 +417,21 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.checkpoint_permute_moe_unpermute = checkpoint_permute_moe_unpermute
         self.checkpoint_combined_ep_tbo = checkpoint_combined_ep_tbo
         self.checkpoint_second_unpermute = checkpoint_second_unpermute
+        self.ep_no_sync = ep_no_sync
+        self.ep_no_sync_capacity_factor = ep_no_sync_capacity_factor
+        self.ep_no_sync_major_align = ep_no_sync_major_align
+        self._ep_symm_group_name: Optional[str] = None
+        self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
+        self._ep_no_sync_last_debug: Dict[str, torch.Tensor] = {}
+
+        if self.ep_no_sync_capacity_factor <= 0:
+            raise OLMoConfigurationError(
+                f"ep_no_sync_capacity_factor must be > 0 (got {self.ep_no_sync_capacity_factor})"
+            )
+        if self.ep_no_sync_major_align < 1:
+            raise OLMoConfigurationError(
+                f"ep_no_sync_major_align must be >= 1 (got {self.ep_no_sync_major_align})"
+            )
 
 
 
@@ -359,6 +507,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     ) -> torch.Tensor:
         if self.routed_experts:
             if self.ep_enabled:
+                if self.ep_no_sync:
+                    return self.combined_forward_ep_no_sync(
+                        x, loss_div_factor=loss_div_factor, **kwargs
+                    )
                 return self.combined_forward_ep(x, loss_div_factor=loss_div_factor, **kwargs)
             else:
                 return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
@@ -380,6 +532,23 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.num_local_routed_experts = self.routed_experts.num_local_experts
         self._ep_enabled = True
         self.ep_pg = ep_mp_mesh.get_group()
+
+        if self.ep_no_sync:
+            if _symm_mem is None:
+                raise RuntimeError(
+                    "EP no-sync requires torch.distributed._symmetric_memory, but it is unavailable"
+                )
+            assert self.ep_pg is not None
+            group_name = self.ep_pg.group_name
+            try:
+                _symm_mem.enable_symm_mem_for_group(group_name)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to enable symmetric memory for EP group '{group_name}' "
+                    f"(block={self.block_idx}, rank={get_rank(self.ep_pg)}): {e}"
+                ) from e
+            self._ep_symm_group_name = group_name
+            self._ep_no_sync_symm_cache.clear()
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -427,7 +596,224 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             scores_only,
             loss_div_factor=loss_div_factor # scalar
         )
-    
+
+    def _get_ep_no_sync_group_name(self) -> str:
+        if not self.ep_no_sync:
+            raise RuntimeError("EP no-sync is not enabled for this block")
+        if self._ep_symm_group_name is None:
+            raise RuntimeError(
+                f"EP no-sync group is not initialized (block={self.block_idx}, ep_enabled={self.ep_enabled})"
+            )
+        return self._ep_symm_group_name
+
+    def _get_or_init_ep_no_sync_symm_tensor(
+        self,
+        *,
+        name: str,
+        shape: Tuple[int, ...],
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        if _symm_mem is None:
+            raise RuntimeError("EP no-sync requires torch.distributed._symmetric_memory")
+        if self.ep_pg is None:
+            raise RuntimeError("EP process group is not initialized")
+
+        cached = self._ep_no_sync_symm_cache.get(name)
+        needs_realloc = (
+            cached is None
+            or tuple(cached.shape) != tuple(shape)
+            or cached.dtype != dtype
+            or cached.device != device
+        )
+        if needs_realloc:
+            try:
+                symm_tensor = _symm_mem.empty(shape, dtype=dtype, device=device)
+                _symm_mem.rendezvous(symm_tensor, group=self.ep_pg)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to allocate/rendezvous symmetric tensor '{name}' with shape={shape}, "
+                    f"dtype={dtype}, device={device}, block={self.block_idx}, rank={get_rank(self.ep_pg)}: {e}"
+                ) from e
+            self._ep_no_sync_symm_cache[name] = symm_tensor
+
+        return self._ep_no_sync_symm_cache[name]
+
+    def _get_ep_no_sync_buffers(
+        self,
+        *,
+        dispatch_in_cap: int,
+        dispatch_out_cap: int,
+        combine_out_cap: int,
+        d_model: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> _NoSyncSymmBuffers:
+        assert self.routed_experts_router is not None
+
+        num_experts = self.routed_experts_router.num_experts
+        dispatch_in = self._get_or_init_ep_no_sync_symm_tensor(
+            name="dispatch_in",
+            shape=(dispatch_in_cap, d_model),
+            dtype=dtype,
+            device=device,
+        )
+        dispatch_in_splits = self._get_or_init_ep_no_sync_symm_tensor(
+            name="dispatch_in_splits",
+            shape=(num_experts,),
+            dtype=torch.int64,
+            device=device,
+        )
+        dispatch_out = self._get_or_init_ep_no_sync_symm_tensor(
+            name="dispatch_out",
+            shape=(dispatch_out_cap, d_model),
+            dtype=dtype,
+            device=device,
+        )
+        dispatch_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
+            name="dispatch_splits_offsets",
+            shape=(2, num_experts),
+            dtype=torch.int64,
+            device=device,
+        )
+        combine_out = self._get_or_init_ep_no_sync_symm_tensor(
+            name="combine_out",
+            shape=(combine_out_cap, d_model),
+            dtype=dtype,
+            device=device,
+        )
+        combine_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
+            name="combine_splits_offsets",
+            shape=(2, num_experts),
+            dtype=torch.int64,
+            device=device,
+        )
+        return _NoSyncSymmBuffers(
+            dispatch_in=dispatch_in,
+            dispatch_in_splits=dispatch_in_splits,
+            dispatch_out=dispatch_out,
+            dispatch_splits_offsets=dispatch_splits_offsets,
+            combine_out=combine_out,
+            combine_splits_offsets=combine_splits_offsets,
+        )
+
+    def _compute_ep_no_sync_rank_capacity(self, num_out_tokens: int) -> int:
+        # `num_out_tokens` is the local routed-token count before EP dispatch.
+        # Under balanced routing, the average received tokens per EP rank is this
+        # same value (not divided by ep_world_size).
+        return max(
+            1,
+            int(
+                math.ceil(
+                    self.ep_no_sync_capacity_factor * float(num_out_tokens)
+                )
+            ),
+        )
+
+    def _build_tail_keep_quota(
+        self,
+        recv_counts_per_src_local_expert: torch.Tensor,
+        rank_capacity: int,
+    ) -> torch.Tensor:
+        """
+        Build per-source keep quotas on destination rank.
+        Order is local-expert-major then source-rank.
+        """
+        counts = recv_counts_per_src_local_expert.to(dtype=torch.long)
+        # shape: (num_local_experts, ep_world_size)
+        counts_flat = counts.transpose(0, 1).reshape(-1)
+        cumsum_counts = torch.cumsum(counts_flat, dim=0)
+        cap = torch.tensor(rank_capacity, device=counts.device, dtype=torch.long)
+        kept_cumsum = torch.minimum(cumsum_counts, cap)
+        prev = torch.cat([torch.zeros(1, device=counts.device, dtype=torch.long), kept_cumsum[:-1]])
+        kept_flat = kept_cumsum - prev
+        kept = kept_flat.view(self.num_local_routed_experts, self.ep_world_size).transpose(0, 1)
+        return kept
+
+    def _build_keep_indices(
+        self,
+        requested_splits: torch.Tensor,
+        keep_splits: torch.Tensor,
+        num_out_tokens: int,
+    ) -> torch.Tensor:
+        """
+        Build indices (into local-permuted tokens) kept after capacity dropping.
+        Tokens are kept from the head of each global expert chunk.
+        """
+        requested = requested_splits.to(dtype=torch.long)
+        keep = keep_splits.to(dtype=torch.long)
+        if requested.numel() == 0:
+            return torch.empty(0, dtype=torch.long, device=keep.device)
+
+        expert_ids = torch.repeat_interleave(
+            torch.arange(requested.numel(), device=keep.device, dtype=torch.long),
+            requested,
+            output_size=num_out_tokens,
+        )
+        token_ids = torch.arange(num_out_tokens, device=keep.device, dtype=torch.long)
+        starts = torch.cumsum(requested, dim=0) - requested
+        pos_in_chunk = token_ids - starts.index_select(0, expert_ids)
+        keep_mask = pos_in_chunk < keep.index_select(0, expert_ids)
+        return token_ids[keep_mask]
+
+    def _gather_by_splits_offsets(
+        self,
+        src: torch.Tensor,
+        splits: torch.Tensor,
+        offsets: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Defragment chunks described by (splits, offsets) into a contiguous tensor.
+        """
+        splits = splits.to(dtype=torch.long)
+        offsets = offsets.to(dtype=torch.long)
+
+        chunk_ids = torch.repeat_interleave(
+            torch.arange(splits.numel(), device=src.device, dtype=torch.long),
+            splits,
+        )
+        if chunk_ids.numel() == 0:
+            return src.narrow(0, 0, 0)
+
+        starts = torch.cumsum(splits, dim=0) - splits
+        out_pos = torch.arange(chunk_ids.numel(), device=src.device, dtype=torch.long)
+        pos_in_chunk = out_pos - starts.index_select(0, chunk_ids)
+        src_indices = offsets.index_select(0, chunk_ids) + pos_in_chunk
+        return src.index_select(0, src_indices)
+
+    def _scatter_by_splits_offsets(
+        self,
+        src: torch.Tensor,
+        *,
+        splits: torch.Tensor,
+        offsets: torch.Tensor,
+        out_shape: Tuple[int, int],
+    ) -> torch.Tensor:
+        """
+        Scatter contiguous src rows into chunked layout described by (splits, offsets).
+        """
+        splits = splits.to(dtype=torch.long)
+        offsets = offsets.to(dtype=torch.long)
+        out = src.new_zeros(out_shape)
+
+        chunk_ids = torch.repeat_interleave(
+            torch.arange(splits.numel(), device=src.device, dtype=torch.long),
+            splits,
+        )
+        if chunk_ids.numel() == 0:
+            return out
+
+        starts = torch.cumsum(splits, dim=0) - splits
+        src_pos = torch.arange(chunk_ids.numel(), device=src.device, dtype=torch.long)
+        pos_in_chunk = src_pos - starts.index_select(0, chunk_ids)
+        out_indices = offsets.index_select(0, chunk_ids) + pos_in_chunk
+        if src.shape[0] != out_indices.numel():
+            raise RuntimeError(
+                f"scatter-by-splits mismatch: src_rows={src.shape[0]}, expected={out_indices.numel()}"
+            )
+        out.index_copy_(0, out_indices, src)
+        return out
+
     def combined_forward_shared_only(
         self,
         x: torch.Tensor,
@@ -637,6 +1023,282 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # Combine shared and routed outputs
         return shared_out * shared_factor + routed_out * routed_factor
 
+    def combined_forward_ep_no_sync(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Forward with EP no-sync using symmetric-memory all_to_all_vdev ops."""
+        assert self.routed_experts is not None
+        assert self.routed_experts_router is not None
+        assert self.ep_enabled
+        assert self.num_local_routed_experts is not None
+
+        group_name = self._get_ep_no_sync_group_name()
+        B, S, D = x.shape
+
+        block_inp = x
+        del x
+
+        attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
+
+        kwargs.pop("max_doc_len", None)
+        kwargs.pop("cu_doc_lens", None)
+
+        (
+            local_x_global_routed_expert_weights,  # (B, S, top_k)
+            local_x_global_routed_expert_indices,  # (B, S, top_k)
+            local_batch_size_per_global_routed_expert,  # (num_experts, )
+            routed_expert_router_aux_loss_info,
+        ) = self.router_forward(
+            router=self.routed_experts_router,
+            local_x=attn_res_out,
+            scores_only=False,
+            loss_div_factor=loss_div_factor,
+        )
+
+        wait_stream_no_compile(
+            this_stream=self.get_dense_stream(),
+            other_stream=torch.cuda.current_stream(),
+        )
+
+        with torch.cuda.stream(self.get_dense_stream()):
+            if self.shared_experts_router:
+                (
+                    local_x_global_shared_expert_weights,  # (B, S, E_shared)
+                    _,
+                    _,
+                    _,
+                ) = self.router_forward(
+                    router=self.shared_experts_router,
+                    local_x=attn_res_out,
+                    scores_only=True,
+                    loss_div_factor=loss_div_factor,
+                )
+            else:
+                local_x_global_shared_expert_weights = None
+
+        moe_inp = attn_res_out
+        in_shape = moe_inp.size()
+        moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
+
+        with nvtx.annotate("Permute local tokens", color="green"):
+            routing_map = local_x_global_routed_expert_indices.view(
+                -1, self.routed_experts_router.top_k
+            ).int()
+            num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k
+            hidden_shape_before_permute = moe_inp.shape
+            permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
+                inp=moe_inp,
+                routing_map=routing_map,
+                num_out_tokens=num_out_tokens,
+                map_type="index",
+            )
+
+        if self.shared_experts is not None:
+            wait_stream_no_compile(
+                this_stream=self.get_dense_stream(),
+                other_stream=torch.cuda.current_stream(),
+            )
+            with torch.cuda.stream(self.get_dense_stream()):
+                shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
+        else:
+            shared_out_up, shared_out_gate = None, None
+
+        requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
+        with torch.no_grad():
+            recv_per_src_local = torch.empty_like(requested_splits)
+            dist.all_to_all_single(
+                recv_per_src_local,
+                requested_splits,
+                group=self.ep_pg,
+            )
+            recv_per_src_local_2d = recv_per_src_local.view(
+                self.ep_world_size, self.num_local_routed_experts
+            )
+
+            rank_capacity = self._compute_ep_no_sync_rank_capacity(num_out_tokens)
+            keep_from_src_2d = self._build_tail_keep_quota(recv_per_src_local_2d, rank_capacity)
+
+            allowed_splits = torch.empty_like(requested_splits)
+            dist.all_to_all_single(
+                allowed_splits,
+                keep_from_src_2d.reshape(-1).contiguous(),
+                group=self.ep_pg,
+            )
+            allowed_splits = torch.minimum(allowed_splits, requested_splits)
+
+        keep_indices = self._build_keep_indices(
+            requested_splits=requested_splits,
+            keep_splits=allowed_splits,
+            num_out_tokens=num_out_tokens,
+        )
+        packed_local_x = permutated_local_x.index_select(0, keep_indices)
+        local_kept_tokens = packed_local_x.shape[0]
+
+        align_pad = max(self.ep_no_sync_major_align - 1, 0)
+        dispatch_out_pad = (self.num_local_routed_experts - 1) * align_pad
+        combine_out_pad = (self.routed_experts_router.num_experts - 1) * align_pad
+
+        dispatch_in_cap = num_out_tokens
+        dispatch_out_cap = rank_capacity + dispatch_out_pad
+        combine_out_cap = num_out_tokens + combine_out_pad
+
+        buffers = self._get_ep_no_sync_buffers(
+            dispatch_in_cap=dispatch_in_cap,
+            dispatch_out_cap=dispatch_out_cap,
+            combine_out_cap=combine_out_cap,
+            d_model=permutated_local_x.shape[-1],
+            dtype=permutated_local_x.dtype,
+            device=permutated_local_x.device,
+        )
+
+        try:
+            dispatch_out, dispatch_splits_offsets = _DispatchVDev2DAutograd.apply(
+                packed_local_x,
+                allowed_splits,
+                buffers.dispatch_in,
+                buffers.dispatch_in_splits,
+                buffers.dispatch_out,
+                buffers.dispatch_splits_offsets,
+                group_name,
+                self.ep_no_sync_major_align,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"EP no-sync dispatch failed (block={self.block_idx}, rank={get_rank(self.ep_pg)}): {e}"
+            ) from e
+
+        dispatch_splits = dispatch_splits_offsets[0]
+        dispatch_offsets = dispatch_splits_offsets[1]
+
+        global_x = self._gather_by_splits_offsets(
+            dispatch_out,
+            splits=dispatch_splits,
+            offsets=dispatch_offsets,
+        )
+        parallel_batch_size_per_local_expert = dispatch_splits.view(
+            self.num_local_routed_experts, self.ep_world_size
+        ).sum(dim=1, dtype=torch.long)
+
+        if requires_host_side_split_sizes():
+            parallel_batch_size_per_local_expert_cpu, _, dtoh_event = async_copy_to_cpu(
+                parallel_batch_size_per_local_expert,
+                event=self._dtoh_event,
+            )
+            assert dtoh_event is not None
+            cast(torch.cuda.Event, dtoh_event).synchronize()
+            global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
+        else:
+            global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert)
+
+        global_x_padded = self._scatter_by_splits_offsets(
+            global_x,
+            splits=dispatch_splits,
+            offsets=dispatch_offsets,
+            out_shape=(dispatch_out_cap, global_x.shape[-1]),
+        )
+
+        try:
+            combine_out, combine_splits_offsets = _CombineVDev2DOffsetAutograd.apply(
+                global_x_padded,
+                dispatch_splits_offsets,
+                buffers.combine_out,
+                buffers.combine_splits_offsets,
+                group_name,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"EP no-sync combine failed (block={self.block_idx}, rank={get_rank(self.ep_pg)}): {e}"
+            ) from e
+
+        combine_splits = combine_splits_offsets[0]
+        combine_offsets = combine_splits_offsets[1]
+        local_kept_x = self._gather_by_splits_offsets(
+            combine_out,
+            splits=combine_splits,
+            offsets=combine_offsets,
+        )
+
+        if local_kept_x.shape[0] != local_kept_tokens:
+            raise RuntimeError(
+                f"EP no-sync token reconstruction mismatch (block={self.block_idx}, rank={get_rank(self.ep_pg)}): "
+                f"local_kept_x={local_kept_x.shape[0]}, local_kept_tokens={local_kept_tokens}"
+            )
+
+        restored_local_x = permutated_local_x.new_zeros(
+            (num_out_tokens, permutated_local_x.shape[-1])
+        )
+        if keep_indices.numel() > 0:
+            restored_local_x.index_copy_(0, keep_indices, local_kept_x)
+
+        if self.shared_experts is not None:
+            assert shared_out_up is not None
+            assert shared_out_gate is not None
+            with torch.cuda.stream(self.get_dense_stream()):
+                shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
+                if self.shared_experts_router:
+                    assert local_x_global_shared_expert_weights is not None
+                    _, _, E_s = local_x_global_shared_expert_weights.shape
+                    mixed_shared_out = torch.bmm(
+                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
+                        shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
+                    ).squeeze(1).view(B, S, D)
+                else:
+                    mixed_shared_out = shared_out.squeeze(0)
+        else:
+            mixed_shared_out = None
+
+        with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+            local_x = moe_unpermute_no_compile(
+                inp=restored_local_x,
+                row_id_map=reversed_local_x_permutation_mapping,
+                merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                restore_shape=hidden_shape_before_permute,
+                map_type="index",
+            )
+            local_x = cast(torch.Tensor, local_x)
+        zero_rows_after_local_unpermute = (local_x.abs().sum(dim=-1) == 0).sum(dtype=torch.long)
+
+        local_x = local_x.view(in_shape)
+        wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
+
+        if self.shared_experts is not None:
+            assert mixed_shared_out is not None
+            mlp_out = local_x + mixed_shared_out
+        else:
+            mlp_out = local_x
+
+        final_out = attn_res_out + self.feed_forward_norm(mlp_out)
+
+        if routed_expert_router_aux_loss_info is not None:
+            routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
+                *routed_expert_router_aux_loss_info
+            )
+            final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
+
+        self._ep_no_sync_last_debug = {
+            "requested_splits": requested_splits.detach(),
+            "allowed_splits": allowed_splits.detach(),
+            "rank_capacity": torch.tensor(
+                rank_capacity, device=requested_splits.device, dtype=torch.long
+            ),
+            "local_kept_tokens": torch.tensor(
+                local_kept_tokens, device=requested_splits.device, dtype=torch.long
+            ),
+            "received_tokens_after_drop": dispatch_splits.sum(dtype=torch.long).detach(),
+            "combined_tokens": combine_splits.sum(dtype=torch.long).detach(),
+            "num_dropped": torch.tensor(
+                num_out_tokens - local_kept_tokens,
+                device=requested_splits.device,
+                dtype=torch.long,
+            ),
+            "zero_rows_after_local_unpermute": zero_rows_after_local_unpermute.detach(),
+        }
+
+        return final_out
 
     def combined_forward_ep(
         self,
