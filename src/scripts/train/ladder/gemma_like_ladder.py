@@ -404,7 +404,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     Convenience multipliers (for quick hyperparameter sweeps):
         --lr-multiplier=2.0                                Multiply computed learning rate
         --batch-multiplier=0.5                             Multiply computed batch size
-        --chinchilla-multiple=1                          Multiply Chinchilla training tokens
+        --chinchilla-multiple=1                            Multiply Chinchilla training tokens
         --no-beaker-launch                                 Skip setting beaker launch config
 
     """
