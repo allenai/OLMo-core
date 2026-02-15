@@ -2,7 +2,7 @@
 Convert an OLMo Core hybrid model checkpoint (with FLA/GatedDeltaNet layers) 
 to a HuggingFace model checkpoint.
 
-This script extends the standard conversion to support OLMo 3.5 Hybrid models that mix
+This script extends the standard conversion to support OLMo 3.2 Hybrid models that mix
 attention layers with linear attention (GatedDeltaNet) layers.
 
 UPDATED: Now uses simplified conversion without weight fusion, since the HF architecture
@@ -136,7 +136,7 @@ def get_hybrid_hf_config_dict(
     max_sequence_length: int | None = None,  # NEW parameter
 ) -> Dict[str, Any]:
     """
-    Build a config dict for Olmo3_5Hybrid model.
+    Build a config dict for Olmo3_2Hybrid model.
     """
     blocks = list(model.blocks.values())
     n_layers = len(blocks)
@@ -204,8 +204,8 @@ def get_hybrid_hf_config_dict(
 
     # Build the config dict
     config_dict = {
-        "model_type": "olmo3_5_hybrid",
-        "architectures": ["Olmo3_5HybridForCausalLM"],
+        "model_type": "olmo3_2_hybrid",
+        "architectures": ["Olmo3_2HybridForCausalLM"],
         
         # Standard transformer config
         "vocab_size": model.vocab_size,
