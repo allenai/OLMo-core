@@ -7,7 +7,7 @@ This uses the `gemma3_like()` function from `TransformerConfig`, but puts in som
 import argparse
 import math
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.data import (
@@ -24,7 +24,11 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+from olmo_core.nn.lm_head import LMLossImplementation, LMHeadConfig
+from olmo_core.nn.rope import RoPEConfig, RoPEType
+from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerBlockConfig, \
+    TransformerBlockType
 from olmo_core.optim import (
     CosWithWarmup,
     OptimGroupOverride,
@@ -53,8 +57,9 @@ DEFAULT_SEQUENCE_LENGTH = 8192
 
 from dataclasses import dataclass
 
-from olmo_core.nn.attention import AttentionBackendName, GateConfig, GateGranularity
-from olmo_core.nn.feed_forward import ActivationFunction
+from olmo_core.nn.attention import AttentionBackendName, GateConfig, GateGranularity, GatedDeltaNetConfig, \
+    AttentionConfig, AttentionType, SlidingWindowAttentionConfig
+from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
 from olmo_core.nn.transformer import TransformerConfig
 
 
@@ -218,6 +223,281 @@ class GemmaLikeTransformerConfig(TransformerConfig):
             **kwargs,
         )
 
+    @classmethod
+    def v2(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        # Too many changes from the original gemma_like, so we need to import a lot of stuff into here.
+
+        d_model: int = kwargs.pop("d_model")
+        n_layers: int = kwargs.pop("n_layers")
+        n_heads: int = kwargs.pop("n_heads")
+        hidden_size: int = kwargs.pop("hidden_size")
+        n_kv_heads = 8
+        head_dim = 128
+        global_layer_interval = 5
+        global_rope_theta = 1_000_000
+        layer_norm_eps = 1e-6
+        dtype = DType.float32
+        attn_backend = kwargs.pop("attn_backend", AttentionBackendName.flash_3)
+        lm_head_loss_impl = kwargs.pop("lm_head_loss_impl", LMLossImplementation.default)
+        use_gdn = kwargs.pop("use_gdn", False)
+
+        local_rope_theta = 10_000
+        local_window_size = 1024
+
+        layer_norm = LayerNormConfig(
+            name=LayerNormType.rms,
+            eps=layer_norm_eps,
+            bias=False,
+            dtype=dtype,
+        )
+
+        feed_forward = FeedForwardConfig(
+            hidden_size=hidden_size,
+            bias=False,
+            dtype=dtype,
+            activation=ActivationFunction.silu,
+        )
+
+        if use_gdn:
+            # Default block uses GatedDeltaNet (replaces sliding window attention layers).
+            block = TransformerBlockConfig(
+                name=TransformerBlockType.peri_norm,
+                sequence_mixer=GatedDeltaNetConfig(
+                    n_heads=n_heads,
+                    n_v_heads=n_heads,  # for GDN, we intentionally match the number of heads.
+                    head_dim=head_dim,
+                    expand_v=1.0,
+                    dtype=dtype,
+                ),
+                feed_forward=feed_forward,
+                layer_norm=layer_norm,
+            )
+        else:
+            # Default block uses sliding window attention (like v1/gemma3_like).
+            block = TransformerBlockConfig(
+                name=TransformerBlockType.peri_norm,
+                sequence_mixer=AttentionConfig(
+                    name=AttentionType.default,
+                    n_heads=n_heads,
+                    n_kv_heads=n_kv_heads,
+                    head_dim=head_dim,
+                    bias=False,
+                    rope=RoPEConfig(name=RoPEType.default, theta=local_rope_theta),
+                    gate=GateConfig(
+                        granularity=GateGranularity.elementwise,
+                        full_precision=True,
+                    ),
+                    qk_norm=layer_norm,
+                    use_head_qk_norm=True,
+                    backend=attn_backend,
+                    sliding_window=SlidingWindowAttentionConfig(
+                        pattern=[local_window_size] * (global_layer_interval - 1) + [-1],
+                        force_full_attention_on_first_layer=False,
+                        force_full_attention_on_last_layer=False,
+                    ),
+                    dtype=dtype,
+                ),
+                feed_forward=feed_forward,
+                layer_norm=layer_norm,
+            )
+
+        # Override every `global_layer_interval`-th layer with full global attention.
+        block_overrides: Dict[int, TransformerBlockConfig] = {}
+        for layer_idx in range(n_layers):
+            if layer_idx % global_layer_interval == (global_layer_interval - 1):
+                global_block = TransformerBlockConfig(
+                    name=TransformerBlockType.peri_norm,
+                    sequence_mixer=AttentionConfig(
+                        name=AttentionType.default,
+                        n_heads=n_heads,
+                        n_kv_heads=n_kv_heads,
+                        head_dim=head_dim,
+                        bias=False,
+                        rope=RoPEConfig(name=RoPEType.default, theta=global_rope_theta),
+                        gate=GateConfig(
+                            granularity=GateGranularity.elementwise,
+                            full_precision=True,
+                        ),
+                        qk_norm=layer_norm,
+                        use_head_qk_norm=True,
+                        backend=attn_backend,
+                        dtype=dtype,
+                    ),
+                    feed_forward=feed_forward,
+                    layer_norm=layer_norm,
+                )
+                block_overrides[layer_idx] = global_block
+
+        return cls(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block=block,
+            lm_head=LMHeadConfig(
+                loss_implementation=lm_head_loss_impl,
+                layer_norm=layer_norm,
+                bias=False,
+                dtype=dtype,
+            ),
+            dtype=dtype,
+            block_overrides=block_overrides if block_overrides else None,
+            embed_scale=math.sqrt(d_model),
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_260M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 260M model config.
+
+        259,551,360 total params
+        195,326,080 non-embedding params
+        """
+        return cls.v2(
+            d_model=640,
+            hidden_size=640 * 8,
+            n_layers=10,
+            n_heads=8,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_709M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 709M model config.
+
+        708,903,680 total params
+        606,143,232 non-embedding params
+        """
+        return cls.v2(
+            d_model=1024,
+            hidden_size=1024 * 8,
+            n_layers=15,
+            n_heads=16,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_1p3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1.3B model config.
+
+        1,253,157,120 total params
+        1,124,706,560 non-embedding params
+        """
+        return cls.v2(
+            d_model=1280,
+            hidden_size=1280 * 8,
+            n_layers=20,
+            n_heads=16,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_2B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 2.2B model config.
+
+        2,156,558,080 total params
+        2,002,417,408 non-embedding params
+        """
+        return cls.v2(
+            d_model=1536,
+            hidden_size=1536 * 8,
+            n_layers=25,
+            n_heads=24,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_4B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 4.3B model config.
+
+        4,312,000,000 total params
+        4,106,479,104 non-embedding params
+        """
+        return cls.v2(
+            d_model=2048,
+            hidden_size=2048 * 8,
+            n_layers=30,
+            n_heads=32,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        An 8B model config.
+
+        8,588,259,840 total params
+        8,331,358,720 non-embedding params
+        """
+        return cls.v2(
+            d_model=2560,
+            hidden_size=2560 * 8,
+            n_layers=40,
+            n_heads=40,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_15B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 15B model config.
+
+        15,087,541,760 total params
+        14,779,260,416 non-embedding params
+        """
+        return cls.v2(
+            d_model=3072,
+            hidden_size=3072 * 8,
+            n_layers=50,
+            n_heads=48,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_34B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 34B model config.
+
+        34,084,000,000 total params
+        33,672,958,208 non-embedding params
+        """
+        return cls.v2(
+            d_model=4096,
+            hidden_size=4096 * 8,
+            n_layers=65,
+            n_heads=64,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_65B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 65B model config.
+
+        64,782,689,280 total params
+        64,268,887,040 non-embedding params
+        """
+        return cls.v2(
+            d_model=5120,
+            hidden_size=5120 * 8,
+            n_layers=80,
+            n_heads=80,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
 
 @dataclass
 class _ModelSizeSettings:
@@ -229,40 +509,40 @@ class _ModelSizeSettings:
     activation_memory_budget: float
 
 
-class GemmaLikeOlmoV1(StrEnum):
-    GL_250M = "250M"
-    GL_680M = "680M"
-    GL_1p2B = "1.2B"
+class GemmaLikeOlmoV2(StrEnum):
+    GL_260M = "260M"
+    GL_709M = "709M"
+    GL_1p3B = "1.3B"
     GL_2B = "2B"
     GL_4B = "4B"
     GL_8B = "8B"
-    GL_14B = "14B"
-    GL_32B = "32B"
+    GL_15B = "15B"
+    GL_34B = "34B"
 
     def get_settings(self, vocab_size: int) -> Tuple[TransformerConfig, _ModelSizeSettings]:
         """Get the model config and all settings for this model size."""
         # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
         settings_map = {
-            GemmaLikeOlmoV1.GL_250M: _ModelSizeSettings("250M", 1, 16, 1.0),
-            GemmaLikeOlmoV1.GL_680M: _ModelSizeSettings("680M", 2, 16, 1.0),
-            GemmaLikeOlmoV1.GL_1p2B: _ModelSizeSettings("1p2B", 2, 16, 1.0),
-            GemmaLikeOlmoV1.GL_2B: _ModelSizeSettings("2B", 4, 16, 1.0),
-            GemmaLikeOlmoV1.GL_4B: _ModelSizeSettings("4B", 4, 32, 1.0),
-            GemmaLikeOlmoV1.GL_8B: _ModelSizeSettings("8B", 8, 64, 0.9),
-            GemmaLikeOlmoV1.GL_14B: _ModelSizeSettings(
-                "14B", 8, 128, 0.4
+            GemmaLikeOlmoV2.GL_260M: _ModelSizeSettings("260M", 1, 16, 1.0),
+            GemmaLikeOlmoV2.GL_709M: _ModelSizeSettings("709M", 2, 16, 1.0),
+            GemmaLikeOlmoV2.GL_1p3B: _ModelSizeSettings("1p3B", 3, 16, 1.0),
+            GemmaLikeOlmoV2.GL_2B: _ModelSizeSettings("2B", 8, 16, 1.0),
+            GemmaLikeOlmoV2.GL_4B: _ModelSizeSettings("4B", 9, 32, 1.0),
+            GemmaLikeOlmoV2.GL_8B: _ModelSizeSettings("8B", 14, 64, 0.9),
+            GemmaLikeOlmoV2.GL_15B: _ModelSizeSettings(
+                "15B", 16, 128, 0.4
             ),  # Support up to 16 hosts, bsz8 per host
-            GemmaLikeOlmoV1.GL_32B: _ModelSizeSettings(
-                "32B", 8, 16, 0.1
+            GemmaLikeOlmoV2.GL_34B: _ModelSizeSettings(
+                "34B", 16, 16, 0.1
             ),  # Currently does not work, OOMs!!!
         }
         if self not in settings_map:
             raise ValueError(
-                f"Model not in list! Valid models: {[m.name for m in GemmaLikeOlmoV1]}\n\n"
+                f"Model not in list! Valid models: {[m.name for m in GemmaLikeOlmoV2]}\n\n"
             )
 
         settings = settings_map[self]
-        config_method = getattr(GemmaLikeTransformerConfig, f"v1_{settings.size}")
+        config_method = getattr(GemmaLikeTransformerConfig, f"v2_{settings.size}")
         model_config = config_method(vocab_size)
         return model_config, settings
 
@@ -361,33 +641,33 @@ def get_global_batch_size(
     return rounded_global_bsz
 
 
-def parse_model_size(run_name: str) -> GemmaLikeOlmoV1:
+def parse_model_size(run_name: str) -> GemmaLikeOlmoV2:
     """
     Parse model size from run name.
-    The run name must contain one of the enum values (e.g., "250M", "1.2B", "8B").
-    Examples: "250m", "gl-v1-250m", "1.2b", "1p2b" (normalized to "1.2b").
+    The run name must contain one of the enum values (e.g., "260M", "1.3B", "8B").
+    Examples: "260m", "gl-v2-260m", "1.3b", "1p3b" (normalized to "1.3b").
     """
-    normalized = run_name.lower().strip().replace("1p2b", "1.2b").replace("1p2", "1.2")
+    normalized = run_name.lower().strip().replace("1p3b", "1.3b").replace("1p3", "1.3")
 
     # Sort by value length descending so longer matches are tried first,
     # e.g. "32b" is matched before "2b", "14b" before "4b".
-    for size in sorted(GemmaLikeOlmoV1, key=lambda s: len(s.value), reverse=True):
+    for size in sorted(GemmaLikeOlmoV2, key=lambda s: len(s.value), reverse=True):
         if size.value.lower() in normalized:
             return size
 
     raise ValueError(
         f"Could not parse model size from run name '{run_name}'. "
-        f"Valid sizes: {[s.value for s in GemmaLikeOlmoV1]}. "
-        f"Examples: '250m', 'gl-v1-250m', '1.2b'"
+        f"Valid sizes: {[s.value for s in GemmaLikeOlmoV2]}. "
+        f"Examples: '260m', 'gl-v1-260m', '1.3b'"
     )
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     """
-    Build experiment config for GL-OLMo v1.
+    Build experiment config for GL-OLMo v2.
 
-    Model size can be specified as just the size (e.g., "250m") or with prefix
-    (e.g., "gl-v1-250m"). The model size is parsed from the run name.
+    Model size can be specified as just the size (e.g., "260m") or with prefix
+    (e.g., "gl-v2-260m"). The model size is parsed from the run name.
 
     Hyperparameters are computed using StepFun optimal schedules [Li 2025], but can be
     overridden using standard config override syntax:
@@ -615,30 +895,30 @@ if __name__ == "__main__":
 
     Examples:
         Render the config and exit (dry run):
-            python src/scripts/train/ladder/gemma_like_ladder.py dry_run gl-v1-250m ai2/jupiter
+            python src/scripts/train/ladder/gemma_like_ladder.py dry_run gl-v2-260m ai2/jupiter
 
         Start a local training run with torchrun:
-            torchrun --nproc-per-node=8 src/scripts/train/ladder/gemma_like_ladder.py train gl-v1-250m ai2/jupiter
+            torchrun --nproc-per-node=8 src/scripts/train/ladder/gemma_like_ladder.py train gl-v2-260m ai2/jupiter
 
         Launch a training run on Beaker (Jupiter cluster):
-            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v1-250m ai2/jupiter
+            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v2-260m ai2/jupiter
 
         Launch with custom hyperparameters using multipliers:
-            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v1-250m ai2/jupiter \
+            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v2-260m ai2/jupiter \
                 --lr-multiplier=2.0 \
                 --batch-multiplier=0.5
         Override specific config values:
-            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v1-8b ai2/jupiter \
+            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v2-8b ai2/jupiter \
                 --launch.num_nodes=2 \
                 --train_module.scheduler.warmup=5000000
 
         Enable logging callbacks:
-            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v1-250m ai2/jupiter \
+            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v2-260m ai2/jupiter \
                 --trainer.callbacks.wandb.enabled=true \
                 --trainer.callbacks.comet.enabled=true
 
         Override config without setting launch (uses default node count):
-            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v1-250m ai2/jupiter \
+            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v2-260m ai2/jupiter \
                 --train_module.optim.lr=0.001 \
                 --data_loader.global_batch_size=1000 \
                 --train_module.scheduler.warmup=1000000
