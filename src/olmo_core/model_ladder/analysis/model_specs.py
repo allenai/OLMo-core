@@ -25,15 +25,23 @@ __all__ = [
     "count_mlp_params",
     "count_layernorm_params",
     "gdn_macs_per_token",
+    "gdn_parallel_macs_per_token",
     "mamba2_macs_per_token",
+    "mamba2_parallel_macs_per_token",
     "attention_macs_per_token",
     "mlp_macs_per_token",
     "compute_hybrid_specs",
+    "compute_hybrid_specs_parallel",
     "compute_hybrid_mamba2_specs",
+    "compute_hybrid_mamba2_specs_parallel",
     "compute_olmo3_specs",
     "compute_specs_for_size",
+    "compute_specs_for_size_parallel",
     "fmt",
     "LADDER_ARCH_CONFIGS",
+    "DISPLAY_NAMES",
+    "get_display_name",
+    "get_param_count",
 ]
 
 
@@ -285,8 +293,8 @@ def gdn_macs_per_token(
 
     macs += value_dim * d_model  # o_proj
 
-    # Recurrence: per-token state update ~num_v_heads * head_k_dim * head_v_dim
-    macs += num_v_heads * head_k_dim * head_v_dim
+    # Recurrence: per-token state read (query) + write (update), each ~d_k * d_v per head
+    macs += 3 * num_v_heads * head_k_dim * head_v_dim
 
     return macs
 
@@ -324,9 +332,9 @@ def mamba2_macs_per_token(
     # out_proj: intermediate_size -> d_model
     macs += intermediate_size * d_model
 
-    # SSM recurrence: per-token state update per head
-    # Each head: head_dim * state_size (outer product update + output computation)
-    macs += n_heads * head_dim * state_size
+    # SSM recurrence: per-token state read (query) + write (update) per head
+    # Each head: head_dim * state_size for each of read and write
+    macs += 2 * n_heads * head_dim * state_size
 
     return macs
 
@@ -346,17 +354,112 @@ def attention_macs_per_token(
     # Q, K, V, O projections: 4 * d_model^2
     macs += 4 * d_model * d_model
 
+    # Halved to account for causal attention
+    effective_seq_len = seq_len // 2
+
     # QK^T: each token attends to seq_len keys -> n_heads * head_dim * seq_len
-    macs += n_heads * head_dim * seq_len
+    macs += n_heads * head_dim * effective_seq_len
 
     if chinchilla_flops:
         # Softmax: 3 non-MAC ops per score (subtract max, exp, divide by sum).
         # Chinchilla counts 3 * num_heads * seq_len * seq_len FLOPs (no 2× factor).
         # Since we convert MACs -> FLOPs via 2× later, store as 1.5 to get 3 after doubling.
-        macs += (3 * n_heads * seq_len + 1) // 2  # ceil(3/2) to stay integer
+        macs += (3 * n_heads * effective_seq_len + 1) // 2  # ceil(3/2) to stay integer
 
     # attn * V: n_heads * seq_len * head_dim
-    macs += n_heads * seq_len * head_dim
+    macs += n_heads * effective_seq_len * head_dim
+
+    return macs
+
+
+def gdn_parallel_macs_per_token(
+    d_model: int, n_heads: int, chunk_size: int = 256, conv_size: int = 4, use_gate: bool = True
+) -> int:
+    """
+    MACs per token for GatedDeltaNet using chunkwise parallel training algorithm.
+
+    Compared to the recurrent formulation, training uses the WY representation
+    (arXiv:2412.06464v3, Equations 8-10) which adds:
+    - Intra-chunk local attention: O(chunk_size) per token
+    - Inter-chunk state propagation via WY form: ~3x the per-head state cost
+    """
+    key_dim, value_dim, head_k_dim, head_v_dim = gdn_dims(d_model, n_heads)
+    num_v_heads = n_heads
+
+    macs = 0
+
+    # Linear projections (same as recurrent)
+    macs += d_model * key_dim  # q_proj
+    macs += d_model * key_dim  # k_proj
+    macs += d_model * value_dim  # v_proj
+    macs += d_model * num_v_heads  # a_proj
+    macs += d_model * num_v_heads  # b_proj
+
+    # Depthwise convolutions (same as recurrent)
+    macs += key_dim * conv_size  # q_conv1d
+    macs += key_dim * conv_size  # k_conv1d
+    macs += value_dim * conv_size  # v_conv1d
+
+    if use_gate:
+        macs += d_model * value_dim  # g_proj
+
+    macs += value_dim * d_model  # o_proj
+
+    # # Intra-chunk: local attention within each chunk of size C
+    # # Q@K^T (C x d_k @ d_k x C -> C x C) and scores@V (C x C @ C x d_v -> C x d_v)
+    # # Per token (amortized): C * d_k + C * d_v = C * (d_k + d_v)
+    # macs += chunk_size * (key_dim + value_dim)
+
+    # GDN Intra-chunk involves:
+    # 1. Kernel Matrix K*K^T (C*d_k)
+    # 2. W & U construction (roughly 2 * C * (d_k + d_v))
+    # 3. Attention Q*K^T (C*d_k)
+    # 4. Output Score*(U-WS) (C*d_v)
+    # Conservative estimate based on paper Eq 8-9:
+    macs += chunk_size * (2 * key_dim + 2 * value_dim + key_dim)
+
+    # Inter-chunk: state propagation using WY representation
+    # Three matrix multiplications involving the (d_k x d_v) state per head per chunk,
+    # amortized to per-token cost
+    macs += 3 * num_v_heads * head_k_dim * head_v_dim
+
+    return macs
+
+
+def mamba2_parallel_macs_per_token(
+    d_model: int,
+    n_heads: int,
+    chunk_size: int = 256,
+    expand: int = 2,
+    state_size: int = 128,
+    n_groups: int = 1,
+    conv_kernel: int = 4,
+) -> int:
+    """
+    MACs per token for Mamba2 using SSD parallel training algorithm.
+
+    Compared to the recurrent formulation, the SSD algorithm adds intra-chunk
+    semi-separable matmuls that scale with chunk_size.
+    """
+    dims = mamba2_dims(d_model, n_heads, expand, state_size, n_groups)
+    intermediate_size = dims["intermediate_size"]
+    conv_dim = dims["conv_dim"]
+    projection_size = dims["projection_size"]
+    head_dim = dims["head_dim"]
+
+    macs = 0
+
+    # Projections (same as recurrent)
+    macs += d_model * projection_size  # in_proj
+    macs += conv_dim * conv_kernel  # depthwise conv1d
+    macs += intermediate_size * d_model  # out_proj
+
+    # Intra-chunk: semi-separable attention within each chunk
+    # Per token (amortized): C * n_heads * head_dim
+    macs += 2 * chunk_size * n_heads * head_dim
+
+    # Inter-chunk: blockwise state propagation (read + write)
+    macs += 4 * n_heads * head_dim * state_size
 
     return macs
 
@@ -446,10 +549,9 @@ def compute_hybrid_specs(
     embed_macs = d * V if chinchilla_flops else 0  # embedding lookup (counted by Chinchilla)
     head_macs = d * V
     gdn_layer_macs = gdn_macs_per_token(d, nh) + mlp_macs_per_token(d, mlp_h)
-    attn_layer_macs = (
-        attention_macs_per_token(d, nh, seq_len, chinchilla_flops=chinchilla_flops)
-        + mlp_macs_per_token(d, mlp_h)
-    )
+    attn_layer_macs = attention_macs_per_token(
+        d, nh, seq_len, chinchilla_flops=chinchilla_flops
+    ) + mlp_macs_per_token(d, mlp_h)
 
     total_macs = embed_macs + head_macs + n_gdn * gdn_layer_macs + n_attn * attn_layer_macs
     total_flops = 2 * total_macs
@@ -552,10 +654,9 @@ def compute_hybrid_mamba2_specs(
     mamba2_layer_macs = mamba2_macs_per_token(d, nh)
     if not strip_mamba2_mlp:
         mamba2_layer_macs += mlp_macs_per_token(d, mlp_h)
-    attn_layer_macs = (
-        attention_macs_per_token(d, nh, seq_len, chinchilla_flops=chinchilla_flops)
-        + mlp_macs_per_token(d, mlp_h)
-    )
+    attn_layer_macs = attention_macs_per_token(
+        d, nh, seq_len, chinchilla_flops=chinchilla_flops
+    ) + mlp_macs_per_token(d, mlp_h)
 
     total_macs = embed_macs + head_macs + n_mamba2 * mamba2_layer_macs + n_attn * attn_layer_macs
     total_flops = 2 * total_macs
@@ -603,10 +704,9 @@ def compute_olmo3_specs(
 
     embed_macs = d * V if chinchilla_flops else 0  # embedding lookup (counted by Chinchilla)
     head_macs = d * V
-    attn_layer_macs = (
-        attention_macs_per_token(d, nh, seq_len, chinchilla_flops=chinchilla_flops)
-        + mlp_macs_per_token(d, mlp_h)
-    )
+    attn_layer_macs = attention_macs_per_token(
+        d, nh, seq_len, chinchilla_flops=chinchilla_flops
+    ) + mlp_macs_per_token(d, mlp_h)
     total_macs = embed_macs + head_macs + nl * attn_layer_macs
     total_flops = 2 * total_macs
 
@@ -619,6 +719,153 @@ def compute_olmo3_specs(
         "total_flops_per_token": total_flops,
         "seq_len": seq_len,
     }
+
+
+def compute_hybrid_specs_parallel(
+    spec: ModelSpec,
+    transformer_ratio: int = 4,
+    seq_len: int = 4096,
+    chunk_size: int = 256,
+    force_final_attention: bool = True,
+    placement: str = "every_nth",
+    chinchilla_flops: bool = False,
+) -> dict:
+    """Compute params and parallel-training FLOPs for a hybrid GDN model.
+
+    Same as :func:`compute_hybrid_specs` but uses chunkwise parallel training
+    FLOP estimates (intra-chunk attention + WY inter-chunk overhead) instead of
+    recurrent inference FLOPs for GDN layers.
+    """
+    result = compute_hybrid_specs(
+        spec,
+        transformer_ratio=transformer_ratio,
+        seq_len=seq_len,
+        force_final_attention=force_final_attention,
+        placement=placement,
+        chinchilla_flops=chinchilla_flops,
+    )
+
+    d = spec.d_model
+    nh = spec.n_heads
+    mlp_h = spec.mlp_hidden_size
+    V = spec.vocab_size
+
+    # Recompute GDN layer MACs using parallel algorithm
+    gdn_layer_macs = gdn_parallel_macs_per_token(d, nh, chunk_size=chunk_size) + mlp_macs_per_token(
+        d, mlp_h
+    )
+
+    embed_macs = d * V if chinchilla_flops else 0
+    head_macs = d * V
+    n_gdn = result["n_gdn"]
+    n_attn = result["n_attn"]
+    attn_layer_macs = result["attn_layer_macs"]
+
+    total_macs = embed_macs + head_macs + n_gdn * gdn_layer_macs + n_attn * attn_layer_macs
+
+    result["gdn_layer_macs"] = gdn_layer_macs
+    result["total_macs_per_token"] = total_macs
+    result["total_flops_per_token"] = 2 * total_macs
+    result["chunk_size"] = chunk_size
+
+    return result
+
+
+def compute_hybrid_mamba2_specs_parallel(
+    spec: ModelSpec,
+    transformer_ratio: int = 4,
+    seq_len: int = 4096,
+    chunk_size: int = 256,
+    force_final_attention: bool = True,
+    strip_mamba2_mlp: bool = False,
+    chinchilla_flops: bool = False,
+) -> dict:
+    """Compute params and parallel-training FLOPs for a hybrid Mamba2-Transformer model.
+
+    Same as :func:`compute_hybrid_mamba2_specs` but uses SSD parallel training
+    FLOP estimates instead of recurrent inference FLOPs for Mamba2 layers.
+    """
+    result = compute_hybrid_mamba2_specs(
+        spec,
+        transformer_ratio=transformer_ratio,
+        seq_len=seq_len,
+        force_final_attention=force_final_attention,
+        strip_mamba2_mlp=strip_mamba2_mlp,
+        chinchilla_flops=chinchilla_flops,
+    )
+
+    d = spec.d_model
+    nh = spec.n_heads
+    mlp_h = spec.mlp_hidden_size
+    V = spec.vocab_size
+
+    # Recompute Mamba2 layer MACs using parallel algorithm
+    mamba2_layer_macs = mamba2_parallel_macs_per_token(d, nh, chunk_size=chunk_size)
+    if not strip_mamba2_mlp:
+        mamba2_layer_macs += mlp_macs_per_token(d, mlp_h)
+
+    embed_macs = d * V if chinchilla_flops else 0
+    head_macs = d * V
+    n_mamba2 = result["n_mamba2"]
+    n_attn = result["n_attn"]
+    attn_layer_macs = result["attn_layer_macs"]
+
+    total_macs = embed_macs + head_macs + n_mamba2 * mamba2_layer_macs + n_attn * attn_layer_macs
+
+    result["mamba2_layer_macs"] = mamba2_layer_macs
+    result["total_macs_per_token"] = total_macs
+    result["total_flops_per_token"] = 2 * total_macs
+    result["chunk_size"] = chunk_size
+
+    return result
+
+
+def compute_specs_for_size_parallel(
+    ladder_name: str,
+    size: str,
+    seq_len: Optional[int] = None,
+    chunk_size: int = 256,
+    chinchilla_flops: bool = False,
+) -> Optional[dict]:
+    """
+    Compute architecture specs with parallel-training FLOPs for a given ladder name and size.
+
+    Like :func:`compute_specs_for_size` but uses chunkwise parallel FLOP estimates
+    for GDN/Mamba2 layers. Pure transformer models are unaffected.
+    """
+    config = _get_arch_config(ladder_name)
+    if config is None:
+        return None
+
+    spec = OLMO3_SPECS_BY_NAME.get(size)
+    if spec is None:
+        return None
+
+    effective_seq_len = seq_len or config.seq_len
+
+    if config.is_transformer:
+        return compute_olmo3_specs(
+            spec, seq_len=effective_seq_len, chinchilla_flops=chinchilla_flops
+        )
+    elif config.layer_type == "mamba2":
+        return compute_hybrid_mamba2_specs_parallel(
+            spec,
+            transformer_ratio=config.transformer_ratio,
+            seq_len=effective_seq_len,
+            chunk_size=chunk_size,
+            force_final_attention=config.force_final_attention,
+            chinchilla_flops=chinchilla_flops,
+        )
+    else:
+        return compute_hybrid_specs_parallel(
+            spec,
+            transformer_ratio=config.transformer_ratio,
+            seq_len=effective_seq_len,
+            chunk_size=chunk_size,
+            force_final_attention=config.force_final_attention,
+            placement=config.placement,
+            chinchilla_flops=chinchilla_flops,
+        )
 
 
 def fmt(n: float) -> str:
@@ -704,7 +951,9 @@ def compute_specs_for_size(
     effective_seq_len = seq_len or config.seq_len
 
     if config.is_transformer:
-        return compute_olmo3_specs(spec, seq_len=effective_seq_len, chinchilla_flops=chinchilla_flops)
+        return compute_olmo3_specs(
+            spec, seq_len=effective_seq_len, chinchilla_flops=chinchilla_flops
+        )
     elif config.layer_type == "mamba2":
         return compute_hybrid_mamba2_specs(
             spec,
@@ -722,3 +971,39 @@ def compute_specs_for_size(
             placement=config.placement,
             chinchilla_flops=chinchilla_flops,
         )
+
+
+# ---------------------------------------------------------------------------
+# Display names and param-count helper
+# ---------------------------------------------------------------------------
+
+DISPLAY_NAMES: Dict[str, str] = {
+    "olmo3": "Olmo 3",
+    "olmo3-1": "Olmo 3 v1",
+    "olmo3-2": "Olmo 3 v2",
+    "olmo3-3": "Olmo 3 v3",
+    "pure-gdn": "Pure GDN",
+    "hybrid-gdn": "Hybrid GDN (1/4)",
+    "hybrid-gdn-half": "Hybrid GDN (1/2)",
+    "hybrid-gdn-eight": "Hybrid GDN (1/8)",
+    "hybrid-gdn-middle": "Hybrid GDN (Middle)",
+    "pure-mamba": "Pure Mamba",
+    "hybrid-mamba": "Hybrid Mamba",
+}
+
+
+def get_display_name(ladder_name: str) -> str:
+    """Return a human-readable display name for a ladder."""
+    return DISPLAY_NAMES.get(ladder_name, ladder_name)
+
+
+def get_param_count(ladder_name: str, size: str) -> Optional[int]:
+    """Return the non-embedding parameter count for a ladder architecture and size.
+
+    Uses :func:`compute_specs_for_size` to compute the count dynamically.
+    Returns ``None`` if the architecture/size combination is not recognized.
+    """
+    specs = compute_specs_for_size(ladder_name, size)
+    if specs is None:
+        return None
+    return specs["non_embed_params"]
