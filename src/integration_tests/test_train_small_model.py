@@ -199,15 +199,17 @@ def test_train_small_model_cpu(tmp_path):
 
 
 def test_ephemeral_blocked_during_merge_window(tmp_path):
-    """Verify that ephemeral checkpoints are blocked during the merge window."""
+    """Verify that ephemeral checkpoints are blocked during the merge window
+    but NOT at the merge step itself (off-by-one check)."""
     save_folder = tmp_path / "checkpoints"
     work_dir = tmp_path / "work_dir"
     save_folder.mkdir()
     work_dir.mkdir()
 
-    max_steps = 8
+    max_steps = 10
+    merge_step = 8
     merge_last_n_steps = 3  # merge window: steps 6, 7, 8
-    ephemeral_save_interval = 2  # would normally save at steps 2, 4, 6, 8
+    ephemeral_save_interval = 2  # would normally save at steps 2, 4, 6, 8, 10
 
     tokenizer_config = TokenizerConfig.gpt2()
 
@@ -243,7 +245,7 @@ def test_ephemeral_blocked_during_merge_window(tmp_path):
         .with_callback(
             "model_merger",
             ModelMergeCallback(
-                merge_step=max_steps,
+                merge_step=merge_step,
                 merge_last_n_steps=merge_last_n_steps,
                 enabled=True,
             ),
@@ -266,19 +268,29 @@ def test_ephemeral_blocked_during_merge_window(tmp_path):
             step = int(name.replace("step", ""))
             checkpoint_steps.add(step)
 
-    # Ephemeral checkpoints at steps 2 and 4 should exist (before window)
-    # Steps 6 and 8 fall inside the merge window [6, 8] and should be blocked
-    assert (
-        2 in checkpoint_steps or 4 in checkpoint_steps
-    ), f"Expected ephemeral checkpoints before the merge window, got: {checkpoint_steps}"
-    # Step 6 is inside the merge window and should be blocked
+    # Step 6 is inside the merge window but NOT the merge step — should be blocked.
+    # (Earlier ephemeral checkpoints at steps 2, 4 may have been cleaned up by
+    # the checkpointer, so we don't assert on those.)
     assert 6 not in checkpoint_steps, (
         f"Ephemeral checkpoint at step 6 should have been blocked during merge window, "
         f"got checkpoints at: {checkpoint_steps}"
     )
 
-    # Merged checkpoint should still exist and be correct
-    merged_path = save_folder / f"step{max_steps}-merged"
+    # Step 8 IS the merge step — ephemeral should NOT be blocked after merge completes
+    # (off-by-one check: blocking ends at the merge step, not after it)
+    assert 8 in checkpoint_steps, (
+        f"Ephemeral checkpoint at step 8 (merge step) should NOT have been blocked, "
+        f"got checkpoints at: {checkpoint_steps}"
+    )
+
+    # Step 10 is after the window — should exist
+    assert 10 in checkpoint_steps, (
+        f"Ephemeral checkpoint at step 10 (after window) should exist, "
+        f"got checkpoints at: {checkpoint_steps}"
+    )
+
+    # Merged checkpoint should exist
+    merged_path = save_folder / f"step{merge_step}-merged"
     assert merged_path.exists(), f"Merged checkpoint not found at {merged_path}"
 
     log.info(f"Ephemeral blocking test passed. Checkpoints at steps: {checkpoint_steps}")

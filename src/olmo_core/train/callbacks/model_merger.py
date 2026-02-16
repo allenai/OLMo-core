@@ -9,6 +9,7 @@ This callback:
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import ClassVar, Dict, List, Optional, Set, Union
 
@@ -17,9 +18,10 @@ import torch
 from olmo_core.distributed.checkpoint import save_state_dict
 from olmo_core.distributed.utils import barrier, get_local_tensor, get_rank
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import clear_directory, dir_is_empty, file_exists, is_url, join_path
+from olmo_core.io import clear_directory, dir_is_empty, is_url, join_path
 
 from .callback import Callback
+from .checkpointer import CheckpointerCallback
 from .evaluator_callback import EvaluatorCallback
 
 log = logging.getLogger(__name__)
@@ -35,15 +37,16 @@ class ModelMergeCallback(Callback):
     window is always re-accumulated on resume.
     """
 
-    priority: ClassVar[int] = 2
+    # Run before CheckpointerCallback to block ephemeral checkpoints during merge windows
+    priority: ClassVar[int] = 2 
 
-    merge_step: Union[int, List[int]] = field(default_factory=list)  # type: ignore[assignment]
+    merge_step: Union[int, List[int]] = field(default_factory=list)
     """The step(s) at which to save merged checkpoint(s)."""
 
     merge_interval: Optional[int] = None
     """Merge every N steps. Alternative to explicit merge_step."""
 
-    merge_last_n_steps: int = 100
+    merge_last_n_steps: int = 200
     """Number of steps before each merge step to start accumulating the average."""
 
     output_suffix: str = "merged"
@@ -58,24 +61,27 @@ class ModelMergeCallback(Callback):
     _completed_merges: Set[int] = field(default_factory=set, repr=False)
 
     def __post_init__(self):
+        if not self.enabled:
+            return
+
         if self.merge_last_n_steps <= 0:
             raise OLMoConfigurationError(
                 f"merge_last_n_steps must be positive, got {self.merge_last_n_steps}"
             )
 
-        # Validate merge_interval
         if self.merge_interval is not None:
             if self.merge_interval <= 0:
                 raise OLMoConfigurationError(
                     f"merge_interval must be positive, got {self.merge_interval}"
                 )
-            # Can't set both merge_step and merge_interval
+            # Don't set both merge_step and merge_interval
             has_merge_step = (isinstance(self.merge_step, int) and self.merge_step > 0) or (
                 isinstance(self.merge_step, list) and len(self.merge_step) > 0
             )
             if has_merge_step:
                 raise OLMoConfigurationError(
-                    "Cannot set both merge_step and merge_interval. Use one or the other."
+                    "Cannot set both merge_step and merge_interval. "
+                    "If you need both, compute all steps and pass them as merge_step."
                 )
             # Defer step computation to pre_train (needs max_steps from trainer)
             return
@@ -89,7 +95,6 @@ class ModelMergeCallback(Callback):
         if not self._merge_steps:
             raise OLMoConfigurationError("Either merge_step or merge_interval must be set.")
 
-        # Validate
         invalid = [s for s in self._merge_steps if s <= 0]
         if invalid:
             raise OLMoConfigurationError(f"merge_step values must be positive, got: {invalid}")
@@ -109,14 +114,6 @@ class ModelMergeCallback(Callback):
     def _merged_checkpoint_path(self, step: int) -> str:
         return str(join_path(self.trainer.save_folder, f"step{step}-{self.output_suffix}"))
 
-    def _merged_checkpoint_exists(self, step: int) -> bool:
-        try:
-            metadata_path = join_path(
-                self._merged_checkpoint_path(step), "model_and_optim", ".metadata"
-            )
-            return file_exists(metadata_path)
-        except Exception:
-            return False
 
     def pre_train(self):
         if not self.enabled:
@@ -153,17 +150,34 @@ class ModelMergeCallback(Callback):
         remaining = [ms for ms in self._merge_steps if ms not in self._completed_merges]
         log.info(f"Remaining merge steps: {remaining}")
 
+        # Warn if any permanent checkpoint could land inside a merge window.
+        # On resume from that checkpoint, the merge average would be shorter
+        # than merge_last_n_steps.
+        checkpointer = next(
+            (cb for cb in self.trainer.callbacks.values() if isinstance(cb, CheckpointerCallback)),
+            None,
+        )
+        if checkpointer and checkpointer.save_interval:
+            si = checkpointer.save_interval
+            for ms in remaining:
+                ws = self._window_start(ms)
+                first_ckpt = ((ws // si) + 1) * si
+                if ws < first_ckpt < ms:
+                    log.warning(
+                        f"Permanent checkpoint at step {first_ckpt} falls inside "
+                        f"merge window [{ws}, {ms}]. If training is interrupted and "
+                        f"resumed from that checkpoint, the merge average will be "
+                        f"shorter than {self.merge_last_n_steps} steps."
+                    )
+
     def post_train_batch(self):
         if not self.enabled:
             return
 
         active = self._active_windows()
 
-        # Block ephemeral checkpoints during merge windows to prevent
-        # mid-window resume points that would shorten the average.
-        self.trainer.block_ephemeral_checkpoints = len(active) > 0
-
         if not active:
+            self.trainer.block_ephemeral_checkpoints = False
             return
 
         # Copy model weights to CPU once for all active windows
@@ -179,6 +193,12 @@ class ModelMergeCallback(Callback):
         for ms in active:
             if self.step == ms:
                 self._save_merged_checkpoint(ms)
+
+        # Block ephemeral checkpoints during merge windows to prevent
+        # mid-window resume points that would shorten the average.
+        # Set AFTER saves so the flag is False once all windows at this step complete.
+        still_active = [ms for ms in active if ms not in self._completed_merges]
+        self.trainer.block_ephemeral_checkpoints = len(still_active) > 0
 
     def _accumulate_weights(self, merge_step: int, model_state: Dict[str, torch.Tensor]):
         if merge_step not in self._accumulators:
@@ -215,8 +235,6 @@ class ModelMergeCallback(Callback):
         }
 
         output_path = self._merged_checkpoint_path(merge_step)
-
-        import os
 
         if get_rank() == 0:
             if not dir_is_empty(output_path):

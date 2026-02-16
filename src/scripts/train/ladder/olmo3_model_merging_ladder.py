@@ -21,11 +21,13 @@ from olmo_core.train import callbacks
 
 log = logging.getLogger(__name__)
 
-MERGE_LAST_N_STEPS = 500
+DEFAULT_MERGE_LAST_N_STEPS = 500
 
 
 class ModelMergingLadder(ModelLadder):
     """ModelLadder that includes ModelMergeCallback for weight averaging at pre-decay steps."""
+
+    merge_last_n_steps: int = DEFAULT_MERGE_LAST_N_STEPS
 
     def _configure_trainer(self, size_spec: str, for_benchmarking: bool = False):
         config = super()._configure_trainer(size_spec, for_benchmarking)
@@ -45,16 +47,25 @@ class ModelMergingLadder(ModelLadder):
 
         config.callbacks["model_merger"] = callbacks.ModelMergeCallback(
             merge_step=merge_steps,
-            merge_last_n_steps=MERGE_LAST_N_STEPS,
+            merge_last_n_steps=self.merge_last_n_steps,
             enabled=not for_benchmarking,
         )
 
         return config
 
 
+def add_merging_args(cmd: str, parser: argparse.ArgumentParser):
+    parser.add_argument(
+        "--merge-last-n-steps",
+        type=int,
+        default=DEFAULT_MERGE_LAST_N_STEPS,
+        help="Number of steps before each merge point to accumulate the average.",
+    )
+
+
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
-    return ModelMergingLadder(
+    ladder = ModelMergingLadder(
         name=args.name,
         project=args.project,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
@@ -87,7 +98,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             num_workers=8, instance_filter_config=InstanceFilterConfig()
         ),
     )
+    ladder.merge_last_n_steps = args.merge_last_n_steps
+    return ladder
 
 
 if __name__ == "__main__":
-    main(configure_ladder=configure_ladder)
+    main(configure_ladder=configure_ladder, add_additional_args=add_merging_args)
