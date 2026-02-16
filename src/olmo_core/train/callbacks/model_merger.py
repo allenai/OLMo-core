@@ -1,13 +1,3 @@
-"""
-ModelMergeCallback for averaging model weights over a window of training steps.
-
-This callback:
-- Supports explicit merge_step configuration or interval-based merging
-- Supports overlapping merge windows with per-window accumulators
-- Does NOT save accumulator state (no state_dict/load_state_dict)
-- On resume, recomputes accumulation from the last checkpoint
-"""
-
 import logging
 import os
 from dataclasses import dataclass, field
