@@ -21,7 +21,7 @@ from olmo_core.train import callbacks
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MERGE_LAST_N_STEPS = 500
+DEFAULT_MERGE_LAST_N_STEPS = 200
 
 
 class ModelMergingLadder(ModelLadder):
