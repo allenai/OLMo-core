@@ -35,6 +35,7 @@ from ..io import (
     dir_is_empty,
     file_exists,
     is_url,
+    join_path,
     list_directory,
     normalize_path,
     upload,
@@ -70,6 +71,7 @@ class CheckpointerConfig(Config):
 
 @dataclass
 class CheckpointMetadata(Config):
+    ephemeral: Optional[bool] = None
     version: str = VERSION
 
 
@@ -97,7 +99,13 @@ class Checkpointer:
         if get_fs_local_rank() == 0:
             self.work_dir.mkdir(exist_ok=True, parents=True)
 
-    def save(self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]):
+    def save(
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+        train_state: Dict[str, Any],
+        ephemeral: bool = False,
+    ):
         """
         Save model, optim, and other training state to a local or remote directory.
         """
@@ -123,10 +131,14 @@ class Checkpointer:
                 _skip_prepare=True,
             )
 
-        self._save_metadata(dir, CheckpointMetadata())
+        self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
 
     def save_async(
-        self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+        train_state: Dict[str, Any],
+        ephemeral: bool = False,
     ) -> Future[None]:
         """
         An async version of :meth:`save()`.
@@ -161,7 +173,7 @@ class Checkpointer:
 
         def done_callback(fut: Future):
             del fut
-            self._save_metadata(dir, CheckpointMetadata())
+            self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
 
         # Upload metadata when everything else is done.
         future.add_done_callback(done_callback)
@@ -298,7 +310,9 @@ class Checkpointer:
         return True
 
     @classmethod
-    def find_checkpoints(cls, dir: PathOrStr) -> Generator[Tuple[int, str], None, None]:
+    def find_checkpoints(
+        cls, dir: PathOrStr, ephemeral: Optional[bool] = None
+    ) -> Generator[Tuple[int, str], None, None]:
         """
         Find checkpoints within a directory.
         """
@@ -311,6 +325,18 @@ class Checkpointer:
                 # Make sure the directory is a valid checkpoint dir.
                 if not cls.dir_is_checkpoint(path):
                     continue
+
+                # Filter out based on ephemeral flag.
+                if ephemeral is not None:
+                    metadata_path = cached_path(join_path(path, cls.METADATA_FNAME), quiet=True)
+                    metadata = CheckpointMetadata.from_file(metadata_path)
+
+                    # Assume not ephemeral for backwards compat.
+                    if metadata.ephemeral is None:
+                        metadata.ephemeral = False
+
+                    if metadata.ephemeral != ephemeral:
+                        continue
 
                 yield step, path
 
