@@ -33,7 +33,7 @@ def main():
     rank = dist.get_rank()
     world = dist.get_world_size()
 
-    if world != 4:
+    if world != 2:
         if rank == 0:
             print(f"ERROR: expected world_size=4, got {world}", flush=True)
         dist.destroy_process_group()

@@ -198,7 +198,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
-            ep_no_sync=True,
+            ep_no_sync=False,
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,

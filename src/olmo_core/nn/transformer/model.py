@@ -239,7 +239,7 @@ class Transformer(nn.Module):
         for name, module in self.named_modules():
             if hasattr(module, "reset_parameters"): # TODO: what's the point of this
                 module.reset_parameters()  # type: ignore
-                log.info(f"'{name}' called reset_parameters()")
+                # log.info(f"'{name}' called reset_parameters()")
 
         seed = self.init_seed
         if world_mesh is not None and self.pp_enabled:
