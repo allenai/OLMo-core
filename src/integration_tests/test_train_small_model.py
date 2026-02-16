@@ -296,6 +296,104 @@ def test_ephemeral_blocked_during_merge_window(tmp_path):
     log.info(f"Ephemeral blocking test passed. Checkpoints at steps: {checkpoint_steps}")
 
 
+def test_overlapping_merge_windows(tmp_path):
+    """Verify that overlapping merge windows each produce correct averages."""
+    save_folder = tmp_path / "checkpoints"
+    work_dir = tmp_path / "work_dir"
+    save_folder.mkdir()
+    work_dir.mkdir()
+
+    # max_steps=8, merge at steps 5 and 7, window size 3
+    # Window for step 5: [3, 5]  (steps 3, 4, 5)
+    # Window for step 7: [5, 7]  (steps 5, 6, 7)
+    # Overlap at step 5: both windows are active
+    max_steps = 8
+    merge_steps = [5, 7]
+    merge_last_n_steps = 3
+
+    # Capture weights at all steps in both windows (steps 3-7)
+    capture_steps = set(range(3, 8))
+
+    tokenizer_config = TokenizerConfig.gpt2()
+
+    config = ExperimentConfig(
+        model=TransformerConfig.olmo3_30M(vocab_size=tokenizer_config.padded_vocab_size()),
+        dataset=NumpyFSLDatasetConfig(
+            paths=[DATA_PATH],
+            sequence_length=64,
+            tokenizer=tokenizer_config,
+            work_dir=str(work_dir),
+        ),
+        data_loader=NumpyDataLoaderConfig(global_batch_size=64 * 4, seed=0, num_workers=0),
+        train_module=TransformerTrainModuleConfig(
+            rank_microbatch_size=64 * 2,
+            max_sequence_length=64,
+            optim=AdamWConfig(lr=1e-3),
+            compile_model=False,
+        ),
+        trainer=TrainerConfig(
+            save_folder=str(save_folder),
+            save_overwrite=True,
+            metrics_collect_interval=1,
+            cancel_check_interval=1,
+            max_duration=Duration.steps(max_steps),
+        )
+        .with_callback("checkpointer", CheckpointerCallback(save_interval=1000))
+        .with_callback(
+            "model_merger",
+            ModelMergeCallback(
+                merge_step=merge_steps,
+                merge_last_n_steps=merge_last_n_steps,
+                enabled=True,
+            ),
+        )
+        .with_callback("weight_capture", WeightCaptureCallback(capture_steps=capture_steps)),
+    )
+
+    seed_all(42)
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model)
+    dataset = config.dataset.build()
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader)
+    trainer.fit()
+
+    weight_capture = trainer.callbacks["weight_capture"]
+    captured = weight_capture.captured_weights
+
+    # Verify both merged checkpoints exist
+    for ms in merge_steps:
+        merged_path = save_folder / f"step{ms}-merged"
+        assert merged_path.exists(), f"Merged checkpoint not found at {merged_path}"
+
+    # Verify each merged checkpoint is the correct average of its own window
+    for ms in merge_steps:
+        window_start = max(0, ms - merge_last_n_steps + 1)
+        window_steps = list(range(window_start, ms + 1))
+
+        # Load merged checkpoint
+        model_and_optim_path = save_folder / f"step{ms}-merged" / "model_and_optim"
+        merged_state: Dict[str, Dict[str, torch.Tensor]] = {"model": {}, "optim": {}}
+        for key in captured[window_steps[0]].keys():
+            merged_state["model"][key] = torch.empty_like(captured[window_steps[0]][key])
+        load_state_dict(str(model_and_optim_path), merged_state)
+
+        # Compute expected average from captured weights
+        for key in captured[window_steps[0]].keys():
+            stacked = torch.stack([captured[s][key] for s in window_steps])
+            expected = stacked.mean(dim=0)
+            actual = merged_state["model"][key].float()
+
+            if not torch.allclose(actual, expected, rtol=1e-4, atol=1e-6):
+                max_diff = (actual - expected).abs().max().item()
+                raise AssertionError(
+                    f"Merged weights for '{key}' at step {ms} do not match expected "
+                    f"average of steps {window_steps}. Max difference: {max_diff}"
+                )
+
+        log.info(f"Overlapping window verification passed for merge step {ms}")
+
+
 def _run_train_gpu(tmp_path: Path):
     save_folder = tmp_path / "checkpoints"
     work_dir = tmp_path / "work_dir"

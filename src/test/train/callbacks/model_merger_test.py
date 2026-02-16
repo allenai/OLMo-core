@@ -5,7 +5,7 @@ import pytest
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.train.callbacks import ModelMergeCallback
 from olmo_core.train.callbacks.model_merger import (
-    compute_merge_steps_from_wsds,
+    compute_merge_steps_from_decay_schedule,
     compute_merge_window_starts,
 )
 
@@ -102,7 +102,9 @@ def test_window_start_single_step_window():
 
 def _make_cb_at_step(merge_steps, merge_last_n_steps, current_step, completed=None):
     """Create a callback and simulate being at a given step."""
-    cb = ModelMergeCallback(merge_step=merge_steps, merge_last_n_steps=merge_last_n_steps, enabled=True)
+    cb = ModelMergeCallback(
+        merge_step=merge_steps, merge_last_n_steps=merge_last_n_steps, enabled=True
+    )
     # Patch the step property to return our test value
     cb.__class__ = type(
         "_TestMergeCallback", (ModelMergeCallback,), {"step": property(lambda self: current_step)}
@@ -168,9 +170,9 @@ def test_compute_merge_window_starts():
     assert compute_merge_window_starts([500, 550, 1000], 100) == [401, 901]
 
 
-def test_compute_merge_steps_from_wsds_with_fixed_decay():
+def test_compute_merge_steps_from_decay_schedule_with_fixed_decay():
     # 2 periods of 10000 tokens, batch size 100, decay 1000 tokens
-    steps = compute_merge_steps_from_wsds(
+    steps = compute_merge_steps_from_decay_schedule(
         period_lengths=[10000, 10000],
         tokens_per_step=100,
         decay=1000,
@@ -180,8 +182,8 @@ def test_compute_merge_steps_from_wsds_with_fixed_decay():
     assert steps == [90, 190]
 
 
-def test_compute_merge_steps_from_wsds_with_decay_fraction():
-    steps = compute_merge_steps_from_wsds(
+def test_compute_merge_steps_from_decay_schedule_with_decay_fraction():
+    steps = compute_merge_steps_from_decay_schedule(
         period_lengths=[10000],
         tokens_per_step=100,
         decay_fraction=0.1,
@@ -190,6 +192,6 @@ def test_compute_merge_steps_from_wsds_with_decay_fraction():
     assert steps == [90]
 
 
-def test_compute_merge_steps_from_wsds_requires_decay():
+def test_compute_merge_steps_from_decay_schedule_requires_decay():
     with pytest.raises(ValueError, match="Either decay or decay_fraction"):
-        compute_merge_steps_from_wsds(period_lengths=[10000], tokens_per_step=100)
+        compute_merge_steps_from_decay_schedule(period_lengths=[10000], tokens_per_step=100)

@@ -35,12 +35,18 @@ class ModelMergeCallback(Callback):
 
     Ephemeral checkpoints are blocked during merge windows to ensure the full
     window is always re-accumulated on resume.
+
+    .. warning::
+        This callback should be enabled with intention and configured with your
+        training schedule in mind. Merge steps should be configured outside of decay
+        phases where possible to ensure the averaged weights reflect a stable
+        training regime.
     """
 
     # Run before CheckpointerCallback to block ephemeral checkpoints during merge windows
-    priority: ClassVar[int] = 2 
+    priority: ClassVar[int] = 2
 
-    merge_step: Union[int, List[int]] = field(default_factory=list)
+    merge_step: Union[int, List[int]] = field(default_factory=list)  # type: ignore[assignment]
     """The step(s) at which to save merged checkpoint(s)."""
 
     merge_interval: Optional[int] = None
@@ -113,7 +119,6 @@ class ModelMergeCallback(Callback):
 
     def _merged_checkpoint_path(self, step: int) -> str:
         return str(join_path(self.trainer.save_folder, f"step{step}-{self.output_suffix}"))
-
 
     def pre_train(self):
         if not self.enabled:
@@ -228,7 +233,7 @@ class ModelMergeCallback(Callback):
             log.warning(f"No weights accumulated for merge step {merge_step}, cannot save")
             return
 
-        log.info(f"Saving merged checkpoint (average of {count} steps) " f"at step {merge_step}")
+        log.info(f"Saving merged checkpoint (average of {count} steps) at step {merge_step}")
 
         averaged_state: Dict[str, torch.Tensor] = {
             key: acc_val / count for key, acc_val in accumulator.items()
@@ -273,6 +278,8 @@ class ModelMergeCallback(Callback):
         params_dict = dict(model.named_parameters())
 
         # Store original weights on CPU to avoid doubling GPU memory
+        # TODO: Evaluate performance impact of synchronous copy vs async copy with
+        # device sync before optimizer step.
         log.info("Storing original model weights...")
         original_state = {
             k: get_local_tensor(p.data.detach()).to("cpu").clone() for k, p in params_dict.items()
@@ -288,7 +295,7 @@ class ModelMergeCallback(Callback):
                     local_param.copy_(
                         averaged_state[name].to(local_param.device, local_param.dtype)
                     )
-
+        # Sync to ensure all ranks have loaded the merged weights before evaluation starts
         barrier()
 
         try:
@@ -304,20 +311,19 @@ class ModelMergeCallback(Callback):
                         local_param.copy_(
                             original_state[name].to(local_param.device, local_param.dtype)
                         )
+            # Ensure all ranks have restored original weights before training resumes
             barrier()
 
-    # NO state_dict or load_state_dict - state is not checkpointed!
-    # On resume, accumulation starts fresh from the last checkpoint.
 
-
-def compute_merge_steps_from_wsds(
+# Utility functions for computing merge steps and required checkpoint steps for merge windows
+def compute_merge_steps_from_decay_schedule(
     period_lengths: List[int],
     tokens_per_step: int,
     decay: Optional[int] = None,
     decay_fraction: Optional[float] = None,
 ) -> List[int]:
     """
-    Compute merge steps from WSDS period configuration.
+    Compute merge steps from a decay schedule with one or more periods.
     """
     if decay is None and decay_fraction is None:
         raise ValueError("Either decay or decay_fraction must be set")
