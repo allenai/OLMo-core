@@ -901,6 +901,15 @@ class MoEV2TransformerTrainModule(TrainModule):
                         #     elif param._main_grad_fp32 is not None:
                         #         debug_check_grad(name, "_main_grad_fp32", param._main_grad_fp32, input_ids=input_ids, micro_batch_idx=micro_batch_idx)
 
+                        # dump grad
+                        # named_grads = []
+                        # for name, param in self.model_parts[0].named_parameters():
+                        #     if param.grad is not None:
+                        #         named_grads.append((f"{name}.grad", param.grad.clone()))
+                        #     elif param._main_grad_fp32 is not None:
+                        #         named_grads.append((f"{name}._main_grad_fp32", param._main_grad_fp32.clone()))
+                        # torch.save(named_grads, f"grads_rank{dist.get_rank()}_nosync.pt")
+
 
                         dbg_mem_after_bwd = torch.cuda.memory_allocated()/1024**3
                         dbg_mem_activation_freed = dbg_mem_before_bwd - dbg_mem_after_bwd

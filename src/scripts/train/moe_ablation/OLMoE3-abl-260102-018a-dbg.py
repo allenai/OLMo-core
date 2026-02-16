@@ -113,7 +113,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 3 // 2
 
-MICRO_BSZ = 2
+MICRO_BSZ = 1
 # DP_DIM=2
 EP_DIM=2
 PP_DIM=1
@@ -142,7 +142,7 @@ else:
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=False
+USE_COMPILE=True
 USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
@@ -416,7 +416,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 # entity="ai2-llm",
                 # project="olmoe-dev-v2",
                 # project="olmo3",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )

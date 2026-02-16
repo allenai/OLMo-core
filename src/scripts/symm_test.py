@@ -24,6 +24,7 @@ def _maybe_set_backend():
             "NVSHMEM is not available in this PyTorch build/system.\n"
             "These ops are NVSHMEM-backed; install/use a PyTorch build with NVSHMEM enabled."
         )
+    # symm_mem.set_backend("NCCL")
     symm_mem.set_backend("NVSHMEM")
 
 
@@ -35,7 +36,7 @@ def main():
 
     if world != 2:
         if rank == 0:
-            print(f"ERROR: expected world_size=4, got {world}", flush=True)
+            print(f"ERROR: expected world_size=2, got {world}", flush=True)
         dist.destroy_process_group()
         sys.exit(1)
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
 
 import nvtx
+from textual import work
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
@@ -63,6 +64,51 @@ class _NoSyncSymmBuffers:
     combine_tmp_splits_offsets: torch.Tensor
 
 
+def _defrag_rows_by_splits_offsets(src: torch.Tensor, splits_offsets: torch.Tensor) -> torch.Tensor:
+    """Defragment chunked rows described by (splits, offsets) into contiguous order."""
+    splits = splits_offsets[0].to(dtype=torch.long)
+    offsets = splits_offsets[1].to(dtype=torch.long)
+
+    chunk_ids = torch.repeat_interleave(
+        torch.arange(splits.numel(), device=src.device, dtype=torch.long),
+        splits,
+    ) # TODO: remove D2H Sync
+    if chunk_ids.numel() == 0:
+        return src.narrow(0, 0, 0)
+
+    starts = torch.cumsum(splits, dim=0) - splits
+    out_pos = torch.arange(chunk_ids.numel(), device=src.device, dtype=torch.long)
+    pos_in_chunk = out_pos - starts.index_select(0, chunk_ids)
+    src_indices = offsets.index_select(0, chunk_ids) + pos_in_chunk
+    return src.index_select(0, src_indices)
+
+
+def _scatter_rows_by_splits_offsets(
+    src: torch.Tensor,
+    splits_offsets: torch.Tensor,
+    *,
+    out_rows: int,
+) -> torch.Tensor:
+    """Scatter contiguous rows into chunked layout described by (splits, offsets)."""
+    splits = splits_offsets[0].to(dtype=torch.long)
+    offsets = splits_offsets[1].to(dtype=torch.long)
+    out = src.new_zeros((out_rows, src.shape[-1]))
+
+    chunk_ids = torch.repeat_interleave(
+        torch.arange(splits.numel(), device=src.device, dtype=torch.long),
+        splits,
+    )
+    if chunk_ids.numel() == 0:
+        return out
+
+    starts = torch.cumsum(splits, dim=0) - splits
+    src_pos = torch.arange(chunk_ids.numel(), device=src.device, dtype=torch.long)
+    pos_in_chunk = src_pos - starts.index_select(0, chunk_ids)
+    out_indices = offsets.index_select(0, chunk_ids) + pos_in_chunk
+    out.index_copy_(0, out_indices, src)
+    return out
+
+
 class _DispatchVDev2DAutograd(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
@@ -75,6 +121,7 @@ class _DispatchVDev2DAutograd(torch.autograd.Function):
         symm_out_splits_offsets: torch.Tensor,
         symm_tmp_splits_offsets: torch.Tensor,
         group_name: str,
+        group: dist.ProcessGroup,
         major_align: int,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         packed_rows = packed_input.shape[0]
@@ -89,6 +136,14 @@ class _DispatchVDev2DAutograd(torch.autograd.Function):
         symm_in_splits.copy_(in_splits.to(dtype=torch.int64))
         symm_out_splits_offsets.zero_()
 
+        work = dist.barrier(
+            group=group,
+            async_op=True,
+            device_ids=[symm_input.device.index],
+        )
+        assert work is not None
+        work.block_current_stream() 
+
         torch.ops.symm_mem.all_to_all_vdev_2d(
             symm_input,
             symm_out,
@@ -98,6 +153,7 @@ class _DispatchVDev2DAutograd(torch.autograd.Function):
             major_align=major_align,
         )
 
+        ctx.group = group
         ctx.group_name = group_name
         ctx.packed_rows = packed_rows
         ctx.symm_input_shape = symm_input.shape
@@ -128,6 +184,15 @@ class _DispatchVDev2DAutograd(torch.autograd.Function):
         symm_forward_out_splits_offsets = ctx.symm_out_splits_offsets
         symm_forward_out_splits_offsets.copy_(forward_out_splits_offsets)
         grad_input_splits_offsets = ctx.symm_tmp_splits_offsets
+        grad_input_splits_offsets.zero_()
+
+        work = dist.barrier(
+            group=ctx.group,
+            async_op=True,
+            device_ids=[ctx.symm_input.device.index],
+        )
+        assert work is not None
+        work.block_current_stream() 
 
         torch.ops.symm_mem.all_to_all_vdev_2d_offset(
             symm_grad_out,
@@ -136,9 +201,16 @@ class _DispatchVDev2DAutograd(torch.autograd.Function):
             grad_input_splits_offsets,
             ctx.group_name,
         )
-        grad_packed_input = grad_symm_input[: ctx.packed_rows].clone()
+        grad_packed_input = _defrag_rows_by_splits_offsets(
+            grad_symm_input,
+            grad_input_splits_offsets,
+        )
+        if grad_packed_input.shape[0] != ctx.packed_rows:
+            raise RuntimeError(
+                f"dispatch backward produced {grad_packed_input.shape[0]} rows, expected {ctx.packed_rows}"
+            )
 
-        return grad_packed_input, None, None, None, None, None, None, None, None
+        return grad_packed_input, None, None, None, None, None, None, None, None, None
 
 
 class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
@@ -151,7 +223,10 @@ class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
         symm_out: torch.Tensor,
         symm_out_splits_offsets: torch.Tensor,
         symm_tmp_splits_offsets: torch.Tensor,
+        symm_in_splits: torch.Tensor,
         group_name: str,
+        group: dist.ProcessGroup,
+        major_align: int,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         input_rows = input.shape[0]
         if input_rows > symm_input.shape[0]:
@@ -162,7 +237,78 @@ class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
         symm_input.zero_()
         if input_rows > 0:
             symm_input[:input_rows].copy_(input)
+        
+        # torch.distributed.barrier() # NOTE: this barrier does not work
         symm_out_splits_offsets.zero_()
+        assert _symm_mem is not None, "Symmetric memory ops are not available. Make sure to use a PyTorch build with NVSHMEM support and that NVSHMEM is properly initialized."
+
+        # option 1: NOT working (not implemented: "todo" in https://github.com/pytorch/pytorch/blob/main/torch/csrc/distributed/c10d/symm_mem/NVSHMEMSymmetricMemory.cu)
+        # _symm_mem.rendezvous(symm_input, group=group_name).barrier()
+        # _symm_mem.rendezvous(symm_out_splits_offsets, group=group_name).barrier()
+        # _symm_mem.rendezvous(in_splits_offsets, group=group_name).barrier()
+        # _symm_mem.rendezvous(symm_out, group=group_name).barrier()
+        # _symm_mem.rendezvous(symm_tmp_splits_offsets, group=group_name).barrier()
+        
+        # option 2: NOT working (barrier in NCCL stream, all2all in current stream)
+        # torch.distributed.barrier(async_op=True) 
+
+        # option 2.1: still not working
+        work = dist.barrier(
+            group=group,
+            async_op=True,
+            device_ids=[symm_input.device.index],
+        )
+        assert work is not None
+        work.block_current_stream() 
+
+        # option 3: working (consider performance implications of a full barrier here)
+        # torch.distributed.barrier(async_op=False) 
+
+        # NOTE: A barrier seems necessary, 
+        # otherwise the symm_out_splits_offsets[0] (the splits) will only have non-zero values for the local rank's own expert.
+        # eg, correct:
+        # rank 0:
+        # tensor([[ 1636,  1991,  1177,  4833,  2338,  3264,  2015,  1601,  3154,   930,
+        #         1766,   551,  1271,  4111,  1997,  1653,  3323,  1916,  1871,  2436,
+        #         3006,  1868,   793,  2845,  1946,  1684,  2320,  1532,  1582,  2337,
+        #         1097,   692],
+        #         [    0,  1636,  3627,  4804,  9637, 11975, 15239, 17254, 18855, 22009,
+        #         22939, 24705, 25256, 26527, 30638, 32635, 34288, 37611, 39527, 41398,
+        #         43834, 46840, 48708, 49501, 52346, 54292, 55976, 58296, 59828, 61410,
+        #         63747, 64844]], device='cuda:0')
+        # rank 1:
+        # tensor([[ 1735,  2066,  1256,  4811,  2296,  3092,  2112,  1528,  3177,   986,
+        #         1781,   560,  1217,  4114,  1970,  1631,  3317,  1918,  1839,  2465,
+        #         3003,  1836,   737,  2881,  1980,  1599,  2380,  1539,  1612,  2298,
+        #         1072,   728],
+        #         [    0,  1735,  3801,  5057,  9868, 12164, 15256, 17368, 18896, 22073,
+        #         23059, 24840, 25400, 26617, 30731, 32701, 34332, 37649, 39567, 41406,
+        #         43871, 46874, 48710, 49447, 52328, 54308, 55907, 58287, 59826, 61438,
+        #         63736, 64808]], device='cuda:1')
+
+        # wrong (without barrier):
+        # rank 0:
+        # tensor([[ 1636,  1991,  1177,  4833,  2338,  3264,  2015,  1601,  3154,   930,
+        #         1766,   551,  1271,  4111,  1997,  1653,     0,     0,     0,     0,
+        #             0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        #             0,     0],
+        #         [    0,  1636,  3627,  4804,  9637, 11975, 15239, 17254, 18855, 22009,
+        #         22939, 24705, 25256, 26527, 30638, 32635, 34288, 34288, 34288, 34288,
+        #         34288, 34288, 34288, 34288, 34288, 34288, 34288, 34288, 34288, 34288,
+        #         34288, 34288]], device='cuda:0')
+        # rank 1:
+        # tensor([[ 1735,  2066,  1256,  4811,  2296,  3092,  2112,  1528,  3177,   986,
+        #         1781,   560,  1217,  4114,  1970,  1631,  3317,  1918,  1839,  2465,
+        #         3003,  1836,   737,  2881,  1980,  1599,  2380,  1539,  1612,  2298,
+        #         1072,   728],
+        #         [    0,  1735,  3801,  5057,  9868, 12164, 15256, 17368, 18896, 22073,
+        #         23059, 24840, 25400, 26617, 30731, 32701, 34332, 37649, 39567, 41406,
+        #         43871, 46874, 48710, 49447, 52328, 54308, 55907, 58287, 59826, 61438,
+        #         63736, 64808]], device='cuda:1')
+        # Save input layout metadata *before* the symm op. Some backends may
+        # reuse/mutate the provided metadata buffers.
+        in_splits_offsets_saved = in_splits_offsets.clone()
+
         torch.ops.symm_mem.all_to_all_vdev_2d_offset(
             symm_input,
             symm_out,
@@ -171,21 +317,26 @@ class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
             group_name,
         )
 
+        # print(f'rank {torch.distributed.get_rank()}: {symm_out_splits_offsets}') # for debug
+
+        ctx.group = group
         ctx.group_name = group_name
         ctx.input_rows = input_rows
         ctx.symm_input = symm_input
         ctx.symm_out = symm_out
         ctx.symm_out_splits_offsets = symm_out_splits_offsets
         ctx.symm_tmp_splits_offsets = symm_tmp_splits_offsets
+        ctx.symm_in_splits = symm_in_splits
+        ctx.major_align = major_align
         out_splits_offsets = symm_out_splits_offsets.clone()
-        ctx.save_for_backward(out_splits_offsets)
+        ctx.save_for_backward(out_splits_offsets, in_splits_offsets_saved)
         ctx.mark_non_differentiable(out_splits_offsets)
         return symm_out, out_splits_offsets
 
     @staticmethod
     def backward(ctx, grad_out: torch.Tensor, grad_out_splits_offsets: torch.Tensor):  # type: ignore[override]
         del grad_out_splits_offsets
-        (forward_out_splits_offsets,) = ctx.saved_tensors
+        (forward_out_splits_offsets, forward_in_splits_offsets) = ctx.saved_tensors
 
         symm_grad_out = ctx.symm_out
         if grad_out.shape[0] > symm_grad_out.shape[0]:
@@ -197,18 +348,37 @@ class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
             symm_grad_out[: grad_out.shape[0]].copy_(grad_out)
 
         grad_input = ctx.symm_input
-        symm_forward_out_splits_offsets = ctx.symm_out_splits_offsets
-        symm_forward_out_splits_offsets.copy_(forward_out_splits_offsets)
+        symm_forward_out_splits = ctx.symm_in_splits
+        symm_forward_out_splits.copy_(forward_out_splits_offsets[0].to(dtype=torch.int64))
         grad_input_splits_offsets = ctx.symm_tmp_splits_offsets
+        grad_input_splits_offsets.zero_()
 
-        torch.ops.symm_mem.all_to_all_vdev_2d_offset(
+        work = dist.barrier(
+            group=ctx.group,
+            async_op=True,
+            device_ids=[ctx.symm_input.device.index],
+        )
+        assert work is not None
+        work.block_current_stream() 
+
+        torch.ops.symm_mem.all_to_all_vdev_2d(
             symm_grad_out,
             grad_input,
-            symm_forward_out_splits_offsets,
+            symm_forward_out_splits,
             grad_input_splits_offsets,
             ctx.group_name,
+            major_align=ctx.major_align,
         )
-        return grad_input[: ctx.input_rows].clone(), None, None, None, None, None, None
+        # expected_rows = int(forward_in_splits_offsets[0].sum(dtype=torch.long).item())
+        # actual_rows = int(grad_input_splits_offsets[0].sum(dtype=torch.long).item())
+        # if actual_rows != expected_rows:
+        #     raise RuntimeError(
+        #         "combine backward layout mismatch: "
+        #         f"defrag_rows={actual_rows}, "
+        #         f"expected_rows_from_forward_in_splits={expected_rows}, "
+        #         f"input_rows={ctx.input_rows}"
+        #     )
+        return grad_input[: ctx.input_rows].clone(), None, None, None, None, None, None, None, None, None
 
 
 @dataclass
@@ -957,7 +1127,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         starts = torch.cumsum(requested, dim=0) - requested
         pos_in_chunk = token_ids - starts.index_select(0, expert_ids)
         keep_mask = pos_in_chunk < keep.index_select(0, expert_ids)
-        return token_ids[keep_mask]
+        return token_ids[keep_mask] # TODO: remove D2H Sync
 
     def _gather_by_splits_offsets(
         self,
@@ -974,7 +1144,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         chunk_ids = torch.repeat_interleave(
             torch.arange(splits.numel(), device=src.device, dtype=torch.long),
             splits,
-        )
+        ) # TODO: remove D2H Sync
         if chunk_ids.numel() == 0:
             return src.narrow(0, 0, 0)
 
@@ -1002,7 +1172,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         chunk_ids = torch.repeat_interleave(
             torch.arange(splits.numel(), device=src.device, dtype=torch.long),
             splits,
-        )
+        ) # TODO: remove D2H Sync
         if chunk_ids.numel() == 0:
             return out
 
@@ -1367,6 +1537,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             buffers.dispatch_splits_offsets,
             buffers.dispatch_tmp_splits_offsets,
             group_name,
+            self.ep_pg,
             self.ep_no_sync_major_align,
         )
 
@@ -1408,7 +1579,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             buffers.combine_out,
             buffers.combine_splits_offsets,
             buffers.combine_tmp_splits_offsets,
+            buffers.dispatch_in_splits,
             group_name,
+            self.ep_pg,
+            self.ep_no_sync_major_align,
         )
 
         combine_splits = combine_splits_offsets[0]
@@ -1418,64 +1592,64 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             splits=combine_splits,
             offsets=combine_offsets,
         )
-        expected_combine_offsets = torch.cumsum(
-            allowed_splits.to(dtype=torch.long), dim=0
-        ) - allowed_splits.to(dtype=torch.long)
-        local_kept_x_expected_layout = self._gather_by_splits_offsets(
-            combine_out,
-            splits=allowed_splits,
-            offsets=expected_combine_offsets,
-        )
+        # expected_combine_offsets = torch.cumsum(
+        #     allowed_splits.to(dtype=torch.long), dim=0
+        # ) - allowed_splits.to(dtype=torch.long)
+        # local_kept_x_expected_layout = self._gather_by_splits_offsets(
+        #     combine_out,
+        #     splits=allowed_splits,
+        #     offsets=expected_combine_offsets,
+        # )
         # Strict correctness: trust op-provided output metadata. If metadata is
         # inconsistent with allowed_splits, fail hard below.
         local_kept_x = local_kept_x_from_op
-        combine_vs_allowed = (combine_splits.to(dtype=torch.long) - allowed_splits.to(dtype=torch.long)).abs()
-        combine_vs_allowed_sum_abs = int(combine_vs_allowed.sum(dtype=torch.long).item())
-        combine_vs_allowed_max_abs = int(combine_vs_allowed.max().item()) if combine_vs_allowed.numel() > 0 else 0
+        # combine_vs_allowed = (combine_splits.to(dtype=torch.long) - allowed_splits.to(dtype=torch.long)).abs()
+        # combine_vs_allowed_sum_abs = int(combine_vs_allowed.sum(dtype=torch.long).item())
+        # combine_vs_allowed_max_abs = int(combine_vs_allowed.max().item()) if combine_vs_allowed.numel() > 0 else 0
 
-        local_mismatch = int(
-            (local_kept_x.shape[0] != local_kept_tokens)
-            or (combine_vs_allowed_sum_abs != 0)
-        )
-        mismatch_flag = torch.tensor(
-            local_mismatch,
-            device=permutated_local_x.device,
-            dtype=torch.int32,
-        )
-        dist.all_reduce(mismatch_flag, op=dist.ReduceOp.MAX, group=self.ep_pg)
-        if mismatch_flag.item() != 0:
-            rank = get_rank(self.ep_pg)
-            requested_sum = int(requested_splits.sum(dtype=torch.long).item())
-            allowed_sum = int(allowed_splits.sum(dtype=torch.long).item())
-            dispatch_recv = int(dispatch_splits.sum(dtype=torch.long).item())
-            combine_recv = int(combine_splits.sum(dtype=torch.long).item())
-            dispatch_max_end = int((dispatch_offsets + dispatch_splits).max().item()) if dispatch_splits.numel() > 0 else 0
-            combine_max_end = int((combine_offsets + combine_splits).max().item()) if combine_splits.numel() > 0 else 0
+        # local_mismatch = int(
+        #     (local_kept_x.shape[0] != local_kept_tokens)
+        #     or (combine_vs_allowed_sum_abs != 0)
+        # )
+        # mismatch_flag = torch.tensor(
+        #     local_mismatch,
+        #     device=permutated_local_x.device,
+        #     dtype=torch.int32,
+        # )
+        # dist.all_reduce(mismatch_flag, op=dist.ReduceOp.MAX, group=self.ep_pg)
+        # if mismatch_flag.item() != 0:
+        #     rank = get_rank(self.ep_pg)
+        #     requested_sum = int(requested_splits.sum(dtype=torch.long).item())
+        #     allowed_sum = int(allowed_splits.sum(dtype=torch.long).item())
+        #     dispatch_recv = int(dispatch_splits.sum(dtype=torch.long).item())
+        #     combine_recv = int(combine_splits.sum(dtype=torch.long).item())
+        #     dispatch_max_end = int((dispatch_offsets + dispatch_splits).max().item()) if dispatch_splits.numel() > 0 else 0
+        #     combine_max_end = int((combine_offsets + combine_splits).max().item()) if combine_splits.numel() > 0 else 0
 
-            local_diag = {
-                "rank": rank,
-                "local_kept_tokens": int(local_kept_tokens),
-                "local_kept_x_rows": int(local_kept_x.shape[0]),
-                "local_kept_x_from_op_rows": int(local_kept_x_from_op.shape[0]),
-                "local_kept_x_expected_layout_rows": int(local_kept_x_expected_layout.shape[0]),
-                "requested_sum": requested_sum,
-                "allowed_sum": allowed_sum,
-                "dispatch_recv": dispatch_recv,
-                "combine_recv": combine_recv,
-                "dispatch_max_end": dispatch_max_end,
-                "combine_max_end": combine_max_end,
-                "combine_vs_allowed_sum_abs": combine_vs_allowed_sum_abs,
-                "combine_vs_allowed_max_abs": combine_vs_allowed_max_abs,
-            }
-            all_diags: List[Optional[dict]] = [None for _ in range(self.ep_world_size)]
-            dist.all_gather_object(all_diags, local_diag, group=self.ep_pg)
+        #     local_diag = {
+        #         "rank": rank,
+        #         "local_kept_tokens": int(local_kept_tokens),
+        #         "local_kept_x_rows": int(local_kept_x.shape[0]),
+        #         "local_kept_x_from_op_rows": int(local_kept_x_from_op.shape[0]),
+        #         "local_kept_x_expected_layout_rows": int(local_kept_x_expected_layout.shape[0]),
+        #         "requested_sum": requested_sum,
+        #         "allowed_sum": allowed_sum,
+        #         "dispatch_recv": dispatch_recv,
+        #         "combine_recv": combine_recv,
+        #         "dispatch_max_end": dispatch_max_end,
+        #         "combine_max_end": combine_max_end,
+        #         "combine_vs_allowed_sum_abs": combine_vs_allowed_sum_abs,
+        #         "combine_vs_allowed_max_abs": combine_vs_allowed_max_abs,
+        #     }
+        #     all_diags: List[Optional[dict]] = [None for _ in range(self.ep_world_size)]
+        #     dist.all_gather_object(all_diags, local_diag, group=self.ep_pg)
 
-            raise RuntimeError(
-                f"EP no-sync combine metadata mismatch (block={self.block_idx}, rank={rank}): "
-                f"local_kept_x={local_kept_x.shape[0]}, local_kept_tokens={local_kept_tokens}, "
-                f"received_after_drop={dispatch_recv}, combined_tokens={combine_recv}, "
-                f"requested_sum={requested_sum}, allowed_sum={allowed_sum}, all_rank_diags={all_diags}"
-            )
+        #     raise RuntimeError(
+        #         f"EP no-sync combine metadata mismatch (block={self.block_idx}, rank={rank}): "
+        #         f"local_kept_x={local_kept_x.shape[0]}, local_kept_tokens={local_kept_tokens}, "
+        #         f"received_after_drop={dispatch_recv}, combined_tokens={combine_recv}, "
+        #         f"requested_sum={requested_sum}, allowed_sum={allowed_sum}, all_rank_diags={all_diags}"
+        #     )
 
         restored_local_x = permutated_local_x.new_zeros(
             (num_out_tokens, permutated_local_x.shape[-1])
@@ -1509,7 +1683,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 map_type="index",
             )
             local_x = cast(torch.Tensor, local_x)
-        zero_rows_after_local_unpermute = (local_x.abs().sum(dim=-1) == 0).sum(dtype=torch.long)
+        # zero_rows_after_local_unpermute = (local_x.abs().sum(dim=-1) == 0).sum(dtype=torch.long)
 
         local_x = local_x.view(in_shape)
         wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
@@ -1528,36 +1702,40 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             )
             final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
 
-        self._ep_no_sync_last_debug = {
-            "requested_splits": requested_splits.detach(),
-            "allowed_splits": allowed_splits.detach(),
-            "rank_capacity": torch.tensor(
-                rank_capacity, device=requested_splits.device, dtype=torch.long
-            ),
-            "local_kept_tokens": torch.tensor(
-                local_kept_tokens, device=requested_splits.device, dtype=torch.long
-            ),
-            "received_tokens_after_drop": dispatch_splits.sum(dtype=torch.long).detach(),
-            "combined_tokens": combine_splits.sum(dtype=torch.long).detach(),
-            "num_dropped": torch.tensor(
-                num_out_tokens - local_kept_tokens,
-                device=requested_splits.device,
-                dtype=torch.long,
-            ),
-            "zero_rows_after_local_unpermute": zero_rows_after_local_unpermute.detach(),
-            "combine_vs_allowed_sum_abs": combine_vs_allowed.sum(dtype=torch.long).detach(),
-            "combine_vs_allowed_max_abs": (
-                combine_vs_allowed.max() if combine_vs_allowed.numel() > 0 else torch.zeros(
-                    [], device=requested_splits.device, dtype=torch.long
-                )
-            ).detach(),
-            "used_expected_combine_layout": torch.tensor(
-                0,
-                device=requested_splits.device,
-                dtype=torch.int32,
-            ),
-        }
+        # self._ep_no_sync_last_debug = {
+        #     "requested_splits": requested_splits.detach(),
+        #     "allowed_splits": allowed_splits.detach(),
+        #     "rank_capacity": torch.tensor(
+        #         rank_capacity, device=requested_splits.device, dtype=torch.long
+        #     ),
+        #     "local_kept_tokens": torch.tensor(
+        #         local_kept_tokens, device=requested_splits.device, dtype=torch.long
+        #     ),
+        #     "received_tokens_after_drop": dispatch_splits.sum(dtype=torch.long).detach(),
+        #     "combined_tokens": combine_splits.sum(dtype=torch.long).detach(),
+        #     "num_dropped": torch.tensor(
+        #         num_out_tokens - local_kept_tokens,
+        #         device=requested_splits.device,
+        #         dtype=torch.long,
+        #     ),
+        #     "zero_rows_after_local_unpermute": zero_rows_after_local_unpermute.detach(),
+        #     "combine_vs_allowed_sum_abs": combine_vs_allowed.sum(dtype=torch.long).detach(),
+        #     "combine_vs_allowed_max_abs": (
+        #         combine_vs_allowed.max() if combine_vs_allowed.numel() > 0 else torch.zeros(
+        #             [], device=requested_splits.device, dtype=torch.long
+        #         )
+        #     ).detach(),
+        #     "used_expected_combine_layout": torch.tensor(
+        #         0,
+        #         device=requested_splits.device,
+        #         dtype=torch.int32,
+        #     ),
+        # }
 
+        # torch.save( {
+        #     'final_out': final_out.detach().cpu(),
+        # },
+        # f'ep_no_sync_debug_block_{self.block_idx}_rank_{get_rank(self.ep_pg)}.pt')
         return final_out
 
     def combined_forward_ep(
@@ -1878,6 +2056,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # NOTE: the attach only writes 1.0 to the aux loss grad slot, so it should not matter where to attach
             final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
                     
+        # torch.save( {
+        #     'final_out': final_out.detach().cpu(),
+        # },
+        # f'ep_sync_debug_block_{self.block_idx}_rank_{get_rank(self.ep_pg)}.pt')
         return final_out
     
 
