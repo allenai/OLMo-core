@@ -104,7 +104,11 @@ def train(config: ExperimentConfig):
         merged_state["model"][key] = torch.empty_like(
             weight_capture.captured_weights[max_steps][key]
         )
-    load_state_dict(str(model_and_optim_path), merged_state)
+    load_state_dict(
+        str(model_and_optim_path),
+        merged_state,
+        process_group=trainer.checkpointer.process_group,
+    )
 
     # Verify merged weights match expected average
     captured_list = list(weight_capture.captured_weights.values())
