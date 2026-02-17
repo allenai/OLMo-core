@@ -54,7 +54,7 @@ gantry run --cluster ai2/saturn -y --budget ai2/oceo --workspace ai2/flex2 \
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-no_anneal-tool_use_general_mix/step888"
     # "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-5b-olmo3_math-mixed-sft/step1062"
 MODEL_PATHS=(
-    "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-olmo3_50b_code_anneal_mixed_SFT_TEST/step620"
+    "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-4x7b-olmo3_code_50b_sft-router_sft_general_only/step394"
 )
 for MODEL_PATH in "${MODEL_PATHS[@]}"; do
 uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
@@ -63,6 +63,13 @@ uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
             --skip-validation \
             --max-sequence-length 65536
 done
+
+
+# convert FROM HF
+uv run python src/examples/huggingface/convert_checkpoint_from_hf.py \
+            -i allenai/Olmo-3-1025-7B \
+            -o /weka/oe-training-default/ai2-llm/checkpoints/jacobm/final-olmo3-checkpoints/olmo3-7b-base-test-again \
+            --skip-validation 
 
     "${CODE_BASE},${CODE_EXPERT_2},${MATH_EXPERT}|${CKPT_DIR}/FlexOlmo-3x7B-code_base-code_only-math_mixed"
     "${MATH_BASE},${CODE_EXPERT_3},${MATH_EXPERT}|${CKPT_DIR}/FlexOlmo-3x7B-math_base-code_mixed-math_mixed"

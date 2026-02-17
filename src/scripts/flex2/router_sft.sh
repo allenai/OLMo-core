@@ -17,7 +17,7 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --launch.priority=urgent \
     --seq_len=2048 \
     --launch.num_gpus=8 \
-    --num_nodes=8 \
+    --num_nodes=4 \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
     --model_name olmoe-4x7b \
