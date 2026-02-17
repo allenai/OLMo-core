@@ -160,6 +160,22 @@ uv sync --extra beaker --extra transformers
     - Only install the project + extras you need (the image already has CUDA dependencies)
     - Beaker images follow the pattern `<user>/olmo-core-tch<torch>cu<cuda>-<date>`
 
+    **Setting the tokenizer explicitly:** By default the conversion script saves the tokenizer from the training config (e.g. `dolma2`). If your model will be used with a different tokenizer at inference time (e.g. an instruct tokenizer with a chat template), use the `-t` flag to override it:
+
+    ```bash
+    -t allenai/olmo-3-tokenizer-instruct-dev
+    ```
+
+    **Converting multiple models in parallel:** When converting several checkpoints (e.g. from a learning rate sweep), use `--timeout 0` instead of `--timeout -1` so gantry submits each job and returns immediately without following logs. This lets you loop over models and launch all conversions at once:
+
+    ```bash
+    LRS=(8e-5 5e-5 2.5e-5)
+    for LR in "${LRS[@]}"; do
+        gantry run --cluster ai2/saturn-cirrascale --timeout 0 -y --budget ai2/oe-adapt --workspace ai2/<your_workspace> \
+            ...
+    done
+    ```
+
 2. **Verify chat template and tokenizer settings before running evals.**
 
     After converting to HuggingFace format, check that your model has the correct chat template for evaluation (either in `tokenizer_config.json` or as a separate `chat_template.jinja` file). The HF conversion copies whatever tokenizer was saved with the checkpoint, but that tokenizer's chat template may not be correct for evals—you may need to update it manually.
