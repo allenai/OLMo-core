@@ -126,6 +126,24 @@ def train(config: ExperimentConfig):
 
     log.info("Averaging verification passed")
 
+    # Verify merged checkpoint can be loaded into a model and produce valid output
+    log.info("Loading merged weights into model for forward pass check...")
+    with torch.no_grad():
+        for name, param in trainer.train_module.model.named_parameters():
+            if name in merged_state["model"]:
+                local_param = get_local_tensor(param.data)
+                local_param.copy_(
+                    merged_state["model"][name].to(local_param.device, local_param.dtype)
+                )
+
+    device = next(trainer.train_module.model.parameters()).device
+    input_ids = torch.randint(0, config.model.vocab_size, (2, 64), device=device)
+    with torch.no_grad():
+        logits = trainer.train_module.model(input_ids)
+    assert not torch.isnan(logits).any(), "Forward pass with merged weights produced NaN"
+    assert not torch.isinf(logits).any(), "Forward pass with merged weights produced Inf"
+    log.info("Forward pass verification passed")
+
 
 def build_config(
     save_folder: Path, work_dir: Path, dp_config: Optional[TransformerDataParallelConfig] = None
