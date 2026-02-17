@@ -239,11 +239,43 @@ class ModelMergeCallback(Callback):
 
         barrier()
 
+        # To save correctly under FSDP, we temporarily load averaged weights
+        # into the model so save_state_dict sees DTensors (with sharding metadata)
+        # rather than plain tensors (which would be treated as replicated and
+        # only save rank 0's data).
+        model = self.trainer.train_module.model
+        params_dict = dict(model.named_parameters())
+
+        original_state = {
+            k: get_local_tensor(p.data.detach()).to("cpu").clone() for k, p in params_dict.items()
+        }
+
+        with torch.no_grad():
+            for name, param in params_dict.items():
+                if name in averaged_state:
+                    local_param = get_local_tensor(param.data)
+                    local_param.copy_(
+                        averaged_state[name].to(local_param.device, local_param.dtype)
+                    )
+
+        barrier()
+
         save_state_dict(
             join_path(output_path, "model_and_optim"),
-            {"model": averaged_state, "optim": {}},
+            self.trainer.train_module.state_dict_to_save(optim=False),
             process_group=self.trainer.checkpointer.process_group,
         )
+
+        barrier()
+
+        # Restore original weights
+        with torch.no_grad():
+            for name, param in params_dict.items():
+                if name in original_state:
+                    local_param = get_local_tensor(param.data)
+                    local_param.copy_(
+                        original_state[name].to(local_param.device, local_param.dtype)
+                    )
 
         barrier()
         log.info(f"Merged checkpoint saved to: {output_path}")
