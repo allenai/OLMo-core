@@ -22,6 +22,7 @@ from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, Tokeniz
 from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.checkpoint import load_state_dict
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
 from olmo_core.testing import run_distributed_test
@@ -50,8 +51,8 @@ class WeightCaptureCallback(Callback):
     def post_train_batch(self):
         if self.step in self.capture_steps:
             self.captured_weights[self.step] = {
-                k: v.clone().cpu().float()
-                for k, v in self.trainer.train_module.model.state_dict().items()
+                k: get_local_tensor(p.data.detach()).cpu().float().clone()
+                for k, p in self.trainer.train_module.model.named_parameters()
             }
 
 
