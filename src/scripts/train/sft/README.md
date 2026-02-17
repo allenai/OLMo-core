@@ -159,22 +159,8 @@ uv sync --extra beaker --extra transformers
     - Gantry's default venv doesn't have access to these packages
     - Only install the project + extras you need (the image already has CUDA dependencies)
     - Beaker images follow the pattern `<user>/olmo-core-tch<torch>cu<cuda>-<date>`
-
-    **Setting the tokenizer explicitly:** By default the conversion script saves the tokenizer from the training config (e.g. `dolma2`). If your model will be used with a different tokenizer at inference time (e.g. an instruct tokenizer with a chat template), use the `-t` flag to override it:
-
-    ```bash
-    -t allenai/olmo-3-tokenizer-instruct-dev
-    ```
-
-    **Converting multiple models in parallel:** When converting several checkpoints (e.g. from a learning rate sweep), use `--timeout 0` instead of `--timeout -1` so gantry submits each job and returns immediately without following logs. This lets you loop over models and launch all conversions at once:
-
-    ```bash
-    LRS=(8e-5 5e-5 2.5e-5)
-    for LR in "${LRS[@]}"; do
-        gantry run --cluster ai2/saturn-cirrascale --timeout 0 -y --budget ai2/oe-adapt --workspace ai2/<your_workspace> \
-            ...
-    done
-    ```
+    - Use `-t <tokenizer_id>` to override the tokenizer saved with the model (e.g. `-t allenai/olmo-3-tokenizer-instruct-dev` for instruct models with a chat template).
+    - Use `--timeout 0` instead of `--timeout -1` to launch gantry jobs without following logs, useful for converting multiple models in parallel.
 
 2. **Verify chat template and tokenizer settings before running evals.**
 
