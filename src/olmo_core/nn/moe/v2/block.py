@@ -34,7 +34,7 @@ from ...moe import MoERouterGatingFunction
 from ...moe import MoERouterConfig as MoERouterConfigV1
 from ...moe.loss import MoELoadBalancingLossGranularity
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
-from .routed_experts import RoutedExperts, RoutedExpertsConfig, requires_host_side_split_sizes
+from .routed_experts import RoutedExperts, RoutedExpertsConfig, requires_host_side_split_sizes, use_torch_grouped_mm
 from .router import MoERouterConfigV2, MoERouterV2
 from .shared_experts import SharedExperts
 from .shared_experts import SharedExpertsConfig
@@ -64,23 +64,63 @@ class _NoSyncSymmBuffers:
     combine_tmp_splits_offsets: torch.Tensor
 
 
-def _defrag_rows_by_splits_offsets(src: torch.Tensor, splits_offsets: torch.Tensor) -> torch.Tensor:
-    """Defragment chunked rows described by (splits, offsets) into contiguous order."""
+def _build_chunk_row_plan(
+    splits: torch.Tensor,
+    *,
+    rows: int,
+    device: torch.device,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Build a static-shape mapping from contiguous row positions to chunk ids/positions.
+    """
+    if rows < 0:
+        raise ValueError(f"rows must be non-negative, got {rows}")
+
+    pos = torch.arange(rows, device=device, dtype=torch.long)
+    if splits.numel() == 0:
+        empty_mask = torch.zeros(rows, device=device, dtype=torch.bool)
+        return pos.new_zeros((rows,)), pos.new_zeros((rows,)), empty_mask
+
+    splits_long = splits.to(dtype=torch.long)
+    chunk_ends = torch.cumsum(splits_long, dim=0)
+    total_rows = chunk_ends[-1]
+
+    valid_mask = pos < total_rows
+    safe_pos = torch.where(valid_mask, pos, torch.zeros_like(pos))
+    max_chunk_idx = splits_long.numel() - 1
+    chunk_ids = torch.searchsorted(chunk_ends, safe_pos, right=True).clamp_max(max_chunk_idx)
+    chunk_starts = chunk_ends - splits_long
+    pos_in_chunk = safe_pos - chunk_starts.index_select(0, chunk_ids)
+
+    safe_chunk_ids = torch.where(valid_mask, chunk_ids, torch.zeros_like(chunk_ids))
+    safe_pos_in_chunk = torch.where(valid_mask, pos_in_chunk, torch.zeros_like(pos_in_chunk))
+    return safe_chunk_ids, safe_pos_in_chunk, valid_mask
+
+
+def _defrag_rows_by_splits_offsets_padded(
+    src: torch.Tensor,
+    splits_offsets: torch.Tensor,
+    *,
+    out_rows: int,
+) -> torch.Tensor:
+    """Defragment chunked rows into contiguous order with static `out_rows`."""
     splits = splits_offsets[0].to(dtype=torch.long)
     offsets = splits_offsets[1].to(dtype=torch.long)
 
-    chunk_ids = torch.repeat_interleave(
-        torch.arange(splits.numel(), device=src.device, dtype=torch.long),
-        splits,
-    ) # TODO: remove D2H Sync
-    if chunk_ids.numel() == 0:
-        return src.narrow(0, 0, 0)
+    out = src.new_zeros((out_rows, src.shape[-1]))
+    if out_rows == 0 or splits.numel() == 0:
+        return out
 
-    starts = torch.cumsum(splits, dim=0) - splits
-    out_pos = torch.arange(chunk_ids.numel(), device=src.device, dtype=torch.long)
-    pos_in_chunk = out_pos - starts.index_select(0, chunk_ids)
+    chunk_ids, pos_in_chunk, valid_mask = _build_chunk_row_plan(
+        splits,
+        rows=out_rows,
+        device=src.device,
+    )
     src_indices = offsets.index_select(0, chunk_ids) + pos_in_chunk
-    return src.index_select(0, src_indices)
+    gathered = src.index_select(0, src_indices)
+    out.copy_(gathered)
+    out.copy_(torch.where(valid_mask.unsqueeze(-1), out, torch.zeros_like(out)))
+    return out
 
 
 def _scatter_rows_by_splits_offsets(
@@ -94,18 +134,18 @@ def _scatter_rows_by_splits_offsets(
     offsets = splits_offsets[1].to(dtype=torch.long)
     out = src.new_zeros((out_rows, src.shape[-1]))
 
-    chunk_ids = torch.repeat_interleave(
-        torch.arange(splits.numel(), device=src.device, dtype=torch.long),
-        splits,
-    )
-    if chunk_ids.numel() == 0:
+    if src.shape[0] == 0 or splits.numel() == 0:
         return out
 
-    starts = torch.cumsum(splits, dim=0) - splits
-    src_pos = torch.arange(chunk_ids.numel(), device=src.device, dtype=torch.long)
-    pos_in_chunk = src_pos - starts.index_select(0, chunk_ids)
+    chunk_ids, pos_in_chunk, valid_mask = _build_chunk_row_plan(
+        splits,
+        rows=src.shape[0],
+        device=src.device,
+    )
     out_indices = offsets.index_select(0, chunk_ids) + pos_in_chunk
-    out.index_copy_(0, out_indices, src)
+    # Use where instead of multiply so masked NaNs become 0 instead of NaN.
+    masked_src = torch.where(valid_mask.unsqueeze(-1), src, torch.zeros_like(src))
+    out.index_add_(0, out_indices, masked_src)
     return out
 
 
@@ -201,9 +241,10 @@ class _DispatchVDev2DAutograd(torch.autograd.Function):
             grad_input_splits_offsets,
             ctx.group_name,
         )
-        grad_packed_input = _defrag_rows_by_splits_offsets(
+        grad_packed_input = _defrag_rows_by_splits_offsets_padded(
             grad_symm_input,
             grad_input_splits_offsets,
+            out_rows=ctx.packed_rows,
         )
         if grad_packed_input.shape[0] != ctx.packed_rows:
             raise RuntimeError(
@@ -631,7 +672,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._ep_symm_group_name: Optional[str] = None
         self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_last_debug: Dict[str, torch.Tensor] = {}
-        self._ep_no_sync_forward_call_count: int = 0
+        # self._ep_no_sync_forward_call_count: int = 0
 
         if self.ep_no_sync_capacity_factor <= 0:
             raise OLMoConfigurationError(
@@ -717,112 +758,112 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if self.routed_experts:
             if self.ep_enabled:
                 if self.ep_no_sync:
-                    self._ep_no_sync_forward_call_count += 1
-                    compare_after_calls = int(os.getenv("OLMO_EP_NO_SYNC_COMPARE_AFTER_CALLS", "0"))
-                    if (
-                        os.getenv("OLMO_EP_NO_SYNC_COMPARE_SYNC", "0") == "1"
-                        and self._ep_no_sync_forward_call_count >= compare_after_calls
-                    ):
-                        cmp_kwargs = dict(kwargs)
-                        with torch.no_grad():
-                            out_sync = self.combined_forward_ep(
-                                x.detach(),
-                                loss_div_factor=loss_div_factor,
-                                **dict(cmp_kwargs),
-                            )
-                            out_no_sync = self.combined_forward_ep_no_sync(
-                                x.detach(),
-                                loss_div_factor=loss_div_factor,
-                                **dict(cmp_kwargs),
-                            )
-                            diff = (out_no_sync - out_sync).abs()
-                            mae = float(diff.mean().item())
-                            max_abs = float(diff.max().item())
-                            denom = float(out_sync.abs().mean().item()) + 1e-12
-                            rel_mae = mae / denom
-                            rank = get_rank(self.ep_pg) if self.ep_pg is not None else get_rank()
-                            no_sync_dbg = self._ep_no_sync_last_debug
-                            no_sync_diag = {
-                                "rank": rank,
-                                "num_dropped": int(
-                                    no_sync_dbg.get(
-                                        "num_dropped",
-                                        torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
-                                    ).item()
-                                ),
-                                "local_kept_tokens": int(
-                                    no_sync_dbg.get(
-                                        "local_kept_tokens",
-                                        torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
-                                    ).item()
-                                ),
-                                "received_after_drop": int(
-                                    no_sync_dbg.get(
-                                        "received_tokens_after_drop",
-                                        torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
-                                    ).item()
-                                ),
-                                "combined_tokens": int(
-                                    no_sync_dbg.get(
-                                        "combined_tokens",
-                                        torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
-                                    ).item()
-                                ),
-                                "zero_rows_after_local_unpermute": int(
-                                    no_sync_dbg.get(
-                                        "zero_rows_after_local_unpermute",
-                                        torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
-                                    ).item()
-                                ),
-                                "combine_vs_allowed_sum_abs": int(
-                                    no_sync_dbg.get(
-                                        "combine_vs_allowed_sum_abs",
-                                        torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
-                                    ).item()
-                                ),
-                                "combine_vs_allowed_max_abs": int(
-                                    no_sync_dbg.get(
-                                        "combine_vs_allowed_max_abs",
-                                        torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
-                                    ).item()
-                                ),
-                                "used_expected_combine_layout": bool(
-                                    int(
-                                        no_sync_dbg.get(
-                                            "used_expected_combine_layout",
-                                            torch.tensor(0, device=out_no_sync.device, dtype=torch.int32),
-                                        ).item()
-                                    )
-                                ),
-                            }
-                            if self.ep_pg is not None:
-                                diags: List[Optional[dict]] = [None for _ in range(self.ep_world_size)]
-                                dist.all_gather_object(
-                                    diags,
-                                    {
-                                        "rank": rank,
-                                        "mae": mae,
-                                        "rel_mae": rel_mae,
-                                        "max_abs": max_abs,
-                                    },
-                                    group=self.ep_pg,
-                                )
-                                no_sync_diags: List[Optional[dict]] = [
-                                    None for _ in range(self.ep_world_size)
-                                ]
-                                dist.all_gather_object(no_sync_diags, no_sync_diag, group=self.ep_pg)
-                            else:
-                                diags = [
-                                    {"rank": rank, "mae": mae, "rel_mae": rel_mae, "max_abs": max_abs}
-                                ]
-                                no_sync_diags = [no_sync_diag]
-                        raise RuntimeError(
-                            f"EP no-sync debug compare failed (block={self.block_idx}, "
-                            f"forward_call={self._ep_no_sync_forward_call_count}, "
-                            f"compare_after_calls={compare_after_calls}): "
-                            f"all_rank_output_diffs={diags}, "
-                            f"all_rank_no_sync_debug={no_sync_diags}"
-                        )
+                    # self._ep_no_sync_forward_call_count += 1
+                    # compare_after_calls = int(os.getenv("OLMO_EP_NO_SYNC_COMPARE_AFTER_CALLS", "0"))
+                    # if (
+                    #     os.getenv("OLMO_EP_NO_SYNC_COMPARE_SYNC", "0") == "1"
+                    #     and self._ep_no_sync_forward_call_count >= compare_after_calls
+                    # ):
+                    #     cmp_kwargs = dict(kwargs)
+                    #     with torch.no_grad():
+                    #         out_sync = self.combined_forward_ep(
+                    #             x.detach(),
+                    #             loss_div_factor=loss_div_factor,
+                    #             **dict(cmp_kwargs),
+                    #         )
+                    #         out_no_sync = self.combined_forward_ep_no_sync(
+                    #             x.detach(),
+                    #             loss_div_factor=loss_div_factor,
+                    #             **dict(cmp_kwargs),
+                    #         )
+                    #         diff = (out_no_sync - out_sync).abs()
+                    #         mae = float(diff.mean().item())
+                    #         max_abs = float(diff.max().item())
+                    #         denom = float(out_sync.abs().mean().item()) + 1e-12
+                    #         rel_mae = mae / denom
+                    #         rank = get_rank(self.ep_pg) if self.ep_pg is not None else get_rank()
+                    #         no_sync_dbg = self._ep_no_sync_last_debug
+                    #         no_sync_diag = {
+                    #             "rank": rank,
+                    #             "num_dropped": int(
+                    #                 no_sync_dbg.get(
+                    #                     "num_dropped",
+                    #                     torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
+                    #                 ).item()
+                    #             ),
+                    #             "local_kept_tokens": int(
+                    #                 no_sync_dbg.get(
+                    #                     "local_kept_tokens",
+                    #                     torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
+                    #                 ).item()
+                    #             ),
+                    #             "received_after_drop": int(
+                    #                 no_sync_dbg.get(
+                    #                     "received_tokens_after_drop",
+                    #                     torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
+                    #                 ).item()
+                    #             ),
+                    #             "combined_tokens": int(
+                    #                 no_sync_dbg.get(
+                    #                     "combined_tokens",
+                    #                     torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
+                    #                 ).item()
+                    #             ),
+                    #             "zero_rows_after_local_unpermute": int(
+                    #                 no_sync_dbg.get(
+                    #                     "zero_rows_after_local_unpermute",
+                    #                     torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
+                    #                 ).item()
+                    #             ),
+                    #             "combine_vs_allowed_sum_abs": int(
+                    #                 no_sync_dbg.get(
+                    #                     "combine_vs_allowed_sum_abs",
+                    #                     torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
+                    #                 ).item()
+                    #             ),
+                    #             "combine_vs_allowed_max_abs": int(
+                    #                 no_sync_dbg.get(
+                    #                     "combine_vs_allowed_max_abs",
+                    #                     torch.tensor(-1, device=out_no_sync.device, dtype=torch.long),
+                    #                 ).item()
+                    #             ),
+                    #             "used_expected_combine_layout": bool(
+                    #                 int(
+                    #                     no_sync_dbg.get(
+                    #                         "used_expected_combine_layout",
+                    #                         torch.tensor(0, device=out_no_sync.device, dtype=torch.int32),
+                    #                     ).item()
+                    #                 )
+                    #             ),
+                    #         }
+                    #         if self.ep_pg is not None:
+                    #             diags: List[Optional[dict]] = [None for _ in range(self.ep_world_size)]
+                    #             dist.all_gather_object(
+                    #                 diags,
+                    #                 {
+                    #                     "rank": rank,
+                    #                     "mae": mae,
+                    #                     "rel_mae": rel_mae,
+                    #                     "max_abs": max_abs,
+                    #                 },
+                    #                 group=self.ep_pg,
+                    #             )
+                    #             no_sync_diags: List[Optional[dict]] = [
+                    #                 None for _ in range(self.ep_world_size)
+                    #             ]
+                    #             dist.all_gather_object(no_sync_diags, no_sync_diag, group=self.ep_pg)
+                    #         else:
+                    #             diags = [
+                    #                 {"rank": rank, "mae": mae, "rel_mae": rel_mae, "max_abs": max_abs}
+                    #             ]
+                    #             no_sync_diags = [no_sync_diag]
+                    #     raise RuntimeError(
+                    #         f"EP no-sync debug compare failed (block={self.block_idx}, "
+                    #         f"forward_call={self._ep_no_sync_forward_call_count}, "
+                    #         f"compare_after_calls={compare_after_calls}): "
+                    #         f"all_rank_output_diffs={diags}, "
+                    #         f"all_rank_no_sync_debug={no_sync_diags}"
+                    #     )
                     return self.combined_forward_ep_no_sync(
                         x, loss_div_factor=loss_div_factor, **kwargs
                     )
@@ -1096,63 +1137,79 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # shape: (num_local_experts, ep_world_size)
         counts_flat = counts.transpose(0, 1).reshape(-1)
         cumsum_counts = torch.cumsum(counts_flat, dim=0)
-        cap = torch.tensor(rank_capacity, device=counts.device, dtype=torch.long)
-        kept_cumsum = torch.minimum(cumsum_counts, cap)
+        kept_cumsum = torch.clamp(cumsum_counts, max=rank_capacity)
         prev = torch.cat([torch.zeros(1, device=counts.device, dtype=torch.long), kept_cumsum[:-1]])
         kept_flat = kept_cumsum - prev
         kept = kept_flat.view(self.num_local_routed_experts, self.ep_world_size).transpose(0, 1)
         return kept
 
-    def _build_keep_indices(
+    def _build_keep_reorder(
         self,
         requested_splits: torch.Tensor,
         keep_splits: torch.Tensor,
         num_out_tokens: int,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Build indices (into local-permuted tokens) kept after capacity dropping.
-        Tokens are kept from the head of each global expert chunk.
+        Build a static-shape reorder map that moves kept tokens to the front while
+        preserving within-group order. Returns:
+          - reorder indices (original -> packed order),
+          - inverse reorder indices (packed -> original order),
+          - keep mask in packed order.
         """
         requested = requested_splits.to(dtype=torch.long)
         keep = keep_splits.to(dtype=torch.long)
-        if requested.numel() == 0:
-            return torch.empty(0, dtype=torch.long, device=keep.device)
-
-        expert_ids = torch.repeat_interleave(
-            torch.arange(requested.numel(), device=keep.device, dtype=torch.long),
-            requested,
-            output_size=num_out_tokens,
-        )
         token_ids = torch.arange(num_out_tokens, device=keep.device, dtype=torch.long)
-        starts = torch.cumsum(requested, dim=0) - requested
-        pos_in_chunk = token_ids - starts.index_select(0, expert_ids)
-        keep_mask = pos_in_chunk < keep.index_select(0, expert_ids)
-        return token_ids[keep_mask] # TODO: remove D2H Sync
+        if requested.numel() == 0:
+            keep_mask = torch.zeros(num_out_tokens, device=keep.device, dtype=torch.bool)
+            return token_ids, token_ids, keep_mask
+
+        requested_ends = torch.cumsum(requested, dim=0)
+        total_requested = requested_ends[-1]
+        in_range = token_ids < total_requested
+        safe_token_ids = torch.where(in_range, token_ids, torch.zeros_like(token_ids))
+
+        max_expert_idx = requested.numel() - 1
+        expert_ids = torch.searchsorted(requested_ends, safe_token_ids, right=True).clamp_max(max_expert_idx)
+        starts = requested_ends - requested
+        pos_in_chunk = safe_token_ids - starts.index_select(0, expert_ids)
+        keep_mask = in_range & (pos_in_chunk < keep.index_select(0, expert_ids))
+
+        # Stable partition in O(N): keep rows first, then dropped rows.
+        keep_i64 = keep_mask.to(dtype=torch.long)
+        drop_i64 = (~keep_mask).to(dtype=torch.long)
+        keep_rank = torch.cumsum(keep_i64, dim=0) - 1
+        drop_rank = torch.cumsum(drop_i64, dim=0) - 1
+        num_kept = keep_i64.sum(dtype=torch.long)
+        packed_pos = torch.where(keep_mask, keep_rank, num_kept + drop_rank)
+
+        reorder_indices = torch.empty_like(token_ids)
+        reorder_indices.scatter_(0, packed_pos, token_ids)
+
+        inverse_reorder_indices = torch.empty_like(reorder_indices)
+        inverse_reorder_indices.scatter_(0, reorder_indices, token_ids)
+        packed_keep_mask = keep_mask.index_select(0, reorder_indices)
+        return reorder_indices, inverse_reorder_indices, packed_keep_mask
 
     def _gather_by_splits_offsets(
         self,
         src: torch.Tensor,
         splits: torch.Tensor,
         offsets: torch.Tensor,
+        *,
+        out_rows: int,
     ) -> torch.Tensor:
         """
-        Defragment chunks described by (splits, offsets) into a contiguous tensor.
+        Defragment chunks described by (splits, offsets) into a static-size tensor.
         """
-        splits = splits.to(dtype=torch.long)
-        offsets = offsets.to(dtype=torch.long)
-
-        chunk_ids = torch.repeat_interleave(
-            torch.arange(splits.numel(), device=src.device, dtype=torch.long),
-            splits,
-        ) # TODO: remove D2H Sync
-        if chunk_ids.numel() == 0:
-            return src.narrow(0, 0, 0)
-
-        starts = torch.cumsum(splits, dim=0) - splits
-        out_pos = torch.arange(chunk_ids.numel(), device=src.device, dtype=torch.long)
-        pos_in_chunk = out_pos - starts.index_select(0, chunk_ids)
-        src_indices = offsets.index_select(0, chunk_ids) + pos_in_chunk
-        return src.index_select(0, src_indices)
+        splits_offsets = torch.stack(
+            (splits.to(dtype=torch.long), offsets.to(dtype=torch.long)),
+            dim=0,
+        )
+        return _defrag_rows_by_splits_offsets_padded(
+            src,
+            splits_offsets,
+            out_rows=out_rows,
+        )
 
     def _scatter_by_splits_offsets(
         self,
@@ -1165,27 +1222,20 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         """
         Scatter contiguous src rows into chunked layout described by (splits, offsets).
         """
-        splits = splits.to(dtype=torch.long)
-        offsets = offsets.to(dtype=torch.long)
-        out = src.new_zeros(out_shape)
-
-        chunk_ids = torch.repeat_interleave(
-            torch.arange(splits.numel(), device=src.device, dtype=torch.long),
-            splits,
-        ) # TODO: remove D2H Sync
-        if chunk_ids.numel() == 0:
-            return out
-
-        starts = torch.cumsum(splits, dim=0) - splits
-        src_pos = torch.arange(chunk_ids.numel(), device=src.device, dtype=torch.long)
-        pos_in_chunk = src_pos - starts.index_select(0, chunk_ids)
-        out_indices = offsets.index_select(0, chunk_ids) + pos_in_chunk
-        if src.shape[0] != out_indices.numel():
+        if src.shape[-1] != out_shape[-1]:
             raise RuntimeError(
-                f"scatter-by-splits mismatch: src_rows={src.shape[0]}, expected={out_indices.numel()}"
+                f"scatter-by-splits mismatch: src_width={src.shape[-1]}, out_width={out_shape[-1]}"
             )
-        out.index_copy_(0, out_indices, src)
-        return out
+
+        splits_offsets = torch.stack(
+            (splits.to(dtype=torch.long), offsets.to(dtype=torch.long)),
+            dim=0,
+        )
+        return _scatter_rows_by_splits_offsets(
+            src,
+            splits_offsets,
+            out_rows=out_shape[0],
+        )
 
     def combined_forward_shared_only(
         self,
@@ -1408,7 +1458,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert self.routed_experts_router is not None
         assert self.ep_enabled
         assert self.num_local_routed_experts is not None
-
+        assert use_torch_grouped_mm() == True, "EP no-sync implementation requires torch.grouped_mm support"
+        
         group_name = self._get_ep_no_sync_group_name()
         B, S, D = x.shape
 
@@ -1503,13 +1554,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             )
             allowed_splits = torch.minimum(allowed_splits, requested_splits)
 
-        keep_indices = self._build_keep_indices(
+        local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = self._build_keep_reorder(
             requested_splits=requested_splits,
             keep_splits=allowed_splits,
             num_out_tokens=num_out_tokens,
         )
-        packed_local_x = permutated_local_x.index_select(0, keep_indices)
-        local_kept_tokens = packed_local_x.shape[0]
+        packed_local_x = permutated_local_x.index_select(0, local_reorder_indices)
 
         align_pad = max(self.ep_no_sync_major_align - 1, 0)
         dispatch_out_pad = (self.num_local_routed_experts - 1) * align_pad
@@ -1548,7 +1598,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             dispatch_out,
             splits=dispatch_splits,
             offsets=dispatch_offsets,
+            out_rows=dispatch_out_cap,
         )
+        
         parallel_batch_size_per_local_expert = dispatch_splits.view(
             self.num_local_routed_experts, self.ep_world_size
         ).sum(dim=1, dtype=torch.long)
@@ -1563,6 +1615,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
         else:
             global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert)
+
+        # NOTE: global_x may contain NaNs due to torch grouped_mm's behavior for pad postions (uninit values for > offsets[-1])
+        # if torch.isnan(global_x).any():
+        #     rank = get_rank(self.ep_pg)
+        #     raise RuntimeError(f"NaN detected in global_x after EP no-sync expert forward (block={self.block_idx}, rank={rank})")
 
         global_x_padded = self._scatter_by_splits_offsets(
             global_x,
@@ -1584,25 +1641,23 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             self.ep_pg,
             self.ep_no_sync_major_align,
         )
-
+        
         combine_splits = combine_splits_offsets[0]
         combine_offsets = combine_splits_offsets[1]
-        local_kept_x_from_op = self._gather_by_splits_offsets(
+        local_kept_x = self._gather_by_splits_offsets(
             combine_out,
             splits=combine_splits,
             offsets=combine_offsets,
+            out_rows=num_out_tokens,
         )
-        # expected_combine_offsets = torch.cumsum(
-        #     allowed_splits.to(dtype=torch.long), dim=0
-        # ) - allowed_splits.to(dtype=torch.long)
-        # local_kept_x_expected_layout = self._gather_by_splits_offsets(
-        #     combine_out,
-        #     splits=allowed_splits,
-        #     offsets=expected_combine_offsets,
-        # )
-        # Strict correctness: trust op-provided output metadata. If metadata is
-        # inconsistent with allowed_splits, fail hard below.
-        local_kept_x = local_kept_x_from_op
+
+        # grouped_mm ignores rows beyond offs[-1]; force dropped rows to zero
+        # before restoring original token order.
+        local_kept_x = torch.where(
+            packed_keep_mask.unsqueeze(-1),
+            local_kept_x,
+            torch.zeros_like(local_kept_x),
+        )
         # combine_vs_allowed = (combine_splits.to(dtype=torch.long) - allowed_splits.to(dtype=torch.long)).abs()
         # combine_vs_allowed_sum_abs = int(combine_vs_allowed.sum(dtype=torch.long).item())
         # combine_vs_allowed_max_abs = int(combine_vs_allowed.max().item()) if combine_vs_allowed.numel() > 0 else 0
@@ -1651,11 +1706,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         #         f"requested_sum={requested_sum}, allowed_sum={allowed_sum}, all_rank_diags={all_diags}"
         #     )
 
-        restored_local_x = permutated_local_x.new_zeros(
-            (num_out_tokens, permutated_local_x.shape[-1])
-        )
-        if keep_indices.numel() > 0:
-            restored_local_x.index_copy_(0, keep_indices, local_kept_x)
+        restored_local_x = local_kept_x.index_select(0, local_inverse_reorder_indices)
 
         if self.shared_experts is not None:
             assert shared_out_up is not None

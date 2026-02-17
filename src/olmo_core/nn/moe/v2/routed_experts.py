@@ -1,3 +1,29 @@
+"""
+Notes on torch grouped_mm backend behavior (PyTorch 2.10):
+
+- torch.nn.functional.grouped_mm(...) calls aten::_grouped_mm.
+- CUDA path in aten/native/cuda/GroupedBlas.cpp chooses:
+  1) Fast path: at::cuda::detail::bf16bf16_grouped_mm(...)
+  2) Fallback: _grouped_mm_fallback(...)
+
+Fast path conditions (CUDA):
+- mat_a dtype == bf16
+- mat_b dtype == bf16
+- out_dtype (or default) == bf16
+- _scaled_mm_allowed_device(sm90_only=true, sm100_only=true) is true
+  (in 2.10 this means device major == 9 or 10 only)
+- grouped-mm CUTLASS kernels are built
+  (!USE_ROCM, !Windows, CUDA_VERSION >= 12.0)
+
+Fallback behavior:
+- Uses offs.cpu() and loops over groups with mm_out/bmm_out.
+- This can introduce D2H sync for device offs.
+
+Implication:
+- On CUDA devices outside the fastpath gate (e.g. major 12 in PyTorch 2.10),
+  grouped_mm falls back even if offs is on GPU.
+"""
+
 import grouped_gemm  # type: ignore
 import grouped_gemm.ops
 from abc import abstractmethod
@@ -24,7 +50,14 @@ def gmm(a, b, batch_sizes, trans_b=False):
         # emulating grouped_gemm(..., trans_b=True).
         b_grouped_mm = b.transpose(1, 2) if trans_b else b
         offs = torch.cumsum(batch_sizes.to(dtype=torch.int32), dim=0, dtype=torch.int32)
-        return F.grouped_mm(a, b_grouped_mm, offs=offs)
+        out = F.grouped_mm(a, b_grouped_mm, offs=offs)
+        # WARNING: https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.grouped_mm.html
+        # "offs[i] marks the end of group i and offs[-1] must be strictly less than the total length of that operand’s sliced dimension"
+        # so padded positions are always necessary? I think "strictly less than" is a documentation mistake
+        
+        # BIG NOTE: grouped_mm's returned value containes uninitialized values for the padded positions (pos > offsets[-1]), which can be NaN and may cause later ops to produce NaN in valid positions.
+        
+        return out
 
     return gmm_no_compile(a, b, batch_sizes, trans_b)
 
@@ -220,8 +253,12 @@ class RoutedExperts(nn.Module):
         down = gmm(h, self.w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
         return down
 
-    @torch.compile
     def chunk_and_activate(self, up_gate: torch.Tensor) -> torch.Tensor:
+        # NOTE: this might include pad tokens, but I decide not to exlude pads:
+        # 1 chunk_and_activate is cheap relative to MoE GEMMs, even at 2x capacity.
+        # 2 Excluding tail pads without sync is hard with stock PyTorch ops; 
+        #   true compute-skipping usually needs dynamic slicing (.item() sync) or a custom kernel.
+        # 3 Extra pad-handling ops can cost more than just doing SiLU on full buffer.
         up, gate = up_gate.chunk(2, dim=-1)  
         h = up * F.silu(gate) # -> (BS, H)
         return h
