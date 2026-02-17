@@ -133,7 +133,7 @@ BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/math-base
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     flexolmo-2x7b-no_anneal-UNFROZEN-tool_use_general_mix \
         $BASE_CKPT \
-        ai2/saturn \
+        ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
     --trainer.max_duration.value=2 \
     --train_module.optim.lr=1e-4 \
@@ -142,7 +142,7 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --launch.priority=urgent \
     --seq_len=4096 \
     --launch.num_gpus=8 \
-    --num_nodes=1 \
+    --num_nodes=4 \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
     --model_name olmoe-2x7b-unfrozen \
