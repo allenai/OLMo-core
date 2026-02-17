@@ -1316,16 +1316,25 @@ class MoEFusedV2Optimizer:
                                 device_mesh=self.moe_mesh['ep_mp'], # first shard over ep_mp
                                 placements=[Shard(0)],
                             ).to_local()
-                            ckpt_state = distribute_tensor(
-                                ckpt_state,
-                                device_mesh=self.moe_mesh['ep_dp'], # then shard over ep_dp
-                                placements=[Shard(0)],
-                            )
+                            if self.use_distributed:
+                                # when in distributed optimizer, we need to further shard the local tensor over ep_dp
+                                ckpt_state = distribute_tensor(
+                                    ckpt_state,
+                                    device_mesh=self.moe_mesh['ep_dp'], # then shard over ep_dp
+                                    placements=[Shard(0)],
+                                )
+                            else:
+                                # when not in distributed optimizer, we just replicate the local tensor over ep_dp
+                                ckpt_state = distribute_tensor(
+                                    ckpt_state,
+                                    device_mesh=self.moe_mesh['ep_dp'], # then replicate over ep_dp
+                                    placements=[Replicate()],
+                                )
                             # shape checks
                             assert ckpt_state.shape == state_dt.shape, \
-                                f"Global shape mismatch: {ckpt_state.shape} vs {state_dt.shape}"
+                                f"Global shape mismatch {name}.{suffix}: {ckpt_state.shape} vs {state_dt.shape}"
                             assert ckpt_state.to_local().shape == state_dt.to_local().shape, \
-                                f"Local shape mismatch: {ckpt_state.to_local().shape} vs {state_dt.to_local().shape}"
+                                f"Local shape mismatch {name}.{suffix}: {ckpt_state.to_local().shape} vs {state_dt.to_local().shape}"
                             
                             # now the sharded local tensor should match the local tensor shape of the live state
                             state_dt.to_local().copy_(ckpt_state.to_local())

@@ -211,6 +211,7 @@ WORKDIR /app/olmo-core
 RUN pip install nvitop nvtx
 
 # nsys
+# the latest version has problems with nvtx; pinning to 2025.5.1 
 ARG UBUNTU_VERSION
 RUN set -eux; \
     . /etc/os-release; \
@@ -219,7 +220,7 @@ RUN set -eux; \
     echo "deb [trusted=yes] https://developer.download.nvidia.com/devtools/repos/ubuntu${UBUNTU_SHORT}/${ARCH}/ /" \
       > /etc/apt/sources.list.d/nvidia-devtools.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends nsight-systems-cli; \
+    apt-get install -y --no-install-recommends nsight-systems-cli-2025.5.1; \ 
     rm -rf /var/lib/apt/lists/*
 
 # install beaker

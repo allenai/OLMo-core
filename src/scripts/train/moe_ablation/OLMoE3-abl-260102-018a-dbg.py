@@ -113,7 +113,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 3 // 2
 
-MICRO_BSZ = 1
+MICRO_BSZ = 4
 # DP_DIM=2
 EP_DIM=2
 PP_DIM=1
@@ -393,7 +393,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=1,
+            metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
@@ -416,7 +416,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 # entity="ai2-llm",
                 # project="olmoe-dev-v2",
                 # project="olmo3",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -436,8 +436,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=59156,
-                                   end=59159
+                                   start=10021,
+                                   end=10024
             )
         )
         .with_callback(
