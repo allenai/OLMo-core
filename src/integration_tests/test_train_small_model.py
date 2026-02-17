@@ -98,24 +98,22 @@ def train(config: ExperimentConfig):
         weight_capture.captured_weights.keys() == capture_steps
     ), f"Expected to capture steps {capture_steps}, got {weight_capture.captured_weights.keys()}"
 
-    # Load the merged checkpoint
-    merged_state: Dict[str, Dict[str, torch.Tensor]] = {"model": {}, "optim": {}}
-    for key in weight_capture.captured_weights[max_steps].keys():
-        merged_state["model"][key] = torch.empty_like(
-            weight_capture.captured_weights[max_steps][key]
-        )
+    # Load the merged checkpoint into the model via the standard load path
+    merged_state = trainer.train_module.state_dict_to_save(optim=False)
     load_state_dict(
         str(model_and_optim_path),
         merged_state,
         process_group=trainer.checkpointer.process_group,
     )
+    trainer.train_module.load_state_dict(merged_state)
 
-    # Verify merged weights match expected average
+    # Extract loaded local shards and verify they match the expected average
     captured_list = list(weight_capture.captured_weights.values())
     for key in captured_list[0].keys():
         stacked = torch.stack([w[key] for w in captured_list])
         expected = stacked.mean(dim=0)
-        actual = merged_state["model"][key].float()
+        param = trainer.train_module.model.get_parameter(key)
+        actual = get_local_tensor(param.data).cpu().float()
 
         if not torch.allclose(actual, expected, rtol=1e-4, atol=1e-6):
             max_diff = (actual - expected).abs().max().item()
@@ -126,16 +124,7 @@ def train(config: ExperimentConfig):
 
     log.info("Averaging verification passed")
 
-    # Verify merged checkpoint can be loaded into a model and produce valid output
-    log.info("Loading merged weights into model for forward pass check...")
-    with torch.no_grad():
-        for name, param in trainer.train_module.model.named_parameters():
-            if name in merged_state["model"]:
-                local_param = get_local_tensor(param.data)
-                local_param.copy_(
-                    merged_state["model"][name].to(local_param.device, local_param.dtype)
-                )
-
+    # Verify merged model produces valid output
     device = next(trainer.train_module.model.parameters()).device
     input_ids = torch.randint(0, config.model.vocab_size, (2, 64), device=device)
     with torch.no_grad():
