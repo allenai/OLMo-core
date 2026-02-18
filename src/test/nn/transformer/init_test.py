@@ -6,7 +6,6 @@ import math
 
 import pytest
 import torch
-import torch.nn as nn
 
 from olmo_core.nn.attention import AttentionConfig, GateConfig, GateGranularity
 from olmo_core.nn.feed_forward import FeedForwardConfig

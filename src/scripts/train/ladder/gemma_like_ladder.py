@@ -6,6 +6,7 @@ This uses the `gemma3_like()` function from `TransformerConfig`, but puts in som
 
 import argparse
 import math
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -24,6 +25,16 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.nn.attention import (
+    AttentionBackendName,
+    AttentionConfig,
+    AttentionType,
+    GateConfig,
+    GatedDeltaNetConfig,
+    GateGranularity,
+    SlidingWindowAttentionConfig,
+)
+from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig, LMLossImplementation
 from olmo_core.nn.rope import RoPEConfig, RoPEType
@@ -31,6 +42,7 @@ from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
     TransformerBlockType,
+    TransformerConfig,
 )
 from olmo_core.optim import (
     CosWithWarmup,
@@ -56,21 +68,6 @@ from olmo_core.train.train_module import (
 )
 
 DEFAULT_SEQUENCE_LENGTH = 8192
-
-
-from dataclasses import dataclass
-
-from olmo_core.nn.attention import (
-    AttentionBackendName,
-    AttentionConfig,
-    AttentionType,
-    GateConfig,
-    GatedDeltaNetConfig,
-    GateGranularity,
-    SlidingWindowAttentionConfig,
-)
-from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
-from olmo_core.nn.transformer import TransformerConfig
 
 
 @dataclass
