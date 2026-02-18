@@ -10,8 +10,15 @@ import torch.nn as nn
 
 from olmo_core.nn.attention import AttentionConfig, GateConfig, GateGranularity
 from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import (
+    TransformerBlockConfig,
+    TransformerBlockType,
+    TransformerConfig,
+    TransformerType,
+)
 from olmo_core.nn.transformer.init import InitMethod
 
 
@@ -40,10 +47,14 @@ def test_fan_in_init_embeddings(init_device, device):
     ],
 )
 def test_fan_in_init_attention(init_device, device):
-    """Test that fan_in init uses 1/√d_model for attention weights."""
+    """Test that fan_in init uses 1/√d_in for attention weights."""
     d_model = 512
-    config = TransformerConfig.llama2_271M(
-        vocab_size=50257, d_model=d_model, init_method=InitMethod.fan_in
+    config = TransformerConfig.llama_like(
+        d_model=d_model,
+        vocab_size=50257,
+        n_layers=4,
+        n_heads=8,
+        init_method=InitMethod.fan_in,
     )
     model = config.build(init_device=init_device)
     model.init_weights(device=torch.device(device))
@@ -61,9 +72,15 @@ def test_fan_in_init_attention(init_device, device):
 
         # Allow 20% tolerance
         tolerance = expected_std * 0.2
-        assert abs(q_std - expected_std) < tolerance, f"Q std: expected ~{expected_std}, got {q_std}"
-        assert abs(k_std - expected_std) < tolerance, f"K std: expected ~{expected_std}, got {k_std}"
-        assert abs(v_std - expected_std) < tolerance, f"V std: expected ~{expected_std}, got {v_std}"
+        assert (
+            abs(q_std - expected_std) < tolerance
+        ), f"Q std: expected ~{expected_std}, got {q_std}"
+        assert (
+            abs(k_std - expected_std) < tolerance
+        ), f"K std: expected ~{expected_std}, got {k_std}"
+        assert (
+            abs(v_std - expected_std) < tolerance
+        ), f"V std: expected ~{expected_std}, got {v_std}"
         assert (
             abs(out_std - expected_std) < tolerance
         ), f"Out std: expected ~{expected_std}, got {out_std}"
@@ -79,10 +96,12 @@ def test_fan_in_init_feed_forward(init_device, device):
     """Test that fan_in init uses correct std for feed-forward weights."""
     d_model = 512
     hidden_size = 2048
-    config = TransformerConfig.llama2_271M(
-        vocab_size=50257,
+    config = TransformerConfig.llama_like(
         d_model=d_model,
-        mlp_hidden_size=hidden_size,
+        vocab_size=50257,
+        n_layers=4,
+        n_heads=8,
+        feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False),
         init_method=InitMethod.fan_in,
     )
     model = config.build(init_device=init_device)
@@ -123,8 +142,12 @@ def test_fan_in_init_feed_forward(init_device, device):
 def test_fan_in_init_final_w_out(init_device, device):
     """Test that fan_in init uses 1/√d_model for final LM head."""
     d_model = 512
-    config = TransformerConfig.llama2_271M(
-        vocab_size=50257, d_model=d_model, init_method=InitMethod.fan_in
+    config = TransformerConfig.llama_like(
+        d_model=d_model,
+        vocab_size=50257,
+        n_layers=4,
+        n_heads=8,
+        init_method=InitMethod.fan_in,
     )
     model = config.build(init_device=init_device)
     model.init_weights(device=torch.device(device))
@@ -132,7 +155,7 @@ def test_fan_in_init_final_w_out(init_device, device):
     expected_std = 1.0 / math.sqrt(d_model)
 
     # Check LM head weight
-    lm_head_std = model.lm_head.weight.std().item()
+    lm_head_std = model.lm_head.w_out.weight.std().item()
 
     # Allow 20% tolerance
     tolerance = expected_std * 0.2
@@ -156,21 +179,19 @@ def test_fan_in_init_different_from_normal(init_device, device):
     model_fan_in = config_fan_in.build(init_device=init_device)
     model_normal = config_normal.build(init_device=init_device)
 
-    # Use different seeds to ensure they're initialized differently
     torch.manual_seed(42)
     model_fan_in.init_weights(device=torch.device(device))
 
     torch.manual_seed(42)
     model_normal.init_weights(device=torch.device(device))
 
-    # Check that feed-forward w2 has different std (most obvious difference)
-    fan_in_w2_std = model_fan_in.blocks["0"].feed_forward.w2.weight.std().item()
-    normal_w2_std = model_normal.blocks["0"].feed_forward.w2.weight.std().item()
+    # Embedding std is the most obvious difference: fan_in uses std=1.0, normal uses std=0.02
+    fan_in_emb_std = model_fan_in.embeddings.weight.std().item()
+    normal_emb_std = model_normal.embeddings.weight.std().item()
 
-    # These should be significantly different
-    assert abs(fan_in_w2_std - normal_w2_std) > 0.01, (
-        f"fan_in and normal init should produce different stds for w2, "
-        f"but got fan_in={fan_in_w2_std}, normal={normal_w2_std}"
+    assert abs(fan_in_emb_std - normal_emb_std) > 0.5, (
+        f"fan_in and normal init should produce very different embedding stds, "
+        f"but got fan_in={fan_in_emb_std}, normal={normal_emb_std}"
     )
 
 
@@ -182,13 +203,18 @@ def test_fan_in_init_moe():
 
     # Create a simple MoE config
     config = TransformerConfig(
+        name=TransformerType.moe,
         d_model=d_model,
-        n_heads=4,
         n_layers=2,
         vocab_size=1000,
-        mlp_hidden_size=hidden_size,
         init_method=InitMethod.fan_in,
-        moe=MoEConfig(num_experts=num_experts, hidden_size=hidden_size),
+        block=TransformerBlockConfig(
+            name=TransformerBlockType.moe,
+            sequence_mixer=AttentionConfig(n_heads=4),
+            feed_forward_moe=MoEConfig(num_experts=num_experts, hidden_size=hidden_size),
+            layer_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
+        ),
+        lm_head=LMHeadConfig(bias=False),
     )
 
     model = config.build(init_device="cpu")
@@ -197,10 +223,10 @@ def test_fan_in_init_moe():
     # Check that the model was initialized without errors
     # and that MoE weights have reasonable stds
     block = model.blocks["0"]
-    if hasattr(block, "moe"):
+    if hasattr(block, "feed_forward_moe"):
         # Router should use 1/√d_model
         expected_router_std = 1.0 / math.sqrt(d_model)
-        router_weight = block.moe.router.weight
+        router_weight = block.feed_forward_moe.router.weight
         router_std = router_weight.std().item()
 
         # Allow 30% tolerance for MoE (more parameters, more variance)
@@ -238,9 +264,7 @@ def test_fan_in_init_attention_gate(granularity):
 
     g_std = block.attention.w_g.weight.std().item()
     tolerance = expected_std * 0.2
-    assert (
-        abs(g_std - expected_std) < tolerance
-    ), f"w_g std: expected ~{expected_std}, got {g_std}"
+    assert abs(g_std - expected_std) < tolerance, f"w_g std: expected ~{expected_std}, got {g_std}"
 
 
 if __name__ == "__main__":
