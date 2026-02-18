@@ -1159,13 +1159,12 @@ def _param_ci_str(bootstrap, param_name: str, point_value: float, fmt: str = ".4
     """Format a parameter value with bootstrap CI below in smaller font using makecell."""
     val_str = f"{point_value:{fmt}}"
     if bootstrap is None:
-        ci_line = r"{\color{red}$\pm$ 0.0}"
+        ci_line = r"{\color{red}[-, -]}"
     else:
         bootstrap_values = [getattr(f.fitted_params, param_name) for f in bootstrap.fits]
         lo = np.percentile(bootstrap_values, 2.5)
         hi = np.percentile(bootstrap_values, 97.5)
-        ci_half = (hi - lo) / 2
-        ci_line = f"$\\pm$ {ci_half:{fmt}}"
+        ci_line = f"[{lo:{fmt}}, {hi:{fmt}}]"
     return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
 
 
@@ -1173,13 +1172,12 @@ def _param_ci_str_sci(bootstrap, param_name: str, point_value: float) -> str:
     """Format a parameter value (large numbers) with bootstrap CI below in smaller font."""
     val_str = _fmt_latex_num(point_value)
     if bootstrap is None:
-        ci_line = r"{\color{red}$\pm$ 0.0}"
+        ci_line = r"{\color{red}[-, -]}"
     else:
         bootstrap_values = [getattr(f.fitted_params, param_name) for f in bootstrap.fits]
         lo = np.percentile(bootstrap_values, 2.5)
         hi = np.percentile(bootstrap_values, 97.5)
-        ci_half = (hi - lo) / 2
-        ci_line = f"$\\pm$ {_fmt_latex_num(ci_half)}"
+        ci_line = f"[{_fmt_latex_num(lo)}, {_fmt_latex_num(hi)}]"
     return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
 
 
@@ -1187,13 +1185,12 @@ def _derived_ci_str(bootstrap, attr_name: str, point_value: float, fmt: str = ".
     """Format a derived property (a_opt/b_opt) with bootstrap CI below in smaller font."""
     val_str = f"{point_value:{fmt}}"
     if bootstrap is None:
-        ci_line = r"{\color{red}$\pm$ 0.0}"
+        ci_line = r"{\color{red}[-, -]}"
     else:
         bootstrap_values = [getattr(f.fitted_params, attr_name) for f in bootstrap.fits]
         lo = np.percentile(bootstrap_values, 2.5)
         hi = np.percentile(bootstrap_values, 97.5)
-        ci_half = (hi - lo) / 2
-        ci_line = f"$\\pm$ {ci_half:{fmt}}"
+        ci_line = f"[{lo:{fmt}}, {hi:{fmt}}]"
     return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
 
 
@@ -1207,14 +1204,16 @@ def generate_scaling_params_latex_table(fits: Dict[str, Tuple]) -> str:
     lines = []
     lines.append(r"\begin{table*}[htbp]")
     lines.append(r"    \centering")
+    any_missing_bootstrap = any(bootstrap is None for _, _, _, _, _, _, bootstrap in fits.values())
     lines.append(
         r"    \caption{Fitted Chinchilla scaling law parameters for "
         r"$L(N, D) = E + A/N^\alpha + B/D^\beta$."
     )
-    lines.append(
-        r"    95\% bootstrap CI shown below each estimate "
-        r"({\color{red}red} placeholders indicate no bootstrap was run).}"
-    )
+    caption_ci = r"    95\% bootstrap CI shown below each estimate"
+    if any_missing_bootstrap:
+        caption_ci += r" ({\color{red}red} placeholders indicate no bootstrap was run)"
+    caption_ci += ".}"
+    lines.append(caption_ci)
     lines.append(r"    \label{tab:scaling-law-parameters}")
     lines.append(r"    \small")
     lines.append(r"    \renewcommand{\arraystretch}{1.2}")
@@ -1666,46 +1665,51 @@ def generate_compute_equivalent_table(
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"    \centering")
     lines.append(
-        r"    \caption{Predicted loss at compute-optimal allocation for each architecture. "
-        r"Each architecture's fitted $a_\text{opt}, b_\text{opt}$ determine its optimal $N, D$ "
-        r"split for a given compute budget ($C = 6ND$). "
+        r"    \caption{Compute-optimal model size ($N^*$), dataset size ($D^*$), and predicted loss "
+        r"for each architecture. "
+        r"Each architecture's fitted $a_\text{opt}, b_\text{opt}$ determine its optimal allocation "
+        r"for a given compute budget ($C = 6ND$). "
         r"$\Delta$ shows loss reduction relative to "
         + escape_latex(get_display_name(ref_name))
         + r".}"
     )
     lines.append(r"    \label{tab:compute-equivalent-loss}")
 
-    # Column spec: Compute + (Loss + Delta) per non-ref ladder + ref loss
+    # Column spec: Compute + (N* + D* + Loss) per ref + (N* + D* + Loss + Delta) per non-ref
     n_others = len(ladder_names) - 1
-    col_spec = "r" + "r" + "rr" * n_others
+    col_spec = "r" + "rrr" + "rrrr" * n_others
     lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
     lines.append(r"        \toprule")
 
     # Header row 1
     header1_parts = [""]
     ref_display = escape_latex(get_display_name(ref_name))
-    header1_parts.append(ref_display)
+    header1_parts.append(r"\multicolumn{3}{c}{" + ref_display + "}")
     for name in ladder_names[1:]:
         display = escape_latex(get_display_name(name))
-        header1_parts.append(r"\multicolumn{2}{c}{" + display + "}")
+        header1_parts.append(r"\multicolumn{4}{c}{" + display + "}")
     lines.append("        " + " & ".join(header1_parts) + r" \\")
 
     # Header row 2
     header2_parts = ["Compute (FLOPs)"]
-    header2_parts.append("Loss")
+    header2_parts.extend(["$N^*$", "$D^*$", "Loss"])
     for _ in ladder_names[1:]:
-        header2_parts.extend(["Loss", r"$\Delta$"])
+        header2_parts.extend(["$N^*$", "$D^*$", "Loss", r"$\Delta$"])
     lines.append("        " + " & ".join(header2_parts) + r" \\")
     lines.append(r"        \midrule")
 
     # Check if any ladder has bootstrap data
     has_bootstrap = any(fits[n][6] is not None for n in ladder_names)
 
-    def _optimal_loss(fit: ChinchillaParametricFit, C: float) -> float:
+    def _optimal_alloc(
+        fit: ChinchillaParametricFit, C: float
+    ) -> Tuple[float, float, float]:
+        """Return (n_opt, d_opt, loss) for a given compute budget."""
         p = fit.fitted_params
         n_opt = np.sqrt(C * p.b_opt / (6.0 * p.a_opt))
         d_opt = C / (6.0 * n_opt)
-        return float(fit.predict_loss(np.array([n_opt]), np.array([d_opt]))[0])
+        loss = float(fit.predict_loss(np.array([n_opt]), np.array([d_opt]))[0])
+        return n_opt, d_opt, loss
 
     for C in flop_budgets:
         # Format compute budget
@@ -1718,29 +1722,32 @@ def generate_compute_equivalent_table(
 
         row_parts = [c_str]
 
-        # Compute loss for reference architecture
+        # Compute optimal allocation for reference architecture
         ref_fit = fits[ref_name][0]
         ref_bootstrap = fits[ref_name][6]
-        ref_loss = _optimal_loss(ref_fit, C)
-        row_parts.append(f"{ref_loss:.3f}")
+        ref_n, ref_d, ref_loss = _optimal_alloc(ref_fit, C)
+        row_parts.extend([_fmt_model_size(ref_n), _fmt_tokens(ref_d), f"{ref_loss:.3f}"])
 
-        # Compute loss for each other architecture
+        # Compute optimal allocation for each other architecture
         for name in ladder_names[1:]:
             fit = fits[name][0]
             bootstrap = fits[name][6]
-            loss = _optimal_loss(fit, C)
+            n_opt, d_opt, loss = _optimal_alloc(fit, C)
             delta = loss - ref_loss
             # Bootstrap CI on delta
             ci_str = ""
             if ref_bootstrap is not None and bootstrap is not None:
                 deltas = []
                 for rf, bf in zip(ref_bootstrap.fits, bootstrap.fits):
-                    deltas.append(_optimal_loss(bf, C) - _optimal_loss(rf, C))
+                    _, _, bl = _optimal_alloc(bf, C)
+                    _, _, rl = _optimal_alloc(rf, C)
+                    deltas.append(bl - rl)
                 if len(deltas) >= 3:
                     lo, hi = np.percentile(deltas, [2.5, 97.5])
                     ci_str = f" [{lo:+.3f}, {hi:+.3f}]"
-            row_parts.append(f"{loss:.3f}")
-            row_parts.append(f"{delta:+.3f}{ci_str}")
+            row_parts.extend(
+                [_fmt_model_size(n_opt), _fmt_tokens(d_opt), f"{loss:.3f}", f"{delta:+.3f}{ci_str}"]
+            )
 
         lines.append("        " + " & ".join(row_parts) + r" \\")
 
@@ -2827,7 +2834,6 @@ def generate_combined_savings_figure(
     lines.append("% Panel (b): Projected Savings Factor")
     lines.append(r"\nextgroupplot[")
     lines.append(r"    xlabel={Model Size (Parameters)},")
-    ref_display = escape_latex(get_display_name(reference_name))
     lines.append(r"    ylabel={Savings Factor ($D_\mathrm{ref}/D_\mathrm{arch}$)},")
     lines.append(r"    title={(b) Projected Savings Factor},")
     lines.append(r"    xmin=2e8,")
@@ -2841,7 +2847,7 @@ def generate_combined_savings_figure(
     lines.append(
         r"\node[font=\footnotesize, gray, anchor=south west] at "
         r"(axis cs:\pgfkeysvalueof{/pgfplots/xmin},1) "
-        f"{{{ref_display} ($1\\times$)}};"
+        r"{$1\times$ Transformer};"
     )
 
     for name in other_names:

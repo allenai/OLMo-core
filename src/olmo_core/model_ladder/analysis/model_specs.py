@@ -354,7 +354,7 @@ def mlp_macs_per_token(d_model: int, mlp_hidden: int) -> int:
 def compute_hybrid_specs(
     spec: ModelSpec,
     transformer_ratio: int = 4,
-    seq_len: int = 4096,
+    seq_len: int = 8192,
     force_final_attention: bool = True,
     placement: str = "every_nth",
     chinchilla_flops: bool = True,
@@ -417,7 +417,7 @@ def compute_hybrid_specs(
 def compute_hybrid_mamba2_specs(
     spec: ModelSpec,
     transformer_ratio: int = 4,
-    seq_len: int = 4096,
+    seq_len: int = 8192,
     force_final_attention: bool = True,
     strip_mamba2_mlp: bool = False,
     chinchilla_flops: bool = True,
@@ -478,7 +478,7 @@ def compute_hybrid_mamba2_specs(
 
 
 def compute_olmo3_specs(
-    spec: ModelSpec, seq_len: int = 4096, chinchilla_flops: bool = True
+    spec: ModelSpec, seq_len: int = 8192, chinchilla_flops: bool = True
 ) -> dict:
     d = spec.d_model
     nh = spec.n_heads
@@ -512,7 +512,7 @@ def compute_olmo3_specs(
 def compute_hybrid_specs_parallel(
     spec: ModelSpec,
     transformer_ratio: int = 4,
-    seq_len: int = 4096,
+    seq_len: int = 8192,
     chunk_size: int = 256,
     force_final_attention: bool = True,
     placement: str = "every_nth",
@@ -548,7 +548,7 @@ def compute_hybrid_specs_parallel(
 def compute_hybrid_mamba2_specs_parallel(
     spec: ModelSpec,
     transformer_ratio: int = 4,
-    seq_len: int = 4096,
+    seq_len: int = 8192,
     chunk_size: int = 256,
     force_final_attention: bool = True,
     strip_mamba2_mlp: bool = False,
@@ -661,7 +661,7 @@ class LadderArchConfig:
     is_transformer: bool = False
     force_final_attention: bool = True
     placement: str = "every_nth"
-    seq_len: int = 4096
+    seq_len: int = 8192
     layer_type: str = "gdn"
 
 
@@ -696,9 +696,9 @@ DISPLAY_NAMES: Dict[str, str] = {
     "olmo3-2": "Olmo 3 v2",
     "olmo3-3": "Olmo 3 v3",
     "pure-gdn": "Pure GDN",
-    "hybrid-gdn": "Hybrid GDN (1/4)",
-    "hybrid-gdn-half": "Hybrid GDN (1/2)",
-    "hybrid-gdn-eight": "Hybrid GDN (1/8)",
+    "hybrid-gdn": "Hybrid GDN (1:3)",
+    "hybrid-gdn-half": "Hybrid GDN (1:1)",
+    "hybrid-gdn-eight": "Hybrid GDN (1:7)",
     "hybrid-gdn-middle": "Hybrid GDN (Middle)",
     "pure-mamba": "Pure Mamba",
     "hybrid-mamba": "Hybrid Mamba",

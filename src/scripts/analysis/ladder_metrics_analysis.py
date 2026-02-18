@@ -2482,147 +2482,6 @@ def plot_all(
 # =============================================================================
 
 
-def generate_model_config_latex_table(ladder_names: List[str]) -> str:
-    """
-    Generate LaTeX table of model configurations for all ladders used in the analysis.
-
-    Ladders are grouped by architecture family (Transformer, GDN, Mamba2) with a
-    multicolumn header per group.  Within each group a short variant label (ratio,
-    placement, etc.) distinguishes individual ladders.
-    """
-    from olmo_core.model_ladder.analysis.model_specs import LADDER_ARCH_CONFIGS
-
-    size_order = ["60M", "100M", "190M", "370M", "600M", "760M", "1B"]
-
-    # Collect all sizes that exist across all ladders
-    all_sizes: set = set()
-    for name in ladder_names:
-        for size in size_order:
-            if get_param_count(name, size) is not None:
-                all_sizes.add(size)
-    sizes = [s for s in size_order if s in all_sizes]
-
-    if not sizes or not ladder_names:
-        return "% No model config data available"
-
-    # --- Group ladders by architecture family ---
-    # Each group: (group_display_name, [(ladder_name, short_variant_label), ...])
-    FAMILY_ORDER = ["transformer", "gdn", "mamba2"]
-    FAMILY_DISPLAY = {"transformer": "Transformer", "gdn": "GDN", "mamba2": "Mamba2"}
-
-    # Map ladder_name -> (family, variant_label, sort_key)
-    # sort_key: lower = more attention (appears first, left-to-right)
-    def _classify(name: str) -> Tuple[str, str, float]:
-        lower = name.lower()
-        cfg = LADDER_ARCH_CONFIGS.get(lower)
-        if cfg is None:
-            return ("other", name, 50)
-        if cfg.is_transformer:
-            return ("transformer", "100%", 0)
-        family = cfg.layer_type  # "gdn" or "mamba2"
-        if cfg.transformer_ratio == 0:
-            # Pure (no attention) -> sort last within its family
-            return (family, "Pure", 100)
-        # Sort by attention fraction descending: 1/2 (=0.5) before 1/4 (=0.25) before 1/8 (=0.125)
-        attn_frac = 1.0 / cfg.transformer_ratio
-        ratio_label = f"1/{cfg.transformer_ratio}"
-        sort_key = 1.0 - attn_frac  # lower = more attention
-        if cfg.placement == "middle":
-            ratio_label += " Mid"
-            sort_key += 0.001  # middle variant just after same-ratio interleaved
-        return (family, ratio_label, sort_key)
-
-    # Build ordered groups from the input ladder_names
-    # Each member: (name, label, sort_key)
-    groups_raw: List[Tuple[str, List[Tuple[str, str, float]]]] = []
-    seen_families: Dict[str, int] = {}
-    for name in ladder_names:
-        family, label, sort_key = _classify(name)
-        if family not in seen_families:
-            seen_families[family] = len(groups_raw)
-            groups_raw.append((family, []))
-        groups_raw[seen_families[family]][1].append((name, label, sort_key))
-
-    # Sort groups by FAMILY_ORDER
-    family_rank = {f: i for i, f in enumerate(FAMILY_ORDER)}
-    groups_raw.sort(key=lambda g: family_rank.get(g[0], 99))
-
-    # Sort members within each group by sort_key (most attention first)
-    for _, members in groups_raw:
-        members.sort(key=lambda m: m[2])
-
-    # Deduplicate variant labels within each group (e.g. multiple olmo3 runs)
-    groups: List[Tuple[str, List[Tuple[str, str]]]] = []
-    for family, members in groups_raw:
-        seen_labels: Dict[str, str] = {}
-        deduped: List[Tuple[str, str]] = []
-        for name, label, _ in members:
-            if label not in seen_labels:
-                seen_labels[label] = name
-                deduped.append((name, label))
-        groups.append((family, deduped))
-
-    n_cols = sum(len(members) for _, members in groups)
-
-    lines: List[str] = []
-    lines.append(r"\begin{table}[htbp]")
-    lines.append(r"    \centering")
-    lines.append(
-        r"    \caption{Model configurations used in ladder experiments. "
-        r"$d$: model dimension, $h$: number of attention heads, "
-        r"$l$: number of layers, $N$: non-embedding parameter count.}"
-    )
-    lines.append(r"    \label{tab:scaling-ladder-configs}")
-
-    col_spec = "l" + "rrr" + "r" * n_cols
-    lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
-    lines.append(r"        \toprule")
-
-    # Row 1: architecture family multicolumn headers
-    header_top = ["", "", "", ""]
-    col_idx = 5  # first data column (1-indexed)
-    cmidrules = []
-    for family, members in groups:
-        n = len(members)
-        display = FAMILY_DISPLAY.get(family, escape_latex(family))
-        header_top.append(f"\\multicolumn{{{n}}}{{c}}{{{display}}}")
-        cmidrules.append(f"\\cmidrule(lr){{{col_idx}-{col_idx + n - 1}}}")
-        col_idx += n
-    lines.append("        " + " & ".join(header_top) + r" \\")
-    lines.append("        " + " ".join(cmidrules))
-
-    # Row 2: Size d h l + variant labels
-    header_bot = [r"Size", r"$d$", r"$h$", r"$l$"]
-    for _, members in groups:
-        for _, label in members:
-            header_bot.append(escape_latex(label))
-    lines.append("        " + " & ".join(header_bot) + r" \\")
-    lines.append(r"        \midrule")
-
-    # Data rows
-    for size in sizes:
-        spec = OLMO3_SPECS_BY_NAME.get(size)
-        if spec is not None:
-            row_parts = [size, str(spec.d_model), str(spec.n_heads), str(spec.n_layers)]
-        else:
-            row_parts = [size, "---", "---", "---"]
-
-        for _, members in groups:
-            for name, _ in members:
-                params = get_param_count(name, size)
-                if params is not None:
-                    row_parts.append(f"{round(params / 1e6)}M")
-                else:
-                    row_parts.append("---")
-
-        lines.append("        " + " & ".join(row_parts) + r" \\")
-
-    lines.append(r"        \bottomrule")
-    lines.append(r"    \end{tabular}")
-    lines.append(r"\end{table}")
-    return "\n".join(lines)
-
-
 def generate_latex_table(
     df: pd.DataFrame,
     caption: str,
@@ -2818,14 +2677,14 @@ ABLATION_ARCHITECTURES: List[Dict[str, Any]] = [
     {
         "key": "hybrid-gdn-half",
         "aliases": [],
-        "display": "GatedDeltaNet + 1/2 Attn",
+        "display": "GatedDeltaNet + 1:1 Attn",
         "attn_pct": "50\\%",
         "group": "Hybrid: Interleaved Attention",
     },
     {
         "key": "hybrid-gdn",
         "aliases": [],
-        "display": "GatedDeltaNet + 1/4 Attn",
+        "display": "GatedDeltaNet + 1:3 Attn",
         "attn_pct": "25\\%",
         "group": "Hybrid: Interleaved Attention",
         "star": True,
@@ -2833,14 +2692,14 @@ ABLATION_ARCHITECTURES: List[Dict[str, Any]] = [
     {
         "key": "hybrid-gdn-eight",
         "aliases": [],
-        "display": "GatedDeltaNet + 1/8 Attn",
+        "display": "GatedDeltaNet + 1:7 Attn",
         "attn_pct": "12.5\\%",
         "group": "Hybrid: Interleaved Attention",
     },
     {
         "key": "hybrid-mamba",
         "aliases": [],
-        "display": "Mamba2 + 1/4 Attn",
+        "display": "Mamba2 + 1:3 Attn",
         "attn_pct": "25\\%",
         "group": "Hybrid: Interleaved Attention",
     },
@@ -2884,7 +2743,7 @@ def generate_ablation_latex_table(
         metric_clusters: Which Base Easy clusters to show (default: Math, Code, QA).
 
     Returns:
-        (avg_and_configs_tex, detail_tex) — two strings of LaTeX source.
+        (avg_tex, configs_tex, detail_tex) — three strings of LaTeX source.
     """
     if metric_clusters is None:
         metric_clusters = ["Math_BPB", "Code_BPB", "QA_BPB"]
@@ -3195,7 +3054,10 @@ def generate_ablation_latex_table(
     lines_c.append(r"\centering")
     lines_c.append(r"\caption{")
     lines_c.append(
-        r"    \textbf{Non-embedding parameter counts (millions) for each architecture and scale.}"
+        r"    \textbf{Architecture configurations and non-embedding parameter counts (millions).}"
+    )
+    lines_c.append(
+        r"    $d$: model dimension, $h$: number of attention heads, $l$: number of layers."
     )
     lines_c.append(
         r"    Architectures at the same nominal scale can differ substantially in "
@@ -3215,13 +3077,25 @@ def generate_ablation_latex_table(
     lines_c.append(" & ".join(h_parts_c) + r" \\")
     lines_c.append(r"\midrule")
 
+    # Model dimension / heads / layers info rows
+    for row_label, attr in [("$d$", "d_model"), ("$h$", "n_heads"), ("$l$", "n_layers")]:
+        row_parts_spec = [row_label, ""]
+        for sl in show_sizes:
+            spec = OLMO3_SPECS_BY_NAME.get(sl)
+            if spec is not None:
+                row_parts_spec.append(str(getattr(spec, attr)))
+            else:
+                row_parts_spec.append("--")
+        lines_c.append(" & ".join(row_parts_spec) + r" \\")
+    lines_c.append(r"\midrule")
+
     def _config_row(arch_idx, arch):
         parts = []
         mk = arch["matched_key"]
         for sl in show_sizes:
             params = get_param_count(mk, sl) if mk else None
             if params is not None:
-                parts.append(f"{params / 1e6:.1f}")
+                parts.append(f"{round(params / 1e6)}")
             else:
                 parts.append("--")
         return parts
@@ -3232,9 +3106,10 @@ def generate_ablation_latex_table(
     lines_c.append(r"\end{tabular}")
     lines_c.append(r"\end{table*}")
 
-    avg_and_configs = "\n".join(lines_a) + "\n\n" + "\n".join(lines_c)
+    avg = "\n".join(lines_a)
+    configs = "\n".join(lines_c)
     detail = "\n\n".join(detail_parts)
-    return avg_and_configs, detail
+    return avg, configs, detail
 
 
 # =============================================================================
@@ -3805,12 +3680,11 @@ def generate_paper_eval_figure(
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
     sizes: Optional[List[str]] = None,
     star_ladder: Optional[str] = None,
+    use_lines: bool = True,
 ) -> str:
     """
     Generate combined evaluation figure (pgfplots/TikZ) matching the style of
-    ``fig:scaling-law-fit-log``: all checkpoint data points shown as scatter,
-    nice colors from ``LATEX_PLOT_STYLES``, and a single shared legend at the
-    bottom.
+    ``fig:scaling-law-fit-log``.
 
     Layout:
         Top row (2 panels):   (a) Base Easy Avg BPB vs FLOPs,
@@ -3818,8 +3692,13 @@ def generate_paper_eval_figure(
         Bottom row (3 panels): (c) Math BPB,  (d) Code BPB,  (e) QA BPB
 
     All axes use log-log scales.  Each ladder is drawn with its branded color
-    and mark; every checkpoint (``size@D/N``) appears as a scatter point,
-    connected by lines within each model size.
+    and mark.
+
+    Args:
+        use_lines: If True (default), draw thin lines connecting checkpoints
+            within each model size and a thick envelope through the final
+            checkpoint per size — matching ``fig:scaling-law-fit-log``.
+            If False, draw scatter points (old behaviour).
     """
 
     ladder_names = list(ladder_results.keys())
@@ -3934,33 +3813,42 @@ def generate_paper_eval_figure(
                 continue
             pts = allpts[name]
             style = get_latex_style(name, idx)
+            line_style_str = f", {style['line_style']}" if style.get("line_style") else ""
 
             # Group by model size so we can draw connecting lines per size
             by_size: Dict[str, List[Tuple[float, float]]] = {}
             for f, y, sl in pts:
                 by_size.setdefault(sl, []).append((f, y))
 
-            # All points as scatter (opacity matches scaling-law-fit-log)
-            all_f = [p[0] for p in pts]
-            all_y = [p[1] for p in pts]
-            coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in zip(all_f, all_y))
-            plines.append(
-                f"\\addplot[only marks, mark={style['mark']}, "
-                f"{style['color_name']}, mark size=1.5pt, "
-                f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
-                f"coordinates {{{coords}}};"
-            )
+            if use_lines:
+                # Thin lines: one per model size, connecting checkpoints sorted by FLOPs
+                for sl in sorted(by_size, key=lambda s: get_size_numeric(s)):
+                    size_pts = sorted(by_size[sl], key=lambda p: p[0])
+                    coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in size_pts)
+                    plines.append(
+                        f"\\addplot[{style['color_name']}, thin, no markers{line_style_str}, "
+                        f"opacity=0.5, forget plot] "
+                        f"coordinates {{{coords}}};"
+                    )
+            else:
+                # Scatter: all checkpoints as small marks
+                all_f = [p[0] for p in pts]
+                all_y = [p[1] for p in pts]
+                coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in zip(all_f, all_y))
+                plines.append(
+                    f"\\addplot[only marks, mark={style['mark']}, "
+                    f"{style['color_name']}, mark size=1.5pt, "
+                    f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
+                    f"coordinates {{{coords}}};"
+                )
 
-            # Connecting line through per-size points (sorted by flops)
-            # Use the largest-D/N envelope: one point per size at highest flops
+            # Thick envelope: one point per size at highest FLOPs (final checkpoint)
             envelope = []
             for sl in sorted(by_size, key=lambda s: get_size_numeric(s)):
                 size_pts = sorted(by_size[sl], key=lambda p: p[0])
-                # Take the point with highest FLOPs (= most tokens) per size
                 envelope.append(size_pts[-1])
             envelope.sort(key=lambda p: p[0])
             env_coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in envelope)
-            line_style_str = f", {style['line_style']}" if style.get("line_style") else ""
             plines.append(
                 f"\\addplot[{style['color_name']}, thick, no markers{line_style_str}, forget plot] "
                 f"coordinates {{{env_coords}}};"
@@ -4034,13 +3922,24 @@ def generate_paper_eval_figure(
     lines.append(r"{\footnotesize " + "\\qquad".join(legend_parts) + r"}")
 
     # Caption
+    if use_lines:
+        caption_detail = (
+            r"Thin lines connect checkpoints within each model size; "
+            r"the thick line traces the highest Chinchilla multiple per model size."
+        )
+    else:
+        caption_detail = (
+            r"Each point is a single checkpoint; the connecting line traces the highest "
+            r"Chinchilla multiple per model size."
+        )
     lines.append(
         r"\caption{Downstream evaluation metrics vs.\ training FLOPs. "
         r"\textbf{(a)} Base Easy Suite average BPB (lower is better). "
-        r"\textbf{(b)} Average language modeling perplexity (lower is better). "
+        r"\textbf{(b)} Average language modeling perplexity across 11 held-out corpora "
+        r"(C4, Dolma Books/CC/pes2o/Reddit/Stack/Wiki, ICE, M2D2~S2ORC, Pile, Wikitext-103; lower is better). "
         r"\textbf{(c)--(e)} Per-cluster Base Easy BPB for Math, Code, and QA respectively. "
-        r"Each point is a single checkpoint; the connecting line traces the highest "
-        r"Chinchilla multiple per model size.}"
+        + caption_detail
+        + "}"
     )
     lines.append(r"\label{fig:base_easy_avg}")
     lines.append(r"\end{figure*}")
@@ -4054,6 +3953,7 @@ def generate_latex_plots(
     include_main: bool = False,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
+    use_lines: bool = True,
 ) -> str:
     """
     Generate publication-ready LaTeX/TikZ plots for all metric suites.
@@ -4102,6 +4002,7 @@ def generate_latex_plots(
             ladder_results,
             sizes=sizes,
             star_ladder=star_ladder,
+            use_lines=use_lines,
         )
     )
     parts.append("")
@@ -4346,6 +4247,7 @@ def export_results(
     include_main: bool = False,
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
+    use_lines: bool = True,
 ) -> None:
     """Export results to various formats."""
     easy_df = create_base_easy_table(ladder_results, sizes)
@@ -4407,20 +4309,17 @@ def export_results(
     with open(latex_path, "w") as f:
         f.write(latex_output)
 
-    # Generate ablation tables (avg+configs in one file, detail in another)
-    ablation_avg, ablation_detail = generate_ablation_latex_table(ladder_results, sizes)
+    # Generate ablation tables (avg, configs, detail as separate files)
+    ablation_avg, ablation_configs, ablation_detail = generate_ablation_latex_table(ladder_results, sizes)
     ablation_path = output_path / "ablation-evals.tex"
     with open(ablation_path, "w") as f:
         f.write(ablation_avg)
+    config_path = output_path / "ablation-configs.tex"
+    with open(config_path, "w") as f:
+        f.write(ablation_configs)
     ablation_detail_path = output_path / "ablation-evals-detail.tex"
     with open(ablation_detail_path, "w") as f:
         f.write(ablation_detail)
-
-    # Generate model config table
-    config_output = generate_model_config_latex_table(list(ladder_results.keys()))
-    config_path = output_path / "model-configs.tex"
-    with open(config_path, "w") as f:
-        f.write(config_output)
 
     # Generate LaTeX/TikZ plots
     latex_plots = generate_latex_plots(
@@ -4429,6 +4328,7 @@ def export_results(
         include_main=include_main,
         use_final_checkpoint=use_final_checkpoint,
         star_ladder=star_ladder,
+        use_lines=use_lines,
     )
     plots_path = output_path / "ablation-scaling-plot.tex"
     with open(plots_path, "w") as f:
@@ -4598,7 +4498,7 @@ Examples:
     parser.add_argument(
         "--scatter",
         action="store_true",
-        help="Use scatter points instead of connecting lines in paper figures.",
+        help="Use scatter points instead of thin/thick lines in paper figures (old behaviour).",
     )
 
     args = parser.parse_args()
@@ -4808,6 +4708,7 @@ Examples:
             include_main=include_main,
             use_final_checkpoint=args.curve_final,
             star_ladder=args.star_ladder,
+            use_lines=not args.scatter,
         )
 
     # Generate paper figures (pgfplots/TikZ .tex files)
@@ -4824,6 +4725,7 @@ Examples:
                 ladder_results,
                 sizes=args.sizes,
                 star_ladder=args.star_ladder,
+                use_lines=not args.scatter,
             )
             fig_path = figures_dir / "base-easy-avg.tex"
             with open(fig_path, "w") as f:
