@@ -363,7 +363,8 @@ def compute_merge_window_starts(
 
     For overlapping windows, only the earliest start in each overlapping group
     is returned, since resuming from that checkpoint allows all overlapping
-    windows to re-accumulate correctly.
+    windows to accumulate fully (avoiding mid-window resumes that would cause
+    merges to be skipped).
     """
     if not merge_steps:
         return []
