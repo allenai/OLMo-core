@@ -481,23 +481,6 @@ class GemmaLikeTransformerConfig(TransformerConfig):
             **kwargs,
         )
 
-    @classmethod
-    def v2_65B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
-        """
-        A 65B model config.
-
-        64,782,689,280 total params
-        64,268,887,040 non-embedding params
-        """
-        return cls.v2(
-            d_model=5120,
-            hidden_size=5120 * 8,
-            n_layers=80,
-            n_heads=80,
-            vocab_size=vocab_size,
-            **kwargs,
-        )
-
 
 @dataclass
 class _ModelSizeSettings:
