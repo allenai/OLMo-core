@@ -6,7 +6,7 @@ STEP=step3256
 TOKENIZER=allenai/olmo-3-tokenizer-instruct-dev
 BEAKER_IMAGE=tylerr/olmo-core-tch291cu128-2025-11-25
 
-# LRS=(8e-5 5e-5 2.5e-5 1e-4 6e-5 3e-5 1.5e-5)
+# LRS=(1e-4 9e-5 8e-5 6e-5 5e-5 3e-5 2.5e-5 1.5e-5)
 LRS=(8e-5 1e-4 6e-5)
 
 for LR in "${LRS[@]}"; do
