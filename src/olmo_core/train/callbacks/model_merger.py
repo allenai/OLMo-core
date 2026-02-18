@@ -208,7 +208,7 @@ class ModelMergeCallback(Callback):
                 self._save_merged_checkpoint(ms)
 
         # Block ephemeral checkpoints during merge windows to prevent
-        # mid-window resume points that would shorten the average.
+        # mid-window resume points that would cause the merge to be skipped.
         # Set AFTER saves so the flag is False once all windows at this step complete.
         still_active = [ms for ms in active if ms not in self._completed_merges]
         self.trainer.block_ephemeral_checkpoints = len(still_active) > 0
