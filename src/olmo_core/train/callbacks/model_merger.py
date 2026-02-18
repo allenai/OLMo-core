@@ -142,12 +142,31 @@ class ModelMergeCallback(Callback):
                 )
                 self._completed_merges.add(ms)
 
+        # Skip merges where we resumed mid-window (can't accumulate full average)
+        for ms in self._merge_steps:
+            if ms not in self._completed_merges and self._window_start(ms) < current_step <= ms:
+                log.warning(
+                    f"Resumed at step {current_step} inside merge window "
+                    f"[{self._window_start(ms)}, {ms}]. "
+                    f"This merge will be skipped (cannot accumulate full "
+                    f"{self.merge_last_n_steps}-step average)."
+                )
+                self._completed_merges.add(ms)
+
         remaining = [ms for ms in self._merge_steps if ms not in self._completed_merges]
         log.info(f"Remaining merge steps: {remaining}")
 
+        # Check if any merge window would be shorter than configured
+        for ms in remaining:
+            if ms < self.merge_last_n_steps:
+                raise OLMoConfigurationError(
+                    f"Merge step {ms} is less than merge_last_n_steps "
+                    f"({self.merge_last_n_steps}). The merge window would only be "
+                    f"{ms + 1} steps instead of {self.merge_last_n_steps}."
+                )
+
         # Warn if any permanent checkpoint could land inside a merge window.
-        # On resume from that checkpoint, the merge average would be shorter
-        # than merge_last_n_steps.
+        # On resume from that checkpoint, the merge will be skipped.
         checkpointer = next(
             (cb for cb in self.trainer.callbacks.values() if isinstance(cb, CheckpointerCallback)),
             None,
@@ -161,8 +180,7 @@ class ModelMergeCallback(Callback):
                     log.warning(
                         f"Permanent checkpoint at step {first_ckpt} falls inside "
                         f"merge window [{ws}, {ms}]. If training is interrupted and "
-                        f"resumed from that checkpoint, the merge average will be "
-                        f"shorter than {self.merge_last_n_steps} steps."
+                        f"resumed from that checkpoint, this merge will be skipped."
                     )
 
     def post_train_batch(self):
@@ -239,10 +257,11 @@ class ModelMergeCallback(Callback):
 
         barrier()
 
-        # To save correctly under FSDP, we temporarily load averaged weights
-        # into the model so save_state_dict sees DTensors (with sharding metadata)
-        # rather than plain tensors (which would be treated as replicated and
-        # only save rank 0's data).
+        # To save and evaluate correctly under FSDP, we temporarily load averaged
+        # weights into the model so save_state_dict sees DTensors (with sharding
+        # metadata) rather than plain tensors (which would be treated as replicated
+        # and only save rank 0's data). We keep the weights loaded for evaluation
+        # to avoid swapping twice.
         model = self.trainer.train_module.model
         params_dict = dict(model.named_parameters())
 
@@ -258,73 +277,21 @@ class ModelMergeCallback(Callback):
                         averaged_state[name].to(local_param.device, local_param.dtype)
                     )
 
-        barrier()
-
-        save_state_dict(
-            join_path(output_path, "model_and_optim"),
-            self.trainer.train_module.state_dict_to_save(optim=False),
-            process_group=self.trainer.checkpointer.process_group,
-        )
-
-        barrier()
-
-        # Restore original weights
-        with torch.no_grad():
-            for name, param in params_dict.items():
-                if name in original_state:
-                    local_param = get_local_tensor(param.data)
-                    local_param.copy_(
-                        original_state[name].to(local_param.device, local_param.dtype)
-                    )
-
-        barrier()
-        log.info(f"Merged checkpoint saved to: {output_path}")
-
-        self._evaluate_merged(averaged_state)
-
-        # Clean up
-        del self._accumulators[merge_step]
-        del self._accumulator_counts[merge_step]
-        self._completed_merges.add(merge_step)
-
-    def _evaluate_merged(self, averaged_state: Dict[str, torch.Tensor]):
-        evaluator_callbacks = [
-            cb for cb in self.trainer.callbacks.values() if isinstance(cb, EvaluatorCallback)
-        ]
-
-        if not evaluator_callbacks:
-            log.info("No EvaluatorCallback found, skipping merged model evaluation")
-            return
-
-        model = self.trainer.train_module.model
-        params_dict = dict(model.named_parameters())
-
-        # Store original weights on CPU to avoid doubling GPU memory
-        # TODO: Evaluate performance impact of synchronous copy vs async copy with
-        # device sync before optimizer step.
-        log.info("Storing original model weights...")
-        original_state = {
-            k: get_local_tensor(p.data.detach()).to("cpu").clone() for k, p in params_dict.items()
-        }
-
-        barrier()
-
-        log.info("Loading merged weights for evaluation...")
-        with torch.no_grad():
-            for name, param in params_dict.items():
-                if name in averaged_state:
-                    local_param = get_local_tensor(param.data)
-                    local_param.copy_(
-                        averaged_state[name].to(local_param.device, local_param.dtype)
-                    )
-        # Sync to ensure all ranks have loaded the merged weights before evaluation starts
         barrier()
 
         try:
-            for callback in evaluator_callbacks:
-                log.info(f"Running merged model evaluation via {callback.__class__.__name__}...")
-                callback._perform_eval(prefix="eval/merged")
+            save_state_dict(
+                join_path(output_path, "model_and_optim"),
+                self.trainer.train_module.state_dict_to_save(optim=False),
+                process_group=self.trainer.checkpointer.process_group,
+            )
+
+            barrier()
+            log.info(f"Merged checkpoint saved to: {output_path}")
+
+            self._evaluate_merged()
         finally:
+            # Restore original weights
             log.info("Restoring original model weights...")
             with torch.no_grad():
                 for name, param in params_dict.items():
@@ -333,8 +300,26 @@ class ModelMergeCallback(Callback):
                         local_param.copy_(
                             original_state[name].to(local_param.device, local_param.dtype)
                         )
-            # Ensure all ranks have restored original weights before training resumes
             barrier()
+
+        # Clean up
+        del self._accumulators[merge_step]
+        del self._accumulator_counts[merge_step]
+        self._completed_merges.add(merge_step)
+
+    def _evaluate_merged(self):
+        """Run evaluations with the currently loaded (merged) model weights."""
+        evaluator_callbacks = [
+            cb for cb in self.trainer.callbacks.values() if isinstance(cb, EvaluatorCallback)
+        ]
+
+        if not evaluator_callbacks:
+            log.info("No EvaluatorCallback found, skipping merged model evaluation")
+            return
+
+        for callback in evaluator_callbacks:
+            log.info(f"Running merged model evaluation via {callback.__class__.__name__}...")
+            callback._perform_eval(prefix="eval/merged")
 
 
 # Utility functions for computing merge steps and required checkpoint steps for merge windows

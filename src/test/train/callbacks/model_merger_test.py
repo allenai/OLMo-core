@@ -151,6 +151,59 @@ def test_active_windows_skips_completed():
 
 
 # ============================================================================
+# Resume mid-window skipping
+# ============================================================================
+
+
+def test_resume_mid_window_skips_merge():
+    """If we resume inside a merge window, that merge should be skipped."""
+    cb = _make_cb_at_step([100], 10, current_step=95)
+    # Step 95 is inside window [91, 100], but not at the start
+    # Simulate pre_train detecting mid-window resume
+    current_step = 95
+    for ms in cb._merge_steps:
+        if ms not in cb._completed_merges and cb._window_start(ms) < current_step <= ms:
+            cb._completed_merges.add(ms)
+    assert 100 in cb._completed_merges
+    assert cb._active_windows() == []
+
+
+def test_resume_at_window_start_does_not_skip():
+    """If we resume exactly at the window start, the merge should proceed."""
+    cb = _make_cb_at_step([100], 10, current_step=91)
+    # Step 91 is exactly the window start [91, 100]
+    current_step = 91
+    for ms in cb._merge_steps:
+        if ms not in cb._completed_merges and cb._window_start(ms) < current_step <= ms:
+            cb._completed_merges.add(ms)
+    assert 100 not in cb._completed_merges
+    assert cb._active_windows() == [100]
+
+
+def test_resume_before_window_does_not_skip():
+    """If we resume before the window, the merge should proceed."""
+    cb = _make_cb_at_step([100], 10, current_step=85)
+    current_step = 85
+    for ms in cb._merge_steps:
+        if ms not in cb._completed_merges and cb._window_start(ms) < current_step <= ms:
+            cb._completed_merges.add(ms)
+    assert 100 not in cb._completed_merges
+
+
+def test_resume_mid_window_overlapping_skips_affected():
+    """If two windows overlap and we resume mid-way, only the affected one is skipped."""
+    cb = _make_cb_at_step([100, 120], 20, current_step=95)
+    # Window for 100: [81, 100], window for 120: [101, 120]
+    # Step 95 is inside window for 100 but before window for 120
+    current_step = 95
+    for ms in cb._merge_steps:
+        if ms not in cb._completed_merges and cb._window_start(ms) < current_step <= ms:
+            cb._completed_merges.add(ms)
+    assert 100 in cb._completed_merges
+    assert 120 not in cb._completed_merges
+
+
+# ============================================================================
 # Helper functions
 # ============================================================================
 
