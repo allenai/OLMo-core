@@ -1855,6 +1855,7 @@ def resolve_block_configs(
     if isinstance(block, dict):
         # Named-block configuration.
         assert block_pattern is not None
+        assert block_overrides is None
         full_pattern = list(islice(cycle(block_pattern), n_layers))
         block_configs = [block[name] for name in full_pattern]
     else:

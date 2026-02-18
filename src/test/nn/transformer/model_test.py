@@ -606,14 +606,16 @@ def test_transformer_num_flops_per_token():
     ],
 )
 def test_gemma3_builder_configs(config_builder, expected_d_model):
-    config = config_builder(n_layers=2)
+    config = config_builder(n_layers=6)
     assert config.d_model == expected_d_model
-    assert config.n_layers == 2
+    assert config.n_layers == 6
 
-    assert config.block.feed_forward is not None
-    assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
+    block_configs = config.resolved_block_configs
+    local_block = block_configs[0]
+    assert local_block.feed_forward is not None
+    assert local_block.feed_forward.activation == ActivationFunction.gelu_tanh
 
-    sequence_mixer = config.block.sequence_mixer
+    sequence_mixer = local_block.sequence_mixer
     assert isinstance(sequence_mixer, AttentionConfig)
     assert sequence_mixer.qk_norm is not None
     assert sequence_mixer.rope is not None
@@ -646,7 +648,7 @@ def test_gemma3_hybrid_local_global_attention():
     assert global_count == 2
     assert local_count == 10
 
-    distinct_blocks = set(config.resolved_block_configs)
+    distinct_blocks = {id(b) for b in config.resolved_block_configs}
     assert len(distinct_blocks) == 2
 
 
