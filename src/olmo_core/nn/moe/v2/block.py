@@ -127,7 +127,6 @@ def _defrag_rows_by_splits_offsets_padded(
     return out
 
 
-
 class _DispatchVDev2DAutograd(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
@@ -155,7 +154,7 @@ class _DispatchVDev2DAutograd(torch.autograd.Function):
             )
         
         with nvtx.annotate("DropToken", color="green"):
-            torch.index_select(source_input, 0, reorder_indices, out=symm_input) 
+            torch.index_select(source_input, 0, reorder_indices, out=symm_input)
 
         # symm_out.zero_()
         if in_splits.dtype != torch.int64:
@@ -238,7 +237,6 @@ class _DispatchVDev2DAutograd(torch.autograd.Function):
             )
         grad_source_input = torch.zeros_like(grad_packed_input)
         grad_source_input.index_add_(0, reorder_indices, grad_packed_input)
-
         return grad_source_input, None, None, None, None, None, None, None, None, None, None
 
 
@@ -315,6 +313,9 @@ class _DispatchVDevAutograd(torch.autograd.Function):
         symm_grad_out.copy_(grad_out)
 
         grad_symm_input = ctx.symm_input
+        # Ensure any rows not written by vdev (e.g. dropped-token tail capacity)
+        # stay zero without doing a defrag/gather pass.
+        grad_symm_input.zero_()
         symm_forward_out_rank_splits_offsets = ctx.symm_out_rank_splits_offsets
         symm_forward_out_rank_splits_offsets.copy_(forward_out_rank_splits_offsets)
         grad_input_rank_splits_offsets = ctx.symm_tmp_rank_splits_offsets
@@ -335,15 +336,13 @@ class _DispatchVDevAutograd(torch.autograd.Function):
             ctx.group_name,
         )
 
-        # 1D Dispatch does not have holes, so no need to defrag
-        grad_packed_input = grad_symm_input
-        if grad_packed_input.shape[0] != ctx.source_rows:
+        # 1D vdev layout is contiguous for this path; return directly.
+        if grad_symm_input.shape[0] != ctx.source_rows:
             raise RuntimeError(
-                f"dispatch backward produced {grad_packed_input.shape[0]} rows, expected {ctx.source_rows}"
+                f"dispatch backward produced {grad_symm_input.shape[0]} rows, expected {ctx.source_rows}"
             )
-        grad_source_input = torch.zeros_like(grad_packed_input)
-        grad_source_input.index_add_(0, reorder_indices, grad_packed_input)
-
+        grad_source_input = torch.zeros_like(grad_symm_input)
+        grad_source_input.index_add_(0, reorder_indices, grad_symm_input)
         return grad_source_input, None, None, None, None, None, None, None, None, None, None
 
 
@@ -1856,11 +1855,38 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     dtype=torch.long,
                 )
 
-            global_x_rank_major = self._checkpointed_permute_routed_experts_unpermute(
-                global_x=dispatch_rank_major,
-                global_x_local_expert_indices=global_x_local_expert_indices,
-                parallel_batch_size_per_local_expert_cpu=padded_batch_size_per_local_expert,
-            )
+
+            with nvtx.annotate("Permute global tokens", color='green'):
+                routing_map2 = global_x_local_expert_indices.view(-1, 1).int()
+                num_out_tokens2 = routing_map2.size(0)
+                if self.routed_experts.num_local_experts == 1:
+                    reversed_global_x_permutation_mapping = None
+                else:
+                    # moe_permute (by TE)
+                    dispatch_rank_major, reversed_global_x_permutation_mapping = moe_permute_no_compile(
+                        inp=dispatch_rank_major, 
+                        routing_map=routing_map2, 
+                        num_out_tokens=num_out_tokens2, 
+                        map_type='index'
+                    )
+
+            # expert forward
+            dispatch_rank_major = self.routed_experts(dispatch_rank_major, padded_batch_size_per_local_expert)
+            
+
+            with nvtx.annotate("Unpermute global tokens", color='green'):
+                if self.routed_experts.num_local_experts == 1:
+                    global_x_rank_major = dispatch_rank_major  # skip unpermute if only one local expert
+                else:
+                    # moe_unpermute (by TE)
+                    global_x_rank_major = moe_unpermute_no_compile(
+                        inp=dispatch_rank_major,
+                        row_id_map=reversed_global_x_permutation_mapping,
+                        merging_probs=None,
+                        restore_shape=None, # map_type='index' does not require restore_shape
+                        map_type='index',
+                    ) 
+
 
             # set shared experts to wait until this point to maximize overlap with alltoall
             wait_stream_no_compile(
@@ -2287,14 +2313,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     ):
         assert self.routed_experts is not None
 
-
-        ## 6. MLP forwrad ##
+        ## MLP forwrad ##
         global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
-
-        # if _debug_get_row_indices_for_nan_before_end(global_x, parallel_batch_size_per_local_expert_cpu.sum()).numel() > 0:
-        #     raise RuntimeError(f"NaN detected in global_x in valid tokens")
         
-        ## 7. Unpermute the output tokens to be ready for all-to-all communication ##
+        ## Unpermute the output tokens to be ready for all-to-all communication ##
         with nvtx.annotate("Unpermute global tokens", color='green'):
             if self.routed_experts.num_local_experts == 1:
                 global_x_restore = global_x  # skip unpermute if only one local expert
@@ -2310,8 +2332,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     restore_shape=hidden_shape_before_permute2,
                     map_type='index',
                 ) 
-                # if torch.isnan(global_x_restore).any():
-                #     raise RuntimeError("NaN detected in global_x_restore after unpermute")
+
 
         return global_x_restore
 
