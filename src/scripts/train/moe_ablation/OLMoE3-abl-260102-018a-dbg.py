@@ -143,6 +143,7 @@ else:
 
 # SPLIT_POINTS = None
 USE_COMPILE=True
+USE_NO_SYNC_EP=True
 USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
@@ -198,7 +199,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
-            ep_no_sync=True,
+            ep_no_sync=USE_NO_SYNC_EP,
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
@@ -416,7 +417,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 # entity="ai2-llm",
                 # project="olmoe-dev-v2",
                 # project="olmo3",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )

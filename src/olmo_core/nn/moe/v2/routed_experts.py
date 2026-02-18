@@ -38,6 +38,15 @@ from dataclasses import dataclass
 from typing import cast
 from torch.distributed.device_mesh import DeviceMesh
 
+def _debug_is_inf_or_nan(x):
+    return torch.logical_or(~torch.isfinite(x), torch.isnan(x))
+
+def _debug_get_row_indices_for_nan_or_inf(x):
+    return torch.where(_debug_is_inf_or_nan(x).any(dim=-1))[0]
+
+def _debug_get_row_indices_for_nan_or_inf_before_end(x, end):
+    naninf_row_indices = _debug_get_row_indices_for_nan_or_inf(x)
+    return naninf_row_indices[naninf_row_indices < end]
 
 @torch.compiler.disable
 def gmm_no_compile(a, b, batch_sizes, trans_b=False):
@@ -56,7 +65,8 @@ def gmm(a, b, batch_sizes, trans_b=False):
         # so padded positions are always necessary? I think "strictly less than" is a documentation mistake
         
         # BIG NOTE: grouped_mm's returned value containes uninitialized values for the padded positions (pos > offsets[-1]), which can be NaN and may cause later ops to produce NaN in valid positions.
-        
+        # if _debug_get_row_indices_for_nan_or_inf_before_end(out, batch_sizes.sum()).numel() > 0:
+        #     raise RuntimeError(f"NaN or Inf detected in grouped_mm output in valid tokens. batch_sizes={batch_sizes} offs={offs} out={out}")
         return out
 
     return gmm_no_compile(a, b, batch_sizes, trans_b)
