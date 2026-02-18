@@ -153,6 +153,15 @@ class ReduceType(StrEnum):
     across the process group to produce the global L2 norm.
     """
 
+    weighted_mean = "weighted_mean"
+    """
+    Weighted average across the process group. Requires a ``weight`` to be provided when
+    recording the metric. The result is ``sum(value * weight) / sum(weight)`` across all ranks.
+    """
+
+
+WEIGHTED_MEAN_WEIGHT_PREFIX = "__wm_weight__/"
+
 
 class MetricMergeStrategy(StrEnum):
     """

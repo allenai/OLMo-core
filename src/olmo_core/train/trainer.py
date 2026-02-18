@@ -58,6 +58,7 @@ from .checkpoint import Checkpointer
 from .common import (
     TRAIN_CE_LOSS_METRIC,
     TRAIN_PPL_METRIC,
+    WEIGHTED_MEAN_WEIGHT_PREFIX,
     Duration,
     DurationUnit,
     LoadStrategy,
@@ -1001,6 +1002,7 @@ class Trainer:
         reduce_type: Optional[ReduceType] = None,
         namespace: Optional[str] = None,
         merge_strategy: MetricMergeStrategy = MetricMergeStrategy.warn,
+        weight: Optional[Union[float, torch.Tensor]] = None,
     ):
         """
         Record a new metric for the current step.
@@ -1014,6 +1016,8 @@ class Trainer:
             ``None`` means no reduction.
         :param namespace: A namespace to record the metric under, i.g. "train" or "optim".
         :param merge_strategy: How to merge metrics when duplicates are logged.
+        :param weight: The weight for the metric. Required when ``reduce_type`` is
+            :data:`ReduceType.weighted_mean`.
         """
         if namespace is not None:
             name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
@@ -1023,6 +1027,34 @@ class Trainer:
         else:
             value = get_local_tensor(value.detach()).float()
 
+        if reduce_type == ReduceType.weighted_mean:
+            if weight is None:
+                raise ValueError(
+                    "'weight' is required when reduce_type is ReduceType.weighted_mean"
+                )
+            if not isinstance(weight, torch.Tensor):
+                weight = torch.tensor(weight)
+            else:
+                weight = get_local_tensor(weight.detach()).float()
+            value = value * weight
+        elif weight is not None:
+            raise ValueError(
+                "'weight' should only be provided when reduce_type is ReduceType.weighted_mean"
+            )
+
+        self._store_metric(name, value, reduce_type, merge_strategy)
+
+        if reduce_type == ReduceType.weighted_mean:
+            weight_name = WEIGHTED_MEAN_WEIGHT_PREFIX + name
+            self._store_metric(weight_name, weight, ReduceType.sum, merge_strategy)
+
+    def _store_metric(
+        self,
+        name: str,
+        value: torch.Tensor,
+        reduce_type: Optional[ReduceType],
+        merge_strategy: MetricMergeStrategy,
+    ):
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
 
@@ -1363,6 +1395,9 @@ class Trainer:
 
     def _check_and_pass_on_metrics(self, metrics: Dict[int, Dict[str, float]]):
         for step in sorted(metrics.keys()):
+            for key in list(metrics[step].keys()):
+                if key.startswith(WEIGHTED_MEAN_WEIGHT_PREFIX):
+                    del metrics[step][key]
             # Check for nan/inf loss and add perplexity.
             if (ce_loss := metrics[step].get(TRAIN_CE_LOSS_METRIC)) is not None:
                 if not math.isfinite(ce_loss):

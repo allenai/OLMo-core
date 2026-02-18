@@ -12,6 +12,7 @@ from olmo_core.utils import get_default_device
 
 def run_reduce_metrics():
     device = get_default_device()
+    wm_weight_prefix = "__wm_weight__/"
     raw_metrics = {
         0: {
             "train/CrossEntropyLoss": torch.tensor(2.0, device=device),
@@ -27,6 +28,12 @@ def run_reduce_metrics():
             ),
             "train/rank": torch.tensor(float(dist.get_rank()), device=device),
             "optim/weight_norm": torch.tensor(2.0 if dist.get_rank() == 0 else 3.0, device=device),
+            "train/weighted_loss": torch.tensor(
+                1.0 * 3.0 if dist.get_rank() == 0 else 2.0 * 1.0, device=device
+            ),
+            f"{wm_weight_prefix}train/weighted_loss": torch.tensor(
+                3.0 if dist.get_rank() == 0 else 1.0, device=device
+            ),
         },
     }
     metrics_reduce_type = {
@@ -35,6 +42,8 @@ def run_reduce_metrics():
         "train/masked_instances": ReduceType.sum,
         "optim/total_grad_norm": None,
         "optim/weight_norm": ReduceType.l2_norm,
+        "train/weighted_loss": ReduceType.weighted_mean,
+        f"{wm_weight_prefix}train/weighted_loss": ReduceType.sum,
     }
 
     metrics = reduce_metrics(raw_metrics, metrics_reduce_type, device)
@@ -50,6 +59,7 @@ def run_reduce_metrics():
                 "train/rank": 1.0,
                 "train/masked_instances": 1.0,
                 "optim/weight_norm": math.sqrt(13),
+                "train/weighted_loss": 1.25,
             },
         }
 
@@ -57,3 +67,24 @@ def run_reduce_metrics():
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_reduce_metrics(backend):
     run_distributed_test(run_reduce_metrics, backend=backend)
+
+
+def test_reduce_metrics_weighted_mean_non_distributed():
+    wm_weight_prefix = "__wm_weight__/"
+    device = torch.device("cpu")
+    raw_metrics = {
+        0: {
+            "loss": torch.tensor(6.0, device=device),
+            f"{wm_weight_prefix}loss": torch.tensor(3.0, device=device),
+            "other": torch.tensor(5.0, device=device),
+        },
+    }
+    metrics_reduce_type = {
+        "loss": ReduceType.weighted_mean,
+        f"{wm_weight_prefix}loss": ReduceType.sum,
+        "other": None,
+    }
+    metrics = reduce_metrics(raw_metrics, metrics_reduce_type, device)
+    assert metrics[0]["loss"] == pytest.approx(2.0)
+    assert metrics[0]["other"] == 5.0
+    assert wm_weight_prefix not in str(metrics)
