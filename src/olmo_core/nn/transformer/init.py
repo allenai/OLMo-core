@@ -191,18 +191,13 @@ class InitMethod(StrEnum):
     ):
         from ..moe import DroplessMoEMLP, MoELinearRouter, MoEMLP
 
-        del d_model
-
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
         elif self == InitMethod.fan_in:
-            # For fan_in, router weight uses 1/√d_model (d_in = d_model)
-            router_weight = cast(MoELinearRouter, m.router).weight
-            # Router weight is flattened (num_experts * d_model,) -> (num_experts, d_model)
-            d_in = router_weight.numel() // cast(MoELinearRouter, m.router).num_experts
-            std = d_in**-0.5
+            # For fan_in, router weight uses 1/√d_model
+            std = d_model**-0.5
 
         _apply_init(
             nn.init.trunc_normal_,
@@ -214,17 +209,15 @@ class InitMethod(StrEnum):
             generator=generator,
         )
 
-        # Initialize w1
+        mlp = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp)
+
+        # Initialize w1 (maps d_model -> hidden_size, fan-in = d_model)
         if self == InitMethod.fan_in:
-            # w1 has shape (num_experts * d_model, hidden_size)
-            # d_in for each expert is d_model
-            w1 = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1
-            d_in = w1.shape[0] // cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).num_experts
-            std = d_in**-0.5
+            std = mlp.d_model**-0.5
 
         _apply_init(
             nn.init.trunc_normal_,
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
+            mlp.w1,
             mean=0.0,
             std=std,
             a=-3 * std,
@@ -232,17 +225,13 @@ class InitMethod(StrEnum):
             generator=generator,
         )
 
-        # Initialize w2
+        # Initialize w2 (maps hidden_size -> d_model, fan-in = hidden_size)
         if self == InitMethod.fan_in:
-            # w2 has shape (num_experts * hidden_size, d_model)
-            # d_in for each expert is hidden_size
-            w2 = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w2
-            d_in = w2.shape[0] // cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).num_experts
-            std = d_in**-0.5
+            std = mlp.hidden_size**-0.5
 
         _apply_init(
             nn.init.trunc_normal_,
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w2,
+            mlp.w2,
             mean=0.0,
             std=std,
             a=-3 * std,
@@ -250,17 +239,13 @@ class InitMethod(StrEnum):
             generator=generator,
         )
 
-        # Initialize w3
+        # Initialize w3 (maps d_model -> hidden_size, fan-in = d_model)
         if self == InitMethod.fan_in:
-            # w3 has shape (num_experts * d_model, hidden_size)
-            # d_in for each expert is d_model
-            w3 = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w3
-            d_in = w3.shape[0] // cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).num_experts
-            std = d_in**-0.5
+            std = mlp.d_model**-0.5
 
         _apply_init(
             nn.init.trunc_normal_,
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w3,
+            mlp.w3,
             mean=0.0,
             std=std,
             a=-3 * std,
