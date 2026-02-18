@@ -42,7 +42,7 @@ class ModelMergeCallback(Callback):
     merge_interval: Optional[int] = None
     """Merge every N steps. Alternative to explicit merge_step."""
 
-    merge_last_n_steps: int = 200
+    merge_last_n_steps: int = 500
     """Number of steps before each merge step to start accumulating the average."""
 
     output_suffix: str = "merged"
