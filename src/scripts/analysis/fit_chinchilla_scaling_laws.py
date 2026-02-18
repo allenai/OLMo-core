@@ -39,6 +39,10 @@ Usage:
         --rollout \
         --plot --plot-3d \
         --output ~/results/scaling-analysis
+
+    # Pool multiple independent runs (comma-separated paths)
+    python fit_chinchilla_scaling_laws.py \
+        --ladder olmo3:~/data/olmo3-run1,~/data/olmo3-run2,~/data/olmo3-run3
 """
 
 import argparse
@@ -60,7 +64,17 @@ from olmo_core.model_ladder.analysis.model_specs import (
     LADDER_ARCH_CONFIGS,
     OLMO3_SPECS_BY_NAME,
     compute_specs_for_size,
+    compute_specs_for_size_parallel,
+    get_display_name,
+    get_param_count,
+)
+from olmo_core.model_ladder.analysis.model_specs import (
     fmt as fmt_number,
+)
+from olmo_core.model_ladder.analysis.plotting import (
+    LATEX_PLOT_STYLES,
+    escape_latex,
+    get_latex_style,
 )
 
 # Default loss column to use for fitting
@@ -68,71 +82,28 @@ DEFAULT_LOSS_COLUMN = "eval/lm/c4_en/CE loss"
 
 # Alternative loss columns to try if default not found
 FALLBACK_LOSS_COLUMNS = [
+    "eval/lm/c4_en-validation/CE loss",
     "eval/lm/pile/CE loss",
     "eval/lm/dolma_common-crawl/CE loss",
+    "eval/lm/dolma_common-crawl-validation/CE loss",
     "eval/lm/wikitext_103/CE loss",
     "train/CE loss (log scale)",
 ]
 
-# Legacy non-embedding parameter counts for architectures that cannot yet be
-# computed from ModelSpec (Mamba variants).  All other architectures (OLMo3,
-# hybrid-GDN, pure-GDN) are now computed dynamically via compute_specs_for_size().
-_LEGACY_PARAM_COUNTS = {
-    "pure-mamba": {
-        "60M": 60_642_944,
-        "100M": 109_746_048,
-        "190M": 207_115_584,
-    },
-    "hybrid-mamba": {
-        "60M": 59_837_760,
-        "100M": 107_743_776,
-        "190M": 202_925_232,
-    },
-}
-
-# Human-readable display names for each ladder.
-# Used in plots, tables, and printed output.
-DISPLAY_NAMES: Dict[str, str] = {
-    "olmo3": "Olmo 3",
-    "olmo3-1": "Olmo 3 v1",
-    "olmo3-2": "Olmo 3 v2",
-    "olmo3-3": "Olmo 3 v3",
-    "pure-gdn": "Pure GDN",
-    "hybrid-gdn": "Hybrid GDN (1/4)",
-    "hybrid-gdn-half": "Hybrid GDN (1/2)",
-    "hybrid-gdn-eight": "Hybrid GDN (1/8)",
-    "hybrid-gdn-middle": "Hybrid GDN (Middle)",
-    "pure-mamba": "Pure Mamba",
-    "hybrid-mamba": "Hybrid Mamba",
-}
-
-# TODO: Replace placeholder values below with actual pretraining / evaluation results.
-# Each VALIDATION_POINTS entry: (N_non_embed_params, D_tokens, observed_loss)
-#   - N can be approximate; it is auto-corrected via compute_specs_for_size when possible.
-#   - Use None for any value that is not yet available (renders as {\color{red}TBD}).
-VALIDATION_POINTS: Dict[str, Dict[str, Tuple[float, Optional[float], Optional[float]]]] = {
-    "olmo3": {
-        "OLMo 3 7B (sanity)": (7e9, None, None),  # TODO: fill D and observed_loss
-        "OLMo 3 32B": (32e9, None, None),  # TODO: fill D and observed_loss
-    },
-    "hybrid-gdn": {
-        "Hybrid 7B": (7e9, None, None),  # TODO: fill D and observed_loss
-    },
-}
-
-# TODO: Replace placeholder values with actual downstream evaluation results.
-# Each entry: (tokens_trained, benchmark_score) — both can be None.
-EMPIRICAL_EFFICIENCY_DATA: Dict[str, Dict[str, Tuple[Optional[float], Optional[float]]]] = {
-    "MMLU (5-shot)": {
-        "olmo3": (None, None),  # TODO: (tokens_trained, MMLU_score)
-        "hybrid-gdn": (None, None),  # TODO: (tokens_trained, MMLU_score)
-    },
-}
-
-
-def get_display_name(ladder_name: str) -> str:
-    """Return a human-readable display name for a ladder, falling back to the raw name."""
-    return DISPLAY_NAMES.get(ladder_name.lower(), ladder_name)
+# Validation loss columns to average when --average-val-loss is used
+VALIDATION_LOSS_COLUMNS = [
+    "eval/lm/c4_en-validation/CE loss",
+    "eval/lm/dolma_books-validation/CE loss",
+    "eval/lm/dolma_common-crawl-validation/CE loss",
+    "eval/lm/dolma_pes2o-validation/CE loss",
+    "eval/lm/dolma_reddit-validation/CE loss",
+    "eval/lm/dolma_stack-validation/CE loss",
+    "eval/lm/dolma_wiki-validation/CE loss",
+    "eval/lm/ice-validation/CE loss",
+    "eval/lm/m2d2_s2orc-validation/CE loss",
+    "eval/lm/pile-validation/CE loss",
+    "eval/lm/wikitext_103-validation/CE loss",
+]
 
 
 def shade_color(hex_color: str, fraction: float) -> Tuple[float, float, float]:
@@ -143,39 +114,26 @@ def shade_color(hex_color: str, fraction: float) -> Tuple[float, float, float]:
     return (1 - fraction + fraction * r, 1 - fraction + fraction * g, 1 - fraction + fraction * b)
 
 
-def get_corrected_param_count(ladder_name: str, size: str) -> Optional[int]:
-    """
-    Get the non-embedding parameter count for a given ladder and size.
-
-    First tries to compute from architecture specs via :func:`compute_specs_for_size`.
-    Falls back to ``_LEGACY_PARAM_COUNTS`` for architectures that cannot be computed
-    (Mamba variants).
-
-    Args:
-        ladder_name: Name of the ladder (e.g., "olmo3-1", "hybrid-gdn")
-        size: Model size string (e.g., "60M", "190M")
-
-    Returns:
-        Non-embedding parameter count if found/computable, None otherwise.
-    """
-    # Try computing from architecture specs first
-    computed = compute_specs_for_size(ladder_name, size)
-    if computed is not None:
-        return computed["non_embed_params"]
-
-    # Fallback to legacy hardcoded values (Mamba variants)
-    ladder_lower = ladder_name.lower()
-    if ladder_lower in _LEGACY_PARAM_COUNTS:
-        size_map = _LEGACY_PARAM_COUNTS[ladder_lower]
-        if size in size_map:
-            return size_map[size]
-
-    for pattern, size_map in _LEGACY_PARAM_COUNTS.items():
-        if pattern in ladder_lower:
-            if size in size_map:
-                return size_map[size]
-
-    return None
+def _compute_specs(
+    ladder_name: str,
+    size: str,
+    parallel_flops: bool = True,
+    chunk_size: int = 256,
+    chinchilla_flops: bool = True,
+    seq_len: Optional[int] = None,
+) -> Optional[dict]:
+    """Dispatch to parallel or recurrent spec computation."""
+    if parallel_flops:
+        return compute_specs_for_size_parallel(
+            ladder_name,
+            size,
+            seq_len=seq_len,
+            chunk_size=chunk_size,
+            chinchilla_flops=chinchilla_flops,
+        )
+    return compute_specs_for_size(
+        ladder_name, size, seq_len=seq_len, chinchilla_flops=chinchilla_flops
+    )
 
 
 def find_loss_column(df: pd.DataFrame, preferred: Optional[str] = None) -> str:
@@ -196,19 +154,26 @@ def find_loss_column(df: pd.DataFrame, preferred: Optional[str] = None) -> str:
 
 
 def load_ladder_data(
-    ladder_dir: Path,
+    ladder_dir: "Path | List[Path]",
     ladder_name: str,
     loss_column: Optional[str] = None,
     verbose: bool = True,
     use_all_checkpoints: bool = True,
     simple_flops: bool = False,
     post_decay_only: bool = True,
+    parallel_flops: bool = True,
+    chunk_size: int = 256,
+    chinchilla_flops: bool = True,
+    seq_len: Optional[int] = None,
+    average_val_loss: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
     """
     Load ladder results from pickle files for Chinchilla fitting.
 
     Args:
-        ladder_dir: Directory containing metrics_*.pkl files
+        ladder_dir: Directory (or list of directories) containing metrics_*.pkl files.
+            When multiple directories are given the data is concatenated, which is useful
+            for pooling independent runs of the same ladder configuration.
         ladder_name: Name of the ladder (used for parameter count corrections)
         loss_column: Specific loss column to use (auto-detected if None)
         verbose: Print loading progress
@@ -217,6 +182,12 @@ def load_ladder_data(
         simple_flops: If True, use 6*N*D approximation for FLOPs instead of logged values.
         post_decay_only: If True (default), only use post-decay checkpoints
             (D/N = 10, 20, 40, 80, 160, ...). If False, also include pre-decay.
+        chinchilla_flops: If True, include embedding and softmax FLOPs in the
+            Chinchilla convention.
+        seq_len: Sequence length for FLOP calculation (default: arch config default).
+        average_val_loss: If True, use the average of all available validation loss
+            columns (VALIDATION_LOSS_COLUMNS) instead of a single loss column. This
+            gives a more stable signal than any single domain.
 
     Returns:
         N: Array of parameter counts (corrected non-embedding counts if available)
@@ -225,9 +196,25 @@ def load_ladder_data(
         F: Array of FLOPs (raw FLOPs, either from logged values or 6*N*D approximation)
         sizes: List of size names (e.g., ["190M", "370M", ...] or ["190M@20", "190M@40", ...])
     """
-    pkl_files = sorted(ladder_dir.glob("metrics_*.pkl"))
+    # Normalise to a list of directories
+    if isinstance(ladder_dir, Path):
+        ladder_dirs = [ladder_dir]
+    else:
+        ladder_dirs = list(ladder_dir)
+
+    pkl_files = []
+    for d in ladder_dirs:
+        found = sorted(d.glob("metrics_*.pkl"))
+        if not found:
+            if verbose:
+                print(f"  Warning: No metrics_*.pkl files found in {d}")
+        pkl_files.extend(found)
     if not pkl_files:
-        raise FileNotFoundError(f"No metrics_*.pkl files found in {ladder_dir}")
+        raise FileNotFoundError(
+            f"No metrics_*.pkl files found in any of: {[str(d) for d in ladder_dirs]}"
+        )
+    if verbose and len(ladder_dirs) > 1:
+        print(f"  Pooling {len(ladder_dirs)} run directories ({len(pkl_files)} pkl files total)")
 
     N_list, D_list, L_list, F_list, sizes = [], [], [], [], []
     used_loss_col = None
@@ -248,16 +235,37 @@ def load_ladder_data(
                 print(f"  Warning: {pkl_path} is empty, skipping")
             continue
 
-        computed = compute_specs_for_size(ladder_name, size)
+        computed = _compute_specs(
+            ladder_name,
+            size,
+            parallel_flops=parallel_flops,
+            chunk_size=chunk_size,
+            chinchilla_flops=chinchilla_flops,
+            seq_len=seq_len,
+        )
         if not computed:
             if verbose:
                 print(f"  Warning: Could not compute specs for {size}, skipping")
             continue
 
-        # Find the loss column once
+        # Find the loss column once (or detect available val columns for averaging)
         if used_loss_col is None:
-            used_loss_col = find_loss_column(df, loss_column)
-            if verbose:
+            if average_val_loss:
+                # Find which validation columns are present in this dataframe
+                _available_val_cols = [c for c in VALIDATION_LOSS_COLUMNS if c in df.columns]
+                if not _available_val_cols:
+                    # Fallback to single column
+                    used_loss_col = find_loss_column(df, loss_column)
+                    average_val_loss = False  # disable for this ladder
+                    if verbose:
+                        print(f"  No validation columns found, falling back to: {used_loss_col}")
+                else:
+                    used_loss_col = "__average_val__"
+                    if verbose:
+                        print(f"  Averaging {len(_available_val_cols)} validation loss columns")
+            else:
+                used_loss_col = find_loss_column(df, loss_column)
+            if verbose and used_loss_col != "__average_val__":
                 print(f"  Using loss column: {used_loss_col}")
 
         # Get parameter count (should be constant for all rows in the file)
@@ -269,7 +277,7 @@ def load_ladder_data(
         original_num_params = num_params
 
         # Apply correction for non-embedding parameter count if available
-        corrected_params = get_corrected_param_count(ladder_name, size)
+        corrected_params = get_param_count(ladder_name, size)
         if corrected_params is not None:
             if verbose:
                 print(
@@ -299,7 +307,13 @@ def load_ladder_data(
 
             for _, row in df.iterrows():
                 tokens = row.get("tokens")
-                loss = row.get(used_loss_col)
+
+                if average_val_loss and used_loss_col == "__average_val__":
+                    vals = [row.get(c) for c in _available_val_cols
+                            if row.get(c) is not None and not pd.isna(row.get(c))]
+                    loss = float(np.mean(vals)) if vals else None
+                else:
+                    loss = row.get(used_loss_col)
 
                 if tokens is None or pd.isna(tokens):
                     continue
@@ -351,7 +365,12 @@ def load_ladder_data(
                     print(f"  Warning: No tokens for {size}, skipping")
                 continue
 
-            loss = final_row.get(used_loss_col)
+            if average_val_loss and used_loss_col == "__average_val__":
+                vals = [final_row.get(c) for c in _available_val_cols
+                        if final_row.get(c) is not None and not pd.isna(final_row.get(c))]
+                loss = float(np.mean(vals)) if vals else None
+            else:
+                loss = final_row.get(used_loss_col)
             if loss is None or pd.isna(loss):
                 if verbose:
                     print(f"  Warning: No loss value for {size}, skipping")
@@ -385,7 +404,7 @@ def load_ladder_data(
 
 def fit_ladder(
     name: str,
-    ladder_dir: Path,
+    ladder_dir: "Path | List[Path]",
     loss_column: Optional[str] = None,
     use_bootstrap: bool = False,
     num_bootstraps: int = 100,
@@ -397,6 +416,11 @@ def fit_ladder(
     num_slices: int = 4,
     post_decay_only: bool = True,
     fixed_params: Optional[Dict[str, float]] = None,
+    parallel_flops: bool = True,
+    chunk_size: int = 256,
+    chinchilla_flops: bool = True,
+    seq_len: Optional[int] = None,
+    average_val_loss: bool = False,
 ) -> Tuple[
     ChinchillaParametricFit,
     np.ndarray,
@@ -416,9 +440,11 @@ def fit_ladder(
         bootstrap_fit: Bootstrap fit if requested, else None
     """
     display = get_display_name(name)
+    dirs = ladder_dir if isinstance(ladder_dir, list) else [ladder_dir]
     print(f"\n{'='*60}")
     print(f"Fitting: {display}")
-    print(f"Directory: {ladder_dir}")
+    for d in dirs:
+        print(f"Directory: {d}")
     print(f"{'='*60}")
 
     N, D, L, F, sizes = load_ladder_data(
@@ -429,16 +455,19 @@ def fit_ladder(
         use_all_checkpoints=use_all_checkpoints,
         simple_flops=simple_flops,
         post_decay_only=post_decay_only,
+        parallel_flops=parallel_flops,
+        chunk_size=chunk_size,
+        chinchilla_flops=chinchilla_flops,
+        seq_len=seq_len,
+        average_val_loss=average_val_loss,
     )
 
     # Compute weights
     weights = None
     if weight_by_compute:
-        # Weight by sqrt(compute) to emphasize larger-scale runs
-        # weights = np.sqrt(6 * N * D)
+        # Weight by compute to emphasize larger-scale runs
         weights = 6 * N * D
         if verbose:
-            # print(f"\n  Weighting by sqrt(compute)")
             print(f"\n  Weighting by compute")
 
     if verbose:
@@ -496,7 +525,6 @@ def fit_rollout(
 
     weights = None
     if weight_by_compute:
-        # weights = np.sqrt(6 * N * D)
         weights = 6 * N * D
 
     fit_fn = (
@@ -638,26 +666,26 @@ def print_rollout_evaluation(name: str, rollout: ScalingLawRollout):
         )
 
 
-def print_comparison(fits: Dict[str, Tuple]):
+def print_comparison(fits: Dict[str, Tuple], header: str = "COMPARISON SUMMARY"):
     """Print comparison of multiple ladder fits."""
     if len(fits) < 2:
         return
 
     print(f"\n{'='*60}")
-    print("COMPARISON SUMMARY")
+    print(header)
     print(f"{'='*60}")
 
     # Table header
     display_names = {name: get_display_name(name) for name in fits}
     max_name_len = max(len(d) for d in display_names.values())
     col_w = max(max_name_len, 20)
-    print(f"\n{'Ladder':<{col_w}} {'E':>8} {'α':>8} {'β':>8} {'a_opt':>8} {'b_opt':>8}")
-    print("-" * (col_w + 40))
+    print(f"\n{'Ladder':<{col_w}} {'E':>8} {'A':>10} {'α':>8} {'B':>10} {'β':>8} {'a_opt':>8} {'b_opt':>8}")
+    print("-" * (col_w + 60))
 
     for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
         p = fit.fitted_params
         print(
-            f"{display_names[name]:<{col_w}} {p.E:>8.4f} {p.alpha:>8.4f} {p.beta:>8.4f} {p.a_opt:>8.4f} {p.b_opt:>8.4f}"
+            f"{display_names[name]:<{col_w}} {p.E:>8.4f} {p.A:>10.4f} {p.alpha:>8.4f} {p.B:>10.4f} {p.beta:>8.4f} {p.a_opt:>8.4f} {p.b_opt:>8.4f}"
         )
 
     # Compare predictions at a common scale
@@ -870,18 +898,23 @@ def _emit_ci_band(
 
 
 def load_ladder_domain_data(
-    ladder_dir: Path,
+    ladder_dir: "Path | List[Path]",
     ladder_name: str,
     domains: Optional[List[str]] = None,
     verbose: bool = True,
     post_decay_only: bool = True,
     simple_flops: bool = False,
+    parallel_flops: bool = True,
+    chunk_size: int = 256,
+    chinchilla_flops: bool = True,
+    seq_len: Optional[int] = None,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]]:
     """
     Load ladder results with per-domain BPB metrics for domain-specific scaling law fitting.
 
     Args:
-        ladder_dir: Directory containing metrics_*.pkl files
+        ladder_dir: Directory (or list of directories) containing metrics_*.pkl files.
+            When multiple directories are given the data is concatenated.
         ladder_name: Name of the ladder (used for parameter count corrections)
         domains: Which domain clusters to extract (default: Math_BPB, Code_BPB, QA_BPB)
         verbose: Print loading progress
@@ -900,9 +933,22 @@ def load_ladder_domain_data(
     if domains is None:
         domains = ["Math_BPB", "Code_BPB", "QA_BPB"]
 
-    pkl_files = sorted(ladder_dir.glob("metrics_*.pkl"))
+    # Normalize to a list of directories
+    if isinstance(ladder_dir, Path):
+        ladder_dirs = [ladder_dir]
+    else:
+        ladder_dirs = list(ladder_dir)
+
+    pkl_files = []
+    for d in ladder_dirs:
+        found = sorted(d.glob("metrics_*.pkl"))
+        if not found and verbose:
+            print(f"  Warning: No metrics_*.pkl files found in {d}")
+        pkl_files.extend(found)
     if not pkl_files:
-        raise FileNotFoundError(f"No metrics_*.pkl files found in {ladder_dir}")
+        raise FileNotFoundError(
+            f"No metrics_*.pkl files found in any of: {[str(d) for d in ladder_dirs]}"
+        )
 
     # Accumulators per domain
     domain_data: Dict[str, Dict[str, list]] = {
@@ -928,8 +974,15 @@ def load_ladder_domain_data(
         if df.empty:
             continue
 
-        # Use compute_specs_for_size for consistent FLOPs (same as main loader)
-        computed = compute_specs_for_size(ladder_name, size)
+        # Use compute_specs for consistent FLOPs (same as main loader)
+        computed = _compute_specs(
+            ladder_name,
+            size,
+            parallel_flops=parallel_flops,
+            chunk_size=chunk_size,
+            chinchilla_flops=chinchilla_flops,
+            seq_len=seq_len,
+        )
         if computed:
             num_params = computed["non_embed_params"]
             flops_per_token = computed["total_flops_per_token"]
@@ -937,7 +990,7 @@ def load_ladder_domain_data(
             num_params = df["num_params"].iloc[0]
             if num_params is None or pd.isna(num_params):
                 continue
-            corrected_params = get_corrected_param_count(ladder_name, size)
+            corrected_params = get_param_count(ladder_name, size)
             if corrected_params is not None:
                 num_params = corrected_params
             flops_per_token = None
@@ -1011,7 +1064,7 @@ def load_ladder_domain_data(
 
 def fit_domain_ladders(
     name: str,
-    ladder_dir: Path,
+    ladder_dir: "Path | List[Path]",
     domains: Optional[List[str]] = None,
     weight_by_compute: bool = True,
     overestimate_penalty: float = 1.0,
@@ -1019,6 +1072,10 @@ def fit_domain_ladders(
     verbose: bool = True,
     post_decay_only: bool = True,
     simple_flops: bool = False,
+    parallel_flops: bool = True,
+    chunk_size: int = 256,
+    chinchilla_flops: bool = True,
+    seq_len: Optional[int] = None,
 ) -> Dict[
     str, Tuple[ChinchillaParametricFit, np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]
 ]:
@@ -1039,6 +1096,10 @@ def fit_domain_ladders(
         verbose=verbose,
         post_decay_only=post_decay_only,
         simple_flops=simple_flops,
+        parallel_flops=parallel_flops,
+        chunk_size=chunk_size,
+        chinchilla_flops=chinchilla_flops,
+        seq_len=seq_len,
     )
 
     results: Dict[
@@ -1046,7 +1107,6 @@ def fit_domain_ladders(
         Tuple[ChinchillaParametricFit, np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]],
     ] = {}
     for domain, (N, D, L, F, sizes) in domain_data.items():
-        # weights = np.sqrt(6 * N * D) if weight_by_compute else None
         weights = 6 * N * D if weight_by_compute else None
         try:
             fit = ChinchillaParametricFit.fit(
@@ -1220,16 +1280,9 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
     size_order = ["60M", "100M", "190M", "370M", "600M", "760M", "1B"]
     for name in ladder_names:
         for size in size_order:
-            if get_corrected_param_count(name, size) is not None:
+            if get_param_count(name, size) is not None:
                 all_sizes.add(size)
-        # Also check legacy dict for Mamba sizes not in size_order
-        for pattern, size_map in _LEGACY_PARAM_COUNTS.items():
-            if pattern in name.lower():
-                all_sizes.update(size_map.keys())
     sizes = [s for s in size_order if s in all_sizes]
-
-    def escape_latex(s: str) -> str:
-        return s.replace("_", r"\_").replace("%", r"\%").replace("&", r"\&")
 
     # --- Group ladders by architecture family ---
     FAMILY_ORDER = ["transformer", "gdn", "mamba2"]
@@ -1330,7 +1383,7 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
 
         for _, members in groups:
             for name, _ in members:
-                params = get_corrected_param_count(name, size)
+                params = get_param_count(name, size)
                 if params is not None:
                     row_parts.append(f"{round(params / 1e6)}M")
                 else:
@@ -1498,7 +1551,7 @@ def generate_token_savings_table(
         f"(target loss $= {target_loss:.3f}$, "
         f"selected as the {strategy_desc} of all observed training losses). "
         r"Savings $> 1\times$ means fewer tokens needed than "
-        + _escape_latex(get_display_name(ref_name))
+        + escape_latex(get_display_name(ref_name))
         + r".}"
     )
     lines.append(r"    \label{tab:token-savings-by-scale}")
@@ -1513,7 +1566,7 @@ def generate_token_savings_table(
     # Header row 1: architecture names spanning D + savings columns
     header1_parts = [""]
     for idx, name in enumerate(ladder_names):
-        display = _escape_latex(get_display_name(name))
+        display = escape_latex(get_display_name(name))
         if idx == 0:
             header1_parts.append(display)
         else:
@@ -1617,7 +1670,7 @@ def generate_compute_equivalent_table(
         r"Each architecture's fitted $a_\text{opt}, b_\text{opt}$ determine its optimal $N, D$ "
         r"split for a given compute budget ($C = 6ND$). "
         r"$\Delta$ shows loss reduction relative to "
-        + _escape_latex(get_display_name(ref_name))
+        + escape_latex(get_display_name(ref_name))
         + r".}"
     )
     lines.append(r"    \label{tab:compute-equivalent-loss}")
@@ -1630,10 +1683,10 @@ def generate_compute_equivalent_table(
 
     # Header row 1
     header1_parts = [""]
-    ref_display = _escape_latex(get_display_name(ref_name))
+    ref_display = escape_latex(get_display_name(ref_name))
     header1_parts.append(ref_display)
     for name in ladder_names[1:]:
-        display = _escape_latex(get_display_name(name))
+        display = escape_latex(get_display_name(name))
         header1_parts.append(r"\multicolumn{2}{c}{" + display + "}")
     lines.append("        " + " & ".join(header1_parts) + r" \\")
 
@@ -1700,368 +1753,9 @@ def generate_compute_equivalent_table(
     return "\n".join(lines)
 
 
-def generate_prediction_validation_table(
-    fits: Dict[str, Tuple],
-    validation_points: Optional[
-        Dict[str, Dict[str, Tuple[float, Optional[float], Optional[float]]]]
-    ] = None,
-) -> str:
-    """
-    Generate LaTeX table validating scaling law predictions against actual model results (Table 6).
-
-    For each architecture, plugs the final model's (N, D) into the fitted scaling law
-    and compares the predicted loss to the observed pretraining loss.
-
-    Args:
-        fits: {ladder_name: (fit, N, D, L, F, sizes, bootstrap)}
-        validation_points: {arch_key: {label: (N, D_or_None, loss_or_None)}}
-            Defaults to module-level VALIDATION_POINTS.
-    """
-    if validation_points is None:
-        validation_points = VALIDATION_POINTS
-
-    _TBD = r"{\color{red}TBD}"
-
-    lines = []
-    lines.append(r"\begin{table}[htbp]")
-    lines.append(r"    \centering")
-    lines.append(
-        r"    \caption{Scaling law prediction validation against final models. "
-        r"Predicted loss is computed from the fitted law "
-        r"$L(N, D) = E + A/N^\alpha + B/D^\beta$. "
-        + _TBD
-        + r" values are placeholders to be filled with actual results.}"
-    )
-    lines.append(r"    \label{tab:prediction-validation}")
-    lines.append(r"    \small")
-    lines.append(r"    \begin{tabular}{llrrrrr}")
-    lines.append(r"        \toprule")
-    lines.append(r"        Architecture & Model & $N$ & $D$ & Observed & Predicted & Error (\%) \\")
-    lines.append(r"        \midrule")
-
-    first_arch = True
-    for arch_name, (fit, *_rest) in fits.items():
-        points = validation_points.get(arch_name, validation_points.get(arch_name.lower(), {}))
-        if not points:
-            continue
-
-        if not first_arch:
-            lines.append(r"        \midrule")
-        first_arch = False
-
-        display = get_display_name(arch_name)
-
-        for label, (N, D, observed) in points.items():
-            # Format N
-            if N is not None:
-                n_str = _fmt_model_size(N)
-            else:
-                n_str = _TBD
-
-            # Format D
-            if D is not None:
-                d_str = _fmt_tokens(D)
-            else:
-                d_str = _TBD
-
-            # Format observed loss
-            if observed is not None:
-                obs_str = f"{observed:.4f}"
-            else:
-                obs_str = _TBD
-
-            # Compute predicted loss (only possible if both N and D are known)
-            if N is not None and D is not None:
-                predicted = fit.predict_loss(np.array([N]), np.array([D]))[0]
-                pred_str = f"{predicted:.4f}"
-                if observed is not None:
-                    error_pct = (predicted - observed) / observed * 100
-                    err_str = f"{error_pct:+.2f}"
-                else:
-                    err_str = _TBD
-            else:
-                pred_str = "---"
-                err_str = "---"
-
-            lines.append(
-                f"        {display} & {label} & {n_str} & {d_str} "
-                f"& {obs_str} & {pred_str} & {err_str} \\\\"
-            )
-
-    lines.append(r"        \bottomrule")
-    lines.append(r"    \end{tabular}")
-    lines.append(r"\end{table}")
-    return "\n".join(lines)
-
-
-def generate_data_efficiency_validation_table(
-    fits: Dict[str, Tuple],
-    empirical_efficiency: Optional[
-        Dict[str, Dict[str, Tuple[Optional[float], Optional[float]]]]
-    ] = None,
-) -> str:
-    """
-    Generate LaTeX table connecting the B coefficient ratio to empirical data efficiency (Table 7).
-
-    Compares the theoretical data efficiency implied by the scaling law's B coefficient
-    to the empirical observation from downstream benchmarks (MMLU).
-
-    Args:
-        fits: {ladder_name: (fit, N, D, L, F, sizes, bootstrap)}
-        empirical_efficiency: {benchmark: {arch_key: (tokens_trained, score)}}
-            Defaults to module-level EMPIRICAL_EFFICIENCY_DATA.
-    """
-    ladder_names = list(fits.keys())
-    if len(ladder_names) < 2:
-        return "% Need at least 2 ladders for data efficiency comparison"
-
-    if empirical_efficiency is None:
-        empirical_efficiency = EMPIRICAL_EFFICIENCY_DATA
-
-    _TBD = r"{\color{red}TBD}"
-    ref_name = ladder_names[0]
-    ref_fit = fits[ref_name][0]
-    ref_B = ref_fit.fitted_params.B
-
-    # Compute implied D ratio at 7B scale using solve_d_for_target_loss
-    # Target loss: median of all observed ladder losses
-    all_L = np.concatenate([fits[n][3] for n in ladder_names])
-    target_loss = float(np.median(all_L))
-    ref_n = 7e9
-    ref_d_needed = solve_d_for_target_loss(ref_fit, target_loss, ref_n)
-
-    # Collect benchmark names
-    benchmark_names = list(empirical_efficiency.keys())
-
-    lines = []
-    lines.append(r"\begin{table}[htbp]")
-    lines.append(r"    \centering")
-    lines.append(
-        r"    \caption{Data efficiency: theoretical (from $B$ coefficient) vs.\ empirical "
-        r"(from downstream benchmarks). "
-        r"The scaling law's $B$ coefficient governs how efficiently each architecture "
-        r"converts training data into loss reduction. "
-        r"Implied $D$ ratio is computed at $N = 7$B for target loss $= "
-        + f"{target_loss:.3f}"
-        + r"$ (median of observed ladder losses). "
-        + _TBD
-        + r" values are placeholders to be filled.}"
-    )
-    lines.append(r"    \label{tab:data-efficiency-validation}")
-    lines.append(r"    \small")
-
-    # Columns: Architecture | B | B ratio | Implied D ratio | (tokens + score + D ratio) per benchmark
-    n_bench = len(benchmark_names)
-    col_spec = "l" + "rrr" + "rrr" * n_bench
-    lines.append(f"    \\begin{{tabular}}{{{col_spec}}}")
-    lines.append(r"        \toprule")
-
-    # Header row 1
-    header1_parts = [""]
-    header1_parts.append(r"\multicolumn{3}{c}{Scaling Law ($B$ coefficient)}")
-    for bname in benchmark_names:
-        header1_parts.append(r"\multicolumn{3}{c}{" + bname + "}")
-    lines.append("        " + " & ".join(header1_parts) + r" \\")
-
-    # cmidrule
-    cmidrule = r"        \cmidrule(lr){2-4}"
-    for i, _ in enumerate(benchmark_names):
-        start = 5 + i * 3
-        end = start + 2
-        cmidrule += f" \\cmidrule(lr){{{start}-{end}}}"
-    lines.append(cmidrule)
-
-    # Header row 2
-    header2_parts = ["Architecture", "$B$", "$B$ ratio", "Implied $D$ ratio"]
-    for _ in benchmark_names:
-        header2_parts.extend(["Tokens", "Score", "$D$ ratio"])
-    lines.append("        " + " & ".join(header2_parts) + r" \\")
-    lines.append(r"        \midrule")
-
-    for name in ladder_names:
-        fit = fits[name][0]
-        B_val = fit.fitted_params.B
-        display = get_display_name(name)
-
-        b_str = _fmt_latex_num(B_val)
-
-        if name == ref_name:
-            b_ratio_str = r"1.00$\times$"
-            d_ratio_str = r"1.00$\times$"
-        else:
-            b_ratio = ref_B / B_val if B_val > 0 else float("inf")
-            b_ratio_str = f"{b_ratio:.2f}$\\times$" if np.isfinite(b_ratio) else r"$\infty$"
-
-            d_needed = solve_d_for_target_loss(fit, target_loss, ref_n)
-            if np.isfinite(ref_d_needed) and np.isfinite(d_needed) and d_needed > 0:
-                d_ratio = ref_d_needed / d_needed
-                d_ratio_str = f"{d_ratio:.2f}$\\times$"
-            else:
-                d_ratio_str = "---"
-
-        row_parts = [display, b_str, b_ratio_str, d_ratio_str]
-
-        # Empirical benchmark columns
-        for bname in benchmark_names:
-            bench_data = empirical_efficiency.get(bname, {})
-            arch_data = bench_data.get(name, bench_data.get(name.lower(), (None, None)))
-            tokens, score = arch_data
-
-            if tokens is not None:
-                tok_str = _fmt_tokens(tokens)
-            else:
-                tok_str = _TBD
-
-            if score is not None:
-                score_str = f"{score:.1f}"
-            else:
-                score_str = _TBD
-
-            # Empirical D ratio (ref tokens / this tokens)
-            if name == ref_name:
-                emp_ratio_str = "---"
-            else:
-                ref_bench = bench_data.get(ref_name, bench_data.get(ref_name.lower(), (None, None)))
-                ref_tokens = ref_bench[0]
-                if ref_tokens is not None and tokens is not None and tokens > 0:
-                    emp_ratio = ref_tokens / tokens
-                    emp_ratio_str = f"{emp_ratio:.2f}$\\times$"
-                else:
-                    emp_ratio_str = _TBD
-
-            row_parts.extend([tok_str, score_str, emp_ratio_str])
-
-        lines.append("        " + " & ".join(row_parts) + r" \\")
-
-    lines.append(r"        \bottomrule")
-    lines.append(r"    \end{tabular}")
-    lines.append(r"\end{table}")
-    return "\n".join(lines)
-
-
 # =============================================================================
 # pgfplots/TikZ figure generation
 # =============================================================================
-
-
-def _escape_latex(s: str) -> str:
-    """Escape special LaTeX characters in text strings."""
-    return s.replace("_", r"\_").replace("&", r"\&").replace("%", r"\%").replace("#", r"\#")
-
-
-# Import LaTeX plot styles from the metrics analysis script
-try:
-    from ladder_metrics_analysis import LATEX_PLOT_STYLES, _get_latex_style
-except ImportError:
-    # Fallback styles if ladder_metrics_analysis is not importable (AI2 color scheme)
-    LATEX_PLOT_STYLES: Dict[str, Dict[str, str]] = {  # type: ignore[no-redef]
-        "olmo3": {
-            "color_def": r"\definecolor{clrTransformer}{HTML}{012E59}",
-            "color_name": "clrTransformer",
-            "mark": "square*",
-            "mark_options": "fill=clrTransformer",
-            "line_style": "",
-        },
-        "olmo3-1": {
-            "color_def": r"\definecolor{clrTransformer}{HTML}{012E59}",
-            "color_name": "clrTransformer",
-            "mark": "square*",
-            "mark_options": "fill=clrTransformer",
-            "line_style": "",
-        },
-        "olmo3-2": {
-            "color_def": r"\definecolor{clrTransformerV2}{HTML}{265ED4}",
-            "color_name": "clrTransformerV2",
-            "mark": "square*",
-            "mark_options": "fill=clrTransformerV2",
-            "line_style": "",
-        },
-        "olmo3-3": {
-            "color_def": r"\definecolor{clrTransformerV3}{HTML}{00D5FF}",
-            "color_name": "clrTransformerV3",
-            "mark": "square*",
-            "mark_options": "fill=clrTransformerV3",
-            "line_style": "",
-        },
-        "pure-gdn": {
-            "color_def": r"\definecolor{clrGDN}{HTML}{FF9100}",
-            "color_name": "clrGDN",
-            "mark": "triangle*",
-            "mark_options": "fill=clrGDN",
-            "line_style": "",
-        },
-        "pure-mamba": {
-            "color_def": r"\definecolor{clrMamba}{HTML}{B86800}",
-            "color_name": "clrMamba",
-            "mark": "diamond*",
-            "mark_options": "fill=clrMamba",
-            "line_style": "",
-        },
-        "hybrid-gdn": {
-            "color_def": r"\definecolor{clrHybGDN}{HTML}{F0529C}",
-            "color_name": "clrHybGDN",
-            "mark": "*",
-            "mark_options": "fill=clrHybGDN",
-            "line_style": "",
-        },
-        "hybrid-gdn-half": {
-            "color_def": r"\definecolor{clrHybGDNHalf}{HTML}{C4387E}",
-            "color_name": "clrHybGDNHalf",
-            "mark": "square",
-            "mark_options": "draw=clrHybGDNHalf, thick",
-            "line_style": "dashed",
-        },
-        "hybrid-gdn-eight": {
-            "color_def": r"\definecolor{clrHybGDNEight}{HTML}{A02060}",
-            "color_name": "clrHybGDNEight",
-            "mark": "triangle",
-            "mark_options": "draw=clrHybGDNEight, thick",
-            "line_style": "densely dashed",
-        },
-        "hybrid-gdn-middle": {
-            "color_def": r"\definecolor{clrHybGDNMid}{HTML}{009BB8}",
-            "color_name": "clrHybGDNMid",
-            "mark": "pentagon*",
-            "mark_options": "fill=clrHybGDNMid",
-            "line_style": "densely dotted",
-        },
-        "hybrid-mamba": {
-            "color_def": r"\definecolor{clrHybMamba}{HTML}{265ED4}",
-            "color_name": "clrHybMamba",
-            "mark": "diamond",
-            "mark_options": "draw=clrHybMamba, thick",
-            "line_style": "densely dotted",
-        },
-        "hybrid-gdn-middle-no-final": {
-            "color_def": r"\definecolor{clrHybGDNMidNoFinal}{HTML}{007A94}",
-            "color_name": "clrHybGDNMidNoFinal",
-            "mark": "pentagon",
-            "mark_options": "draw=clrHybGDNMidNoFinal, thick",
-            "line_style": "densely dotted",
-        },
-    }
-
-    _FALLBACK_COLORS = [
-        ("clrFallbackA", "012E59"),
-        ("clrFallbackB", "FF9100"),
-        ("clrFallbackC", "F0529C"),
-        ("clrFallbackD", "265ED4"),
-    ]
-    _FALLBACK_MARKS = ["*", "square*", "triangle*", "diamond*"]
-
-    def _get_latex_style(ladder_name: str, idx: int) -> Dict[str, str]:  # type: ignore[misc]
-        key = ladder_name.lower()
-        if key in LATEX_PLOT_STYLES:
-            return LATEX_PLOT_STYLES[key]
-        fb_color_name, fb_hex = _FALLBACK_COLORS[idx % len(_FALLBACK_COLORS)]
-        fb_mark = _FALLBACK_MARKS[idx % len(_FALLBACK_MARKS)]
-        return {
-            "color_def": f"\\definecolor{{{fb_color_name}}}{{HTML}}{{{fb_hex}}}",
-            "color_name": fb_color_name,
-            "mark": fb_mark,
-            "mark_options": f"fill={fb_color_name}" if fb_mark.endswith("*") else "",
-            "line_style": "dashed" if idx % 2 else "",
-        }
 
 
 def _emit_color_defs(ladder_names: List[str]) -> str:
@@ -2069,7 +1763,7 @@ def _emit_color_defs(ladder_names: List[str]) -> str:
     seen = set()
     lines = []
     for idx, name in enumerate(ladder_names):
-        style = _get_latex_style(name, idx)
+        style = get_latex_style(name, idx)
         if style["color_name"] not in seen:
             lines.append(style["color_def"])
             seen.add(style["color_name"])
@@ -2167,8 +1861,8 @@ def _emit_arch_legend(ladder_names: List[str]) -> str:
     """Build a manual tikz-based architecture color legend line."""
     parts = []
     for idx, name in enumerate(ladder_names):
-        style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
+        style = get_latex_style(name, idx)
+        display = escape_latex(get_display_name(name))
         line_style = style.get("line_style", "")
         line_opt = f", {line_style}" if line_style else ""
         part = (
@@ -2246,7 +1940,7 @@ def generate_paper_figure_1(
 
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
-        style = _get_latex_style(name, idx)
+        style = get_latex_style(name, idx)
 
         F_peta = F / 1e15
         unique_N = np.unique(N)
@@ -2298,7 +1992,7 @@ def generate_paper_figure_1(
 
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
-        style = _get_latex_style(name, idx)
+        style = get_latex_style(name, idx)
 
         # Extract D/N ratio per data point
         dn_arr = np.array([int(s.split("@")[1]) for s in sizes])
@@ -2360,7 +2054,7 @@ def generate_paper_figure_1(
 
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
-        style = _get_latex_style(name, idx)
+        style = get_latex_style(name, idx)
 
         unique_N = np.unique(N)
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
@@ -2431,7 +2125,7 @@ def generate_paper_figure_1(
             op = 0.25 + 0.65 * i / max(n_ms - 1, 1)
             ms_opacity_parts.append(
                 f"\\tikz\\fill[black, opacity={op:.2f}] (0,0) circle (2pt);"
-                f"\\,{_escape_latex(sz)}"
+                f"\\,{escape_latex(sz)}"
             )
         ms_line = "\\enspace".join(ms_opacity_parts)
 
@@ -2452,7 +2146,7 @@ def generate_paper_figure_1(
         fit = fits[name][0]
         p = fit.fitted_params
         r2 = fit.r_squared
-        display = _escape_latex(get_display_name(name))
+        display = escape_latex(get_display_name(name))
         r2_str = f"{r2:.3f}" if r2 is not None else "?"
         caption_parts.append(
             f"{display}: $\\alpha={p.alpha:.3f}$, $\\beta={p.beta:.3f}$, $R^2={r2_str}$. "
@@ -2555,8 +2249,8 @@ def generate_paper_figure_2(
     for idx, name in enumerate(ladder_names):
         fit = fits[name][0]
         bootstrap = fits[name][6]
-        style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
+        style = get_latex_style(name, idx)
+        display = escape_latex(get_display_name(name))
 
         d_needed = np.array([solve_d_for_target_loss(fit, target_loss, n) for n in N_range])
         valid = np.isfinite(d_needed) & (d_needed > 0) & (d_needed <= 1e19)
@@ -2588,7 +2282,7 @@ def generate_paper_figure_2(
         N_b, d_b, valid_b = all_d_curves[names[1]]
         both_valid = valid_a & valid_b
         if np.any(both_valid):
-            style_a = _get_latex_style(names[0], 0)
+            style_a = get_latex_style(names[0], 0)
             # Fill between: forward path of curve a, backward path of curve b
             N_fwd = N_a[both_valid]
             d_upper = np.maximum(d_a[both_valid], d_b[both_valid])
@@ -2681,11 +2375,11 @@ def generate_paper_figure_3(
         lines.append(r"    xlabel={FLOPs (PetaFLOPs)},")
         if domain_idx == 0:
             lines.append(r"    ylabel={BPB},")
-        lines.append(f"    title={{{_escape_latex(domain_clean)}}},")
+        lines.append(f"    title={{{escape_latex(domain_clean)}}},")
         lines.append(r"]")
 
         for ladder_idx, name in enumerate(ladder_names):
-            style = _get_latex_style(name, ladder_idx)
+            style = get_latex_style(name, ladder_idx)
 
             if domain not in domain_fits.get(name, {}):
                 continue
@@ -2774,7 +2468,7 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
 
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
-        style = _get_latex_style(name, idx)
+        style = get_latex_style(name, idx)
 
         predicted = fit.predict_loss(N, D)
         residuals_pct = (L - predicted) / L * 100
@@ -2799,7 +2493,7 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
 
     for idx, name in enumerate(ladder_names):
         fit, N, D, L, F, sizes, bootstrap = fits[name]
-        style = _get_latex_style(name, idx)
+        style = get_latex_style(name, idx)
 
         predicted = fit.predict_loss(N, D)
         abs_rel_err = np.abs((L - predicted) / L) * 100
@@ -2846,7 +2540,7 @@ def generate_paper_figure_4(fits: Dict[str, Tuple]) -> str:
     r2_parts = []
     for name in ladder_names:
         r2 = fits[name][0].r_squared
-        display = _escape_latex(get_display_name(name))
+        display = escape_latex(get_display_name(name))
         r2_str = f"{r2:.4f}" if r2 is not None else "?"
         r2_parts.append(f"{display} $R^2={r2_str}$")
     lines.append(
@@ -2929,7 +2623,7 @@ def generate_savings_factor_figure(
     lines.append(r"]")
 
     # Horizontal baseline at y=1
-    ref_display = _escape_latex(get_display_name(reference_name))
+    ref_display = escape_latex(get_display_name(reference_name))
     lines.append(
         r"\draw[dashed, gray, thick] (axis cs:\pgfkeysvalueof{/pgfplots/xmin},1) -- "
         r"(axis cs:\pgfkeysvalueof{/pgfplots/xmax},1);"
@@ -2945,8 +2639,8 @@ def generate_savings_factor_figure(
     for name in other_names:
         arch_fit = fits[name][0]
         arch_bootstrap = fits[name][6]
-        style = _get_latex_style(name, ladder_names.index(name))
-        display = _escape_latex(get_display_name(name))
+        style = get_latex_style(name, ladder_names.index(name))
+        display = escape_latex(get_display_name(name))
 
         savings = []
         valid_losses = []
@@ -3074,8 +2768,8 @@ def generate_combined_savings_figure(
     for idx, name in enumerate(ladder_names):
         fit = fits[name][0]
         bootstrap = fits[name][6]
-        style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
+        style = get_latex_style(name, idx)
+        display = escape_latex(get_display_name(name))
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
 
         d_needed = np.array([solve_d_for_target_loss(fit, target_loss, n) for n in N_range])
@@ -3107,7 +2801,7 @@ def generate_combined_savings_figure(
         N_b, d_b, valid_b = all_d_curves[names_list[1]]
         both_valid = valid_a & valid_b
         if np.any(both_valid):
-            style_a = _get_latex_style(names_list[0], 0)
+            style_a = get_latex_style(names_list[0], 0)
             N_fwd = N_a[both_valid]
             d_upper = np.maximum(d_a[both_valid], d_b[both_valid])
             d_lower = np.minimum(d_a[both_valid], d_b[both_valid])
@@ -3133,9 +2827,10 @@ def generate_combined_savings_figure(
     lines.append("% Panel (b): Projected Savings Factor")
     lines.append(r"\nextgroupplot[")
     lines.append(r"    xlabel={Model Size (Parameters)},")
-    ref_display = _escape_latex(get_display_name(reference_name))
+    ref_display = escape_latex(get_display_name(reference_name))
     lines.append(r"    ylabel={Savings Factor ($D_\mathrm{ref}/D_\mathrm{arch}$)},")
     lines.append(r"    title={(b) Projected Savings Factor},")
+    lines.append(r"    xmin=2e8,")
     lines.append(r"]")
 
     # Horizontal baseline at y=1
@@ -3153,17 +2848,20 @@ def generate_combined_savings_figure(
         arch_fit = fits[name][0]
         arch_bootstrap = fits[name][6]
         idx = ladder_names.index(name)
-        style = _get_latex_style(name, idx)
-        display = _escape_latex(get_display_name(name))
+        style = get_latex_style(name, idx)
+        display = escape_latex(get_display_name(name))
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
 
         # Compute savings factor at each N
         # Only include points where both D values are practical (<=1e19),
         # matching panel (a) filtering.  At small N the required D diverges
         # and the ratio becomes numerically meaningless.
+        # Start at 2e8 params since savings factors are unreliable below that.
         savings = []
         valid_N = []
         for n in N_range:
+            if n < 2e8:
+                continue
             d_ref = solve_d_for_target_loss(ref_fit, target_loss, n)
             d_arch = solve_d_for_target_loss(arch_fit, target_loss, n)
             if (
@@ -3175,10 +2873,10 @@ def generate_combined_savings_figure(
                 savings.append(d_ref / d_arch)
                 valid_N.append(n)
 
-        # CI band on savings ratio
+        # CI band on savings ratio (filtered to N >= 2e8)
         if plot_ci and ref_bootstrap is not None and arch_bootstrap is not None:
             N_ci, ci_lo, ci_hi = _compute_savings_ci_envelope(
-                ref_bootstrap, arch_bootstrap, target_loss, N_range
+                ref_bootstrap, arch_bootstrap, target_loss, N_range[N_range >= 2e8]
             )
             if len(N_ci) > 0:
                 lines.append(_emit_ci_band(N_ci, ci_lo, ci_hi, style["color_name"]))
@@ -4214,7 +3912,14 @@ def predict_loss_for_target(
             print(f"  95% CI: [{ci_low:.4f}, {ci_high:.4f}]")
 
 
-def compare_specs_for_ladder(ladder_name: str, ladder_dir: Path) -> None:
+def compare_specs_for_ladder(
+    ladder_name: str,
+    ladder_dir: Path,
+    parallel_flops: bool = True,
+    chunk_size: int = 256,
+    chinchilla_flops: bool = True,
+    seq_len: Optional[int] = None,
+) -> None:
     """
     Print a diagnostic comparison of computed vs. logged parameter counts and FLOPs.
 
@@ -4255,7 +3960,14 @@ def compare_specs_for_ladder(ladder_name: str, ladder_dir: Path) -> None:
             continue
         logged_params = float(logged_params)
 
-        computed = compute_specs_for_size(ladder_name, size)
+        computed = _compute_specs(
+            ladder_name,
+            size,
+            parallel_flops=parallel_flops,
+            chunk_size=chunk_size,
+            chinchilla_flops=chinchilla_flops,
+            seq_len=seq_len,
+        )
 
         # Param comparison
         if computed is not None:
@@ -4318,7 +4030,8 @@ def main():
         action="append",
         required=True,
         metavar="NAME:PATH",
-        help="Ladder to fit. Format: name:path (can specify multiple times)",
+        help="Ladder to fit. Format: name:path (can specify multiple times). "
+        "Pool multiple runs with comma-separated paths: name:path1,path2,path3",
     )
     parser.add_argument(
         "--loss-column",
@@ -4470,6 +4183,35 @@ def main():
         help="Target losses for efficiency table (default: auto-determined from data)",
     )
     parser.add_argument(
+        "--parallel-flops",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use chunkwise parallel training FLOP estimates for GDN/Mamba2 layers "
+        "instead of recurrent inference FLOPs. This accounts for intra-chunk "
+        "attention and inter-chunk state propagation overhead.",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=256,
+        help="Chunk size for parallel FLOP estimation (default: 256). "
+        "Only used when --parallel-flops is set.",
+    )
+    parser.add_argument(
+        "--chinchilla-flops",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use Chinchilla FLOP counting convention: include embedding lookup and "
+        "softmax FLOPs in the per-token FLOP estimate (default: True). "
+        "Use --no-chinchilla-flops to disable.",
+    )
+    parser.add_argument(
+        "--seq-len",
+        type=int,
+        default=8192,
+        help="Sequence length for FLOP calculation (default: 8192).",
+    )
+    parser.add_argument(
         "--fix-params",
         nargs="*",
         default=None,
@@ -4477,18 +4219,37 @@ def main():
         help="Fix specific scaling law parameters during fitting. "
         "Format: E=1.5 alpha=0.3. Valid params: E, A, alpha, B, beta.",
     )
+    parser.add_argument(
+        "--fit-flops",
+        action="store_true",
+        help="Also fit a FLOP-based scaling law L(C, D) = E + A/C^α + B/D^β "
+        "where C = total training FLOPs. This uses the same fitting machinery "
+        "but replaces N (params) with C (FLOPs) as the first variable, which "
+        "provides a fairer comparison across architectures with different "
+        "parameter efficiencies (e.g. Pure GDN vs Transformer).",
+    )
+    parser.add_argument(
+        "--average-val-loss",
+        action="store_true",
+        help="Use the average of all available validation loss columns "
+        "(eval/lm/*-validation/CE loss) instead of a single loss column. "
+        "Gives a more stable, multi-domain loss signal for fitting.",
+    )
 
     args = parser.parse_args()
 
-    # Parse ladder arguments
-    ladders = {}
+    # Parse ladder arguments.  Each --ladder value is NAME:PATH or just PATH.
+    # Multiple directories for the same ladder (independent runs to pool) can
+    # be given as comma-separated paths:  NAME:path1,path2,path3
+    ladders: Dict[str, List[Path]] = {}
     for spec in args.ladder:
         if ":" in spec:
-            name, path = spec.split(":", 1)
+            name, paths_str = spec.split(":", 1)
         else:
-            path = spec
-            name = Path(path).name
-        ladders[name] = Path(path).expanduser()
+            paths_str = spec
+            name = Path(paths_str.split(",")[0]).name
+        paths = [Path(p.strip()).expanduser() for p in paths_str.split(",")]
+        ladders[name] = paths
 
     # Parse fixed params
     fixed_params: Optional[Dict[str, float]] = None
@@ -4500,10 +4261,17 @@ def main():
             key, val = spec.split("=", 1)
             fixed_params[key] = float(val)
 
-    # Compare computed vs. logged specs if requested
+    # Compare computed vs. logged specs if requested (uses first dir only — specs are identical across runs)
     if args.compare_specs:
-        for name, ladder_dir in ladders.items():
-            compare_specs_for_ladder(name, ladder_dir)
+        for name, ladder_dirs in ladders.items():
+            compare_specs_for_ladder(
+                name,
+                ladder_dirs[0],
+                parallel_flops=args.parallel_flops,
+                chunk_size=args.chunk_size,
+                chinchilla_flops=args.chinchilla_flops,
+                seq_len=args.seq_len,
+            )
 
     # Fit each ladder
     fits: Dict[str, Tuple] = {}
@@ -4525,6 +4293,11 @@ def main():
                 num_slices=args.num_slices,
                 post_decay_only=not args.include_pre_decay,
                 fixed_params=fixed_params,
+                parallel_flops=args.parallel_flops,
+                chunk_size=args.chunk_size,
+                chinchilla_flops=args.chinchilla_flops,
+                seq_len=args.seq_len,
+                average_val_loss=args.average_val_loss,
             )
             fit, N, D, L, F, sizes, bootstrap = result
             fits[name] = (fit, N, D, L, F, sizes, bootstrap)
@@ -4561,6 +4334,78 @@ def main():
 
     # Print comparison if multiple ladders
     print_comparison(fits)
+
+    # ---- FLOP-based fitting: L(N_eff, D) where N_eff = flops_per_token / 6 ----
+    flop_fits: Dict[str, Tuple] = {}
+    if args.fit_flops:
+        print(f"\n{'='*60}")
+        print("FLOP-BASED FITTING: L(N_eff, D) where N_eff = FLOPs_per_token / 6")
+        print("  N_eff normalises away architecture differences so that models")
+        print("  with the same FLOP budget share the same effective parameter count.")
+        print(f"{'='*60}")
+
+        for name, (fit_nd, N, D, L, F, sizes, bootstrap) in fits.items():
+            display = get_display_name(name)
+
+            # N_eff = total_training_flops / (6 * D)  =  flops_per_token * 3 * D / (6 * D)
+            #       = flops_per_token / 2
+            # But F = 3 * flops_per_token * D, so N_eff = F / (6 * D)
+            N_eff = F / (6.0 * D)
+            print(
+                f"\n  {display}: N_eff range = [{N_eff.min()/1e6:.1f}M, {N_eff.max()/1e6:.1f}M] "
+                f"(was N = [{N.min()/1e6:.1f}M, {N.max()/1e6:.1f}M])"
+            )
+
+            # Compute weights
+            weights = None
+            if not args.no_weight:
+                weights = 6 * N_eff * D
+
+            try:
+                if args.bootstrap > 0:
+                    boot_fit = ChinchillaParametricBootstrappedFit.fit(
+                        N_eff,
+                        D,
+                        L,
+                        num_bootstraps=args.bootstrap,
+                        weights=weights,
+                        overestimate_penalty=args.overestimate_penalty,
+                        num_slices=args.num_slices,
+                        progress_bar=not args.quiet,
+                        fixed_params=fixed_params,
+                    )
+                    flop_fit = boot_fit.point_estimate
+                    flop_bootstrap = boot_fit
+                else:
+                    flop_fit = ChinchillaParametricFit.fit(
+                        N_eff,
+                        D,
+                        L,
+                        weights=weights,
+                        overestimate_penalty=args.overestimate_penalty,
+                        num_slices=args.num_slices,
+                        fixed_params=fixed_params,
+                    )
+                    flop_bootstrap = None
+
+                flop_fits[name] = (flop_fit, N_eff, D, L, F, sizes, flop_bootstrap)
+
+                p = flop_fit.fitted_params
+                r2 = flop_fit.r_squared
+                print(
+                    f"  {display}: E={p.E:.4f}, A={p.A:.4e}, α={p.alpha:.4f}, "
+                    f"B={p.B:.4e}, β={p.beta:.4f}" + (f", R²={r2:.6f}" if r2 is not None else "")
+                )
+            except Exception as e:
+                print(f"  Error fitting {display}: {e}")
+                import traceback
+
+                traceback.print_exc()
+
+        if flop_fits:
+            print_comparison(
+                flop_fits, header="FLOP-BASED FIT COMPARISON (L(N_eff, D), N_eff = FLOPs/token / 6)"
+            )
 
     # Predict for target if specified
     if args.predict_n is not None and args.predict_d is not None:
@@ -4621,6 +4466,10 @@ def main():
                     verbose=not args.quiet,
                     post_decay_only=not args.include_pre_decay,
                     simple_flops=args.simple_flops,
+                    parallel_flops=args.parallel_flops,
+                    chunk_size=args.chunk_size,
+                    chinchilla_flops=args.chinchilla_flops,
+                    seq_len=args.seq_len,
                 )
                 if domain_results:
                     domain_fits_all[name] = domain_results
@@ -4712,13 +4561,6 @@ def main():
             f.write(table1)
         print(f"\nSaved Table 1 to: {table1_path}")
 
-        # # Table 2: Model Configurations
-        # table2 = generate_model_config_latex_table(list(ladders.keys()))
-        # table2_path = tables_dir / "scaling-ladder-configs.tex"
-        # with open(table2_path, "w") as f:
-        #     f.write(table2)
-        # print(f"Saved Table 2 to: {table2_path}")
-
         # Table 3: Efficiency Gains
         table3 = generate_efficiency_latex_table(fits, target_losses=args.target_losses)
         table3_path = tables_dir / "scaling-efficiency-gains.tex"
@@ -4745,20 +4587,6 @@ def main():
         with open(table5_path, "w") as f:
             f.write(table5)
         print(f"Saved Table 5 to: {table5_path}")
-
-        # # Table 6: Prediction Validation
-        # table6 = generate_prediction_validation_table(fits)
-        # table6_path = tables_dir / "prediction-validation.tex"
-        # with open(table6_path, "w") as f:
-        #     f.write(table6)
-        # print(f"Saved Table 6 to: {table6_path}")
-
-        # # Table 7: Data Efficiency Validation
-        # table7 = generate_data_efficiency_validation_table(fits)
-        # table7_path = tables_dir / "data-efficiency-validation.tex"
-        # with open(table7_path, "w") as f:
-        #     f.write(table7)
-        # print(f"Saved Table 7 to: {table7_path}")
 
     # Save results
     if args.output:

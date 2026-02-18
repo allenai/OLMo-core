@@ -35,6 +35,13 @@ from olmo_core.model_ladder.analysis.metrics import (
 from olmo_core.model_ladder.analysis.model_specs import (
     OLMO3_SPECS_BY_NAME,
     compute_specs_for_size,
+    compute_specs_for_size_parallel,
+    get_display_name,
+    get_param_count,
+)
+from olmo_core.model_ladder.analysis.plotting import (
+    escape_latex,
+    get_latex_style,
 )
 
 # Optional plotting imports
@@ -61,144 +68,12 @@ except ImportError:
     PLOTTING_AVAILABLE = False
 
 
-# Corrected non-embedding parameter counts for each model type and size.
-# These override the values from pickle files which may include embedding params.
-# Imported from fit_chinchilla_scaling_laws.py conventions.
-# Human-readable display names for each ladder.
-# Used in plots, tables, and printed output.
-DISPLAY_NAMES: Dict[str, str] = {
-    "olmo3": "Olmo 3",
-    "olmo3-1": "Olmo 3 v1",
-    "olmo3-2": "Olmo 3 v2",
-    "olmo3-3": "Olmo 3 v3",
-    "pure-gdn": "Pure GDN",
-    "hybrid-gdn": "Hybrid GDN (1/4)",
-    "hybrid-gdn-half": "Hybrid GDN (1/2)",
-    "hybrid-gdn-eight": "Hybrid GDN (1/8)",
-    "hybrid-gdn-middle": "Hybrid GDN (Middle)",
-    "pure-mamba": "Pure Mamba",
-    "hybrid-mamba": "Hybrid Mamba",
-}
-
-
-def get_display_name(ladder_name: str) -> str:
-    """Return a human-readable display name for a ladder, falling back to the raw name."""
-    return DISPLAY_NAMES.get(ladder_name.lower(), ladder_name)
-
-
 def _starred_display_name(ladder_name: str, star_ladder: Optional[str] = None) -> str:
     """Return display name with a star appended if this is the selected architecture."""
     display = get_display_name(ladder_name)
     if star_ladder and ladder_name.lower() == star_ladder.lower():
         display += " \u2605"  # ★
     return display
-
-
-CORRECTED_PARAM_COUNTS: Dict[str, Dict[str, int]] = {
-    "olmo3-1": {
-        "60M": 57_422_208,
-        "100M": 101_736_960,
-        "190M": 190_354_176,
-        "370M": 371_262_464,
-        "600M": 547_964_160,
-        "760M": 758_220_288,
-    },
-    "olmo3-2": {
-        "60M": 57_422_208,
-        "100M": 101_736_960,
-        "190M": 190_354_176,
-        "370M": 371_262_464,
-        "600M": 547_964_160,
-        "760M": 758_220_288,
-    },
-    "olmo3-3": {
-        "60M": 57_422_208,
-        "100M": 101_736_960,
-        "190M": 190_354_176,
-        "370M": 371_262_464,
-        "600M": 547_964_160,
-        "760M": 758_220_288,
-    },
-    "pure-gdn": {
-        "60M": 78_045_696,
-        "100M": 139_771_584,
-        "190M": 275_789_856,
-        "370M": 573_609_472,
-        "600M": 779_794_176,
-    },
-    "hybrid-gdn": {
-        "60M": 72_889_824,
-        "100M": 130_262_928,
-        "190M": 254_430_936,
-        "370M": 523_022_720,
-        "600M": 721_836_672,
-        "760M": 947_913_600,
-        "1B": 1_481_856_384,
-    },
-    "hybrid-gdn-middle": {
-        "60M": 70_311_888,
-        "100M": 127_093_376,
-        "190M": 247_311_296,
-        "370M": 510_376_032,
-        "600M": 707_347_296,
-    },
-    "hybrid-gdn-half": {
-        "60M": 67_733_952,
-        "100M": 120_754_272,
-        "190M": 233_072_016,
-        "370M": 472_435_968,
-        "600M": 663_879_168,
-    },
-    "hybrid-gdn-eight": {
-        "60M": 75_467_760,
-        "100M": 133_432_480,
-        "190M": 261_550_576,
-        "370M": 548_316_096,
-        "600M": 750_815_424,
-        "760M": 979_529_152,
-    },
-    "pure-mamba": {
-        "60M": 60_642_944,
-        "100M": 109_746_048,
-        "190M": 207_115_584,
-    },
-    "hybrid-mamba": {
-        "60M": 59_837_760,
-        "100M": 107_743_776,
-        "190M": 202_925_232,
-    },
-}
-
-
-def get_corrected_param_count(ladder_name: str, size: str) -> Optional[int]:
-    """
-    Get the non-embedding parameter count for a given ladder and size.
-
-    First tries to compute from architecture specs via :func:`compute_specs_for_size`.
-    Falls back to ``CORRECTED_PARAM_COUNTS`` for architectures that cannot be computed
-    (e.g., Mamba variants).
-    """
-    # Try computing from architecture specs first
-    computed = compute_specs_for_size(ladder_name, size)
-    if computed is not None:
-        return computed["non_embed_params"]
-
-    # Fallback to legacy hardcoded values
-    ladder_lower = ladder_name.lower()
-
-    # Try exact match first
-    if ladder_lower in CORRECTED_PARAM_COUNTS:
-        size_map = CORRECTED_PARAM_COUNTS[ladder_lower]
-        if size in size_map:
-            return size_map[size]
-
-    # Try substring matches
-    for pattern, size_map in CORRECTED_PARAM_COUNTS.items():
-        if pattern in ladder_lower:
-            if size in size_map:
-                return size_map[size]
-
-    return None
 
 
 # BASE_EASY_SUITE is imported from olmo_core.model_ladder.analysis.metrics
@@ -529,6 +404,11 @@ def analyze_ladder(
     ladder_name: str = "",
     use_all_checkpoints: bool = False,
     post_decay_only: bool = True,
+    parallel_flops: bool = True,
+    chunk_size: int = 256,
+    chinchilla_flops: bool = True,
+    seq_len: Optional[int] = None,
+    simple_flops: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Analyze all metrics files in a ladder directory.
@@ -540,6 +420,11 @@ def analyze_ladder(
             (keyed as "size@D/N_ratio"). If False, only use the final checkpoint.
         post_decay_only: If True (default), only include post-decay checkpoints
             (D/N = 10, 20, 40, 80, 160, ...). If False, also include pre-decay.
+        parallel_flops: Use chunkwise parallel FLOP estimates for GDN/Mamba2.
+        chunk_size: Chunk size for parallel FLOP estimation.
+        chinchilla_flops: Include embedding/softmax FLOPs (Chinchilla convention).
+        seq_len: Sequence length override for FLOP calculation.
+        simple_flops: Use simple 6*N*D approximation for FLOPs.
 
     Returns:
         Dict mapping size -> {
@@ -571,7 +456,7 @@ def analyze_ladder(
 
         # Get corrected parameter count
         raw_num_params = df["num_params"].iloc[0] if "num_params" in df.columns else 0
-        corrected_params = get_corrected_param_count(ladder_name, size)
+        corrected_params = get_param_count(ladder_name, size)
         num_params = corrected_params if corrected_params is not None else raw_num_params
         if corrected_params is not None and raw_num_params:
             print(
@@ -580,8 +465,20 @@ def analyze_ladder(
             )
 
         # Compute FLOPs per token from architecture specs
-        computed_specs = compute_specs_for_size(ladder_name, size)
-        flops_per_token = computed_specs["total_flops_per_token"] if computed_specs else None
+        if simple_flops:
+            computed_specs = None
+            flops_per_token = None
+        elif parallel_flops:
+            computed_specs = compute_specs_for_size_parallel(
+                ladder_name, size, seq_len=seq_len, chunk_size=chunk_size,
+                chinchilla_flops=chinchilla_flops,
+            )
+            flops_per_token = computed_specs["total_flops_per_token"] if computed_specs else None
+        else:
+            computed_specs = compute_specs_for_size(
+                ladder_name, size, seq_len=seq_len, chinchilla_flops=chinchilla_flops,
+            )
+            flops_per_token = computed_specs["total_flops_per_token"] if computed_specs else None
 
         # Canonical D/N values from WSDS Chinchilla schedule with tokens_per_param=20.
         # Post-decay: end of cooldown at each period (0.5xC, 1xC, 2xC, ...).
@@ -639,9 +536,12 @@ def analyze_ladder(
                         lm_metrics[task]["PPL"] = float(row[ppl_col])
 
                 # Training FLOPs = 3 * tokens * fwd_flops_per_token (fwd + bwd)
-                train_flops = (
-                    3.0 * float(tokens) * flops_per_token if flops_per_token is not None else None
-                )
+                if simple_flops:
+                    train_flops = 6.0 * float(num_params) * float(tokens)
+                elif flops_per_token is not None:
+                    train_flops = 3.0 * float(tokens) * flops_per_token
+                else:
+                    train_flops = None
 
                 results[checkpoint_key] = {
                     "base_easy": cluster_results["base_easy"],
@@ -682,9 +582,12 @@ def analyze_ladder(
             }
 
             # Training FLOPs = 3 * tokens * fwd_flops_per_token (fwd + bwd)
-            train_flops_final = (
-                3.0 * float(final_tokens) * flops_per_token if flops_per_token is not None else None
-            )
+            if simple_flops:
+                train_flops_final = 6.0 * float(num_params) * float(final_tokens)
+            elif flops_per_token is not None:
+                train_flops_final = 3.0 * float(final_tokens) * flops_per_token
+            else:
+                train_flops_final = None
 
             results[size] = {
                 "base_easy": cluster_results["base_easy"],
@@ -2595,15 +2498,12 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
     all_sizes: set = set()
     for name in ladder_names:
         for size in size_order:
-            if get_corrected_param_count(name, size) is not None:
+            if get_param_count(name, size) is not None:
                 all_sizes.add(size)
     sizes = [s for s in size_order if s in all_sizes]
 
     if not sizes or not ladder_names:
         return "% No model config data available"
-
-    def escape_latex(s: str) -> str:
-        return s.replace("_", r"\_").replace("%", r"\%").replace("&", r"\&")
 
     # --- Group ladders by architecture family ---
     # Each group: (group_display_name, [(ladder_name, short_variant_label), ...])
@@ -2709,7 +2609,7 @@ def generate_model_config_latex_table(ladder_names: List[str]) -> str:
 
         for _, members in groups:
             for name, _ in members:
-                params = get_corrected_param_count(name, size)
+                params = get_param_count(name, size)
                 if params is not None:
                     row_parts.append(f"{round(params / 1e6)}M")
                 else:
@@ -2737,9 +2637,6 @@ def generate_latex_table(
         return ""
 
     df = _sort_by_size(df.copy(), group_by_size=group_by_size)
-
-    def escape_latex(s: str) -> str:
-        return s.replace("_", r"\_").replace("%", r"\%").replace("&", r"\&")
 
     n_metrics = len(metric_cols)
     col_spec = "ll" + "r" * n_metrics
@@ -2970,13 +2867,14 @@ def generate_ablation_latex_table(
     sizes: Optional[List[str]] = None,
     star_ladder: Optional[str] = None,
     metric_clusters: Optional[List[str]] = None,
-) -> str:
+) -> Tuple[str, str]:
     """
     Generate publication-ready ablation tables comparing architectures across scales.
 
-    Produces two tables:
-      - **Table A (averages):** Architecture × size, one average BPB column per size.
-      - **Table B (per-domain):** Architecture × size, with Math/Code/QA sub-columns per size.
+    Produces three table groups:
+      - **Table A (averages) + Table C (configs):** returned as the first element.
+      - **Table B (per-domain detail):** split into two tables by size (first half / second half),
+        returned as the second element.
 
     Args:
         ladder_results: {ladder_name: {size_key: {base_easy/base_main/...}}}
@@ -2984,6 +2882,9 @@ def generate_ablation_latex_table(
             If None, auto-detects from data.
         star_ladder: Ladder name to mark with a star (e.g. "hybrid-gdn").
         metric_clusters: Which Base Easy clusters to show (default: Math, Code, QA).
+
+    Returns:
+        (avg_and_configs_tex, detail_tex) — two strings of LaTeX source.
     """
     if metric_clusters is None:
         metric_clusters = ["Math_BPB", "Code_BPB", "QA_BPB"]
@@ -3207,68 +3108,84 @@ def generate_ablation_latex_table(
     lines_a.append(r"\end{table*}")
 
     # =========================================================================
-    # Table B: Per-domain breakdown (Math, Code, QA sub-columns per size)
+    # Table B: Per-domain breakdown, split into two tables by size
     # =========================================================================
-    lines_b: List[str] = []
-    lines_b.append(r"\begin{table*}[t]")
-    lines_b.append(r"\centering")
-    lines_b.append(r"\caption{")
-    lines_b.append(r"    \textbf{Architecture ablation results --- per-domain breakdown.}")
-    lines_b.append(f"    Per-domain {suite_label} BPB for pure and hybrid architectures.")
-    lines_b.append(r"    \textbf{Bold} indicates best; \underline{underline} second best.")
-    lines_b.append(r"    $\bigstar$ marks our selected architecture.")
-    lines_b.append(
-        r"    Note that per-size comparisons should be interpreted with care, "
-        r"as architectures at the same nominal scale differ in actual parameter count "
-        r"(see \cref{tab:ablation-configs})."
-    )
-    lines_b.append(r"}")
-    lines_b.append(r"\label{tab:ablation-evals-detail}")
-    lines_b.append(r"\small")
-    lines_b.append(r"\resizebox{\textwidth}{!}{%")
+    mid = (n_sizes + 1) // 2  # first half gets the extra size if odd
+    size_halves = [show_sizes[:mid], show_sizes[mid:]]
+    half_labels = ["small scales", "large scales"]
+    half_suffixes = ["a", "b"]
 
-    # Column spec: l c | (n_metrics columns) per size
-    col_spec_b = "@{}l c" + (" " + "c" * n_metrics) * n_sizes + "@{}"
-    lines_b.append(r"\begin{tabular}{" + col_spec_b + "}")
-    lines_b.append(r"\toprule")
+    def _build_detail_table(
+        subset_sizes: List[str], label_suffix: str, caption_extra: str
+    ) -> List[str]:
+        n_sub_sizes = len(subset_sizes)
+        lines: List[str] = []
+        lines.append(r"\begin{table*}[t]")
+        lines.append(r"\centering")
+        lines.append(r"\caption{")
+        lines.append(r"    \textbf{Architecture ablation results --- per-domain breakdown (" + caption_extra + r").}")
+        lines.append(f"    Per-domain {suite_label} BPB for pure and hybrid architectures.")
+        lines.append(r"    \textbf{Bold} indicates best; \underline{underline} second best.")
+        lines.append(r"    $\bigstar$ marks our selected architecture.")
+        lines.append(
+            r"    Note that per-size comparisons should be interpreted with care, "
+            r"as architectures at the same nominal scale differ in actual parameter count "
+            r"(see \cref{tab:ablation-configs})."
+        )
+        lines.append(r"}")
+        lines.append(r"\label{tab:ablation-evals-detail-" + label_suffix + "}")
+        lines.append(r"\small")
+        lines.append(r"\resizebox{\textwidth}{!}{%")
 
-    # Header row 1: size names spanning metric sub-columns
-    h1_parts_b = ["", ""]
-    for sl in show_sizes:
-        h1_parts_b.append(r"\multicolumn{" + str(n_metrics) + r"}{c}{\textbf{" + sl + r"}}")
-    lines_b.append(" & ".join(h1_parts_b) + r" \\")
+        col_spec = "@{}l c" + (" " + "c" * n_metrics) * n_sub_sizes + "@{}"
+        lines.append(r"\begin{tabular}{" + col_spec + "}")
+        lines.append(r"\toprule")
 
-    # cmidrule for each size group
-    cmidrules_b = []
-    col_start = 3
-    for _ in show_sizes:
-        col_end = col_start + n_metrics - 1
-        cmidrules_b.append(f"\\cmidrule(lr){{{col_start}-{col_end}}}")
-        col_start = col_end + 1
-    lines_b.append(" ".join(cmidrules_b))
+        # Header row 1: size names spanning metric sub-columns
+        h1_parts = ["", ""]
+        for sl in subset_sizes:
+            h1_parts.append(r"\multicolumn{" + str(n_metrics) + r"}{c}{\textbf{" + sl + r"}}")
+        lines.append(" & ".join(h1_parts) + r" \\")
 
-    # Header row 2: metric names
-    h2_parts_b = [r"\textbf{Architecture}", r"\textbf{Attn \%}"]
-    for _ in show_sizes:
-        for cluster in metric_clusters:
-            h2_parts_b.append(cluster_short.get(cluster, _escape(cluster)))
-    lines_b.append(" & ".join(h2_parts_b) + r" \\")
-    lines_b.append(r"\midrule")
+        # cmidrule for each size group
+        cmidrules = []
+        col_start = 3
+        for _ in subset_sizes:
+            col_end = col_start + n_metrics - 1
+            cmidrules.append(f"\\cmidrule(lr){{{col_start}-{col_end}}}")
+            col_start = col_end + 1
+        lines.append(" ".join(cmidrules))
 
-    # Body
-    def _detail_row(arch_idx, _arch):
-        parts = []
-        for sl in show_sizes:
-            for mi in range(n_metrics):
-                parts.append(_fmt_val(cell_values[arch_idx].get(sl, {}).get(mi), arch_idx, sl, mi))
-        return parts
+        # Header row 2: metric names
+        h2_parts = [r"\textbf{Architecture}", r"\textbf{Attn \%}"]
+        for _ in subset_sizes:
+            for cluster in metric_clusters:
+                h2_parts.append(cluster_short.get(cluster, _escape(cluster)))
+        lines.append(" & ".join(h2_parts) + r" \\")
+        lines.append(r"\midrule")
 
-    lines_b.extend(_build_arch_rows_latex(2 + n_metrics * n_sizes, _detail_row))
+        # Body
+        def _detail_row_subset(arch_idx, _arch):
+            parts = []
+            for sl in subset_sizes:
+                for mi in range(n_metrics):
+                    parts.append(
+                        _fmt_val(cell_values[arch_idx].get(sl, {}).get(mi), arch_idx, sl, mi)
+                    )
+            return parts
 
-    lines_b.append(r"\bottomrule")
-    lines_b.append(r"\end{tabular}%")
-    lines_b.append(r"}")
-    lines_b.append(r"\end{table*}")
+        lines.extend(_build_arch_rows_latex(2 + n_metrics * n_sub_sizes, _detail_row_subset))
+
+        lines.append(r"\bottomrule")
+        lines.append(r"\end{tabular}%")
+        lines.append(r"}")
+        lines.append(r"\end{table*}")
+        return lines
+
+    detail_parts: List[str] = []
+    for subset, suffix, label in zip(size_halves, half_suffixes, half_labels):
+        if subset:
+            detail_parts.append("\n".join(_build_detail_table(subset, suffix, label)))
 
     # =========================================================================
     # Table C: Architecture configurations (parameter counts per size)
@@ -3302,7 +3219,7 @@ def generate_ablation_latex_table(
         parts = []
         mk = arch["matched_key"]
         for sl in show_sizes:
-            params = get_corrected_param_count(mk, sl) if mk else None
+            params = get_param_count(mk, sl) if mk else None
             if params is not None:
                 parts.append(f"{params / 1e6:.1f}")
             else:
@@ -3315,139 +3232,14 @@ def generate_ablation_latex_table(
     lines_c.append(r"\end{tabular}")
     lines_c.append(r"\end{table*}")
 
-    return "\n".join(lines_a) + "\n\n" + "\n".join(lines_b) + "\n\n" + "\n".join(lines_c)
+    avg_and_configs = "\n".join(lines_a) + "\n\n" + "\n".join(lines_c)
+    detail = "\n\n".join(detail_parts)
+    return avg_and_configs, detail
 
 
 # =============================================================================
 # LaTeX/TikZ Plot Generation (pgfplots)
 # =============================================================================
-
-# Color palette for LaTeX plots - semantically grouped, colorblind-friendly.
-# Each entry: (pgfplots color definition string, mark style, line style)
-LATEX_PLOT_STYLES: Dict[str, Dict[str, str]] = {
-    # Pure architectures — solid lines, filled marks (AI2 color scheme)
-    "olmo3": {
-        "color_def": "\\definecolor{clrTransformer}{HTML}{012E59}",  # olmoDarkBlue
-        "color_name": "clrTransformer",
-        "mark": "square*",
-        "mark_options": "fill=clrTransformer",
-        "line_style": "",
-    },
-    "olmo3-1": {
-        "color_def": "\\definecolor{clrTransformer}{HTML}{012E59}",  # olmoDarkBlue
-        "color_name": "clrTransformer",
-        "mark": "square*",
-        "mark_options": "fill=clrTransformer",
-        "line_style": "",
-    },
-    "olmo3-2": {
-        "color_def": "\\definecolor{clrTransformerV2}{HTML}{265ED4}",  # olmoBlue
-        "color_name": "clrTransformerV2",
-        "mark": "square*",
-        "mark_options": "fill=clrTransformerV2",
-        "line_style": "",
-    },
-    "olmo3-3": {
-        "color_def": "\\definecolor{clrTransformerV3}{HTML}{00D5FF}",  # olmoTeal
-        "color_name": "clrTransformerV3",
-        "mark": "square*",
-        "mark_options": "fill=clrTransformerV3",
-        "line_style": "",
-    },
-    "pure-gdn": {
-        "color_def": "\\definecolor{clrGDN}{HTML}{FF9100}",  # olmoOrange
-        "color_name": "clrGDN",
-        "mark": "triangle*",
-        "mark_options": "fill=clrGDN",
-        "line_style": "",
-    },
-    "pure-mamba": {
-        "color_def": "\\definecolor{clrMamba}{HTML}{B86800}",  # warm brown
-        "color_name": "clrMamba",
-        "mark": "diamond*",
-        "mark_options": "fill=clrMamba",
-        "line_style": "",
-    },
-    # Hybrids — distinct colors, varied marks and line styles
-    "hybrid-gdn": {
-        "color_def": "\\definecolor{clrHybGDN}{HTML}{F0529C}",  # ai2pink
-        "color_name": "clrHybGDN",
-        "mark": "*",
-        "mark_options": "fill=clrHybGDN",
-        "line_style": "",
-    },
-    "hybrid-gdn-half": {
-        "color_def": "\\definecolor{clrHybGDNHalf}{HTML}{C4387E}",  # deep magenta
-        "color_name": "clrHybGDNHalf",
-        "mark": "square",
-        "mark_options": "draw=clrHybGDNHalf, thick",
-        "line_style": "dashed",
-    },
-    "hybrid-gdn-eight": {
-        "color_def": "\\definecolor{clrHybGDNEight}{HTML}{A02060}",  # dark rose
-        "color_name": "clrHybGDNEight",
-        "mark": "triangle",
-        "mark_options": "draw=clrHybGDNEight, thick",
-        "line_style": "densely dashed",
-    },
-    "hybrid-gdn-middle": {
-        "color_def": "\\definecolor{clrHybGDNMid}{HTML}{009BB8}",  # shifted teal
-        "color_name": "clrHybGDNMid",
-        "mark": "pentagon*",
-        "mark_options": "fill=clrHybGDNMid",
-        "line_style": "densely dotted",
-    },
-    "hybrid-mamba": {
-        "color_def": "\\definecolor{clrHybMamba}{HTML}{265ED4}",  # olmoBlue
-        "color_name": "clrHybMamba",
-        "mark": "diamond",
-        "mark_options": "draw=clrHybMamba, thick",
-        "line_style": "densely dotted",
-    },
-    "hybrid-gdn-middle-no-final": {
-        "color_def": "\\definecolor{clrHybGDNMidNoFinal}{HTML}{007A94}",  # darker teal
-        "color_name": "clrHybGDNMidNoFinal",
-        "mark": "pentagon",
-        "mark_options": "draw=clrHybGDNMidNoFinal, thick",
-        "line_style": "densely dotted",
-    },
-}
-
-# Fallback styles when a ladder name is not in LATEX_PLOT_STYLES (AI2 palette)
-_FALLBACK_COLORS = [
-    ("clrFallbackA", "012E59"),  # olmoDarkBlue
-    ("clrFallbackB", "FF9100"),  # olmoOrange
-    ("clrFallbackC", "F0529C"),  # ai2pink
-    ("clrFallbackD", "265ED4"),  # olmoBlue
-    ("clrFallbackE", "00D5FF"),  # olmoTeal
-    ("clrFallbackF", "B86800"),  # warm brown
-]
-_FALLBACK_MARKS = ["*", "square*", "triangle*", "diamond*", "pentagon*", "o"]
-
-
-def _get_latex_style(ladder_name: str, idx: int) -> Dict[str, str]:
-    """Get LaTeX plot style for a ladder, falling back to auto-generated style."""
-    key = ladder_name.lower()
-    if key in LATEX_PLOT_STYLES:
-        return LATEX_PLOT_STYLES[key]
-
-    # Fallback: generate a style from the index
-    fb_color_name, fb_hex = _FALLBACK_COLORS[idx % len(_FALLBACK_COLORS)]
-    fb_mark = _FALLBACK_MARKS[idx % len(_FALLBACK_MARKS)]
-    filled = fb_mark.endswith("*")
-    return {
-        "color_def": f"\\definecolor{{{fb_color_name}}}{{{{{fb_hex}}}}}",
-        "color_name": fb_color_name,
-        "mark": fb_mark,
-        "mark_options": f"fill={fb_color_name}" if filled else "",
-        "line_style": "dashed" if idx % 2 else "",
-    }
-
-
-def _escape_latex_text(s: str) -> str:
-    """Escape special LaTeX characters in text strings."""
-    return s.replace("_", r"\_").replace("&", r"\&").replace("%", r"\%").replace("#", r"\#")
-
 
 def generate_latex_plot(
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
@@ -3592,7 +3384,7 @@ def generate_latex_plot(
     for idx, ladder_name in enumerate(ladder_names):
         if ladder_name not in ladder_data:
             continue
-        style = _get_latex_style(ladder_name, idx)
+        style = get_latex_style(ladder_name, idx)
         styles[ladder_name] = style
         if emit_color_defs and style["color_name"] not in seen_colors:
             seen_colors.add(style["color_name"])
@@ -3601,7 +3393,7 @@ def generate_latex_plot(
     # Build the TikZ code
     lines: List[str] = []
     direction = "higher is better" if higher_is_better else "lower is better"
-    lines.append(f"% {_escape_latex_text(title)} ({direction})")
+    lines.append(f"% {escape_latex(title)} ({direction})")
     if color_defs:
         for cdef in color_defs:
             lines.append(cdef)
@@ -3616,7 +3408,7 @@ def generate_latex_plot(
         lines.append("    log ticks with fixed point,")
     lines.append("    log basis x=10,")
     lines.append("    xlabel={Parameters},")
-    lines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
+    lines.append(f"    ylabel={{{escape_latex(ylabel)}}},")
     lines.append(f"    xmin={x_min:.0f}, xmax={x_max:.0f},")
     if not log_y:
         lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
@@ -3664,7 +3456,7 @@ def generate_latex_plot(
         display = get_display_name(ladder_name)
         if star_ladder and ladder_name.lower() == star_ladder.lower():
             display += r" $\bigstar$"
-        lines.append(f"\\addlegendentry{{{_escape_latex_text(display)}}}")
+        lines.append(f"\\addlegendentry{{{escape_latex(display)}}}")
         lines.append("")
 
     lines.append(r"\end{axis}")
@@ -3753,7 +3545,7 @@ def generate_latex_flops_plot(
     for idx, ladder_name in enumerate(ladder_names):
         if ladder_name not in ladder_data:
             continue
-        style = _get_latex_style(ladder_name, idx)
+        style = get_latex_style(ladder_name, idx)
         styles[ladder_name] = style
         if emit_color_defs and style["color_name"] not in seen_colors:
             seen_colors.add(style["color_name"])
@@ -3762,7 +3554,7 @@ def generate_latex_flops_plot(
     # Build the TikZ code
     lines: List[str] = []
     direction = "higher is better" if higher_is_better else "lower is better"
-    lines.append(f"% {_escape_latex_text(title)} ({direction})")
+    lines.append(f"% {escape_latex(title)} ({direction})")
     if color_defs:
         for cdef in color_defs:
             lines.append(cdef)
@@ -3777,7 +3569,7 @@ def generate_latex_flops_plot(
         lines.append("    log ticks with fixed point,")
     lines.append("    log basis x=10,")
     lines.append("    xlabel={Training FLOPs (PetaFLOPs)},")
-    lines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
+    lines.append(f"    ylabel={{{escape_latex(ylabel)}}},")
     lines.append(f"    xmin={x_min:.4f}, xmax={x_max:.4f},")
     if not log_y:
         lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
@@ -3822,7 +3614,7 @@ def generate_latex_flops_plot(
             display = get_display_name(ladder_name)
             if star_ladder and ladder_name.lower() == star_ladder.lower():
                 display += r" $\bigstar$"
-            lines.append(f"\\addlegendentry{{{_escape_latex_text(display)}}}")
+            lines.append(f"\\addlegendentry{{{escape_latex(display)}}}")
         lines.append("")
 
     lines.append(r"\end{axis}")
@@ -3947,7 +3739,7 @@ def generate_latex_bar_chart(
     seen_colors: set = set()
     color_defs: List[str] = []
     for idx, ladder_name in enumerate(ladder_names):
-        style = _get_latex_style(ladder_name, idx)
+        style = get_latex_style(ladder_name, idx)
         styles[ladder_name] = style
         if emit_color_defs and style["color_name"] not in seen_colors:
             seen_colors.add(style["color_name"])
@@ -3956,7 +3748,7 @@ def generate_latex_bar_chart(
     # Build the TikZ code
     lines: List[str] = []
     direction = "higher is better" if higher_is_better else "lower is better"
-    lines.append(f"% {_escape_latex_text(title)} ({direction})")
+    lines.append(f"% {escape_latex(title)} ({direction})")
     if color_defs:
         for cdef in color_defs:
             lines.append(cdef)
@@ -3968,7 +3760,7 @@ def generate_latex_bar_chart(
     lines.append("    ybar,")
     lines.append(f"    bar width={0.8 / len(ladder_names):.3f}cm,")
     lines.append("    xlabel={Model Size},")
-    lines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
+    lines.append(f"    ylabel={{{escape_latex(ylabel)}}},")
     lines.append(f"    ymin={y_min:.2f}, ymax={y_max:.2f},")
     lines.append("    symbolic x coords={" + ", ".join(all_size_labels) + "},")
     lines.append("    xtick=data,")
@@ -4000,7 +3792,7 @@ def generate_latex_bar_chart(
         display = get_display_name(ladder_name)
         if star_ladder and ladder_name.lower() == star_ladder.lower():
             display += r" $\bigstar$"
-        lines.append(f"\\addlegendentry{{{_escape_latex_text(display)}}}")
+        lines.append(f"\\addlegendentry{{{escape_latex(display)}}}")
         lines.append("")
 
     lines.append(r"\end{axis}")
@@ -4104,7 +3896,7 @@ def generate_paper_eval_figure(
     # Color definitions
     seen_colors: set = set()
     for idx, name in enumerate(ladder_names):
-        style = _get_latex_style(name, idx)
+        style = get_latex_style(name, idx)
         if style["color_name"] not in seen_colors:
             seen_colors.add(style["color_name"])
             lines.append(style["color_def"])
@@ -4122,31 +3914,26 @@ def generate_paper_eval_figure(
         r"    title style={font=\small},",
         r"    xmode=log,",
         r"    ymode=log,",
-        r"    log ticks with fixed point,",
+        r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},",
     ]
 
-    legend_name = "evallegend"
-
     # ---- Helper: emit one panel's plots ------------------------------------
-    def _emit_panel(extract_fn, ylabel: str, title: str, panel_label: str, add_legend: bool):
+    def _emit_panel(extract_fn, ylabel: str, title: str, panel_label: str):
         """Emit addplot commands for a single panel."""
         plines: List[str] = []
         allpts = _collect_allpoints(extract_fn)
 
         plines.append(r"\nextgroupplot[")
         plines.append(r"    xlabel={Training FLOPs (PetaFLOPs)},")
-        plines.append(f"    ylabel={{{_escape_latex_text(ylabel)}}},")
-        plines.append(f"    title={{({panel_label}) {_escape_latex_text(title)}}},")
+        plines.append(f"    ylabel={{{escape_latex(ylabel)}}},")
+        plines.append(f"    title={{({panel_label}) {escape_latex(title)}}},")
         plines.append(r"]")
 
         for idx, name in enumerate(ladder_names):
             if name not in allpts:
                 continue
             pts = allpts[name]
-            style = _get_latex_style(name, idx)
-            display = _escape_latex_text(get_display_name(name))
-            if star_ladder and name.lower() == star_ladder.lower():
-                display += r" $\bigstar$"
+            style = get_latex_style(name, idx)
 
             # Group by model size so we can draw connecting lines per size
             by_size: Dict[str, List[Tuple[float, float]]] = {}
@@ -4174,17 +3961,10 @@ def generate_paper_eval_figure(
             envelope.sort(key=lambda p: p[0])
             env_coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in envelope)
             line_style_str = f", {style['line_style']}" if style.get("line_style") else ""
-            if add_legend:
-                plines.append(
-                    f"\\addplot[{style['color_name']}, thick, no markers{line_style_str}] "
-                    f"coordinates {{{env_coords}}};"
-                )
-                plines.append(f"\\addlegendentry{{{display}}}")
-            else:
-                plines.append(
-                    f"\\addplot[{style['color_name']}, thick, no markers{line_style_str}, forget plot] "
-                    f"coordinates {{{env_coords}}};"
-                )
+            plines.append(
+                f"\\addplot[{style['color_name']}, thick, no markers{line_style_str}, forget plot] "
+                f"coordinates {{{env_coords}}};"
+            )
 
         return plines
 
@@ -4199,20 +3979,12 @@ def generate_paper_eval_figure(
     lines.append(r"    height=0.36\textwidth,")
     for sa in shared_axis:
         lines.append(sa)
-    lines.append(f"    legend to name={legend_name},")
-    lines.append(r"    legend style={")
-    lines.append(r"        font=\footnotesize,")
-    lines.append(r"        cells={anchor=west},")
-    lines.append(f"        legend columns={len(ladder_names)},")
-    lines.append(r"        draw=none,")
-    lines.append(r"        column sep=8pt,")
-    lines.append(r"    },")
     lines.append(r"]")
 
-    for i, (label, efn, yl, ttl) in enumerate(top_panels):
+    for label, efn, yl, ttl in top_panels:
         lines.append("")
         lines.append(f"% Panel ({label}): {ttl}")
-        lines.extend(_emit_panel(efn, yl, ttl, label, add_legend=(i == 0)))
+        lines.extend(_emit_panel(efn, yl, ttl, label))
 
     lines.append("")
     lines.append(r"\end{groupplot}")
@@ -4237,15 +4009,29 @@ def generate_paper_eval_figure(
     for label, efn, yl, ttl in bottom_panels:
         lines.append("")
         lines.append(f"% Panel ({label}): {ttl}")
-        lines.extend(_emit_panel(efn, yl, ttl, label, add_legend=False))
+        lines.extend(_emit_panel(efn, yl, ttl, label))
 
     lines.append("")
     lines.append(r"\end{groupplot}")
     lines.append(r"\end{tikzpicture}")
 
-    # Shared legend
-    lines.append(r"\vspace{0.2em}\\")
-    lines.append(f"\\pgfplotslegendfromname{{{legend_name}}}")
+    # Manual tikz legend (matches scaling-law-fit-log style)
+    lines.append(r"\par\vspace{0.5em}")
+    legend_parts = []
+    for idx, name in enumerate(ladder_names):
+        style = get_latex_style(name, idx)
+        display = escape_latex(get_display_name(name))
+        if star_ladder and name.lower() == star_ladder.lower():
+            display += r" $\bigstar$"
+        line_style = style.get("line_style", "")
+        line_opt = f", {line_style}" if line_style else ""
+        part = (
+            f"\\tikz\\draw[{style['color_name']}, line width=2pt{line_opt}] "
+            f"(0,0) -- (1em,0);"
+            f"\\,{display}"
+        )
+        legend_parts.append(part)
+    lines.append(r"{\footnotesize " + "\\qquad".join(legend_parts) + r"}")
 
     # Caption
     lines.append(
@@ -4304,7 +4090,7 @@ def generate_latex_plots(
     seen_colors: set = set()
     parts.append("% --- Color definitions ---")
     for idx, ladder_name in enumerate(ladder_names):
-        style = _get_latex_style(ladder_name, idx)
+        style = get_latex_style(ladder_name, idx)
         if style["color_name"] not in seen_colors:
             seen_colors.add(style["color_name"])
             parts.append(style["color_def"])
@@ -4379,7 +4165,7 @@ def generate_latex_plots(
                 )
             )
             parts.append(
-                f"    \\caption{{Base Main {_escape_latex_text(cluster_name)} vs.\\ training FLOPs.}}"
+                f"    \\caption{{Base Main {escape_latex(cluster_name)} vs.\\ training FLOPs.}}"
             )
             parts.append(f"    \\label{{fig:base_main_{cluster_name.lower()}}}")
             parts.append(r"\end{figure}")
@@ -4510,7 +4296,7 @@ def generate_latex_plots(
 
         #     for idx, ladder_name in enumerate(compare_ladders, start=1):
         #         diffs = relative_data[ladder_name]
-        #         style = _get_latex_style(ladder_name, idx)
+        #         style = get_latex_style(ladder_name, idx)
 
         #         coords = " ".join(
         #             f"({label},{diff:.4f})" for label, diff in zip(all_size_labels, diffs)
@@ -4524,7 +4310,7 @@ def generate_latex_plots(
         #         if star_ladder and ladder_name.lower() == star_ladder.lower():
         #             display += r" $\bigstar$"
         #         bar_lines.append(
-        #             f"\\addlegendentry{{{_escape_latex_text(display)} vs {_escape_latex_text(get_display_name(baseline_ladder))}}}"
+        #             f"\\addlegendentry{{{escape_latex(display)} vs {escape_latex(get_display_name(baseline_ladder))}}}"
         #         )
         #         bar_lines.append("")
 
@@ -4535,11 +4321,11 @@ def generate_latex_plots(
 
         #     if include_main:
         #         parts.append(
-        #             f"    \\caption{{Main Suite accuracy relative to {_escape_latex_text(get_display_name(baseline_ladder))} (percentage difference).}}"
+        #             f"    \\caption{{Main Suite accuracy relative to {escape_latex(get_display_name(baseline_ladder))} (percentage difference).}}"
         #         )
         #     else:
         #         parts.append(
-        #             f"    \\caption{{Easy Suite BPB percentage difference vs {_escape_latex_text(get_display_name(baseline_ladder))} (more negative = better).}}"
+        #             f"    \\caption{{Easy Suite BPB percentage difference vs {escape_latex(get_display_name(baseline_ladder))} (more negative = better).}}"
         #         )
         #     parts.append(r"    \label{fig:relative_comparison}")
         #     parts.append(r"\end{figure}")
@@ -4621,11 +4407,14 @@ def export_results(
     with open(latex_path, "w") as f:
         f.write(latex_output)
 
-    # Generate ablation table
-    ablation_output = generate_ablation_latex_table(ladder_results, sizes)
+    # Generate ablation tables (avg+configs in one file, detail in another)
+    ablation_avg, ablation_detail = generate_ablation_latex_table(ladder_results, sizes)
     ablation_path = output_path / "ablation-evals.tex"
     with open(ablation_path, "w") as f:
-        f.write(ablation_output)
+        f.write(ablation_avg)
+    ablation_detail_path = output_path / "ablation-evals-detail.tex"
+    with open(ablation_detail_path, "w") as f:
+        f.write(ablation_detail)
 
     # Generate model config table
     config_output = generate_model_config_latex_table(list(ladder_results.keys()))
@@ -4684,17 +4473,8 @@ Examples:
         transformer:~/Downloads/transformer-ladder \\
         --plot
 
-    # Export results with plots
+    # Export results with plots and LaTeX tables
     python ladder_metrics_analysis.py --compare ... --export ~/results --plot
-
-    # Print LaTeX tables
-    python ladder_metrics_analysis.py --compare ... --latex
-
-    # Generate LaTeX/TikZ plots (pgfplots) for publication
-    python ladder_metrics_analysis.py --compare ... --latex-plots
-
-    # Highlight a specific ladder with a star in LaTeX plots
-    python ladder_metrics_analysis.py --compare ... --latex-plots --star-ladder hybrid-gdn
         """,
     )
 
@@ -4740,29 +4520,6 @@ Examples:
         help="Group results by ladder instead of by model size",
     )
     parser.add_argument(
-        "--latex",
-        action="store_true",
-        help="Print LaTeX tables (booktabs format) to stdout",
-    )
-    parser.add_argument(
-        "--latex-ablation",
-        action="store_true",
-        help="Print a publication-ready ablation table (architectures as rows, "
-        "sizes as column groups) in LaTeX booktabs format to stdout.",
-    )
-    parser.add_argument(
-        "--latex-configs",
-        action="store_true",
-        help="Print a model configuration table (architecture specs, param counts, "
-        "FLOPs) in LaTeX booktabs format to stdout.",
-    )
-    parser.add_argument(
-        "--latex-plots",
-        action="store_true",
-        help="Generate LaTeX/TikZ (pgfplots) code for publication-ready plots "
-        "showing metrics vs parameter count. Output to stdout or to file with --export/--output.",
-    )
-    parser.add_argument(
         "--star-ladder",
         type=str,
         default=None,
@@ -4798,6 +4555,51 @@ Examples:
         type=Path,
         help="Directory to save figures to (creates it if needed)",
     )
+    parser.add_argument(
+        "--parallel-flops",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use chunkwise parallel training FLOP estimates for GDN/Mamba2 layers "
+        "instead of recurrent inference FLOPs. This accounts for intra-chunk "
+        "attention and inter-chunk state propagation overhead.",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=256,
+        help="Chunk size for parallel FLOP estimation (default: 256). "
+        "Only used when --parallel-flops is set.",
+    )
+    parser.add_argument(
+        "--chinchilla-flops",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use Chinchilla FLOP counting convention: include embedding lookup and "
+        "softmax FLOPs in the per-token FLOP estimate (default: True). "
+        "Use --no-chinchilla-flops to disable.",
+    )
+    parser.add_argument(
+        "--seq-len",
+        type=int,
+        default=None,
+        help="Sequence length for FLOP calculation (default: use arch config value).",
+    )
+    parser.add_argument(
+        "--simple-flops",
+        action="store_true",
+        help="Use simple 6*N*D approximation for FLOPs instead of architecture-aware values. "
+        "This can be useful when comparing models with different architectures.",
+    )
+    parser.add_argument(
+        "--paper-figures",
+        action="store_true",
+        help="Generate paper figures (pgfplots/TikZ .tex files) to --output directory.",
+    )
+    parser.add_argument(
+        "--scatter",
+        action="store_true",
+        help="Use scatter points instead of connecting lines in paper figures.",
+    )
 
     args = parser.parse_args()
 
@@ -4825,6 +4627,11 @@ Examples:
             ladder_name=ladder_name,
             use_all_checkpoints=args.all_checkpoints,
             post_decay_only=not args.include_pre_decay,
+            parallel_flops=args.parallel_flops,
+            chunk_size=args.chunk_size,
+            chinchilla_flops=args.chinchilla_flops,
+            seq_len=args.seq_len,
+            simple_flops=args.simple_flops,
         )
 
     if args.compare:
@@ -4843,6 +4650,11 @@ Examples:
                 ladder_name=name,
                 use_all_checkpoints=args.all_checkpoints,
                 post_decay_only=not args.include_pre_decay,
+                parallel_flops=args.parallel_flops,
+                chunk_size=args.chunk_size,
+                chinchilla_flops=args.chinchilla_flops,
+                seq_len=args.seq_len,
+                simple_flops=args.simple_flops,
             )
 
     group_by_size = not args.group_by_ladder
@@ -4899,7 +4711,9 @@ Examples:
             baseline_data = None
             for sk, sd in baseline_results.items():
                 if get_size_label(sk) == size_label:
-                    if baseline_data is None or sd.get("tokens", 0) > baseline_data.get("tokens", 0):
+                    if baseline_data is None or sd.get("tokens", 0) > baseline_data.get(
+                        "tokens", 0
+                    ):
                         baseline_data = sd
 
             if baseline_data is None:
@@ -4913,7 +4727,9 @@ Examples:
                 compare_data = None
                 for sk, sd in ladder_results[ladder_name].items():
                     if get_size_label(sk) == size_label:
-                        if compare_data is None or sd.get("tokens", 0) > compare_data.get("tokens", 0):
+                        if compare_data is None or sd.get("tokens", 0) > compare_data.get(
+                            "tokens", 0
+                        ):
                             compare_data = sd
 
                 if compare_data is None:
@@ -4967,57 +4783,6 @@ Examples:
                 for cluster, cluster_data in data.get("base_easy", {}).items():
                     print(f"      {cluster}: {cluster_data['avg']:.4f}")
 
-    # Print LaTeX tables if requested
-    if args.latex:
-        print("\n" + "=" * 80)
-        print("LATEX TABLES (booktabs format)")
-        print("=" * 80)
-        print("\n% Add to preamble: \\usepackage{booktabs}\n")
-
-        latex_output = generate_comparison_latex(
-            ladder_results, args.sizes, include_main=include_main
-        )
-        print(latex_output)
-
-    # Print ablation-style LaTeX table if requested
-    if args.latex_ablation:
-        print("\n" + "=" * 80)
-        print("LATEX ABLATION TABLE")
-        print("=" * 80)
-        print("\n% Add to preamble: \\usepackage{booktabs}\n")
-
-        ablation_output = generate_ablation_latex_table(
-            ladder_results,
-            sizes=args.sizes,
-            star_ladder=args.star_ladder,
-        )
-        print(ablation_output)
-
-    # Print model config table if requested
-    if args.latex_configs:
-        print("\n" + "=" * 80)
-        print("LATEX MODEL CONFIG TABLE")
-        print("=" * 80)
-        print("\n% Add to preamble: \\usepackage{booktabs}\n")
-
-        config_output = generate_model_config_latex_table(list(ladder_results.keys()))
-        print(config_output)
-
-    # Generate LaTeX/TikZ plots if requested (print to stdout; file output handled by --export)
-    if args.latex_plots:
-        latex_plots = generate_latex_plots(
-            ladder_results,
-            args.sizes,
-            include_main=include_main,
-            use_final_checkpoint=args.curve_final,
-            star_ladder=args.star_ladder,
-        )
-        print("\n" + "=" * 80)
-        print("LATEX/TIKZ PLOTS (pgfplots)")
-        print("=" * 80)
-        print()
-        print(latex_plots)
-
     # Generate plots if requested
     if args.plot or args.plot_flops:
         show_plots = figure_output is None
@@ -5044,6 +4809,26 @@ Examples:
             use_final_checkpoint=args.curve_final,
             star_ladder=args.star_ladder,
         )
+
+    # Generate paper figures (pgfplots/TikZ .tex files)
+    if args.paper_figures:
+        output_dir = figure_output or (Path(args.export).expanduser() if args.export else None)
+        if output_dir is None:
+            print("\nWarning: --paper-figures requires --output or --export, skipping")
+        else:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            figures_dir = output_dir / "figures"
+            figures_dir.mkdir(parents=True, exist_ok=True)
+
+            fig_tex = generate_paper_eval_figure(
+                ladder_results,
+                sizes=args.sizes,
+                star_ladder=args.star_ladder,
+            )
+            fig_path = figures_dir / "base-easy-avg.tex"
+            with open(fig_path, "w") as f:
+                f.write(fig_tex)
+            print(f"\nSaved eval figure to: {fig_path}")
 
 
 if __name__ == "__main__":

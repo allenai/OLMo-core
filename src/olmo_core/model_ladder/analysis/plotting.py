@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 
 import numpy as np
 
@@ -778,3 +778,132 @@ def _build_comparison_title(exp_a: str, exp_b: str, cutoff: int, subtitle: Optio
     if subtitle:
         title = f"{title}<br><sub>{subtitle}</sub>"
     return title
+
+
+# ---------------------------------------------------------------------------
+# LaTeX / pgfplots shared utilities
+# ---------------------------------------------------------------------------
+
+LATEX_PLOT_STYLES: Dict[str, Dict[str, str]] = {
+    # Pure architectures — solid lines, filled marks (AI2 color scheme)
+    "olmo3": {
+        "color_def": "\\definecolor{clrTransformer}{HTML}{012E59}",  # olmoDarkBlue
+        "color_name": "clrTransformer",
+        "mark": "square*",
+        "mark_options": "fill=clrTransformer",
+        "line_style": "",
+    },
+    "olmo3-1": {
+        "color_def": "\\definecolor{clrTransformer}{HTML}{012E59}",  # olmoDarkBlue
+        "color_name": "clrTransformer",
+        "mark": "square*",
+        "mark_options": "fill=clrTransformer",
+        "line_style": "",
+    },
+    "olmo3-2": {
+        "color_def": "\\definecolor{clrTransformerV2}{HTML}{265ED4}",  # olmoBlue
+        "color_name": "clrTransformerV2",
+        "mark": "square*",
+        "mark_options": "fill=clrTransformerV2",
+        "line_style": "",
+    },
+    "olmo3-3": {
+        "color_def": "\\definecolor{clrTransformerV3}{HTML}{00D5FF}",  # olmoTeal
+        "color_name": "clrTransformerV3",
+        "mark": "square*",
+        "mark_options": "fill=clrTransformerV3",
+        "line_style": "",
+    },
+    "pure-gdn": {
+        "color_def": "\\definecolor{clrGDN}{HTML}{FF9100}",  # olmoOrange
+        "color_name": "clrGDN",
+        "mark": "triangle*",
+        "mark_options": "fill=clrGDN",
+        "line_style": "",
+    },
+    "pure-mamba": {
+        "color_def": "\\definecolor{clrMamba}{HTML}{B86800}",  # warm brown
+        "color_name": "clrMamba",
+        "mark": "diamond*",
+        "mark_options": "fill=clrMamba",
+        "line_style": "",
+    },
+    # Hybrids — distinct colors, varied marks and line styles
+    "hybrid-gdn": {
+        "color_def": "\\definecolor{clrHybGDN}{HTML}{F0529C}",  # ai2pink
+        "color_name": "clrHybGDN",
+        "mark": "*",
+        "mark_options": "fill=clrHybGDN",
+        "line_style": "",
+    },
+    "hybrid-gdn-half": {
+        "color_def": "\\definecolor{clrHybGDNHalf}{HTML}{C4387E}",  # deep magenta
+        "color_name": "clrHybGDNHalf",
+        "mark": "square",
+        "mark_options": "draw=clrHybGDNHalf, thick",
+        "line_style": "dashed",
+    },
+    "hybrid-gdn-eight": {
+        "color_def": "\\definecolor{clrHybGDNEight}{HTML}{A02060}",  # dark rose
+        "color_name": "clrHybGDNEight",
+        "mark": "triangle",
+        "mark_options": "draw=clrHybGDNEight, thick",
+        "line_style": "densely dashed",
+    },
+    "hybrid-gdn-middle": {
+        "color_def": "\\definecolor{clrHybGDNMid}{HTML}{009BB8}",  # shifted teal
+        "color_name": "clrHybGDNMid",
+        "mark": "pentagon*",
+        "mark_options": "fill=clrHybGDNMid",
+        "line_style": "densely dotted",
+    },
+    "hybrid-mamba": {
+        "color_def": "\\definecolor{clrHybMamba}{HTML}{265ED4}",  # olmoBlue
+        "color_name": "clrHybMamba",
+        "mark": "diamond",
+        "mark_options": "draw=clrHybMamba, thick",
+        "line_style": "densely dotted",
+    },
+    "hybrid-gdn-middle-no-final": {
+        "color_def": "\\definecolor{clrHybGDNMidNoFinal}{HTML}{007A94}",  # darker teal
+        "color_name": "clrHybGDNMidNoFinal",
+        "mark": "pentagon",
+        "mark_options": "draw=clrHybGDNMidNoFinal, thick",
+        "line_style": "densely dotted",
+    },
+}
+
+# Fallback styles when a ladder name is not in LATEX_PLOT_STYLES (AI2 palette)
+_FALLBACK_COLORS = [
+    ("clrFallbackA", "012E59"),  # olmoDarkBlue
+    ("clrFallbackB", "FF9100"),  # olmoOrange
+    ("clrFallbackC", "F0529C"),  # ai2pink
+    ("clrFallbackD", "265ED4"),  # olmoBlue
+    ("clrFallbackE", "00D5FF"),  # olmoTeal
+    ("clrFallbackF", "B86800"),  # warm brown
+]
+_FALLBACK_MARKS = ["*", "square*", "triangle*", "diamond*", "pentagon*", "o"]
+
+
+def get_latex_style(ladder_name: str, idx: int) -> Dict[str, str]:
+    """Get LaTeX plot style for a ladder, falling back to auto-generated style."""
+    key = ladder_name.lower()
+    if key in LATEX_PLOT_STYLES:
+        return LATEX_PLOT_STYLES[key]
+
+    # Fallback: generate a style from the index
+    fb_color_name, fb_hex = _FALLBACK_COLORS[idx % len(_FALLBACK_COLORS)]
+    fb_mark = _FALLBACK_MARKS[idx % len(_FALLBACK_MARKS)]
+    filled = fb_mark.endswith("*")
+    return {
+        "color_def": f"\\definecolor{{{fb_color_name}}}{{{{{fb_hex}}}}}",
+        "color_name": fb_color_name,
+        "mark": fb_mark,
+        "mark_options": f"fill={fb_color_name}" if filled else "",
+        "line_style": "dashed" if idx % 2 else "",
+    }
+
+
+def escape_latex(s: str) -> str:
+    """Escape special LaTeX characters in text strings."""
+    return s.replace("_", r"\_").replace("&", r"\&").replace("%", r"\%").replace("#", r"\#")

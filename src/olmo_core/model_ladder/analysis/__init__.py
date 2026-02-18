@@ -17,16 +17,28 @@ from .metrics import (
     normalize_task_name,
 )
 from .model_specs import (
+    DISPLAY_NAMES,
     LADDER_ARCH_CONFIGS,
     OLMO3_SPECS,
     OLMO3_SPECS_BY_NAME,
     LadderArchConfig,
     ModelSpec,
+    compute_hybrid_mamba2_specs_parallel,
     compute_hybrid_specs,
+    compute_hybrid_specs_parallel,
     compute_olmo3_specs,
     compute_specs_for_size,
+    compute_specs_for_size_parallel,
+    get_display_name,
+    get_param_count,
 )
-from .plotting import plot_scaling_law_3d, plot_scaling_law_3d_comparison
+from .plotting import (
+    LATEX_PLOT_STYLES,
+    escape_latex,
+    get_latex_style,
+    plot_scaling_law_3d,
+    plot_scaling_law_3d_comparison,
+)
 from .scaling_laws import (
     ChinchillaParametricBootstrappedFit,
     ChinchillaParametricFit,
@@ -49,6 +61,12 @@ __all__ = [
     "ChinchillaParametricBootstrappedFit",
     "plot_scaling_law_3d",
     "plot_scaling_law_3d_comparison",
+    "LATEX_PLOT_STYLES",
+    "escape_latex",
+    "get_latex_style",
+    "DISPLAY_NAMES",
+    "get_display_name",
+    "get_param_count",
     "BASE_EASY_SUITE",
     "aggregate_base_easy_cluster",
     "aggregate_base_easy_cluster_for_row",
@@ -61,6 +79,9 @@ __all__ = [
     "LadderArchConfig",
     "LADDER_ARCH_CONFIGS",
     "compute_hybrid_specs",
+    "compute_hybrid_specs_parallel",
+    "compute_hybrid_mamba2_specs_parallel",
     "compute_olmo3_specs",
     "compute_specs_for_size",
+    "compute_specs_for_size_parallel",
 ]
