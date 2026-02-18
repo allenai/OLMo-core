@@ -296,7 +296,7 @@ class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
         # option 2: NOT working (barrier in NCCL stream, all2all in current stream)
         # torch.distributed.barrier(async_op=True) 
 
-        # option 2.1: still not working
+        # option 2.1: working
         work = dist.barrier(
             group=group,
             async_op=True,
@@ -1024,6 +1024,68 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         kept = kept_flat.view(self.num_local_routed_experts, self.ep_world_size).transpose(0, 1)
         return kept
 
+    @nvtx.annotate("SyncTokenCount", color="green")
+    def _sync_tail_drop_allowed_splits_single_a2a(
+        self,
+        requested_splits: torch.Tensor,
+        *,
+        rank_capacity: int,
+    ) -> torch.Tensor:
+        """
+        Tail-drop keep-split sync with a single all_to_all_single.
+        Each EP rank receives every rank's requested splits and capacity, then
+        computes the same keep policy locally.
+        """
+        assert self.num_local_routed_experts is not None
+        requested = requested_splits.to(dtype=torch.long)
+        expected_splits = self.ep_world_size * self.num_local_routed_experts
+        if requested.numel() != expected_splits:
+            raise RuntimeError(
+                "requested_splits size mismatch: "
+                f"got {requested.numel()}, expected {expected_splits}"
+            )
+
+        local_capacity = torch.tensor(
+            [rank_capacity],
+            device=requested.device,
+            dtype=torch.long,
+        )
+        payload = torch.cat((requested, local_capacity), dim=0)
+        payload_replicated = payload.repeat(self.ep_world_size)
+        gathered_payload = torch.empty_like(payload_replicated)
+        dist.all_to_all_single(
+            gathered_payload,
+            payload_replicated,
+            group=self.ep_pg,
+        )
+
+        payload_width = payload.numel()
+        gathered_payload_2d = gathered_payload.view(self.ep_world_size, payload_width)
+        global_requested = gathered_payload_2d[:, :-1].view(
+            self.ep_world_size, self.ep_world_size, self.num_local_routed_experts
+        )
+        global_capacity = gathered_payload_2d[:, -1]
+
+        # Flatten in local-expert-major then source-rank order for each destination rank.
+        counts_flat = global_requested.permute(2, 0, 1).reshape(-1, self.ep_world_size)
+        cumsum_counts = torch.cumsum(counts_flat, dim=0)
+        kept_cumsum = torch.minimum(cumsum_counts, global_capacity.view(1, -1))
+        prev = torch.cat(
+            [
+                torch.zeros((1, self.ep_world_size), device=requested.device, dtype=torch.long),
+                kept_cumsum[:-1],
+            ],
+            dim=0,
+        )
+        kept_flat = kept_cumsum - prev
+        keep_from_src_dest_local = kept_flat.view(
+            self.num_local_routed_experts, self.ep_world_size, self.ep_world_size
+        ).permute(1, 2, 0)
+
+        local_src_rank = get_rank(self.ep_pg)
+        allowed_splits = keep_from_src_dest_local[local_src_rank].reshape(-1)
+        return torch.minimum(allowed_splits, requested)
+
     @nvtx.annotate('_build_keep_reorder')
     def _build_keep_reorder(
         self,
@@ -1441,53 +1503,28 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 map_type="index",
             )
 
-        if self.shared_experts is not None:
-            wait_stream_no_compile(
-                this_stream=self.get_dense_stream(),
-                other_stream=torch.cuda.current_stream(),
-            )
-            with torch.cuda.stream(self.get_dense_stream()):
-                shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
-        else:
-            shared_out_up, shared_out_gate = None, None
-
-        requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
         with torch.no_grad():
-            with nvtx.annotate("SyncTokenCount", color="green"):
-                recv_per_src_local = torch.empty_like(requested_splits)
-                dist.all_to_all_single(
-                    recv_per_src_local,
-                    requested_splits,
-                    group=self.ep_pg,
-                )
-                recv_per_src_local_2d = recv_per_src_local.view(
-                    self.ep_world_size, self.num_local_routed_experts
-                )
+            requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
+            rank_capacity = self._compute_ep_no_sync_rank_capacity(num_out_tokens)
 
-                rank_capacity = self._compute_ep_no_sync_rank_capacity(num_out_tokens)
-                keep_from_src_2d = self._build_tail_keep_quota(recv_per_src_local_2d, rank_capacity)
+            allowed_splits = self._sync_tail_drop_allowed_splits_single_a2a(
+                requested_splits,
+                rank_capacity=rank_capacity,
+            )
 
-                allowed_splits = torch.empty_like(requested_splits)
-                dist.all_to_all_single(
-                    allowed_splits,
-                    keep_from_src_2d.reshape(-1).contiguous(),
-                    group=self.ep_pg,
-                )
-                allowed_splits = torch.minimum(allowed_splits, requested_splits)
+            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = self._build_keep_reorder(
+                requested_splits=requested_splits,
+                keep_splits=allowed_splits,
+                num_out_tokens=num_out_tokens,
+            )
 
-        local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = self._build_keep_reorder(
-            requested_splits=requested_splits,
-            keep_splits=allowed_splits,
-            num_out_tokens=num_out_tokens,
-        )
+            align_pad = max(self.ep_no_sync_major_align - 1, 0)
+            dispatch_out_pad = (self.num_local_routed_experts - 1) * align_pad
+            combine_out_pad = (self.routed_experts_router.num_experts - 1) * align_pad
 
-        align_pad = max(self.ep_no_sync_major_align - 1, 0)
-        dispatch_out_pad = (self.num_local_routed_experts - 1) * align_pad
-        combine_out_pad = (self.routed_experts_router.num_experts - 1) * align_pad
-
-        dispatch_in_cap = num_out_tokens
-        dispatch_out_cap = rank_capacity + dispatch_out_pad
-        combine_out_cap = num_out_tokens + combine_out_pad
+            dispatch_in_cap = num_out_tokens
+            dispatch_out_cap = rank_capacity + dispatch_out_pad
+            combine_out_cap = num_out_tokens + combine_out_pad
 
         buffers = self._get_ep_no_sync_buffers(
             dispatch_in_cap=dispatch_in_cap,
@@ -1497,6 +1534,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             dtype=permutated_local_x.dtype,
             device=permutated_local_x.device,
         )
+
+        # lauch shared experts right before dispatch to overlap with the all_to_all
+        if self.shared_experts is not None:
+            wait_stream_no_compile(
+                this_stream=self.get_dense_stream(),
+                other_stream=torch.cuda.current_stream(),
+            ) # type: ignore
+            with torch.cuda.stream(self.get_dense_stream()):
+                shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
+        else:
+            shared_out_up, shared_out_gate = None, None
 
         dispatch_out, dispatch_splits_offsets = _DispatchVDev2DAutograd.apply(
             permutated_local_x,
@@ -1555,6 +1603,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if self.shared_experts is not None:
             assert shared_out_up is not None
             assert shared_out_gate is not None
+            wait_stream_no_compile(
+                this_stream=self.get_dense_stream(),
+                other_stream=torch.cuda.current_stream(),
+            ) # type: ignore
             with torch.cuda.stream(self.get_dense_stream()):
                 shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
                 if self.shared_experts_router:
@@ -1587,7 +1639,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 map_type="index",
             )
             local_x = cast(torch.Tensor, local_x)
-        # zero_rows_after_local_unpermute = (local_x.abs().sum(dim=-1) == 0).sum(dtype=torch.long)
 
         local_x = local_x.view(in_shape)
         wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
