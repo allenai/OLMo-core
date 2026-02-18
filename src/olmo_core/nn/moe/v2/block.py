@@ -980,14 +980,22 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 f"splits={splits.numel()}, offsets={offsets.numel()}, expected={expected_chunks}"
             )
 
-        offsets_2d = offsets.view(self.num_local_routed_experts, self.ep_world_size).to(dtype=torch.long)
+        splits_long = splits.to(dtype=torch.long)
+        offsets_long = offsets.to(dtype=torch.long)
+        offsets_2d = offsets_long.view(self.num_local_routed_experts, self.ep_world_size)
         expert_starts = offsets_2d[:, 0].clone()
         # grouped_mm groups always start at row 0; absorb any leading gap into expert 0.
         expert_starts[0] = 0
         expert_ends = torch.empty_like(expert_starts)
         if self.num_local_routed_experts > 1:
             expert_ends[:-1] = expert_starts[1:]
-        expert_ends[-1] = total_rows
+        # Exclude any trailing symmetric-buffer capacity tail that is not referenced by
+        # dispatch metadata, while still including in-group/inter-group alignment pads.
+        chunk_ends = offsets_long + splits_long
+        used_rows = (chunk_ends * (splits_long > 0).to(dtype=torch.long)).max()
+        if total_rows >= 0:
+            used_rows = torch.clamp_max(used_rows, int(total_rows))
+        expert_ends[-1] = used_rows
         padded_sizes = expert_ends - expert_starts
         # Guard against malformed metadata under backend issues.
         return torch.clamp_min(padded_sizes, 0)
@@ -1563,11 +1571,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         dispatch_splits = dispatch_splits_offsets[0]
         dispatch_offsets = dispatch_splits_offsets[1]
         
-        padded_batch_size_per_local_expert = self._build_padded_local_expert_batch_sizes_from_layout(
-            splits=dispatch_splits,
-            offsets=dispatch_offsets,
-            total_rows=dispatch_out.shape[0],
-        )
+        with torch.no_grad():
+            padded_batch_size_per_local_expert = self._build_padded_local_expert_batch_sizes_from_layout(
+                splits=dispatch_splits,
+                offsets=dispatch_offsets,
+                total_rows=dispatch_out.shape[0],
+            )
 
         if requires_host_side_split_sizes():
             padded_batch_size_per_local_expert_cpu, _, dtoh_event = async_copy_to_cpu(

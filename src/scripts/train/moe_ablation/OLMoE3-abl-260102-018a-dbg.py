@@ -434,7 +434,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         # )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
                                    start=10021,
                                    end=10024
