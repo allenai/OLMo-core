@@ -7,7 +7,7 @@ This uses the `gemma3_like()` function from `TransformerConfig`, but puts in som
 import argparse
 import math
 from datetime import datetime
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.data import (
@@ -25,10 +25,13 @@ from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
-from olmo_core.nn.lm_head import LMLossImplementation, LMHeadConfig
+from olmo_core.nn.lm_head import LMHeadConfig, LMLossImplementation
 from olmo_core.nn.rope import RoPEConfig, RoPEType
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerBlockConfig, \
-    TransformerBlockType
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerBlockConfig,
+    TransformerBlockType,
+)
 from olmo_core.optim import (
     CosWithWarmup,
     OptimGroupOverride,
@@ -57,8 +60,15 @@ DEFAULT_SEQUENCE_LENGTH = 8192
 
 from dataclasses import dataclass
 
-from olmo_core.nn.attention import AttentionBackendName, GateConfig, GateGranularity, GatedDeltaNetConfig, \
-    AttentionConfig, AttentionType, SlidingWindowAttentionConfig
+from olmo_core.nn.attention import (
+    AttentionBackendName,
+    AttentionConfig,
+    AttentionType,
+    GateConfig,
+    GatedDeltaNetConfig,
+    GateGranularity,
+    SlidingWindowAttentionConfig,
+)
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
 from olmo_core.nn.transformer import TransformerConfig
 
@@ -502,7 +512,9 @@ class GemmaLikeOlmoV2(StrEnum):
     GL_15B = "15B"
     GL_34B = "34B"
 
-    def get_settings(self, vocab_size: int, use_gdn: bool = False) -> Tuple[TransformerConfig, _ModelSizeSettings]:
+    def get_settings(
+        self, vocab_size: int, use_gdn: bool = False
+    ) -> Tuple[TransformerConfig, _ModelSizeSettings]:
         """Get the model config and all settings for this model size."""
         # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
         settings_map = {
@@ -702,7 +714,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     print(f"save_folder (checkpoint location): {save_folder}")
 
     tokenizer_config = TokenizerConfig.dolma2()
-    model_config, model_size_settings = model.get_settings(tokenizer_config.padded_vocab_size(), use_gdn=use_gdn)
+    model_config, model_size_settings = model.get_settings(
+        tokenizer_config.padded_vocab_size(), use_gdn=use_gdn
+    )
 
     # Compute hyperparameters
     model_active_params = model_config.num_active_params
