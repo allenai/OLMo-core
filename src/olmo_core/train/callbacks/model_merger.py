@@ -359,12 +359,14 @@ def compute_merge_window_starts(
     merge_last_n_steps: int,
 ) -> List[int]:
     """
-    Compute the required checkpoint steps for merge windows.
+    Compute the checkpoint steps needed at the start of each merge window.
 
-    For overlapping windows, only the earliest start in each overlapping group
-    is returned, since resuming from that checkpoint allows all overlapping
-    windows to accumulate fully (avoiding mid-window resumes that would cause
-    merges to be skipped).
+    These steps should be passed as ``fixed_steps`` to the checkpointer so that
+    a checkpoint always exists at the beginning of each merge window. Without this,
+    a mid-window resume would cause the merge to be skipped.
+
+    For overlapping windows, only the earliest start in each group is returned
+    since it covers all windows in that group.
     """
     if not merge_steps:
         return []
