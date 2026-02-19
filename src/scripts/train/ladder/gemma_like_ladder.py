@@ -868,6 +868,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 tokenizer=tokenizer_config,
                 eval_on_finish=True,
                 eval_interval=5_000,
+                lazy=True,
             ),
         )
     )
