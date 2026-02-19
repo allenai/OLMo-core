@@ -162,6 +162,12 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
             )
         return configs
 
+    def get_num_tokens(self) -> int:
+        dtype = self.get_dtype()
+        item_size = dtype(0).itemsize
+        source_sizes = path_map(lambda p: io.get_file_size(p) // item_size, self.source_paths)
+        return sum(source_sizes)
+
     def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
