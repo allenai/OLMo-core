@@ -90,6 +90,31 @@ python src/scripts/train/OLMo2-1B.py dry_run test-run ai2/titan-cirrascale
 python src/scripts/train/OLMo2-1B.py launch olmo2-1b-test ai2/jupiter-cirrascale-2 --launch.num_nodes=4
 ```
 
+## Docker and Beaker Launch
+
+The Docker image (`src/Dockerfile`) is a two-stage build: a `build` stage compiles GPU-specific dependencies (flash-attn, TransformerEngine, grouped_gemm, ring-flash-attn, etc.) on an NVIDIA CUDA devel image, and a `release` stage copies the conda environment into a lighter Ubuntu base with AWS CLI, Google Cloud SDK, and MLNX OFED drivers. The image contains all dependencies but *not* the OLMo-core package itself — source code is cloned at runtime.
+
+```bash
+# Build locally (versions configured in Makefile)
+make docker-image
+
+# Push to GHCR
+make ghcr-image
+
+# Create Beaker image
+make beaker-image
+```
+
+**How launch works**: When a training script uses the `launch` command (or `BeakerLaunchConfig.launch()`), it creates a Gantry recipe that:
+1. Starts a container from a pre-built Beaker image (default: `OLMoCoreBeakerImage.stable` in `src/olmo_core/launch/beaker.py`)
+2. Clones the git repo at the current commit into the container (requires clean working tree unless `allow_dirty=True`)
+3. Installs the package from source (`pip install -e .`)
+4. Runs the training command, optionally wrapped with `torchrun` for multi-GPU/multi-node
+
+Pre-built images are listed in the `OLMoCoreBeakerImage` enum in `src/olmo_core/launch/beaker.py`, tagged by torch version and CUDA version (e.g., `tch2100cu128`). The `stable` image tracks the default torch/CUDA versions. When updating default images, also update `.github/workflows/main.yml`.
+
+`BeakerLaunchConfig` also supports `pre_setup` and `post_setup` hooks for running commands before/after the package install step, Weka bucket mounts, and multi-node settings (replicas, leader selection, host networking).
+
 ## Testing
 
 - Tests in `src/test/` mirror the source structure.
