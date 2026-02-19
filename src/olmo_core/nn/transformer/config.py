@@ -1838,7 +1838,6 @@ def validate_block_resolution_config(
         )
 
 
-
 def resolve_block_configs(
     n_layers: int,
     block: TransformerBlockConfig | dict[str, TransformerBlockConfig],
