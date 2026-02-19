@@ -75,6 +75,120 @@ def moe_unpermute_no_compile(*args, **kwargs):
     return moe_unpermute(*args, **kwargs)
 
 
+class _RowPermutationReorderAutograd(torch.autograd.Function):
+    """Reorder rows by a permutation; backward uses inverse gather."""
+
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx,
+        inp: torch.Tensor,
+        reorder_indices: torch.Tensor,
+        inverse_reorder_indices: torch.Tensor,
+        out: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if out is not None:
+            output = torch.index_select(inp, 0, reorder_indices, out=out)
+            ctx.mark_dirty(output)
+        else:
+            output = torch.index_select(inp, 0, reorder_indices)
+
+        # Store directly on ctx (matches other autograd wrappers in this module).
+        ctx.inverse_reorder_indices = inverse_reorder_indices
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):  # type: ignore[override]
+        grad_inp = None
+        if ctx.needs_input_grad[0]:
+            if not grad_output.is_contiguous():
+                grad_output = grad_output.contiguous()
+            grad_inp = torch.index_select(grad_output, 0, ctx.inverse_reorder_indices)
+        return grad_inp, None, None, None
+
+
+@torch.compiler.disable
+def moe_reorder_rows_permutation_no_compile(
+    *,
+    inp: torch.Tensor,
+    reorder_indices: torch.Tensor,
+    inverse_reorder_indices: torch.Tensor,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if inp.ndim != 2:
+        raise ValueError(f"Expected rank-2 input, got shape={tuple(inp.shape)}")
+    if reorder_indices.ndim != 1:
+        raise ValueError(f"Expected rank-1 reorder_indices, got shape={tuple(reorder_indices.shape)}")
+    if inverse_reorder_indices.ndim != 1:
+        raise ValueError(
+            "Expected rank-1 inverse_reorder_indices, "
+            f"got shape={tuple(inverse_reorder_indices.shape)}"
+        )
+    if reorder_indices.numel() != inp.shape[0]:
+        raise ValueError(
+            f"reorder_indices size ({reorder_indices.numel()}) must equal input rows ({inp.shape[0]})"
+        )
+    if inverse_reorder_indices.numel() != inp.shape[0]:
+        raise ValueError(
+            f"inverse_reorder_indices size ({inverse_reorder_indices.numel()}) must equal input rows ({inp.shape[0]})"
+        )
+    if reorder_indices.device != inp.device:
+        raise ValueError(
+            f"reorder_indices/input device mismatch: reorder_indices={reorder_indices.device} inp={inp.device}"
+        )
+    if inverse_reorder_indices.device != inp.device:
+        raise ValueError(
+            "inverse_reorder_indices/input device mismatch: "
+            f"inverse_reorder_indices={inverse_reorder_indices.device} inp={inp.device}"
+        )
+    if out is not None:
+        if out.shape != inp.shape:
+            raise ValueError(f"out shape mismatch: out={tuple(out.shape)} inp={tuple(inp.shape)}")
+        if out.dtype != inp.dtype:
+            raise ValueError(f"out dtype mismatch: out={out.dtype} inp={inp.dtype}")
+        if out.device != inp.device:
+            raise ValueError(f"out device mismatch: out={out.device} inp={inp.device}")
+
+    reorder_i64 = (
+        reorder_indices if reorder_indices.dtype == torch.long else reorder_indices.to(dtype=torch.long)
+    )
+    inverse_i64 = (
+        inverse_reorder_indices
+        if inverse_reorder_indices.dtype == torch.long
+        else inverse_reorder_indices.to(dtype=torch.long)
+    )
+    return _RowPermutationReorderAutograd.apply(inp, reorder_i64, inverse_i64, out)
+
+
+@torch.compiler.disable
+def moe_permute_1d_fused_drop_no_compile(
+    *,
+    inp: torch.Tensor,
+    routing_map: torch.Tensor,
+    num_out_tokens: int,
+    reorder_indices: torch.Tensor,
+    inverse_reorder_indices: torch.Tensor,
+    out: Optional[torch.Tensor] = None,
+    map_type: str = "index",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """TE permute + drop-token reorder fused into a single autograd stage."""
+    if map_type != "index":
+        raise ValueError(f"moe_permute_1d_fused_drop_no_compile only supports map_type='index' (got {map_type})")
+
+    permuted, row_id_map = moe_permute_no_compile(
+        inp=inp,
+        routing_map=routing_map,
+        num_out_tokens=num_out_tokens,
+        map_type="index",
+    )
+    dropped = moe_reorder_rows_permutation_no_compile(
+        inp=permuted,
+        reorder_indices=reorder_indices,
+        inverse_reorder_indices=inverse_reorder_indices,
+        out=out,
+    )
+    return dropped, row_id_map
+
+
 if _HAS_TRITON:
 
     @triton.jit

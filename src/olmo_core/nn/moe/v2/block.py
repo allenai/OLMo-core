@@ -43,6 +43,7 @@ from .shared_experts import SharedExpertsConfig
 from ..utils import (
     build_chunk_routing_map_no_compile,
     moe_chunk_reorder_no_compile,
+    moe_permute_1d_fused_drop_no_compile,
     moe_unpermute_1d_fused_drop_no_compile,
     moe_unpermute_no_compile,
     moe_permute_no_compile,
@@ -252,7 +253,6 @@ class _DispatchVDevAutograd(torch.autograd.Function):
     def forward(  # type: ignore[override]
         ctx,
         source_input: torch.Tensor,
-        reorder_indices: torch.Tensor,
         in_rank_splits: torch.Tensor,
         symm_input: torch.Tensor,
         symm_in_rank_splits: torch.Tensor,
@@ -262,18 +262,20 @@ class _DispatchVDevAutograd(torch.autograd.Function):
         group_name: str,
         group: dist.ProcessGroup,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        packed_rows = reorder_indices.shape[0]
-        if packed_rows != source_input.shape[0]:
+        source_rows = source_input.shape[0]
+        if source_rows != symm_input.shape[0]:
             raise RuntimeError(
-                f"dispatch reorder/input size mismatch: reorder_rows={packed_rows}, input_rows={source_input.shape[0]}"
-            )
-        if packed_rows != symm_input.shape[0]:
-            raise RuntimeError(
-                f"dispatch input rows ({packed_rows}) must equal symmetric dispatch input capacity ({symm_input.shape[0]})"
+                f"dispatch input rows ({source_rows}) must equal symmetric dispatch input capacity ({symm_input.shape[0]})"
             )
 
-        with nvtx.annotate("DropToken", color="green"):
-            torch.index_select(source_input, 0, reorder_indices, out=symm_input)
+        input_aliases_symm_input = (
+            source_input.untyped_storage().data_ptr() == symm_input.untyped_storage().data_ptr()
+            and source_input.storage_offset() == symm_input.storage_offset()
+            and tuple(source_input.shape) == tuple(symm_input.shape)
+            and tuple(source_input.stride()) == tuple(symm_input.stride())
+        )
+        if not input_aliases_symm_input:
+            symm_input.copy_(source_input)
         if in_rank_splits.dtype != torch.int64:
             symm_in_rank_splits.copy_(in_rank_splits.to(dtype=torch.int64))
         else:
@@ -306,7 +308,6 @@ class _DispatchVDevAutograd(torch.autograd.Function):
         # Keep metadata directly on ctx to avoid saved_tensors lifetime issues
         # under compiled autograd.
         ctx.forward_out_rank_splits_offsets = out_rank_splits_offsets
-        ctx.reorder_indices = reorder_indices
         ctx.mark_non_differentiable(out_rank_splits_offsets)
         return symm_out, out_rank_splits_offsets
 
@@ -314,7 +315,6 @@ class _DispatchVDevAutograd(torch.autograd.Function):
     def backward(ctx, grad_out: torch.Tensor, grad_out_rank_splits_offsets: torch.Tensor):  # type: ignore[override]
         del grad_out_rank_splits_offsets
         forward_out_rank_splits_offsets = ctx.forward_out_rank_splits_offsets
-        reorder_indices = ctx.reorder_indices
 
         symm_grad_out = ctx.symm_out
         if grad_out.shape[0] != symm_grad_out.shape[0]:
@@ -352,9 +352,9 @@ class _DispatchVDevAutograd(torch.autograd.Function):
             raise RuntimeError(
                 f"dispatch backward produced {grad_symm_input.shape[0]} rows, expected {ctx.source_rows}"
             )
-        grad_source_input = torch.zeros_like(grad_symm_input)
-        grad_source_input.index_add_(0, reorder_indices, grad_symm_input)
-        return grad_source_input, None, None, None, None, None, None, None, None, None, None
+        # grad_source_input = grad_symm_input.clone() # no need to copy
+        grad_source_input = grad_symm_input
+        return grad_source_input, None, None, None, None, None, None, None, None
 
 
 class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
@@ -1808,26 +1808,37 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 dispatch_out_cap = rank_capacity + dispatch_out_pad
                 combine_out_cap = num_out_tokens + combine_out_pad
 
+        buffers = self._get_ep_no_sync_buffers(
+            dispatch_in_cap=dispatch_in_cap,
+            dispatch_out_cap=dispatch_out_cap,
+            combine_out_cap=combine_out_cap,
+            d_model=moe_inp.shape[-1],
+            dtype=moe_inp.dtype,
+            device=moe_inp.device,
+        )
+
         with nvtx.annotate("Permute local tokens", color="green"):
             routing_map = local_x_global_routed_expert_indices.view(
                 -1, self.routed_experts_router.top_k
             ).int()
             hidden_shape_before_permute = moe_inp.shape
-            permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
-                inp=moe_inp,
-                routing_map=routing_map,
-                num_out_tokens=num_out_tokens,
-                map_type="index",
-            )
-
-        buffers = self._get_ep_no_sync_buffers(
-            dispatch_in_cap=dispatch_in_cap,
-            dispatch_out_cap=dispatch_out_cap,
-            combine_out_cap=combine_out_cap,
-            d_model=permutated_local_x.shape[-1],
-            dtype=permutated_local_x.dtype,
-            device=permutated_local_x.device,
-        )
+            if self.ep_no_sync_use_2d_all_to_all:
+                permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
+                    inp=moe_inp,
+                    routing_map=routing_map,
+                    num_out_tokens=num_out_tokens,
+                    map_type="index",
+                )
+            else:
+                permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_1d_fused_drop_no_compile(
+                    inp=moe_inp,
+                    routing_map=routing_map,
+                    num_out_tokens=num_out_tokens,
+                    reorder_indices=local_reorder_indices,
+                    inverse_reorder_indices=local_inverse_reorder_indices,
+                    out=buffers.dispatch_in.detach(),
+                    map_type="index",
+                )
 
         # lauch shared experts right before dispatch to overlap with the all_to_all
         if self.shared_experts is not None:
@@ -1898,7 +1909,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
             dispatch_out, dispatch_rank_splits_offsets = _DispatchVDevAutograd.apply(
                 permutated_local_x,
-                local_reorder_indices,
                 send_rank_splits,
                 buffers.dispatch_in,
                 buffers.dispatch_in_rank_splits,
