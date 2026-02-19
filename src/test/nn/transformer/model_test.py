@@ -544,6 +544,7 @@ def test_build_with_block_overrides():
         layer_norm_eps=1e-6,
         feed_forward=FeedForwardConfig(hidden_size=d_model * 2, bias=False),
     )
+    assert not isinstance(config.block, dict)
     assert config.block.feed_forward_moe is not None
     moe_config = replace(config.block.feed_forward_moe, shared_mlp=config.block.feed_forward)
     config.block_overrides = {
@@ -605,14 +606,16 @@ def test_transformer_num_flops_per_token():
     ],
 )
 def test_gemma3_builder_configs(config_builder, expected_d_model):
-    config = config_builder(n_layers=2)
+    config = config_builder(n_layers=6)
     assert config.d_model == expected_d_model
-    assert config.n_layers == 2
+    assert config.n_layers == 6
 
-    assert config.block.feed_forward is not None
-    assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
+    block_configs = config.resolved_block_configs
+    local_block = block_configs[0]
+    assert local_block.feed_forward is not None
+    assert local_block.feed_forward.activation == ActivationFunction.gelu_tanh
 
-    sequence_mixer = config.block.sequence_mixer
+    sequence_mixer = local_block.sequence_mixer
     assert isinstance(sequence_mixer, AttentionConfig)
     assert sequence_mixer.qk_norm is not None
     assert sequence_mixer.rope is not None
@@ -626,44 +629,27 @@ def test_gemma3_builder_configs(config_builder, expected_d_model):
     assert model.num_params == num_actual_params
 
 
-def test_gemma3_block_overrides_rope_theta():
+def test_gemma3_hybrid_local_global_attention():
     config = TransformerConfig.gemma3_1B(n_layers=12)
-
-    assert config.block_overrides is not None
 
     local_count = 0
     global_count = 0
-    for layer_idx in range(config.n_layers):
-        if layer_idx in config.block_overrides:
-            global_block = config.block_overrides[layer_idx]
-            attention = global_block.sequence_mixer
-            assert isinstance(attention, AttentionConfig)
-            assert attention.rope is not None
+    for block_config in config.resolved_block_configs:
+        attention = block_config.sequence_mixer
+        assert isinstance(attention, AttentionConfig)
+        assert attention.rope is not None
+        if attention.sliding_window is None:
             assert attention.rope.theta == 1_000_000
-            assert attention.sliding_window is None
             global_count += 1
         else:
-            attention = config.block.sequence_mixer
-            assert isinstance(attention, AttentionConfig)
-            assert attention.rope is not None
             assert attention.rope.theta == 10_000
             local_count += 1
 
     assert global_count == 2
     assert local_count == 10
 
-
-def test_gemma3_sliding_window_pattern():
-    config = TransformerConfig.gemma3_1B(n_layers=12)
-
-    attention = config.block.sequence_mixer
-    assert isinstance(attention, AttentionConfig)
-
-    swa = attention.sliding_window
-    assert swa is not None
-    assert swa.pattern == [1024, 1024, 1024, 1024, 1024, -1]
-    assert swa.force_full_attention_on_first_layer is False
-    assert swa.force_full_attention_on_last_layer is False
+    distinct_blocks = {id(b) for b in config.resolved_block_configs}
+    assert len(distinct_blocks) == 2
 
 
 @pytest.mark.parametrize(
