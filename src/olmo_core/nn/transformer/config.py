@@ -336,6 +336,14 @@ class TransformerConfig(ModelConfig):
             block_pattern=self.block_pattern,
             block_overrides=self.block_overrides,
         )
+        if self.block_pattern is not None and self.n_layers % len(self.block_pattern) != 0:
+            log.warning(
+                "`n_layers` (%d) is not divisible by the length of `block_pattern` (%d). "
+                "The pattern will be cycled and truncated to fit `n_layers`, so the last "
+                "cycle will be incomplete.",
+                self.n_layers,
+                len(self.block_pattern),
+            )
 
     def build(
         self,
@@ -1829,12 +1837,6 @@ def validate_block_resolution_config(
             f"Unknown names: {missing_block_names}. Available names: {available_block_names}."
         )
 
-    pattern_length = len(block_pattern)
-    if n_layers % pattern_length != 0:
-        raise OLMoConfigurationError(
-            f"`n_layers` ({n_layers}) must be divisible by the length of `block_pattern` "
-            f"({pattern_length})."
-        )
 
 
 def resolve_block_configs(
