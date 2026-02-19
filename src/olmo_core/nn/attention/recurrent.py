@@ -250,6 +250,11 @@ class GatedDeltaNet(SequenceMixer):
     ) -> None:
         from olmo_core.nn.transformer.init import InitMethod, init_linear
 
+        if init_method == InitMethod.fan_in:
+            raise NotImplementedError(
+                f"init method '{init_method}' is not supported for GatedDeltaNet"
+            )
+
         if init_method == InitMethod.normalized:
             std = d_model**-0.5
 
@@ -269,11 +274,11 @@ class GatedDeltaNet(SequenceMixer):
         inv_dt = dt + torch.log(-torch.expm1(-dt))
         self.dt_bias.copy_(inv_dt)
 
-        if self == InitMethod.llama:
+        if init_method == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
-        elif self == InitMethod.llama_depth:
+        elif init_method == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
-        elif self == InitMethod.normalized:
+        elif init_method == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
         init_linear(self.w_out, std=std, generator=generator)
