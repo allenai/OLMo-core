@@ -466,3 +466,169 @@ def test_rope_tensor_start_pos(device, head_first):
 
         torch.testing.assert_close(q2, q_expected)
         torch.testing.assert_close(k2, k_expected)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+@pytest.mark.parametrize(
+    "rope_cls",
+    [
+        pytest.param(RotaryEmbedding, id="default"),
+        pytest.param(ComplexRotaryEmbedding, id="complex"),
+    ],
+)
+def test_rope_cu_doc_lens_resets_positions(device, head_first, rope_cls):
+    B, T, d_model, n_heads = 1, 8, 16, 4
+    head_size = d_model // n_heads
+    rope = rope_cls(head_size=head_size)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+
+        cu_doc_lens = torch.tensor([0, 4, 8], device=device, dtype=torch.int32)
+
+        q_with_doc, k_with_doc = rope(
+            q.clone(), k.clone(), head_first=head_first, cu_doc_lens=cu_doc_lens
+        )
+
+        q_doc0_input = q[:, :, :4, :] if head_first else q[:, :4, :, :]
+        k_doc0_input = k[:, :, :4, :] if head_first else k[:, :4, :, :]
+        q_doc0, k_doc0 = rope(q_doc0_input.clone(), k_doc0_input.clone(), head_first=head_first)
+
+        q_doc1_input = q[:, :, 4:8, :] if head_first else q[:, 4:8, :, :]
+        k_doc1_input = k[:, :, 4:8, :] if head_first else k[:, 4:8, :, :]
+        q_doc1, k_doc1 = rope(q_doc1_input.clone(), k_doc1_input.clone(), head_first=head_first)
+
+        if head_first:
+            q_with_doc_0 = q_with_doc[:, :, :4, :]
+            k_with_doc_0 = k_with_doc[:, :, :4, :]
+            q_with_doc_1 = q_with_doc[:, :, 4:8, :]
+            k_with_doc_1 = k_with_doc[:, :, 4:8, :]
+        else:
+            q_with_doc_0 = q_with_doc[:, :4, :, :]
+            k_with_doc_0 = k_with_doc[:, :4, :, :]
+            q_with_doc_1 = q_with_doc[:, 4:8, :, :]
+            k_with_doc_1 = k_with_doc[:, 4:8, :, :]
+
+        torch.testing.assert_close(q_with_doc_0, q_doc0)
+        torch.testing.assert_close(k_with_doc_0, k_doc0)
+        torch.testing.assert_close(q_with_doc_1, q_doc1)
+        torch.testing.assert_close(k_with_doc_1, k_doc1)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+@pytest.mark.parametrize(
+    "rope_cls",
+    [
+        pytest.param(RotaryEmbedding, id="default"),
+        pytest.param(ComplexRotaryEmbedding, id="complex"),
+    ],
+)
+def test_rope_cu_doc_lens_batch_gt_1(device, head_first, rope_cls):
+    B, T, d_model, n_heads = 2, 8, 16, 4
+    head_size = d_model // n_heads
+    rope = rope_cls(head_size=head_size)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+
+        cu_doc_lens = torch.tensor([0, 4, 8, 12, 16], device=device, dtype=torch.int32)
+
+        q_with_doc, k_with_doc = rope(
+            q.clone(), k.clone(), head_first=head_first, cu_doc_lens=cu_doc_lens
+        )
+
+        q_b0 = q[:1, :, :, :] if head_first else q[:1, :, :, :]
+        k_b0 = k[:1, :, :, :] if head_first else k[:1, :, :, :]
+        q_b1 = q[1:2, :, :, :] if head_first else q[1:2, :, :, :]
+        k_b1 = k[1:2, :, :, :] if head_first else k[1:2, :, :, :]
+
+        cu_doc_lens_b0 = torch.tensor([0, 4, 8], device=device, dtype=torch.int32)
+        cu_doc_lens_b1 = torch.tensor([0, 4, 8], device=device, dtype=torch.int32)
+
+        q_b0_out, k_b0_out = rope(
+            q_b0.clone(), k_b0.clone(), head_first=head_first, cu_doc_lens=cu_doc_lens_b0
+        )
+        q_b1_out, k_b1_out = rope(
+            q_b1.clone(), k_b1.clone(), head_first=head_first, cu_doc_lens=cu_doc_lens_b1
+        )
+
+        torch.testing.assert_close(q_with_doc[:1], q_b0_out)
+        torch.testing.assert_close(k_with_doc[:1], k_b0_out)
+        torch.testing.assert_close(q_with_doc[1:2], q_b1_out)
+        torch.testing.assert_close(k_with_doc[1:2], k_b1_out)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "rope_cls",
+    [
+        pytest.param(RotaryEmbedding, id="default"),
+        pytest.param(ComplexRotaryEmbedding, id="complex"),
+    ],
+)
+def test_rope_cu_doc_lens_uneven_docs(device, rope_cls):
+    B, T, d_model, n_heads = 2, 8, 16, 4
+    head_size = d_model // n_heads
+    rope = rope_cls(head_size=head_size)
+    head_first = False
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+
+        cu_doc_lens = torch.tensor([0, 3, 8, 10, 16], device=device, dtype=torch.int32)
+
+        q_with_doc, k_with_doc = rope(
+            q.clone(), k.clone(), head_first=head_first, cu_doc_lens=cu_doc_lens
+        )
+
+        q_b0_doc0_input = q[0:1, :3, :, :]
+        k_b0_doc0_input = k[0:1, :3, :, :]
+        q_b0_doc0, k_b0_doc0 = rope(
+            q_b0_doc0_input.clone(), k_b0_doc0_input.clone(), head_first=head_first
+        )
+
+        q_b0_doc1_input = q[0:1, 3:8, :, :]
+        k_b0_doc1_input = k[0:1, 3:8, :, :]
+        q_b0_doc1, k_b0_doc1 = rope(
+            q_b0_doc1_input.clone(), k_b0_doc1_input.clone(), head_first=head_first
+        )
+
+        q_b1_doc0_input = q[1:2, :2, :, :]
+        k_b1_doc0_input = k[1:2, :2, :, :]
+        q_b1_doc0, k_b1_doc0 = rope(
+            q_b1_doc0_input.clone(), k_b1_doc0_input.clone(), head_first=head_first
+        )
+
+        q_b1_doc1_input = q[1:2, 2:8, :, :]
+        k_b1_doc1_input = k[1:2, 2:8, :, :]
+        q_b1_doc1, k_b1_doc1 = rope(
+            q_b1_doc1_input.clone(), k_b1_doc1_input.clone(), head_first=head_first
+        )
+
+        torch.testing.assert_close(q_with_doc[0:1, :3, :, :], q_b0_doc0)
+        torch.testing.assert_close(k_with_doc[0:1, :3, :, :], k_b0_doc0)
+        torch.testing.assert_close(q_with_doc[0:1, 3:8, :, :], q_b0_doc1)
+        torch.testing.assert_close(k_with_doc[0:1, 3:8, :, :], k_b0_doc1)
+        torch.testing.assert_close(q_with_doc[1:2, :2, :, :], q_b1_doc0)
+        torch.testing.assert_close(k_with_doc[1:2, :2, :, :], k_b1_doc0)
+        torch.testing.assert_close(q_with_doc[1:2, 2:8, :, :], q_b1_doc1)
+        torch.testing.assert_close(k_with_doc[1:2, 2:8, :, :], k_b1_doc1)

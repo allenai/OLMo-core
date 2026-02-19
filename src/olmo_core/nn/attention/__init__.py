@@ -594,6 +594,7 @@ class Attention(SequenceMixer):
                 pos_sin=pos_sin,
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
+                cu_doc_lens=cu_doc_lens,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -885,6 +886,7 @@ class NormalizedAttention(Attention):
                 pos_sin=pos_sin,
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
+                cu_doc_lens=cu_doc_lens,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -1041,6 +1043,11 @@ class FusedAttention(SequenceMixer):
             qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
         if self.rope is not None:
+            if cu_doc_lens is not None:
+                raise NotImplementedError(
+                    "Per-document RoPE positions are not supported with fused attention. "
+                    "Use the non-fused attention/rope path or disable cu_doc_lens."
+                )
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
