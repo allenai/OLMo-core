@@ -717,7 +717,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     # Compute hyperparameters
-    model_active_params = model_config.num_active_non_embedding_params
+    model_active_params = model_config.num_non_embedding_params
     train_duration = Duration.chinchilla_tokens(
         chinchilla_multiple, model_params=model_active_params
     )
