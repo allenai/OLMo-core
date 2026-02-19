@@ -18,6 +18,7 @@ from typing import (
     Iterable,
     List,
     Optional,
+    Set,
     Tuple,
     Type,
     TypedDict,
@@ -242,12 +243,18 @@ class Trainer:
     training throughput.
     """
 
-    block_ephemeral_checkpoints: bool = False
-    """
-    When ``True``, the checkpointer will skip ephemeral checkpoint saves.
-    Used by :class:`~olmo_core.train.callbacks.ModelMergeCallback` to prevent
-    ephemeral checkpoints during merge windows.
-    """
+    _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, init=False, default_factory=set)
+    """Callbacks that are blocking ephemeral checkpoints."""
+
+    @property
+    def block_ephemeral_checkpoints(self) -> bool:
+        return len(self._blocking_ephemeral_checkpoints) > 0
+
+    def get_callback_name(self, callback: Callback) -> str:
+        for name, cb in self.callbacks.items():
+            if cb is callback:
+                return name
+        raise ValueError("callback not registered with trainer!")
 
     hard_stop: Optional[Duration] = None
     """

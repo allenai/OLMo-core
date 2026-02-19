@@ -190,7 +190,7 @@ class ModelMergeCallback(Callback):
         active = self._active_windows()
 
         if not active:
-            self.trainer.block_ephemeral_checkpoints = False
+            self.unblock_ephemeral_checkpoints()
             return
 
         # Copy model weights to CPU once for all active windows
@@ -211,7 +211,10 @@ class ModelMergeCallback(Callback):
         # mid-window resume points that would cause the merge to be skipped.
         # Set AFTER saves so the flag is False once all windows at this step complete.
         still_active = [ms for ms in active if ms not in self._completed_merges]
-        self.trainer.block_ephemeral_checkpoints = len(still_active) > 0
+        if still_active:
+            self.block_ephemeral_checkpoints()
+        else:
+            self.unblock_ephemeral_checkpoints()
 
     def _accumulate_weights(self, merge_step: int, model_state: Dict[str, torch.Tensor]):
         if merge_step not in self._accumulators:
