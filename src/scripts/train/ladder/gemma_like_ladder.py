@@ -45,7 +45,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
 )
 from olmo_core.optim import (
-    CosWithWarmup,
+    CosWithWarmupAndLinearDecay,
     OptimGroupOverride,
     SchedulerUnits,
     SkipStepAdamWConfig,
@@ -780,9 +780,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        scheduler=CosWithWarmup(
+        scheduler=CosWithWarmupAndLinearDecay(
             units=SchedulerUnits.tokens,
             warmup=2000 * global_batch_size,
+            decay=2000 * global_batch_size,
+            decay_fraction=None,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
