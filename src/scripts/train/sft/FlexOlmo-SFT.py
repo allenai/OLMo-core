@@ -287,7 +287,7 @@ class SFTRouterConfig(Config):
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
-    init_seed: int = 531842
+    init_seed: int = 531841
 
     @classmethod
     def build(
@@ -534,7 +534,7 @@ class SFTRouterConfig(Config):
             model=model,
             dataset=None,
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=bs_config.global_batch_size_tokens, seed=3452100, num_workers=4
+                global_batch_size=bs_config.global_batch_size_tokens, seed=34520, num_workers=4
             ),
             # train_module=TransformerTrainModuleConfig(
             #     rank_microbatch_size=2 * 4096,
