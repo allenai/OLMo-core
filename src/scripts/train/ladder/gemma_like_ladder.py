@@ -807,6 +807,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     trainer_config = (
         TrainerConfig(
             save_folder=save_folder,
+            work_dir=work_dir,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
