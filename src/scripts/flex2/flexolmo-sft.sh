@@ -144,7 +144,7 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --num_nodes=4 \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
-    --model_name olmoe-2x7b \
+    --model_name olmoe-2x7b-unfrozen-lm-head \
     --dataset_path $SFT_DATASET
 
 
