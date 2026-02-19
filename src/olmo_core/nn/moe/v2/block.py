@@ -41,6 +41,9 @@ from .shared_experts import SharedExpertsConfig
 
 # backend: transformer_engine
 from ..utils import (
+    build_chunk_routing_map_no_compile,
+    moe_chunk_reorder_no_compile,
+    moe_unpermute_1d_fused_drop_no_compile,
     moe_unpermute_no_compile,
     moe_permute_no_compile,
     moe_sort_chunks_by_index_no_compile,
@@ -189,14 +192,18 @@ class _DispatchVDev2DAutograd(torch.autograd.Function):
         ctx.symm_out_splits_offsets = symm_out_splits_offsets
         ctx.symm_tmp_splits_offsets = symm_tmp_splits_offsets
         out_splits_offsets = symm_out_splits_offsets.clone()
-        ctx.save_for_backward(out_splits_offsets, reorder_indices)
+        # Keep metadata directly on ctx to avoid saved_tensors lifetime issues
+        # under compiled autograd.
+        ctx.forward_out_splits_offsets = out_splits_offsets
+        ctx.reorder_indices = reorder_indices
         ctx.mark_non_differentiable(out_splits_offsets)
         return symm_out, out_splits_offsets
 
     @staticmethod
     def backward(ctx, grad_out: torch.Tensor, grad_out_splits_offsets: torch.Tensor):  # type: ignore[override]
         del grad_out_splits_offsets
-        (forward_out_splits_offsets, reorder_indices) = ctx.saved_tensors
+        forward_out_splits_offsets = ctx.forward_out_splits_offsets
+        reorder_indices = ctx.reorder_indices
 
         symm_grad_out = ctx.symm_out
         if grad_out.shape[0] != symm_grad_out.shape[0]:
@@ -296,14 +303,18 @@ class _DispatchVDevAutograd(torch.autograd.Function):
         ctx.symm_out_rank_splits_offsets = symm_out_rank_splits_offsets
         ctx.symm_tmp_rank_splits_offsets = symm_tmp_rank_splits_offsets
         out_rank_splits_offsets = symm_out_rank_splits_offsets.clone()
-        ctx.save_for_backward(out_rank_splits_offsets, reorder_indices)
+        # Keep metadata directly on ctx to avoid saved_tensors lifetime issues
+        # under compiled autograd.
+        ctx.forward_out_rank_splits_offsets = out_rank_splits_offsets
+        ctx.reorder_indices = reorder_indices
         ctx.mark_non_differentiable(out_rank_splits_offsets)
         return symm_out, out_rank_splits_offsets
 
     @staticmethod
     def backward(ctx, grad_out: torch.Tensor, grad_out_rank_splits_offsets: torch.Tensor):  # type: ignore[override]
         del grad_out_rank_splits_offsets
-        (forward_out_rank_splits_offsets, reorder_indices) = ctx.saved_tensors
+        forward_out_rank_splits_offsets = ctx.forward_out_rank_splits_offsets
+        reorder_indices = ctx.reorder_indices
 
         symm_grad_out = ctx.symm_out
         if grad_out.shape[0] != symm_grad_out.shape[0]:
@@ -417,14 +428,16 @@ class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
         ctx.symm_in_splits = symm_in_splits
         ctx.major_align = major_align
         out_splits_offsets = symm_out_splits_offsets.clone()
-        ctx.save_for_backward(out_splits_offsets)
+        # Keep metadata directly on ctx to avoid saved_tensors lifetime issues
+        # under compiled autograd.
+        ctx.forward_out_splits_offsets = out_splits_offsets
         ctx.mark_non_differentiable(out_splits_offsets)
         return symm_out, out_splits_offsets
 
     @staticmethod
     def backward(ctx, grad_out: torch.Tensor, grad_out_splits_offsets: torch.Tensor):  # type: ignore[override]
         del grad_out_splits_offsets
-        (forward_out_splits_offsets,) = ctx.saved_tensors
+        forward_out_splits_offsets = ctx.forward_out_splits_offsets
 
         symm_grad_out = ctx.symm_out
         if grad_out.shape[0] != symm_grad_out.shape[0]:
@@ -479,7 +492,14 @@ class _CombineVDevAutograd(torch.autograd.Function):
                 f"combine input rows ({input_rows}) must equal symmetric combine input capacity ({symm_input.shape[0]})"
             )
 
-        symm_input.copy_(input)
+        input_aliases_symm_input = (
+            input.untyped_storage().data_ptr() == symm_input.untyped_storage().data_ptr()
+            and input.storage_offset() == symm_input.storage_offset()
+            and tuple(input.shape) == tuple(symm_input.shape)
+            and tuple(input.stride()) == tuple(symm_input.stride())
+        )
+        if not input_aliases_symm_input:
+            symm_input.copy_(input)
         if in_rank_splits.dtype != torch.int64:
             symm_in_rank_splits.copy_(in_rank_splits.to(dtype=torch.int64))
         else:
@@ -510,14 +530,16 @@ class _CombineVDevAutograd(torch.autograd.Function):
         ctx.symm_out_rank_splits_offsets = symm_out_rank_splits_offsets
         ctx.symm_tmp_rank_splits_offsets = symm_tmp_rank_splits_offsets
         out_rank_splits_offsets = symm_out_rank_splits_offsets.clone()
-        ctx.save_for_backward(out_rank_splits_offsets)
+        # Keep metadata directly on ctx to avoid saved_tensors lifetime issues
+        # under compiled autograd.
+        ctx.forward_out_rank_splits_offsets = out_rank_splits_offsets
         ctx.mark_non_differentiable(out_rank_splits_offsets)
         return symm_out, out_rank_splits_offsets
 
     @staticmethod
     def backward(ctx, grad_out: torch.Tensor, grad_out_rank_splits_offsets: torch.Tensor):  # type: ignore[override]
         del grad_out_rank_splits_offsets
-        (forward_out_rank_splits_offsets,) = ctx.saved_tensors
+        forward_out_rank_splits_offsets = ctx.forward_out_rank_splits_offsets
 
         symm_grad_out = ctx.symm_out
         if grad_out.shape[0] != symm_grad_out.shape[0]:
@@ -569,6 +591,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     ep_no_sync_use_2d_all_to_all: bool = False
     ep_no_sync_capacity_factor: float = 1.4
     ep_no_sync_major_align: int = 1
+    ep_no_sync_restore_unpermute_backend: str = "te_fused"
         
     def build(
         self,
@@ -702,6 +725,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ep_no_sync_use_2d_all_to_all: bool = True,
         ep_no_sync_capacity_factor: float = 2.0,
         ep_no_sync_major_align: int = 1,
+        ep_no_sync_restore_unpermute_backend: str = "te_fused",
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -800,6 +824,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.ep_no_sync_use_2d_all_to_all = ep_no_sync_use_2d_all_to_all
         self.ep_no_sync_capacity_factor = ep_no_sync_capacity_factor
         self.ep_no_sync_major_align = ep_no_sync_major_align
+        self.ep_no_sync_restore_unpermute_backend = ep_no_sync_restore_unpermute_backend.lower()
         self._ep_symm_group_name: Optional[str] = None
         self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_last_debug: Dict[str, torch.Tensor] = {}
@@ -812,6 +837,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if self.ep_no_sync_major_align < 1:
             raise OLMoConfigurationError(
                 f"ep_no_sync_major_align must be >= 1 (got {self.ep_no_sync_major_align})"
+            )
+        if self.ep_no_sync_restore_unpermute_backend not in ("te_fused", "te_legacy", "cuda"):
+            raise OLMoConfigurationError(
+                "ep_no_sync_restore_unpermute_backend must be one of "
+                "'te_fused'|'te_legacy'|'cuda' "
+                f"(got {self.ep_no_sync_restore_unpermute_backend!r})"
             )
 
 
@@ -1278,11 +1309,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 f"got {requested.numel()}, expected {expected_splits}"
             )
 
-        local_capacity = torch.tensor(
-            [rank_capacity],
-            device=requested.device,
-            dtype=torch.long,
-        )
+        local_capacity = requested.new_full((1,), rank_capacity, dtype=torch.long)
         payload = torch.cat((requested, local_capacity), dim=0)
         payload_replicated = payload.repeat(self.ep_world_size)
         gathered_payload = torch.empty_like(payload_replicated)
@@ -1408,6 +1435,61 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         restored = combine_out.index_select(0, restored_src_indices)
         return torch.where(restored_mask.unsqueeze(-1), restored, torch.zeros_like(restored))
+
+    @nvtx.annotate("_restore_drop_unpermute_1d")
+    def _restore_drop_unpermute_1d(
+        self,
+        *,
+        combine_out: torch.Tensor,
+        local_inverse_reorder_indices: torch.Tensor,
+        packed_keep_mask: torch.Tensor,
+        num_kept: torch.Tensor,
+        reversed_local_x_permutation_mapping: torch.Tensor,
+        local_x_global_routed_expert_weights: torch.Tensor,
+        hidden_shape_before_permute: torch.Size,
+    ) -> torch.Tensor:
+        assert self.routed_experts_router is not None
+        merging_probs = local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k)
+        backend = self.ep_no_sync_restore_unpermute_backend
+
+        if backend == "te_fused":
+            return cast(
+                torch.Tensor,
+                moe_unpermute_1d_fused_drop_no_compile(
+                    inp=combine_out,
+                    row_id_map=reversed_local_x_permutation_mapping,
+                    local_inverse_reorder_indices=local_inverse_reorder_indices,
+                    packed_keep_mask=packed_keep_mask,
+                    merging_probs=merging_probs,
+                    num_kept=num_kept,
+                    map_type="index",
+                ),
+            )
+        if backend == "te_legacy":
+            with nvtx.annotate("RestoreDrop", color="green"):
+                restored_local_x = combine_out.index_select(0, local_inverse_reorder_indices)
+                restored_keep_mask = packed_keep_mask.index_select(0, local_inverse_reorder_indices)
+                restored_local_x = torch.where(
+                    restored_keep_mask.unsqueeze(-1),
+                    restored_local_x,
+                    torch.zeros_like(restored_local_x),
+                )
+            return cast(
+                torch.Tensor,
+                moe_unpermute_no_compile(
+                    inp=restored_local_x,
+                    row_id_map=reversed_local_x_permutation_mapping,
+                    merging_probs=merging_probs,
+                    restore_shape=hidden_shape_before_permute,
+                    map_type="index",
+                ),
+            )
+        if backend == "cuda":
+            raise RuntimeError(
+                "ep_no_sync_restore_unpermute_backend='cuda' is not implemented yet. "
+                "TODO: add a custom CUDA path mirroring TE _moe_unpermute_index_map semantics."
+            )
+        raise RuntimeError(f"Unhandled ep_no_sync_restore_unpermute_backend: {backend}")
 
 
 
@@ -1713,6 +1795,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     keep_splits=allowed_splits,
                     num_out_tokens=num_out_tokens,
                 )
+                num_kept = allowed_splits.sum(dtype=torch.long)
                 if self.ep_no_sync_use_2d_all_to_all:
                     align_pad = max(self.ep_no_sync_major_align - 1, 0)
                     dispatch_out_pad = (self.num_local_routed_experts - 1) * align_pad
@@ -1829,26 +1912,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             dispatch_rank_major = dispatch_out # 1D Dispatch does not have holes, so no need to defrag
 
             with torch.no_grad():
-                recv_splits_src_local_flat = recv_splits_by_src_local.reshape(-1)
-                recv_chunk_ids, _, recv_valid_mask = _build_chunk_row_plan(
-                    recv_splits_src_local_flat,
-                    rows=dispatch_rank_major.shape[0],
-                    device=dispatch_rank_major.device,
-                )
-                global_x_local_expert_indices = torch.remainder(
-                    recv_chunk_ids, self.num_local_routed_experts
-                ).to(dtype=torch.int32)
-                # Tail rows beyond valid received tokens should not map to expert 0.
-                # Route them to the last local expert so they remain after all valid expert segments.
-                global_x_local_expert_indices = torch.where(
-                    recv_valid_mask,
-                    global_x_local_expert_indices,
-                    torch.full_like(
-                        global_x_local_expert_indices,
-                        self.num_local_routed_experts - 1,
-                    ),
-                )
-
                 # Per-local-expert rows received on this rank.
                 padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
                     dim=0,
@@ -1857,34 +1920,39 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
 
             with nvtx.annotate("Permute global tokens", color='green'):
-                routing_map2 = global_x_local_expert_indices.view(-1, 1).int()
-                num_out_tokens2 = routing_map2.size(0)
                 if self.routed_experts.num_local_experts == 1:
-                    reversed_global_x_permutation_mapping = None
+                    global_x_local_expert_major = dispatch_rank_major
+                    global_chunk_row_id_map = None
                 else:
-                    # moe_permute (by TE)
-                    dispatch_rank_major, reversed_global_x_permutation_mapping = moe_permute_no_compile(
-                        inp=dispatch_rank_major, 
-                        routing_map=routing_map2, 
-                        num_out_tokens=num_out_tokens2, 
-                        map_type='index'
+                    global_chunk_routing_map = build_chunk_routing_map_no_compile(
+                        recv_splits_by_src_local,
+                        rows=dispatch_rank_major.shape[0],
+                    )
+                    global_x_local_expert_major, global_chunk_row_id_map = moe_chunk_reorder_no_compile(
+                        inp=dispatch_rank_major,
+                        routing_map=global_chunk_routing_map,
+                        num_out_tokens=dispatch_rank_major.shape[0],
                     )
 
             # expert forward
-            dispatch_rank_major = self.routed_experts(dispatch_rank_major, padded_batch_size_per_local_expert)
+            dispatch_rank_major = self.routed_experts(
+                global_x_local_expert_major,
+                padded_batch_size_per_local_expert,
+            )
             
 
             with nvtx.annotate("Unpermute global tokens", color='green'):
                 if self.routed_experts.num_local_experts == 1:
                     global_x_rank_major = dispatch_rank_major  # skip unpermute if only one local expert
                 else:
-                    # moe_unpermute (by TE)
-                    global_x_rank_major = moe_unpermute_no_compile(
+                    assert global_chunk_row_id_map is not None
+                    global_x_rank_major = moe_chunk_reorder_no_compile(
                         inp=dispatch_rank_major,
-                        row_id_map=reversed_global_x_permutation_mapping,
-                        merging_probs=None,
-                        restore_shape=None, # map_type='index' does not require restore_shape
-                        map_type='index',
+                        row_id_map=global_chunk_row_id_map,
+                        # Use a fresh detached alias each call:
+                        # - writes directly into combine buffer storage (no extra copy),
+                        # - avoids persisting autograd history on the reusable buffer tensor object.
+                        out=buffers.combine_in.detach(),
                     ) 
 
 
@@ -1935,27 +2003,26 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 packed_keep_mask=packed_keep_mask,
                 out_rows=num_out_tokens,
             )
-        else:
-            # 1D Combine does not have holes, so no need to defrag
-            # inverse reorder and zero out dropped tokens
-            with nvtx.annotate("RestoreDrop", color="green"):
-                restored_local_x = combine_out.index_select(0, local_inverse_reorder_indices)
-                restored_keep_mask = packed_keep_mask.index_select(0, local_inverse_reorder_indices)
-                restored_local_x = torch.where(
-                    restored_keep_mask.unsqueeze(-1),
-                    restored_local_x,
-                    torch.zeros_like(restored_local_x),
+            with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+                local_x = moe_unpermute_no_compile(
+                    inp=restored_local_x,
+                    row_id_map=reversed_local_x_permutation_mapping,
+                    merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                    restore_shape=hidden_shape_before_permute,
+                    map_type="index",
                 )
-
-        with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
-            local_x = moe_unpermute_no_compile(
-                inp=restored_local_x,
-                row_id_map=reversed_local_x_permutation_mapping,
-                merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
-                restore_shape=hidden_shape_before_permute,
-                map_type="index",
-            )
-            local_x = cast(torch.Tensor, local_x)
+                local_x = cast(torch.Tensor, local_x)
+        else:
+            with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+                local_x = self._restore_drop_unpermute_1d(
+                    combine_out=combine_out,
+                    local_inverse_reorder_indices=local_inverse_reorder_indices,
+                    packed_keep_mask=packed_keep_mask,
+                    num_kept=num_kept,
+                    reversed_local_x_permutation_mapping=reversed_local_x_permutation_mapping,
+                    local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
+                    hidden_shape_before_permute=hidden_shape_before_permute,
+                )
 
         local_x = local_x.view(in_shape)
         wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
