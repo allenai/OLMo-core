@@ -8,6 +8,8 @@ import pytest
 import torch
 
 from olmo_core.nn.attention import AttentionConfig, GateConfig, GateGranularity
+from olmo_core.nn.attention.flash_linear_attn_api import has_fla as _has_fla
+from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
@@ -173,6 +175,27 @@ def test_fan_in_init_attention_gate(d_model, init_device, device, granularity):
     g_std = block.attention.w_g.weight.std().item()
     tolerance = expected_std * 0.2
     assert abs(g_std - expected_std) < tolerance, f"w_g std: expected ~{expected_std}, got {g_std}"
+
+
+@pytest.mark.skipif(not _has_fla(), reason="fla not installed")
+def test_fan_in_init_raises_for_gdn():
+    """Test that fan_in init raises NotImplementedError for GatedDeltaNet."""
+    d_model = 256
+    config = TransformerConfig(
+        d_model=d_model,
+        vocab_size=1000,
+        n_layers=2,
+        init_method=InitMethod.fan_in,
+        block=TransformerBlockConfig(
+            sequence_mixer=GatedDeltaNetConfig(n_heads=d_model // 64),
+            feed_forward=FeedForwardConfig(hidden_size=d_model * 4, bias=False),
+            layer_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
+        ),
+        lm_head=LMHeadConfig(bias=False),
+    )
+    model = config.build(init_device="cpu")
+    with pytest.raises(NotImplementedError, match="fan_in.*not supported.*GatedDeltaNet"):
+        model.init_weights(device=torch.device("cpu"))
 
 
 if __name__ == "__main__":

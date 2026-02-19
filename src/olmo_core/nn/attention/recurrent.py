@@ -250,6 +250,11 @@ class GatedDeltaNet(SequenceMixer):
     ) -> None:
         from olmo_core.nn.transformer.init import InitMethod, init_linear
 
+        if init_method == InitMethod.fan_in:
+            raise NotImplementedError(
+                f"init method '{init_method}' is not supported for GatedDeltaNet"
+            )
+
         if init_method == InitMethod.normalized:
             std = d_model**-0.5
 
