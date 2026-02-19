@@ -470,13 +470,19 @@ def analyze_ladder(
             flops_per_token = None
         elif parallel_flops:
             computed_specs = compute_specs_for_size_parallel(
-                ladder_name, size, seq_len=seq_len, chunk_size=chunk_size,
+                ladder_name,
+                size,
+                seq_len=seq_len,
+                chunk_size=chunk_size,
                 chinchilla_flops=chinchilla_flops,
             )
             flops_per_token = computed_specs["total_flops_per_token"] if computed_specs else None
         else:
             computed_specs = compute_specs_for_size(
-                ladder_name, size, seq_len=seq_len, chinchilla_flops=chinchilla_flops,
+                ladder_name,
+                size,
+                seq_len=seq_len,
+                chinchilla_flops=chinchilla_flops,
             )
             flops_per_token = computed_specs["total_flops_per_token"] if computed_specs else None
 
@@ -2118,7 +2124,7 @@ def plot_base_easy_metrics_vs_flops(
                 use_final_checkpoint=use_final_checkpoint,
             )
 
-        ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=10)
+        ax.set_xlabel("Training PetaFLOPs", fontsize=10)
         ax.set_ylabel("Bits-per-byte", fontsize=10)
         ax.set_title(f"Base Easy {cluster.replace('_BPB', '')}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
@@ -2202,7 +2208,7 @@ def plot_base_main_metrics_vs_flops(
                 use_final_checkpoint=use_final_checkpoint,
             )
 
-        ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=10)
+        ax.set_xlabel("Training PetaFLOPs", fontsize=10)
         ax.set_ylabel("Accuracy (%)" if cluster != "FIM" else "pass@1 (%)", fontsize=10)
         ax.set_title(f"Base Main {cluster}", fontsize=11, fontweight="bold")
         ax.set_xscale("log")
@@ -2288,7 +2294,7 @@ def plot_lm_metrics_vs_flops(
             use_final_checkpoint=use_final_checkpoint,
         )
 
-    ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=10)
+    ax.set_xlabel("Training PetaFLOPs", fontsize=10)
     ax.set_ylabel("Perplexity", fontsize=10)
     ax.set_title("Average PPL", fontsize=12, fontweight="bold")
     ax.set_xscale("log")
@@ -2324,7 +2330,7 @@ def plot_lm_metrics_vs_flops(
                 use_final_checkpoint=use_final_checkpoint,
             )
 
-        ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=10)
+        ax.set_xlabel("Training PetaFLOPs", fontsize=10)
         ax.set_ylabel("Perplexity", fontsize=10)
         ax.set_title(f"{task}", fontsize=12, fontweight="bold")
         ax.set_xscale("log")
@@ -2684,7 +2690,7 @@ ABLATION_ARCHITECTURES: List[Dict[str, Any]] = [
     {
         "key": "hybrid-gdn",
         "aliases": [],
-        "display": "GatedDeltaNet + 1:3 Attn",
+        "display": "GatedDeltaNet + 3:1 Attn",
         "attn_pct": "25\\%",
         "group": "Hybrid: Interleaved Attention",
         "star": True,
@@ -2692,14 +2698,14 @@ ABLATION_ARCHITECTURES: List[Dict[str, Any]] = [
     {
         "key": "hybrid-gdn-eight",
         "aliases": [],
-        "display": "GatedDeltaNet + 1:7 Attn",
+        "display": "GatedDeltaNet + 7:1 Attn",
         "attn_pct": "12.5\\%",
         "group": "Hybrid: Interleaved Attention",
     },
     {
         "key": "hybrid-mamba",
         "aliases": [],
-        "display": "Mamba2 + 1:3 Attn",
+        "display": "Mamba2 + 3:1 Attn",
         "attn_pct": "25\\%",
         "group": "Hybrid: Interleaved Attention",
     },
@@ -2982,7 +2988,11 @@ def generate_ablation_latex_table(
         lines.append(r"\begin{table*}[t]")
         lines.append(r"\centering")
         lines.append(r"\caption{")
-        lines.append(r"    \textbf{Architecture ablation results --- per-domain breakdown (" + caption_extra + r").}")
+        lines.append(
+            r"    \textbf{Architecture ablation results --- per-domain breakdown ("
+            + caption_extra
+            + r").}"
+        )
         lines.append(f"    Per-domain {suite_label} BPB for pure and hybrid architectures.")
         lines.append(r"    \textbf{Bold} indicates best; \underline{underline} second best.")
         lines.append(r"    $\bigstar$ marks our selected architecture.")
@@ -3115,6 +3125,7 @@ def generate_ablation_latex_table(
 # =============================================================================
 # LaTeX/TikZ Plot Generation (pgfplots)
 # =============================================================================
+
 
 def generate_latex_plot(
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
@@ -3359,7 +3370,7 @@ def generate_latex_flops_plot(
     """
     Generate a TikZ/pgfplots figure showing metric vs training FLOPs.
 
-    Same interface as generate_latex_plot() but uses FLOPs (PetaFLOPs) on the x-axis
+    Same interface as generate_latex_plot() but uses PetaFLOPs on the x-axis
     instead of parameter count, enabling iso-compute comparison across architectures.
     """
     ladder_names = list(ladder_results.keys())
@@ -3443,7 +3454,7 @@ def generate_latex_flops_plot(
         lines.append("    ymode=log,")
         lines.append("    log ticks with fixed point,")
     lines.append("    log basis x=10,")
-    lines.append("    xlabel={Training FLOPs (PetaFLOPs)},")
+    lines.append("    xlabel={Training PetaFLOPs},")
     lines.append(f"    ylabel={{{escape_latex(ylabel)}}},")
     lines.append(f"    xmin={x_min:.4f}, xmax={x_max:.4f},")
     if not log_y:
@@ -3803,7 +3814,7 @@ def generate_paper_eval_figure(
         allpts = _collect_allpoints(extract_fn)
 
         plines.append(r"\nextgroupplot[")
-        plines.append(r"    xlabel={Training FLOPs (PetaFLOPs)},")
+        plines.append(r"    xlabel={Training PetaFLOPs},")
         plines.append(f"    ylabel={{{escape_latex(ylabel)}}},")
         plines.append(f"    title={{({panel_label}) {escape_latex(title)}}},")
         plines.append(r"]")
@@ -4322,7 +4333,9 @@ def export_results(
         f.write(latex_output)
 
     # Generate ablation tables (avg, configs, detail as separate files)
-    ablation_avg, ablation_configs, ablation_detail = generate_ablation_latex_table(ladder_results, sizes)
+    ablation_avg, ablation_configs, ablation_detail = generate_ablation_latex_table(
+        ladder_results, sizes
+    )
     ablation_path = output_path / "ablation-evals.tex"
     with open(ablation_path, "w") as f:
         f.write(ablation_avg)

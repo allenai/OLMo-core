@@ -309,8 +309,11 @@ def load_ladder_data(
                 tokens = row.get("tokens")
 
                 if average_val_loss and used_loss_col == "__average_val__":
-                    vals = [row.get(c) for c in _available_val_cols
-                            if row.get(c) is not None and not pd.isna(row.get(c))]
+                    vals = [
+                        row.get(c)
+                        for c in _available_val_cols
+                        if row.get(c) is not None and not pd.isna(row.get(c))
+                    ]
                     loss = float(np.mean(vals)) if vals else None
                 else:
                     loss = row.get(used_loss_col)
@@ -366,8 +369,11 @@ def load_ladder_data(
                 continue
 
             if average_val_loss and used_loss_col == "__average_val__":
-                vals = [final_row.get(c) for c in _available_val_cols
-                        if final_row.get(c) is not None and not pd.isna(final_row.get(c))]
+                vals = [
+                    final_row.get(c)
+                    for c in _available_val_cols
+                    if final_row.get(c) is not None and not pd.isna(final_row.get(c))
+                ]
                 loss = float(np.mean(vals)) if vals else None
             else:
                 loss = final_row.get(used_loss_col)
@@ -679,7 +685,9 @@ def print_comparison(fits: Dict[str, Tuple], header: str = "COMPARISON SUMMARY")
     display_names = {name: get_display_name(name) for name in fits}
     max_name_len = max(len(d) for d in display_names.values())
     col_w = max(max_name_len, 20)
-    print(f"\n{'Ladder':<{col_w}} {'E':>8} {'A':>10} {'α':>8} {'B':>10} {'β':>8} {'a_opt':>8} {'b_opt':>8}")
+    print(
+        f"\n{'Ladder':<{col_w}} {'E':>8} {'A':>10} {'α':>8} {'B':>10} {'β':>8} {'a_opt':>8} {'b_opt':>8}"
+    )
     print("-" * (col_w + 60))
 
     for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
@@ -746,6 +754,28 @@ def solve_n_for_target_loss(fit: ChinchillaParametricFit, target_loss: float, D:
     if remainder <= 0:
         return float("inf")
     return (p.A / remainder) ** (1.0 / p.alpha)
+
+
+def compute_optimal_frontier(
+    fit: ChinchillaParametricFit, C_range: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute the compute-optimal (N, D) allocation for each FLOP budget in C_range.
+
+    Minimizes L(N,D) = E + A/N^α + B/D^β subject to C = 6·N·D.
+    From the first-order conditions: α·A/N^α = β·B/D^β, giving
+        D = ((β·B)/(α·A))^(1/β) · N^(α/β)
+    Combined with C = 6·N·D:
+        N_opt = (C / (6 · G))^a_opt   where G = ((β·B)/(α·A))^(1/β)
+        D_opt = C / (6 · N_opt)
+
+    Returns (N_opt, D_opt) arrays with the same shape as C_range.
+    """
+    p = fit.fitted_params
+    G = (p.beta * p.B / (p.alpha * p.A)) ** (1.0 / p.beta)
+    N_opt = (C_range / (6.0 * G)) ** p.a_opt
+    D_opt = C_range / (6.0 * N_opt)
+    return N_opt, D_opt
 
 
 # =============================================================================
@@ -1181,7 +1211,9 @@ def _param_ci_str_sci(
         bootstrap_values = [getattr(f.fitted_params, param_name) for f in bootstrap.fits]
         lo = np.percentile(bootstrap_values, 2.5)
         hi = np.percentile(bootstrap_values, 97.5)
-        ci_line = f"[{_fmt_latex_num(lo, ci_decimal_places)}, {_fmt_latex_num(hi, ci_decimal_places)}]"
+        ci_line = (
+            f"[{_fmt_latex_num(lo, ci_decimal_places)}, {_fmt_latex_num(hi, ci_decimal_places)}]"
+        )
     return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
 
 
@@ -1624,8 +1656,11 @@ def generate_token_savings_table(
                     if len(ratios) >= 3:
                         lo, hi = np.percentile(ratios, [2.5, 97.5])
                         savings_str = (
-                            r"\makecell{" + f"{ratio:.2f}$\\times$"
-                            + r" \\ {\scriptsize " + f"[{lo:.2f}, {hi:.2f}]" + "}}"
+                            r"\makecell{"
+                            + f"{ratio:.2f}$\\times$"
+                            + r" \\ {\scriptsize "
+                            + f"[{lo:.2f}, {hi:.2f}]"
+                            + "}}"
                         )
                 row_parts.append(savings_str)
             else:
@@ -1713,9 +1748,7 @@ def generate_compute_equivalent_table(
     lines.append("        " + " & ".join(header2_parts) + r" \\")
     lines.append(r"        \midrule")
 
-    def _optimal_alloc(
-        fit: ChinchillaParametricFit, C: float
-    ) -> Tuple[float, float, float]:
+    def _optimal_alloc(fit: ChinchillaParametricFit, C: float) -> Tuple[float, float, float]:
         """Return (n_opt, d_opt, loss) for a given compute budget."""
         p = fit.fitted_params
         n_opt = np.sqrt(C * p.b_opt / (6.0 * p.a_opt))
@@ -1746,8 +1779,11 @@ def generate_compute_equivalent_table(
             if len(ref_losses) >= 3:
                 lo, hi = np.percentile(ref_losses, [2.5, 97.5])
                 ref_loss_str = (
-                    r"\makecell{" + f"{ref_loss:.3f}"
-                    + r" \\ {\scriptsize " + f"[{lo:.2f}, {hi:.2f}]" + "}}"
+                    r"\makecell{"
+                    + f"{ref_loss:.3f}"
+                    + r" \\ {\scriptsize "
+                    + f"[{lo:.2f}, {hi:.2f}]"
+                    + "}}"
                 )
         row_parts.extend([_fmt_model_size(ref_n), _fmt_tokens(ref_d), ref_loss_str])
 
@@ -1765,8 +1801,11 @@ def generate_compute_equivalent_table(
                 if len(boot_losses) >= 3:
                     lo, hi = np.percentile(boot_losses, [2.5, 97.5])
                     loss_str = (
-                        r"\makecell{" + f"{loss:.3f}"
-                        + r" \\ {\scriptsize " + f"[{lo:.2f}, {hi:.2f}]" + "}}"
+                        r"\makecell{"
+                        + f"{loss:.3f}"
+                        + r" \\ {\scriptsize "
+                        + f"[{lo:.2f}, {hi:.2f}]"
+                        + "}}"
                     )
 
             # Format delta with bootstrap CI below
@@ -1780,12 +1819,13 @@ def generate_compute_equivalent_table(
                 if len(deltas) >= 3:
                     lo, hi = np.percentile(deltas, [2.5, 97.5])
                     delta_str = (
-                        r"\makecell{" + f"{delta:+.3f}"
-                        + r" \\ {\scriptsize " + f"[{lo:+.2f}, {hi:+.2f}]" + "}}"
+                        r"\makecell{"
+                        + f"{delta:+.3f}"
+                        + r" \\ {\scriptsize "
+                        + f"[{lo:+.2f}, {hi:+.2f}]"
+                        + "}}"
                     )
-            row_parts.extend(
-                [_fmt_model_size(n_opt), _fmt_tokens(d_opt), loss_str, delta_str]
-            )
+            row_parts.extend([_fmt_model_size(n_opt), _fmt_tokens(d_opt), loss_str, delta_str])
 
         lines.append("        " + " & ".join(row_parts) + r" \\")
 
@@ -1917,7 +1957,10 @@ def _emit_arch_legend(ladder_names: List[str]) -> str:
 
 
 def generate_paper_figure_1(
-    fits: Dict[str, Tuple], log_loss: bool = False, use_lines: bool = False
+    fits: Dict[str, Tuple],
+    log_loss: bool = False,
+    use_lines: bool = False,
+    bold_curve: str = "mean",
 ) -> str:
     """
     Generate Figure 1: Main Scaling Law Fits (1x3 pgfplots groupplot).
@@ -1935,10 +1978,20 @@ def generate_paper_figure_1(
         use_lines: If True, show thin lines connecting data points (iso-param
             curves) instead of scatter points in all three panels.  The fitted
             curve in panels B and C is evaluated at the largest model only.
+        bold_curve: Strategy for the bold fitted curve.
+            "mean" — evaluate at the mean D/N ratio (default).
+            "optimal" — evaluate along the compute-optimal frontier
+              (Panel A traces the Pareto frontier; Panels B/C use the
+              optimal D/N at the largest compute budget).
     """
     ladder_names = list(fits.keys())
     loss_label = "Loss"
-    fig_suffix = "-log" if log_loss else ""
+    parts = []
+    if log_loss:
+        parts.append("log")
+    if bold_curve == "optimal":
+        parts.append("opt")
+    fig_suffix = ("-" + "-".join(parts)) if parts else ""
     lines = []
     lines.append(f"% Figure 1{fig_suffix}: Main Scaling Law Fits")
     lines.append("% Generated by fit_chinchilla_scaling_laws.py")
@@ -1974,7 +2027,7 @@ def generate_paper_figure_1(
         lines.append(
             r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},"
         )
-    lines.append(r"    xlabel={FLOPs (PetaFLOPs)},")
+    lines.append(r"    xlabel={PetaFLOPs},")
     # lines.append(f"    ylabel={{{loss_label}}},")
     lines.append(r"    title={(a) Loss vs Compute},")
 
@@ -2004,12 +2057,19 @@ def generate_paper_figure_1(
             # Scatter: data points with opacity varying by model size
             lines.extend(_scatter_by_model_size(F_peta, L, sizes, style))
 
-        # Bold fitted curve: sweep N at mean D/N ratio
-        mean_dn = np.mean([np.mean(D[N == n]) / n for n in unique_N])
+        # Bold fitted curve
         flop_ratio = np.median(F / (6.0 * N * D))
-        N_sweep = np.logspace(np.log10(N.min()), np.log10(N.max()), 150)
-        D_sweep = N_sweep * mean_dn
-        F_sweep_peta = (6.0 * N_sweep * D_sweep * flop_ratio) / 1e15
+        if bold_curve == "optimal":
+            # Compute-optimal frontier: for each C, allocate (N,D) optimally
+            C_range = np.logspace(np.log10(F.min() / flop_ratio), np.log10(F.max() / flop_ratio), 150)
+            N_sweep, D_sweep = compute_optimal_frontier(fit, C_range)
+            F_sweep_peta = (C_range * flop_ratio) / 1e15
+        else:
+            # Mean D/N ratio (original behaviour)
+            mean_dn = np.mean([np.mean(D[N == n]) / n for n in unique_N])
+            N_sweep = np.logspace(np.log10(N.min()), np.log10(N.max()), 150)
+            D_sweep = N_sweep * mean_dn
+            F_sweep_peta = (6.0 * N_sweep * D_sweep * flop_ratio) / 1e15
         L_sweep = fit.predict_loss(N_sweep, D_sweep)
         lines.append(
             f"\\addplot[{style['color_name']}, very thick, no markers{line_style}, forget plot] "
@@ -2193,11 +2253,14 @@ def generate_paper_figure_1(
         caption_parts.append(
             f"{display}: $\\alpha={p.alpha:.3f}$, $\\beta={p.beta:.3f}$, $R^2={r2_str}$. "
         )
+    curve_desc_a = (
+        r"the compute-optimal frontier" if bold_curve == "optimal" else r"the mean $D/N$ ratio"
+    )
     if use_lines:
         caption_parts.append(
             r"\textbf{(a)} Loss vs compute; thin lines connect checkpoints "
             r"of the same model size and the bold curve shows the fitted scaling law "
-            r"at the mean $D/N$ ratio. "
+            f"at {curve_desc_a}. "
             r"\textbf{(b)} Loss vs parameter count; thin lines connect checkpoints "
             r"at the same Chinchilla multiple ($D/N$ ratio) and the fitted curve is "
             r"evaluated at the largest multiple. "
@@ -2208,7 +2271,7 @@ def generate_paper_figure_1(
     else:
         caption_parts.append(
             r"\textbf{(a)} Loss vs compute, with isoparam curves (thin) and "
-            r"the fitted scaling law at the mean $D/N$ ratio (bold). "
+            f"the fitted scaling law at {curve_desc_a} (bold). "
             r"\textbf{(b)} Loss vs parameter count; point opacity reflects the Chinchilla multiple "
             r"($D/N$ ratio) and the fitted curve is evaluated at the largest multiple, "
             r"corresponding to the final checkpoint per model size. "
@@ -2414,7 +2477,7 @@ def generate_paper_figure_3(
         lines.append(
             r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},"
         )
-        lines.append(r"    xlabel={FLOPs (PetaFLOPs)},")
+        lines.append(r"    xlabel={PetaFLOPs},")
         if domain_idx == 0:
             lines.append(r"    ylabel={BPB},")
         lines.append(f"    title={{{escape_latex(domain_clean)}}},")
@@ -3560,7 +3623,7 @@ def plot_loss_vs_flops(
     if log_loss:
         ax.set_yscale("log")
         _format_log_yaxis(ax)
-    ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=12)
+    ax.set_xlabel("Training PetaFLOPs", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("All Checkpoints", fontsize=13, fontweight="bold")
     ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
@@ -3629,7 +3692,7 @@ def plot_loss_vs_flops(
     if log_loss:
         ax.set_yscale("log")
         _format_log_yaxis(ax)
-    ax.set_xlabel("Training FLOPs (PetaFLOPs)", fontsize=12)
+    ax.set_xlabel("Training PetaFLOPs", fontsize=12)
     ax.set_ylabel("Loss", fontsize=12)
     ax.set_title("Per Model Size", fontsize=13, fontweight="bold")
     ax.tick_params(labelsize=10)
@@ -4527,19 +4590,27 @@ def main():
         figures_dir = output_dir / "figures"
         figures_dir.mkdir(parents=True, exist_ok=True)
 
-        # Figure 1: Main Scaling Law Fits (linear and log-loss versions)
+        # Figure 1: Main Scaling Law Fits
+        # Generate all 4 combinations: {linear, log-loss} × {mean, optimal}
         use_lines = not args.scatter
-        fig1 = generate_paper_figure_1(fits, use_lines=use_lines)
-        fig1_path = figures_dir / "scaling-law-fit.tex"
-        with open(fig1_path, "w") as f:
-            f.write(fig1)
-        print(f"\nSaved Figure 1 to: {fig1_path}")
-
-        fig1_log = generate_paper_figure_1(fits, log_loss=True, use_lines=use_lines)
-        fig1_log_path = figures_dir / "scaling-law-fit-log.tex"
-        with open(fig1_log_path, "w") as f:
-            f.write(fig1_log)
-        print(f"Saved Figure 1 (log-loss) to: {fig1_log_path}")
+        for log_loss, bold in [(False, "mean"), (False, "optimal"), (True, "mean"), (True, "optimal")]:
+            fig1 = generate_paper_figure_1(fits, log_loss=log_loss, use_lines=use_lines, bold_curve=bold)
+            parts = []
+            if log_loss:
+                parts.append("log")
+            if bold == "optimal":
+                parts.append("opt")
+            suffix = ("-" + "-".join(parts)) if parts else ""
+            fig1_path = figures_dir / f"scaling-law-fit{suffix}.tex"
+            with open(fig1_path, "w") as f:
+                f.write(fig1)
+            desc = []
+            if log_loss:
+                desc.append("log-loss")
+            if bold == "optimal":
+                desc.append("optimal frontier")
+            desc_str = f" ({', '.join(desc)})" if desc else ""
+            print(f"Saved Figure 1{desc_str} to: {fig1_path}")
 
         # Figure 2: Efficiency Projections (median target loss)
         fig2 = generate_paper_figure_2(fits, loss_strategy="median", plot_ci=args.plot_ci)
