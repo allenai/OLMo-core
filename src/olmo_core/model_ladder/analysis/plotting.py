@@ -841,35 +841,35 @@ LATEX_PLOT_STYLES: Dict[str, Dict[str, str]] = {
         "color_name": "clrHybGDNHalf",
         "mark": "square",
         "mark_options": "draw=clrHybGDNHalf, thick",
-        "line_style": "dashed",
+        "line_style": "",
     },
     "hybrid-gdn-eight": {
         "color_def": "\\definecolor{clrHybGDNEight}{HTML}{A02060}",  # dark rose
         "color_name": "clrHybGDNEight",
         "mark": "triangle",
         "mark_options": "draw=clrHybGDNEight, thick",
-        "line_style": "densely dashed",
+        "line_style": "",
     },
     "hybrid-gdn-middle": {
         "color_def": "\\definecolor{clrHybGDNMid}{HTML}{009BB8}",  # shifted teal
         "color_name": "clrHybGDNMid",
         "mark": "pentagon*",
         "mark_options": "fill=clrHybGDNMid",
-        "line_style": "densely dotted",
+        "line_style": "",
     },
     "hybrid-mamba": {
         "color_def": "\\definecolor{clrHybMamba}{HTML}{265ED4}",  # olmoBlue
         "color_name": "clrHybMamba",
         "mark": "diamond",
         "mark_options": "draw=clrHybMamba, thick",
-        "line_style": "densely dotted",
+        "line_style": "",
     },
     "hybrid-gdn-middle-no-final": {
         "color_def": "\\definecolor{clrHybGDNMidNoFinal}{HTML}{007A94}",  # darker teal
         "color_name": "clrHybGDNMidNoFinal",
         "mark": "pentagon",
         "mark_options": "draw=clrHybGDNMidNoFinal, thick",
-        "line_style": "densely dotted",
+        "line_style": "",
     },
 }
 
@@ -900,7 +900,7 @@ def get_latex_style(ladder_name: str, idx: int) -> Dict[str, str]:
         "color_name": fb_color_name,
         "mark": fb_mark,
         "mark_options": f"fill={fb_color_name}" if filled else "",
-        "line_style": "dashed" if idx % 2 else "",
+        "line_style": "",
     }
 
 

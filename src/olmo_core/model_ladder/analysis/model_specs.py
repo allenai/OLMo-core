@@ -58,9 +58,14 @@ class ModelSpec:
     d_model: int
     n_heads: int
     n_layers: int
+    n_kv_heads: Optional[int] = None  # None means MHA (n_kv_heads == n_heads)
     hidden_size_multiplier: float = 1.5
     hidden_size_multiple_of: int = 256
     vocab_size: int = 100352  # dolma2 tokenizer padded vocab
+
+    @property
+    def effective_n_kv_heads(self) -> int:
+        return self.n_kv_heads if self.n_kv_heads is not None else self.n_heads
 
     @property
     def head_dim(self) -> int:
@@ -82,8 +87,10 @@ OLMO3_SPECS = [
     ModelSpec("760M", d_model=1536, n_heads=16, n_layers=16),
     ModelSpec("1B", d_model=2048, n_heads=16, n_layers=16),
     ModelSpec("3B", d_model=3328, n_heads=16, n_layers=16),
-    ModelSpec("7B", d_model=4096, n_heads=32, n_layers=32),
-    ModelSpec("13B", d_model=5120, n_heads=40, n_layers=40),
+    ModelSpec("7B", d_model=4096, n_heads=32, n_layers=32, hidden_size_multiplier=1.0),
+    ModelSpec("13B", d_model=5120, n_heads=40, n_layers=40, hidden_size_multiplier=1.0),
+    ModelSpec("32B", d_model=5120, n_heads=40, n_layers=64, n_kv_heads=8,
+             hidden_size_multiplier=27648 / (8 * 5120 / 3), hidden_size_multiple_of=512),
 ]
 
 OLMO3_SPECS_BY_NAME: Dict[str, ModelSpec] = {s.name: s for s in OLMO3_SPECS}
@@ -177,11 +184,21 @@ def count_gdn_params(d_model: int, n_heads: int, conv_size: int = 4, use_gate: b
     return params
 
 
-def count_attention_params(d_model: int, n_heads: int, qk_norm: bool = True) -> int:
+def count_attention_params(
+    d_model: int, n_heads: int, n_kv_heads: Optional[int] = None, qk_norm: bool = True
+) -> int:
     head_dim = d_model // n_heads
-    params = 4 * d_model * d_model  # Q, K, V, O
+    n_kv = n_kv_heads if n_kv_heads is not None else n_heads
+    # Q projection: d_model * (n_heads * head_dim)
+    # K projection: d_model * (n_kv_heads * head_dim)
+    # V projection: d_model * (n_kv_heads * head_dim)
+    # O projection: (n_heads * head_dim) * d_model
+    params = d_model * n_heads * head_dim  # Q
+    params += 2 * d_model * n_kv * head_dim  # K, V
+    params += n_heads * head_dim * d_model  # O
     if qk_norm:
-        params += 2 * d_model
+        # q_norm over n_heads * head_dim, k_norm over n_kv_heads * head_dim
+        params += n_heads * head_dim + n_kv * head_dim
     return params
 
 
@@ -245,10 +262,18 @@ def mamba2_macs_per_token(
 
 
 def attention_macs_per_token(
-    d_model: int, n_heads: int, seq_len: int, chinchilla_flops: bool = True
+    d_model: int,
+    n_heads: int,
+    seq_len: int,
+    chinchilla_flops: bool = True,
+    n_kv_heads: Optional[int] = None,
 ) -> int:
     head_dim = d_model // n_heads
-    macs = 4 * d_model * d_model  # Projections
+    n_kv = n_kv_heads if n_kv_heads is not None else n_heads
+    # Projections: Q + K + V + O (same structure as count_attention_params, minus norms)
+    macs = d_model * n_heads * head_dim  # Q
+    macs += 2 * d_model * n_kv * head_dim  # K, V
+    macs += n_heads * head_dim * d_model  # O
 
     effective_seq_len = seq_len // 2
     # Attention Score (QK^T) + Output (AV)
@@ -382,8 +407,9 @@ def compute_hybrid_specs(
 
     embed_params = V * d
     head_params = V * d
+    n_kv = spec.effective_n_kv_heads
     gdn_params = count_gdn_params(d, nh) + count_mlp_params(d, mlp_h) + 2 * d
-    attn_params = count_attention_params(d, nh) + count_mlp_params(d, mlp_h) + 2 * d
+    attn_params = count_attention_params(d, nh, n_kv) + count_mlp_params(d, mlp_h) + 2 * d
     final_norm = d
 
     total_params = (
@@ -395,7 +421,7 @@ def compute_hybrid_specs(
     head_macs = d * V
     gdn_layer_macs = gdn_macs_per_token(d, nh) + mlp_macs_per_token(d, mlp_h)
     attn_layer_macs = attention_macs_per_token(
-        d, nh, seq_len, chinchilla_flops
+        d, nh, seq_len, chinchilla_flops, n_kv
     ) + mlp_macs_per_token(d, mlp_h)
 
     total_macs = embed_macs + head_macs + n_gdn * gdn_layer_macs + n_attn * attn_layer_macs
@@ -442,10 +468,11 @@ def compute_hybrid_mamba2_specs(
     embed_params = V * d
     head_params = V * d
     mamba_mixer = count_mamba2_params(d, nh)
+    n_kv = spec.effective_n_kv_heads
     mamba_params = (
         mamba_mixer + d if strip_mamba2_mlp else mamba_mixer + count_mlp_params(d, mlp_h) + 2 * d
     )
-    attn_params = count_attention_params(d, nh) + count_mlp_params(d, mlp_h) + 2 * d
+    attn_params = count_attention_params(d, nh, n_kv) + count_mlp_params(d, mlp_h) + 2 * d
     final_norm = d
 
     total_params = (
@@ -459,7 +486,7 @@ def compute_hybrid_mamba2_specs(
     if not strip_mamba2_mlp:
         mamba_layer_macs += mlp_macs_per_token(d, mlp_h)
     attn_layer_macs = attention_macs_per_token(
-        d, nh, seq_len, chinchilla_flops
+        d, nh, seq_len, chinchilla_flops, n_kv
     ) + mlp_macs_per_token(d, mlp_h)
 
     total_macs = embed_macs + head_macs + n_mamba * mamba_layer_macs + n_attn * attn_layer_macs
@@ -486,9 +513,10 @@ def compute_olmo3_specs(
     mlp_h = spec.mlp_hidden_size
     V = spec.vocab_size
 
+    n_kv = spec.effective_n_kv_heads
     embed_params = V * d
     head_params = V * d
-    attn_params = count_attention_params(d, nh) + count_mlp_params(d, mlp_h) + 2 * d
+    attn_params = count_attention_params(d, nh, n_kv) + count_mlp_params(d, mlp_h) + 2 * d
     final_norm = d
     total_params = embed_params + head_params + nl * attn_params + final_norm
     non_embed_params = total_params - embed_params
@@ -496,7 +524,7 @@ def compute_olmo3_specs(
     embed_macs = d * V if chinchilla_flops else 0
     head_macs = d * V
     attn_layer_macs = attention_macs_per_token(
-        d, nh, seq_len, chinchilla_flops
+        d, nh, seq_len, chinchilla_flops, n_kv
     ) + mlp_macs_per_token(d, mlp_h)
     total_macs = embed_macs + head_macs + nl * attn_layer_macs
 

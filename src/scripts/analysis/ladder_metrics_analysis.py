@@ -3903,10 +3903,22 @@ def generate_paper_eval_figure(
     lines.append(r"\end{groupplot}")
     lines.append(r"\end{tikzpicture}")
 
-    # Manual tikz legend (matches scaling-law-fit-log style)
+    # Manual tikz legend — ordered to match ABLATION_ARCHITECTURES (tab:ablation-evals-avg)
     lines.append(r"\par\vspace{0.5em}")
     legend_parts = []
-    for idx, name in enumerate(ladder_names):
+    # Build ordered list: ABLATION_ARCHITECTURES first, then any remaining ladders
+    legend_order: List[str] = []
+    for arch in ABLATION_ARCHITECTURES:
+        all_keys = [arch["key"]] + arch.get("aliases", [])
+        for k in all_keys:
+            if k in ladder_results and k not in legend_order:
+                legend_order.append(k)
+                break
+    for name in ladder_names:
+        if name not in legend_order:
+            legend_order.append(name)
+    for name in legend_order:
+        idx = ladder_names.index(name)
         style = get_latex_style(name, idx)
         display = escape_latex(get_display_name(name))
         if star_ladder and name.lower() == star_ladder.lower():

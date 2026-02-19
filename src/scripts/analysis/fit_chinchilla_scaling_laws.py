@@ -1155,7 +1155,9 @@ def _fmt_latex_num(value: float, decimal_places: int = 2) -> str:
     return f"${sign}{mantissa:.{decimal_places}f} \\cdot 10^{{{exp}}}$"
 
 
-def _param_ci_str(bootstrap, param_name: str, point_value: float, fmt: str = ".4f") -> str:
+def _param_ci_str(
+    bootstrap, param_name: str, point_value: float, fmt: str = ".4f", ci_fmt: str = ".2f"
+) -> str:
     """Format a parameter value with bootstrap CI below in smaller font using makecell."""
     val_str = f"{point_value:{fmt}}"
     if bootstrap is None:
@@ -1164,11 +1166,13 @@ def _param_ci_str(bootstrap, param_name: str, point_value: float, fmt: str = ".4
         bootstrap_values = [getattr(f.fitted_params, param_name) for f in bootstrap.fits]
         lo = np.percentile(bootstrap_values, 2.5)
         hi = np.percentile(bootstrap_values, 97.5)
-        ci_line = f"[{lo:{fmt}}, {hi:{fmt}}]"
+        ci_line = f"[{lo:{ci_fmt}}, {hi:{ci_fmt}}]"
     return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
 
 
-def _param_ci_str_sci(bootstrap, param_name: str, point_value: float) -> str:
+def _param_ci_str_sci(
+    bootstrap, param_name: str, point_value: float, ci_decimal_places: int = 1
+) -> str:
     """Format a parameter value (large numbers) with bootstrap CI below in smaller font."""
     val_str = _fmt_latex_num(point_value)
     if bootstrap is None:
@@ -1177,11 +1181,13 @@ def _param_ci_str_sci(bootstrap, param_name: str, point_value: float) -> str:
         bootstrap_values = [getattr(f.fitted_params, param_name) for f in bootstrap.fits]
         lo = np.percentile(bootstrap_values, 2.5)
         hi = np.percentile(bootstrap_values, 97.5)
-        ci_line = f"[{_fmt_latex_num(lo)}, {_fmt_latex_num(hi)}]"
+        ci_line = f"[{_fmt_latex_num(lo, ci_decimal_places)}, {_fmt_latex_num(hi, ci_decimal_places)}]"
     return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
 
 
-def _derived_ci_str(bootstrap, attr_name: str, point_value: float, fmt: str = ".4f") -> str:
+def _derived_ci_str(
+    bootstrap, attr_name: str, point_value: float, fmt: str = ".4f", ci_fmt: str = ".2f"
+) -> str:
     """Format a derived property (a_opt/b_opt) with bootstrap CI below in smaller font."""
     val_str = f"{point_value:{fmt}}"
     if bootstrap is None:
@@ -1190,7 +1196,7 @@ def _derived_ci_str(bootstrap, attr_name: str, point_value: float, fmt: str = ".
         bootstrap_values = [getattr(f.fitted_params, attr_name) for f in bootstrap.fits]
         lo = np.percentile(bootstrap_values, 2.5)
         hi = np.percentile(bootstrap_values, 97.5)
-        ci_line = f"[{lo:{fmt}}, {hi:{fmt}}]"
+        ci_line = f"[{lo:{ci_fmt}}, {hi:{ci_fmt}}]"
     return r"\makecell{" + val_str + r" \\ {\scriptsize " + ci_line + "}}"
 
 
@@ -1545,14 +1551,20 @@ def generate_token_savings_table(
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"    \centering")
     strategy_desc = "minimum" if loss_strategy == "min" else "median"
-    lines.append(
+    # Check if any ladder has bootstrap data — include CI note in caption
+    has_bootstrap = any(fits[n][6] is not None for n in ladder_names)
+    caption_text = (
         r"    \caption{Projected token requirements across model scales "
         f"(target loss $= {target_loss:.3f}$, "
         f"selected as the {strategy_desc} of all observed training losses). "
         r"Savings $> 1\times$ means fewer tokens needed than "
         + escape_latex(get_display_name(ref_name))
-        + r".}"
+        + "."
     )
+    if has_bootstrap:
+        caption_text += r" 95\% bootstrap CI shown below each estimate."
+    caption_text += "}"
+    lines.append(caption_text)
     lines.append(r"    \label{tab:token-savings-by-scale}")
 
     # Column spec: Size + D per ladder + savings per non-reference ladder
@@ -1580,9 +1592,6 @@ def generate_token_savings_table(
     lines.append("        " + " & ".join(header2_parts) + r" \\")
     lines.append(r"        \midrule")
 
-    # Check if any ladder has bootstrap data
-    has_bootstrap = any(fits[n][6] is not None for n in ladder_names)
-
     for n_size in model_sizes:
         size_label = _fmt_model_size(n_size)
         row_parts = [size_label]
@@ -1603,8 +1612,8 @@ def generate_token_savings_table(
             # Savings ratio: ref / this (> 1 means this arch needs fewer tokens)
             if np.isfinite(d_ref) and np.isfinite(d_needed) and d_needed > 0:
                 ratio = d_ref / d_needed
-                # Compute bootstrap CI on savings ratio
-                ci_str = ""
+                # Compute bootstrap CI on savings ratio below point estimate
+                savings_str = f"{ratio:.2f}$\\times$"
                 if ref_bootstrap is not None and bootstrap is not None:
                     ratios = []
                     for rf, bf in zip(ref_bootstrap.fits, bootstrap.fits):
@@ -1614,8 +1623,11 @@ def generate_token_savings_table(
                             ratios.append(d_r / d_b)
                     if len(ratios) >= 3:
                         lo, hi = np.percentile(ratios, [2.5, 97.5])
-                        ci_str = f" [{lo:.2f}, {hi:.2f}]"
-                row_parts.append(f"{ratio:.2f}$\\times${ci_str}")
+                        savings_str = (
+                            r"\makecell{" + f"{ratio:.2f}$\\times$"
+                            + r" \\ {\scriptsize " + f"[{lo:.2f}, {hi:.2f}]" + "}}"
+                        )
+                row_parts.append(savings_str)
             else:
                 row_parts.append("---")
 
@@ -1623,9 +1635,6 @@ def generate_token_savings_table(
 
     lines.append(r"        \bottomrule")
     lines.append(r"    \end{tabular}")
-    if has_bootstrap:
-        lines.append(r"    \vspace{1mm}")
-        lines.append(r"    {\footnotesize 95\% bootstrap CI shown in brackets where available.}")
     lines.append(r"\end{table}")
     return "\n".join(lines)
 
@@ -1657,22 +1666,28 @@ def generate_compute_equivalent_table(
         # Span from ~190M Chinchilla-optimal to ~70B Chinchilla-optimal
         # 190M at D/N=20 → C = 6 * 190e6 * 3.8e9 ≈ 4.3e18
         # 70B at D/N=20 → C = 6 * 70e9 * 1.4e12 ≈ 5.9e23
-        flop_budgets = [1e19, 1e20, 1e21, 1e22, 1e23]
+        flop_budgets = [1e18, 1e19, 1e20, 1e21, 1e22, 1e23]
 
     ref_name = ladder_names[0]
 
     lines = []
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"    \centering")
-    lines.append(
+    caption_text = (
         r"    \caption{Compute-optimal model size ($N^*$), dataset size ($D^*$), and predicted loss "
         r"for each architecture. "
         r"Each architecture's fitted $a_\text{opt}, b_\text{opt}$ determine its optimal allocation "
         r"for a given compute budget ($C = 6ND$). "
         r"$\Delta$ shows loss reduction relative to "
         + escape_latex(get_display_name(ref_name))
-        + r".}"
+        + "."
     )
+    # Check if any ladder has bootstrap data — include CI note in caption
+    has_bootstrap = any(fits[n][6] is not None for n in ladder_names)
+    if has_bootstrap:
+        caption_text += r" 95\% bootstrap CI shown below each estimate."
+    caption_text += "}"
+    lines.append(caption_text)
     lines.append(r"    \label{tab:compute-equivalent-loss}")
 
     # Column spec: Compute + (N* + D* + Loss) per ref + (N* + D* + Loss + Delta) per non-ref
@@ -1691,15 +1706,12 @@ def generate_compute_equivalent_table(
     lines.append("        " + " & ".join(header1_parts) + r" \\")
 
     # Header row 2
-    header2_parts = ["Compute (FLOPs)"]
+    header2_parts = ["FLOPs"]
     header2_parts.extend(["$N^*$", "$D^*$", "Loss"])
     for _ in ladder_names[1:]:
         header2_parts.extend(["$N^*$", "$D^*$", "Loss", r"$\Delta$"])
     lines.append("        " + " & ".join(header2_parts) + r" \\")
     lines.append(r"        \midrule")
-
-    # Check if any ladder has bootstrap data
-    has_bootstrap = any(fits[n][6] is not None for n in ladder_names)
 
     def _optimal_alloc(
         fit: ChinchillaParametricFit, C: float
@@ -1726,7 +1738,18 @@ def generate_compute_equivalent_table(
         ref_fit = fits[ref_name][0]
         ref_bootstrap = fits[ref_name][6]
         ref_n, ref_d, ref_loss = _optimal_alloc(ref_fit, C)
-        row_parts.extend([_fmt_model_size(ref_n), _fmt_tokens(ref_d), f"{ref_loss:.3f}"])
+
+        # Format reference loss with bootstrap CI below
+        ref_loss_str = f"{ref_loss:.3f}"
+        if ref_bootstrap is not None:
+            ref_losses = [_optimal_alloc(rf, C)[2] for rf in ref_bootstrap.fits]
+            if len(ref_losses) >= 3:
+                lo, hi = np.percentile(ref_losses, [2.5, 97.5])
+                ref_loss_str = (
+                    r"\makecell{" + f"{ref_loss:.3f}"
+                    + r" \\ {\scriptsize " + f"[{lo:.2f}, {hi:.2f}]" + "}}"
+                )
+        row_parts.extend([_fmt_model_size(ref_n), _fmt_tokens(ref_d), ref_loss_str])
 
         # Compute optimal allocation for each other architecture
         for name in ladder_names[1:]:
@@ -1734,8 +1757,20 @@ def generate_compute_equivalent_table(
             bootstrap = fits[name][6]
             n_opt, d_opt, loss = _optimal_alloc(fit, C)
             delta = loss - ref_loss
-            # Bootstrap CI on delta
-            ci_str = ""
+
+            # Format loss with bootstrap CI below
+            loss_str = f"{loss:.3f}"
+            if bootstrap is not None:
+                boot_losses = [_optimal_alloc(bf, C)[2] for bf in bootstrap.fits]
+                if len(boot_losses) >= 3:
+                    lo, hi = np.percentile(boot_losses, [2.5, 97.5])
+                    loss_str = (
+                        r"\makecell{" + f"{loss:.3f}"
+                        + r" \\ {\scriptsize " + f"[{lo:.2f}, {hi:.2f}]" + "}}"
+                    )
+
+            # Format delta with bootstrap CI below
+            delta_str = f"{delta:+.3f}"
             if ref_bootstrap is not None and bootstrap is not None:
                 deltas = []
                 for rf, bf in zip(ref_bootstrap.fits, bootstrap.fits):
@@ -1744,18 +1779,18 @@ def generate_compute_equivalent_table(
                     deltas.append(bl - rl)
                 if len(deltas) >= 3:
                     lo, hi = np.percentile(deltas, [2.5, 97.5])
-                    ci_str = f" [{lo:+.3f}, {hi:+.3f}]"
+                    delta_str = (
+                        r"\makecell{" + f"{delta:+.3f}"
+                        + r" \\ {\scriptsize " + f"[{lo:+.2f}, {hi:+.2f}]" + "}}"
+                    )
             row_parts.extend(
-                [_fmt_model_size(n_opt), _fmt_tokens(d_opt), f"{loss:.3f}", f"{delta:+.3f}{ci_str}"]
+                [_fmt_model_size(n_opt), _fmt_tokens(d_opt), loss_str, delta_str]
             )
 
         lines.append("        " + " & ".join(row_parts) + r" \\")
 
     lines.append(r"        \bottomrule")
     lines.append(r"    \end{tabular}")
-    if has_bootstrap:
-        lines.append(r"    \vspace{1mm}")
-        lines.append(r"    {\footnotesize 95\% bootstrap CI shown in brackets where available.}")
     lines.append(r"\end{table}")
     return "\n".join(lines)
 
