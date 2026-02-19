@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 from olmo_core.config import DType, StrEnum
 from olmo_core.data import (
     DataMix,
+    InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
     NumpyPaddedFSLDatasetConfig,
@@ -762,6 +763,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         sequence_length=sequence_length,
         max_target_sequence_length=max(8192, sequence_length),
         work_dir=work_dir,
+        instance_filter_config=InstanceFilterConfig(),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
