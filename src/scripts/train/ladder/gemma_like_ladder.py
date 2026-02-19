@@ -752,6 +752,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             workspace="ai2/oe-t-ladder",
             num_nodes=model_size_settings.num_nodes,
             nccl_debug=True,
+            step_soft_timeout=None,
         )
 
     # Dataset config
