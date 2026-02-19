@@ -98,11 +98,11 @@ class EvaluatorCallback(Callback):
 
     def pre_train(self):
         if self.eval_on_startup:
-            self._perform_eval()
+            self.perform_eval()
 
     def post_train(self):
         if self.eval_on_finish:
-            self._perform_eval()
+            self.perform_eval()
 
     def post_step(self):
         if self.step <= 1:
@@ -111,9 +111,9 @@ class EvaluatorCallback(Callback):
         if (self.eval_interval is not None and self.step % self.eval_interval == 0) or (
             self.fixed_steps is not None and self.step in self.fixed_steps
         ):
-            self._perform_eval()
+            self.perform_eval()
 
-    def _perform_eval(self, prefix: str = "eval"):
+    def perform_eval(self, prefix: str = "eval"):
         """
         Run evaluation on all evaluators and record metrics.
 

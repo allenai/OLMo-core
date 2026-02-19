@@ -319,7 +319,7 @@ class ModelMergeCallback(Callback):
 
         for callback in evaluator_callbacks:
             log.info(f"Running merged model evaluation via {callback.__class__.__name__}...")
-            callback._perform_eval(prefix="eval/merged")
+            callback.perform_eval(prefix="eval/merged")
 
 
 # Utility functions for computing merge steps and required checkpoint steps for merge windows
