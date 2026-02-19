@@ -21,21 +21,22 @@ from olmo_core.nn.transformer import (
 from olmo_core.nn.transformer.init import InitMethod
 
 
+@pytest.mark.parametrize("d_model", [256, 512])
 @pytest.mark.parametrize(
     "init_device, device",
     [
         pytest.param("cpu", "cpu", id="cpu->cpu"),
+        pytest.param("meta", "cpu", id="meta->cpu"),
     ],
 )
-def test_fan_in_init_dense(init_device, device):
+def test_fan_in_init_dense(d_model, init_device, device):
     """Test that fan_in init uses correct std for embeddings, attention, feed-forward, and LM head."""
-    d_model = 512
-    hidden_size = 2048
+    hidden_size = d_model * 4
     config = TransformerConfig.llama_like(
         d_model=d_model,
-        vocab_size=50257,
+        vocab_size=1000,
         n_layers=4,
-        n_heads=8,
+        n_heads=d_model // 64,
         feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False),
         init_method=InitMethod.fan_in,
     )
@@ -79,13 +80,19 @@ def test_fan_in_init_dense(init_device, device):
     ), f"LM head std: expected ~{expected_d:.5f}, got {lm_head_std:.5f}"
 
 
-def test_fan_in_init_moe():
+@pytest.mark.parametrize("d_model", [256, 512])
+@pytest.mark.parametrize(
+    "init_device, device",
+    [
+        pytest.param("cpu", "cpu", id="cpu->cpu"),
+        pytest.param("meta", "cpu", id="meta->cpu"),
+    ],
+)
+def test_fan_in_init_moe(d_model, init_device, device):
     """Test that fan_in init works with MoE layers."""
-    d_model = 256
-    hidden_size = 512
+    hidden_size = d_model * 2
     num_experts = 8
 
-    # Create a simple MoE config
     config = TransformerConfig(
         name=TransformerType.moe,
         d_model=d_model,
@@ -94,25 +101,23 @@ def test_fan_in_init_moe():
         init_method=InitMethod.fan_in,
         block=TransformerBlockConfig(
             name=TransformerBlockType.moe,
-            sequence_mixer=AttentionConfig(n_heads=4),
+            sequence_mixer=AttentionConfig(n_heads=d_model // 64),
             feed_forward_moe=MoEConfig(num_experts=num_experts, hidden_size=hidden_size),
             layer_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
         ),
         lm_head=LMHeadConfig(bias=False),
     )
 
-    model = config.build(init_device="cpu")
-    model.init_weights(device=torch.device("cpu"))
+    model = config.build(init_device=init_device)
+    model.init_weights(device=torch.device(device))
 
     block = model.blocks["0"]
     assert hasattr(block, "feed_forward_moe"), "Expected MoE block to have feed_forward_moe"
     moe = block.feed_forward_moe
     mlp = moe.experts.mlp
 
-    expected_router_std = 1.0 / math.sqrt(d_model)
-    expected_w1_std = 1.0 / math.sqrt(d_model)  # w1 fan-in = d_model
-    expected_w2_std = 1.0 / math.sqrt(hidden_size)  # w2 fan-in = hidden_size
-    expected_w3_std = 1.0 / math.sqrt(d_model)  # w3 fan-in = d_model
+    expected_d = 1.0 / math.sqrt(d_model)
+    expected_h = 1.0 / math.sqrt(hidden_size)
 
     router_std = moe.router.weight.std().item()
     w1_std = mlp.w1.std().item()
@@ -121,10 +126,10 @@ def test_fan_in_init_moe():
 
     # 30% tolerance (truncated normal + many experts = more variance)
     for name, actual, expected in [
-        ("router", router_std, expected_router_std),
-        ("w1", w1_std, expected_w1_std),
-        ("w2", w2_std, expected_w2_std),
-        ("w3", w3_std, expected_w3_std),
+        ("router", router_std, expected_d),
+        ("w1", w1_std, expected_d),
+        ("w2", w2_std, expected_h),
+        ("w3", w3_std, expected_d),
     ]:
         tolerance = expected * 0.3
         assert (
@@ -132,6 +137,14 @@ def test_fan_in_init_moe():
         ), f"MoE {name} std: expected ~{expected:.5f}, got {actual:.5f}"
 
 
+@pytest.mark.parametrize("d_model", [256, 512])
+@pytest.mark.parametrize(
+    "init_device, device",
+    [
+        pytest.param("cpu", "cpu", id="cpu->cpu"),
+        pytest.param("meta", "cpu", id="meta->cpu"),
+    ],
+)
 @pytest.mark.parametrize(
     "granularity",
     [
@@ -139,19 +152,18 @@ def test_fan_in_init_moe():
         pytest.param(GateGranularity.elementwise, id="elementwise"),
     ],
 )
-def test_fan_in_init_attention_gate(granularity):
+def test_fan_in_init_attention_gate(d_model, init_device, device, granularity):
     """Test that fan_in init initializes the attention gate projection."""
-    d_model = 256
     config = TransformerConfig.llama_like(
         d_model=d_model,
         vocab_size=1000,
         n_layers=2,
-        n_heads=4,
+        n_heads=d_model // 64,
         init_method=InitMethod.fan_in,
         gate=GateConfig(granularity=granularity),
     )
-    model = config.build(init_device="cpu")
-    model.init_weights(device=torch.device("cpu"))
+    model = config.build(init_device=init_device)
+    model.init_weights(device=torch.device(device))
 
     expected_std = 1.0 / math.sqrt(d_model)
 
