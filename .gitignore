@@ -34,6 +34,7 @@ uv.lock
 doc/_build/
 *.swp
 .DS_Store
+plotdevice_wandb_artifacts/
 
 
 # python
