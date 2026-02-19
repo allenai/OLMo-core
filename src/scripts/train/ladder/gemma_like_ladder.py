@@ -793,7 +793,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
