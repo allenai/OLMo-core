@@ -230,23 +230,27 @@ def build_sft_dataset(
 # Remove heads to match params/TPS of transformer.
 REMOVE_HEADS = 2
 
-def build_model_config(vocab_size: int) -> TransformerConfig:
+def build_model_config(vocab_size: int, use_yarn: bool = False) -> TransformerConfig:
     config = TransformerConfig.olmo3_7B(
         vocab_size=vocab_size,
         # See README for how to override with flash_3 using CLI.
         attn_backend=AttentionBackendName.flash_2,
     )
-    # ).with_rope_scaling(
-    #     YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
-    # )
-    # NOTE: rope scaling added by nathanl, ONLY for the yarn model version
 
     # Remove heads (and scale down d_model) to compensate for extra params.
-    config.d_model -= (  # Lets not do this anymore, 32 heads is easier to work with
-        REMOVE_HEADS * 128
-    )
+    # NOTE: This must happen BEFORE with_rope_scaling() so that block_overrides
+    # get the correct head count.
+    config.d_model -= REMOVE_HEADS * 128
     config.block.attention.n_heads -= REMOVE_HEADS
     assert config.d_model / config.block.attention.n_heads == 128
+
+    if use_yarn:
+        config = config.with_rope_scaling(
+            YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
+        )
+    else:
+        # DRoPE: disable RoPE embeddings.
+        config.block.attention.rope = None
 
     ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
 
@@ -269,9 +273,6 @@ def build_model_config(vocab_size: int) -> TransformerConfig:
 
     # Save memory by using fused linear loss implementation.
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
-
-    # Disable RoPE embeddings for this phase of training.
-    config.block.attention.rope = None
 
     return config
 
@@ -313,6 +314,7 @@ class SFTConfig(Config):
         budget: str,
         init_seed: int = 33333,
         dataset_path: str,
+        use_yarn: bool = False,
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
@@ -352,7 +354,7 @@ class SFTConfig(Config):
         #     wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         # )
 
-        model = build_model_config(vocab_size=tokenizer_config.padded_vocab_size())
+        model = build_model_config(vocab_size=tokenizer_config.padded_vocab_size(), use_yarn=use_yarn)
 
         dp_config = TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
@@ -557,6 +559,11 @@ Examples:
     parser.add_argument("--budget", help="The beaker budget to use.")
     parser.add_argument("--workspace", help="The workspace to run in.")
     parser.add_argument("--dataset_path", help="The path to the pre-tokenized SFT dataset.")
+    parser.add_argument(
+        "--use_yarn",
+        action="store_true",
+        help="Use YaRN RoPE scaling instead of DRoPE (no RoPE).",
+    )
 
     # Parse known args to get positional arguments and cmd
     args, overrides = parser.parse_known_args()
@@ -583,6 +590,7 @@ Examples:
         budget=args.budget,
         workspace=args.workspace,
         dataset_path=args.dataset_path,
+        use_yarn=args.use_yarn,
     )
 
     # Print the config for debugging and then execute the command.

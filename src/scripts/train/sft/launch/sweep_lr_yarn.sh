@@ -15,7 +15,8 @@ uv run python src/scripts/train/sft/Olmo-3-Hybrid-7B-SFT.py launch \
     --num_nodes=8 \
     --budget ai2/oe-adapt \
     --workspace ai2/olmo-instruct \
-    --dataset_path /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/olmo-hybrid-sft-triple-tools
+    --dataset_path /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/olmo-hybrid-sft-triple-tools \
+    --use_yarn
 
 # # 2.5e-5 (2x smaller) - second base model
 uv run python src/scripts/train/sft/Olmo-3-Hybrid-7B-SFT.py launch \
@@ -30,4 +31,5 @@ uv run python src/scripts/train/sft/Olmo-3-Hybrid-7B-SFT.py launch \
     --num_nodes=8 \
     --budget ai2/oe-adapt \
     --workspace ai2/olmo-instruct \
-    --dataset_path /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/olmo-hybrid-sft-triple-tools
+    --dataset_path /weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/olmo-hybrid-sft-triple-tools \
+    --use_yarn
