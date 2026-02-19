@@ -159,6 +159,8 @@ uv sync --extra beaker --extra transformers
     - Gantry's default venv doesn't have access to these packages
     - Only install the project + extras you need (the image already has CUDA dependencies)
     - Beaker images follow the pattern `<user>/olmo-core-tch<torch>cu<cuda>-<date>`
+    - Use `-t <tokenizer_id>` to override the tokenizer saved with the model (e.g. `-t allenai/olmo-3-tokenizer-instruct-dev` for instruct models with a chat template).
+    - Use `--timeout 0` instead of `--timeout -1` to launch gantry jobs without following logs, useful for converting multiple models in parallel.
 
 2. **Verify chat template and tokenizer settings before running evals.**
 
