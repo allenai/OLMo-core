@@ -243,19 +243,6 @@ class Trainer:
     training throughput.
     """
 
-    _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, init=False, default_factory=set)
-    """Callbacks that are blocking ephemeral checkpoints."""
-
-    @property
-    def block_ephemeral_checkpoints(self) -> bool:
-        return len(self._blocking_ephemeral_checkpoints) > 0
-
-    def get_callback_name(self, callback: Callback) -> str:
-        for name, cb in self.callbacks.items():
-            if cb is callback:
-                return name
-        raise ValueError("callback not registered with trainer!")
-
     hard_stop: Optional[Duration] = None
     """
     Set a hard stopping point for the trainer. This is useful for ablations when you you don't
@@ -314,6 +301,8 @@ class Trainer:
     _metrics_consistent: Optional[bool] = None
 
     def __post_init__(self):
+        self._blocking_ephemeral_checkpoints: Set[str] = set()
+
         self.save_folder = normalize_path(self.save_folder)
         if self.load_path is not None:
             self.load_path = normalize_path(self.load_path)
@@ -398,6 +387,16 @@ class Trainer:
             callback.post_attach()
 
         self.train_module._attach_trainer(self)
+
+    @property
+    def block_ephemeral_checkpoints(self) -> bool:
+        return len(self._blocking_ephemeral_checkpoints) > 0
+
+    def get_callback_name(self, callback: Callback) -> str:
+        for name, cb in self.callbacks.items():
+            if cb is callback:
+                return name
+        raise ValueError("callback not registered with trainer!")
 
     @property
     def global_batch_size(self) -> int:
