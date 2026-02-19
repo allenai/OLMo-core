@@ -613,6 +613,7 @@ def get_global_batch_size(
     training_tokens: int,
     sequence_length: int,
     round_nearest: int,
+    batch_size_multiplier: float = 1.0,
 ) -> int:
     """
     Get optimal global batch size in tokens using step law from Li 2025.
@@ -623,6 +624,10 @@ def get_global_batch_size(
     global_bsz = 0.58 * pow(d, 0.571)
 
     print(f"Model size: {n}, training tokens: {d}, opt_global_bsz: {global_bsz}")
+    if batch_size_multiplier != 1.0:
+        print(f"Applying bsz multiplier: {batch_size_multiplier}")
+        global_bsz = global_bsz * batch_size_multiplier
+
     instance_bsz = global_bsz / sequence_length
 
     # Round batch size to (round_nearest * seqlen), clamping up
@@ -724,23 +729,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     training_tokens = train_duration.value
 
     learning_rate = get_learning_rate(model_active_params, training_tokens)
-    base_global_batch_size = get_global_batch_size(
+    global_batch_size = get_global_batch_size(
         model_params=model_active_params,
         training_tokens=training_tokens,
         sequence_length=sequence_length,
         round_nearest=model_size_settings.batch_size_round_nearest,
+        batch_size_multiplier=batch_multiplier,
     )
-
-    # Apply custom multipliers
     adjusted_learning_rate = learning_rate * lr_multiplier
-    global_batch_size = int(base_global_batch_size * batch_multiplier)
     if lr_multiplier != 1.0:
         print(
             f"Applied LR multiplier: {lr_multiplier}, LR: {learning_rate} -> {adjusted_learning_rate}"
-        )
-    if batch_multiplier != 1.0:
-        print(
-            f"Applied batch multiplier: {batch_multiplier}, batch: {base_global_batch_size} -> {global_batch_size}"
         )
 
     beaker_launch_config: Optional[BeakerLaunchConfig] = None
