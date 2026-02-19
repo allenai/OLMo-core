@@ -569,7 +569,7 @@ class _CombineVDevAutograd(torch.autograd.Function):
             ctx.group_name,
         )
 
-        return grad_input[: ctx.input_rows].clone(), None, None, None, None, None, None, None, None, None
+        return grad_input[: ctx.input_rows], None, None, None, None, None, None, None, None, None
 
 
 @dataclass
