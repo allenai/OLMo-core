@@ -503,6 +503,21 @@ class TransformerConfig(ModelConfig):
         """
         return self.num_active_params - self.d_model * self.vocab_size
 
+    def visualize(self, detail: str = "full", title: Optional[str] = None) -> str:
+        """
+        Generate a Graphviz DOT-format string of this model's architecture.
+
+        See :func:`~olmo_core.nn.transformer.visualize.to_dot` for details.
+
+        :param detail: Level of detail: ``"overview"``, ``"block"``, or ``"full"`` (default).
+        :param title: Optional title for the graph.
+
+        :returns: A string in Graphviz DOT format.
+        """
+        from .visualize import to_dot
+
+        return to_dot(self, detail=detail, title=title)  # type: ignore[arg-type]
+
     @classmethod
     def olmo2_1M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(

@@ -21,6 +21,7 @@ from .config import (
 )
 from .init import InitMethod
 from .model import MoETransformer, NormalizedTransformer, Transformer
+from .visualize import render, to_dot
 
 __all__ = [
     "TransformerType",
@@ -44,4 +45,6 @@ __all__ = [
     "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingMode",
     "InitMethod",
+    "to_dot",
+    "render",
 ]
