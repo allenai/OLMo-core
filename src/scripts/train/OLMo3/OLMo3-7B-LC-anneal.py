@@ -8,7 +8,7 @@ from typing import Dict, Optional
 
 import torch
 
-from olmo_core.data import NumpyDatasetConfig, NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, DataMix
+from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, DataMix
 from olmo_core.distributed.checkpoint import load_state_dict
 from olmo_core.internal.experiment import (
     CliContext,
@@ -17,7 +17,6 @@ from olmo_core.internal.experiment import (
     build_config, DataComponents,
 )
 from olmo_core.io import join_path, resource_path
-from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.optim import SchedulerUnits
