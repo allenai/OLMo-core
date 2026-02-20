@@ -19,6 +19,7 @@ from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .list_checkpointer import ListCheckpointerCallback
 from .metric_saver import MetricSaverCallback
+from .model_merger import ModelMergeCallback
 from .monkey_patcher import MonkeyPatcherCallback
 from .profiler import ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
@@ -53,6 +54,7 @@ __all__ = [
     "BatchSizeSchedulerCallback",
     "MonkeyPatcherCallback",
     "MetricSaverCallback",
+    "ModelMergeCallback",
     "ListCheckpointerCallback",
 ]
 

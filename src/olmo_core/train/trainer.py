@@ -18,6 +18,7 @@ from typing import (
     Iterable,
     List,
     Optional,
+    Set,
     Tuple,
     Type,
     TypedDict,
@@ -296,6 +297,8 @@ class Trainer:
         default_factory=lambda: defaultdict(OrderedDict)
     )
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
+    _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, default_factory=set)
+    """Callbacks that are blocking ephemeral checkpoints."""
     _checkpoint_loaded: bool = False
     _metrics_consistent: Optional[bool] = None
 
@@ -384,6 +387,10 @@ class Trainer:
             callback.post_attach()
 
         self.train_module._attach_trainer(self)
+
+    @property
+    def block_ephemeral_checkpoints(self) -> bool:
+        return len(self._blocking_ephemeral_checkpoints) > 0
 
     @property
     def global_batch_size(self) -> int:
@@ -616,6 +623,12 @@ class Trainer:
             tps=tps,
             mfu=mfu,
         )
+
+    def get_callback_name(self, callback: Callback) -> str:
+        for name, cb in self.callbacks.items():
+            if cb is callback:
+                return name
+        raise ValueError("callback not registered with trainer!")
 
     def cancel_run(self, reason: str, no_sync: bool = False):
         """
