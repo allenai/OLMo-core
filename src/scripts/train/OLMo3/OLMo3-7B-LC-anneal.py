@@ -127,6 +127,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         return DataComponents(
             dataset=NumpyPackedFSLDatasetConfig.from_data_mix(
                 DataMix.OLMo_longmino_mix_0925,
+                mix_base_dir="r2://olmo-data",
                 tokenizer=common.tokenizer,
                 sequence_length=sequence_length,
                 generate_doc_lengths=True,  # enables intra-document masking
