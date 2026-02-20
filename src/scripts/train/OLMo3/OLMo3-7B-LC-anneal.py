@@ -159,7 +159,6 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
 
         # performance settings
         config.metrics_collect_interval = 50
-        config.callbacks["garbage_collector"].gc_interval = 200
 
         return config
 
