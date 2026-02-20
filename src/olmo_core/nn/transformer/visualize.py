@@ -265,9 +265,9 @@ def _add_attention_detail(
     hd = attn.head_dim or d_model // n_heads
 
     # Q, K, V projections (parallel fan-out).
-    q_node = b.node(f"w_q\\n{d_model}\u2192{n_heads}\u00d7{hd}", fillcolor=_COLOR_ATTN)
-    k_node = b.node(f"w_k\\n{d_model}\u2192{n_kv}\u00d7{hd}", fillcolor=_COLOR_ATTN)
-    v_node = b.node(f"w_v\\n{d_model}\u2192{n_kv}\u00d7{hd}", fillcolor=_COLOR_ATTN)
+    q_node = b.node(f"w_q\n{d_model}\u2192{n_heads}\u00d7{hd}", fillcolor=_COLOR_ATTN)
+    k_node = b.node(f"w_k\n{d_model}\u2192{n_kv}\u00d7{hd}", fillcolor=_COLOR_ATTN)
+    v_node = b.node(f"w_v\n{d_model}\u2192{n_kv}\u00d7{hd}", fillcolor=_COLOR_ATTN)
     b.edge(input_id, q_node)
     b.edge(input_id, k_node)
     b.edge(input_id, v_node)
@@ -276,7 +276,7 @@ def _add_attention_detail(
 
     # Optional clip_qkv.
     if attn.clip_qkv is not None:
-        clip = b.node(f"clip QKV\\n|x| \u2264 {attn.clip_qkv}", fillcolor=_COLOR_ATTN)
+        clip = b.node(f"clip QKV\n|x| \u2264 {attn.clip_qkv}", fillcolor=_COLOR_ATTN)
         b.edge(q_out, clip)
         b.edge(k_out, clip)
         b.edge(v_out, clip)
@@ -322,7 +322,7 @@ def _add_attention_detail(
         attn_out = gate
 
     # Output projection.
-    w_out = b.node(f"w_out\\n{n_heads}\u00d7{hd}\u2192{d_model}", fillcolor=_COLOR_ATTN)
+    w_out = b.node(f"w_out\n{n_heads}\u00d7{hd}\u2192{d_model}", fillcolor=_COLOR_ATTN)
     b.edge(attn_out, w_out)
     b.edge(w_out, output_id)
 
@@ -339,11 +339,11 @@ def _add_ffn_detail(
 ) -> None:
     """Expand FFN into w1/w3 gated structure."""
     act = str(ff.activation)
-    w1 = b.node(f"w1\\n{d_model}\u2192{ff.hidden_size}", fillcolor=_COLOR_FFN)
+    w1 = b.node(f"w1\n{d_model}\u2192{ff.hidden_size}", fillcolor=_COLOR_FFN)
     act_node = b.node(f"{act}", fillcolor=_COLOR_FFN)
-    w3 = b.node(f"w3\\n{d_model}\u2192{ff.hidden_size}", fillcolor=_COLOR_FFN)
+    w3 = b.node(f"w3\n{d_model}\u2192{ff.hidden_size}", fillcolor=_COLOR_FFN)
     mul = b.node("\u00d7", shape="circle", fillcolor=_COLOR_FFN, width="0.4", height="0.4")
-    w2 = b.node(f"w2\\n{ff.hidden_size}\u2192{d_model}", fillcolor=_COLOR_FFN)
+    w2 = b.node(f"w2\n{ff.hidden_size}\u2192{d_model}", fillcolor=_COLOR_FFN)
 
     b.edge(input_id, w1)
     b.edge(input_id, w3)
@@ -366,21 +366,21 @@ def _add_moe_detail(
 ) -> None:
     """Expand MoE into router + experts + optional shared MLP."""
     router = b.node(
-        f"Router\\ntop-{moe.router.top_k} of {moe.num_experts}",
+        f"Router\ntop-{moe.router.top_k} of {moe.num_experts}",
         shape="diamond",
         fillcolor=_COLOR_MOE,
     )
     b.edge(input_id, router)
 
     experts = b.node(
-        f"Experts ({moe.num_experts}\u00d7)\\n" f"h={moe.hidden_size}",
+        f"Experts ({moe.num_experts}\u00d7)\nh={moe.hidden_size}",
         fillcolor=_COLOR_MOE,
     )
     b.edge(router, experts, label="dispatch")
 
     if moe.shared_mlp is not None:
         shared = b.node(
-            f"Shared MLP\\nh={moe.shared_mlp.hidden_size}",
+            f"Shared MLP\nh={moe.shared_mlp.hidden_size}",
             fillcolor=_COLOR_MOE,
         )
         b.edge(input_id, shared)
@@ -410,7 +410,7 @@ def _add_block_overview(
         parts.append(_ffn_summary(block.feed_forward))
     if block.feed_forward_moe is not None:
         parts.append(_moe_summary(block.feed_forward_moe))
-    label = "\\n".join(parts)
+    label = "\n".join(parts)
     n = b.node(label, fillcolor=_COLOR_ATTN)
     b.edge(input_id, n)
     b.edge(n, output_id)
@@ -429,7 +429,7 @@ def _attn_node_or_detail(
         _add_attention_detail(b, attn_cfg, d_model, input_id, output_id)
     else:
         summary = _attn_summary(attn_cfg, d_model) if isinstance(attn_cfg, AttentionConfig) else ""
-        label = f"Attention\\n{summary}" if summary else "Sequence Mixer"
+        label = f"Attention\n{summary}" if summary else "Sequence Mixer"
         n = b.node(label, fillcolor=_COLOR_ATTN)
         b.edge(input_id, n)
         b.edge(n, output_id)
@@ -447,7 +447,7 @@ def _ffn_node_or_detail(
     if detail == "full":
         _add_ffn_detail(b, ff_cfg, d_model, input_id, output_id)
     else:
-        label = f"FeedForward\\n{_ffn_summary(ff_cfg)}"
+        label = f"FeedForward\n{_ffn_summary(ff_cfg)}"
         n = b.node(label, fillcolor=_COLOR_FFN)
         b.edge(input_id, n)
         b.edge(n, output_id)
@@ -465,7 +465,7 @@ def _moe_node_or_detail(
     if detail == "full":
         _add_moe_detail(b, moe_cfg, d_model, input_id, output_id)
     else:
-        label = f"MoE\\n{_moe_summary(moe_cfg)}"
+        label = f"MoE\n{_moe_summary(moe_cfg)}"
         n = b.node(label, fillcolor=_COLOR_MOE)
         b.edge(input_id, n)
         b.edge(n, output_id)
@@ -517,7 +517,7 @@ def _add_block_default_scaled(
 ) -> None:
     norm_lbl = _norm_label(block.layer_norm)
 
-    attn_norm = b.node(f"{norm_lbl}\\n\u00d7 1/\u221a(layer_id)", fillcolor=_COLOR_NORM)
+    attn_norm = b.node(f"{norm_lbl}\n\u00d7 1/\u221a(layer_id)", fillcolor=_COLOR_NORM)
     attn_out = b.node("", shape="point", width="0.01", height="0.01")
     b.edge(input_id, attn_norm)
     _attn_node_or_detail(b, block.sequence_mixer, d_model, attn_norm, attn_out, detail)
@@ -526,7 +526,7 @@ def _add_block_default_scaled(
     b.edge(input_id, res1)
 
     assert block.feed_forward is not None
-    ffn_norm = b.node(f"{norm_lbl}\\n\u00d7 1/\u221a(layer_id)", fillcolor=_COLOR_NORM)
+    ffn_norm = b.node(f"{norm_lbl}\n\u00d7 1/\u221a(layer_id)", fillcolor=_COLOR_NORM)
     ffn_out = b.node("", shape="point", width="0.01", height="0.01")
     b.edge(res1, ffn_norm)
     _ffn_node_or_detail(b, block.feed_forward, d_model, ffn_norm, ffn_out, detail)
@@ -842,11 +842,11 @@ def to_dot(
         )
 
     # Input.
-    inp = b.node("Input\\n(B, T)", shape="ellipse", fillcolor=_COLOR_IO, style="filled")
+    inp = b.node("Input\n(B, T)", shape="ellipse", fillcolor=_COLOR_IO, style="filled")
 
     # Embedding.
     embed = b.node(
-        f"Embedding\\n{config.vocab_size:,} \u00d7 {config.d_model}",
+        f"Embedding\n{config.vocab_size:,} \u00d7 {config.d_model}",
         fillcolor=_COLOR_EMBED,
     )
     b.edge(inp, embed)
@@ -908,7 +908,7 @@ def to_dot(
             b.edge(prev, lm_norm)
             prev = lm_norm
         lm_proj = b.node(
-            f"Linear\\n{config.d_model} \u2192 {config.vocab_size:,}",
+            f"Linear\n{config.d_model} \u2192 {config.vocab_size:,}",
             fillcolor=_COLOR_EMBED,
         )
         b.edge(prev, lm_proj)
@@ -916,7 +916,7 @@ def to_dot(
         b.end_subgraph()
 
     # Output.
-    out = b.node("Output\\nLogits (B, T, V)", shape="ellipse", fillcolor=_COLOR_IO, style="filled")
+    out = b.node("Output\nLogits (B, T, V)", shape="ellipse", fillcolor=_COLOR_IO, style="filled")
     b.edge(prev, out)
 
     return b.to_dot(title=title)
