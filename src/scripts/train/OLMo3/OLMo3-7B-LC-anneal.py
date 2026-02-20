@@ -160,6 +160,10 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         # performance settings
         config.metrics_collect_interval = 50
 
+        # evals don't support context parallelism yet
+        del config.callbacks["lm_evaluator"]
+        del config.callbacks["downstream_evaluator"]
+
         return config
 
     config = build_config(
