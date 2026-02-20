@@ -236,6 +236,7 @@ class ModelMergeCallback(Callback):
             f"({self._accumulator_counts[merge_step]} total)"
         )
 
+    @torch.no_grad()
     def _save_merged_checkpoint(self, merge_step: int):
         accumulator = self._accumulators.get(merge_step)
         count = self._accumulator_counts.get(merge_step, 0)
@@ -272,13 +273,12 @@ class ModelMergeCallback(Callback):
             k: get_local_tensor(p.data.detach()).to("cpu").clone() for k, p in params_dict.items()
         }
 
-        with torch.no_grad():
-            for name, param in params_dict.items():
-                if name in averaged_state:
-                    local_param = get_local_tensor(param.data)
-                    local_param.copy_(
-                        averaged_state[name].to(local_param.device, local_param.dtype)
-                    )
+        for name, param in params_dict.items():
+            if name in averaged_state:
+                local_param = get_local_tensor(param.data)
+                local_param.copy_(
+                    averaged_state[name].to(local_param.device, local_param.dtype)
+                )
 
         barrier()
 
@@ -296,13 +296,12 @@ class ModelMergeCallback(Callback):
         finally:
             # Restore original weights
             log.info("Restoring original model weights...")
-            with torch.no_grad():
-                for name, param in params_dict.items():
-                    if name in original_state:
-                        local_param = get_local_tensor(param.data)
-                        local_param.copy_(
-                            original_state[name].to(local_param.device, local_param.dtype)
-                        )
+            for name, param in params_dict.items():
+                if name in original_state:
+                    local_param = get_local_tensor(param.data)
+                    local_param.copy_(
+                        original_state[name].to(local_param.device, local_param.dtype)
+                    )
             barrier()
 
         # Clean up
