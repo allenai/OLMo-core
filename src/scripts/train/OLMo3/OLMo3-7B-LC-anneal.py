@@ -81,6 +81,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
 
     global_step = trainer_state["global_step"]
     run_name = f"{config['run_name']}-from{global_step}-LC"
+    old_sequence_length = trainer_state["data_loader"]["sequence_length"]
     sequence_length = 64 * 1024
     length_in_steps = ceil(length_in_tokens / batch_size)
 
@@ -141,7 +142,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
 
     def build_model_config(common: CommonComponents) -> TransformerConfig:
         config = olmo3_module.build_model_config(common).with_rope_scaling(
-            YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
+            YaRNRoPEScalingConfig(factor=sequence_length / old_sequence_length, beta_fast=32, beta_slow=1, old_context_len=old_sequence_length)
         )
 
         return config
