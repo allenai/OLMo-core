@@ -122,7 +122,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         config.dp_config.wrapping_strategy = TransformerDataParallelWrappingStrategy.full
         config.cp_config = TransformerContextParallelConfig.llama3(degree=8, head_stride=1)
         config.ac_config = TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.6
+            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.8
         )
 
         return config
