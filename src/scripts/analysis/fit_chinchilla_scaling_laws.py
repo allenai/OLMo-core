@@ -120,7 +120,7 @@ def _compute_specs(
     parallel_flops: bool = True,
     chunk_size: int = 256,
     chinchilla_flops: bool = True,
-    seq_len: Optional[int] = None,
+    seq_len: int = 8192,
 ) -> Optional[dict]:
     """Dispatch to parallel or recurrent spec computation."""
     if parallel_flops:
@@ -164,8 +164,8 @@ def load_ladder_data(
     parallel_flops: bool = True,
     chunk_size: int = 256,
     chinchilla_flops: bool = True,
-    seq_len: Optional[int] = None,
-    average_val_loss: bool = False,
+    seq_len: int = 8192,
+    average_val_loss: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
     """
     Load ladder results from pickle files for Chinchilla fitting.
@@ -425,8 +425,8 @@ def fit_ladder(
     parallel_flops: bool = True,
     chunk_size: int = 256,
     chinchilla_flops: bool = True,
-    seq_len: Optional[int] = None,
-    average_val_loss: bool = False,
+    seq_len: int = 8192,
+    average_val_loss: bool = True,
 ) -> Tuple[
     ChinchillaParametricFit,
     np.ndarray,
@@ -471,10 +471,12 @@ def fit_ladder(
     # Compute weights
     weights = None
     if weight_by_compute:
-        # Weight by compute to emphasize larger-scale runs
-        weights = 6 * N * D
+        # Weight by actual training FLOPs to emphasize larger-scale runs.
+        # F already accounts for non-embedding ops (or falls back to 6ND when
+        # simple_flops=True), so this is more accurate than the 6ND approximation.
+        weights = F
         if verbose:
-            print(f"\n  Weighting by compute")
+            print("\n  Weighting by compute (using actual FLOPs)")
 
     if verbose:
         print(f"\n  Fitting with {len(N)} data points...")
@@ -937,7 +939,7 @@ def load_ladder_domain_data(
     parallel_flops: bool = True,
     chunk_size: int = 256,
     chinchilla_flops: bool = True,
-    seq_len: Optional[int] = None,
+    seq_len: int = 8192,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]]:
     """
     Load ladder results with per-domain BPB metrics for domain-specific scaling law fitting.
@@ -1105,7 +1107,7 @@ def fit_domain_ladders(
     parallel_flops: bool = True,
     chunk_size: int = 256,
     chinchilla_flops: bool = True,
-    seq_len: Optional[int] = None,
+    seq_len: int = 8192,
 ) -> Dict[
     str, Tuple[ChinchillaParametricFit, np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]
 ]:
@@ -1451,8 +1453,12 @@ def generate_efficiency_latex_table(
     # Auto-determine target losses from the data if not provided
     if target_losses is None:
         all_L = np.concatenate([L for (_, _, _, L, _, _, _) in fits.values()])
-        p75, p100 = np.percentile(all_L, 25), all_L.min()
-        target_losses = np.linspace(p75, p100, 5).tolist()
+        # Span from the 25th-percentile loss (harder to achieve) down to the minimum
+        # observed loss (easiest to achieve). linspace produces 5 evenly-spaced targets
+        # in descending order (harder → easier).
+        loss_hard = np.percentile(all_L, 25)
+        loss_easy = all_L.min()
+        target_losses = np.linspace(loss_hard, loss_easy, 5).tolist()
         target_losses = [round(val, 3) for val in target_losses]
 
     lines = []
@@ -1677,17 +1683,20 @@ def generate_token_savings_table(
 def generate_compute_equivalent_table(
     fits: Dict[str, Tuple],
     flop_budgets: Optional[List[float]] = None,
+    label: str = "tab:compute-equivalent-loss",
 ) -> str:
     """
     Generate LaTeX table comparing loss at compute-optimal allocation across architectures.
 
-    For each compute budget, uses the Chinchilla optimal allocation (D/N = a_opt/b_opt)
-    to find optimal N and D, then predicts loss via the fitted scaling law.
+    For each compute budget, uses the Chinchilla optimal allocation to find optimal N and D,
+    then predicts loss via the fitted scaling law.
 
     Uses FLOPs = 6*N*D approximation.
-    Given C = 6*N*D and D = (a_opt/b_opt)*N:
-        N_opt = sqrt(C * b_opt / (6 * a_opt))
-        D_opt = C / (6 * N_opt)
+    From the first-order conditions α·A/N^α = β·B/D^β:
+        D = G · N^(α/β)  where G = (β·B / α·A)^(1/β)
+    Combined with C = 6·N·D:
+        N_opt = (C / (6·G))^a_opt   where a_opt = β/(α+β)
+        D_opt = C / (6 · N_opt)
 
     Args:
         fits: {ladder_name: (fit, N, D, L, F, sizes, bootstrap)}
@@ -1723,7 +1732,7 @@ def generate_compute_equivalent_table(
         caption_text += r" 95\% bootstrap CI shown below each estimate."
     caption_text += "}"
     lines.append(caption_text)
-    lines.append(r"    \label{tab:compute-equivalent-loss}")
+    lines.append(r"    \label{" + label + "}")
 
     # Column spec: Compute + (N* + D* + Loss) per ref + (N* + D* + Loss + Delta) per non-ref
     n_others = len(ladder_names) - 1
@@ -1751,7 +1760,8 @@ def generate_compute_equivalent_table(
     def _optimal_alloc(fit: ChinchillaParametricFit, C: float) -> Tuple[float, float, float]:
         """Return (n_opt, d_opt, loss) for a given compute budget."""
         p = fit.fitted_params
-        n_opt = np.sqrt(C * p.b_opt / (6.0 * p.a_opt))
+        G = (p.beta * p.B / (p.alpha * p.A)) ** (1.0 / p.beta)
+        n_opt = (C / (6.0 * G)) ** p.a_opt
         d_opt = C / (6.0 * n_opt)
         loss = float(fit.predict_loss(np.array([n_opt]), np.array([d_opt]))[0])
         return n_opt, d_opt, loss
@@ -2061,7 +2071,9 @@ def generate_paper_figure_1(
         flop_ratio = np.median(F / (6.0 * N * D))
         if bold_curve == "optimal":
             # Compute-optimal frontier: for each C, allocate (N,D) optimally
-            C_range = np.logspace(np.log10(F.min() / flop_ratio), np.log10(F.max() / flop_ratio), 150)
+            C_range = np.logspace(
+                np.log10(F.min() / flop_ratio), np.log10(F.max() / flop_ratio), 150
+            )
             N_sweep, D_sweep = compute_optimal_frontier(fit, C_range)
             F_sweep_peta = (C_range * flop_ratio) / 1e15
         else:
@@ -2855,6 +2867,7 @@ def generate_combined_savings_figure(
     lines.append(r"    tick label style={font=\scriptsize},")
     lines.append(r"    label style={font=\scriptsize},")
     lines.append(r"    title style={font=\small},")
+    lines.append(r"    legend=false,")
     lines.append(r"]")
 
     # ── Panel (a): Tokens to reach target loss vs model size ──
@@ -2870,20 +2883,43 @@ def generate_combined_savings_figure(
 
     all_d_curves: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
 
+    # Pre-compute all curves so we can draw shading first (below the curves)
     for idx, name in enumerate(ladder_names):
         fit = fits[name][0]
-        bootstrap = fits[name][6]
-        style = get_latex_style(name, idx)
-        display = escape_latex(get_display_name(name))
-        line_style = f", {style['line_style']}" if style.get("line_style") else ""
-
         d_needed = np.array([solve_d_for_target_loss(fit, target_loss, n) for n in N_range])
         valid = np.isfinite(d_needed) & (d_needed > 0) & (d_needed <= 1e19)
         all_d_curves[name] = (N_range, d_needed, valid)
 
+    # Shaded savings region: only where the non-reference curve is BELOW the reference.
+    # Drawn first so the curves render on top.
+    if len(all_d_curves) >= 2:
+        names_list = list(all_d_curves.keys())
+        N_a, d_a, valid_a = all_d_curves[names_list[0]]  # reference
+        N_b, d_b, valid_b = all_d_curves[names_list[1]]  # other arch
+        both_valid = valid_a & valid_b & (d_b < d_a)  # only shade where other < reference
+        if np.any(both_valid):
+            style_b = get_latex_style(names_list[1], 1)
+            N_fwd = N_a[both_valid]
+            d_upper = d_a[both_valid]  # reference curve is the top boundary
+            d_lower = d_b[both_valid]  # other arch is the bottom boundary
+            fill_coords = np.concatenate([N_fwd, N_fwd[::-1]])
+            fill_d = np.concatenate([d_upper, d_lower[::-1]])
+            lines.append(
+                f"\\addplot[fill={style_b['color_name']}!20, draw=none, forget plot] "
+                f"coordinates {{{_make_coordinate_table(fill_coords, fill_d)}}} -- cycle;"
+            )
+
+    # Now draw curves on top of the shading
+    for idx, name in enumerate(ladder_names):
+        fit = fits[name][0]
+        bootstrap = fits[name][6]
+        style = get_latex_style(name, idx)
+        line_style = f", {style['line_style']}" if style.get("line_style") else ""
+        N_range_cur, d_needed, valid = all_d_curves[name]
+
         # CI band (rendered before main curve for z-ordering)
         if plot_ci and bootstrap is not None:
-            N_valid, ci_lo, ci_hi = _compute_ci_envelope(bootstrap, target_loss, N_range)
+            N_valid, ci_lo, ci_hi = _compute_ci_envelope(bootstrap, target_loss, N_range_cur)
             ci_valid = ci_hi <= 1e19
             if len(N_valid) > 0 and np.any(ci_valid):
                 lines.append(
@@ -2895,26 +2931,7 @@ def generate_combined_savings_figure(
         if np.any(valid):
             lines.append(
                 f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
-                f"coordinates {{{_make_coordinate_table(N_range[valid], d_needed[valid])}}};"
-            )
-            lines.append(f"\\addlegendentry{{{display}}}")
-
-    # Shaded savings region between first two curves
-    if len(all_d_curves) >= 2:
-        names_list = list(all_d_curves.keys())
-        N_a, d_a, valid_a = all_d_curves[names_list[0]]
-        N_b, d_b, valid_b = all_d_curves[names_list[1]]
-        both_valid = valid_a & valid_b
-        if np.any(both_valid):
-            style_a = get_latex_style(names_list[0], 0)
-            N_fwd = N_a[both_valid]
-            d_upper = np.maximum(d_a[both_valid], d_b[both_valid])
-            d_lower = np.minimum(d_a[both_valid], d_b[both_valid])
-            fill_coords = np.concatenate([N_fwd, N_fwd[::-1]])
-            fill_d = np.concatenate([d_upper, d_lower[::-1]])
-            lines.append(
-                f"\\addplot[fill={style_a['color_name']}!15, draw=none, forget plot] "
-                f"coordinates {{{_make_coordinate_table(fill_coords, fill_d)}}} -- cycle;"
+                f"coordinates {{{_make_coordinate_table(N_range_cur[valid], d_needed[valid])}}};"
             )
 
     # Vertical line at 7B
@@ -2937,15 +2954,13 @@ def generate_combined_savings_figure(
     lines.append(r"    xmin=2e8,")
     lines.append(r"]")
 
-    # Horizontal baseline at y=1
+    # Horizontal baseline at y=1 in reference (OLMo 3) color.
+    # Use \addplot with domain instead of \draw so pgfplots handles axis limits correctly.
+    ref_style = get_latex_style(reference_name, 0)
+    ref_color = ref_style["color_name"]
+    lines.append(f"\\addplot[{ref_color}, thick, no markers, forget plot, domain=2e8:1e11] {{1}};")
     lines.append(
-        r"\draw[dashed, gray, thick] (axis cs:\pgfkeysvalueof{/pgfplots/xmin},1) -- "
-        r"(axis cs:\pgfkeysvalueof{/pgfplots/xmax},1);"
-    )
-    lines.append(
-        r"\node[font=\footnotesize, gray, anchor=south west] at "
-        r"(axis cs:\pgfkeysvalueof{/pgfplots/xmin},1) "
-        r"{$1\times$ Transformer};"
+        f"\\node[font=\\footnotesize, {ref_color}, anchor=south west] at " f"(axis cs:2e8,1) {{}};"
     )
 
     for name in other_names:
@@ -2953,7 +2968,6 @@ def generate_combined_savings_figure(
         arch_bootstrap = fits[name][6]
         idx = ladder_names.index(name)
         style = get_latex_style(name, idx)
-        display = escape_latex(get_display_name(name))
         line_style = f", {style['line_style']}" if style.get("line_style") else ""
 
         # Compute savings factor at each N
@@ -2990,7 +3004,6 @@ def generate_combined_savings_figure(
                 f"\\addplot[{style['color_name']}, thick, no markers{line_style}] "
                 f"coordinates {{{_make_coordinate_table(np.array(valid_N), np.array(savings))}}};"
             )
-            lines.append(f"\\addlegendentry{{{display}}}")
 
     lines.append("")
     lines.append(r"\end{groupplot}")
@@ -3494,10 +3507,9 @@ def plot_isoflop_curves(
     for name, (fit, N, D, L, F, sizes, bootstrap) in fits.items():
         color = colors[name]
         params = fit.fitted_params
-        # Compute-optimal: N_opt ∝ C^a_opt, where C = 6*N*D
-        # For a given FLOP budget F = 6*N*D, optimal N scales as F^a_opt
-        # This is approximate; exact solution requires solving the optimality conditions
-        N_opt = (flop_range / 6) ** params.a_opt * (1 / 20) ** (params.a_opt * params.b_opt)
+        # Compute-optimal allocation from first-order conditions:
+        # N_opt = (C / (6·G))^a_opt, G = (β·B / α·A)^(1/β)
+        N_opt, _ = compute_optimal_frontier(fit, flop_range)
 
         ax.plot(
             flop_range,
@@ -3507,8 +3519,10 @@ def plot_isoflop_curves(
             color=color,
         )
 
-    # Add Chinchilla reference line
-    N_chinchilla = (flop_range / 6) ** 0.5 * (1 / 20) ** 0.25
+    # Add Chinchilla reference line using paper's Eq. 4 with α=β=0.5, A=B (symmetric):
+    # G_paper = (αA/βB)^(1/(α+β)) = 1 when α=β and A=B; N_opt = (C/6)^0.5 exactly
+    # We also use a representative G from actual Chinchilla paper fits (G ≈ 1)
+    N_chinchilla = (flop_range / 6) ** 0.5
     ax.plot(flop_range, N_chinchilla, "k--", linewidth=1, label="Chinchilla (a=0.5)", alpha=0.7)
 
     ax.set_xscale("log")
@@ -3838,7 +3852,8 @@ def plot_bootstrap_ci(
 
         for C in flop_budgets:
             p = fit.fitted_params
-            n_opt = np.sqrt(C * p.b_opt / (6.0 * p.a_opt))
+            G = (p.beta * p.B / (p.alpha * p.A)) ** (1.0 / p.beta)
+            n_opt = (C / (6.0 * G)) ** p.a_opt
             d_opt = C / (6.0 * n_opt)
             point_loss = float(fit.predict_loss(np.array([n_opt]), np.array([d_opt]))[0])
             point_losses.append(point_loss)
@@ -3847,7 +3862,8 @@ def plot_bootstrap_ci(
             boot_losses = []
             for bf in bootstrap.fits:
                 bp = bf.fitted_params
-                bn = np.sqrt(C * bp.b_opt / (6.0 * bp.a_opt))
+                bG = (bp.beta * bp.B / (bp.alpha * bp.A)) ** (1.0 / bp.beta)
+                bn = (C / (6.0 * bG)) ** bp.a_opt
                 bd = C / (6.0 * bn)
                 boot_losses.append(float(bf.predict_loss(np.array([bn]), np.array([bd]))[0]))
             lo, hi = np.percentile(boot_losses, [2.5, 97.5])
@@ -4022,7 +4038,7 @@ def compare_specs_for_ladder(
     parallel_flops: bool = True,
     chunk_size: int = 256,
     chinchilla_flops: bool = True,
-    seq_len: Optional[int] = None,
+    seq_len: int = 8192,
 ) -> None:
     """
     Print a diagnostic comparison of computed vs. logged parameter counts and FLOPs.
@@ -4334,7 +4350,8 @@ def main():
     )
     parser.add_argument(
         "--average-val-loss",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Use the average of all available validation loss columns "
         "(eval/lm/*-validation/CE loss) instead of a single loss column. "
         "Gives a more stable, multi-domain loss signal for fitting.",
@@ -4593,8 +4610,15 @@ def main():
         # Figure 1: Main Scaling Law Fits
         # Generate all 4 combinations: {linear, log-loss} × {mean, optimal}
         use_lines = not args.scatter
-        for log_loss, bold in [(False, "mean"), (False, "optimal"), (True, "mean"), (True, "optimal")]:
-            fig1 = generate_paper_figure_1(fits, log_loss=log_loss, use_lines=use_lines, bold_curve=bold)
+        for log_loss, bold in [
+            (False, "mean"),
+            (False, "optimal"),
+            (True, "mean"),
+            (True, "optimal"),
+        ]:
+            fig1 = generate_paper_figure_1(
+                fits, log_loss=log_loss, use_lines=use_lines, bold_curve=bold
+            )
             parts = []
             if log_loss:
                 parts.append("log")
@@ -4693,12 +4717,30 @@ def main():
             f.write(table4_min)
         print(f"Saved Table 4-min to: {table4_min_path}")
 
-        # Table 5: Compute-Equivalent Loss
-        table5 = generate_compute_equivalent_table(fits)
+        # Table 5: Compute-Equivalent Loss (hybrid ladders — main paper)
+        pure_gdn_names = {"pure-gdn"}
+        hybrid_fits = {k: v for k, v in fits.items() if k not in pure_gdn_names}
+        table5 = generate_compute_equivalent_table(
+            hybrid_fits, label="tab:compute-equivalent-loss"
+        )
         table5_path = tables_dir / "compute-equivalent-loss.tex"
         with open(table5_path, "w") as f:
             f.write(table5)
         print(f"Saved Table 5 to: {table5_path}")
+
+        # Table 5b: Compute-Equivalent Loss (Pure GDN — appendix)
+        if any(k in fits for k in pure_gdn_names):
+            ref_name = list(fits.keys())[0]
+            pure_gdn_fits_full = {
+                k: v for k, v in fits.items() if k == ref_name or k in pure_gdn_names
+            }
+            table5b = generate_compute_equivalent_table(
+                pure_gdn_fits_full, label="tab:compute-equivalent-loss-pure-gdn"
+            )
+            table5b_path = tables_dir / "compute-equivalent-loss-pure-gdn.tex"
+            with open(table5b_path, "w") as f:
+                f.write(table5b)
+            print(f"Saved Table 5b to: {table5b_path}")
 
     # Save results
     if args.output:

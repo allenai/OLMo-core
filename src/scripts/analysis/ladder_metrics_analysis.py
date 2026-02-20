@@ -463,6 +463,8 @@ def analyze_ladder(
                 f"  {size}: Using corrected non-embedding params: "
                 f"{corrected_params/1e6:.1f}M (was {raw_num_params/1e6:.1f}M)"
             )
+        print(f"raw_num_params = {raw_num_params}")
+        print(f"raw_num_params = {raw_num_params}")
 
         # Compute FLOPs per token from architecture specs
         if simple_flops:

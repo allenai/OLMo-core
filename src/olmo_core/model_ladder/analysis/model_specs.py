@@ -724,7 +724,7 @@ DISPLAY_NAMES: Dict[str, str] = {
     "olmo3-2": "Olmo 3 v2",
     "olmo3-3": "Olmo 3 v3",
     "pure-gdn": "Pure GDN",
-    "hybrid-gdn": "Hybrid GDN (3:1)",
+    "hybrid-gdn": "Hybrid",
     "hybrid-gdn-half": "Hybrid GDN (1:1)",
     "hybrid-gdn-eight": "Hybrid GDN (7:1)",
     "hybrid-gdn-middle": "Hybrid GDN (Middle)",
