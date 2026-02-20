@@ -130,7 +130,7 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tool-use-general-mix
 BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/math-base
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-2x7b-no_anneal-tool_use_general_mix-unf-lm-head \
+    flexolmo-2x7b-no_anneal-tool-mix-unf-lm-head-embed \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -144,7 +144,7 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --num_nodes=4 \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
-    --model_name olmoe-2x7b-unfrozen-lm-head \
+    --model_name olmoe-2x7b-unfrozen-lm-head-embed \
     --dataset_path $SFT_DATASET
 
 
