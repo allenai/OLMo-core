@@ -492,7 +492,7 @@ def _add_block_default(
     _attn_node_or_detail(b, block.sequence_mixer, d_model, attn_norm, attn_out, detail)
     res1 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(attn_out, res1)
-    b.edge(input_id, res1, style="dashed", color="gray")
+    b.edge(input_id, res1)
 
     # FFN path.
     assert block.feed_forward is not None
@@ -502,7 +502,7 @@ def _add_block_default(
     _ffn_node_or_detail(b, block.feed_forward, d_model, ffn_norm, ffn_out, detail)
     res2 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(ffn_out, res2)
-    b.edge(res1, res2, style="dashed", color="gray")
+    b.edge(res1, res2)
     b.edge(res2, output_id)
 
 
@@ -523,7 +523,7 @@ def _add_block_default_scaled(
     _attn_node_or_detail(b, block.sequence_mixer, d_model, attn_norm, attn_out, detail)
     res1 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(attn_out, res1)
-    b.edge(input_id, res1, style="dashed", color="gray")
+    b.edge(input_id, res1)
 
     assert block.feed_forward is not None
     ffn_norm = b.node(f"{norm_lbl}\\n\u00d7 1/\u221a(layer_id)", fillcolor=_COLOR_NORM)
@@ -532,7 +532,7 @@ def _add_block_default_scaled(
     _ffn_node_or_detail(b, block.feed_forward, d_model, ffn_norm, ffn_out, detail)
     res2 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(ffn_out, res2)
-    b.edge(res1, res2, style="dashed", color="gray")
+    b.edge(res1, res2)
     b.edge(res2, output_id)
 
 
@@ -553,7 +553,7 @@ def _add_block_reordered_norm(
     b.edge(attn_out, attn_norm)
     res1 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(attn_norm, res1)
-    b.edge(input_id, res1, style="dashed", color="gray")
+    b.edge(input_id, res1)
 
     assert block.feed_forward is not None
     ffn_out = b.node("", shape="point", width="0.01", height="0.01")
@@ -562,7 +562,7 @@ def _add_block_reordered_norm(
     b.edge(ffn_out, ffn_norm)
     res2 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(ffn_norm, res2)
-    b.edge(res1, res2, style="dashed", color="gray")
+    b.edge(res1, res2)
     b.edge(res2, output_id)
 
 
@@ -585,7 +585,7 @@ def _add_block_peri_norm(
     b.edge(attn_out, post_attn_norm)
     res1 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(post_attn_norm, res1)
-    b.edge(input_id, res1, style="dashed", color="gray")
+    b.edge(input_id, res1)
 
     assert block.feed_forward is not None
     pre_ffn_norm = b.node(f"Pre-{norm_lbl}", fillcolor=_COLOR_NORM)
@@ -596,7 +596,7 @@ def _add_block_peri_norm(
     b.edge(ffn_out, post_ffn_norm)
     res2 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(post_ffn_norm, res2)
-    b.edge(res1, res2, style="dashed", color="gray")
+    b.edge(res1, res2)
     b.edge(res2, output_id)
 
 
@@ -615,7 +615,7 @@ def _add_block_normalized(
     b.edge(attn_out, l2_1)
     lerp1 = b.node("Lerp(\u03b1_attn)", fillcolor=_COLOR_RESIDUAL)
     b.edge(l2_1, lerp1)
-    b.edge(input_id, lerp1, style="dashed", color="gray")
+    b.edge(input_id, lerp1)
     l2_2 = b.node("L2 Normalize", fillcolor=_COLOR_NORM)
     b.edge(lerp1, l2_2)
 
@@ -626,7 +626,7 @@ def _add_block_normalized(
     b.edge(ffn_out, l2_3)
     lerp2 = b.node("Lerp(\u03b1_mlp)", fillcolor=_COLOR_RESIDUAL)
     b.edge(l2_3, lerp2)
-    b.edge(l2_2, lerp2, style="dashed", color="gray")
+    b.edge(l2_2, lerp2)
     l2_4 = b.node("L2 Normalize", fillcolor=_COLOR_NORM)
     b.edge(lerp2, l2_4)
     b.edge(l2_4, output_id)
@@ -649,7 +649,7 @@ def _add_block_moe(
     _attn_node_or_detail(b, block.sequence_mixer, d_model, attn_norm, attn_out, detail)
     res1 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(attn_out, res1)
-    b.edge(input_id, res1, style="dashed", color="gray")
+    b.edge(input_id, res1)
 
     assert block.feed_forward_moe is not None
     ffn_norm = b.node(f"{norm_lbl}", fillcolor=_COLOR_NORM)
@@ -658,7 +658,7 @@ def _add_block_moe(
     _moe_node_or_detail(b, block.feed_forward_moe, d_model, ffn_norm, moe_out, detail)
     res2 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(moe_out, res2)
-    b.edge(res1, res2, style="dashed", color="gray")
+    b.edge(res1, res2)
     b.edge(res2, output_id)
 
 
@@ -679,7 +679,7 @@ def _add_block_moe_reordered_norm(
     b.edge(attn_out, attn_norm)
     res1 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(attn_norm, res1)
-    b.edge(input_id, res1, style="dashed", color="gray")
+    b.edge(input_id, res1)
 
     assert block.feed_forward_moe is not None
     moe_out = b.node("", shape="point", width="0.01", height="0.01")
@@ -688,7 +688,7 @@ def _add_block_moe_reordered_norm(
     b.edge(moe_out, ffn_norm)
     res2 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(ffn_norm, res2)
-    b.edge(res1, res2, style="dashed", color="gray")
+    b.edge(res1, res2)
     b.edge(res2, output_id)
 
 
@@ -713,7 +713,7 @@ def _add_block_moe_hybrid(
     _attn_node_or_detail(b, block.sequence_mixer, d_model, attn_norm, attn_out, detail)
     res1 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(attn_out, res1)
-    b.edge(input_id, res1, style="dashed", color="gray")
+    b.edge(input_id, res1)
 
     assert block.feed_forward is not None
     ffn_norm = b.node(f"{norm_lbl}", fillcolor=_COLOR_NORM)
@@ -722,7 +722,7 @@ def _add_block_moe_hybrid(
     _ffn_node_or_detail(b, block.feed_forward, d_model, ffn_norm, ffn_out, detail)
     res2 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(ffn_out, res2)
-    b.edge(res1, res2, style="dashed", color="gray")
+    b.edge(res1, res2)
     dense_out = res2
     b.end_subgraph()
 
@@ -764,7 +764,7 @@ def _add_block_moe_hybrid_reordered_norm(
     b.edge(attn_out, attn_norm)
     res1 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(attn_norm, res1)
-    b.edge(input_id, res1, style="dashed", color="gray")
+    b.edge(input_id, res1)
 
     assert block.feed_forward is not None
     ffn_out = b.node("", shape="point", width="0.01", height="0.01")
@@ -773,7 +773,7 @@ def _add_block_moe_hybrid_reordered_norm(
     b.edge(ffn_out, ffn_norm)
     res2 = b.node("+", shape="circle", fillcolor=_COLOR_RESIDUAL, width="0.4", height="0.4")
     b.edge(ffn_norm, res2)
-    b.edge(res1, res2, style="dashed", color="gray")
+    b.edge(res1, res2)
     dense_out = res2
     b.end_subgraph()
 
@@ -837,7 +837,7 @@ def to_dot(
     if title is None:
         title = (
             f"d_model={config.d_model}, n_layers={config.n_layers}, "
-            f"vocab_size={config.vocab_size:,}\\n"
+            f"vocab_size={config.vocab_size:,}\n"
             f"{config.num_params:,} params"
         )
 
