@@ -103,7 +103,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         config.optim.lr = lr
         config.scheduler = WSD(
             units=SchedulerUnits.steps,
-            warmup=global_step,
+            warmup=0,
             warmup_fraction=None,
             decay=length_in_steps,
             decay_fraction=None,
@@ -152,7 +152,8 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
 
         config.load_path = original_checkpoint
         config.load_strategy = LoadStrategy.always
-        config.max_duration = Duration.steps(global_step + length_in_steps)
+        config.load_trainer_state = False
+        config.max_duration = Duration.steps(length_in_steps)
         config.hard_stop = None
 
         config.callbacks["checkpointer"].save_interval = 10000
