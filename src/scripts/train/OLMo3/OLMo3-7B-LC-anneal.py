@@ -18,7 +18,7 @@ from olmo_core.internal.experiment import (
 )
 from olmo_core.io import join_path, resource_path
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
+from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig, TransformerDataParallelWrappingStrategy
 from olmo_core.optim import SchedulerUnits
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
@@ -113,7 +113,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         config.max_sequence_length = sequence_length
         config.rank_microbatch_size = sequence_length
         config.dp_config.shard_degree = 1
-        config.dp_config.wrapping_strategy = 'full'
+        config.dp_config.wrapping_strategy = TransformerDataParallelWrappingStrategy.full
         config.cp_config = (
             TransformerContextParallelConfig.llama3(degree=8, head_stride=1)
         )
