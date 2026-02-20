@@ -589,7 +589,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     checkpoint_second_unpermute: bool = False
     ep_no_sync: bool = False
     ep_no_sync_use_2d_all_to_all: bool = False
-    ep_no_sync_capacity_factor: float = 1.4
+    ep_no_sync_capacity_factor: float = 1.5
     ep_no_sync_major_align: int = 1
     ep_no_sync_restore_unpermute_backend: str = "te_fused"
         
@@ -2046,6 +2046,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         final_out = attn_res_out + self.feed_forward_norm(mlp_out)
 
         if routed_expert_router_aux_loss_info is not None:
+            # TODO;BUG: load balancing loss is calculated twice (or at least logged 2x as large in wandb).   
             routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
                 *routed_expert_router_aux_loss_info
             )

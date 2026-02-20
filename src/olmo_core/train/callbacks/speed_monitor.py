@@ -95,9 +95,12 @@ class SpeedMonitorCallback(Callback):
                 elif "B200" in device_name:
                     # data from https://www.nvidia.com/en-us/data-center/hgx/
                     self.device_peak_flops = int(4.5e15 * dense_correction)
+                elif "RTX PRO 6000" in device_name:
+                    # https://www.nvidia.com/content/dam/en-zz/Solutions/design-visualization/quadro-product-literature/NVIDIA-RTX-Blackwell-PRO-GPU-Architecture-v1.0.pdf
+                    self.device_peak_flops = int(1008e12 * dense_correction)
                 else:  # for other GPU types, assume A100
                     # data from https://www.nvidia.com/en-us/data-center/a100/
-                    self.device_peak_flops = int(312e12 * dense_correction)
+                    self.device_peak_flops = int(624e12 * dense_correction)
             log.info(f"Device: {device_name}, Device peak FLOPS: {self.device_peak_flops}")
 
     def pre_load_batch(self):
