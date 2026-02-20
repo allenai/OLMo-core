@@ -276,9 +276,7 @@ class ModelMergeCallback(Callback):
         for name, param in params_dict.items():
             if name in averaged_state:
                 local_param = get_local_tensor(param.data)
-                local_param.copy_(
-                    averaged_state[name].to(local_param.device, local_param.dtype)
-                )
+                local_param.copy_(averaged_state[name].to(local_param.device, local_param.dtype))
 
         barrier()
 
