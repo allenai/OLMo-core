@@ -8,23 +8,29 @@ from typing import Dict, Optional
 
 import torch
 
-from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, DataMix
+from olmo_core.data import DataMix, NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig
 from olmo_core.distributed.checkpoint import load_state_dict
 from olmo_core.internal.experiment import (
     CliContext,
     CommonComponents,
+    DataComponents,
     SubCmd,
-    build_config, DataComponents,
+    build_config,
 )
 from olmo_core.io import join_path, resource_path
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig, TransformerDataParallelWrappingStrategy
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+    TransformerDataParallelWrappingStrategy,
+)
 from olmo_core.optim import SchedulerUnits
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
-    TransformerTrainModuleConfig, TransformerContextParallelConfig,
+    TransformerContextParallelConfig,
+    TransformerTrainModuleConfig,
 )
 
 log = logging.getLogger(__name__)
@@ -114,9 +120,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         config.rank_microbatch_size = sequence_length
         config.dp_config.shard_degree = 1
         config.dp_config.wrapping_strategy = TransformerDataParallelWrappingStrategy.full
-        config.cp_config = (
-            TransformerContextParallelConfig.llama3(degree=8, head_stride=1)
-        )
+        config.cp_config = TransformerContextParallelConfig.llama3(degree=8, head_stride=1)
         config.ac_config = TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.8
         )
@@ -133,16 +137,21 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
                 generate_doc_lengths=True,  # enables intra-document masking
                 source_group_size=8,
                 source_permutation_seed=123,
-                work_dir=common.work_dir
+                work_dir=common.work_dir,
             ),
             data_loader=NumpyDataLoaderConfig(
                 global_batch_size=batch_size, seed=4123, num_workers=12
-            )
+            ),
         )
 
     def build_model_config(common: CommonComponents) -> TransformerConfig:
         config = olmo3_module.build_model_config(common).with_rope_scaling(
-            YaRNRoPEScalingConfig(factor=sequence_length / old_sequence_length, beta_fast=32, beta_slow=1, old_context_len=old_sequence_length)
+            YaRNRoPEScalingConfig(
+                factor=sequence_length / old_sequence_length,
+                beta_fast=32,
+                beta_slow=1,
+                old_context_len=old_sequence_length,
+            )
         )
 
         return config
