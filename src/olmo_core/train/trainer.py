@@ -392,12 +392,6 @@ class Trainer:
     def block_ephemeral_checkpoints(self) -> bool:
         return len(self._blocking_ephemeral_checkpoints) > 0
 
-    def get_callback_name(self, callback: Callback) -> str:
-        for name, cb in self.callbacks.items():
-            if cb is callback:
-                return name
-        raise ValueError("callback not registered with trainer!")
-
     @property
     def global_batch_size(self) -> int:
         """
@@ -629,6 +623,12 @@ class Trainer:
             tps=tps,
             mfu=mfu,
         )
+
+    def get_callback_name(self, callback: Callback) -> str:
+        for name, cb in self.callbacks.items():
+            if cb is callback:
+                return name
+        raise ValueError("callback not registered with trainer!")
 
     def cancel_run(self, reason: str, no_sync: bool = False):
         """
