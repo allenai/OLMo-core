@@ -243,9 +243,6 @@ class Trainer:
     training throughput.
     """
 
-    _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, init=False, default_factory=set)
-    """Callbacks that are blocking ephemeral checkpoints."""
-
     hard_stop: Optional[Duration] = None
     """
     Set a hard stopping point for the trainer. This is useful for ablations when you you don't
@@ -300,6 +297,8 @@ class Trainer:
         default_factory=lambda: defaultdict(OrderedDict)
     )
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
+    _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, default_factory=set)
+    """Callbacks that are blocking ephemeral checkpoints."""
     _checkpoint_loaded: bool = False
     _metrics_consistent: Optional[bool] = None
 
