@@ -417,7 +417,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 # entity="ai2-llm",
                 # project="olmoe-dev-v2",
                 # project="olmo3",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )

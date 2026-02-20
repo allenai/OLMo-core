@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover - import guard
     _HAS_TRITON = False
 
 from olmo_core.kernels.moe_chunk_reorder import moe_chunk_permute, moe_chunk_unpermute
+from olmo_core.kernels.moe_permute_drop import moe_permute_drop_fwd
 from olmo_core.utils import get_or_init_stream
 
 import transformer_engine_torch as tex
@@ -106,8 +107,62 @@ class _RowPermutationReorderAutograd(torch.autograd.Function):
         return grad_inp, None, None, None
 
 
-@torch.compiler.disable
-def moe_reorder_rows_permutation_no_compile(
+class _MoePermuteDropIndexMapAutograd(torch.autograd.Function):
+    """Custom CUDA one-shot permute+drop with TE-compatible packed row_id_map."""
+
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx,
+        inp: torch.Tensor,
+        routing_map: torch.Tensor,
+        requested_splits: torch.Tensor,
+        keep_splits: torch.Tensor,
+        num_out_tokens: int,
+        out: Optional[torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        requested_i64 = requested_splits.to(dtype=torch.long).contiguous()
+        keep_i64 = keep_splits.to(dtype=torch.long).contiguous()
+        requested_offsets = torch.cumsum(requested_i64, dim=0) - requested_i64
+        keep_offsets = torch.cumsum(keep_i64, dim=0) - keep_i64
+
+        dropped, row_id_map = moe_permute_drop_fwd(
+            inp=inp,
+            routing_map=routing_map,
+            requested_offsets=requested_offsets,
+            keep_offsets=keep_offsets,
+            keep_splits=keep_i64,
+            num_out_tokens=num_out_tokens,
+            out=out,
+        )
+        if out is not None and dropped is out:
+            ctx.mark_dirty(dropped)
+
+        ctx.row_id_map = row_id_map
+        ctx.num_tokens = routing_map.shape[0]
+        ctx.topK = routing_map.shape[1]
+        ctx.mark_non_differentiable(row_id_map)
+        return dropped, row_id_map
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor, grad_row_id_map: torch.Tensor):  # type: ignore[override]
+        del grad_row_id_map
+        grad_inp = None
+        if ctx.needs_input_grad[0]:
+            if not grad_output.is_contiguous():
+                grad_output = grad_output.contiguous()
+            grad_inp = tex.moe_permute_bwd(
+                grad_output,
+                TE_DType[grad_output.dtype],
+                ctx.row_id_map,
+                torch.empty(0),
+                ctx.num_tokens,
+                ctx.topK,
+            )
+        return grad_inp, None, None, None, None, None
+
+
+
+def moe_reorder_rows_permutation(
     *,
     inp: torch.Tensor,
     reorder_indices: torch.Tensor,
@@ -156,10 +211,12 @@ def moe_reorder_rows_permutation_no_compile(
         if inverse_reorder_indices.dtype == torch.long
         else inverse_reorder_indices.to(dtype=torch.long)
     )
+    reorder_i64 = reorder_i64.contiguous()
+    inverse_i64 = inverse_i64.contiguous()
     return _RowPermutationReorderAutograd.apply(inp, reorder_i64, inverse_i64, out)
 
 
-@torch.compiler.disable
+
 def moe_permute_1d_fused_drop_no_compile(
     *,
     inp: torch.Tensor,
@@ -167,23 +224,66 @@ def moe_permute_1d_fused_drop_no_compile(
     num_out_tokens: int,
     reorder_indices: torch.Tensor,
     inverse_reorder_indices: torch.Tensor,
+    requested_splits: Optional[torch.Tensor] = None,
+    keep_splits: Optional[torch.Tensor] = None,
     out: Optional[torch.Tensor] = None,
     map_type: str = "index",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """TE permute + drop-token reorder fused into a single autograd stage."""
+    """TE permute + drop-token reorder with optional one-shot custom CUDA backend."""
     if map_type != "index":
         raise ValueError(f"moe_permute_1d_fused_drop_no_compile only supports map_type='index' (got {map_type})")
 
+    if (requested_splits is None) != (keep_splits is None):
+        raise ValueError("requested_splits and keep_splits must both be provided for one-shot permute+drop")
+
+    if requested_splits is not None and keep_splits is not None:
+        if requested_splits.ndim != 1:
+            raise ValueError(f"Expected rank-1 requested_splits, got shape={tuple(requested_splits.shape)}")
+        if keep_splits.ndim != 1:
+            raise ValueError(f"Expected rank-1 keep_splits, got shape={tuple(keep_splits.shape)}")
+        if requested_splits.numel() != keep_splits.numel():
+            raise ValueError(
+                f"requested_splits/keep_splits size mismatch: {requested_splits.numel()} vs {keep_splits.numel()}"
+            )
+        if requested_splits.device != inp.device:
+            raise ValueError(
+                f"requested_splits/input device mismatch: requested_splits={requested_splits.device} inp={inp.device}"
+            )
+        if keep_splits.device != inp.device:
+            raise ValueError(
+                f"keep_splits/input device mismatch: keep_splits={keep_splits.device} inp={inp.device}"
+            )
+        if not inp.is_cuda:
+            raise ValueError("one-shot permute+drop path requires CUDA input")
+        dropped, row_id_map = _MoePermuteDropIndexMapAutograd.apply(
+            inp,
+            routing_map,
+            requested_splits,
+            keep_splits,
+            num_out_tokens,
+            out,
+        )
+        return dropped, row_id_map
+
+    reorder_i64 = (
+        reorder_indices if reorder_indices.dtype == torch.long else reorder_indices.to(dtype=torch.long)
+    )
+    inverse_i64 = (
+        inverse_reorder_indices
+        if inverse_reorder_indices.dtype == torch.long
+        else inverse_reorder_indices.to(dtype=torch.long)
+    )
+
     permuted, row_id_map = moe_permute_no_compile(
         inp=inp,
-        routing_map=routing_map,
+        routing_map=routing_map, # indices of experts. shape: [token_cnt, topK]
         num_out_tokens=num_out_tokens,
         map_type="index",
     )
-    dropped = moe_reorder_rows_permutation_no_compile(
+    dropped = moe_reorder_rows_permutation(
         inp=permuted,
-        reorder_indices=reorder_indices,
-        inverse_reorder_indices=inverse_reorder_indices,
+        reorder_indices=reorder_i64, # shape: [token_cnt * topK]
+        inverse_reorder_indices=inverse_i64, # shape: [token_cnt * topK]
         out=out,
     )
     return dropped, row_id_map
@@ -317,14 +417,18 @@ class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
                 row_id_map,
                 probs,
             )
-            grad_inp = grad_inp * packed_keep_mask.unsqueeze(-1).to(dtype=grad_inp.dtype)
+            # In TE unpermute backward, act_grad is allocated with torch::empty(...) (not zeroed)
+            # TE backward kernel only writes when dest_row != -1 (valid row)
+            # So rows corresponding to dropped tokens can remain uninitialized garbage unless you zero them.
+            grad_inp.masked_fill_(~packed_keep_mask.unsqueeze(-1), 0)
+
 
         if not ctx.needs_input_grad[2]:
             grad_probs = None
         return grad_inp, None, grad_probs, None
 
 
-@torch.compiler.disable
+# @torch.compiler.disable
 def moe_unpermute_1d_fused_drop_no_compile(
     *,
     inp: torch.Tensor,
@@ -333,6 +437,7 @@ def moe_unpermute_1d_fused_drop_no_compile(
     packed_keep_mask: torch.Tensor,
     merging_probs: torch.Tensor,
     num_kept: Optional[torch.Tensor] = None,
+    row_id_map_is_packed: bool = False,
     map_type: str = "index",
 ) -> torch.Tensor:
     """
@@ -378,11 +483,17 @@ def moe_unpermute_1d_fused_drop_no_compile(
     keep_mask = packed_keep_mask if packed_keep_mask.dtype == torch.bool else packed_keep_mask.to(dtype=torch.bool)
     num_kept_t = _normalize_num_kept_tensor(num_kept=num_kept, packed_keep_mask=keep_mask)
 
-    remapped_row_id_map = _build_fused_unpermute_row_id_map(
-        row_id_map_i32=row_map_i32,
-        inverse_reorder_i64=inverse_i64,
-        num_kept=num_kept_t,
-    )
+    if row_id_map_is_packed:
+        remapped_row_id_map = row_map_i32
+    else:
+        # Equivalent: packed_idx = inverse_reorder[row_id_map] (for valid rows)
+        # keep only entries with packed_idx < num_kept
+        # else set to -1
+        remapped_row_id_map = _build_fused_unpermute_row_id_map(
+            row_id_map_i32=row_map_i32, # TE unpermute map in pre-drop row order)
+            inverse_reorder_i64=inverse_i64, # Applies inverse_reorder_i64 to convert each referenced row into packed order (kept rows first, dropped rows after).
+            num_kept=num_kept_t,
+        )
 
     return _TEUnpermuteIndexMapMaskedAutograd.apply(inp, remapped_row_id_map, merging_probs, keep_mask)
 
@@ -391,8 +502,10 @@ def moe_unpermute_1d_fused_drop_no_compile(
 def moe_sort_chunks_by_index_no_compile(*args, **kwargs):
     return moe_sort_chunks_by_index(*args, **kwargs)
 
-
-def _build_chunk_te_routing_map(
+# build_chunk_te_routing_map(torch.tensor([[3,2,1], [1,2,1]]), rows=12)
+# out = [[0, 0, 0, 1, 1, 2, 0, 1, 1, 2, 2, 2]].T
+# the pad tokens will be assigned to the last local expert so that they can be easily masked out at tail
+def build_chunk_te_routing_map(
     recv_splits_by_src_local: torch.Tensor,
     *,
     rows: int,
@@ -402,30 +515,22 @@ def _build_chunk_te_routing_map(
             "recv_splits_by_src_local must be rank-2 [source_rank, local_expert], "
             f"got shape={tuple(recv_splits_by_src_local.shape)}"
         )
-    if rows < 0:
-        raise ValueError(f"rows must be non-negative, got {rows}")
 
     flat_splits_raw = recv_splits_by_src_local.reshape(-1).to(dtype=torch.long)
 
     num_local_experts = recv_splits_by_src_local.shape[1]
-    if num_local_experts <= 0:
-        raise ValueError(
-            "recv_splits_by_src_local second dimension (num_local_experts) must be > 0"
-        )
+
 
     # Keep routing-map construction tensorized on CUDA to avoid host sync.
     rows_t = flat_splits_raw.new_full((1,), rows, dtype=torch.long)
-    flat_splits_nonneg = torch.clamp_min(flat_splits_raw, 0)
-    split_starts = torch.zeros_like(flat_splits_nonneg, dtype=torch.long)
-    if flat_splits_nonneg.numel() > 1:
-        split_starts[1:] = torch.cumsum(flat_splits_nonneg[:-1], dim=0, dtype=torch.long)
+    # flat_splits_nonneg = torch.clamp_min(flat_splits_raw, 0)
+    split_starts = torch.zeros_like(flat_splits_raw, dtype=torch.long)
+    split_starts[1:] = torch.cumsum(flat_splits_raw[:-1], dim=0, dtype=torch.long)
     split_remaining = torch.clamp(rows_t - split_starts, min=0)
-    flat_splits = torch.minimum(flat_splits_nonneg, split_remaining)
+    flat_splits = torch.minimum(flat_splits_raw, split_remaining)
 
     pos = torch.arange(rows, device=recv_splits_by_src_local.device, dtype=torch.long)
-    if flat_splits.numel() == 0:
-        local_expert_indices = torch.zeros(rows, device=pos.device, dtype=torch.int32)
-        return local_expert_indices.view(-1, 1)
+
 
     chunk_ends = torch.cumsum(flat_splits, dim=0)
     total_rows = chunk_ends[-1].view(1)
@@ -442,14 +547,6 @@ def _build_chunk_te_routing_map(
     )
     return local_expert_indices.view(-1, 1)
 
-
-@torch.compiler.disable
-def build_chunk_routing_map_no_compile(
-    recv_splits_by_src_local: torch.Tensor,
-    *,
-    rows: int,
-) -> torch.Tensor:
-    return _build_chunk_te_routing_map(recv_splits_by_src_local, rows=rows).to(dtype=torch.int32)
 
 
 def _moe_chunk_permute_te(

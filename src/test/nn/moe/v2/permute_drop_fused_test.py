@@ -148,3 +148,88 @@ def test_permute_drop_1d_fused_out_buffer():
 
     (dropped * dropped).sum().backward()
     assert x.grad is not None
+
+
+@requires_gpu
+@requires_te
+def test_permute_drop_1d_one_shot_custom_cuda_matches_legacy_kept_rows():
+    torch.manual_seed(29)
+    device = torch.device("cuda")
+    num_tokens = 96
+    top_k = 2
+    d_model = 128
+    num_experts = 8
+    num_out_tokens = num_tokens * top_k
+
+    x = torch.randn(num_tokens, d_model, device=device, dtype=torch.float16)
+    routing_map = torch.randint(
+        low=0,
+        high=num_experts,
+        size=(num_tokens, top_k),
+        device=device,
+        dtype=torch.int32,
+    )
+
+    requested_splits = torch.bincount(
+        routing_map.reshape(-1).to(dtype=torch.long),
+        minlength=num_experts,
+    ).to(dtype=torch.long)
+    keep_fraction = 0.55
+    keep_splits = torch.floor(requested_splits.to(dtype=torch.float32) * keep_fraction).to(dtype=torch.long)
+    keep_splits = torch.minimum(keep_splits, requested_splits)
+    num_kept = int(keep_splits.sum().item())
+
+    requested_ends = torch.cumsum(requested_splits, dim=0)
+    token_ids = torch.arange(num_out_tokens, device=device, dtype=torch.long)
+    expert_ids = torch.searchsorted(requested_ends, token_ids, right=True).clamp_max(requested_splits.numel() - 1)
+    starts = requested_ends - requested_splits
+    pos_in_chunk = token_ids - starts.index_select(0, expert_ids)
+    keep_mask = pos_in_chunk < keep_splits.index_select(0, expert_ids)
+    keep_i64 = keep_mask.to(dtype=torch.long)
+    drop_i64 = (~keep_mask).to(dtype=torch.long)
+    keep_rank = torch.cumsum(keep_i64, dim=0) - 1
+    drop_rank = torch.cumsum(drop_i64, dim=0) - 1
+    packed_pos = torch.where(keep_mask, keep_rank, keep_i64.sum(dtype=torch.long) + drop_rank)
+
+    reorder_indices = torch.empty_like(token_ids)
+    reorder_indices.scatter_(0, packed_pos, token_ids)
+    inverse_reorder_indices = packed_pos
+
+    x_legacy = x.detach().clone().requires_grad_(True)
+    permuted_legacy, _ = moe_permute_no_compile(
+        inp=x_legacy,
+        routing_map=routing_map,
+        num_out_tokens=num_out_tokens,
+        map_type="index",
+    )
+    dropped_legacy = permuted_legacy.index_select(0, reorder_indices)
+
+    x_fused = x.detach().clone().requires_grad_(True)
+    out_buffer = torch.empty((num_out_tokens, d_model), device=device, dtype=x.dtype)
+    dropped_fused, _ = moe_permute_1d_fused_drop_no_compile(
+        inp=x_fused,
+        routing_map=routing_map,
+        num_out_tokens=num_out_tokens,
+        reorder_indices=reorder_indices,
+        inverse_reorder_indices=inverse_reorder_indices,
+        requested_splits=requested_splits,
+        keep_splits=keep_splits,
+        out=out_buffer,
+        map_type="index",
+    )
+
+    torch.testing.assert_close(
+        dropped_fused[:num_kept],
+        dropped_legacy[:num_kept],
+        atol=5e-3,
+        rtol=5e-3,
+    )
+
+    grad_out = torch.randn_like(dropped_legacy)
+    grad_out[num_kept:].zero_()
+    (dropped_legacy * grad_out).sum().backward()
+    (dropped_fused * grad_out).sum().backward()
+
+    assert x_legacy.grad is not None
+    assert x_fused.grad is not None
+    torch.testing.assert_close(x_fused.grad, x_legacy.grad, atol=5e-3, rtol=5e-3)

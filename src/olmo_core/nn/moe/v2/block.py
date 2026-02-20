@@ -41,7 +41,7 @@ from .shared_experts import SharedExpertsConfig
 
 # backend: transformer_engine
 from ..utils import (
-    build_chunk_routing_map_no_compile,
+    build_chunk_te_routing_map,
     moe_chunk_reorder_no_compile,
     moe_permute_1d_fused_drop_no_compile,
     moe_unpermute_1d_fused_drop_no_compile,
@@ -589,7 +589,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     checkpoint_second_unpermute: bool = False
     ep_no_sync: bool = False
     ep_no_sync_use_2d_all_to_all: bool = False
-    ep_no_sync_capacity_factor: float = 1.5
+    ep_no_sync_capacity_factor: float = 1.125
     ep_no_sync_major_align: int = 1
     ep_no_sync_restore_unpermute_backend: str = "te_fused"
         
@@ -1293,12 +1293,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         requested_splits: torch.Tensor,
         *,
         rank_capacity: int,
-        return_recv_splits_by_src_local: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
-        Tail-drop keep-split sync with a single all_to_all_single.
-        Each EP rank receives every rank's requested splits and capacity, then
-        computes the same keep policy locally.
+        Tail-drop keep-split sync with a single all-gather.
+        Each EP rank receives every rank's requested splits, then computes the
+        same keep policy locally using the shared `rank_capacity`.
         """
         # TODO: simplify this
         assert self.num_local_routed_experts is not None
@@ -1310,27 +1309,26 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 f"got {requested.numel()}, expected {expected_splits}"
             )
 
-        local_capacity = requested.new_full((1,), rank_capacity, dtype=torch.long)
-        payload = torch.cat((requested, local_capacity), dim=0)
-        payload_replicated = payload.repeat(self.ep_world_size)
-        gathered_payload = torch.empty_like(payload_replicated)
-        dist.all_to_all_single(
+        gathered_payload = torch.empty(
+            expected_splits * self.ep_world_size,
+            device=requested.device,
+            dtype=requested.dtype,
+        )
+        dist.all_gather_into_tensor(
             gathered_payload,
-            payload_replicated,
+            requested,
             group=self.ep_pg,
         )
 
-        payload_width = payload.numel()
-        gathered_payload_2d = gathered_payload.view(self.ep_world_size, payload_width)
-        global_requested = gathered_payload_2d[:, :-1].view(
+        gathered_payload_2d = gathered_payload.view(self.ep_world_size, expected_splits)
+        global_requested = gathered_payload_2d.view(
             self.ep_world_size, self.ep_world_size, self.num_local_routed_experts
         )
-        global_capacity = gathered_payload_2d[:, -1]
 
         # Flatten in local-expert-major then source-rank order for each destination rank.
         counts_flat = global_requested.permute(2, 0, 1).reshape(-1, self.ep_world_size)
         cumsum_counts = torch.cumsum(counts_flat, dim=0)
-        kept_cumsum = torch.minimum(cumsum_counts, global_capacity.view(1, -1))
+        kept_cumsum = torch.clamp(cumsum_counts, max=rank_capacity)
         prev = torch.cat(
             [
                 torch.zeros((1, self.ep_world_size), device=requested.device, dtype=torch.long),
@@ -1346,11 +1344,13 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         local_rank = get_rank(self.ep_pg)
         allowed_splits = keep_from_src_dest_local[local_rank].reshape(-1)
         allowed_splits = torch.minimum(allowed_splits, requested)
-        if return_recv_splits_by_src_local:
-            # shape: (source_rank, local_expert)
-            recv_splits_by_src_local = keep_from_src_dest_local[:, local_rank, :]
-            return allowed_splits, recv_splits_by_src_local
-        return allowed_splits
+
+        # shape: (source_rank, local_expert)
+        recv_splits_by_src_local = keep_from_src_dest_local[:, local_rank, :]
+        send_side_drop_token_count = requested.sum() - allowed_splits.sum()
+        # receive_side_drop_token_count = rank_capacity - recv_splits_by_src_local.sum()
+        return allowed_splits, recv_splits_by_src_local, send_side_drop_token_count
+
 
     @nvtx.annotate('_build_keep_reorder')
     def _build_keep_reorder(
@@ -1369,34 +1369,31 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         requested = requested_splits.to(dtype=torch.long)
         keep = keep_splits.to(dtype=torch.long)
         token_ids = torch.arange(num_out_tokens, device=keep.device, dtype=torch.long)
-        if requested.numel() == 0:
-            keep_mask = torch.zeros(num_out_tokens, device=keep.device, dtype=torch.bool)
-            return token_ids, token_ids, keep_mask
 
         requested_ends = torch.cumsum(requested, dim=0)
-        total_requested = requested_ends[-1]
-        in_range = token_ids < total_requested
-        safe_token_ids = torch.where(in_range, token_ids, torch.zeros_like(token_ids))
 
         max_expert_idx = requested.numel() - 1
+        # safe_token_ids = torch.arange(num_out_tokens, device=keep.device, dtype=torch.long)
+        safe_token_ids = token_ids
         expert_ids = torch.searchsorted(requested_ends, safe_token_ids, right=True).clamp_max(max_expert_idx)
         starts = requested_ends - requested
         pos_in_chunk = safe_token_ids - starts.index_select(0, expert_ids)
-        keep_mask = in_range & (pos_in_chunk < keep.index_select(0, expert_ids))
+        # keep_mask = in_range & (pos_in_chunk < keep.index_select(0, expert_ids))
+        keep_mask = pos_in_chunk < keep.index_select(0, expert_ids)
 
-        # Stable partition in O(N): keep rows first, then dropped rows.
+        # Stable partition: keep rows first, then dropped rows.
         keep_i64 = keep_mask.to(dtype=torch.long)
         drop_i64 = (~keep_mask).to(dtype=torch.long)
-        keep_rank = torch.cumsum(keep_i64, dim=0) - 1
-        drop_rank = torch.cumsum(drop_i64, dim=0) - 1
+        keep_rank = torch.cumsum(keep_i64, dim=0) - 1 # current token's position among kept tokens
+        drop_rank = torch.cumsum(drop_i64, dim=0) - 1 # current token's position among dropped tokens
         num_kept = keep_i64.sum(dtype=torch.long)
-        packed_pos = torch.where(keep_mask, keep_rank, num_kept + drop_rank)
+        packed_pos = torch.where(keep_mask, keep_rank, num_kept + drop_rank) # position in the packed order (kept tokens followed by dropped tokens)
 
         reorder_indices = torch.empty_like(token_ids)
         reorder_indices.scatter_(0, packed_pos, token_ids)
 
-        inverse_reorder_indices = torch.empty_like(reorder_indices)
-        inverse_reorder_indices.scatter_(0, reorder_indices, token_ids)
+        inverse_reorder_indices = packed_pos
+
         packed_keep_mask = keep_mask.index_select(0, reorder_indices)
         return reorder_indices, inverse_reorder_indices, packed_keep_mask
 
@@ -1448,6 +1445,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         reversed_local_x_permutation_mapping: torch.Tensor,
         local_x_global_routed_expert_weights: torch.Tensor,
         hidden_shape_before_permute: torch.Size,
+        row_id_map_is_packed: bool = False,
     ) -> torch.Tensor:
         assert self.routed_experts_router is not None
         merging_probs = local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k)
@@ -1463,18 +1461,22 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     packed_keep_mask=packed_keep_mask,
                     merging_probs=merging_probs,
                     num_kept=num_kept,
+                    row_id_map_is_packed=row_id_map_is_packed,
                     map_type="index",
                 ),
             )
         if backend == "te_legacy":
-            with nvtx.annotate("RestoreDrop", color="green"):
-                restored_local_x = combine_out.index_select(0, local_inverse_reorder_indices)
-                restored_keep_mask = packed_keep_mask.index_select(0, local_inverse_reorder_indices)
-                restored_local_x = torch.where(
-                    restored_keep_mask.unsqueeze(-1),
-                    restored_local_x,
-                    torch.zeros_like(restored_local_x),
-                )
+            if row_id_map_is_packed:
+                restored_local_x = combine_out
+            else:
+                with nvtx.annotate("RestoreDrop", color="green"):
+                    restored_local_x = combine_out.index_select(0, local_inverse_reorder_indices)
+                    restored_keep_mask = packed_keep_mask.index_select(0, local_inverse_reorder_indices)
+                    restored_local_x = torch.where(
+                        restored_keep_mask.unsqueeze(-1),
+                        restored_local_x,
+                        torch.zeros_like(restored_local_x),
+                    )
             return cast(
                 torch.Tensor,
                 moe_unpermute_no_compile(
@@ -1766,48 +1768,31 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         in_shape = moe_inp.size()
         moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
 
-        num_out_tokens = local_x_global_routed_expert_indices.numel() # a constant
+        num_out_tokens = local_x_global_routed_expert_indices.numel() # a constant = B*S*top_k, including tokens that will be dropped
 
         with torch.no_grad():
             with nvtx.annotate("ConfigCapacity", color="green"):
                 requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
                 rank_capacity = self._compute_ep_no_sync_rank_capacity(num_out_tokens)
-                if self.ep_no_sync_use_2d_all_to_all:
-                    allowed_splits = cast(
-                        torch.Tensor,
-                        self._sync_tail_drop_allowed_splits_single_a2a(
-                            requested_splits,
-                            rank_capacity=rank_capacity,
-                        ),
-                    )
-                    recv_splits_by_src_local = None
-                else:
-                    allowed_splits, recv_splits_by_src_local = cast(
-                        Tuple[torch.Tensor, torch.Tensor],
-                        self._sync_tail_drop_allowed_splits_single_a2a(
-                            requested_splits,
-                            rank_capacity=rank_capacity,
-                            return_recv_splits_by_src_local=True,
-                        ),
-                    )
+                allowed_splits, recv_splits_by_src_local, drop_token_cnt = cast(
+                    Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                    self._sync_tail_drop_allowed_splits_single_a2a(
+                        requested_splits,
+                        rank_capacity=rank_capacity,
+                    ),
+                )
 
                 local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = self._build_keep_reorder(
                     requested_splits=requested_splits,
                     keep_splits=allowed_splits,
                     num_out_tokens=num_out_tokens,
                 )
-                num_kept = allowed_splits.sum(dtype=torch.long)
-                if self.ep_no_sync_use_2d_all_to_all:
-                    align_pad = max(self.ep_no_sync_major_align - 1, 0)
-                    dispatch_out_pad = (self.num_local_routed_experts - 1) * align_pad
-                    combine_out_pad = (self.routed_experts_router.num_experts - 1) * align_pad
-                else:
-                    dispatch_out_pad = 0
-                    combine_out_pad = 0
+                num_kept = allowed_splits.sum(dtype=torch.long) # number of non-dropped tokens that will be dispatched
+
 
                 dispatch_in_cap = num_out_tokens
-                dispatch_out_cap = rank_capacity + dispatch_out_pad
-                combine_out_cap = num_out_tokens + combine_out_pad
+                dispatch_out_cap = rank_capacity 
+                combine_out_cap = num_out_tokens 
 
         buffers = self._get_ep_no_sync_buffers(
             dispatch_in_cap=dispatch_in_cap,
@@ -1830,13 +1815,18 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     num_out_tokens=num_out_tokens,
                     map_type="index",
                 )
+                # TODO: where is token dropping happening in the 2D case?
             else:
+                # In 1D all-to-all, use one-shot custom CUDA permute+drop:
+                # expert-major permutation with per-expert tail-drop written directly to packed layout.
                 permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_1d_fused_drop_no_compile(
                     inp=moe_inp,
                     routing_map=routing_map,
                     num_out_tokens=num_out_tokens,
                     reorder_indices=local_reorder_indices,
                     inverse_reorder_indices=local_inverse_reorder_indices,
+                    requested_splits=requested_splits,
+                    keep_splits=allowed_splits,
                     out=buffers.dispatch_in.detach(),
                     map_type="index",
                 )
@@ -1929,16 +1919,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     dtype=torch.long,
                 )
 
-
+            # rank-major to local-expert-major for expert forward
             with nvtx.annotate("Permute global tokens", color='green'):
                 if self.routed_experts.num_local_experts == 1:
                     global_x_local_expert_major = dispatch_rank_major
                     global_chunk_row_id_map = None
                 else:
-                    global_chunk_routing_map = build_chunk_routing_map_no_compile(
-                        recv_splits_by_src_local,
-                        rows=dispatch_rank_major.shape[0],
-                    )
+                    with torch.no_grad():
+                        global_chunk_routing_map = build_chunk_te_routing_map(
+                            recv_splits_by_src_local,
+                            rows=dispatch_rank_major.shape[0],
+                        ) # (cap_rows, ) mapping each row to a local expert id
                     global_x_local_expert_major, global_chunk_row_id_map = moe_chunk_reorder_no_compile(
                         inp=dispatch_rank_major,
                         routing_map=global_chunk_routing_map,
@@ -1965,6 +1956,15 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                         # - avoids persisting autograd history on the reusable buffer tensor object.
                         out=buffers.combine_in.detach(),
                     ) 
+                    # This should give same results, but the autograd does not work with out=... arguments
+                    # torch.index_select(dispatch_rank_major, 0, global_chunk_row_id_map, out=buffers.combine_in.detach()) # out=... arguments don't support automatic differentiation
+                    # or this
+                    # global_x_rank_major = torch.gather(
+                    #     dispatch_rank_major,
+                    #     dim=0,
+                    #     index=global_chunk_row_id_map.unsqueeze(-1).expand(-1, dispatch_rank_major.shape[-1]),
+                    #     out=buffers.combine_in.detach(),
+                    # )
 
 
             # set shared experts to wait until this point to maximize overlap with alltoall
@@ -2025,6 +2025,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 local_x = cast(torch.Tensor, local_x)
         else:
             with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+                # combine_out does not have capacity pads, but still has dropped tokens at the tail
                 local_x = self._restore_drop_unpermute_1d(
                     combine_out=combine_out,
                     local_inverse_reorder_indices=local_inverse_reorder_indices,
@@ -2033,6 +2034,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     reversed_local_x_permutation_mapping=reversed_local_x_permutation_mapping,
                     local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
                     hidden_shape_before_permute=hidden_shape_before_permute,
+                    row_id_map_is_packed=not self.ep_no_sync_use_2d_all_to_all,
                 )
 
         local_x = local_x.view(in_shape)
