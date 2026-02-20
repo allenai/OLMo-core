@@ -317,8 +317,13 @@ def plot_training_curves(data: dict[str, pd.DataFrame], output_prefix: str = "hy
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     axes = axes.flatten()
 
+    baseline_name = "OLMo 3 7B Base"
+    target_name = "OLMo 3.2 7B Base"
+
     for idx, (title, metric_type, pattern) in enumerate(metrics_config):
         ax = axes[idx]
+        # Store aggregated curves per model for efficiency arrow
+        curves = {}
 
         for model_name, df in data.items():
             # Get x-axis (use total tokens for better comparability)
@@ -365,6 +370,7 @@ def plot_training_curves(data: dict[str, pd.DataFrame], output_prefix: str = "hy
             # Aggregate by step (in case of multiple runs)
             agg_df = plot_df.groupby("step")["metric"].mean().reset_index()
             agg_df = agg_df.sort_values("step")
+            curves[model_name] = agg_df
 
             # Plot
             ax.plot(
@@ -377,6 +383,85 @@ def plot_training_curves(data: dict[str, pd.DataFrame], output_prefix: str = "hy
             )
 
             print(f"  Plotted {model_name} - {title}: {len(agg_df)} points")
+
+        # Draw token efficiency arrow from baseline endpoint to target curve
+        if baseline_name in curves and target_name in curves:
+            baseline_df = curves[baseline_name]
+            target_df = curves[target_name]
+
+            # Get the final point of the baseline (teal) curve
+            baseline_end_tokens = baseline_df["step"].iloc[-1]
+            baseline_end_metric = baseline_df["metric"].iloc[-1]
+
+            # Interpolate on the target (pink) curve to find where it reaches the same metric value
+            # For CE loss (lower is better): find where target first goes below baseline's final value
+            # For accuracy (higher is better): find where target first goes above baseline's final value
+            is_lower_better = "loss" in title.lower() or "ce" in title.lower() or "bpb" in title.lower()
+
+            target_steps = target_df["step"].values
+            target_metrics = target_df["metric"].values
+
+            if is_lower_better:
+                # Find where target metric first drops to or below the baseline's final value
+                mask = target_metrics <= baseline_end_metric
+            else:
+                # Find where target metric first rises to or above the baseline's final value
+                mask = target_metrics >= baseline_end_metric
+
+            if mask.any():
+                # First index where condition is met
+                first_idx = np.where(mask)[0][0]
+
+                # Linear interpolation between the point before and at the crossing
+                if first_idx > 0:
+                    x0, x1 = target_steps[first_idx - 1], target_steps[first_idx]
+                    y0, y1 = target_metrics[first_idx - 1], target_metrics[first_idx]
+                    if y1 != y0:
+                        frac = (baseline_end_metric - y0) / (y1 - y0)
+                        target_tokens_at_match = x0 + frac * (x1 - x0)
+                    else:
+                        target_tokens_at_match = x0
+                else:
+                    target_tokens_at_match = target_steps[first_idx]
+
+                efficiency = baseline_end_tokens / target_tokens_at_match
+                print(f"  Token efficiency ({title}): {efficiency:.1f}x "
+                      f"(baseline={baseline_end_tokens/1e12:.1f}T, "
+                      f"target={target_tokens_at_match/1e12:.1f}T)")
+
+                # Draw horizontal arrow from baseline endpoint to target curve
+                ax.annotate(
+                    "",
+                    xy=(target_tokens_at_match, baseline_end_metric),
+                    xytext=(baseline_end_tokens, baseline_end_metric),
+                    arrowprops=dict(
+                        arrowstyle="->",
+                        color="#333333",
+                        lw=1.5,
+                        shrinkA=0,
+                        shrinkB=0,
+                    ),
+                )
+
+                # Label the arrow with the efficiency multiplier as percentage
+                pct_fewer = (1 - target_tokens_at_match / baseline_end_tokens) * 100
+                mid_tokens = (baseline_end_tokens + target_tokens_at_match) / 2
+                from matplotlib.patheffects import withStroke
+                # Offset label below arrow for loss plots, above for accuracy plots
+                y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
+                label_y_offset = -0.015 * y_range if is_lower_better else 0.005 * y_range
+                label_va = "top" if is_lower_better else "bottom"
+                ax.text(
+                    mid_tokens,
+                    baseline_end_metric + label_y_offset,
+                    f"{pct_fewer:.0f}% fewer tokens",
+                    ha="center",
+                    va=label_va,
+                    fontsize=11,
+                    fontweight="bold",
+                    color="#333333",
+                    path_effects=[withStroke(linewidth=4, foreground="white")],
+                )
 
         ax.set_xlabel("Tokens Trained")
         ax.set_ylabel(title)
