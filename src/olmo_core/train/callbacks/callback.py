@@ -57,13 +57,13 @@ class Callback(Stateful):
         del state_dict
 
     def block_ephemeral_checkpoints(self):
-        """Block ephemeral checkpoint saves. Used with model merging to prevent
-        skipped merge windows if training is interrupted."""
+        """Register this callback as blocking ephemeral checkpoint saves.
+        Ephemeral saves are blocked as long as at least one callback is registered."""
         name = self.trainer.get_callback_name(self)
         self.trainer._blocking_ephemeral_checkpoints.add(name)
 
     def unblock_ephemeral_checkpoints(self):
-        """Resume ephemeral checkpoint saves after blocking."""
+        """Unregister this callback from blocking ephemeral checkpoint saves."""
         name = self.trainer.get_callback_name(self)
         if name in self.trainer._blocking_ephemeral_checkpoints:
             self.trainer._blocking_ephemeral_checkpoints.remove(name)
