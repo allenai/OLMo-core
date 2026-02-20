@@ -1300,6 +1300,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         Each EP rank receives every rank's requested splits and capacity, then
         computes the same keep policy locally.
         """
+        # TODO: simplify this
         assert self.num_local_routed_experts is not None
         requested = requested_splits.to(dtype=torch.long)
         expected_splits = self.ep_world_size * self.num_local_routed_experts
