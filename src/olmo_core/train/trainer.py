@@ -243,6 +243,9 @@ class Trainer:
     training throughput.
     """
 
+    _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, init=False, default_factory=set)
+    """Callbacks that are blocking ephemeral checkpoints."""
+
     hard_stop: Optional[Duration] = None
     """
     Set a hard stopping point for the trainer. This is useful for ablations when you you don't
@@ -301,8 +304,6 @@ class Trainer:
     _metrics_consistent: Optional[bool] = None
 
     def __post_init__(self):
-        self._blocking_ephemeral_checkpoints: Set[str] = set()
-
         self.save_folder = normalize_path(self.save_folder)
         if self.load_path is not None:
             self.load_path = normalize_path(self.load_path)
