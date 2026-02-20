@@ -69,16 +69,17 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     # Remove heads (and scale down d_model) to compensate for extra params.
     config.d_model -= REMOVE_HEADS * 128
+    assert isinstance(config.block, TransformerBlockConfig)
     config.block.sequence_mixer.n_heads -= REMOVE_HEADS
     assert config.d_model / config.block.sequence_mixer.n_heads == 128
 
-    # Save the attention block config (reordered_norm) for overrides.
+    # Save the attention block config (reordered_norm).
     attn_block = config.block
 
     n_heads = attn_block.sequence_mixer.n_heads
 
-    # GDN base block (pre-norm, 75% of layers).
-    config.block = TransformerBlockConfig(
+    # GDN block (pre-norm, 75% of layers).
+    gdn_block = TransformerBlockConfig(
         name=TransformerBlockType.default,
         sequence_mixer=GatedDeltaNetConfig(
             n_heads=n_heads,
@@ -90,22 +91,17 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         feed_forward=attn_block.feed_forward,
     )
 
-    # Override attention layers (every 4th layer).
-    assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
-    attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
-    config.block_overrides = {i: attn_block for i in attention_indices}
-
     # Apply YaRN RoPE scaling to attention layers only.
-    # Cannot use with_rope_scaling() because it asserts sequence_mixer is AttentionConfig
-    # and rejects existing block_overrides.
     yarn = YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
-    for idx in config.block_overrides:
-        blk = config.block_overrides[idx]
-        new_rope = blk.sequence_mixer.rope.copy()
-        new_rope.scaling = yarn
-        config.block_overrides[idx] = replace(
-            blk, sequence_mixer=replace(blk.sequence_mixer, rope=new_rope)
-        )
+    new_rope = attn_block.sequence_mixer.rope.copy()
+    new_rope.scaling = yarn
+    attn_block = replace(
+        attn_block, sequence_mixer=replace(attn_block.sequence_mixer, rope=new_rope)
+    )
+
+    # 3 GDN layers followed by 1 attention layer, repeating.
+    config.block = {"gdn": gdn_block, "attn": attn_block}
+    config.block_pattern = ["gdn", "gdn", "gdn", "attn"]
 
     # Save memory by using fused linear loss implementation.
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear

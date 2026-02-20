@@ -60,16 +60,17 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     # Remove heads (and scale down d_model) to compensate for extra params.
     config.d_model -= REMOVE_HEADS * 128
+    assert isinstance(config.block, TransformerBlockConfig)
     config.block.sequence_mixer.n_heads -= REMOVE_HEADS
     assert config.d_model / config.block.sequence_mixer.n_heads == 128
 
-    # Save the attention block config (reordered_norm) for overrides.
+    # Save the attention block config (reordered_norm).
     attn_block = config.block
 
     n_heads = attn_block.sequence_mixer.n_heads
 
-    # GDN base block (pre-norm, 75% of layers).
-    config.block = TransformerBlockConfig(
+    # GDN block (pre-norm, 75% of layers).
+    gdn_block = TransformerBlockConfig(
         name=TransformerBlockType.default,
         sequence_mixer=GatedDeltaNetConfig(
             n_heads=n_heads,
@@ -81,10 +82,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         feed_forward=attn_block.feed_forward,
     )
 
-    # Override attention layers (every 4th layer).
-    assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
-    attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
-    config.block_overrides = {i: attn_block for i in attention_indices}
+    # 3 GDN layers followed by 1 attention layer, repeating.
+    config.block = {"gdn": gdn_block, "attn": attn_block}
+    config.block_pattern = ["gdn", "gdn", "gdn", "attn"]
 
     return config
 
