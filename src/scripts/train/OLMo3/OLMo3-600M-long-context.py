@@ -1,28 +1,3 @@
-"""
-Long-context extension training script for OLMo3-600M.
-
-Extends context from 8192 -> 65536 using YaRN RoPE scaling on the 600M ladder model.
-Based on the OLMo3-7B-long-context recipe, scaled down for 600M.
-
-Examples:
-    Dry run (print config and exit):
-        python src/scripts/train/OLMo3/OLMo3-600M-long-context.py \
-            --save-folder /tmp/test \
-            --data-root /weka/oe-training-default/ai2-llm \
-            --dry-run
-
-    Train on a single node (for debugging):
-        torchrun --nproc-per-node=8 src/scripts/train/OLMo3/OLMo3-600M-long-context.py \
-            --save-folder /path/to/save \
-            --data-root /weka/oe-training-default/ai2-llm
-
-    Multi-node training:
-        torchrun --nproc-per-node=8 --nnodes=N --node-rank=RANK ... \
-            src/scripts/train/OLMo3/OLMo3-600M-long-context.py \
-            --save-folder /path/to/save \
-            --data-root /weka/oe-training-default/ai2-llm
-"""
-
 import argparse
 import math
 from typing import List, Optional
@@ -37,7 +12,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
-from olmo_core.script_utils import ExperimentConfig, main
+from olmo_core.script_utils import ExperimentConfig, get_cli_parser, main
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -63,8 +38,6 @@ MAX_TOKENS = 10_000_000_000  # 10B tokens (scaled down from 7B's 50B)
 LR = 0.00020712352850360292
 
 MAX_TOKENS_PER_RANK = 32_768  # 600M fits more tokens per rank than 7B
-
-LOAD_PATH = "/oe-eval-default/ai2-llm/checkpoints/model-ladders/olmo3-baseline-ladder/600M/step89187"
 
 
 def _compute_cp_degree(sequence_length: int, world_size: int) -> Optional[int]:
@@ -161,7 +134,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
-            load_path=LOAD_PATH,
+            load_path=opts.load_path,
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
@@ -206,4 +179,11 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
 
 
 if __name__ == "__main__":
-    main(build_config)
+    parser = get_cli_parser()
+    parser.add_argument(
+        "--load-path",
+        type=str,
+        required=True,
+        help="""Path to a checkpoint to initialize the model from.""",
+    )
+    main(build_config, parser=parser)
