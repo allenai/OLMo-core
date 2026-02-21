@@ -10,8 +10,8 @@ def visualize_source(source, icons: bool = True):
     skip_connector, child_connector, last_child_connector = "│  ", "├─ ", "└─ "
 
     def _format_label(label: str) -> str:
-        if len(label) > 53:
-            return label[:13] + "..." + label[-40:]
+        if len(label) > 60:
+            return label[:15] + "…" + label[-40:]
         else:
             return label
 
