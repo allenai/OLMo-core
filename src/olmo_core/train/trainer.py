@@ -45,7 +45,15 @@ from ..distributed.utils import (
     is_distributed,
 )
 from ..exceptions import OLMoConfigurationError
-from ..io import copy_file, file_exists, is_url, join_path, normalize_path
+from ..io import (
+    copy_dir,
+    copy_file,
+    dir_is_empty,
+    file_exists,
+    is_url,
+    join_path,
+    normalize_path,
+)
 from ..utils import cuda_sync_debug_mode, gc_cuda, get_default_thread_count
 from .callbacks import (
     Callback,
@@ -1131,6 +1139,32 @@ class Trainer:
             copy_file(source, target, save_overwrite=self.save_overwrite)
         elif not file_exists(source):
             raise FileNotFoundError(source)
+        return target
+
+    def persist_working_subdir(self, name: PathOrStr) -> PathOrStr:
+        """
+        Persist a directory in the :data:`work_dir` by saving/uploading it to the :data:`save_folder`.
+
+        :param name: The name/path of the directory relative to the :data:`work_dir`.
+
+        :returns: The full path/URL to the saved directory.
+
+        :raises FileNotFoundError: If the directory can't be found.
+        :raises FileExistsError: If any files in the directory already exist in the save folder and :data:`save_overwrite`
+            is ``False``.
+        """
+        if Path(name).is_relative_to(self.work_dir):
+            name = Path(name).relative_to(self.work_dir)
+        source = join_path(self.work_dir, name)
+        target = join_path(self.save_folder, name)
+        if source != target:
+            copy_dir(source, target, save_overwrite=self.save_overwrite)
+        elif not Path(source).exists():
+            raise FileNotFoundError(f"Source '{source}' does not exist")
+        elif not Path(source).is_dir():
+            raise FileNotFoundError(f"Source '{source}' exists but is not a directory")
+        elif dir_is_empty(source):
+            raise FileNotFoundError(f"Source directory '{source}' is empty")
         return target
 
     def add_callback(self, name: str, callback: Callback):
