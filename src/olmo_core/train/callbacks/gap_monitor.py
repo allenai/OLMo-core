@@ -36,34 +36,64 @@ class GAPMonitorCallback(Callback):
     enabled: bool = True
     """Master switch. When ``False``, all monitoring and gradient dumping is disabled."""
 
-    monitor: bool = True
+    monitor: Optional[bool] = None
     """Whether to run GAP monitoring (forward/backward hooks, per-tensor stats).
-    Only takes effect when ``enabled=True``."""
+    Only takes effect when ``enabled=True``. Defaults to ``True`` when ``enabled=True``."""
 
     interval: int = 1
     """How often (in steps) to measure statistics. Default is every step."""
 
-    dump_gradients: bool = False
+    dump_gradients: Optional[bool] = None
+    """Whether to dump raw gradient tensors to disk for offline analysis.
+    Only takes effect when ``enabled=True``. Defaults to ``False`` when ``enabled=True``."""
+
     dump_gradients_start_step: int = 0
+    """Step at which to begin dumping gradients. Inclusive."""
+
     dump_gradients_end_step: Optional[int] = None
+    """Step at which to stop dumping gradients. Inclusive. If ``None``, runs until training ends."""
+
     dump_gradients_step_interval: int = 1
+    """How often (in steps) to dump gradients. Must be positive."""
+
     dump_gradients_save_first_n: Optional[int] = None
+    """If set, gather the full gradient to rank 0 and save only the first N elements along
+    dim 0, storing as a single safetensors file. If ``None``, saves the full distributed
+    gradient via distributed checkpoint. Must be positive if set."""
 
     _handles: Optional[list] = dataclasses.field(default=None, repr=False)
     _local_batch_size_instances: int = dataclasses.field(default=1, repr=False)
     _dry_run_complete: bool = dataclasses.field(default=False, repr=False)
 
     def __post_init__(self):
-        if self.dump_gradients_step_interval <= 0:
+        # Validate: sub-flags must not be True when master switch is off.
+        if not self.enabled and (self.monitor or self.dump_gradients):
             raise ValueError(
-                f"dump_gradients_step_interval must be positive, got {self.dump_gradients_step_interval}"
+                "Cannot set monitor or dump_gradients to True when enabled=False. "
+                "Set enabled=True to use this callback."
             )
-        if self.dump_gradients_save_first_n is not None and self.dump_gradients_save_first_n <= 0:
-            raise ValueError(
-                f"dump_gradients_save_first_n must be positive, got {self.dump_gradients_save_first_n}"
-            )
-        if not self.enabled and self.dump_gradients:
-            log.warning("dump_gradients=True has no effect when enabled=False.")
+
+        # Resolve None defaults.
+        if self.enabled:
+            self.monitor = self.monitor if self.monitor is not None else True
+            self.dump_gradients = self.dump_gradients if self.dump_gradients is not None else False
+
+        # Validate dump_gradients_* params only when gradient dumping is active.
+        if self.enabled and self.dump_gradients:
+            if self.dump_gradients_start_step < 0:
+                raise ValueError(
+                    f"dump_gradients_start_step must be non-negative, got {self.dump_gradients_start_step}"
+                )
+            if self.dump_gradients_step_interval <= 0:
+                raise ValueError(
+                    f"dump_gradients_step_interval must be positive, got {self.dump_gradients_step_interval}"
+                )
+            if self.dump_gradients_save_first_n is not None and self.dump_gradients_save_first_n <= 0:
+                raise ValueError(
+                    f"dump_gradients_save_first_n must be positive, got {self.dump_gradients_save_first_n}"
+                )
+
+        # Validate: enabled but doing nothing.
         if self.enabled and not self.monitor and not self.dump_gradients:
             raise ValueError(
                 "enabled=True but both monitor and dump_gradients are False. "
@@ -230,7 +260,6 @@ class GAPMonitorCallback(Callback):
         step_dir = output_dir / f"step{self.step}"
         step_dir.mkdir(exist_ok=True, parents=True)
 
-        assert hasattr(self.trainer.train_module, "model")
         model = getattr(self.trainer.train_module, "model")
 
         if self.dump_gradients_save_first_n is None:
