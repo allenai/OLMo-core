@@ -34,7 +34,7 @@ from olmo_core.internal.common import (
     get_work_dir,
 )
 from olmo_core.io import copy_dir, dir_is_empty, get_parent, join_path, list_directory
-from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerWekaBucket
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
@@ -304,9 +304,7 @@ class SFTConfig(Config):
             vocab_size=tokenizer_config.padded_vocab_size(),
         )
 
-        config = SFTConfig(
-            run_name=run_name,
-            launch=build_launch_config(
+        launch = build_launch_config(
                 name=run_name,
                 root_dir=root_dir,
                 cmd=[
@@ -327,7 +325,18 @@ class SFTConfig(Config):
                 num_nodes=num_nodes,
                 budget=budget,
                 workspace=workspace,
-            ),
+            )
+
+        mounted_paths = {b.mount for b in launch.weka_buckets}
+        if dataset_path.startswith("/weka/"):
+            weka_root = "/".join(dataset_path.split("/")[:3])
+            if weka_root not in mounted_paths:
+                bucket_name = dataset_path.split("/")[2]
+                launch.weka_buckets.append(BeakerWekaBucket(bucket_name, weka_root))
+
+        config = SFTConfig(
+            run_name=run_name,
+            launch=launch,
             model=model,
             dataset=None,
             data_loader=NumpyDataLoaderConfig(

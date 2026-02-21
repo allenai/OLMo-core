@@ -29,7 +29,6 @@ from typing import List, Optional
 
 from olmo_core.config import DType
 from olmo_core.data import (
-    DataMix,
     NumpyDataLoaderConfig,
     NumpyPackedFSLDatasetConfig,
     TokenizerConfig,
@@ -63,7 +62,25 @@ GLOBAL_BATCH_SIZE = 65536 * 16  # ~1M tokens (scaled down from 7B's ~4M)
 MAX_TOKENS = 10_000_000_000  # 10B tokens (scaled down from 7B's 50B)
 LR = 0.00020712352850360292
 
+MAX_TOKENS_PER_RANK = 32_768  # 600M fits more tokens per rank than 7B
+
 LOAD_PATH = "/oe-eval-default/ai2-llm/checkpoints/model-ladders/olmo3-baseline-ladder/600M/step89187"
+
+
+def _compute_cp_degree(sequence_length: int, world_size: int) -> Optional[int]:
+    """Auto-compute context parallelism degree based on sequence length and world size."""
+    if sequence_length <= MAX_TOKENS_PER_RANK:
+        return None
+
+    min_cp = 2
+    while (sequence_length // min_cp) > MAX_TOKENS_PER_RANK:
+        min_cp *= 2
+
+    cp_degree = min(min_cp, world_size)
+    if world_size % cp_degree != 0:
+        cp_degree = int(2 ** math.floor(math.log2(world_size)))
+
+    return cp_degree if cp_degree > 1 else None
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
@@ -81,11 +98,10 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         )
     )
 
-    dataset_config = NumpyPackedFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_longmino_mix_0625,
-        mix_base_dir=opts.data_root,
-        work_dir=opts.work_dir,
+    dataset_config = NumpyPackedFSLDatasetConfig.glob(
+        f"{opts.data_root}/preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy",
         tokenizer=tokenizer_config,
+        work_dir=opts.work_dir,
         sequence_length=sequence_length,
         generate_doc_lengths=True,
         source_group_size=8,
@@ -98,6 +114,29 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         num_workers=4,
     )
 
+    import torch
+    world_size = max(torch.cuda.device_count(), 1)
+    cp_degree = _compute_cp_degree(sequence_length, world_size)
+
+    cp_config: Optional[TransformerContextParallelConfig] = None
+    if cp_degree is not None:
+        cp_config = TransformerContextParallelConfig.llama3(degree=cp_degree)
+
+    dp_world_size = world_size // (cp_degree or 1)
+    if dp_world_size <= 1:
+        dp_config = TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+        )
+    else:
+        dp_config = TransformerDataParallelConfig(
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            shard_degree=min(dp_world_size, 8),
+        )
+
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=sequence_length,
         max_sequence_length=sequence_length,
@@ -108,13 +147,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         ),
         scheduler=LinearWithWarmup(warmup=200, alpha_f=0.0),
         compile_model=True,
-        dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-            shard_degree=-1,
-        ),
-        cp_config=TransformerContextParallelConfig.llama3(degree=8),
+        dp_config=dp_config,
+        cp_config=cp_config,
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
             modules=["blocks.*.feed_forward"],
