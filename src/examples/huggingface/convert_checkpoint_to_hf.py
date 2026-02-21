@@ -82,6 +82,7 @@ def convert_checkpoint_to_hf(
 
     validation_device = validation_device or torch.device("cpu")
 
+    assert isinstance(model_config.block, TransformerBlockConfig)
     block_entries: list[tuple[str, TransformerBlockConfig]] = [("base block", model_config.block)]
     if model_config.block_overrides:
         block_entries.extend(
@@ -189,7 +190,10 @@ def convert_checkpoint_to_hf(
         )
         model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
 
-        if (moe_config := model_config.block.feed_forward_moe) is not None:
+        if (
+            isinstance(model_config.block, TransformerBlockConfig)
+            and (moe_config := model_config.block.feed_forward_moe) is not None
+        ):
             if moe_config.name == MoEType.dropless:
                 for k, v in model_state_dict.items():
                     # We need to reshape the w1 and w3 weights for the dropless MoE because conversion

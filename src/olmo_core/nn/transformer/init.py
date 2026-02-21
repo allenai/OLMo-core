@@ -67,11 +67,21 @@ class InitMethod(StrEnum):
     dependent on either ``d_model`` or the layer index.
     """
 
+    fan_in = "fan_in"
+    """
+    Per-layer fan-in initialization where each weight matrix is initialized with
+    ``std = 1/√d_in`` where ``d_in`` is the fan-in (number of input features) of that
+    specific layer. Embeddings use ``std = 1.0`` with normal distribution.
+    This provides forward-pass variance-preserving initialization adapted to each layer's
+    specific dimensions, with no depth scaling.
+    """
+
     def init_embeddings(
         self,
         m: nn.Embedding,
         *,
         d_model: int,
+        embed_scale: Optional[float] = None,
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
@@ -79,6 +89,10 @@ class InitMethod(StrEnum):
             _apply_init(nn.init.normal_, m.weight, generator=generator)
         elif self == InitMethod.normalized:
             _apply_init(nn.init.normal_, m.weight, generator=generator, std=d_model**-0.5)
+        elif self == InitMethod.fan_in:
+            # Fan-in init uses std = 1.0 for embeddings, scaled down by embed_scale if set
+            emb_std = 1.0 / embed_scale if embed_scale is not None else 1.0
+            _apply_init(nn.init.normal_, m.weight, generator=generator, std=emb_std)
         else:
             _apply_init(
                 nn.init.trunc_normal_,
@@ -98,7 +112,12 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
+        if self in (
+            InitMethod.llama,
+            InitMethod.llama_depth,
+            InitMethod.normalized,
+            InitMethod.fan_in,
+        ):
             std = d_model**-0.5
         init_linear(m, std=std, generator=generator)
 
@@ -131,19 +150,31 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
-        if self == InitMethod.normalized:
+        # Compute std for w1 initialization
+        if self == InitMethod.fan_in:
+            # For fan_in, w1 uses 1/√d_in where d_in = d_model (ignores base std parameter)
+            std = m.w1.in_features**-0.5
+        elif self == InitMethod.normalized:
             std = d_model**-0.5
 
         init_linear(m.w1, std=std, generator=generator)
 
-        if self == InitMethod.llama:
+        # Compute std for w3 initialization
+        if self == InitMethod.fan_in:
+            # For fan_in, w3 uses 1/√d_in where d_in = d_model
+            std = m.w3.in_features**-0.5
+        elif self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
 
         init_linear(m.w3, std=std, generator=generator)
 
-        if self == InitMethod.normalized:
+        # Compute std for w2 initialization
+        if self == InitMethod.fan_in:
+            # For fan_in, w2 uses 1/√d_in where d_in = hidden_size
+            std = m.w2.in_features**-0.5
+        elif self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
         init_linear(m.w2, std=std, generator=generator)
@@ -160,12 +191,13 @@ class InitMethod(StrEnum):
     ):
         from ..moe import DroplessMoEMLP, MoELinearRouter, MoEMLP
 
-        del d_model
-
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
+        elif self == InitMethod.fan_in:
+            # For fan_in, router weight uses 1/√d_model
+            std = d_model**-0.5
 
         _apply_init(
             nn.init.trunc_normal_,
@@ -176,27 +208,44 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
+        mlp = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp)
+
+        # Initialize w1 (maps d_model -> hidden_size, fan-in = d_model)
+        if self == InitMethod.fan_in:
+            std = mlp.d_model**-0.5
+
         _apply_init(
             nn.init.trunc_normal_,
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
+            mlp.w1,
             mean=0.0,
             std=std,
             a=-3 * std,
             b=3 * std,
             generator=generator,
         )
+
+        # Initialize w2 (maps hidden_size -> d_model, fan-in = hidden_size)
+        if self == InitMethod.fan_in:
+            std = mlp.hidden_size**-0.5
+
         _apply_init(
             nn.init.trunc_normal_,
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w2,
+            mlp.w2,
             mean=0.0,
             std=std,
             a=-3 * std,
             b=3 * std,
             generator=generator,
         )
+
+        # Initialize w3 (maps d_model -> hidden_size, fan-in = d_model)
+        if self == InitMethod.fan_in:
+            std = mlp.d_model**-0.5
+
         _apply_init(
             nn.init.trunc_normal_,
-            cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w3,
+            mlp.w3,
             mean=0.0,
             std=std,
             a=-3 * std,

@@ -110,7 +110,7 @@ class SpeedMonitorCallback(Callback):
                     self.device_peak_flops_per_second = int(4.5e15 * dense_correction)
                 else:  # for other GPU types, assume A100
                     # data from https://www.nvidia.com/en-us/data-center/a100/
-                    self.device_peak_flops_per_second = int(312e12 * dense_correction)
+                    self.device_peak_flops_per_second = int(624e12 * dense_correction)
             log.info(
                 f"Device: {device_name}, Device peak Flops/s: {self.device_peak_flops_per_second}"
             )

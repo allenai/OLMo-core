@@ -19,11 +19,13 @@ from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .list_checkpointer import ListCheckpointerCallback
 from .metric_saver import MetricSaverCallback
+from .model_merger import ModelMergeCallback
 from .monkey_patcher import MonkeyPatcherCallback
 from .profiler import ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
+from .stability_monitor import StabilityMonitorCallback
 from .wandb import WandBCallback
 
 __all__ = [
@@ -46,11 +48,13 @@ __all__ = [
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
+    "StabilityMonitorCallback",
     "WandBCallback",
     "BeakerCallback",
     "BatchSizeSchedulerCallback",
     "MonkeyPatcherCallback",
     "MetricSaverCallback",
+    "ModelMergeCallback",
     "ListCheckpointerCallback",
 ]
 

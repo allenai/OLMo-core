@@ -54,6 +54,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def finalize_config(config: ExperimentConfig):
+    assert not isinstance(config.model.block, dict)
     if config.model.block.name in (
         TransformerBlockType.moe_hybrid,
         TransformerBlockType.moe_hybrid_reordered_norm,

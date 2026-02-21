@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `Callback.pre_log_metrics()` method.
 - Added `SequenceMixer` base class that both attention and recurrent layers inherit from.
 - Added `GatedDeltaNet` layer implementation.
+- Added `InitMethod.fan_in` for per-layer fan-in initialization where each weight matrix uses `std = 1/√d_in`.
+- Added `StabilityMonitorCallback` for detecting training instability via spike detection in loss and gradient norm.
+- Added `gate` and `activation` parameters to `TransformerConfig.gemma3_like()`.
+- Added another ladder script, with `--train-single` flag.
 - Added `CuTeRMSNorm`, a CuTe-based RMSNorm implementation from the QuACK library.
 - Added `lazy` option to `DownstreamEvaluatorCallbackConfig` for lazily loading each task which can decrease startup time.
 - `TrainingProgress` (from `Trainer.training_progress`) now includes `current_tokens`, `bps`, `tps`, and `mfu` fields.
@@ -44,9 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `max_document_length` and `long_doc_strategy` options to `NumpyDocumentSource` in composable data API.
 - Mark ephemeral checkpoints with the `ephemeral` flag in their metadata.
 - Added `ephemeral: Optional[bool]` flag the `Checkpointer.find_checkpoints()` for filtering.
+- Added support for block-pattern based initialization of hybrid transformers. `TransformerConfig.block` now accepts a dict of named `TransformerBlockConfig`s, paired with a `block_pattern` list that controls per-layer block selection.
 
 ### Fixed
 
+- Fixed A100 peak flops spec in `SpeedMonitorCallback` being 2x too low, which inflated MFU by 2x.
 - Fixed `AttentionConfig.num_params()` overcounting QK norm parameters when using GQA/MQA with `use_head_qk_norm=False`.
 - Fixed the peak learning rate in `src/scripts/train/OLMo3/OLMo3-32B-midtraining.py` to the correct one.
 - Fixed type annotation issue in `NumpyInterleavedFSLDataset` where `_num_interleaving_exempt_instances` and `_num_interleavable_instances` were missing `Optional[int]` type hints, causing mypy type errors.
@@ -62,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix failing test_build_world_mesh_cpu for pytorch 2.10.
 - Fix failing convert_checkpoint_to_hf_test due by reducing total disk space required.
 - Ensure all metrics have been logged and bookkeeping ops complete before writing a checkpoint.
+- Fixed `self == InitMethod.*` comparisons in `Attention`, `FusedAttention`, and `GatedDeltaNet` init that should have been `init_method == InitMethod.*`, causing depth-scaled output projection init to never apply.
 - Minor improvements to make checkpointing more robust.
 
 ### Changed
