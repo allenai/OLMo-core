@@ -53,8 +53,6 @@ from olmo_core.train.callbacks import (
 from olmo_core.train.callbacks.wandb import WandBCallback
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
@@ -68,7 +66,7 @@ log = logging.getLogger(__name__)
 DEFAULT_SEQUENCE_LENGTH = 8_192
 DEFAULT_NUM_NODES = 1
 GPUS_PER_NODE = 8
-MAX_RANK_MICROBATCH_SIZE_TOKENS = 32_768  # 600M fits more tokens per rank than 7B
+MAX_RANK_MICROBATCH_SIZE_TOKENS = 131_072  # 600M easily fits large microbatches on H100
 
 
 @dataclass
@@ -276,10 +274,7 @@ class SFTConfig(Config):
         if not dp_shard_degree > 0:
             raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
 
-        ac_config = TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.feed_forward"],
-        )
+        ac_config = None
 
         cp_config = (
             (
@@ -340,7 +335,7 @@ class SFTConfig(Config):
             model=model,
             dataset=None,
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=4
+                global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=8, prefetch_factor=4
             ),
             train_module=TransformerTrainModuleConfig(
                 rank_microbatch_size=bs_config.rank_microbatch_size_tokens,
