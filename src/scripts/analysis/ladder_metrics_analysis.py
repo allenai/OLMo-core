@@ -22,6 +22,7 @@ import argparse
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 from olmo_core.model_ladder.analysis.metrics import (
@@ -463,8 +464,6 @@ def analyze_ladder(
                 f"  {size}: Using corrected non-embedding params: "
                 f"{corrected_params/1e6:.1f}M (was {raw_num_params/1e6:.1f}M)"
             )
-        print(f"raw_num_params = {raw_num_params}")
-        print(f"raw_num_params = {raw_num_params}")
 
         # Compute FLOPs per token from architecture specs
         if simple_flops:
@@ -511,7 +510,11 @@ def analyze_ladder(
                     continue
 
                 # D/N = tokens / original params (token schedule is based on original count).
-                raw_dn = tokens / raw_num_params if raw_num_params else 0
+                # Some ladders (e.g. pure-mamba) report num_params with a different convention
+                # than what was used to design the checkpoint schedule, so we override here.
+                # Key on the directory name so it works regardless of the user-facing alias.
+                snap_params = _SNAP_PARAM_COUNTS.get((ladder_dir.name, size), raw_num_params)
+                raw_dn = tokens / snap_params if snap_params else 0
                 dn_ratio = min(_ALL_DN, key=lambda c: abs(c - raw_dn)) if raw_dn > 0 else 0
                 if dn_ratio not in _KEEP_DN:
                     print(
@@ -629,6 +632,24 @@ SIZE_ORDER = {
     "7B": 8,
     "13B": 9,
     "32B": 10,
+}
+
+# Some ladders report num_params in pickle files with a different convention than what
+# was used to design the checkpoint schedule (e.g. pure-mamba reports params excluding
+# SSM layers, but the schedule was built using the same N as the hybrid-mamba ladder).
+# Override the param count used ONLY for D/N snapping (not for FLOPs or corrected N).
+# Keys are (ladder_dir.name, size) — the directory basename, not the user-facing alias.
+_SNAP_PARAM_COUNTS: Dict[Tuple[str, str], int] = {
+    # pure-mamba reports num_params excluding SSM parameters, so the raw pickle value
+    # is much smaller than the N used to design the checkpoint schedule.  Derive the
+    # correct N from tokens_at_post_decay_D/N=10 / 10 (i.e. the 2nd saved checkpoint).
+    ("pure-mamba-ladder-ffn", "60M"): 28_717_875,    # 2.872e8 / 10
+    ("pure-mamba-ladder-ffn", "100M"): 101_738_086,  # 1.017e9 / 10
+    ("pure-mamba-ladder-ffn", "190M"): 95_184_486,   # 9.518e8 / 10
+    ("pure-mamba-ladder-ffn", "370M"): 185_637_273,  # 1.856e9 / 10
+    ("pure-mamba-ladder-ffn", "600M"): 328_826_880,  # 3.288e9 / 10
+    ("pure-mamba-ladder-ffn", "760M"): 379_138_867,  # 3.791e9 / 10
+    ("pure-mamba-ladder-ffn", "1B"): 639_762_432,    # 6.398e9 / 10
 }
 
 
@@ -3689,15 +3710,96 @@ def generate_latex_bar_chart(
     return "\n".join(lines)
 
 
+def fit_eval_scaling_laws(
+    ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
+    sizes: Optional[List[str]] = None,
+    verbose: bool = True,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Fit a Chinchilla-style scaling law to each downstream evaluation metric for
+    each ladder, using all available checkpoints.
+
+    For each ladder and each of the five metrics (easy_avg, avg_ppl, Math_BPB,
+    Code_BPB, QA_BPB) the function assembles (N, D, metric) triples from every
+    checkpoint entry in *ladder_results* and fits ``ChinchillaParametricFit``.
+    Entries with missing values are silently dropped; ladders/metrics with fewer
+    than 5 valid points are skipped.
+
+    Returns:
+        {ladder_name: {metric_key: ChinchillaParametricFit}}
+        where metric_key ∈ {"easy_avg", "avg_ppl", "Math_BPB", "Code_BPB", "QA_BPB"}.
+    """
+    from olmo_core.model_ladder.analysis.scaling_laws import ChinchillaParametricFit
+
+    def _easy_avg(data):
+        be = data.get("base_easy", {})
+        if be:
+            return sum(c["avg"] for c in be.values()) / len(be)
+        return None
+
+    def _avg_ppl(data):
+        lm = data.get("lm_metrics", {})
+        ppls = [v.get("PPL") for v in lm.values() if v.get("PPL") is not None]
+        return sum(ppls) / len(ppls) if ppls else None
+
+    def _cluster(cn):
+        def _extract(data):
+            be = data.get("base_easy", {})
+            if cn in be:
+                return be[cn]["avg"]
+            return None
+
+        return _extract
+
+    metric_extractors = {
+        "easy_avg": _easy_avg,
+        "avg_ppl": _avg_ppl,
+        **{cn: _cluster(cn) for cn in BASE_EASY_SUITE},
+    }
+
+    results: Dict[str, Dict[str, Any]] = {}
+    for ladder_name, size_results in ladder_results.items():
+        results[ladder_name] = {}
+        for metric_key, extract_fn in metric_extractors.items():
+            Ns, Ds, Ls = [], [], []
+            for size_key, data in size_results.items():
+                if sizes and get_size_label(size_key) not in sizes:
+                    continue
+                n = data.get("num_params")
+                d = data.get("tokens")
+                y = extract_fn(data)
+                if n and d and y and n > 0 and d > 0 and y > 0:
+                    Ns.append(float(n))
+                    Ds.append(float(d))
+                    Ls.append(float(y))
+            if len(Ns) < 5:
+                if verbose:
+                    print(f"  [{ladder_name}] {metric_key}: only {len(Ns)} points, skipping fit")
+                continue
+            try:
+                fit = ChinchillaParametricFit.fit(
+                    np.array(Ns), np.array(Ds), np.array(Ls), num_slices=6
+                )
+                results[ladder_name][metric_key] = fit
+                if verbose:
+                    print(f"  [{ladder_name}] {metric_key}: fit OK (n={len(Ns)})")
+            except Exception as e:
+                if verbose:
+                    print(f"  [{ladder_name}] {metric_key}: fit failed — {e}")
+    return results
+
+
 def generate_paper_eval_figure(
     ladder_results: Dict[str, Dict[str, Dict[str, Any]]],
     sizes: Optional[List[str]] = None,
     star_ladder: Optional[str] = None,
     use_lines: bool = True,
+    eval_fits: Optional[Dict[str, Any]] = None,
+    final_envelope: bool = False,
 ) -> str:
     """
     Generate combined evaluation figure (pgfplots/TikZ) matching the style of
-    ``fig:scaling-law-fit-log``.
+    ``fig:scaling-law-fit-log-opt``.
 
     Layout:
         Top row (2 panels):   (a) Base Easy Avg BPB vs FLOPs,
@@ -3709,9 +3811,16 @@ def generate_paper_eval_figure(
 
     Args:
         use_lines: If True (default), draw thin lines connecting checkpoints
-            within each model size and a thick envelope through the final
-            checkpoint per size — matching ``fig:scaling-law-fit-log``.
-            If False, draw scatter points (old behaviour).
+            within each model size.
+        eval_fits: Optional mapping {ladder_name: {metric_key: ChinchillaParametricFit}}
+            where metric_key is one of "easy_avg", "avg_ppl", "Math_BPB", "Code_BPB",
+            "QA_BPB".  When provided, the thick envelope is replaced by the fitted
+            compute-optimal frontier for each panel/ladder.  Produced by
+            ``fit_eval_scaling_laws()``.  Takes priority over ``final_envelope``.
+        final_envelope: If True, the thick envelope connects the most-overtrained
+            (highest D/N / highest FLOPs) checkpoint per model size — the original
+            behaviour before compute-optimal tracking was added.  Ignored when
+            ``eval_fits`` is provided.
     """
 
     ladder_names = list(ladder_results.keys())
@@ -3742,27 +3851,29 @@ def generate_paper_eval_figure(
 
     cluster_names = list(BASE_EASY_SUITE.keys())  # Math_BPB, Code_BPB, QA_BPB
 
-    # Panel definitions: (label, extract_fn, ylabel, title)
+    # Panel definitions: (label, extract_fn, ylabel, title, metric_key)
     top_panels = [
-        ("a", _extract_easy_avg, "Average BPB", "Base Easy Suite Average"),
-        ("b", _extract_avg_ppl, "Perplexity", "Avg LM Perplexity"),
+        ("a", _extract_easy_avg, "Average BPB", "Base Easy Suite Average", "easy_avg"),
+        ("b", _extract_avg_ppl, "Perplexity", "Avg LM Perplexity", "avg_ppl"),
     ]
     bottom_panels = [
         (
             chr(ord("c") + i),
             _make_cluster_extractor(cn),
-            cn.replace("_BPB", "") + " BPB",
+            "BPB",
             cn.replace("_BPB", ""),
+            cn,
         )
         for i, cn in enumerate(cluster_names)
     ]
 
     # --- Collect per-ladder, per-size ordered data ----------------------------
-    # Returns {ladder_name: [(flops, y, size_label), ...]} sorted by flops.
+    # Returns {ladder_name: [(flops, y, size_label, dn_ratio), ...]} sorted by flops.
+    # dn_ratio is the D/N value from the checkpoint key (or None for final-checkpoint-only data).
 
     def _collect_allpoints(extract_fn):
         """Collect ALL checkpoint points (no averaging) for each ladder."""
-        result: Dict[str, List[Tuple[float, float, str]]] = {}
+        result: Dict[str, List[Tuple[float, float, str, Optional[int]]]] = {}
         for ladder_name in ladder_names:
             pts = []
             for size_key, data in ladder_results[ladder_name].items():
@@ -3772,7 +3883,8 @@ def generate_paper_eval_figure(
                 f = _get_flops_value(data)
                 if y is None or f is None:
                     continue
-                pts.append((f, y, get_size_label(size_key)))
+                dn = _get_dn_ratio(size_key)
+                pts.append((f, y, get_size_label(size_key), dn))
             pts.sort(key=lambda p: p[0])
             if pts:
                 result[ladder_name] = pts
@@ -3797,6 +3909,23 @@ def generate_paper_eval_figure(
     lines.append(r"\begin{figure*}[htbp]")
     lines.append(r"\centering")
 
+    # Compute global FLOP range across all panels and ladders so that all
+    # panels share the same x-axis extent.
+    all_flops_global: List[float] = []
+    for efn in [p[1] for p in top_panels + bottom_panels]:
+        for pts in _collect_allpoints(efn).values():
+            all_flops_global.extend(p[0] for p in pts)
+    if all_flops_global:
+        global_xmin = min(all_flops_global)
+        global_xmax = max(all_flops_global)
+        # Add a small log-space margin (10% on each side in log space)
+        log_margin = 0.05 * (np.log10(global_xmax) - np.log10(global_xmin))
+        xmin_str = f"{10 ** (np.log10(global_xmin) - log_margin):.6e}"
+        xmax_str = f"{10 ** (np.log10(global_xmax) + log_margin):.6e}"
+        xrange_opts = [f"    xmin={xmin_str},", f"    xmax={xmax_str},"]
+    else:
+        xrange_opts = []
+
     # Shared axis options (used by both groupplots)
     shared_axis = [
         r"    grid=major,",
@@ -3806,18 +3935,40 @@ def generate_paper_eval_figure(
         r"    title style={font=\small},",
         r"    xmode=log,",
         r"    ymode=log,",
-        r"    yticklabel={\pgfmathparse{exp(\tick)}\pgfmathprintnumber{\pgfmathresult}},",
+        r"    log ticks with fixed point,",
+        *xrange_opts,
     ]
 
     # ---- Helper: emit one panel's plots ------------------------------------
-    def _emit_panel(extract_fn, ylabel: str, title: str, panel_label: str):
-        """Emit addplot commands for a single panel."""
+    def _emit_panel(
+        extract_fn,
+        ylabel: str,
+        title: str,
+        panel_label: str,
+        metric_key: str = "",
+        show_ylabel: bool = True,
+    ):
+        """Emit addplot commands for a single panel.
+
+        Args:
+            metric_key: Key into the per-ladder eval_fits dict (e.g. "easy_avg",
+                "avg_ppl", "Math_BPB").  Used to look up the fitted
+                ChinchillaParametricFit for the compute-optimal frontier.
+            show_ylabel: If False, suppress the ylabel.
+        """
+        # Per-ladder fit lookup for this panel (None if no fits provided).
+        panel_fits: Dict[str, Any] = {}
+        if eval_fits and metric_key:
+            for lname, metric_map in eval_fits.items():
+                if metric_key in metric_map:
+                    panel_fits[lname] = metric_map[metric_key]
         plines: List[str] = []
         allpts = _collect_allpoints(extract_fn)
 
         plines.append(r"\nextgroupplot[")
         plines.append(r"    xlabel={Training PetaFLOPs},")
-        plines.append(f"    ylabel={{{escape_latex(ylabel)}}},")
+        if show_ylabel:
+            plines.append(f"    ylabel={{{escape_latex(ylabel)}}},")
         plines.append(f"    title={{({panel_label}) {escape_latex(title)}}},")
         plines.append(r"]")
 
@@ -3828,40 +3979,70 @@ def generate_paper_eval_figure(
             style = get_latex_style(name, idx)
             line_style_str = f", {style['line_style']}" if style.get("line_style") else ""
 
-            # Group by model size so we can draw connecting lines per size
-            by_size: Dict[str, List[Tuple[float, float]]] = {}
-            for f, y, sl in pts:
-                by_size.setdefault(sl, []).append((f, y))
+            # Group by model size so we can draw connecting lines per size.
+            # by_size: {size_label: [(flops, y, dn_ratio), ...]}
+            by_size: Dict[str, List[Tuple[float, float, Optional[int]]]] = {}
+            for f, y, sl, dn in pts:
+                by_size.setdefault(sl, []).append((f, y, dn))
 
-            if use_lines:
-                # Thin lines: one per model size, connecting checkpoints sorted by FLOPs
-                for sl in sorted(by_size, key=lambda s: get_size_numeric(s)):
-                    size_pts = sorted(by_size[sl], key=lambda p: p[0])
-                    coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in size_pts)
+            if eval_fits is None:
+                if use_lines:
+                    # Thin lines: one per model size, connecting checkpoints sorted by FLOPs.
+                    for sl in sorted(by_size, key=lambda s: get_size_numeric(s)):
+                        size_pts = sorted(by_size[sl], key=lambda p: p[0])
+                        coords = " ".join(f"({f:.6e},{y:.6e})" for f, y, _ in size_pts)
+                        plines.append(
+                            f"\\addplot[{style['color_name']}, thin, no markers{line_style_str}, "
+                            f"opacity=0.5, forget plot] "
+                            f"coordinates {{{coords}}};"
+                        )
+                else:
+                    # Scatter: all checkpoints as small marks
+                    all_f = [p[0] for p in pts]
+                    all_y = [p[1] for p in pts]
+                    coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in zip(all_f, all_y))
                     plines.append(
-                        f"\\addplot[{style['color_name']}, thin, no markers{line_style_str}, "
-                        f"opacity=0.5, forget plot] "
+                        f"\\addplot[only marks, mark={style['mark']}, "
+                        f"{style['color_name']}, mark size=1.5pt, "
+                        f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
                         f"coordinates {{{coords}}};"
                     )
-            else:
-                # Scatter: all checkpoints as small marks
-                all_f = [p[0] for p in pts]
-                all_y = [p[1] for p in pts]
-                coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in zip(all_f, all_y))
-                plines.append(
-                    f"\\addplot[only marks, mark={style['mark']}, "
-                    f"{style['color_name']}, mark size=1.5pt, "
-                    f"mark options={{{style['mark_options']}}}, opacity=0.5, forget plot] "
-                    f"coordinates {{{coords}}};"
-                )
+            # When eval_fits is provided: draw only the thick compute-optimal line (below).
 
-            # Thick envelope: one point per size at highest FLOPs (final checkpoint)
-            envelope = []
-            for sl in sorted(by_size, key=lambda s: get_size_numeric(s)):
-                size_pts = sorted(by_size[sl], key=lambda p: p[0])
-                envelope.append(size_pts[-1])
-            envelope.sort(key=lambda p: p[0])
-            env_coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in envelope)
+            # Thick envelope: fitted compute-optimal frontier (when eval_fits provided)
+            # or the 1x Chinchilla (D/N ≈ 20) checkpoint per model size as a fallback.
+            fit_obj = panel_fits.get(name)
+            if fit_obj is not None:
+                # Compute the compute-optimal frontier from the fitted scaling law.
+                # Sweep FLOPs across the range covered by this ladder's data.
+                all_flops = [p[0] for p in pts]  # already in PetaFLOPs
+                C_range = np.logspace(
+                    np.log10(min(all_flops) * 1e15), np.log10(max(all_flops) * 1e15), 200
+                )
+                p_fit = fit_obj.fitted_params
+                G = (p_fit.beta * p_fit.B / (p_fit.alpha * p_fit.A)) ** (1.0 / p_fit.beta)
+                N_opt = (C_range / (6.0 * G)) ** p_fit.a_opt
+                D_opt = C_range / (6.0 * N_opt)
+                L_opt = fit_obj.predict_loss(N_opt, D_opt)
+                env_coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in zip(C_range / 1e15, L_opt))
+            else:
+                # No fitted frontier: pick one representative point per model size.
+                envelope = []
+                for sl in sorted(by_size, key=lambda s: get_size_numeric(s)):
+                    size_pts = sorted(by_size[sl], key=lambda p: p[0])
+                    dn_values = [dn for _, _, dn in size_pts if dn is not None]
+                    if final_envelope or not dn_values:
+                        # Original behaviour: most-overtrained (highest FLOPs) checkpoint.
+                        envelope.append((size_pts[-1][0], size_pts[-1][1]))
+                    else:
+                        # Default: 1x Chinchilla (D/N ≈ 20) checkpoint.
+                        opt_pt = min(
+                            size_pts,
+                            key=lambda p: abs((p[2] or 0) - _CHINCHILLA_DN),
+                        )
+                        envelope.append((opt_pt[0], opt_pt[1]))
+                envelope.sort(key=lambda p: p[0])
+                env_coords = " ".join(f"({f:.6e},{y:.6e})" for f, y in envelope)
             plines.append(
                 f"\\addplot[{style['color_name']}, thick, no markers{line_style_str}, forget plot] "
                 f"coordinates {{{env_coords}}};"
@@ -3874,18 +4055,18 @@ def generate_paper_eval_figure(
     lines.append(r"\begin{groupplot}[")
     lines.append(r"    group style={")
     lines.append(r"        group size=2 by 1,")
-    lines.append(r"        horizontal sep=1.2cm,")
+    lines.append(r"        horizontal sep=1.5cm,")
     lines.append(r"    },")
-    lines.append(r"    width=0.54\textwidth,")
+    lines.append(r"    width=0.5\textwidth,")
     lines.append(r"    height=0.36\textwidth,")
     for sa in shared_axis:
         lines.append(sa)
     lines.append(r"]")
 
-    for label, efn, yl, ttl in top_panels:
+    for panel_idx, (label, efn, yl, ttl, mkey) in enumerate(top_panels):
         lines.append("")
         lines.append(f"% Panel ({label}): {ttl}")
-        lines.extend(_emit_panel(efn, yl, ttl, label))
+        lines.extend(_emit_panel(efn, yl, ttl, label, metric_key=mkey))
 
     lines.append("")
     lines.append(r"\end{groupplot}")
@@ -3899,18 +4080,20 @@ def generate_paper_eval_figure(
     lines.append(r"\begin{groupplot}[")
     lines.append(r"    group style={")
     lines.append(r"        group size=3 by 1,")
-    lines.append(r"        horizontal sep=0.8cm,")
+    lines.append(r"        horizontal sep=1.2cm,")
     lines.append(r"    },")
-    lines.append(r"    width=0.37\textwidth,")
+    lines.append(r"    width=0.36\textwidth,")
     lines.append(r"    height=0.28\textwidth,")
     for sa in shared_axis:
         lines.append(sa)
     lines.append(r"]")
 
-    for label, efn, yl, ttl in bottom_panels:
+    for panel_idx, (label, efn, yl, ttl, mkey) in enumerate(bottom_panels):
         lines.append("")
         lines.append(f"% Panel ({label}): {ttl}")
-        lines.extend(_emit_panel(efn, yl, ttl, label))
+        lines.extend(
+            _emit_panel(efn, yl, ttl, label, metric_key=mkey, show_ylabel=(panel_idx == 0))
+        )
 
     lines.append("")
     lines.append(r"\end{groupplot}")
@@ -3947,16 +4130,16 @@ def generate_paper_eval_figure(
     lines.append(r"{\footnotesize " + "\\qquad".join(legend_parts) + r"}")
 
     # Caption
-    if use_lines:
-        caption_detail = (
-            r"Thin lines connect checkpoints within each model size; "
-            r"the thick line traces the highest Chinchilla multiple per model size."
-        )
+    if eval_fits:
+        frontier_desc = r"the thick line is the fitted compute-optimal frontier."
+    elif final_envelope:
+        frontier_desc = r"the thick line traces the most-overtrained checkpoint per model size."
     else:
-        caption_detail = (
-            r"Each point is a single checkpoint; the connecting line traces the highest "
-            r"Chinchilla multiple per model size."
-        )
+        frontier_desc = r"the thick line traces the compute-optimal (1$\times$ Chinchilla) checkpoint per model size."
+    if use_lines:
+        caption_detail = r"Thin lines connect checkpoints within each model size; " + frontier_desc
+    else:
+        caption_detail = r"Each point is a checkpoint; " + frontier_desc
     lines.append(
         r"\caption{Downstream evaluation metrics vs.\ training FLOPs. "
         r"\textbf{(a)} Base Easy Suite average BPB (lower is better). "
@@ -3979,6 +4162,7 @@ def generate_latex_plots(
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
     use_lines: bool = True,
+    eval_fits: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Generate publication-ready LaTeX/TikZ plots for all metric suites.
@@ -4028,6 +4212,7 @@ def generate_latex_plots(
             sizes=sizes,
             star_ladder=star_ladder,
             use_lines=use_lines,
+            eval_fits=eval_fits,
         )
     )
     parts.append("")
@@ -4273,6 +4458,7 @@ def export_results(
     use_final_checkpoint: bool = False,
     star_ladder: Optional[str] = None,
     use_lines: bool = True,
+    eval_fits: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Export results to various formats."""
     easy_df = create_base_easy_table(ladder_results, sizes)
@@ -4356,6 +4542,7 @@ def export_results(
         use_final_checkpoint=use_final_checkpoint,
         star_ladder=star_ladder,
         use_lines=use_lines,
+        eval_fits=eval_fits,
     )
     plots_path = output_path / "ablation-scaling-plot.tex"
     with open(plots_path, "w") as f:
@@ -4424,6 +4611,11 @@ Examples:
         "--export",
         type=Path,
         help="Export results to this directory",
+    )
+    parser.add_argument(
+        "--print-cli",
+        action="store_true",
+        help="Print outputs in the terminal.",
     )
     parser.add_argument(
         "--raw",
@@ -4527,6 +4719,21 @@ Examples:
         action="store_true",
         help="Use scatter points instead of thin/thick lines in paper figures (old behaviour).",
     )
+    parser.add_argument(
+        "--eval-opt-frontier",
+        action="store_true",
+        help="Fit a Chinchilla scaling law to each downstream evaluation metric and draw the "
+        "compute-optimal frontier as the thick envelope curve in the paper eval figure.  "
+        "This requires fitting one model per arch per metric and can be slow; "
+        "it is skipped by default.",
+    )
+    parser.add_argument(
+        "--final-envelope",
+        action="store_true",
+        help="Draw the thick envelope through the most-overtrained (highest D/N) checkpoint "
+        "per model size — the original pre-compute-optimal behaviour.  "
+        "Ignored when --eval-opt-frontier is also set.",
+    )
 
     args = parser.parse_args()
 
@@ -4586,129 +4793,134 @@ Examples:
 
     group_by_size = not args.group_by_ladder
 
-    # Create and display tables
     include_main = args.main
-    easy_df = create_base_easy_table(ladder_results, args.sizes)
-    lm_df = create_lm_table(ladder_results, args.sizes)
 
-    if include_main:
-        main_df = create_base_main_table(ladder_results, args.sizes)
-        heldout_df = create_heldout_table(ladder_results, args.sizes)
-        print_base_main_table(main_df, group_by_size=group_by_size)
+    if args.print_cli:
+        easy_df = create_base_easy_table(ladder_results, args.sizes)
+        lm_df = create_lm_table(ladder_results, args.sizes)
 
-    print_base_easy_table(easy_df, group_by_size=group_by_size)
+        if include_main:
+            main_df = create_base_main_table(ladder_results, args.sizes)
+            heldout_df = create_heldout_table(ladder_results, args.sizes)
+            print_base_main_table(main_df, group_by_size=group_by_size)
 
-    if include_main:
-        print_heldout_table(heldout_df, group_by_size=group_by_size)  # defined above in same guard
+        print_base_easy_table(easy_df, group_by_size=group_by_size)
 
-    print_lm_table(lm_df, group_by_size=group_by_size)
+        if include_main:
+            print_heldout_table(
+                heldout_df, group_by_size=group_by_size
+            )  # defined above in same guard
 
-    # Print relative Easy Suite improvement summary when comparing multiple ladders
-    ladder_names = list(ladder_results.keys())
-    if len(ladder_names) > 1:
-        baseline_name = ladder_names[0]
-        baseline_results = ladder_results[baseline_name]
+        print_lm_table(lm_df, group_by_size=group_by_size)
 
-        # Collect all size labels across ladders
-        all_size_labels = sorted(
-            set(
-                get_size_label(sk)
-                for sr in ladder_results.values()
-                for sk in sr.keys()
-                if not args.sizes or get_size_label(sk) in args.sizes
-            ),
-            key=get_size_numeric,
-        )
+        # Print relative Easy Suite improvement summary when comparing multiple ladders
+        ladder_names = list(ladder_results.keys())
+        if len(ladder_names) > 1:
+            baseline_name = ladder_names[0]
+            baseline_results = ladder_results[baseline_name]
 
-        print("\n" + "=" * 100)
-        print(f"EASY SUITE RELATIVE IMPROVEMENT vs baseline ({get_display_name(baseline_name)})")
-        print("  (positive = better, i.e. lower BPB)")
-        print("=" * 100)
+            # Collect all size labels across ladders
+            all_size_labels = sorted(
+                set(
+                    get_size_label(sk)
+                    for sr in ladder_results.values()
+                    for sk in sr.keys()
+                    if not args.sizes or get_size_label(sk) in args.sizes
+                ),
+                key=get_size_numeric,
+            )
 
-        easy_clusters = list(BASE_EASY_SUITE.keys())
-        header = f"{'Size':<8} {'Ladder':<25}"
-        for c in easy_clusters:
-            header += f" {c:>14}"
-        header += f" {'Avg':>14}"
-        print(header)
-        print("-" * 100)
+            print("\n" + "=" * 100)
+            print(
+                f"EASY SUITE RELATIVE IMPROVEMENT vs baseline ({get_display_name(baseline_name)})"
+            )
+            print("  (positive = better, i.e. lower BPB)")
+            print("=" * 100)
 
-        for size_label in all_size_labels:
-            # Find baseline data for this size — pick the final checkpoint
-            baseline_data = None
-            for sk, sd in baseline_results.items():
-                if get_size_label(sk) == size_label:
-                    if baseline_data is None or sd.get("tokens", 0) > baseline_data.get(
-                        "tokens", 0
-                    ):
-                        baseline_data = sd
+            easy_clusters = list(BASE_EASY_SUITE.keys())
+            header = f"{'Size':<8} {'Ladder':<25}"
+            for c in easy_clusters:
+                header += f" {c:>14}"
+            header += f" {'Avg':>14}"
+            print(header)
+            print("-" * 100)
 
-            if baseline_data is None:
-                continue
-
-            baseline_easy = baseline_data.get("base_easy", {})
-            if not baseline_easy:
-                continue
-
-            for ladder_name in ladder_names[1:]:
-                compare_data = None
-                for sk, sd in ladder_results[ladder_name].items():
+            for size_label in all_size_labels:
+                # Find baseline data for this size — pick the final checkpoint
+                baseline_data = None
+                for sk, sd in baseline_results.items():
                     if get_size_label(sk) == size_label:
-                        if compare_data is None or sd.get("tokens", 0) > compare_data.get(
+                        if baseline_data is None or sd.get("tokens", 0) > baseline_data.get(
                             "tokens", 0
                         ):
-                            compare_data = sd
+                            baseline_data = sd
 
-                if compare_data is None:
+                if baseline_data is None:
                     continue
 
-                compare_easy = compare_data.get("base_easy", {})
-                line = f"{size_label:<8} {get_display_name(ladder_name):<25}"
-                diffs = []
-                for cluster in easy_clusters:
-                    b_val = baseline_easy.get(cluster, {}).get("avg")
-                    c_val = compare_easy.get(cluster, {}).get("avg")
-                    if b_val is not None and c_val is not None and b_val > 0:
-                        # Lower BPB is better, so positive diff = improvement
-                        diff_pct = ((b_val - c_val) / b_val) * 100
-                        diffs.append(diff_pct)
-                        sign = "+" if diff_pct >= 0 else ""
-                        line += f" {sign}{diff_pct:>12.2f}%"
+                baseline_easy = baseline_data.get("base_easy", {})
+                if not baseline_easy:
+                    continue
+
+                for ladder_name in ladder_names[1:]:
+                    compare_data = None
+                    for sk, sd in ladder_results[ladder_name].items():
+                        if get_size_label(sk) == size_label:
+                            if compare_data is None or sd.get("tokens", 0) > compare_data.get(
+                                "tokens", 0
+                            ):
+                                compare_data = sd
+
+                    if compare_data is None:
+                        continue
+
+                    compare_easy = compare_data.get("base_easy", {})
+                    line = f"{size_label:<8} {get_display_name(ladder_name):<25}"
+                    diffs = []
+                    for cluster in easy_clusters:
+                        b_val = baseline_easy.get(cluster, {}).get("avg")
+                        c_val = compare_easy.get(cluster, {}).get("avg")
+                        if b_val is not None and c_val is not None and b_val > 0:
+                            # Lower BPB is better, so positive diff = improvement
+                            diff_pct = ((b_val - c_val) / b_val) * 100
+                            diffs.append(diff_pct)
+                            sign = "+" if diff_pct >= 0 else ""
+                            line += f" {sign}{diff_pct:>12.2f}%"
+                        else:
+                            line += f" {'-':>14}"
+                    if diffs:
+                        avg_diff = sum(diffs) / len(diffs)
+                        sign = "+" if avg_diff >= 0 else ""
+                        line += f" {sign}{avg_diff:>12.2f}%"
                     else:
                         line += f" {'-':>14}"
-                if diffs:
-                    avg_diff = sum(diffs) / len(diffs)
-                    sign = "+" if avg_diff >= 0 else ""
-                    line += f" {sign}{avg_diff:>12.2f}%"
-                else:
-                    line += f" {'-':>14}"
-                print(line)
-            print()
+                    print(line)
+                print()
 
-        print("=" * 100)
+            print("=" * 100)
 
-    # Print raw metrics if requested
-    if args.raw:
-        print("\n\nRAW METRICS:")
-        print("-" * 50)
-        for ladder_name, sizes_data in ladder_results.items():
-            print(f"\n{get_display_name(ladder_name)}:")
-            for size_key, data in sizes_data.items():
-                size_label = get_size_label(size_key)
-                if args.sizes and size_label not in args.sizes:
-                    continue
-                print(f"\n  {size_key} (step {data['step']}, {data['tokens']:,} tokens):")
+        # Print raw metrics if requested
+        if args.raw:
+            print("\n\nRAW METRICS:")
+            print("-" * 50)
+            for ladder_name, sizes_data in ladder_results.items():
+                print(f"\n{get_display_name(ladder_name)}:")
+                for size_key, data in sizes_data.items():
+                    size_label = get_size_label(size_key)
+                    if args.sizes and size_label not in args.sizes:
+                        continue
+                    print(f"\n  {size_key} (step {data['step']}, {data['tokens']:,} tokens):")
 
-                if include_main:
-                    print("    Base Main Suite:")
-                    for cluster, cluster_data in data.get("base_main", {}).items():
-                        print(f"      {cluster}: {cluster_data['avg']*100:.1f}%")
-                        for task, val in cluster_data.get("tasks", {}).items():
-                            print(f"        - {task}: {val*100:.1f}%")
+                    if include_main:
+                        print("    Base Main Suite:")
+                        for cluster, cluster_data in data.get("base_main", {}).items():
+                            print(f"      {cluster}: {cluster_data['avg']*100:.1f}%")
+                            for task, val in cluster_data.get("tasks", {}).items():
+                                print(f"        - {task}: {val*100:.1f}%")
 
-                print("    Base Easy Suite (BPB):")
-                for cluster, cluster_data in data.get("base_easy", {}).items():
-                    print(f"      {cluster}: {cluster_data['avg']:.4f}")
+                    print("    Base Easy Suite (BPB):")
+                    for cluster, cluster_data in data.get("base_easy", {}).items():
+                        print(f"      {cluster}: {cluster_data['avg']:.4f}")
 
     # Generate plots if requested
     if args.plot or args.plot_flops:
@@ -4724,7 +4936,12 @@ Examples:
             plot_flops=args.plot_flops,
         )
 
-    # Export if requested
+    # Fit eval scaling laws once (used by both --export and --paper-figures).
+    eval_fits = None
+    if args.eval_opt_frontier:
+        print("\nFitting eval scaling laws for compute-optimal frontier...")
+        eval_fits = fit_eval_scaling_laws(ladder_results, sizes=args.sizes)
+
     if args.export:
         export_path = Path(args.export).expanduser()
         export_path.mkdir(parents=True, exist_ok=True)
@@ -4735,7 +4952,8 @@ Examples:
             include_main=include_main,
             use_final_checkpoint=args.curve_final,
             star_ladder=args.star_ladder,
-            use_lines=not args.scatter,
+            use_lines=False if args.eval_opt_frontier else not args.scatter,
+            eval_fits=eval_fits,
         )
 
     # Generate paper figures (pgfplots/TikZ .tex files)
@@ -4752,7 +4970,9 @@ Examples:
                 ladder_results,
                 sizes=args.sizes,
                 star_ladder=args.star_ladder,
-                use_lines=not args.scatter,
+                use_lines=False if args.eval_opt_frontier else not args.scatter,
+                eval_fits=eval_fits,
+                final_envelope=args.final_envelope,
             )
             fig_path = figures_dir / "base-easy-avg.tex"
             with open(fig_path, "w") as f:
