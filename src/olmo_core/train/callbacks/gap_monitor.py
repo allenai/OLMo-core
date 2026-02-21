@@ -88,7 +88,10 @@ class GAPMonitorCallback(Callback):
                 raise ValueError(
                     f"dump_gradients_step_interval must be positive, got {self.dump_gradients_step_interval}"
                 )
-            if self.dump_gradients_save_first_n is not None and self.dump_gradients_save_first_n <= 0:
+            if (
+                self.dump_gradients_save_first_n is not None
+                and self.dump_gradients_save_first_n <= 0
+            ):
                 raise ValueError(
                     f"dump_gradients_save_first_n must be positive, got {self.dump_gradients_save_first_n}"
                 )
