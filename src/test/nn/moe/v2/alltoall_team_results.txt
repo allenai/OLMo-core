@@ -1,0 +1,17 @@
+(base) root@jupiter-cs-aus-129:/workspace# TORCH_SYMMMEM_NBLOCKS=128 torchrun --nnodes=1 --nproc-per-node=8 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_team_test.py --num-teams=2 --team-size=4
+[PASS] rank=0 team=0 team_rank=0 nccl=1.293 ms (415.34 GB/s) symm_vdev=1.255 ms (427.71 GB/s) speedup_vdev=1.030x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=18.228 ms (29.45 GB/s) speedup_vdev2d=0.071x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
+
+(base) root@jupiter-cs-aus-129:/workspace# TORCH_SYMMMEM_NBLOCKS=8 torchrun --nnode=2 --nproc-per-node=8 --rdzv_endpoint jupiter-cs-aus-129.reviz.ai2.in:22222 --rdzv_id 20086 --rdzv_backend static --node_rank $LOCAL_RANK /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_team_test.py --num-teams=2 --team-size=8
+[PASS] rank=0 team=0 team_rank=0 nccl=1.551 ms (346.07 GB/s) symm_vdev=15.130 ms (35.48 GB/s) speedup_vdev=0.103x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=15.078 ms (35.61 GB/s) speedup_vdev2d=0.103x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
+
+(base) root@jupiter-cs-aus-129:/workspace# TORCH_SYMMMEM_NBLOCKS=64 torchrun --nnode=2 --nproc-per-node=8 --rdzv_endpoint jupiter-cs-aus-129.reviz.ai2.in:22222 --rdzv_id 20086 --rdzv_backend static --node_rank $LOCAL_RANK /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_team_test.py --num-teams=2 --team-size=8
+[PASS] rank=0 team=0 team_rank=0 nccl=1.476 ms (363.69 GB/s) symm_vdev=50.832 ms (10.56 GB/s) speedup_vdev=0.029x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=15.045 ms (35.69 GB/s) speedup_vdev2d=0.098x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
+
+(base) root@jupiter-cs-aus-129:/workspace# TORCH_SYMMMEM_NBLOCKS=128 torchrun --nnode=2 --nproc-per-node=8 --rdzv_endpoint jupiter-cs-aus-129.reviz.ai2.in:22222 --rdzv_id 20086 --rdzv_backend static --node_rank $LOCAL_RANK /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_team_test.py --num-teams=2 --team-size=8
+[PASS] rank=0 team=0 team_rank=0 nccl=1.491 ms (359.99 GB/s) symm_vdev=96.611 ms (5.56 GB/s) speedup_vdev=0.015x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=14.783 ms (36.32 GB/s) speedup_vdev2d=0.101x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
+
+(base) root@jupiter-cs-aus-129:/workspace# TORCH_SYMMMEM_NBLOCKS=128 NVSHMEM_DISABLE_P2P=1 torchrun --nnodes=1 --nproc-per-node=8 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_team_test.py --num-teams=2 --team-size=4
+[PASS] rank=0 team=0 team_rank=0 nccl=1.283 ms (418.43 GB/s) symm_vdev=79.798 ms (6.73 GB/s) speedup_vdev=0.016x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=14.644 ms (36.66 GB/s) speedup_vdev2d=0.088x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
+
+(base) root@jupiter-cs-aus-129:/workspace# TORCH_SYMMMEM_NBLOCKS=128 torchrun --nnode=2 --nproc-per-node=8 --rdzv_endpoint jupiter-cs-aus-129.reviz.ai2.in:22222 --rdzv_id 20086 --rdzv_backend static --node_rank $LOCAL_RANK /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_team_test.py --num-teams=2 --team-size=8 --bootstrap-group-as-world
+[PASS] rank=0 team=0 team_rank=0 nccl=1.478 ms (363.22 GB/s) symm_vdev=1.502 ms (357.37 GB/s) speedup_vdev=0.984x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=9.189 ms (58.42 GB/s) speedup_vdev2d=0.161x equal_vdev2d=True max_abs_diff_vdev2d=0.000000

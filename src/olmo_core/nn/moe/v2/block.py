@@ -1,5 +1,6 @@
 import math
 import os
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
 
@@ -16,6 +17,12 @@ try:
     import torch.distributed._symmetric_memory as _symm_mem
 except ImportError:
     _symm_mem = None  # type: ignore[assignment]
+
+# Process-local cache for the EP->group "0" symmetric-memory alias.
+# This makes repeated calls from multiple MoE blocks idempotent when they use
+# the same EP group.
+_EP_SYMM_GROUP0_ALIAS_LOCK = threading.Lock()
+_EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
@@ -969,6 +976,60 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 "before any symmetric-memory allocations."
             ) from e
 
+    def _try_alias_ep_group_as_world_for_symm_mem(self) -> bool:
+        """
+        Try to alias EP group metadata as symmetric-memory group "0" so NVSHMEM
+        allocator bootstrap follows EP group topology instead of WORLD.
+
+        Returns True when aliasing is active (or unnecessary because EP==WORLD),
+        otherwise False so caller can fall back to WORLD bootstrap.
+        """
+        global _EP_SYMM_GROUP0_ALIAS_RANKS
+        if _symm_mem is None or self.ep_pg is None:
+            return False
+        if dist.group.WORLD is None:
+            return False
+        if self.ep_pg.group_name == dist.group.WORLD.group_name:
+            return True
+
+        try:
+            import torch.distributed.distributed_c10d as c10d
+            from torch._C._distributed_c10d import _SymmetricMemory
+        except Exception:
+            return False
+
+        try:
+            alias_ranks = tuple(sorted(c10d._world.pg_group_ranks[self.ep_pg].keys()))
+            with _EP_SYMM_GROUP0_ALIAS_LOCK:
+                # Idempotent success: alias already installed for the same EP group.
+                if _EP_SYMM_GROUP0_ALIAS_RANKS == alias_ranks:
+                    return True
+
+                # If group "0" is already registered by a different context,
+                # do not overwrite global process state.
+                if _symm_mem.is_symm_mem_enabled_for_group("0"):
+                    return False
+
+                global_ranks_str = "_".join(map(str, alias_ranks))
+                store = c10d.PrefixStore(
+                    f"symmetric_memory-{global_ranks_str}",
+                    c10d._get_process_group_store(self.ep_pg),
+                )
+                _SymmetricMemory.set_group_info(
+                    "0",
+                    dist.get_rank(self.ep_pg),
+                    dist.get_world_size(self.ep_pg),
+                    store,
+                )
+                # Keep Python bookkeeping in sync to avoid duplicate registration.
+                group_to_store = getattr(_symm_mem, "_group_name_to_store", None)
+                if isinstance(group_to_store, dict):
+                    group_to_store["0"] = store
+                _EP_SYMM_GROUP0_ALIAS_RANKS = alias_ranks
+                return True
+        except Exception:
+            return False
+
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         assert self.routed_experts is not None, "ep can only be applied when routed_experts is enabled"
         ep_dp_mesh = ep_mesh['ep_dp']
@@ -991,15 +1052,26 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             group_name = self.ep_pg.group_name
             assert dist.group.WORLD is not None, "torch.distributed.group.WORLD must be initialized for EP no-sync to work"
             world_group_name = dist.group.WORLD.group_name 
+            alias_group0_active = False
             try:
-                # NVSHMEM-backed symm_mem.empty() allocates through the default group path.
-                # Ensure WORLD group info is initialized so allocations do not fail before rendezvous.
-                _symm_mem.enable_symm_mem_for_group(world_group_name) # _symm_mem.empty() resolves group info for WORLD, even when rendezvous is ep_pg, don't know why. symm API is unstable for now in torch 2.10
                 _symm_mem.enable_symm_mem_for_group(group_name)
+                # Default path: alias EP group as group "0" so NVSHMEM allocator
+                # bootstrap tracks EP topology. This keeps 2x8 intra-node teams
+                # from inheriting WORLD inter-node behavior.
+                alias_group0_active = self._try_alias_ep_group_as_world_for_symm_mem()
+                if not alias_group0_active:
+                    # Fallback path for environments where aliasing private APIs
+                    # are unavailable or group "0" is already occupied.
+                    # _symm_mem.enable_symm_mem_for_group(world_group_name)
+                    # Option: hard fail
+                    raise RuntimeError(
+                        f"Failed to alias EP group '{group_name}' as group '0' for symmetric memory support"
+                    )
+
             except Exception as e:
                 raise RuntimeError(
-                    f"Failed to enable symmetric memory for WORLD='{world_group_name}' "
-                    f"and EP group '{group_name}' "
+                    f"Failed to enable symmetric memory for EP group '{group_name}' "
+                    f"(world='{world_group_name}', alias_group0_active={alias_group0_active}) "
                     f"(block={self.block_idx}, rank={get_rank(self.ep_pg)}): {e}"
                 ) from e
             self._ep_symm_group_name = group_name

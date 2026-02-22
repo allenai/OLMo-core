@@ -7,30 +7,9 @@ import torch
 import torch.distributed as dist
 import torch.distributed._symmetric_memory as symm_mem
 
-# TORCH_SYMMMEM_NBLOCKS=512 torchrun --nproc-per-node=4 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_test.py
-#/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.9/main_nvshmem/src/device/launch/collective_launch.cpp:117: non-zero status: 1 One or more PEs cannot launch 
-# equal_vdev=False
-
-# TORCH_SYMMMEM_NBLOCKS=384 torchrun --nproc-per-node=4 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_test.py
-# [/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.9/main_nvshmem/src/host/stream/coll/barrier/barrier.cu:26] cuda failed with device-side assert triggered
-
 # TORCH_SYMMMEM_NBLOCKS=256 torchrun --nproc-per-node=4 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_test.py
+# B200
 # rank=0 nccl=0.860 ms (624.19 GB/s) symm_vdev=0.688 ms (779.97 GB/s) speedup_vdev=1.250x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=32.748 ms (16.39 GB/s) speedup_vdev2d=0.026x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
-
-# TORCH_SYMMMEM_NBLOCKS=128 torchrun --nproc-per-node=4 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_test.py
-# rank=0 nccl=0.857 ms (626.60 GB/s) symm_vdev=1.170 ms (458.97 GB/s) speedup_vdev=0.732x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=32.747 ms (16.39 GB/s) speedup_vdev2d=0.026x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
-
-# TORCH_SYMMMEM_NBLOCKS=64 torchrun --nproc-per-node=4 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_test.py
-# rank=0 nccl=0.916 ms (586.34 GB/s) symm_vdev=2.224 ms (241.40 GB/s) speedup_vdev=0.412x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=32.760 ms (16.39 GB/s) speedup_vdev2d=0.028x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
-
-# TORCH_SYMMMEM_NBLOCKS=32 torchrun --nproc-per-node=4 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_test.py
-# rank=0 nccl=0.863 ms (622.43 GB/s) symm_vdev=4.272 ms (125.67 GB/s) speedup_vdev=0.202x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=32.758 ms (16.39 GB/s) speedup_vdev2d=0.026x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
-
-# TORCH_SYMMMEM_NBLOCKS=16 torchrun --nproc-per-node=4 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_test.py
-# rank=0 nccl=0.874 ms (614.20 GB/s) symm_vdev=8.276 ms (64.87 GB/s) speedup_vdev=0.106x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=32.743 ms (16.40 GB/s) speedup_vdev2d=0.027x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
-
-# TORCH_SYMMMEM_NBLOCKS=4 torchrun --nproc-per-node=4 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_test.py
-# rank=0 nccl=0.864 ms (621.61 GB/s) symm_vdev=32.739 ms (16.40 GB/s) speedup_vdev=0.026x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=32.745 ms (16.40 GB/s) speedup_vdev2d=0.026x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -255,7 +234,9 @@ def main() -> None:
             symm_vdev2d_bw = payload_gb / (item["symm_vdev2d_avg_ms"] / 1e3)
             speedup_vdev = item["nccl_avg_ms"] / item["symm_vdev_avg_ms"]
             speedup_vdev2d = item["nccl_avg_ms"] / item["symm_vdev2d_avg_ms"]
+            pass_or_fail = "PASS" if item["equal_vdev"] and item["equal_vdev2d"] else "FAIL"
             print(
+                f"[{pass_or_fail}] "
                 f"rank={item['rank']} "
                 f"nccl={item['nccl_avg_ms']:.3f} ms ({nccl_bw:.2f} GB/s) "
                 f"symm_vdev={item['symm_vdev_avg_ms']:.3f} ms ({symm_vdev_bw:.2f} GB/s) "

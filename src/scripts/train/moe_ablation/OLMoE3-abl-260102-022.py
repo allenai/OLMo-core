@@ -1,5 +1,5 @@
 """
-Fork from 009: increase gbs , scale LR
+Fork from 020: increase shared expert size, routed experts topk-=4
 Train an OLMoE model. Run this script without any arguments to see usage info.
 """
 
@@ -94,7 +94,7 @@ MAX_DURATION = int(1200e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL=1000
 
-NUM_EXPERTS = 32
+NUM_EXPERTS = 64
 TOP_K = 4
 D_MODEL=1024
 D_ATTN=D_MODEL
@@ -103,9 +103,9 @@ D_ATTN=D_MODEL
 HEAD_DIM=64
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 768
+MOE_HIDDEN_SIZE = 384
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 768  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 768 + 4 * 384  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -128,7 +128,7 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
 LR= 3e-4 
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024))
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024)) # keep 3e-4 for 1M tokens, scale up for larger gbs
 # LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
 NUM_LAYERS=12
 
@@ -386,7 +386,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            load_path='/workspace/checkpoint/OLMoE3-abl-260102-009_1024d1024a_12L768M768S_32E4K1S_abl/step84000',
+            # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
