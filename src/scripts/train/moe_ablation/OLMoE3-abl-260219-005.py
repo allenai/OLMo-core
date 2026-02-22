@@ -113,7 +113,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 MICRO_BSZ = 1
 # DP_DIM=2
-EP_DIM=16
+EP_DIM=8
 PP_DIM=1
 
 # ref
@@ -141,7 +141,7 @@ else:
 
 # SPLIT_POINTS = None
 USE_COMPILE=True
-USE_NO_SYNC_EP=False
+USE_NO_SYNC_EP=True
 USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
@@ -420,7 +420,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
                                    start=206,
                                    end=209
@@ -430,8 +430,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "torch_mem_history",
             TorchMemoryHistoryCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=59161,
-                                   end=59164,
+                                   start=206,
+                                   end=209,
                                    output_dir='/workspace/tmp'
             )
         )
