@@ -178,7 +178,7 @@ def _chunk_permute_by_row_id_map_torch(
     output.index_add_(0, safe_dst_idx, src_rows)
     return output
 
-
+@torch.compiler.disable
 def _chunk_permute_cuda(
     inp: torch.Tensor,
     routing_map: torch.Tensor,
@@ -190,6 +190,7 @@ def _chunk_permute_cuda(
     return ext.chunk_permute_fwd_cuda(inp, routing_map, num_out_tokens, out)
 
 
+@torch.compiler.disable
 def _chunk_unpermute_cuda(
     inp: torch.Tensor,
     row_id_map: torch.Tensor,
@@ -200,17 +201,18 @@ def _chunk_unpermute_cuda(
     ext = _load_cuda_extension()
     return ext.chunk_unpermute_fwd_cuda(inp, row_id_map, num_tokens, out)
 
-
+@torch.compiler.disable
 def _chunk_permute_by_row_id_map_cuda(
     inp: torch.Tensor,
     row_id_map: torch.Tensor,
     *,
     num_out_tokens: int,
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     ext = _load_cuda_extension()
-    return ext.chunk_permute_by_row_id_map_cuda(inp, row_id_map, num_out_tokens, None)
+    return ext.chunk_permute_by_row_id_map_cuda(inp, row_id_map, num_out_tokens, out)
 
-
+@torch.compiler.disable
 def _dispatch_permute(
     inp: torch.Tensor,
     routing_map: torch.Tensor,
@@ -247,11 +249,12 @@ def _dispatch_permute_by_row_id_map(
     *,
     num_out_tokens: int,
     backend: Literal["cuda", "triton"],
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     if backend == "cuda":
-        return _chunk_permute_by_row_id_map_cuda(inp, row_id_map, num_out_tokens=num_out_tokens)
+        return _chunk_permute_by_row_id_map_cuda(inp, row_id_map, num_out_tokens=num_out_tokens, out=out)
     if backend == "triton":
-        return _chunk_permute_by_row_id_map_torch(inp, row_id_map, num_out_tokens=num_out_tokens)
+        return _chunk_permute_by_row_id_map_torch(inp, row_id_map, num_out_tokens=num_out_tokens) # TODO: add support for `out`
     raise ValueError(f"Invalid backend: {backend}")
 
 
@@ -264,6 +267,7 @@ class _ChunkPermuteFunction(torch.autograd.Function):
         num_out_tokens: int,
         backend: str,
         out: Optional[torch.Tensor],
+        backward_grad_input_buffer: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         output, row_id_map = _dispatch_permute(
             inp,
@@ -280,6 +284,7 @@ class _ChunkPermuteFunction(torch.autograd.Function):
         ctx.row_id_map = row_id_map
         ctx.num_tokens = inp.shape[0]
         ctx.backend = backend
+        ctx.backward_grad_input_buffer = backward_grad_input_buffer # this should point to a symm buffer that can be used in backward to avoid one extra copy
         ctx.mark_non_differentiable(row_id_map)
         return output, row_id_map
 
@@ -288,16 +293,19 @@ class _ChunkPermuteFunction(torch.autograd.Function):
         del grad_row_id_map
 
         grad_inp = None
+
         if ctx.needs_input_grad[0]:
             grad_inp = _dispatch_unpermute(
                 grad_output,
                 ctx.row_id_map,
                 num_tokens=ctx.num_tokens,
-                out=None,
+                out=ctx.backward_grad_input_buffer, # try to write directly into the provided buffer to save memory and copy if possible
                 backend=ctx.backend,  # type: ignore[arg-type]
             )
+            if ctx.backward_grad_input_buffer is not None:
+                assert grad_inp is ctx.backward_grad_input_buffer, "Expected the output to be written to the provided backward_grad_input_buffer"
 
-        return grad_inp, None, None, None, None
+        return grad_inp, None, None, None, None, None
 
 
 class _ChunkUnpermuteFunction(torch.autograd.Function):
@@ -309,6 +317,7 @@ class _ChunkUnpermuteFunction(torch.autograd.Function):
         num_tokens: int,
         backend: str,
         out: Optional[torch.Tensor],
+        backward_grad_input_buffer: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         output = _dispatch_unpermute(
             inp,
@@ -323,6 +332,7 @@ class _ChunkUnpermuteFunction(torch.autograd.Function):
         ctx.row_id_map = row_id_map
         ctx.input_rows = inp.shape[0]
         ctx.backend = backend
+        ctx.backward_grad_input_buffer = backward_grad_input_buffer # this should point to a symm buffer that can be used in backward to avoid one extra copy
         return output
 
     @staticmethod
@@ -334,9 +344,12 @@ class _ChunkUnpermuteFunction(torch.autograd.Function):
                 ctx.row_id_map,
                 num_out_tokens=ctx.input_rows,
                 backend=ctx.backend,  # type: ignore[arg-type]
+                out=ctx.backward_grad_input_buffer,
             )
+            if ctx.backward_grad_input_buffer is not None:
+                assert grad_inp is ctx.backward_grad_input_buffer, "Expected the output to be written to the provided backward_grad_input_buffer"
 
-        return grad_inp, None, None, None, None
+        return grad_inp, None, None, None, None, None
 
 
 def moe_chunk_permute(
@@ -346,6 +359,7 @@ def moe_chunk_permute(
     num_out_tokens: Optional[int] = None,
     out: Optional[torch.Tensor] = None,
     backend: Literal["auto", "cuda", "triton"] = "auto",
+    backward_grad_input_buffer=None, 
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if not inp.is_cuda:
         raise ValueError("moe_chunk_permute expects CUDA input")
@@ -361,20 +375,7 @@ def moe_chunk_permute(
         routing_map_i32 = routing_map_i32.to(dtype=torch.int32)
 
     if backend == "auto":
-        errors = []
-        for candidate in ("cuda", "triton"):
-            try:
-                return _ChunkPermuteFunction.apply(
-                    inp,
-                    routing_map_i32,
-                    num_out_tokens,
-                    candidate,
-                    out,
-                )
-            except Exception as e:
-                errors.append((candidate, str(e)))
-        errors_str = "; ".join([f"{name}: {msg}" for name, msg in errors])
-        raise RuntimeError(f"All chunk permute backends failed ({errors_str})")
+        backend = "cuda"
 
     return _ChunkPermuteFunction.apply(
         inp,
@@ -382,6 +383,7 @@ def moe_chunk_permute(
         num_out_tokens,
         backend,
         out,
+        backward_grad_input_buffer,
     )
 
 
@@ -392,6 +394,7 @@ def moe_chunk_unpermute(
     num_tokens: Optional[int] = None,
     out: Optional[torch.Tensor] = None,
     backend: Literal["auto", "cuda", "triton"] = "auto",
+    backward_grad_input_buffer=None, 
 ) -> torch.Tensor:
     if not inp.is_cuda:
         raise ValueError("moe_chunk_unpermute expects CUDA input")
@@ -416,6 +419,7 @@ def moe_chunk_unpermute(
                     num_tokens,
                     candidate,
                     out,
+                    backward_grad_input_buffer
                 )
             except Exception as e:
                 errors.append((candidate, str(e)))
@@ -428,4 +432,5 @@ def moe_chunk_unpermute(
         num_tokens,
         backend,
         out,
+        backward_grad_input_buffer
     )

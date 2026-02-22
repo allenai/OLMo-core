@@ -113,7 +113,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 3 // 2
 
-MICRO_BSZ = 4
+MICRO_BSZ = 2
 # DP_DIM=2
 EP_DIM=4
 PP_DIM=1
@@ -417,7 +417,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 # entity="ai2-llm",
                 # project="olmoe-dev-v2",
                 # project="olmo3",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -435,7 +435,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         # )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
                                    start=10021,
                                    end=10024

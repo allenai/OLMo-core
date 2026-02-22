@@ -28,7 +28,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
-from .block import MoEFusedV2TransformerBlock, MoEFusedV2TransformerBlockConfig
+from .block import MoEFusedV2TransformerBlock, MoEFusedV2TransformerBlockConfig, _NoSyncSymmSharedPool
 from olmo_core.ops import moe as ops
 from ...lm_head import LMHeadConfig, LMOutputWithLoss
 import nvtx
@@ -286,11 +286,38 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         Apply DDP to the model.
         """
 
+        ep_no_sync_blocks: List[MoEFusedV2TransformerBlock] = []
         for block in self.blocks.values():
             if not block.is_moe:
                 continue
             block = cast(MoEFusedV2TransformerBlock, block)
             block.apply_ep(ep_mesh)
+            if block.ep_no_sync:
+                ep_no_sync_blocks.append(block)
+
+        if ep_no_sync_blocks:
+            slot_counts = {block.ep_no_sync_shared_slots for block in ep_no_sync_blocks}
+            if len(slot_counts) != 1:
+                raise OLMoConfigurationError(
+                    "All EP no-sync blocks must use the same ep_no_sync_shared_slots "
+                    f"value, got {sorted(slot_counts)}"
+                )
+            shared_slots = next(iter(slot_counts))
+            first_pg = ep_no_sync_blocks[0].ep_pg
+            if first_pg is None:
+                raise RuntimeError("EP no-sync block is missing ep_pg after apply_ep()")
+            shared_pool = _NoSyncSymmSharedPool(
+                num_slots=shared_slots,
+                group=first_pg,
+            )
+            for block in ep_no_sync_blocks:
+                if block.ep_pg is not first_pg:
+                    raise RuntimeError(
+                        "All EP no-sync blocks in a model part must share the same ep_pg "
+                        f"(block={block.block_idx})"
+                    )
+                block._ep_no_sync_shared_pool = shared_pool
+                block._ep_no_sync_shared_slot = block.block_idx % shared_slots
 
 
         self.ep_enabled = True

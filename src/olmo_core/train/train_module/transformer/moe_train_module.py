@@ -133,9 +133,12 @@ from torch.distributed.checkpoint.planner_helpers import (
 def debug_check_grad(name, tag, tensor, input_ids, micro_batch_idx):
     if torch.isnan(tensor).any() or torch.isinf(tensor).any():
         # save input_ids for debugging
-        if input_ids is not None:
-            torch.save(input_ids, f"input_ids_rank{dist.get_rank()}_mbx{micro_batch_idx}.pt")
-        raise RuntimeError(f"rank={dist.get_rank()} mbx={micro_batch_idx} NaN or Inf detected in {name} {tag}")
+        # if input_ids is not None:
+        #     torch.save(input_ids, f"input_ids_rank{dist.get_rank()}_mbx{micro_batch_idx}.pt")
+        # raise RuntimeError(f"rank={dist.get_rank()} mbx={micro_batch_idx} NaN or Inf detected in {name} {tag}")
+        print(f"rank={dist.get_rank()} mbx={micro_batch_idx} NaN or Inf detected in {name} {tag}")
+        return True
+    return False
 
 class MoEV2TransformerTrainModule(TrainModule):
     def __init__(
@@ -894,12 +897,17 @@ class MoEV2TransformerTrainModule(TrainModule):
                         #     print(f"-------after bwd {micro_batch_idx}--------")
                         # self.model.reset_offload_handler()
 
+                        # found_nan_inf = False
                         # for name, param in self.model_parts[0].named_parameters():
-                        #     # check nan/inf in grad
+                        # #     # check nan/inf in grad
+
                         #     if param.grad is not None:
-                        #         debug_check_grad(name, "grad", param.grad, input_ids=input_ids, micro_batch_idx=micro_batch_idx)
+                        #         found_nan_inf |= debug_check_grad(name, "grad", param.grad, input_ids=input_ids, micro_batch_idx=micro_batch_idx)
                         #     elif param._main_grad_fp32 is not None:
-                        #         debug_check_grad(name, "_main_grad_fp32", param._main_grad_fp32, input_ids=input_ids, micro_batch_idx=micro_batch_idx)
+                        #         found_nan_inf |= debug_check_grad(name, "_main_grad_fp32", param._main_grad_fp32, input_ids=input_ids, micro_batch_idx=micro_batch_idx)
+
+                        # if found_nan_inf:
+                        #     raise RuntimeError(f"NaN or Inf found in gradients at micro-batch {micro_batch_idx} on rank {dist.get_rank()}")
 
                         # dump grad
                         # named_grads = []
@@ -923,7 +931,51 @@ class MoEV2TransformerTrainModule(TrainModule):
 
 
             del batch  # In case this helps with memory utilization.
+
             if dry_run:
+                symm_total_bytes = 0
+                symm_block_count = 0
+                symm_unique_storage_count = 0
+                seen_module_ids = set()
+                seen_storages = set()
+
+                def account_tensor_storage(tensor: torch.Tensor):
+                    nonlocal symm_total_bytes, symm_unique_storage_count
+                    storage = tensor.untyped_storage()
+                    key = (storage.data_ptr(), storage.nbytes(), str(tensor.device))
+                    if key in seen_storages:
+                        return
+                    seen_storages.add(key)
+                    symm_total_bytes += storage.nbytes()
+                    symm_unique_storage_count += 1
+
+                for model_part in self.model_parts:
+                    for module in model_part.modules():
+                        module_id = id(module)
+                        if module_id in seen_module_ids:
+                            continue
+                        seen_module_ids.add(module_id)
+                        symm_cache = getattr(module, "_ep_no_sync_symm_cache", None)
+                        shared_pool = getattr(module, "_ep_no_sync_shared_pool", None)
+                        has_local = bool(symm_cache)
+                        has_shared = shared_pool is not None
+                        if not has_local and not has_shared:
+                            continue
+                        symm_block_count += 1
+                        if symm_cache:
+                            for tensor in symm_cache.values():
+                                if isinstance(tensor, torch.Tensor):
+                                    account_tensor_storage(tensor)
+                        if shared_pool is not None:
+                            for tensor in shared_pool.iter_tensors():
+                                if isinstance(tensor, torch.Tensor):
+                                    account_tensor_storage(tensor)
+                print(
+                    f"[symm_mem] step={self.trainer.global_step} rank={dist.get_rank()} "
+                    f"blocks={symm_block_count} unique_storages={symm_unique_storage_count} "
+                    f"total={symm_total_bytes / (1024 ** 3):.3f} GiB "
+                    f"({symm_total_bytes} bytes)"
+                )
                 print("activation: ", dbg_mem_activation_usage_all)
                 print("freed:      ", dbg_mem_activation_freed_all)
                 for (tag, mem) in self.model_parts[0]._debug_alloc_mem_layer_logs:

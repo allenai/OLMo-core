@@ -620,6 +620,7 @@ def moe_chunk_reorder_no_compile(
     num_out_tokens: Optional[int] = None,
     out: Optional[torch.Tensor] = None,
     backend: str = "auto",
+    backward_grad_input_buffer: Optional[torch.Tensor] = None,
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     if (routing_map is None) == (row_id_map is None):
         raise ValueError(
@@ -639,6 +640,7 @@ def moe_chunk_reorder_no_compile(
         )
 
         if resolved_backend == "te":
+            raise RuntimeError("TE backend Deprecated.")
             return _moe_chunk_permute_te(
                 inp=inp,
                 routing_map=routing_map_i32,
@@ -653,6 +655,7 @@ def moe_chunk_reorder_no_compile(
                 num_out_tokens=num_out_tokens,
                 out=out,
                 backend=resolved_backend,  # type: ignore[arg-type]
+                backward_grad_input_buffer=backward_grad_input_buffer,
             )
         raise RuntimeError(f"Unhandled chunk reorder backend: {resolved_backend}")
 
@@ -667,6 +670,7 @@ def moe_chunk_reorder_no_compile(
     )
 
     if resolved_backend == "te":
+        raise RuntimeError("TE backend Deprecated.")
         return _moe_chunk_unpermute_te(
             inp=inp,
             row_id_map=row_id_map_i32,
@@ -680,5 +684,6 @@ def moe_chunk_reorder_no_compile(
             num_tokens=row_id_map_i32.numel(),
             out=out,
             backend=resolved_backend,  # type: ignore[arg-type]
+            backward_grad_input_buffer=backward_grad_input_buffer,
         )
     raise RuntimeError(f"Unhandled chunk reorder backend: {resolved_backend}")

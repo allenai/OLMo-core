@@ -1,6 +1,7 @@
 import math
 import os
 import threading
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
 
@@ -74,8 +75,162 @@ class _NoSyncSymmBuffers:
     combine_rank_splits_offsets: torch.Tensor
     combine_tmp_rank_splits_offsets: torch.Tensor
 
+
+@dataclass
+class _NoSyncSymmTransientSlot:# shared in pool
+    dispatch_in: torch.Tensor
+    dispatch_out: torch.Tensor
+    dispatch_in_rank_splits: torch.Tensor
+    dispatch_rank_splits_offsets: torch.Tensor
+    dispatch_tmp_rank_splits_offsets: torch.Tensor
+    combine_in: torch.Tensor
+    # combine_out: torch.Tensor
+    combine_in_rank_splits: torch.Tensor
+    combine_rank_splits_offsets: torch.Tensor
+    combine_tmp_rank_splits_offsets: torch.Tensor
+
+
+class _NoSyncSymmSharedPool:
+    def __init__(self, *, num_slots: int, group: dist.ProcessGroup):
+        if num_slots < 1:
+            raise ValueError(f"num_slots must be >= 1 (got {num_slots})")
+        self.num_slots = num_slots
+        self.group = group
+        self._slot_caches: List[Dict[str, torch.Tensor]] = [{} for _ in range(num_slots)]
+
+    def _get_or_init_slot_tensor(
+        self,
+        *,
+        slot_idx: int,
+        name: str,
+        shape: Tuple[int, ...],
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        if _symm_mem is None:
+            raise RuntimeError("EP no-sync requires torch.distributed._symmetric_memory")
+
+        slot_cache = self._slot_caches[slot_idx]
+        cached = slot_cache.get(name)
+        needs_realloc = (
+            cached is None
+            or tuple(cached.shape) != tuple(shape)
+            or cached.dtype != dtype
+            or cached.device != device
+        )
+        if needs_realloc:
+            symm_tensor = _symm_mem.empty(shape, dtype=dtype, device=device)
+            _symm_mem.rendezvous(symm_tensor, group=self.group)
+            slot_cache[name] = symm_tensor
+        return slot_cache[name]
+
+    def get_slot(
+        self,
+        *,
+        slot_idx: int,
+        dispatch_in_cap: int,
+        dispatch_out_cap: int,
+        combine_in_cap: int,
+        d_model: int,
+        dtype: torch.dtype,
+        device: torch.device,
+        ep_world_size: int,
+    ) -> _NoSyncSymmTransientSlot:
+        if slot_idx < 0 or slot_idx >= self.num_slots:
+            raise ValueError(
+                f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})"
+            )
+        dispatch_in = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="dispatch_in",
+            shape=(dispatch_in_cap, d_model),
+            dtype=dtype,
+            device=device,
+        )
+        dispatch_in_rank_splits = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="dispatch_in_rank_splits",
+            shape=(ep_world_size,),
+            dtype=torch.int64,
+            device=device,
+        )
+        dispatch_out = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="dispatch_out",
+            shape=(dispatch_out_cap, d_model),
+            dtype=dtype,
+            device=device,
+        )
+        dispatch_rank_splits_offsets = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="dispatch_rank_splits_offsets",
+            shape=(2, ep_world_size),
+            dtype=torch.int64,
+            device=device,
+        )
+        dispatch_tmp_rank_splits_offsets = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="dispatch_tmp_rank_splits_offsets",
+            shape=(2, ep_world_size),
+            dtype=torch.int64,
+            device=device,
+        )
+        combine_in = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,  
+            name="combine_in",
+            shape=(combine_in_cap, d_model),
+            dtype=dtype,
+            device=device,
+        )
+        # combine_out = self._get_or_init_slot_tensor(
+        #     slot_idx=slot_idx,
+        #     name="combine_out",
+        #     shape=(dispatch_in_cap, d_model),
+        #     dtype=dtype,
+        #     device=device,
+        # )
+        combine_in_rank_splits = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="combine_in_rank_splits",
+            shape=(ep_world_size,),
+            dtype=torch.int64,
+            device=device,
+        )
+        combine_rank_splits_offsets = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="combine_rank_splits_offsets",
+            shape=(2, ep_world_size),
+            dtype=torch.int64,
+            device=device,
+        )
+        combine_tmp_rank_splits_offsets = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="combine_tmp_rank_splits_offsets",
+            shape=(2, ep_world_size),
+            dtype=torch.int64,
+            device=device,
+        )
+        return _NoSyncSymmTransientSlot(
+            dispatch_in=dispatch_in,
+            dispatch_in_rank_splits=dispatch_in_rank_splits,
+            dispatch_out=dispatch_out,
+            dispatch_rank_splits_offsets=dispatch_rank_splits_offsets,
+            dispatch_tmp_rank_splits_offsets=dispatch_tmp_rank_splits_offsets,
+            combine_in=combine_in,
+            # combine_out=combine_out,
+            combine_in_rank_splits=combine_in_rank_splits,
+            combine_rank_splits_offsets=combine_rank_splits_offsets,
+            combine_tmp_rank_splits_offsets=combine_tmp_rank_splits_offsets,
+        )
+
+    def iter_tensors(self):
+        for slot_cache in self._slot_caches:
+            for tensor in slot_cache.values():
+                yield tensor
+
 class _DispatchVDevAutograd(torch.autograd.Function):
     @staticmethod
+    @torch.compiler.disable # this is required if dispatch_out is shared across layers, no idea why.
     def forward(  # type: ignore[override]
         ctx,
         source_input: torch.Tensor,
@@ -101,6 +256,7 @@ class _DispatchVDevAutograd(torch.autograd.Function):
             and tuple(source_input.stride()) == tuple(symm_input.stride())
         )
         if not input_aliases_symm_input:
+            raise RuntimeError("Not Expected: dispatch source_input should alias symm_input buffer to avoid extra copy")
             symm_input.copy_(source_input)
         if in_rank_splits.dtype != torch.int64:
             symm_in_rank_splits.copy_(in_rank_splits.to(dtype=torch.int64))
@@ -147,7 +303,16 @@ class _DispatchVDevAutograd(torch.autograd.Function):
             raise RuntimeError(
                 f"dispatch backward grad rows ({grad_out.shape[0]}) must equal symmetric dispatch grad input capacity ({symm_grad_out.shape[0]})"
             )
-        symm_grad_out.copy_(grad_out)
+        
+        symm_grad_out_aliases_grad_out = (
+            grad_out.untyped_storage().data_ptr() == symm_grad_out.untyped_storage().data_ptr()
+            and grad_out.storage_offset() == symm_grad_out.storage_offset()
+            and tuple(grad_out.shape) == tuple(symm_grad_out.shape)
+            and tuple(grad_out.stride()) == tuple(symm_grad_out.stride())
+        )
+        if not symm_grad_out_aliases_grad_out:
+            raise RuntimeError("Not Expected: dispatch backward grad_out should alias symm_grad_out buffer to avoid extra copy")
+
 
         grad_symm_input = ctx.symm_input
         # Ensure any rows not written by vdev (e.g. dropped-token tail capacity)
@@ -245,7 +410,16 @@ class _CombineVDevAutograd(torch.autograd.Function):
         # under compiled autograd.
         ctx.forward_out_rank_splits_offsets = out_rank_splits_offsets
         ctx.mark_non_differentiable(out_rank_splits_offsets)
-        return symm_out, out_rank_splits_offsets
+
+        # the user of the output is going to be unpermute kernel, which will save combine_out for backward.
+        # we need to ensure combine_out will not be overwritten, by either:
+        # (1) return a new tensor if the combine_out buffer is shared
+        # out = torch.empty_like(symm_out)
+        # out.copy_(symm_out)
+        # or 
+        # (2) return the symm_out buffer directly if it's not shared
+        out = symm_out
+        return out, out_rank_splits_offsets
 
     @staticmethod
     def backward(ctx, grad_out: torch.Tensor, grad_out_rank_splits_offsets: torch.Tensor):  # type: ignore[override]
@@ -259,7 +433,11 @@ class _CombineVDevAutograd(torch.autograd.Function):
             )
         symm_grad_out.copy_(grad_out)
 
-        grad_input = ctx.symm_input
+        symm_grad_input = ctx.symm_input
+        # Mirror dispatch backward: vdev may only write a prefix when rank
+        # capacity exceeds received rows. Zero tail rows to avoid stale data
+        # from previous uses leaking into upstream gradients.
+        # symm_grad_input.zero_()
         symm_forward_out_rank_splits = ctx.symm_in_rank_splits
         symm_forward_out_rank_splits.copy_(forward_out_rank_splits_offsets[0])
         grad_input_rank_splits_offsets = ctx.symm_tmp_rank_splits_offsets
@@ -274,13 +452,16 @@ class _CombineVDevAutograd(torch.autograd.Function):
 
         torch.ops.symm_mem.all_to_all_vdev(
             symm_grad_out,
-            grad_input,
+            symm_grad_input,
             symm_forward_out_rank_splits,
             grad_input_rank_splits_offsets,
             ctx.group_name,
         )
 
-        return grad_input[: ctx.input_rows], None, None, None, None, None, None, None, None, None
+        grad_input = symm_grad_input
+        # grad_input = torch.empty_like(symm_grad_input)
+        # grad_input.copy_(symm_grad_input)
+        return grad_input, None, None, None, None, None, None, None, None, None
 
 
 @dataclass
@@ -301,6 +482,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     ep_no_sync: bool = False
     ep_no_sync_use_2d_all_to_all: bool = False
     ep_no_sync_capacity_factor: float = 1.125
+    ep_no_sync_shared_slots: int = 2
     ep_no_sync_major_align: int = 1
     ep_no_sync_restore_unpermute_backend: str = "te_fused"
         
@@ -435,6 +617,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ep_no_sync: bool = False,
         ep_no_sync_use_2d_all_to_all: bool = False,
         ep_no_sync_capacity_factor: float = 2.0,
+        ep_no_sync_shared_slots: int = 2,
         ep_no_sync_major_align: int = 1,
         ep_no_sync_restore_unpermute_backend: str = "te_fused",
         init_device: str = "cpu",
@@ -539,16 +722,24 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 "the 2D all_to_all path was removed due to correctness/performance issues."
             )
         self.ep_no_sync_capacity_factor = ep_no_sync_capacity_factor
+        self.ep_no_sync_shared_slots = ep_no_sync_shared_slots
         self.ep_no_sync_major_align = ep_no_sync_major_align
         self.ep_no_sync_restore_unpermute_backend = ep_no_sync_restore_unpermute_backend.lower()
         self._ep_symm_group_name: Optional[str] = None
         self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_last_debug: Dict[str, torch.Tensor] = {}
+        self._ep_no_sync_shared_pool: Optional[_NoSyncSymmSharedPool] = None
+        self._ep_no_sync_shared_slot: int = 0
+        self._ep_no_sync_te_backend_warned: bool = False
         # self._ep_no_sync_forward_call_count: int = 0
 
         if self.ep_no_sync_capacity_factor <= 0:
             raise OLMoConfigurationError(
                 f"ep_no_sync_capacity_factor must be > 0 (got {self.ep_no_sync_capacity_factor})"
+            )
+        if self.ep_no_sync_shared_slots < 1:
+            raise OLMoConfigurationError(
+                f"ep_no_sync_shared_slots must be >= 1 (got {self.ep_no_sync_shared_slots})"
             )
         if self.ep_no_sync_major_align < 1:
             raise OLMoConfigurationError(
@@ -785,6 +976,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 ) from e
             self._ep_symm_group_name = group_name
             self._ep_no_sync_symm_cache.clear()
+            self._ep_no_sync_shared_pool = None
+            self._ep_no_sync_shared_slot = 0
+            self._ep_no_sync_te_backend_warned = False
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -842,6 +1036,14 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             )
         return self._ep_symm_group_name
 
+    def _resolve_ep_no_sync_chunk_reorder_backend(self) -> str:
+        backend = os.getenv("OLMO_MOE_CHUNK_REORDER_BACKEND", "cuda").lower()
+        if backend == "auto":
+            backend = "cuda"
+        if backend not in ("cuda", "triton", "te"):
+            backend = "cuda"
+        return backend
+
     def _get_or_init_ep_no_sync_symm_tensor(
         self,
         *,
@@ -880,6 +1082,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         *,
         dispatch_in_cap: int,
         dispatch_out_cap: int,
+        combine_in_cap: int,
         combine_out_cap: int,
         d_model: int,
         dtype: torch.dtype,
@@ -888,64 +1091,135 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert self.routed_experts_router is not None
 
         ep_world_size = self.ep_world_size
-        dispatch_in = self._get_or_init_ep_no_sync_symm_tensor(
-            name="dispatch_in",
-            shape=(dispatch_in_cap, d_model),
-            dtype=dtype,
-            device=device,
-        )
-        dispatch_in_rank_splits = self._get_or_init_ep_no_sync_symm_tensor(
-            name="dispatch_in_rank_splits",
-            shape=(ep_world_size,),
-            dtype=torch.int64,
-            device=device,
-        )
-        dispatch_out = self._get_or_init_ep_no_sync_symm_tensor(
-            name="dispatch_out",
-            shape=(dispatch_out_cap, d_model),
-            dtype=dtype,
-            device=device,
-        )
-        dispatch_rank_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
-            name="dispatch_rank_splits_offsets",
-            shape=(2, ep_world_size),
-            dtype=torch.int64,
-            device=device,
-        )
-        dispatch_tmp_rank_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
-            name="dispatch_tmp_rank_splits_offsets",
-            shape=(2, ep_world_size),
-            dtype=torch.int64,
-            device=device,
-        )
-        combine_in = self._get_or_init_ep_no_sync_symm_tensor(
-            name="combine_in",
-            shape=(dispatch_out_cap, d_model),
-            dtype=dtype,
-            device=device,
-        )
-        combine_in_rank_splits = self._get_or_init_ep_no_sync_symm_tensor(
-            name="combine_in_rank_splits",
-            shape=(ep_world_size,),
-            dtype=torch.int64,
-            device=device,
-        )
+        transient_slot: Optional[_NoSyncSymmTransientSlot] = None
+        chunk_reorder_backend = self._resolve_ep_no_sync_chunk_reorder_backend()
+        if self._ep_no_sync_shared_pool is not None:
+            if chunk_reorder_backend == "te":
+                if not self._ep_no_sync_te_backend_warned:
+                    warnings.warn(
+                        "EP no-sync shared symm buffer reuse is disabled when "
+                        "OLMO_MOE_CHUNK_REORDER_BACKEND=te. "
+                        "Falling back to per-block symmetric buffers for safety.",
+                        stacklevel=2,
+                    )
+                    self._ep_no_sync_te_backend_warned = True
+            else:
+                transient_slot = self._ep_no_sync_shared_pool.get_slot(
+                    slot_idx=self._ep_no_sync_shared_slot,
+                    dispatch_in_cap=dispatch_in_cap,
+                    dispatch_out_cap=dispatch_out_cap,
+                    combine_in_cap=combine_in_cap,
+                    d_model=d_model,
+                    dtype=dtype,
+                    device=device,
+                    ep_world_size=ep_world_size,
+                )
+
+        if transient_slot is not None:
+            # Use fresh aliases per call to keep Tensor object identity unique
+            # across layers while still sharing the same underlying storage.
+            dispatch_in = transient_slot.dispatch_in.detach()
+            dispatch_out = transient_slot.dispatch_out.detach()
+            dispatch_in_rank_splits = transient_slot.dispatch_in_rank_splits.detach()
+            dispatch_rank_splits_offsets = transient_slot.dispatch_rank_splits_offsets.detach()
+            dispatch_tmp_rank_splits_offsets = transient_slot.dispatch_tmp_rank_splits_offsets.detach()
+            combine_in = transient_slot.combine_in.detach()
+            # combine_out = transient_slot.combine_out.detach()
+            combine_in_rank_splits = transient_slot.combine_in_rank_splits.detach()
+            combine_rank_splits_offsets = transient_slot.combine_rank_splits_offsets.detach()
+            combine_tmp_rank_splits_offsets = transient_slot.combine_tmp_rank_splits_offsets.detach()
+        else:
+            dispatch_in = self._get_or_init_ep_no_sync_symm_tensor(
+                name="dispatch_in",
+                shape=(dispatch_in_cap, d_model),
+                dtype=dtype,
+                device=device,
+            )
+            dispatch_out = self._get_or_init_ep_no_sync_symm_tensor(
+                name="dispatch_out",
+                shape=(dispatch_out_cap, d_model),
+                dtype=dtype,
+                device=device,
+            )
+            dispatch_in_rank_splits = self._get_or_init_ep_no_sync_symm_tensor(
+                name="dispatch_in_rank_splits",
+                shape=(ep_world_size,),
+                dtype=torch.int64,
+                device=device,
+            )
+            dispatch_rank_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
+                name="dispatch_rank_splits_offsets",
+                shape=(2, ep_world_size),
+                dtype=torch.int64,
+                device=device,
+            )
+            dispatch_tmp_rank_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
+                name="dispatch_tmp_rank_splits_offsets",
+                shape=(2, ep_world_size),
+                dtype=torch.int64,
+                device=device,
+            )
+            combine_in = self._get_or_init_ep_no_sync_symm_tensor(
+                name="combine_in",
+                shape=(combine_in_cap, d_model),
+                dtype=dtype,
+                device=device,
+            )
+            combine_out = self._get_or_init_ep_no_sync_symm_tensor(
+                name="combine_out",
+                shape=(combine_out_cap, d_model),
+                dtype=dtype,
+                device=device,
+            )
+            combine_in_rank_splits = self._get_or_init_ep_no_sync_symm_tensor(
+                name="combine_in_rank_splits",
+                shape=(ep_world_size,),
+                dtype=torch.int64,
+                device=device,
+            )
+            combine_rank_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
+                name="combine_rank_splits_offsets",
+                shape=(2, ep_world_size),
+                dtype=torch.int64,
+                device=device,
+            )
+            combine_tmp_rank_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
+                name="combine_tmp_rank_splits_offsets",
+                shape=(2, ep_world_size),
+                dtype=torch.int64,
+                device=device,
+            )
+
+        # Keep dispatch_in per-layer. (unnecessary)
+        # dispatch_in = self._get_or_init_ep_no_sync_symm_tensor(
+        #     name="dispatch_in",
+        #     shape=(dispatch_in_cap, d_model),
+        #     dtype=dtype,    
+        #     device=device,
+        # )
+
+        # Keep dispatch_out per-layer. (is it necessary?))
+        # dispatch_out = self._get_or_init_ep_no_sync_symm_tensor(
+        #     name="dispatch_out",
+        #     shape=(dispatch_out_cap, d_model),
+        #     dtype=dtype,
+        #     device=device,
+        # )
+
+        # Keep combine_in per-layer. (unnecessary)
+        # combine_in = self._get_or_init_ep_no_sync_symm_tensor(
+        #     name="combine_in",
+        #     shape=(combine_in_cap, d_model),
+        #     dtype=dtype,
+        #     device=device,
+        # )
+
+        # Keep combine_out per-layer: unpermute backward saves this input tensor (for prob merge).
+        # There's no point to share this buffer because unpermute backward will need a new copy each layer any way.
         combine_out = self._get_or_init_ep_no_sync_symm_tensor(
             name="combine_out",
             shape=(combine_out_cap, d_model),
             dtype=dtype,
-            device=device,
-        )
-        combine_rank_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
-            name="combine_rank_splits_offsets",
-            shape=(2, ep_world_size),
-            dtype=torch.int64,
-            device=device,
-        )
-        combine_tmp_rank_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
-            name="combine_tmp_rank_splits_offsets",
-            shape=(2, ep_world_size),
-            dtype=torch.int64,
             device=device,
         )
         return _NoSyncSymmBuffers(
@@ -960,6 +1234,13 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             combine_rank_splits_offsets=combine_rank_splits_offsets,
             combine_tmp_rank_splits_offsets=combine_tmp_rank_splits_offsets,
         )
+
+    def iter_ep_no_sync_symm_tensors(self):
+        for tensor in self._ep_no_sync_symm_cache.values():
+            if isinstance(tensor, torch.Tensor):
+                yield tensor
+        if self._ep_no_sync_shared_pool is not None:
+            yield from self._ep_no_sync_shared_pool.iter_tensors()
 
     def _compute_ep_no_sync_rank_capacity(self, num_out_tokens: int) -> int:
         # `num_out_tokens` is the local routed-token count before EP dispatch.
@@ -1465,12 +1746,14 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
 
                 dispatch_in_cap = num_out_tokens
-                dispatch_out_cap = rank_capacity 
+                dispatch_out_cap = rank_capacity
+                combine_in_cap = rank_capacity 
                 combine_out_cap = num_out_tokens 
 
         buffers = self._get_ep_no_sync_buffers(
             dispatch_in_cap=dispatch_in_cap,
             dispatch_out_cap=dispatch_out_cap,
+            combine_in_cap=combine_in_cap,
             combine_out_cap=combine_out_cap,
             d_model=moe_inp.shape[-1],
             dtype=moe_inp.dtype,
@@ -1537,7 +1820,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # rank-major to local-expert-major for expert forward
         with nvtx.annotate("Permute global tokens", color='green'):
             if self.routed_experts.num_local_experts == 1:
-                global_x_local_expert_major = dispatch_rank_major
+                # should verify: use clone() to avoid in-place modification?  
+                dispatch_rank_major = dispatch_rank_major.clone()
                 global_chunk_row_id_map = None
             else:
                 with torch.no_grad():
@@ -1545,15 +1829,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                         recv_splits_by_src_local,
                         rows=dispatch_rank_major.shape[0],
                     ) # (cap_rows, ) mapping each row to a local expert id
-                global_x_local_expert_major, global_chunk_row_id_map = moe_chunk_reorder_no_compile(
+                dispatch_rank_major, global_chunk_row_id_map = moe_chunk_reorder_no_compile(
                     inp=dispatch_rank_major,
                     routing_map=global_chunk_routing_map,
                     num_out_tokens=dispatch_rank_major.shape[0],
+                    backward_grad_input_buffer=buffers.dispatch_out.detach(), # the backward should directly write into the dispatch_out buffer to save memory and copy
+                    # backward_grad_input_buffer=None # for testing
                 )
 
         # expert forward
         dispatch_rank_major = self.routed_experts(
-            global_x_local_expert_major,
+            dispatch_rank_major,
             padded_batch_size_per_local_expert,
         )
 
