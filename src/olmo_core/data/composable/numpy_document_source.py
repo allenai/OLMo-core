@@ -19,6 +19,7 @@ from ..tokenizer import TokenizerConfig
 from ..types import LongDocStrategy, NumpyDatasetDType, NumpyUIntTypes
 from ..utils import (
     chunked,
+    get_npy_header_size,
     iter_document_indices,
     iter_document_indices_with_max_sequence_length,
     load_array_slice,
@@ -165,7 +166,10 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
     def get_num_tokens(self) -> int:
         dtype = self.get_dtype()
         item_size = dtype(0).itemsize
-        source_sizes = path_map(lambda p: io.get_file_size(p) // item_size, self.source_paths)
+        source_sizes = path_map(
+            lambda p: (io.get_file_size(p) - get_npy_header_size(p)) // item_size,
+            self.source_paths,
+        )
         return sum(source_sizes)
 
     def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
@@ -368,7 +372,8 @@ class NumpyDocumentSource(DocumentSource):
             if self.rank == 0:
                 item_size = self.dtype(0).itemsize
                 source_sizes = path_map(
-                    lambda p: io.get_file_size(p) // item_size, self.source_paths
+                    lambda p: (io.get_file_size(p) - get_npy_header_size(p)) // item_size,
+                    self.source_paths,
                 )
             else:
                 source_sizes = []
@@ -385,7 +390,8 @@ class NumpyDocumentSource(DocumentSource):
                 if self.rank == 0:
                     item_size = np.bool_(0).itemsize
                     label_mask_sizes = path_map(
-                        lambda p: io.get_file_size(p) // item_size, self.label_mask_paths
+                        lambda p: (io.get_file_size(p) - get_npy_header_size(p)) // item_size,
+                        self.label_mask_paths,
                     )
                 else:
                     label_mask_sizes = []

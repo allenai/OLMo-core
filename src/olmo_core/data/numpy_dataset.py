@@ -57,6 +57,7 @@ from .utils import (
     get_doc_lengths_from_indices,
     get_document_lengths,
     get_rng,
+    get_npy_header_size,
     load_array_slice_into_tensor,
     memmap_to_write,
     pack_documents_into_instances,
@@ -672,15 +673,16 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
         file_size = get_file_size(path)
+        data_size = file_size - get_npy_header_size(path)
         if (
             self.max_target_sequence_length is None
             or self.max_target_sequence_length == self.sequence_length
         ):
-            return file_size, file_size // (item_size * self.sequence_length)
+            return data_size, data_size // (item_size * self.sequence_length)
         elif self.max_target_sequence_length > self.sequence_length:
-            num_max_seq_len_instances = file_size // (item_size * self.max_target_sequence_length)
+            num_max_seq_len_instances = data_size // (item_size * self.max_target_sequence_length)
             return (
-                file_size,
+                data_size,
                 num_max_seq_len_instances
                 * (self.max_target_sequence_length // self.sequence_length),
             )

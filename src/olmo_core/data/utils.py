@@ -150,12 +150,21 @@ def truncate_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[s
     return new_batch
 
 
+def _load_local_array(path: PathOrStr, *, dtype) -> np.ndarray:
+    """Load a local numpy array, handling both ``.npy`` files and raw binary files."""
+    path = str(path)
+    try:
+        return np.load(path, mmap_mode="r")
+    except ValueError:
+        return np.memmap(path, mode="r", dtype=dtype)
+
+
 def write_document_indices(data_path: Path, *, dtype, eos_token_id: int) -> Path:
     """
     Given a local ".npy" data path from the Dolma toolkit, write a metadata file with start/end indices
     of each document within the array.
     """
-    token_ids = np.memmap(data_path, mode="r", dtype=dtype)
+    token_ids = _load_local_array(data_path, dtype=dtype)
     eos_token_locations = (token_ids == eos_token_id).nonzero()[0]
     metadata_path = data_path.with_suffix(".csv.gz")
     with gzip.open(metadata_path, mode="wt") as f:
@@ -199,7 +208,7 @@ def iter_document_indices(
             raise ValueError(
                 "'eos_token_id' and 'dtype' are required to use the local array for finding document indices"
             )
-        mmap = np.memmap(data_path, mode="r", dtype=dtype)
+        mmap = _load_local_array(data_path, dtype=dtype)
         if bos_token_id is None:
             doc_boundaries = (mmap == eos_token_id).nonzero()[0]
         else:
@@ -230,7 +239,7 @@ def iter_document_indices(
 
         total_tokens: Optional[int] = None
         if dtype is not None:
-            total_tokens = get_file_size(data_path) // dtype(0).itemsize
+            total_tokens = (get_file_size(data_path) - get_npy_header_size(data_path)) // dtype(0).itemsize
 
         with gzip.open(metadata_path, "rt") as f:
             for line in f:
@@ -294,6 +303,33 @@ def get_document_indices(
     return list(iter_document_indices(data_path, local_cache=local_cache))
 
 
+_npy_header_size_cache: Dict[str, int] = {}
+
+_NPY_MAGIC = b"\x93NUMPY"
+
+
+def get_npy_header_size(path: PathOrStr) -> int:
+    """
+    Return the numpy ``.npy`` header size for the file at *path*, or 0 if the
+    file is not in ``.npy`` format (i.e. raw binary).  Results are cached.
+    """
+    key = str(path)
+    if key not in _npy_header_size_cache:
+        magic = get_bytes_range(path, 0, 10)
+        if magic[:6] == _NPY_MAGIC:
+            major = magic[6]
+            if major == 1:
+                header_len = int.from_bytes(magic[8:10], "little")
+                _npy_header_size_cache[key] = 10 + header_len
+            else:
+                header_len_bytes = get_bytes_range(path, 8, 4)
+                header_len = int.from_bytes(header_len_bytes, "little")
+                _npy_header_size_cache[key] = 12 + header_len
+        else:
+            _npy_header_size_cache[key] = 0
+    return _npy_header_size_cache[key]
+
+
 def load_array_slice(
     path: PathOrStr,
     start_idx: int,
@@ -309,7 +345,8 @@ def load_array_slice(
     :param dtype: The numpy datatype of the array.
     """
     item_size = dtype(0).itemsize
-    bytes_start = start_idx * item_size
+    header_size = get_npy_header_size(path)
+    bytes_start = start_idx * item_size + header_size
     num_bytes = (end_idx - start_idx) * item_size
     buffer = get_bytes_range(path, bytes_start, num_bytes)
     return np.frombuffer(buffer, dtype=dtype)

@@ -46,7 +46,7 @@ class DataMix(DataMixBase):
     OLMo_mix_0925_official = "OLMo-mix-0925-official"
 
     # Midtraining mixes
-    OLMo_midtraining_mix_0625_100B = "OLMo-midtraining-mix-0725-100B"
+    OLMo_midtraining_mix_0625_100B = "OLMo-midtraining-mix-0625-100B"
     OLMo_midtraining_mix_0925_ingredient1_100B = "OLMo-midtraining-mix-0925-ingredient1-100B"
     OLMo_midtraining_mix_0925_ingredient2_100B = "OLMo-midtraining-mix-0925-ingredient2-100B"
 
