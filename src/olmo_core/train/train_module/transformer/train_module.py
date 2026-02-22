@@ -470,15 +470,9 @@ class TransformerTrainModule(TrainModule):
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
-        # TODO: (epwalsh) Currently all of our evaluators require the full logits locally,
-        # but when we're using CP/TP we usually can't materialize the full logits locally (due to OOMs).
-        # However we could at least support in-loop PPL evals with a little work in the evaluator
-        # code to handle the sharded logits.
-        if self.cp_enabled:
-            raise RuntimeError(
-                f"{self.__class__.__name__}.eval_batch() does not support context parallelism yet, "
-                "please disable in-loop evals"
-            )
+        # TODO: (epwalsh) TP evals still require full logits locally and are not yet supported.
+        # CP is supported for PPL evals (LMEvaluator) since they only need per-token CE loss.
+        # Downstream evals that require full logits will fail naturally if attempted with CP.
         if self.tp_enabled:
             raise RuntimeError(
                 f"{self.__class__.__name__}.eval_batch() does not support tensor parallelism yet, "
@@ -486,6 +480,17 @@ class TransformerTrainModule(TrainModule):
             )
 
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
+
+        # When using CP, shard the label_mask along the sequence dimension to match
+        # the sharded ce_loss output shape (B, T/CP).
+        if self.cp_enabled and "label_mask" in model_kwargs:
+            assert self.model._cp_load_balancer is not None
+            (label_mask,) = self.model._cp_load_balancer.batch_shard(
+                inputs=[model_kwargs["label_mask"]],
+                seq_dims=[1],
+                pad_values=[0],
+            )
+            model_kwargs["label_mask"] = label_mask.to(torch.bool)
 
         self._set_model_mode("eval")
 
@@ -495,6 +500,7 @@ class TransformerTrainModule(TrainModule):
                 labels=labels,
                 ignore_index=self.label_ignore_index,
                 loss_reduction="none",
+                return_logits=False if self.cp_enabled else None,
                 **model_kwargs,
             )
 
