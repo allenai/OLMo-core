@@ -476,6 +476,24 @@ class TransformerTrainModule(TrainModule):
 
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
 
+        # When using CP/TP, shard the label_mask along the sequence dimension to match the
+        # sharded ce_loss output shape. CP shards first (S -> S/CP), then TP shards further
+        # (S/CP -> S/(CP*TP)).
+        if self.cp_enabled and "label_mask" in model_kwargs:
+            assert self.model._cp_load_balancer is not None
+            (label_mask,) = self.model._cp_load_balancer.batch_shard(
+                inputs=[model_kwargs["label_mask"]],
+                seq_dims=[1],
+                pad_values=[0],
+            )
+            model_kwargs["label_mask"] = label_mask.to(torch.bool)
+
+        if self.tp_enabled and "label_mask" in model_kwargs:
+            tp_mesh = self.model._tp_mesh
+            assert tp_mesh is not None
+            chunks = model_kwargs["label_mask"].chunk(tp_mesh.size(), dim=1)
+            model_kwargs["label_mask"] = chunks[tp_mesh.get_local_rank()]
+
         self._set_model_mode("eval")
 
         with self._eval_batch_context():
@@ -626,25 +644,6 @@ class TransformerTrainModule(TrainModule):
         labels = labels if labels is not None else batch.pop("labels", None)
         if "doc_lens" in batch and "max_doc_lens" in batch:
             log_once(log, "intra-document masking enabled")
-
-        # When using CP/TP, shard the label_mask along the sequence dimension to match the
-        # sharded ce_loss output shape. CP shards first (S -> S/CP), then TP shards further
-        # (S/CP -> S/(CP*TP)).
-        if self.cp_enabled and "label_mask" in batch:
-            assert self.model._cp_load_balancer is not None
-            (label_mask,) = self.model._cp_load_balancer.batch_shard(
-                inputs=[batch["label_mask"]],
-                seq_dims=[1],
-                pad_values=[0],
-            )
-            batch["label_mask"] = label_mask.to(torch.bool)
-
-        if self.tp_enabled and "label_mask" in batch:
-            tp_mesh = self.model._tp_mesh
-            assert tp_mesh is not None
-            chunks = batch["label_mask"].chunk(tp_mesh.size(), dim=1)
-            batch["label_mask"] = chunks[tp_mesh.get_local_rank()]
-
         return input_ids, labels, batch
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
