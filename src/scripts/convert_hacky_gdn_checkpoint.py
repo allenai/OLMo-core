@@ -139,11 +139,18 @@ def rename_keys(state_dict: dict) -> dict:
     2. ``blocks.{i}.fla_norm.<param>`` -> ``blocks.{i}.attention_norm.<param>``
 
     Keys that don't match either pattern are copied through unchanged.
+    If a value is itself a dict (nested checkpoint format), the function
+    recurses into it.
     """
     new_sd: dict = {}
     renamed = 0
 
     for key, value in state_dict.items():
+        # Recurse into nested dicts (e.g. checkpoint with "model" and "optim" sub-dicts).
+        if isinstance(value, dict):
+            new_sd[key] = rename_keys(value)
+            continue
+
         # 1. GDN parameters: fla.inner.* -> attention.*
         m = _FLA_INNER_RE.match(key)
         if m:
