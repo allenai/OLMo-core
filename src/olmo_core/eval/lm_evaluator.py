@@ -90,6 +90,9 @@ class LMEvaluator(Evaluator):
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
+        # ``logits`` may be ``None`` when context parallelism (CP) or tensor parallelism (TP) is
+        # enabled, since gathering the full logits across ranks is unnecessary for perplexity.
+        # Only ``ce_loss`` (already local per-token values) is needed here.
         if ce_loss is None:
             return
 

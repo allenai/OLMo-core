@@ -1,5 +1,6 @@
 import torch
 
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.nn.attention.ring import (
     RingAttentionZigZagLoadBalancer,
@@ -129,3 +130,44 @@ def test_label_mask_shard_zigzag_with_padding():
     # Zig-zag rank 0 gets chunks 0 and 3: tokens [0,1] and [6,7].
     # Tokens 6,7 are padded with 0 (False).
     assert sharded.tolist() == [[True, True, False, False]]
+
+
+def test_label_mask_chunk_for_tp():
+    """torch.chunk produces correct contiguous shards for TP's Shard(1) behavior."""
+    label_mask = torch.tensor([[True, False, True, False, True, True, False, False]])
+    tp_size = 2
+
+    chunks = label_mask.chunk(tp_size, dim=1)
+
+    # Rank 0 gets first half, rank 1 gets second half (contiguous split).
+    assert chunks[0].tolist() == [[True, False, True, False]]
+    assert chunks[1].tolist() == [[True, True, False, False]]
+    assert chunks[0].shape == (1, 4)
+    assert chunks[1].shape == (1, 4)
+
+
+def test_label_mask_chunk_for_tp_with_cp():
+    """Sequential CP + TP sharding produces the correct final shard."""
+    # Full sequence: 8 tokens. CP=2 (Ulysses), TP=2.
+    label_mask = torch.tensor([[True, False, True, False, True, True, False, False]])
+
+    # Step 1: CP shards first (Ulysses, rank 0 -> first half).
+    cp_lb = UlyssesLoadBalancer(cp_rank=0, cp_world_size=2)
+    (cp_sharded,) = cp_lb.batch_shard(inputs=[label_mask], seq_dims=[1], pad_values=[0])
+    cp_sharded = cp_sharded.to(torch.bool)
+    assert cp_sharded.shape == (1, 4)
+    assert cp_sharded.tolist() == [[True, False, True, False]]
+
+    # Step 2: TP shards the CP-sharded result (rank 0 -> first half of CP shard).
+    tp_size = 2
+    chunks = cp_sharded.chunk(tp_size, dim=1)
+    assert chunks[0].tolist() == [[True, False]]
+    assert chunks[1].tolist() == [[True, False]]
+    assert chunks[0].shape == (1, 2)
+
+
+def test_get_local_tensor_passthrough():
+    """get_local_tensor returns regular tensors unchanged."""
+    t = torch.tensor([1.0, 2.0, 3.0])
+    result = get_local_tensor(t)
+    assert result is t
