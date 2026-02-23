@@ -20,10 +20,8 @@ from olmo_core.data import (
     DataCollator,
     NumpyFSLDataLoader,
     NumpyFSLDatasetBase,
-    NumpyFSLDatasetConfig,
+    NumpyFSLDatasetConfig, NumpyPackedFSLDatasetConfig,
 )
-from olmo_core.data.mixes import DataMix
-from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.io import normalize_path
 
 log = logging.getLogger(__name__)
@@ -49,21 +47,18 @@ def load_trainer_state(checkpoint_dir: str) -> Dict[str, Any]:
     return torch.load(cached_path(trainer_state_path), weights_only=False)
 
 
-def verify_paths_match_mix(
-    data_paths: List[str], mix_name: str, tokenizer: TokenizerConfig, mix_base_dir: str
+def verify_paths_match(
+    data_paths: List[str], dataset_paths: List[str]
 ) -> bool:
-    """Verify that data_paths.txt matches the paths from the mix in config.json."""
-    mix = DataMix(mix_name)
-    assert tokenizer.identifier is not None
-    mix_paths, _ = mix.build(mix_base_dir, tokenizer.identifier)
-
-    if len(data_paths) != len(mix_paths):
+    """Verify that data_paths.txt matches the paths from the reconstructed dataset."""
+    if len(data_paths) != len(dataset_paths):
         log.error(
-            f"Path count mismatch: data_paths.txt has {len(data_paths)} paths, mix has {len(mix_paths)}"
+            f"Path count mismatch: data_paths.txt has {len(data_paths)} paths, "
+            f"dataset has {len(dataset_paths)}"
         )
         return False
 
-    for i, (actual, expected) in enumerate(zip(data_paths, mix_paths)):
+    for i, (actual, expected) in enumerate(zip(data_paths, dataset_paths)):
         if normalize_path(actual) != normalize_path(expected):
             log.error(f"Path mismatch at index {i}:\n  Actual:   {actual}\n  Expected: {expected}")
             return False
@@ -145,21 +140,6 @@ def main():
         log.error(f"Only FSL datasets are supported, got: {data_loader_state['dataset_type']}")
         sys.exit(1)
 
-    # Verify that data_paths.txt matches the mix
-    tokenizer_config_dict = {
-        k: v for k, v in dataset_config_dict["tokenizer"].items() if k != "_CLASS_"
-    }
-    tokenizer_config = TokenizerConfig(**tokenizer_config_dict)
-
-    if not verify_paths_match_mix(
-        data_paths,
-        dataset_config_dict["mix"],
-        tokenizer_config,
-        dataset_config_dict.get("mix_base_dir", "gs://ai2-llm"),
-    ):
-        log.error("Mix verification failed! data_paths.txt does not match the mix from config.json")
-        sys.exit(1)
-
     # Reconstruct dataset
     dataset_class_name = dataset_config_dict["_CLASS_"]
     if dataset_class_name == "olmo_core.data.numpy_dataset.NumpyDatasetConfig":
@@ -169,6 +149,8 @@ def main():
         config_class = NumpyFSLDatasetConfig
     elif dataset_class_name == "olmo_core.data.numpy_dataset.NumpyFSLDatasetConfig":
         config_class = NumpyFSLDatasetConfig
+    elif dataset_class_name == "olmo_core.data.numpy_dataset.NumpyPackedFSLDatasetConfig":
+        config_class = NumpyPackedFSLDatasetConfig
     else:
         log.error(f"Unsupported dataset config class: {dataset_class_name}")
         sys.exit(1)
@@ -188,11 +170,19 @@ def main():
     # Remove fields that shouldn't be passed to from_dict
     config_fields.pop("name", None)
     config_fields.pop("_CLASS_", None)  # Remove _CLASS_ field, we already determined the class
-    # Keep mix and mix_base_dir - the dataset will build paths from the mix
 
     dataset_config = config_class.from_dict(config_fields)
     dataset = dataset_config.build()
     assert isinstance(dataset, NumpyFSLDatasetBase), f"Expected FSL dataset, got {type(dataset)}"
+
+    # Verify that data_paths.txt matches the reconstructed dataset paths.
+    # This comparison happens after build(), so source_permutation_seed has already been applied
+    # to dataset.paths, matching the order saved in data_paths.txt during training.
+    if not verify_paths_match(data_paths, [str(p) for p in dataset.paths]):
+        log.error(
+            "Path verification failed! data_paths.txt does not match the reconstructed dataset"
+        )
+        sys.exit(1)
 
     # Prepare the dataset
     dataset.prepare()
