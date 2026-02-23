@@ -251,6 +251,18 @@ def main():
     log.info(f"Loading batch for step {args.step}")
     batch = data_loader[args.step]
 
+    # Trace each instance index back to its source file(s).
+    if isinstance(dataset, NumpyPackedFSLDataset):
+        source_files = []
+        for idx in batch["index"].tolist():
+            for i, (start, end) in enumerate(dataset.source_instance_offsets):
+                if start <= idx < end:
+                    source_files.append([str(p) for p in dataset._source_path_groups[i]])
+                    break
+            else:
+                source_files.append(None)
+        batch["source_files"] = source_files
+
     if args.output is not None:
         with open(args.output, "wb") as f:
             pickle.dump(batch, f)
