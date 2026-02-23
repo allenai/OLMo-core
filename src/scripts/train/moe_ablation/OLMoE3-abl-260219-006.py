@@ -92,18 +92,18 @@ SEQUENCE_LENGTH = 8192
 
 MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-SAVE_INTERVAL=200
+SAVE_INTERVAL=100
 
-NUM_EXPERTS = 128
-TOP_K = 8
-D_MODEL=2560
+NUM_EXPERTS = 64
+TOP_K = 4
+D_MODEL=3072
 D_ATTN=D_MODEL
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 1024
+MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -111,14 +111,14 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) # * 3 // 2
 
-MICRO_BSZ = 1
+MICRO_BSZ = 2
 # DP_DIM=2
 EP_DIM=8
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2)
+REF_NUM_NODES=8
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (12)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -128,7 +128,7 @@ GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 10
 LR= 3e-4 # target lr for 32M tokens
 # LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
-NUM_LAYERS=16
+NUM_LAYERS=32
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -141,8 +141,9 @@ else:
 
 # SPLIT_POINTS = None
 USE_COMPILE=True
-USE_NO_SYNC_EP=False
+USE_NO_SYNC_EP=True
 USE_AC=False
+PER_LAYER_RECOMPUTE=True
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 UNIFORM_ASSIGN=False
@@ -150,8 +151,7 @@ RANDOM_ASSIGN=False
 
 SEED = 2026
 
-# TAG=f'ns' if USE_NO_SYNC_EP else 's'
-TAG='dbg'
+TAG=f'dbg'
 
 # if UNIFORM_ASSIGN:
 #     TAG = 'U-' + TAG
@@ -192,7 +192,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
-        recompute_each_block=False,
+        recompute_each_block=PER_LAYER_RECOMPUTE,
         recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
@@ -202,6 +202,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
+            ep_no_sync_share_combine_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make combine_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,
@@ -421,18 +422,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=1606,
-                                   end=1609
+                                   start=206,
+                                   end=209
             )
         )
         .with_callback(
             "torch_mem_history",
-            TorchMemoryHistoryCallback(enabled=True, # NOTE: change this
+            TorchMemoryHistoryCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=1211,
-                                   end=1214,
+                                   start=206,
+                                   end=209,
                                    output_dir='/workspace/tmp'
             )
         )

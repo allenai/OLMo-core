@@ -880,44 +880,8 @@ class MoEV2TransformerTrainModule(TrainModule):
                         # Run backward pass.
                         dbg_mem_before_bwd = torch.cuda.memory_allocated()/1024**3
 
-                        # if DEBUG_MODE and not dry_run and self.trainer.global_step == 23525:
-                        #     if micro_batch_idx == 17 and dist.get_rank() == 17:
-                        #         loss = loss.detach() + 0.0 * loss
 
-                        # dist.barrier()
-                        # if dist.get_rank() == 0:
-                        #     print(f"-------before bwd {micro_batch_idx}--------")
                         loss.backward()
-
-                        # if dry_run:
-                        #     torch.cuda.empty_cache()
-                        #     print(f'[Dry Run {dist.get_rank()}] after bwd mb{micro_batch_idx} {torch.cuda.memory_allocated()/1024**3:.2f} GB')
-                        # dist.barrier()
-                        # if dist.get_rank() == 0:
-                        #     print(f"-------after bwd {micro_batch_idx}--------")
-                        # self.model.reset_offload_handler()
-
-                        # found_nan_inf = False
-                        # for name, param in self.model_parts[0].named_parameters():
-                        # #     # check nan/inf in grad
-
-                        #     if param.grad is not None:
-                        #         found_nan_inf |= debug_check_grad(name, "grad", param.grad, input_ids=input_ids, micro_batch_idx=micro_batch_idx)
-                        #     elif param._main_grad_fp32 is not None:
-                        #         found_nan_inf |= debug_check_grad(name, "_main_grad_fp32", param._main_grad_fp32, input_ids=input_ids, micro_batch_idx=micro_batch_idx)
-
-                        # if found_nan_inf:
-                        #     raise RuntimeError(f"NaN or Inf found in gradients at micro-batch {micro_batch_idx} on rank {dist.get_rank()}")
-
-                        # dump grad
-                        # named_grads = []
-                        # for name, param in self.model_parts[0].named_parameters():
-                        #     if param.grad is not None:
-                        #         named_grads.append((f"{name}.grad", param.grad.clone()))
-                        #     elif param._main_grad_fp32 is not None:
-                        #         named_grads.append((f"{name}._main_grad_fp32", param._main_grad_fp32.clone()))
-                        # torch.save(named_grads, f"grads_rank{dist.get_rank()}_nosync.pt")
-
 
                         dbg_mem_after_bwd = torch.cuda.memory_allocated()/1024**3
                         dbg_mem_activation_freed = dbg_mem_before_bwd - dbg_mem_after_bwd
@@ -982,6 +946,15 @@ class MoEV2TransformerTrainModule(TrainModule):
                     print(f"Alloc - {tag}: {mem:.2f} GB")
                 for (tag, mem) in self.model_parts[0]._debug_max_alloc_mem_layer_logs:
                     print(f"Max - {tag}: {mem:.2f} GB")
+
+
+
+            if DEBUG_MODE and not dry_run:
+                self._dump_debug_info()
+
+            for model in self.model_parts:
+                model.finalize_grad_reduce()
+            
         else:
             # pipeline parallel forward / backward
             # Calculate how many tokens are going to be used in the loss.
@@ -1032,31 +1005,15 @@ class MoEV2TransformerTrainModule(TrainModule):
                         if z_loss is not None: 
                             z_batch_loss = (z_batch_loss + z_loss.detach()) if z_batch_loss is not None else z_loss.detach()
 
+            if DEBUG_MODE and not dry_run:
+                self._dump_debug_info()
+
+
+            for model in self.model_parts:
+                model.finalize_grad_reduce()
             
         #############################
-        # debug_norm = [torch.nn.utils.get_total_norm([p.grad for p in model_part.parameters()]) for model_part in self.model_parts]
-        if DEBUG_MODE and not dry_run:
-            self._dump_debug_info()
 
-        # self._point_to_full_precision_params()
-        # if dist.get_rank() == 0:
-        #     print("-------fwd/bwd done--------")
-        for model in self.model_parts:
-            # print(f"{dist.get_rank()} finalize grad reduce")
-            model.finalize_grad_reduce()
-            # print(f"{dist.get_rank()} finalize done")
-        # if dist.get_rank() == 0:
-        #     print("-------finalize_grad_reduce done--------")
-
-        # for name, param in self.model_parts[0].named_parameters():
-        #     # check nan/inf in grad
-        #     if param.grad is not None:
-        #         debug_check_grad(name, "grad", param.grad, input_ids=None, micro_batch_idx=-2)
-        #     elif param._main_grad_fp32 is not None:
-        #         debug_check_grad(name, "_main_grad_fp32", param._main_grad_fp32, input_ids=None, micro_batch_idx=-2)
-        # dist.barrier()
-        # if dist.get_rank() == 0:
-        #     print("-------all ranks passed barrier--------")
 
         for model in self.model_parts:
             model.post_batch(dry_run=dry_run)

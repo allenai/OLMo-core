@@ -160,8 +160,8 @@ class MultiGroupDistributedDataParallel(Module):
 
         # reduction bucket size
         if bucket_cap_mb is None:
-            # default case (bucket cap is 25 MiB)
-            bucket_cap_mb = 25
+            # default case (bucket cap is 250 MiB)
+            bucket_cap_mb = 250
             self.bucket_bytes_cap_default = True
         else:
             self.bucket_bytes_cap_default = False

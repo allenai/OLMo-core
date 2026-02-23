@@ -72,6 +72,7 @@ class _NoSyncSymmBuffers:
     combine_in: torch.Tensor
     combine_in_rank_splits: torch.Tensor
     combine_out: torch.Tensor
+    combine_out_is_shared: bool
     combine_rank_splits_offsets: torch.Tensor
     combine_tmp_rank_splits_offsets: torch.Tensor
 
@@ -84,7 +85,7 @@ class _NoSyncSymmTransientSlot:# shared in pool
     dispatch_rank_splits_offsets: torch.Tensor
     dispatch_tmp_rank_splits_offsets: torch.Tensor
     combine_in: torch.Tensor
-    # combine_out: torch.Tensor
+    combine_out: Optional[torch.Tensor]
     combine_in_rank_splits: torch.Tensor
     combine_rank_splits_offsets: torch.Tensor
     combine_tmp_rank_splits_offsets: torch.Tensor
@@ -131,6 +132,8 @@ class _NoSyncSymmSharedPool:
         dispatch_in_cap: int,
         dispatch_out_cap: int,
         combine_in_cap: int,
+        combine_out_cap: int,
+        include_combine_out: bool,
         d_model: int,
         dtype: torch.dtype,
         device: torch.device,
@@ -182,13 +185,16 @@ class _NoSyncSymmSharedPool:
             dtype=dtype,
             device=device,
         )
-        # combine_out = self._get_or_init_slot_tensor(
-        #     slot_idx=slot_idx,
-        #     name="combine_out",
-        #     shape=(dispatch_in_cap, d_model),
-        #     dtype=dtype,
-        #     device=device,
-        # )
+        if include_combine_out:
+            combine_out = self._get_or_init_slot_tensor(
+                slot_idx=slot_idx,
+                name="combine_out",
+                shape=(combine_out_cap, d_model),
+                dtype=dtype,
+                device=device,
+            )
+        else:
+            combine_out = None
         combine_in_rank_splits = self._get_or_init_slot_tensor(
             slot_idx=slot_idx,
             name="combine_in_rank_splits",
@@ -217,7 +223,7 @@ class _NoSyncSymmSharedPool:
             dispatch_rank_splits_offsets=dispatch_rank_splits_offsets,
             dispatch_tmp_rank_splits_offsets=dispatch_tmp_rank_splits_offsets,
             combine_in=combine_in,
-            # combine_out=combine_out,
+            combine_out=combine_out,
             combine_in_rank_splits=combine_in_rank_splits,
             combine_rank_splits_offsets=combine_rank_splits_offsets,
             combine_tmp_rank_splits_offsets=combine_tmp_rank_splits_offsets,
@@ -350,6 +356,7 @@ class _DispatchVDevAutograd(torch.autograd.Function):
 
 class _CombineVDevAutograd(torch.autograd.Function):
     @staticmethod
+    @torch.compiler.disable
     def forward(  # type: ignore[override]
         ctx,
         input: torch.Tensor,
@@ -431,7 +438,17 @@ class _CombineVDevAutograd(torch.autograd.Function):
             raise RuntimeError(
                 f"combine backward grad rows ({grad_out.shape[0]}) must equal symmetric combine grad input capacity ({symm_grad_out.shape[0]})"
             )
-        symm_grad_out.copy_(grad_out)
+        symm_grad_out_aliases_grad_out = (
+            grad_out.untyped_storage().data_ptr() == symm_grad_out.untyped_storage().data_ptr()
+            and grad_out.storage_offset() == symm_grad_out.storage_offset()
+            and tuple(grad_out.shape) == tuple(symm_grad_out.shape)
+            and tuple(grad_out.stride()) == tuple(symm_grad_out.stride())
+        )
+        if not symm_grad_out_aliases_grad_out:
+            # raise RuntimeError("Not Expected: combine backward grad_out should alias symm_grad_out buffer to avoid extra copy")
+            # Shared-combine_out mode may route grad through clone() and lose aliasing.
+            # Copy into the symmetric buffer in that case.
+            symm_grad_out.copy_(grad_out)
 
         symm_grad_input = ctx.symm_input
         # Mirror dispatch backward: vdev may only write a prefix when rank
@@ -482,7 +499,8 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     ep_no_sync: bool = False
     ep_no_sync_use_2d_all_to_all: bool = False
     ep_no_sync_capacity_factor: float = 1.125
-    ep_no_sync_shared_slots: int = 2
+    ep_no_sync_shared_slots: int = 1
+    ep_no_sync_share_combine_out: bool = False
     ep_no_sync_major_align: int = 1
     ep_no_sync_restore_unpermute_backend: str = "te_fused"
         
@@ -618,6 +636,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ep_no_sync_use_2d_all_to_all: bool = False,
         ep_no_sync_capacity_factor: float = 2.0,
         ep_no_sync_shared_slots: int = 2,
+        ep_no_sync_share_combine_out: bool = False,
         ep_no_sync_major_align: int = 1,
         ep_no_sync_restore_unpermute_backend: str = "te_fused",
         init_device: str = "cpu",
@@ -723,6 +742,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             )
         self.ep_no_sync_capacity_factor = ep_no_sync_capacity_factor
         self.ep_no_sync_shared_slots = ep_no_sync_shared_slots
+        self.ep_no_sync_share_combine_out = ep_no_sync_share_combine_out
         self.ep_no_sync_major_align = ep_no_sync_major_align
         self.ep_no_sync_restore_unpermute_backend = ep_no_sync_restore_unpermute_backend.lower()
         self._ep_symm_group_name: Optional[str] = None
@@ -1109,6 +1129,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     dispatch_in_cap=dispatch_in_cap,
                     dispatch_out_cap=dispatch_out_cap,
                     combine_in_cap=combine_in_cap,
+                    combine_out_cap=combine_out_cap,
+                    include_combine_out=self.ep_no_sync_share_combine_out,
                     d_model=d_model,
                     dtype=dtype,
                     device=device,
@@ -1124,7 +1146,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             dispatch_rank_splits_offsets = transient_slot.dispatch_rank_splits_offsets.detach()
             dispatch_tmp_rank_splits_offsets = transient_slot.dispatch_tmp_rank_splits_offsets.detach()
             combine_in = transient_slot.combine_in.detach()
-            # combine_out = transient_slot.combine_out.detach()
             combine_in_rank_splits = transient_slot.combine_in_rank_splits.detach()
             combine_rank_splits_offsets = transient_slot.combine_rank_splits_offsets.detach()
             combine_tmp_rank_splits_offsets = transient_slot.combine_tmp_rank_splits_offsets.detach()
@@ -1162,12 +1183,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             combine_in = self._get_or_init_ep_no_sync_symm_tensor(
                 name="combine_in",
                 shape=(combine_in_cap, d_model),
-                dtype=dtype,
-                device=device,
-            )
-            combine_out = self._get_or_init_ep_no_sync_symm_tensor(
-                name="combine_out",
-                shape=(combine_out_cap, d_model),
                 dtype=dtype,
                 device=device,
             )
@@ -1214,14 +1229,19 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         #     device=device,
         # )
 
-        # Keep combine_out per-layer: unpermute backward saves this input tensor (for prob merge).
-        # There's no point to share this buffer because unpermute backward will need a new copy each layer any way.
-        combine_out = self._get_or_init_ep_no_sync_symm_tensor(
-            name="combine_out",
-            shape=(combine_out_cap, d_model),
-            dtype=dtype,
-            device=device,
-        )
+        shared_combine_out = transient_slot.combine_out if transient_slot is not None else None
+        if shared_combine_out is not None:
+            combine_out = shared_combine_out.detach()
+            combine_out_is_shared = True
+        else:
+            # Per-block fallback: required when shared pool is unavailable or disabled.
+            combine_out = self._get_or_init_ep_no_sync_symm_tensor(
+                name="combine_out",
+                shape=(combine_out_cap, d_model),
+                dtype=dtype,
+                device=device,
+            )
+            combine_out_is_shared = False
         return _NoSyncSymmBuffers(
             dispatch_in=dispatch_in,
             dispatch_in_rank_splits=dispatch_in_rank_splits,
@@ -1231,6 +1251,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             combine_in=combine_in,
             combine_in_rank_splits=combine_in_rank_splits,
             combine_out=combine_out,
+            combine_out_is_shared=combine_out_is_shared,
             combine_rank_splits_offsets=combine_rank_splits_offsets,
             combine_tmp_rank_splits_offsets=combine_tmp_rank_splits_offsets,
         )
@@ -1396,6 +1417,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         local_x_global_routed_expert_weights: torch.Tensor,
         hidden_shape_before_permute: torch.Size,
         row_id_map_is_packed: bool = False,
+        backward_grad_input_buffer: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         assert self.routed_experts_router is not None
         merging_probs = local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k)
@@ -1412,10 +1434,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     merging_probs=merging_probs,
                     num_kept=num_kept,
                     row_id_map_is_packed=row_id_map_is_packed,
+                    backward_grad_input_buffer=backward_grad_input_buffer,
                     map_type="index",
                 ),
             )
         if backend == "te_legacy":
+            raise RuntimeError('te_legacy deprecated')
             if row_id_map_is_packed:
                 restored_local_x = combine_out
             else:
@@ -1905,9 +1929,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             mixed_shared_out = None
 
         with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+            # Shared combine_out storage may be reused by later layers before this
+            # layer's backward runs, so keep a per-call snapshot for autograd.
+            combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
             # combine_out does not have capacity pads, but still has dropped tokens at the tail
             local_x = self._restore_drop_unpermute_1d(
-                combine_out=combine_out,
+                combine_out=combine_out_for_unpermute,
                 local_inverse_reorder_indices=local_inverse_reorder_indices,
                 packed_keep_mask=packed_keep_mask,
                 num_kept=num_kept,
@@ -1915,6 +1942,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
                 hidden_shape_before_permute=hidden_shape_before_permute,
                 row_id_map_is_packed=True,
+                backward_grad_input_buffer=buffers.combine_out.detach(), # the backward should directly write into the combine_out buffer to save memory and copy
             )
 
         local_x = local_x.view(in_shape)

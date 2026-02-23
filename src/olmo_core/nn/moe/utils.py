@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover - import guard
 
 from olmo_core.kernels.moe_chunk_reorder import moe_chunk_permute, moe_chunk_unpermute
 from olmo_core.kernels.moe_permute_drop import moe_permute_drop_fwd
+from olmo_core.kernels.moe_unpermute_bwd import moe_unpermute_bwd as moe_unpermute_bwd_cuda
 from olmo_core.utils import get_or_init_stream
 
 import transformer_engine_torch as tex
@@ -375,7 +376,7 @@ def _build_fused_unpermute_row_id_map(
 
 
 class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
-    """TE index-map unpermute with explicit dropped-row grad masking."""
+    """TE index-map unpermute forward + custom CUDA backward."""
 
     @staticmethod
     def forward(  # type: ignore[override]
@@ -384,6 +385,7 @@ class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
         row_id_map: torch.Tensor,
         merging_probs: torch.Tensor,
         packed_keep_mask: torch.Tensor,
+        backward_grad_input_buffer: Optional[torch.Tensor],
     ) -> torch.Tensor:
         if row_id_map.dtype != torch.int32:
             row_id_map = row_id_map.to(dtype=torch.int32)
@@ -399,6 +401,7 @@ class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
             probs.shape[1],
         )
         ctx.save_for_backward(inp, row_id_map, probs, packed_keep_mask)
+        ctx.backward_grad_input_buffer = backward_grad_input_buffer
         return output
 
     @staticmethod
@@ -410,22 +413,22 @@ class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
         grad_inp = None
         grad_probs = None
         if ctx.needs_input_grad[0]:
-            grad_inp, grad_probs = tex.moe_unpermute_bwd(
-                grad_output,
-                inp,
-                TE_DType[grad_output.dtype],
-                row_id_map,
-                probs,
+            grad_inp, grad_probs = moe_unpermute_bwd_cuda(
+                grad_output=grad_output,
+                input_fwd=inp,
+                row_id_map=row_id_map,
+                probs=probs,
+                keep_mask=packed_keep_mask,
+                out=ctx.backward_grad_input_buffer,
             )
-            # In TE unpermute backward, act_grad is allocated with torch::empty(...) (not zeroed)
-            # TE backward kernel only writes when dest_row != -1 (valid row)
-            # So rows corresponding to dropped tokens can remain uninitialized garbage unless you zero them.
-            grad_inp.masked_fill_(~packed_keep_mask.unsqueeze(-1), 0)
-
+            if ctx.backward_grad_input_buffer is not None:
+                assert grad_inp is ctx.backward_grad_input_buffer, (
+                    "Expected moe_unpermute_bwd to write to backward_grad_input_buffer"
+                )
 
         if not ctx.needs_input_grad[2]:
             grad_probs = None
-        return grad_inp, None, grad_probs, None
+        return grad_inp, None, grad_probs, None, None
 
 
 # @torch.compiler.disable
@@ -438,11 +441,12 @@ def moe_unpermute_1d_fused_drop_no_compile(
     merging_probs: torch.Tensor,
     num_kept: Optional[torch.Tensor] = None,
     row_id_map_is_packed: bool = False,
+    backward_grad_input_buffer: Optional[torch.Tensor] = None,
     map_type: str = "index",
 ) -> torch.Tensor:
     """
-    Fused 1D restore-drop + TE index-map unpermute.
-    TODO: add a custom CUDA backend mirroring TE `_moe_unpermute_index_map`.
+    Fused 1D restore-drop + TE index-map unpermute forward.
+    Backward uses a custom CUDA kernel equivalent to TE moe_unpermute_bwd with dropped-row zeroing.
     """
     if map_type != "index":
         raise ValueError(f"moe_unpermute_1d_fused_drop_no_compile only supports map_type='index' (got {map_type})")
@@ -471,6 +475,22 @@ def moe_unpermute_1d_fused_drop_no_compile(
         raise ValueError(
             f"input rows ({inp.shape[0]}) must equal packed_keep_mask size ({packed_keep_mask.numel()})"
         )
+    if backward_grad_input_buffer is not None:
+        if tuple(backward_grad_input_buffer.shape) != tuple(inp.shape):
+            raise ValueError(
+                "backward_grad_input_buffer shape mismatch: "
+                f"expected={tuple(inp.shape)} got={tuple(backward_grad_input_buffer.shape)}"
+            )
+        if backward_grad_input_buffer.dtype != inp.dtype:
+            raise ValueError(
+                "backward_grad_input_buffer dtype mismatch: "
+                f"buffer={backward_grad_input_buffer.dtype} inp={inp.dtype}"
+            )
+        if backward_grad_input_buffer.device != inp.device:
+            raise ValueError(
+                "backward_grad_input_buffer device mismatch: "
+                f"buffer={backward_grad_input_buffer.device} inp={inp.device}"
+            )
     if num_kept is not None and not torch.is_tensor(num_kept):
         raise ValueError(f"num_kept must be a scalar tensor when provided, got {type(num_kept)}")
 
@@ -495,7 +515,13 @@ def moe_unpermute_1d_fused_drop_no_compile(
             num_kept=num_kept_t,
         )
 
-    return _TEUnpermuteIndexMapMaskedAutograd.apply(inp, remapped_row_id_map, merging_probs, keep_mask)
+    return _TEUnpermuteIndexMapMaskedAutograd.apply(
+        inp,
+        remapped_row_id_map,
+        merging_probs,
+        keep_mask,
+        backward_grad_input_buffer,
+    )
 
 
 @torch.compiler.disable
