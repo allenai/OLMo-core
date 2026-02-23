@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mark ephemeral checkpoints with the `ephemeral` flag in their metadata.
 - Added `ephemeral: Optional[bool]` flag the `Checkpointer.find_checkpoints()` for filtering.
 - Added support for block-pattern based initialization of hybrid transformers. `TransformerConfig.block` now accepts a dict of named `TransformerBlockConfig`s, paired with a `block_pattern` list that controls per-layer block selection.
+- Added optional `vocab_size` field to `DataCollator` for validating token IDs are in `[0, vocab_size)` before the batch reaches the model. Wired through automatically in both `NumpyDataLoaderConfig` and `ComposableDataLoaderConfig`.
 
 ### Fixed
 
