@@ -1,14 +1,13 @@
-import logging
 from datetime import datetime
 from functools import partial
 
 from olmo_core.config import DType
 from olmo_core.data import (
-    DataMix,
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
 )
+from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import (
@@ -17,12 +16,17 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
-from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.nn.transformer.config import TransformerBlockConfig
+from olmo_core.optim import (
+    LinearWithWarmup,
+    OptimGroupOverride,
+    SchedulerUnits,
+    SkipStepAdamWConfig,
+)
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -30,81 +34,54 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-log = logging.getLogger(__name__)
-
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
+MAX_TOKENS = 100_000_000_000  # 100B
+LR = 0.00020712352850360292
+# SEED = 1337  #  ingredient 1
+SEED = 683  #  ingredient 2
 
-# Uncomment for benchmarking TPS (simulate TPS at 64 nodes with 16 nodes)
-# GLOBAL_BATCH_SIZE //= 4
-
-# Reduce per-device batch size to save on memory.
-MICROBATCH_DISCOUNT = 1
-
-# Remove heads to match params/TPS of transformer.
 REMOVE_HEADS = 2
-
-### OLMo "3.1" 7B Settings (from OLMo 3 32B)
-DATA_MIX = DataMix.OLMo_mix_0925
-MAX_DURATION = Duration.epochs(1)
-HARD_STOP = None
 INSTANCE_FILTER = True
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo3_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        # See README for how to override with flash_3 using CLI.
-        attn_backend=AttentionBackendName.flash_2,
     )
+    assert isinstance(config.block, TransformerBlockConfig)
+    assert isinstance(config.block.sequence_mixer, AttentionConfig)
 
     # Remove heads (and scale down d_model) to compensate for extra params.
     config.d_model -= REMOVE_HEADS * 128
-    assert isinstance(config.block, TransformerBlockConfig)
-    config.block.sequence_mixer.n_heads -= REMOVE_HEADS
-    assert config.d_model / config.block.sequence_mixer.n_heads == 128
+    num_heads = config.block.sequence_mixer.n_heads - REMOVE_HEADS
+    config.block.sequence_mixer.n_heads = num_heads
+    assert config.d_model / num_heads == 128
 
-    # Save the attention block config (reordered_norm).
     attn_block = config.block
 
-    n_heads = attn_block.sequence_mixer.n_heads
-
-    # GDN block (pre-norm, 75% of layers).
-    gdn_block = TransformerBlockConfig(
-        name=TransformerBlockType.default,
+    gdn_block = attn_block.replace(
         sequence_mixer=GatedDeltaNetConfig(
-            n_heads=n_heads,
-            # FLA repo says num_heads * head_dim = 0.75 * hidden_size
-            head_dim=int(0.75 * config.d_model / n_heads),
+            n_heads=num_heads,
+            head_dim=int(0.75 * config.d_model / num_heads),
             allow_neg_eigval=True,
         ),
-        layer_norm=attn_block.layer_norm,
-        feed_forward=attn_block.feed_forward,
     )
 
     # 3 GDN layers followed by 1 attention layer, repeating.
     config.block = {"gdn": gdn_block, "attn": attn_block}
     config.block_pattern = ["gdn", "gdn", "gdn", "attn"]
+    assert config.n_layers % len(config.block_pattern) == 0
 
     return config
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    rank_microbatch_size = common.max_sequence_length
-
-    # if common.launch is not None:
-    #     gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
-    #     if all("B200" in g for g in gpus):
-    #         rank_microbatch_size *= 2
-
-    # Added because FLA models seem to use more memory than transformers.
-    rank_microbatch_size = int(rank_microbatch_size // MICROBATCH_DISCOUNT)
-
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=rank_microbatch_size,
+        rank_microbatch_size=common.max_sequence_length,
         max_sequence_length=common.max_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=3e-4,
+            lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -121,7 +98,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=0, alpha_f=0.0),
     )
 
 
@@ -130,14 +107,21 @@ def build_data_components(
     intra_document_masking: bool = False,
     include_instance_filter: bool = False,
 ) -> DataComponents:
-    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DATA_MIX,
+    source_list = SourceMixtureList.from_yaml(
+        "src/olmo_core/data/source_mixtures/OLMo3-32B-midtraining-modelnamefilter.yaml"
+    )
+    source_list.validate()
+    dataset_config = NumpyFSLDatasetConfig.from_src_mix(
+        src_mix=SourceMixtureDatasetConfig(
+            source_list=source_list,
+            requested_tokens=MAX_TOKENS,
+            global_batch_size=GLOBAL_BATCH_SIZE,
+            processes=16,
+            seed=SEED,
+        ),
         tokenizer=common.tokenizer,
-        mix_base_dir=common.root_dir,
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
-        # max target sequence length doesn't affect how the data is loaded, just how it's cached behind the scenes
-        max_target_sequence_length=max(common.max_sequence_length, 8192),
         generate_doc_lengths=intra_document_masking,
         instance_filter_config=None
         if not include_instance_filter
@@ -147,7 +131,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=4
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
@@ -164,13 +148,15 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            # willm: Adapted this from 1B linear RNN runs.
+            load_strategy=LoadStrategy.always,
+            load_trainer_state=False,
+            load_optim_state=True,
+            load_path=f"{common.root_dir}/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h/step1414078/",
             save_folder=f"{common.root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
-            max_duration=MAX_DURATION,
-            hard_stop=HARD_STOP,
+            max_duration=Duration.tokens(MAX_TOKENS),
         )
         .with_callback(
             "checkpointer",
