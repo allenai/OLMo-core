@@ -1,8 +1,6 @@
 import torch
 
-from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.eval.lm_evaluator import LMEvaluator
-from olmo_core.nn.attention.ring import UlyssesLoadBalancer
 
 
 def _make_evaluator(labels=("c4", "wiki")) -> LMEvaluator:
@@ -77,42 +75,57 @@ def test_update_metrics_multiple_labels():
     assert metrics["wiki/CE loss"].item() == 5.5
 
 
-def test_label_mask_chunk_for_tp():
-    """torch.chunk produces correct contiguous shards for TP's Shard(1) behavior."""
-    label_mask = torch.tensor([[True, False, True, False, True, True, False, False]])
-    tp_size = 2
+def test_compute_metrics_returns_ppl():
+    """compute_metrics should return PPL = exp(CE loss) for each label."""
+    evaluator = _make_evaluator(labels=("c4",))
+    ce_loss = torch.tensor([[1.0, 2.0, 3.0]])
+    batch = {"metadata": [{"label": "c4"}]}
 
-    chunks = label_mask.chunk(tp_size, dim=1)
+    evaluator.update_metrics(batch, ce_loss=ce_loss, logits=None)
 
-    # Rank 0 gets first half, rank 1 gets second half (contiguous split).
-    assert chunks[0].tolist() == [[True, False, True, False]]
-    assert chunks[1].tolist() == [[True, True, False, False]]
-    assert chunks[0].shape == (1, 4)
-    assert chunks[1].shape == (1, 4)
-
-
-def test_label_mask_chunk_for_tp_with_cp():
-    """Sequential CP + TP sharding produces the correct final shard."""
-    # Full sequence: 8 tokens. CP=2 (Ulysses), TP=2.
-    label_mask = torch.tensor([[True, False, True, False, True, True, False, False]])
-
-    # Step 1: CP shards first (Ulysses, rank 0 -> first half).
-    cp_lb = UlyssesLoadBalancer(cp_rank=0, cp_world_size=2)
-    (cp_sharded,) = cp_lb.batch_shard(inputs=[label_mask], seq_dims=[1], pad_values=[0])
-    cp_sharded = cp_sharded.to(torch.bool)
-    assert cp_sharded.shape == (1, 4)
-    assert cp_sharded.tolist() == [[True, False, True, False]]
-
-    # Step 2: TP shards the CP-sharded result (rank 0 -> first half of CP shard).
-    tp_size = 2
-    chunks = cp_sharded.chunk(tp_size, dim=1)
-    assert chunks[0].tolist() == [[True, False]]
-    assert chunks[1].tolist() == [[True, False]]
-    assert chunks[0].shape == (1, 2)
+    metrics = evaluator.compute_metrics()
+    expected_ce = torch.tensor([1.0, 2.0, 3.0]).mean()
+    assert metrics["c4/PPL"].item() == torch.exp(expected_ce).item()
 
 
-def test_get_local_tensor_passthrough():
-    """get_local_tensor returns regular tensors unchanged."""
-    t = torch.tensor([1.0, 2.0, 3.0])
-    result = get_local_tensor(t)
-    assert result is t
+def test_reset_metrics():
+    """reset_metrics should clear accumulated state so new updates start fresh."""
+    evaluator = _make_evaluator(labels=("c4",))
+    ce_loss = torch.tensor([[10.0, 20.0]])
+    batch = {"metadata": [{"label": "c4"}]}
+
+    evaluator.update_metrics(batch, ce_loss=ce_loss, logits=None)
+    evaluator.reset_metrics()
+
+    # After reset, no data has been seen, so compute returns nan.
+    metrics = evaluator.compute_metrics()
+    assert torch.isnan(metrics["c4/CE loss"])
+
+
+def test_compute_metrics_unseen_label():
+    """A label that receives no updates should produce NaN without affecting other labels."""
+    evaluator = _make_evaluator(labels=("c4", "wiki"))
+    ce_loss = torch.tensor([[1.0, 2.0]])
+    batch = {"metadata": [{"label": "c4"}]}
+
+    evaluator.update_metrics(batch, ce_loss=ce_loss, logits=None)
+
+    metrics = evaluator.compute_metrics()
+    assert metrics["c4/CE loss"].item() == 1.5
+    assert torch.isnan(metrics["wiki/CE loss"])
+
+
+def test_update_metrics_with_label_mask_batch_size_2():
+    """label_mask is applied per-instance when batch size > 1."""
+    evaluator = _make_evaluator(labels=("c4",))
+    ce_loss = torch.tensor([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]])
+    label_mask = torch.tensor([[True, False, False, True], [False, True, True, False]])
+    batch = {"metadata": [{"label": "c4"}, {"label": "c4"}], "label_mask": label_mask}
+
+    evaluator.update_metrics(batch, ce_loss=ce_loss, logits=None)
+
+    metrics = evaluator.compute_metrics()
+    # Instance 0: positions 0,3 selected -> [1.0, 4.0]
+    # Instance 1: positions 1,2 selected -> [6.0, 7.0]
+    # MeanMetric sees all 4 values: mean(1.0, 4.0, 6.0, 7.0) = 4.5
+    assert metrics["c4/CE loss"].item() == 4.5

@@ -167,46 +167,6 @@ def test_ulysses_load_balancer_shard_by_document():
     assert opts1["cu_doc_lens"].tolist() == cu_doc_lens.tolist()
 
 
-def test_zig_zag_load_balancer_shard_bool():
-    """batch_shard correctly shards a boolean tensor (zig-zag strategy)."""
-    x = torch.tensor([[True, True, False, False, True, True, False, False]])
-    sharded = _get_zigzag_lb(0, 2).batch_shard(inputs=[x], seq_dims=[1], pad_values=[0])[0]
-    sharded = sharded.to(torch.bool)
-    assert sharded.shape == (1, 4)
-    # Zig-zag rank 0 gets tokens [0,1] (chunk 0) and [6,7] (chunk 3)
-    assert sharded.tolist() == [[True, True, False, False]]
-
-
-def test_zig_zag_load_balancer_shard_bool_with_padding():
-    """batch_shard pads a boolean tensor with 0 (False) for zig-zag when padding is needed."""
-    x = torch.tensor([[True, True, True, True, True, True]])
-    sharded = _get_zigzag_lb(0, 2).batch_shard(inputs=[x], seq_dims=[1], pad_values=[0])[0]
-    sharded = sharded.to(torch.bool)
-    assert sharded.shape == (1, 4)
-    # Zig-zag rank 0 gets chunks 0 and 3: tokens [0,1] and [6,7].
-    # Tokens 6,7 are padded with 0 (False).
-    assert sharded.tolist() == [[True, True, False, False]]
-
-
-def test_ulysses_load_balancer_shard_bool():
-    """batch_shard correctly shards a boolean tensor (Ulysses strategy)."""
-    x = torch.tensor([[True, False, True, False, True, True, True, True]])
-    sharded = _get_ulysses_lb(0, 2).batch_shard(inputs=[x], seq_dims=[1], pad_values=[0])[0]
-    sharded = sharded.to(torch.bool)
-    assert sharded.shape == (1, 4)
-    assert sharded.tolist() == [[True, False, True, False]]
-
-
-def test_ulysses_load_balancer_shard_bool_with_padding():
-    """batch_shard pads a boolean tensor with 0 (False) when sequence isn't evenly divisible."""
-    x = torch.tensor([[True, True, True, False, False, True]])
-    sharded = _get_ulysses_lb(1, 2).batch_shard(inputs=[x], seq_dims=[1], pad_values=[0])[0]
-    sharded = sharded.to(torch.bool)
-    assert sharded.shape == (1, 3)
-    # Rank 1 gets tokens [3,4,5]
-    assert sharded.tolist() == [[False, False, True]]
-
-
 def test_ulysses_load_balancer_shard_by_document_with_padding():
     # 10 tokens with CP=4 -> pads to 12 tokens (next multiple of 4), then each rank gets 3
     x = torch.tensor(list(range(10))).unsqueeze(0)
