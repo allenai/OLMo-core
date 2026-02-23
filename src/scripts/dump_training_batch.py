@@ -20,7 +20,8 @@ from olmo_core.data import (
     DataCollator,
     NumpyFSLDataLoader,
     NumpyFSLDatasetBase,
-    NumpyFSLDatasetConfig, NumpyPackedFSLDatasetConfig,
+    NumpyFSLDatasetConfig,
+    NumpyPackedFSLDatasetConfig,
 )
 from olmo_core.io import normalize_path
 
@@ -117,9 +118,13 @@ def main():
     checkpoint_dir = normalize_path(args.checkpoint)
 
     # Load checkpoint files
-    log.info(f"Loading checkpoint from {checkpoint_dir}")
+    log.info(f"Loading checkpoint config from {checkpoint_dir}")
     config = load_checkpoint_config(checkpoint_dir)
+
+    log.info("Loading data paths from checkpoint")
     data_paths = load_data_paths(checkpoint_dir)
+
+    log.info("Loading trainer state from checkpoint")
     trainer_state = load_trainer_state(checkpoint_dir)
 
     # Get data loader state
@@ -155,6 +160,8 @@ def main():
         log.error(f"Unsupported dataset config class: {dataset_class_name}")
         sys.exit(1)
 
+    log.info(f"Using dataset config class: {config_class.__name__}")
+
     # Start with the full dataset config and only modify what we need
     config_fields = dict(dataset_config_dict)
 
@@ -171,21 +178,44 @@ def main():
     config_fields.pop("name", None)
     config_fields.pop("_CLASS_", None)  # Remove _CLASS_ field, we already determined the class
 
+    log.info("Building dataset config from checkpoint fields")
     dataset_config = config_class.from_dict(config_fields)
+
+    log.info("Building dataset (resolving paths from mix)")
     dataset = dataset_config.build()
     assert isinstance(dataset, NumpyFSLDatasetBase), f"Expected FSL dataset, got {type(dataset)}"
+    log.info(f"Dataset has {len(dataset.paths)} source paths")
 
     # Verify that data_paths.txt matches the reconstructed dataset paths.
     # This comparison happens after build(), so source_permutation_seed has already been applied
     # to dataset.paths, matching the order saved in data_paths.txt during training.
+    log.info("Verifying data paths match")
     if not verify_paths_match(data_paths, [str(p) for p in dataset.paths]):
         log.error(
             "Path verification failed! data_paths.txt does not match the reconstructed dataset"
         )
         sys.exit(1)
 
-    # Prepare the dataset
+    # Prepare the dataset.
+    # NOTE: For NumpyPackedFSLDataset, this runs the full packing algorithm, which requires
+    # downloading all source files and is very expensive. If you have access to the cached
+    # packing results from the training cluster, point --work-dir to that cache directory.
+    log.info(
+        f"Preparing dataset (work_dir={args.work_dir}). "
+        "For packed datasets this runs the packing algorithm, which can be very slow..."
+    )
     dataset.prepare()
+    log.info(f"Dataset prepared: {len(dataset)} instances")
+
+    # Pre-compute source_sizes from the already-cached file_sizes to avoid a second round of
+    # ~960 concurrent HEAD requests to R2 that overwhelms the connection pool. The file_sizes
+    # property was already populated during prepare(), and source_sizes is just file_sizes
+    # divided by item_size, but it's a separate property that would re-query every path.
+    from olmo_core.data.numpy_dataset import NumpyPackedFSLDataset
+
+    if isinstance(dataset, NumpyPackedFSLDataset):
+        item_size = dataset.dtype(0).itemsize
+        dataset._source_sizes = [s // item_size for s in dataset.file_sizes]
 
     # Verify fingerprint
     if dataset.fingerprint != data_loader_state["dataset_fingerprint"]:
@@ -201,6 +231,7 @@ def main():
 
     collator = DataCollator(pad_token_id=dataset.pad_token_id)
 
+    log.info("Building data loader")
     data_loader = NumpyFSLDataLoader(
         dataset,
         collator=collator,
@@ -214,13 +245,16 @@ def main():
     )
 
     # Reshuffle to regenerate the same global indices as during training
+    log.info(f"Reshuffling data loader (epoch={data_loader_state['epoch']})")
     data_loader.reshuffle(epoch=data_loader_state["epoch"], in_memory=True)
 
+    log.info(f"Loading batch for step {args.step}")
     batch = data_loader[args.step]
 
     if args.output is not None:
         with open(args.output, "wb") as f:
             pickle.dump(batch, f)
+        log.info(f"Batch saved to {args.output}")
     else:
         for instance in batch["input_ids"]:
             print(", ".join(str(token_id.item()) for token_id in instance))
