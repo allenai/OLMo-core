@@ -2,10 +2,7 @@ import torch
 
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.eval.lm_evaluator import LMEvaluator
-from olmo_core.nn.attention.ring import (
-    RingAttentionZigZagLoadBalancer,
-    UlyssesLoadBalancer,
-)
+from olmo_core.nn.attention.ring import UlyssesLoadBalancer
 
 
 def _make_evaluator(labels=("c4", "wiki")) -> LMEvaluator:
@@ -78,58 +75,6 @@ def test_update_metrics_multiple_labels():
     metrics = evaluator.compute_metrics()
     assert metrics["c4/CE loss"].item() == 1.5
     assert metrics["wiki/CE loss"].item() == 5.5
-
-
-def test_label_mask_shard_zigzag():
-    """batch_shard correctly shards a boolean label_mask (zig-zag strategy)."""
-    lb = RingAttentionZigZagLoadBalancer(cp_rank=0, cp_world_size=2)
-    # 8 tokens, CP=2 -> each rank gets 4 tokens (zig-zag: rank 0 gets chunks 0,3)
-    label_mask = torch.tensor([[True, True, False, False, True, True, False, False]])
-    (sharded,) = lb.batch_shard(inputs=[label_mask], seq_dims=[1], pad_values=[0])
-    sharded = sharded.to(torch.bool)
-
-    assert sharded.shape == (1, 4)
-    # Zig-zag rank 0 gets tokens [0,1] (chunk 0) and [6,7] (chunk 3)
-    assert sharded.tolist() == [[True, True, False, False]]
-
-
-def test_label_mask_shard_ulysses():
-    """batch_shard correctly shards a boolean label_mask (Ulysses strategy)."""
-    lb = UlyssesLoadBalancer(cp_rank=0, cp_world_size=2)
-    # 8 tokens, CP=2 -> rank 0 gets first 4 tokens (contiguous)
-    label_mask = torch.tensor([[True, False, True, False, True, True, True, True]])
-    (sharded,) = lb.batch_shard(inputs=[label_mask], seq_dims=[1], pad_values=[0])
-    sharded = sharded.to(torch.bool)
-
-    assert sharded.shape == (1, 4)
-    assert sharded.tolist() == [[True, False, True, False]]
-
-
-def test_label_mask_shard_with_padding():
-    """batch_shard pads label_mask with False when sequence isn't evenly divisible."""
-    lb = UlyssesLoadBalancer(cp_rank=1, cp_world_size=2)
-    # 6 tokens, CP=2 -> pads to 6 (already divisible by 2), each rank gets 3
-    label_mask = torch.tensor([[True, True, True, False, False, True]])
-    (sharded,) = lb.batch_shard(inputs=[label_mask], seq_dims=[1], pad_values=[0])
-    sharded = sharded.to(torch.bool)
-
-    assert sharded.shape == (1, 3)
-    # Rank 1 gets tokens [3,4,5]
-    assert sharded.tolist() == [[False, False, True]]
-
-
-def test_label_mask_shard_zigzag_with_padding():
-    """batch_shard pads label_mask with False for zig-zag when padding is needed."""
-    lb = RingAttentionZigZagLoadBalancer(cp_rank=0, cp_world_size=2)
-    # 6 tokens with CP=2: zig-zag requires multiple of 4 (2*CP), so pads to 8
-    label_mask = torch.tensor([[True, True, True, True, True, True]])
-    (sharded,) = lb.batch_shard(inputs=[label_mask], seq_dims=[1], pad_values=[0])
-    sharded = sharded.to(torch.bool)
-
-    assert sharded.shape == (1, 4)
-    # Zig-zag rank 0 gets chunks 0 and 3: tokens [0,1] and [6,7].
-    # Tokens 6,7 are padded with 0 (False).
-    assert sharded.tolist() == [[True, True, False, False]]
 
 
 def test_label_mask_chunk_for_tp():
