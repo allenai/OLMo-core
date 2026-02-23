@@ -242,9 +242,7 @@ class Transformer(nn.Module):
         for key, block in self.blocks.items():
             if isinstance(block.attention, (Attention, FusedAttention)):
                 rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)
-                rope_buffers[int(key)] = (
-                    None if rope is None else rope.get_buffers(seq_len, device)
-                )
+                rope_buffers[int(key)] = None if rope is None else rope.get_buffers(seq_len, device)
             else:
                 rope_buffers[int(key)] = None
         return rope_buffers
