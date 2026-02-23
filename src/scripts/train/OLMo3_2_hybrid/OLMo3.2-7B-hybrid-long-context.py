@@ -18,7 +18,6 @@ from olmo_core.internal.experiment import (
 from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.lm_head import LMLossImplementation
-from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -64,19 +63,16 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     attn_block = config.block
 
+    # Drop RoPE (DroPE) from all layers at the start of long context training.
+    attn_block = attn_block.replace(
+        sequence_mixer=attn_block.sequence_mixer.replace(rope=None),
+    )
+
     gdn_block = attn_block.replace(
         sequence_mixer=GatedDeltaNetConfig(
             n_heads=num_heads,
             head_dim=int(0.75 * config.d_model / num_heads),
             allow_neg_eigval=True,
-        ),
-    )
-
-    # Apply YaRN RoPE scaling to attention layers only.
-    yarn = YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
-    attn_block = attn_block.replace(
-        sequence_mixer=attn_block.sequence_mixer.replace(
-            rope=attn_block.sequence_mixer.rope.replace(scaling=yarn),
         ),
     )
 
@@ -109,6 +105,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
+        # Note: because we have 30 heads and are using Ulysses, we can only set degree to 2.
+        # this means that LC training needs to be performed on B200s rather than H100s in order
+        # to have enough HBM to fit the model + activations.
         cp_config=TransformerContextParallelConfig.ulysses(degree=2),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
@@ -167,6 +166,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_TOKENS),
+            # We began LC training with intra-document masking enabled, but ran into data-triggered
+            # errors with varlen FLA operations. We skipped a few steps to continue training before
+            # eventually disabling intra-document masking around step 1500.
             steps_to_skip=[StepSkipRange(start=961, stop=976)],
         )
         .with_callback(
@@ -185,7 +187,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 group=common.run_name,
                 entity="ai2-llm",
                 project="linear-rnns",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )

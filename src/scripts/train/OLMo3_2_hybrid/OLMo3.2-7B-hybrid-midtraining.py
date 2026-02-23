@@ -38,10 +38,16 @@ SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
 LR = 0.00020712352850360292
-# SEED = 1337  #  ingredient 1
-SEED = 683  #  ingredient 2
 
+# Multiple midtraining runs were performed (ingredient 1 and 2) and the final checkpoints were combined into a souped model.
+SEED = 1337  #  ingredient 1
+# SEED = 683  #  ingredient 2
+
+# Remove heads to match params/TPS of OLMo3 7B transformer. This is to enable a
+# fair comparison with OLMo3 7B. If training from scratch, we recommend setting the
+# number of attention heads to 32 (or some power of 2 that makes sense for your model size).
 REMOVE_HEADS = 2
+
 INSTANCE_FILTER = True
 
 
@@ -173,7 +179,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 group=common.run_name,
                 entity="ai2-llm",
                 project="linear-rnns",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )

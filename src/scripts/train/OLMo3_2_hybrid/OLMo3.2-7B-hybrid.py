@@ -43,6 +43,14 @@ INSTANCE_FILTER = True
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
+    """
+    Build OLMo 3.2 7B hybrid model config.
+
+    This is a hybrid architecture combining Gated Delta Net (GDN) recurrent layers
+    with standard attention layers in a 3:1 ratio (3 GDN layers followed by 1 attention
+    layer, repeating). The model is based on OLMo3 7B but with reduced heads to match
+    params/TPS for fair comparison with the pure transformer variant.
+    """
     config = TransformerConfig.olmo3_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
     )
