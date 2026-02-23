@@ -146,18 +146,14 @@ class SubCmd(StrEnum):
             train(config)
             teardown_training_environment()
         elif self == SubCmd.train_single:
-            if (dp_config := getattr(config.train_module, "dp_config", None)) is not None:
-                log.warning(
-                    "'dp_config' is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
-                    dp_config,
-                )
-                config.train_module.dp_config = None  # type: ignore
-            if (tp_config := getattr(config.train_module, "tp_config", None)) is not None:
-                log.warning(
-                    "'tp_config' is set to %s, but you can't use tensor parallelism when running on a single node. Disabling.",
-                    tp_config,
-                )
-                config.train_module.tp_config = None  # type: ignore
+            for parallelism_style in ["dp_config", "tp_config", "cp_config", "pp_config"]:
+                if (p_config := getattr(config.train_module, parallelism_style, None)) is not None:
+                    log.warning(
+                        "'%s' is set to %s, but you can't use parallelism when running on a single node. Disabling.",
+                        parallelism_style,
+                        p_config,
+                    )
+                    setattr(config.train_module, parallelism_style, None)
             train(config)
             teardown_training_environment()
         elif self == SubCmd.prep:
