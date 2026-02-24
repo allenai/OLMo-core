@@ -95,6 +95,8 @@ class MultiGroupDistributedDataParallel(Module):
             if n not in self.parameters_to_ignore
         ]
 
+        self._param_to_name = {p: n for n, p in module.named_parameters()}
+
         # this is the order to launch grad reduce
         self._reversed_module_parameters = list(reversed(self._module_parameters))
 

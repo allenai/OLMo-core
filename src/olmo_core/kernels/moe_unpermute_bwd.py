@@ -149,7 +149,7 @@ def moe_unpermute_bwd(
         keep_mask_bool = keep_mask_bool.contiguous()
 
     ext = _load_cuda_extension()
-    out1, out2 = ext.moe_unpermute_bwd_cuda(
+    return ext.moe_unpermute_bwd_cuda(
         grad_output_in,
         input_fwd_in,
         row_id_map_i32,
@@ -157,4 +157,3 @@ def moe_unpermute_bwd(
         keep_mask_bool,
         out,
     )
-    return out1, out2
