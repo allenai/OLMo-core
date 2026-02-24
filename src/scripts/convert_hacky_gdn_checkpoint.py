@@ -47,6 +47,7 @@ It copies everything except ``model_and_optim/`` verbatim, then writes a correct
 ``model_and_optim/`` directory.
 """
 
+import json
 import logging
 import os
 import re
@@ -179,6 +180,116 @@ def rename_keys(state_dict: dict) -> dict:
     return new_sd
 
 
+def convert_config(config: dict) -> dict:
+    """Convert a hacky-branch ``config.json`` to the main-branch format.
+
+    The old config stores the block as a single :class:`TransformerBlockConfig`
+    with ``name="fla_hybrid"``, an ``fla`` field (:class:`FLAConfig`), and
+    ``fla_hybrid_attention_indices`` listing which layers use attention.
+
+    The new config uses a dict of named blocks (``"gdn"`` and ``"attn"``) with
+    a ``block_pattern`` that cycles over layers.
+    """
+    config = json.loads(json.dumps(config))  # deep copy
+    model = config.get("model")
+    if model is None:
+        log.warning("No 'model' key in config.json, skipping config conversion.")
+        return config
+
+    old_block = model.get("block", {})
+
+    # Only convert if this is actually the old fla_hybrid format.
+    if old_block.get("name") != "fla_hybrid" or "fla" not in old_block:
+        log.info("Config does not use old fla_hybrid format, keeping as-is.")
+        return config
+
+    n_layers = model["n_layers"]
+
+    # ---------------------------------------------------------------
+    # Build the GDN sequence mixer config from the old ``fla`` field.
+    # ---------------------------------------------------------------
+    old_fla = old_block["fla"]
+    old_fla_kwargs = old_fla.get("fla_layer_kwargs", {})
+
+    from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
+
+    gdn_mixer = GatedDeltaNetConfig(
+        n_heads=old_block["attention"]["n_heads"],
+        head_dim=old_fla_kwargs.get("head_dim"),
+        allow_neg_eigval=old_fla_kwargs.get("allow_neg_eigval", True),
+        dtype=old_fla.get("dtype", "float32"),
+    ).as_config_dict()
+
+    # ---------------------------------------------------------------
+    # Build the attention sequence mixer from the old ``attention`` field.
+    # ---------------------------------------------------------------
+    attn_mixer = old_block["attention"]  # already in the correct format
+
+    # ---------------------------------------------------------------
+    # Shared block fields (layer_norm, feed_forward).
+    # ---------------------------------------------------------------
+    shared_fields = {}
+    for field_name in ("layer_norm", "feed_forward", "feed_forward_moe", "dropout"):
+        if field_name in old_block:
+            shared_fields[field_name] = old_block[field_name]
+
+    # ---------------------------------------------------------------
+    # Build the two named block configs.
+    # ---------------------------------------------------------------
+    from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType
+
+    # GDN block uses the default (pre-norm) block type.
+    gdn_block = {
+        "sequence_mixer": gdn_mixer,
+        **shared_fields,
+        "name": TransformerBlockType.default.value,
+        "_CLASS_": "olmo_core.nn.transformer.config.TransformerBlockConfig",
+    }
+
+    # Attention block: determine block type from the original.
+    # The old "fla_hybrid" type means the attention layers used reordered_norm.
+    attn_block_type = TransformerBlockType.reordered_norm.value
+    attn_block = {
+        "sequence_mixer": attn_mixer,
+        **shared_fields,
+        "name": attn_block_type,
+        "_CLASS_": "olmo_core.nn.transformer.config.TransformerBlockConfig",
+    }
+
+    # ---------------------------------------------------------------
+    # Derive block_pattern from fla_hybrid_attention_indices.
+    # ---------------------------------------------------------------
+    attn_indices = set(old_block.get("fla_hybrid_attention_indices", []))
+    raw_pattern = ["attn" if i in attn_indices else "gdn" for i in range(n_layers)]
+
+    # Try to find the shortest repeating cycle.
+    block_pattern = raw_pattern
+    for cycle_len in range(1, n_layers + 1):
+        if n_layers % cycle_len != 0:
+            continue
+        candidate = raw_pattern[:cycle_len]
+        if candidate * (n_layers // cycle_len) == raw_pattern:
+            block_pattern = candidate
+            break
+
+    # ---------------------------------------------------------------
+    # Replace the model config fields.
+    # ---------------------------------------------------------------
+    model["block"] = {"gdn": gdn_block, "attn": attn_block}
+    model["block_pattern"] = block_pattern
+
+    # Remove stale fields that don't exist in the new config.
+    model.pop("block_overrides", None)
+
+    log.info(
+        "Converted config: block_pattern=%s (cycle length %d for %d layers)",
+        block_pattern,
+        len(block_pattern),
+        n_layers,
+    )
+    return config
+
+
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
     "--input",
@@ -253,7 +364,20 @@ def main(input_path: str, output_path: str, overwrite: bool, dry_run: bool) -> N
         log.info("Copied auxiliary checkpoint files to %s", output_dir)
 
     # ------------------------------------------------------------------
-    # 4. Write the corrected model_and_optim checkpoint.
+    # 4. Convert config.json to the new format.
+    # ------------------------------------------------------------------
+    config_path = output_dir / "config.json"
+    if config_path.exists():
+        with open(config_path) as f:
+            old_config = json.load(f)
+        new_config = convert_config(old_config)
+        with open(config_path, "w") as f:
+            json.dump(new_config, f, indent=2)
+            f.write("\n")
+        log.info("Converted config.json")
+
+    # ------------------------------------------------------------------
+    # 5. Write the corrected model_and_optim checkpoint.
     # ------------------------------------------------------------------
     new_model_and_optim_dir = str(output_dir / "model_and_optim")
     log.info("Saving corrected checkpoint to: %s", new_model_and_optim_dir)
