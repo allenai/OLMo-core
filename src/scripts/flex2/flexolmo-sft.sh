@@ -35,10 +35,13 @@ python src/scripts/train/sft/OLMo-sft.py launch \
 # BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-50B/step95368
 # BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-frozen-router-5B/step9537
 # SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/code-general-mix
-BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-50B/step95368
-SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/general-olmo3_code-mix
+# BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-50B/step95368
+# BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-frozen-router-5B-1-active/step4769
+# SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/general-olmo3_code-mix
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-4x7B-math_base-math_mixed-code_mixed_olmo3_50b_ann_with_sft-math_base_again
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/all
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-2x7b-olmo3_code_anneal-olmo3_code-general-mix-unf-lm-head \
+    flexolmo-4x7b-olmo3_code_50b_sft-router_sft_1.0 \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -47,12 +50,12 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
     --train_module.state_dict_load_opts.strict=False \
     --launch.priority=urgent \
-    --seq_len=4096 \
+    --seq_len=2048 \
     --launch.num_gpus=8 \
-    --num_nodes=4 \
+    --num_nodes=8 \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
-    --model_name olmoe-2x7b-unfrozen-lm-head \
+    --model_name olmoe-4x7b \
     --dataset_path $SFT_DATASET
 
 # MATH:
