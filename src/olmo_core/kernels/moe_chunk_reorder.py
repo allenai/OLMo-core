@@ -5,6 +5,8 @@ from typing import Literal, Optional, Tuple
 
 import torch
 
+from .cuda_extension_utils import load_cuda_extension
+
 
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ATTEMPTED = False
@@ -22,17 +24,21 @@ def _load_cuda_extension():
 
     _CUDA_EXTENSION_ATTEMPTED = True
     try:
-        from torch.utils.cpp_extension import load
-
         this_dir = Path(__file__).resolve().parent
         cpp_src = this_dir / "cuda" / "moe_chunk_reorder.cpp"
         cu_src = this_dir / "cuda" / "moe_chunk_reorder_kernel.cu"
-        _CUDA_EXTENSION = load(
-            name="olmo_moe_chunk_reorder_ext",
-            sources=[str(cpp_src), str(cu_src)],
+        _CUDA_EXTENSION = load_cuda_extension(
+            base_name="olmo_moe_chunk_reorder_ext",
+            sources=[cpp_src, cu_src],
             extra_cflags=["-O3"],
             extra_cuda_cflags=["-O3"],
-            verbose=False,
+            verbose_env_names=("OLMO_MOE_CHUNK_REORDER_VERBOSE", "OLMO_MOE_CUDA_EXT_VERBOSE"),
+            force_rebuild_env_names=(
+                "OLMO_MOE_CHUNK_REORDER_FORCE_REBUILD",
+                "OLMO_MOE_CUDA_EXT_FORCE_REBUILD",
+            ),
+            stale_lock_timeout_env_names=("OLMO_MOE_EXT_STALE_LOCK_TIMEOUT_SEC",),
+            with_arch_suffix=True,
         )
     except Exception as e:
         _CUDA_EXTENSION_ERROR = e
