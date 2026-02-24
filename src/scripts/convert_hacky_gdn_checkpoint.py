@@ -1,31 +1,40 @@
 #!/usr/bin/env python3
 """
 Convert an OLMo-core checkpoint from the "hacky" GDN branch (tyler/anejs/linear-rnns)
-to the current main branch parameter naming.
+to the current main branch format.
 
-On the hacky branch, GDN layers used an ``FLABlock`` that stored a wrapper ``FLA`` module
-in ``self.fla``, which in turn stored the actual ``GatedDeltaNet`` in ``self.inner``.
-The GatedDeltaNet implementation also used different parameter names (``q_proj`` vs ``w_q``).
+Two things are converted:
 
-Hacky branch parameter paths (GDN layers)::
+1. **Parameter names** in ``model_and_optim/``: On the hacky branch, GDN layers used
+   an ``FLABlock`` that stored a wrapper ``FLA`` module in ``self.fla``, which in turn
+   stored the actual ``GatedDeltaNet`` in ``self.inner``. The GDN implementation also
+   used different projection names (``q_proj`` vs ``w_q``). The renames are::
 
-    blocks.{i}.fla.inner.q_proj.weight     ->  blocks.{i}.attention.w_q.weight
-    blocks.{i}.fla.inner.k_proj.weight     ->  blocks.{i}.attention.w_k.weight
-    blocks.{i}.fla.inner.v_proj.weight     ->  blocks.{i}.attention.w_v.weight
-    blocks.{i}.fla.inner.a_proj.weight     ->  blocks.{i}.attention.w_a.weight
-    blocks.{i}.fla.inner.b_proj.weight     ->  blocks.{i}.attention.w_b.weight
-    blocks.{i}.fla.inner.g_proj.weight     ->  blocks.{i}.attention.w_g.weight
-    blocks.{i}.fla.inner.o_proj.weight     ->  blocks.{i}.attention.w_out.weight
-    blocks.{i}.fla.inner.A_log            ->  blocks.{i}.attention.A_log
-    blocks.{i}.fla.inner.dt_bias          ->  blocks.{i}.attention.dt_bias
-    blocks.{i}.fla.inner.q_conv1d.weight  ->  blocks.{i}.attention.q_conv1d.weight
-    blocks.{i}.fla.inner.k_conv1d.weight  ->  blocks.{i}.attention.k_conv1d.weight
-    blocks.{i}.fla.inner.v_conv1d.weight  ->  blocks.{i}.attention.v_conv1d.weight
-    blocks.{i}.fla.inner.o_norm.weight    ->  blocks.{i}.attention.o_norm.weight
-    blocks.{i}.fla_norm.weight            ->  blocks.{i}.attention_norm.weight
+       blocks.{i}.fla.inner.q_proj.weight     ->  blocks.{i}.attention.w_q.weight
+       blocks.{i}.fla.inner.k_proj.weight     ->  blocks.{i}.attention.w_k.weight
+       blocks.{i}.fla.inner.v_proj.weight     ->  blocks.{i}.attention.w_v.weight
+       blocks.{i}.fla.inner.a_proj.weight     ->  blocks.{i}.attention.w_a.weight
+       blocks.{i}.fla.inner.b_proj.weight     ->  blocks.{i}.attention.w_b.weight
+       blocks.{i}.fla.inner.g_proj.weight     ->  blocks.{i}.attention.w_g.weight
+       blocks.{i}.fla.inner.o_proj.weight     ->  blocks.{i}.attention.w_out.weight
+       blocks.{i}.fla.inner.A_log            ->  blocks.{i}.attention.A_log
+       blocks.{i}.fla.inner.dt_bias          ->  blocks.{i}.attention.dt_bias
+       blocks.{i}.fla.inner.q_conv1d.weight  ->  blocks.{i}.attention.q_conv1d.weight
+       blocks.{i}.fla.inner.k_conv1d.weight  ->  blocks.{i}.attention.k_conv1d.weight
+       blocks.{i}.fla.inner.v_conv1d.weight  ->  blocks.{i}.attention.v_conv1d.weight
+       blocks.{i}.fla.inner.o_norm.weight    ->  blocks.{i}.attention.o_norm.weight
+       blocks.{i}.fla_norm.weight            ->  blocks.{i}.attention_norm.weight
 
-Attention layers are left untouched (they already use ``blocks.{i}.attention.*``
-and ``blocks.{i}.attention_norm.*``).
+   Attention layers are left untouched (they already use ``blocks.{i}.attention.*``
+   and ``blocks.{i}.attention_norm.*``). Optimizer state keys are renamed in the
+   same way.
+
+2. **config.json**: The old config used a single ``TransformerBlockConfig`` with
+   ``name="fla_hybrid"``, an ``fla`` field (``FLAConfig``), and
+   ``fla_hybrid_attention_indices`` to select which layers use attention. The new
+   config uses a dict of named blocks (``"gdn"`` and ``"attn"``) with a
+   ``block_pattern`` list (e.g. ``["gdn", "gdn", "gdn", "attn"]``) that cycles
+   over layers.
 
 Usage::
 
@@ -36,15 +45,13 @@ Usage::
 The script expects the standard OLMo-core checkpoint layout::
 
     step1000/
+    ├── config.json
     ├── model_and_optim/
     │   ├── .metadata
     │   └── ...
     ├── train/
     │   └── rank0.pt
     └── .metadata.json
-
-It copies everything except ``model_and_optim/`` verbatim, then writes a corrected
-``model_and_optim/`` directory.
 """
 
 import json
