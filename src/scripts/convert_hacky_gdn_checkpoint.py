@@ -243,7 +243,10 @@ def convert_config(config: dict) -> dict:
     # ---------------------------------------------------------------
     # Build the two named block configs.
     # ---------------------------------------------------------------
-    from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType
+    from olmo_core.nn.transformer.config import (
+        TransformerBlockConfig,
+        TransformerBlockType,
+    )
 
     # GDN block uses the default (pre-norm) block type.
     gdn_block = {
