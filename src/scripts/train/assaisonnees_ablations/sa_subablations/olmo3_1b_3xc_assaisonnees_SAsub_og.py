@@ -22,7 +22,7 @@ from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 # Change these to match the config you want to use
 SEQ_LENGTH = 8192
-CHINCHILLA_MULTIPLE = 3
+CHINCHILLA_MULTIPLE = 2.73
 SEED = 1337
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
 PRIORITY = "urgent"
