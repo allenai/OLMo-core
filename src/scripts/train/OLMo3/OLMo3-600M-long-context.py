@@ -37,16 +37,17 @@ GLOBAL_BATCH_SIZE = 65536 * 16  # ~1M tokens (scaled down from 7B's ~4M)
 MAX_TOKENS = 10_000_000_000  # 10B tokens (scaled down from 7B's 50B)
 LR = 0.00020712352850360292
 
-MAX_TOKENS_PER_RANK = 32_768  # 600M fits more tokens per rank than 7B
+MAX_TOKENS_PER_CP_RANK = 32_768  # threshold for enabling context parallelism
+MAX_TOKENS_PER_RANK = 131_072  # 600M model w/ AC easily fits this on H100
 
 
 def _compute_cp_degree(sequence_length: int, world_size: int) -> Optional[int]:
     """Auto-compute context parallelism degree based on sequence length and world size."""
-    if sequence_length <= MAX_TOKENS_PER_RANK:
+    if sequence_length <= MAX_TOKENS_PER_CP_RANK:
         return None
 
     min_cp = 2
-    while (sequence_length // min_cp) > MAX_TOKENS_PER_RANK:
+    while (sequence_length // min_cp) > MAX_TOKENS_PER_CP_RANK:
         min_cp *= 2
 
     cp_degree = min(min_cp, world_size)
@@ -110,8 +111,17 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             shard_degree=min(dp_world_size, 8),
         )
 
+    cp_factor = cp_degree or 1
+    max_microbatch = MAX_TOKENS_PER_RANK * cp_factor
+    rank_batch = GLOBAL_BATCH_SIZE // dp_world_size
+    rank_microbatch_size = min(rank_batch, max_microbatch)
+    rank_microbatch_size = max(
+        (rank_microbatch_size // sequence_length) * sequence_length,
+        sequence_length,
+    )
+
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=sequence_length,
+        rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=sequence_length,
         optim=SkipStepAdamWConfig(
             lr=LR,

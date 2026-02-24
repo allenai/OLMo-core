@@ -66,7 +66,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * 8192,
+        rank_microbatch_size=16 * 8192,
         max_sequence_length=sequence_length,
         optim=SkipStepAdamWConfig(
             lr=LR,
