@@ -28,8 +28,9 @@ def estimate_lr(num_params: int, chinchilla_multiple: float = 4.0) -> float:
 
 
 def estimate_gbs(num_params: int) -> int:
-    """Estimate global batch size"""
-    return round(2048 * 160 * (num_params / 108_000_000) ** (2 / 3))
+    """Estimate global batch size, rounded down to a multiple of SEQ_LENGTH."""
+    raw = round(2048 * 160 * (num_params / 108_000_000) ** (2 / 3))
+    return (raw // SEQ_LENGTH) * SEQ_LENGTH
 
 
 @dataclass
