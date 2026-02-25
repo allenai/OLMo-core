@@ -21,7 +21,7 @@ dependencies = [
     "packaging",
     "dataclass-extensions>=0.2.8,<0.3.0",
     "pyyaml",
-    "rich",
+    "rich>=14.0.0",
     "safetensors",
     "importlib_resources",
     "bettermap",
