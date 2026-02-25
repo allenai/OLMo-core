@@ -80,10 +80,11 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --dataset_path $SFT_DATASET
 
 # REASONING:
+# BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-2x7B-olmo3_reasoning-20b-8k/step19074
+BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-2x7B-olmo3_reasoning-fixed-20b-8k/step19074
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/general-olmo3_reasoning-mix
-BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-2x7B-olmo3_reasoning-20b-8k/step19074
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-2x7b-reasoning_anneal-general-olmo3_reasoning-mix \
+    flexolmo-2x7b-reasoning_anneal-FIXED-general-olmo3_reasoning-mix \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -104,11 +105,12 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
 
 # BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-50B/step95368
 # SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/code-general-mix
-BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-2x7B-olmo3_math_anneal-5b/step9537
-BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/math-math-anneal-frozen-router-5b/step9537
+# BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-2x7B-olmo3_math_anneal-5b/step9537
+# BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/math-math-anneal-frozen-router-5b/step9537
+BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-2x7B-olmo3_reasoning-20b-8k/step19074
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/mixed/
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-2x7b-5b-olmo2_math-mixed-sft-TEST \
+    flexolmo-2x7b-20b_olmo3_math_anneal-math-mixed-sft \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
