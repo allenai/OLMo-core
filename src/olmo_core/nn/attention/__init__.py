@@ -577,7 +577,7 @@ class Attention(SequenceMixer):
             if self.k_norm is not None:
                 k = self.k_norm(k)
 
-        if self.rope is not None:
+        if self.rope is not None and not self.rope.disabled:
             # In context-parallel mode we must be given pre-sharded buffers
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
@@ -886,7 +886,7 @@ class NormalizedAttention(Attention):
         # shape: (batch_size, seq_len, n_kv_heads, head_dim)
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
-        if self.rope is not None:
+        if self.rope is not None and not self.rope.disabled:
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
@@ -1057,7 +1057,7 @@ class FusedAttention(SequenceMixer):
         if self.clip_qkv is not None:
             qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
 
-        if self.rope is not None:
+        if self.rope is not None and not self.rope.disabled:
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
