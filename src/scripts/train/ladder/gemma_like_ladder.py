@@ -57,6 +57,7 @@ from olmo_core.train.callbacks import (
     CometCallback,
     DownstreamEvaluatorCallbackConfig,
     LMEvaluatorCallbackConfig,
+    RoPEDropCallback,
     SpeedMonitorCallback,
     StabilityMonitorCallback,
     WandBCallback,
@@ -825,6 +826,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         )
         .with_callback("speed_monitor", SpeedMonitorCallback())
         .with_callback("stability_monitor", StabilityMonitorCallback(enabled=True))
+        .with_callback("rope_drop", RoPEDropCallback(drop_fraction=0.5))
         .with_callback(
             "comet",
             CometCallback(

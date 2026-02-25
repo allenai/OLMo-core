@@ -376,6 +376,7 @@ class RotaryEmbeddingBase(nn.Module):
         self.theta = theta
         self.full_precision = full_precision
         self.scaling = scaling
+        self.disabled: bool = False
         self._cache = (cache or BufferCache()).with_namespace(
             f"RoPE_theta={self.theta}_scaling={repr(self.scaling)}"
         )
