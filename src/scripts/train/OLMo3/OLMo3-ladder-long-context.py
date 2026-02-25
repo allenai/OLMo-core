@@ -28,9 +28,8 @@ def estimate_lr(num_params: int, chinchilla_multiple: float = 4.0) -> float:
 
 
 def estimate_gbs(num_params: int) -> int:
-    """Estimate global batch size, rounded down to a multiple of SEQ_LENGTH."""
-    raw = round(2048 * 160 * (num_params / 108_000_000) ** (2 / 3))
-    return (raw // SEQ_LENGTH) * SEQ_LENGTH
+    """Estimate global batch size"""
+    return round(2048 * 160 * (num_params / 108_000_000) ** (2 / 3))
 
 
 @dataclass
@@ -142,8 +141,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         ),
     )
 
+    # round gbz to num gpus
+    num_gpus = beaker_launch_config.num_gpus if beaker_launch_config else 8
+    dp_world_size = num_gpus * (beaker_launch_config.num_nodes if beaker_launch_config else 1)
+    rank_unit = SEQ_LENGTH * dp_world_size
+    gbs = max((cfg.global_batch_size // rank_unit) * rank_unit, rank_unit)
+
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=cfg.global_batch_size, seed=SEED, num_workers=4
+        global_batch_size=gbs, seed=SEED, num_workers=4
     )
 
     trainer_config = cookbook.configure_trainer(
