@@ -73,27 +73,30 @@ SIZES: dict[str, LadderSize] = {
 }
 
 
-def _pop_overrides(overrides: list[str]) -> tuple[str, Optional[str], list[str]]:
-    """Extract ``--size`` and ``--load-path`` from the overrides list."""
+def _pop_overrides(overrides: list[str]) -> tuple[str, Optional[str], int, list[str]]:
+    """Extract ``--size``, ``--load-path``, and ``--launch.num_nodes`` from the overrides list."""
     size: Optional[str] = None
     load_path: Optional[str] = None
+    num_nodes: Optional[int] = None
     remaining: list[str] = []
     for arg in overrides:
         if arg.startswith("--size="):
             size = arg.split("=", 1)[1]
         elif arg.startswith("--load-path="):
             load_path = arg.split("=", 1)[1]
+        elif arg.startswith("--launch.num_nodes="):
+            num_nodes = int(arg.split("=", 1)[1])
         else:
             remaining.append(arg)
     if size is None:
         raise ValueError(f"--size is required. Choices: {list(SIZES.keys())}")
     if size not in SIZES:
         raise ValueError(f"Invalid size '{size}'. Choices: {list(SIZES.keys())}")
-    return size, load_path, remaining
+    return size, load_path, num_nodes or 1, remaining
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
-    size, load_path, overrides = _pop_overrides(cli_context.overrides)
+    size, load_path, num_nodes, overrides = _pop_overrides(cli_context.overrides)
     cfg = SIZES[size]
 
     run_name_with_ts = (
@@ -109,7 +112,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cluster=cli_context.cluster,
         root_dir=root_dir,
         workspace="ai2/OLMo_3",
-        num_nodes=1,
+        num_nodes=num_nodes,
         nccl_debug=False,
     )
 
