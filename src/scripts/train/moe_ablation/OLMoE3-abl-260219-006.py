@@ -92,7 +92,7 @@ SEQUENCE_LENGTH = 8192
 
 MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-SAVE_INTERVAL=100
+SAVE_INTERVAL=250
 
 NUM_EXPERTS = 64
 TOP_K = 4
@@ -118,14 +118,14 @@ PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (12)
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (4)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
-LR= 3e-4 # target lr for 32M tokens
+LR= 1e-3 # target lr for 32M tokens
 # LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
 NUM_LAYERS=32
@@ -141,7 +141,7 @@ else:
 
 # SPLIT_POINTS = None
 USE_COMPILE=True
-USE_NO_SYNC_EP=True
+USE_NO_SYNC_EP=False
 USE_AC=False
 PER_LAYER_RECOMPUTE=True
 USE_TBO=False
@@ -151,7 +151,7 @@ RANDOM_ASSIGN=False
 
 SEED = 2026
 
-TAG=f'dbg'
+TAG=f'abl'
 
 # if UNIFORM_ASSIGN:
 #     TAG = 'U-' + TAG
@@ -405,7 +405,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=False,
-                pre_train_checkpoint=False,
+                pre_train_checkpoint=True,
             ),
         )
         .with_callback(
@@ -416,7 +416,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 # project="tianhua-moe",
                 project="olmoe-dev-v2",
                 # project="olmo3",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )

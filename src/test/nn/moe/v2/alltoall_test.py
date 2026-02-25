@@ -1,11 +1,17 @@
 import argparse
 import os
+import sys
+from pathlib import Path
 from statistics import mean
-from typing import List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
 import torch.distributed._symmetric_memory as symm_mem
+
+# NOTE: all_to_all_vdev_2d has bug:
+# unguarded odata[tid] write in prefixSum_warp at line 477, used for NUM_TILES scan at line 551, and len_per_tile can be left uninitialized from line 522.
+# torch/csrc/distributed/c10d/symm_mem/nvshmem_extension.cu (v2.10)
 
 # TORCH_SYMMMEM_NBLOCKS=256 torchrun --nproc-per-node=4 /workspace/OLMo-core/src/test/nn/moe/v2/alltoall_test.py
 # B200
@@ -24,6 +30,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-iters", type=int, default=10)
     parser.add_argument("--iters", type=int, default=50)
     parser.add_argument("--major-align", type=int, default=1)
+    parser.add_argument(
+        "--vdev2d-impl",
+        choices=["torch", "custom"],
+        default="torch",
+        help="`torch` uses torch.ops.symm_mem.all_to_all_vdev_2d. `custom` uses local CUDA extension.",
+    )
+    parser.add_argument(
+        "--vdev2d-nblocks",
+        type=int,
+        default=0,
+        help="Grid blocks for custom vdev2d kernels. 0 means auto-tuned default.",
+    )
     return parser.parse_args()
 
 
@@ -98,6 +116,16 @@ def _alloc_rendezvous_symm_tensor(
     return t
 
 
+def _load_custom_vdev2d_callable() -> Callable[..., None]:
+    src_root = Path(__file__).resolve().parents[4]
+    src_root_str = str(src_root)
+    if src_root_str not in sys.path:
+        sys.path.insert(0, src_root_str)
+    from olmo_core.kernels.symm_mem_vdev2d import all_to_all_vdev_2d_nblocks
+
+    return all_to_all_vdev_2d_nblocks
+
+
 def main() -> None:
     args = _parse_args()
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
@@ -109,6 +137,9 @@ def main() -> None:
     world_size = dist.get_world_size(group)
     device = torch.device("cuda", local_rank)
     dtype = _dtype_from_name(args.dtype)
+    custom_vdev2d: Optional[Callable[..., None]] = None
+    if args.vdev2d_impl == "custom":
+        custom_vdev2d = _load_custom_vdev2d_callable()
 
     # if world_size != 4:
     #     raise RuntimeError(f"Expected world_size=4, got {world_size}.")
@@ -157,14 +188,25 @@ def main() -> None:
         )
 
     def run_symm_vdev2d() -> None:
-        torch.ops.symm_mem.all_to_all_vdev_2d(
-            symm_in,
-            symm_out_vdev2d,
-            symm_in_splits,
-            symm_out_vdev2d_splits_offsets,
-            group_name,
-            major_align=args.major_align,
-        )
+        if custom_vdev2d is None:
+            torch.ops.symm_mem.all_to_all_vdev_2d(
+                symm_in,
+                symm_out_vdev2d,
+                symm_in_splits,
+                symm_out_vdev2d_splits_offsets,
+                group_name,
+                major_align=args.major_align,
+            )
+        else:
+            custom_vdev2d(
+                symm_in,
+                symm_out_vdev2d,
+                symm_in_splits,
+                symm_out_vdev2d_splits_offsets,
+                group_name,
+                major_align=args.major_align,
+                nblocks=args.vdev2d_nblocks,
+            )
 
     dist.barrier(group=group)
     for _ in range(args.warmup_iters):
@@ -224,7 +266,8 @@ def main() -> None:
         print("=== AllToAll Comparison: NCCL vs NVSHMEM Symmetric Memory (vdev + vdev_2d) ===", flush=True)
         print(
             f"world_size={world_size} rows={args.rows} cols={args.cols} dtype={dtype} "
-            f"warmup={args.warmup_iters} iters={args.iters} major_align={args.major_align}",
+            f"warmup={args.warmup_iters} iters={args.iters} major_align={args.major_align} "
+            f"vdev2d_impl={args.vdev2d_impl} vdev2d_nblocks={args.vdev2d_nblocks}",
             flush=True,
         )
         print(f"payload_per_rank={payload_gb:.3f} GB", flush=True)

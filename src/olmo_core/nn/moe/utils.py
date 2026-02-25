@@ -66,6 +66,17 @@ def wait_stream_no_compile(this_stream: torch.cuda.Stream, other_stream: torch.c
     this_stream.wait_stream(other_stream)
 
 
+@torch.compiler.disable
+def record_stream_event_no_compile(stream: torch.cuda.Stream) -> torch.cuda.Event:
+    event = stream.record_event()
+    return cast(torch.cuda.Event, event)
+
+
+@torch.compiler.disable
+def wait_event_no_compile(stream: torch.cuda.Stream, event: torch.cuda.Event):
+    stream.wait_event(event)
+
+
 # disable compile for permute
 @torch.compiler.disable
 def moe_permute_no_compile(*args, **kwargs):

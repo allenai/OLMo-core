@@ -261,6 +261,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         self.grad_accum_in_fp32 = grad_accum_in_fp32
         if self.grad_accum_in_fp32:
+            assert False, "Depreacted config: grad_accum_in_fp32. Use option for DDP wrapper."
             for part in self.model_parts:
                 part.attach_fp32_accum()
 

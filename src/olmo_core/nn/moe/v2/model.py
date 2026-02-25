@@ -28,7 +28,12 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
-from .block import MoEFusedV2TransformerBlock, MoEFusedV2TransformerBlockConfig, _NoSyncSymmSharedPool
+from .block import (
+    MoEFusedV2TransformerBlock,
+    MoEFusedV2TransformerBlockConfig,
+    _NoSyncSymmSharedPool,
+    _NoSyncTboPendingContext,
+)
 from olmo_core.ops import moe as ops
 from ...lm_head import LMHeadConfig, LMOutputWithLoss
 import nvtx
@@ -161,6 +166,13 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             if block.is_moe and not found_moe:
                 found_moe = True
                 first_moe_idx = idx
+            if block.is_moe:
+                moe_block = cast(MoEFusedV2TransformerBlock, block)
+                if moe_block.ep_no_sync and moe_block.ep_no_sync_shared_slots < 2:
+                    raise OLMoConfigurationError(
+                        "When TBO and EP no-sync are enabled, ep_no_sync_shared_slots must be >= 2 "
+                        f"(block={moe_block.block_idx}, got {moe_block.ep_no_sync_shared_slots})."
+                    )
         
         return first_moe_idx
 
@@ -679,7 +691,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             mark_dynamic(x0, (0, 1), strict=False)
             mark_dynamic(x1, (0, 1), strict=False)
         x1_is_fresh = True # x1 is always fresh in the beginning
-        x1_ctx = {
+        x1_ctx: object = {
             "x1": x1,
         }
         for block_idx, block in enumerate(self.blocks.values()):
@@ -718,7 +730,20 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             return merged
 
     # @torch.compile
-    def _tbo_last_step(self, x0, x1_ctx: Dict[str, Any], lm_head_kwargs: Dict[str, Any], labels0: Optional[torch.Tensor], labels1: Optional[torch.Tensor]):
+    def _tbo_last_step(self, x0, x1_ctx: object, lm_head_kwargs: Dict[str, Any], labels0: Optional[torch.Tensor], labels1: Optional[torch.Tensor]):
+        if isinstance(x1_ctx, _NoSyncTboPendingContext):
+            with nvtx.annotate("TBO-1", color='orange'):
+                pending_ctx = x1_ctx.block._ep_no_sync_stage_c_launch(x1_ctx)
+
+            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
+
+            with nvtx.annotate("TBO-1", color='orange'):
+                x1 = x1_ctx.block._ep_no_sync_stage_tail(pending_ctx)
+
+            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
+            return h0, h1
+
+        x1_ctx = cast(Dict[str, Any], x1_ctx)
         with nvtx.annotate("TBO-1", color='orange'):
             global_x1 = x1_ctx['global_x1']
             send_counts1 = cast(List, x1_ctx['send_counts1'])

@@ -114,6 +114,37 @@ def maybe_remove_stale_build_lock(build_directory: PathLikeStr, *, timeout_secon
         )
 
 
+def _force_rebuild_build_directory(build_directory: str, *, enabled: bool) -> None:
+    if not enabled:
+        return
+
+    dist = torch.distributed
+    if dist.is_available() and dist.is_initialized():
+        rank = dist.get_rank()
+        if rank == 0:
+            shutil.rmtree(build_directory, ignore_errors=True)
+            os.makedirs(build_directory, exist_ok=True)
+        dist.barrier()
+        return
+
+    shutil.rmtree(build_directory, ignore_errors=True)
+    os.makedirs(build_directory, exist_ok=True)
+
+
+def _is_transient_missing_lock_error(exc: BaseException, build_directory: str) -> bool:
+    if not isinstance(exc, (FileNotFoundError, OSError)):
+        return False
+    if getattr(exc, "errno", None) != 2:
+        return False
+
+    path = getattr(exc, "filename", None)
+    if not isinstance(path, str):
+        path = str(exc)
+
+    lock_path = os.path.join(build_directory, "lock")
+    return "lock" in path and (build_directory in path or lock_path in path)
+
+
 def load_cuda_extension(
     *,
     base_name: str,
@@ -135,17 +166,30 @@ def load_cuda_extension(
         _env_float(stale_lock_timeout_env_names, stale_lock_timeout_default_seconds),
         0.0,
     )
-    maybe_remove_stale_build_lock(build_directory, timeout_seconds=stale_lock_timeout_s)
-
-    if _env_bool(force_rebuild_env_names, default=False):
-        shutil.rmtree(build_directory, ignore_errors=True)
-
+    force_rebuild = _env_bool(force_rebuild_env_names, default=False)
+    _force_rebuild_build_directory(build_directory, enabled=force_rebuild)
     verbose = _env_bool(verbose_env_names, default=False)
-    return load(
-        name=ext_name,
-        sources=[str(path) for path in sources],
-        extra_cflags=list(extra_cflags or []),
-        extra_cuda_cflags=list(extra_cuda_cflags or []),
-        build_directory=build_directory,
-        verbose=verbose,
-    )
+    max_retries = max(int(_env_float(("OLMO_MOE_EXT_LOAD_RETRIES",), 8.0)), 1)
+    retry_sleep_s = max(_env_float(("OLMO_MOE_EXT_LOAD_RETRY_SLEEP_SEC",), 0.1), 0.0)
+
+    for attempt in range(max_retries):
+        # Ensure build directory exists before cpp_extension.load() creates/open lock file.
+        os.makedirs(build_directory, exist_ok=True)
+        maybe_remove_stale_build_lock(build_directory, timeout_seconds=stale_lock_timeout_s)
+        try:
+            return load(
+                name=ext_name,
+                sources=[str(path) for path in sources],
+                extra_cflags=list(extra_cflags or []),
+                extra_cuda_cflags=list(extra_cuda_cflags or []),
+                build_directory=build_directory,
+                verbose=verbose,
+            )
+        except Exception as e:
+            is_last_attempt = attempt + 1 >= max_retries
+            if is_last_attempt or not _is_transient_missing_lock_error(e, build_directory):
+                raise
+            if retry_sleep_s > 0:
+                time.sleep(retry_sleep_s * (attempt + 1))
+
+    raise RuntimeError("Failed to load CUDA extension after retries")
