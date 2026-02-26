@@ -64,7 +64,7 @@ class AmpleGCG:
             in generated suffixes
 
         Returns:
-        - list of len = batch_size * num_beams with each entry=prompt+suffix
+        - list of len = batch_size * num_beams (element is a suffix)
         """
         if isinstance(query, str):
             queries = [query]
@@ -80,12 +80,14 @@ class AmpleGCG:
 
         # shape (batch_size, input_size)
         inputs = self.tokenizer(prompts, return_tensors="pt", padding=True).to(self.model.device)
+        input_size = inputs.shape[1]
 
         # generate and slice off original prompts
         output = self.model.generate(
-            **inputs, generation_config=self.gen_config
-        )  # shape (batch_size * num_beams, input_length+20)
-        # returns list of len = batch_size * num_beams (each element is query+suffix)
+            **inputs, generation_config=self.gen_config, trust_remote_code=True
+        )[:, input_size:]  # shape (batch_size * num_beams, 20)
+
+        # returns list of len = batch_size * num_beams (each element is a suffix)
         decoded = self.tokenizer.batch_decode(output, skip_special_tokens=True)
 
         return decoded
