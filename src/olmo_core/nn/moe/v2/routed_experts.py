@@ -33,6 +33,7 @@ from ...moe import MoERouterConfig as MoERouterConfigV1
 from typing import List, Optional
 import nvtx
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.kernels import grouped_mm as grouped_mm_with_buffers
 import torch.nn.functional as F
 from dataclasses import dataclass
 from typing import cast
@@ -52,14 +53,30 @@ def _debug_get_row_indices_for_nan_or_inf_before_end(x, end):
 def gmm_no_compile(a, b, batch_sizes, trans_b=False):
     return grouped_gemm.ops.gmm(a, b, batch_sizes, trans_b)
 
-def gmm(a, b, batch_sizes, trans_b=False):
+def gmm(
+    a: torch.Tensor,
+    b: torch.Tensor,
+    batch_sizes: torch.Tensor,
+    trans_b: bool = False,
+    out: Optional[torch.Tensor] = None,
+    input_grad_out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     if use_torch_grouped_mm():
         # torch.nn.functional.grouped_mm has no trans_b argument.
         # It expects mat_b to be (num_groups, K, N), so we transpose when
         # emulating grouped_gemm(..., trans_b=True).
         b_grouped_mm = b.transpose(1, 2) if trans_b else b
         offs = torch.cumsum(batch_sizes.to(dtype=torch.int32), dim=0, dtype=torch.int32)
-        out = F.grouped_mm(a, b_grouped_mm, offs=offs)
+        if out is not None or input_grad_out is not None:
+            out_tensor = grouped_mm_with_buffers(
+                a,
+                b_grouped_mm,
+                offs=offs,
+                out=out,
+                input_grad_out=input_grad_out,
+            )
+        else:
+            out_tensor = F.grouped_mm(a, b_grouped_mm, offs=offs)
         # WARNING: https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.grouped_mm.html
         # "offs[i] marks the end of group i and offs[-1] must be strictly less than the total length of that operand’s sliced dimension"
         # so padded positions are always necessary? I think "strictly less than" is a documentation mistake
@@ -67,8 +84,12 @@ def gmm(a, b, batch_sizes, trans_b=False):
         # BIG NOTE: grouped_mm's returned value containes uninitialized values for the padded positions (pos > offsets[-1]), which can be NaN and may cause later ops to produce NaN in valid positions.
         # if _debug_get_row_indices_for_nan_or_inf_before_end(out, batch_sizes.sum()).numel() > 0:
         #     raise RuntimeError(f"NaN or Inf detected in grouped_mm output in valid tokens. batch_sizes={batch_sizes} offs={offs} out={out}")
-        return out
+        return out_tensor
 
+    if out is not None or input_grad_out is not None:
+        raise RuntimeError(
+            "gmm(out=..., input_grad_out=...) requires torch grouped_mm backend"
+        )
     return gmm_no_compile(a, b, batch_sizes, trans_b)
 
 # if env variable OLMO_USE_TORCH_GROUPED_MM is set, use its value to determine whether to use torch grouped_mm; 
@@ -219,7 +240,14 @@ class RoutedExperts(nn.Module):
 
     # @torch.compiler.disable(recursive=False)
     @nvtx.annotate("RoutedExperts.forward", color="blue")
-    def forward(self, x: torch.Tensor, batch_size_per_expert: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+        *,
+        down_proj_out: Optional[torch.Tensor] = None,
+        up_proj_input_grad_out: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         `batch_size_per_expert` specifies the number of tokens in x for each expert.
         """
@@ -238,20 +266,34 @@ class RoutedExperts(nn.Module):
             batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int32)
 
         if x.numel() == 0:
+            if down_proj_out is not None:
+                return down_proj_out
             return x
         
         w_up_gate = self.w_up_gate # (E, H, 2D)
         w_down = self.w_down # (E, H, D)
 
         # up + gate projection
-        up_gate = gmm(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
+        up_gate = gmm(
+            x,
+            w_up_gate,
+            batch_size_per_expert_tensor,
+            trans_b=True,
+            input_grad_out=up_proj_input_grad_out,
+        ) # -> (BS, 2H)
 
         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
 
         h = self.chunk_and_activate(up_gate) # -> (BS, H)
         
         # down projection
-        down = gmm(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, D)
+        down = gmm(
+            h,
+            w_down,
+            batch_size_per_expert_tensor,
+            trans_b=False,
+            out=down_proj_out,
+        ) # -> (BS, D)
 
         return cast(torch.Tensor, down)  # ensure type is Tensor
 

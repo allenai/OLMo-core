@@ -21,7 +21,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Compare NCCL all_to_all_single vs NVSHMEM symmetric-memory "
-            "all_to_all_vdev and all_to_all_vdev_2d."
+            "all_to_all_vdev, all_to_all_vdev_2d and all_to_all_vdev_2d_offset."
         )
     )
     parser.add_argument("--rows", type=int, default=2 * 8192 * 4, help="Rows per rank.") # B * S * TopK
@@ -116,14 +116,17 @@ def _alloc_rendezvous_symm_tensor(
     return t
 
 
-def _load_custom_vdev2d_callable() -> Callable[..., None]:
+def _load_custom_vdev2d_callables() -> tuple[Callable[..., None], Callable[..., None]]:
     src_root = Path(__file__).resolve().parents[4]
     src_root_str = str(src_root)
     if src_root_str not in sys.path:
         sys.path.insert(0, src_root_str)
-    from olmo_core.kernels.symm_mem_vdev2d import all_to_all_vdev_2d_nblocks
+    from olmo_core.kernels.symm_mem_vdev2d import (
+        all_to_all_vdev_2d_nblocks,
+        all_to_all_vdev_2d_offset_nblocks,
+    )
 
-    return all_to_all_vdev_2d_nblocks
+    return all_to_all_vdev_2d_nblocks, all_to_all_vdev_2d_offset_nblocks
 
 
 def main() -> None:
@@ -138,8 +141,9 @@ def main() -> None:
     device = torch.device("cuda", local_rank)
     dtype = _dtype_from_name(args.dtype)
     custom_vdev2d: Optional[Callable[..., None]] = None
+    custom_vdev2d_offset: Optional[Callable[..., None]] = None
     if args.vdev2d_impl == "custom":
-        custom_vdev2d = _load_custom_vdev2d_callable()
+        custom_vdev2d, custom_vdev2d_offset = _load_custom_vdev2d_callables()
 
     # if world_size != 4:
     #     raise RuntimeError(f"Expected world_size=4, got {world_size}.")
@@ -175,8 +179,19 @@ def main() -> None:
     symm_out_vdev_splits_offsets = _alloc_rendezvous_symm_tensor((2, world_size), torch.int64, device, group)
     symm_out_vdev2d = _alloc_rendezvous_symm_tensor((out_cap, args.cols), x.dtype, device, group)
     symm_out_vdev2d_splits_offsets = _alloc_rendezvous_symm_tensor((2, world_size), torch.int64, device, group)
+    symm_in_vdev2d_offset_splits_offsets = _alloc_rendezvous_symm_tensor(
+        (2, world_size), torch.int64, device, group
+    )
+    symm_out_vdev2d_offset = _alloc_rendezvous_symm_tensor((out_cap, args.cols), x.dtype, device, group)
+    symm_out_vdev2d_offset_splits_offsets = _alloc_rendezvous_symm_tensor(
+        (2, world_size), torch.int64, device, group
+    )
     symm_in.copy_(x)
     symm_in_splits.fill_(split_rows)
+    symm_in_vdev2d_offset_splits_offsets[0].fill_(split_rows)
+    symm_in_vdev2d_offset_splits_offsets[1].copy_(
+        torch.arange(world_size, device=device, dtype=torch.int64) * split_rows
+    )
 
     def run_symm_vdev() -> None:
         torch.ops.symm_mem.all_to_all_vdev(
@@ -208,6 +223,25 @@ def main() -> None:
                 nblocks=args.vdev2d_nblocks,
             )
 
+    def run_symm_vdev2d_offset() -> None:
+        if custom_vdev2d_offset is None:
+            torch.ops.symm_mem.all_to_all_vdev_2d_offset(
+                symm_in,
+                symm_out_vdev2d_offset,
+                symm_in_vdev2d_offset_splits_offsets,
+                symm_out_vdev2d_offset_splits_offsets,
+                group_name,
+            )
+        else:
+            custom_vdev2d_offset(
+                symm_in,
+                symm_out_vdev2d_offset,
+                symm_in_vdev2d_offset_splits_offsets,
+                symm_out_vdev2d_offset_splits_offsets,
+                group_name,
+                nblocks=args.vdev2d_nblocks,
+            )
+
     dist.barrier(group=group)
     for _ in range(args.warmup_iters):
         run_nccl()
@@ -229,23 +263,40 @@ def main() -> None:
     dist.barrier(group=group)
     symm_vdev2d_times_ms = _event_timed_ms(run_symm_vdev2d, args.iters)
 
+    dist.barrier(group=group)
+    for _ in range(args.warmup_iters):
+        run_symm_vdev2d_offset()
+    torch.cuda.synchronize(device)
+    dist.barrier(group=group)
+    symm_vdev2d_offset_times_ms = _event_timed_ms(run_symm_vdev2d_offset, args.iters)
+
     # Correctness check.
     run_nccl()
     run_symm_vdev()
     run_symm_vdev2d()
+    run_symm_vdev2d_offset()
     symm_vdev_defrag = _defrag_by_splits_offsets(
         symm_out_vdev, symm_out_vdev_splits_offsets, out_rows=args.rows
     )
     symm_vdev2d_defrag = _defrag_by_splits_offsets(
         symm_out_vdev2d, symm_out_vdev2d_splits_offsets, out_rows=args.rows
     )
+    symm_vdev2d_offset_defrag = _defrag_by_splits_offsets(
+        symm_out_vdev2d_offset, symm_out_vdev2d_offset_splits_offsets, out_rows=args.rows
+    )
     equal_vdev = torch.equal(nccl_out, symm_vdev_defrag)
     equal_vdev2d = torch.equal(nccl_out, symm_vdev2d_defrag)
+    equal_vdev2d_offset = torch.equal(nccl_out, symm_vdev2d_offset_defrag)
     max_abs_diff_vdev = (
         float((nccl_out - symm_vdev_defrag).abs().max().item()) if not equal_vdev else 0.0
     )
     max_abs_diff_vdev2d = (
         float((nccl_out - symm_vdev2d_defrag).abs().max().item()) if not equal_vdev2d else 0.0
+    )
+    max_abs_diff_vdev2d_offset = (
+        float((nccl_out - symm_vdev2d_offset_defrag).abs().max().item())
+        if not equal_vdev2d_offset
+        else 0.0
     )
 
     gathered = [None] * world_size
@@ -254,16 +305,23 @@ def main() -> None:
         "nccl_avg_ms": mean(nccl_times_ms),
         "symm_vdev_avg_ms": mean(symm_vdev_times_ms),
         "symm_vdev2d_avg_ms": mean(symm_vdev2d_times_ms),
+        "symm_vdev2d_offset_avg_ms": mean(symm_vdev2d_offset_times_ms),
         "equal_vdev": bool(equal_vdev),
         "equal_vdev2d": bool(equal_vdev2d),
+        "equal_vdev2d_offset": bool(equal_vdev2d_offset),
         "max_abs_diff_vdev": max_abs_diff_vdev,
         "max_abs_diff_vdev2d": max_abs_diff_vdev2d,
+        "max_abs_diff_vdev2d_offset": max_abs_diff_vdev2d_offset,
     }
     dist.all_gather_object(gathered, result, group=group)
 
     if rank == 0:
         payload_gb = (args.rows * args.cols * torch.tensor([], dtype=dtype).element_size()) / 1e9
-        print("=== AllToAll Comparison: NCCL vs NVSHMEM Symmetric Memory (vdev + vdev_2d) ===", flush=True)
+        print(
+            "=== AllToAll Comparison: NCCL vs NVSHMEM Symmetric Memory "
+            "(vdev + vdev_2d + vdev_2d_offset) ===",
+            flush=True,
+        )
         print(
             f"world_size={world_size} rows={args.rows} cols={args.cols} dtype={dtype} "
             f"warmup={args.warmup_iters} iters={args.iters} major_align={args.major_align} "
@@ -275,9 +333,15 @@ def main() -> None:
             nccl_bw = payload_gb / (item["nccl_avg_ms"] / 1e3)
             symm_vdev_bw = payload_gb / (item["symm_vdev_avg_ms"] / 1e3)
             symm_vdev2d_bw = payload_gb / (item["symm_vdev2d_avg_ms"] / 1e3)
+            symm_vdev2d_offset_bw = payload_gb / (item["symm_vdev2d_offset_avg_ms"] / 1e3)
             speedup_vdev = item["nccl_avg_ms"] / item["symm_vdev_avg_ms"]
             speedup_vdev2d = item["nccl_avg_ms"] / item["symm_vdev2d_avg_ms"]
-            pass_or_fail = "PASS" if item["equal_vdev"] and item["equal_vdev2d"] else "FAIL"
+            speedup_vdev2d_offset = item["nccl_avg_ms"] / item["symm_vdev2d_offset_avg_ms"]
+            pass_or_fail = (
+                "PASS"
+                if item["equal_vdev"] and item["equal_vdev2d"] and item["equal_vdev2d_offset"]
+                else "FAIL"
+            )
             print(
                 f"[{pass_or_fail}] "
                 f"rank={item['rank']} "
@@ -287,7 +351,11 @@ def main() -> None:
                 f"equal_vdev={item['equal_vdev']} max_abs_diff_vdev={item['max_abs_diff_vdev']:.6f} "
                 f"symm_vdev2d={item['symm_vdev2d_avg_ms']:.3f} ms ({symm_vdev2d_bw:.2f} GB/s) "
                 f"speedup_vdev2d={speedup_vdev2d:.3f}x "
-                f"equal_vdev2d={item['equal_vdev2d']} max_abs_diff_vdev2d={item['max_abs_diff_vdev2d']:.6f}",
+                f"equal_vdev2d={item['equal_vdev2d']} max_abs_diff_vdev2d={item['max_abs_diff_vdev2d']:.6f} "
+                f"symm_vdev2d_offset={item['symm_vdev2d_offset_avg_ms']:.3f} ms ({symm_vdev2d_offset_bw:.2f} GB/s) "
+                f"speedup_vdev2d_offset={speedup_vdev2d_offset:.3f}x "
+                f"equal_vdev2d_offset={item['equal_vdev2d_offset']} "
+                f"max_abs_diff_vdev2d_offset={item['max_abs_diff_vdev2d_offset']:.6f}",
                 flush=True,
             )
 

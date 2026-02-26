@@ -111,9 +111,9 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) # * 3 // 2
 
-MICRO_BSZ = 4
+MICRO_BSZ = 2
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=4
 PP_DIM=1
 
 # ref
@@ -144,7 +144,7 @@ USE_COMPILE=True
 USE_NO_SYNC_EP=True
 USE_AC=False
 PER_LAYER_RECOMPUTE=False
-USE_TBO=True
+USE_TBO=False
 GRAD_ACC_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
@@ -152,6 +152,7 @@ RANDOM_ASSIGN=False
 SEED = 2026
 
 TAG=f'dbg-8-128'
+# TAG=f'test'
 
 # if UNIFORM_ASSIGN:
 #     TAG = 'U-' + TAG
@@ -425,8 +426,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=306,
-                                   end=309
+                                   start=906,
+                                   end=909
             )
         )
         .with_callback(

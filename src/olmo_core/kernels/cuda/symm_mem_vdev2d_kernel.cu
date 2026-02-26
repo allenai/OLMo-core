@@ -12,6 +12,7 @@
 #include <cub/cub.cuh>
 #include <limits>
 #include <mutex>
+#include <optional>
 
 // NVSHMEM minimum SM arch
 #define _NVSHMEM_MIN_SM_ARCH 700
@@ -34,6 +35,8 @@
 
 #define THREADS_PER_BLOCK 512
 #define WARP_SIZE 32
+#define ROWWISE_THREADS_PER_BLOCK 512
+#define ROWWISE_WARPS_PER_BLOCK (ROWWISE_THREADS_PER_BLOCK / WARP_SIZE)
 
 namespace {
 
@@ -245,6 +248,125 @@ __global__ void allToAllV_2d(
 #endif
 }
 
+__global__ void dispatchRowsPut(
+    const void* input_data,
+    void* out_data,
+    const int64_t* dst_ranks,
+    const int64_t* dst_rows,
+    size_t row_bytes,
+    int64_t num_input_rows,
+    int64_t top_k,
+    int64_t out_capacity_rows,
+    nvshmem_team_t team) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  int npes = nvshmem_team_n_pes(team);
+  int64_t num_routes = num_input_rows * top_k;
+  int warp_id = threadIdx.x / WARP_SIZE;
+
+  int64_t route_id = static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t route_stride =
+      static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+  for (; route_id < num_routes; route_id += route_stride) {
+    int64_t peer = dst_ranks[route_id];
+    int64_t dst_row = dst_rows[route_id];
+    if (peer < 0 || dst_row < 0) {
+      continue;
+    }
+
+    CUDA_KERNEL_ASSERT(peer < npes);
+    CUDA_KERNEL_ASSERT(dst_row < out_capacity_rows);
+
+    int64_t src_row = route_id / top_k;
+    auto peer_global = nvshmem_team_translate_pe(
+        team, static_cast<int>(peer), NVSHMEM_TEAM_WORLD);
+    nvshmemx_putmem_warp(
+        (char*)out_data + static_cast<size_t>(dst_row) * row_bytes,
+        (const char*)input_data + static_cast<size_t>(src_row) * row_bytes,
+        row_bytes,
+        peer_global);
+  }
+#endif
+}
+
+template <bool ZERO_INVALID_ROWS>
+__global__ void gatherRowsGet(
+    const void* expert_out_data,
+    void* gathered_data,
+    const int64_t* src_ranks,
+    const int64_t* src_rows,
+    size_t row_bytes,
+    int64_t num_out_rows,
+    int64_t top_k,
+    int64_t expert_capacity_rows,
+    nvshmem_team_t team) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  int npes = nvshmem_team_n_pes(team);
+  int64_t num_routes = num_out_rows * top_k;
+  int warp_id = threadIdx.x / WARP_SIZE;
+  int lane_id = threadIdx.x % WARP_SIZE;
+
+  int64_t route_id = static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t route_stride =
+      static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+  for (; route_id < num_routes; route_id += route_stride) {
+    int64_t peer = src_ranks[route_id];
+    int64_t src_row = src_rows[route_id];
+    char* dst_ptr = (char*)gathered_data + static_cast<size_t>(route_id) * row_bytes;
+    if (peer < 0 || src_row < 0) {
+      if constexpr (ZERO_INVALID_ROWS) {
+        for (size_t i = static_cast<size_t>(lane_id); i < row_bytes; i += WARP_SIZE) {
+          dst_ptr[i] = 0;
+        }
+      }
+      continue;
+    }
+
+    CUDA_KERNEL_ASSERT(peer < npes);
+    CUDA_KERNEL_ASSERT(src_row < expert_capacity_rows);
+    auto peer_global = nvshmem_team_translate_pe(
+        team, static_cast<int>(peer), NVSHMEM_TEAM_WORLD);
+    nvshmemx_getmem_warp(
+        dst_ptr,
+        (const char*)expert_out_data + static_cast<size_t>(src_row) * row_bytes,
+        row_bytes,
+        peer_global);
+  }
+#endif
+}
+
+template <typename scalar_t, bool HAS_PROBS>
+__global__ void combineRowsReduceKernel(
+    const scalar_t* gathered,
+    scalar_t* out,
+    const float* probs,
+    int64_t num_out_rows,
+    int64_t top_k,
+    int64_t dim) {
+  int64_t row = blockIdx.x;
+  int64_t col = static_cast<int64_t>(blockIdx.y) * blockDim.x + threadIdx.x;
+  if (row >= num_out_rows || col >= dim) {
+    return;
+  }
+
+  float acc = 0.0f;
+  int64_t base = row * top_k * dim + col;
+  for (int64_t k = 0; k < top_k; ++k) {
+    float v = static_cast<float>(gathered[base + k * dim]);
+    if constexpr (HAS_PROBS) {
+      v *= probs[row * top_k + k];
+    }
+    acc += v;
+  }
+
+  out[row * dim + col] = static_cast<scalar_t>(acc);
+}
+
 int resolve_num_blocks(int world_size, int ne, int64_t requested_nblocks) {
   if (requested_nblocks > 0) {
     TORCH_CHECK(
@@ -269,6 +391,28 @@ int resolve_num_blocks_auto(
   num_blocks = at::round_up(num_blocks, nsplits);
   int max_blocks = intra_node ? 256 : 64;
   return std::min(num_blocks, max_blocks);
+}
+
+int resolve_num_blocks_rowwise(
+    int64_t num_routes,
+    int64_t requested_nblocks,
+    bool intra_node) {
+  if (requested_nblocks > 0) {
+    TORCH_CHECK(
+        requested_nblocks <= std::numeric_limits<int>::max(),
+        "nblocks is too large");
+    return static_cast<int>(requested_nblocks);
+  }
+  if (num_routes <= 0) {
+    return 1;
+  }
+
+  auto* props = at::cuda::getCurrentDeviceProperties();
+  int sm_count = std::max(props->multiProcessorCount, 1);
+  int target_blocks = sm_count * 4;
+  int max_blocks = intra_node ? 2048 : 512;
+  int64_t capped = std::min<int64_t>(num_routes, max_blocks);
+  return std::max<int>(1, static_cast<int>(std::min<int64_t>(target_blocks, capped)));
 }
 
 std::string cu_result_string(CUresult result) {
@@ -390,6 +534,14 @@ void all_to_all_vdev_2d_nblocks(
   auto team = team_manager.get_team(group_name, input_hdl->get_rank_to_global_rank());
   maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(allToAllV_2d));
 
+  // Ensure all peers have completed prior stream work (input writes / split setup)
+  // before 2D all-to-all starts issuing remote gets.
+  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+  TORCH_CHECK(
+      pre_barrier_status == 0,
+      "nvshmemx_barrier_on_stream (pre) failed with status ",
+      pre_barrier_status);
+
   auto input_dim0 = input.size(0);
   bool rank_is_row_in = true;
   void* args0[] = {
@@ -439,6 +591,13 @@ void all_to_all_vdev_2d_nblocks(
       args1,
       0,
       stream);
+
+  // Ensure all peers have completed the collective before buffers can be reused.
+  int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+  TORCH_CHECK(
+      post_barrier_status == 0,
+      "nvshmemx_barrier_on_stream (post) failed with status ",
+      post_barrier_status);
 }
 
 void all_to_all_vdev_2d_offset_nblocks(
@@ -513,6 +672,14 @@ void all_to_all_vdev_2d_offset_nblocks(
   auto team = team_manager.get_team(group_name, input_hdl->get_rank_to_global_rank());
   maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(allToAllV_2d));
 
+  // Ensure all peers have completed prior stream work (input writes / split setup)
+  // before 2D all-to-all starts issuing remote gets.
+  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+  TORCH_CHECK(
+      pre_barrier_status == 0,
+      "nvshmemx_barrier_on_stream (pre) failed with status ",
+      pre_barrier_status);
+
   auto input_dim0 = input.size(0);
   bool rank_is_row_in = false;
   void* args0[] = {
@@ -560,6 +727,344 @@ void all_to_all_vdev_2d_offset_nblocks(
       dim3(num_blocks),
       dim3(THREADS_PER_BLOCK),
       args1,
+      0,
+      stream);
+
+  // Ensure all peers have completed the collective before buffers can be reused.
+  int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+  TORCH_CHECK(
+      post_barrier_status == 0,
+      "nvshmemx_barrier_on_stream (post) failed with status ",
+      post_barrier_status);
+}
+
+void rowwise_dispatch_put(
+    at::Tensor& input,
+    at::Tensor& out,
+    at::Tensor& dst_ranks,
+    at::Tensor& dst_rows,
+    const std::string& group_name,
+    int64_t nblocks) {
+  auto out_hdl = c10d::symmetric_memory::rendezvous(out, group_name);
+
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(input.dim() == 2, "input must be rank-2 [N, D]");
+  TORCH_CHECK(out.dim() == 2, "out must be rank-2 [C, D]");
+  TORCH_CHECK(
+      dst_ranks.dim() == 2 && dst_rows.dim() == 2,
+      "dst_ranks and dst_rows must be rank-2 [N, K]");
+  TORCH_CHECK(
+      dst_ranks.sizes() == dst_rows.sizes(),
+      "dst_ranks and dst_rows must have identical shapes");
+  TORCH_CHECK(
+      dst_ranks.size(0) == input.size(0),
+      "dst_ranks/dst_rows first dim (N) must match input rows");
+  TORCH_CHECK(
+      input.size(1) == out.size(1),
+      "input and out must have the same hidden dim (D)");
+
+  TORCH_CHECK(
+      input.is_contiguous() && out.is_contiguous() && dst_ranks.is_contiguous() &&
+          dst_rows.is_contiguous(),
+      "input, out, dst_ranks and dst_rows must be contiguous");
+  TORCH_CHECK(
+      input.dtype() == out.dtype(),
+      "input and out must have the same dtype");
+  TORCH_CHECK(
+      dst_ranks.scalar_type() == at::kLong && dst_rows.scalar_type() == at::kLong,
+      "dst_ranks and dst_rows must be int64");
+
+  auto device = input.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && out.device() == device &&
+          dst_ranks.device() == device && dst_rows.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+  c10::cuda::CUDAGuard guard(device);
+
+  auto stream = at::cuda::getCurrentCUDAStream();
+  auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
+  auto team = team_manager.get_team(group_name, out_hdl->get_rank_to_global_rank());
+  maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(dispatchRowsPut));
+
+  const void* input_ptr = input.data_ptr();
+  void* out_ptr = out.mutable_data_ptr();
+  const int64_t* dst_ranks_ptr = reinterpret_cast<const int64_t*>(dst_ranks.data_ptr());
+  const int64_t* dst_rows_ptr = reinterpret_cast<const int64_t*>(dst_rows.data_ptr());
+
+  int64_t num_input_rows = input.size(0);
+  int64_t top_k = dst_ranks.size(1);
+  int64_t out_capacity_rows = out.size(0);
+  size_t row_bytes = static_cast<size_t>(input.stride(0)) * input.element_size();
+  int num_blocks = resolve_num_blocks_rowwise(
+      num_input_rows * top_k, nblocks, out_hdl->world_within_direct_access());
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  // Ensure all peers have completed prior stream work (e.g., local zero_/copy_)
+  // before remote puts in this launch start.
+  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+  TORCH_CHECK(
+      pre_barrier_status == 0,
+      "nvshmemx_barrier_on_stream (pre) failed with status ",
+      pre_barrier_status);
+
+  void* args[] = {
+      &input_ptr,
+      &out_ptr,
+      &dst_ranks_ptr,
+      &dst_rows_ptr,
+      &row_bytes,
+      &num_input_rows,
+      &top_k,
+      &out_capacity_rows,
+      &team};
+  nvshmemx_collective_launch(
+      (const void*)dispatchRowsPut,
+      dim3(num_blocks),
+      dim3(ROWWISE_THREADS_PER_BLOCK),
+      args,
+      0,
+      stream);
+  int barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+  TORCH_CHECK(
+      barrier_status == 0,
+      "nvshmemx_barrier_on_stream failed with status ",
+      barrier_status);
+}
+
+void rowwise_combine_get(
+    at::Tensor& expert_out,
+    at::Tensor& out,
+    at::Tensor& src_ranks,
+    at::Tensor& src_rows,
+    const std::optional<at::Tensor>& probs,
+    const std::string& group_name,
+    int64_t nblocks) {
+  auto expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
+
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(expert_out.dim() == 2, "expert_out must be rank-2 [C, D]");
+  TORCH_CHECK(out.dim() == 2, "out must be rank-2 [N, D]");
+  TORCH_CHECK(
+      src_ranks.dim() == 2 && src_rows.dim() == 2,
+      "src_ranks and src_rows must be rank-2 [N, K]");
+  TORCH_CHECK(
+      src_ranks.sizes() == src_rows.sizes(),
+      "src_ranks and src_rows must have identical shapes");
+  TORCH_CHECK(
+      src_ranks.size(0) == out.size(0),
+      "src_ranks/src_rows first dim (N) must match out rows");
+  TORCH_CHECK(
+      expert_out.size(1) == out.size(1),
+      "expert_out and out must have the same hidden dim (D)");
+
+  TORCH_CHECK(
+      expert_out.is_contiguous() && out.is_contiguous() && src_ranks.is_contiguous() &&
+          src_rows.is_contiguous(),
+      "expert_out, out, src_ranks and src_rows must be contiguous");
+  TORCH_CHECK(
+      expert_out.dtype() == out.dtype(),
+      "expert_out and out must have the same dtype");
+  TORCH_CHECK(
+      src_ranks.scalar_type() == at::kLong && src_rows.scalar_type() == at::kLong,
+      "src_ranks and src_rows must be int64");
+
+  auto device = expert_out.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && out.device() == device &&
+          src_ranks.device() == device && src_rows.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+
+  const float* probs_ptr = nullptr;
+  if (probs.has_value()) {
+    TORCH_CHECK(probs->defined(), "probs optional tensor must be defined");
+    TORCH_CHECK(
+        probs->device() == device,
+        "probs must be on the same CUDA device as other arguments");
+    TORCH_CHECK(
+        probs->is_contiguous(),
+        "probs must be contiguous");
+    TORCH_CHECK(
+        probs->sizes() == src_ranks.sizes(),
+        "probs must have shape [N, K] matching src_ranks/src_rows");
+    TORCH_CHECK(
+        probs->scalar_type() == at::kFloat,
+        "probs must be float32");
+    probs_ptr = probs->data_ptr<float>();
+  }
+
+  c10::cuda::CUDAGuard guard(device);
+  auto stream = at::cuda::getCurrentCUDAStream();
+  auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
+  auto team =
+      team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
+  maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(gatherRowsGet<true>));
+
+  int64_t num_out_rows = out.size(0);
+  int64_t top_k = src_ranks.size(1);
+  int64_t dim = out.size(1);
+  int64_t expert_capacity_rows = expert_out.size(0);
+  size_t row_bytes =
+      static_cast<size_t>(expert_out.stride(0)) * expert_out.element_size();
+  int num_blocks = resolve_num_blocks_rowwise(
+      num_out_rows * top_k, nblocks, expert_out_hdl->world_within_direct_access());
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  // Local temporary gather buffer [N, K, D] before reduction to [N, D].
+  auto gathered = at::empty({num_out_rows, top_k, dim}, out.options());
+
+  const void* expert_out_ptr = expert_out.data_ptr();
+  void* gathered_ptr = gathered.mutable_data_ptr();
+  const int64_t* src_ranks_ptr = reinterpret_cast<const int64_t*>(src_ranks.data_ptr());
+  const int64_t* src_rows_ptr = reinterpret_cast<const int64_t*>(src_rows.data_ptr());
+
+  void* args[] = {
+      &expert_out_ptr,
+      &gathered_ptr,
+      &src_ranks_ptr,
+      &src_rows_ptr,
+      &row_bytes,
+      &num_out_rows,
+      &top_k,
+      &expert_capacity_rows,
+      &team};
+  nvshmemx_collective_launch(
+      (const void*)gatherRowsGet<true>,
+      dim3(num_blocks),
+      dim3(ROWWISE_THREADS_PER_BLOCK),
+      args,
+      0,
+      stream);
+
+  constexpr int THREADS = 256;
+  dim3 block(THREADS);
+  dim3 grid(
+      static_cast<unsigned int>(num_out_rows),
+      static_cast<unsigned int>(at::ceil_div(dim, static_cast<int64_t>(THREADS))));
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf,
+      at::kBFloat16,
+      out.scalar_type(),
+      "combineRowsReduceKernel",
+      [&] {
+        const scalar_t* gathered_typed = gathered.data_ptr<scalar_t>();
+        scalar_t* out_typed = out.mutable_data_ptr<scalar_t>();
+        if (probs_ptr == nullptr) {
+          combineRowsReduceKernel<scalar_t, false>
+              <<<grid, block, 0, stream>>>(
+                  gathered_typed,
+                  out_typed,
+                  nullptr,
+                  num_out_rows,
+                  top_k,
+                  dim);
+        } else {
+          combineRowsReduceKernel<scalar_t, true>
+              <<<grid, block, 0, stream>>>(
+                  gathered_typed,
+                  out_typed,
+                  probs_ptr,
+                  num_out_rows,
+                  top_k,
+                  dim);
+        }
+      });
+}
+
+void rowwise_gather_get(
+    at::Tensor& expert_out,
+    at::Tensor& out,
+    at::Tensor& src_ranks,
+    at::Tensor& src_rows,
+    const std::string& group_name,
+    int64_t nblocks) {
+  auto expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
+
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(expert_out.dim() == 2, "expert_out must be rank-2 [C, D]");
+  TORCH_CHECK(out.dim() == 2, "out must be rank-2 [R, D]");
+  TORCH_CHECK(
+      src_ranks.dim() == 2 && src_rows.dim() == 2,
+      "src_ranks and src_rows must be rank-2 [R, 1]");
+  TORCH_CHECK(
+      src_ranks.sizes() == src_rows.sizes(),
+      "src_ranks and src_rows must have identical shapes");
+  TORCH_CHECK(
+      src_ranks.size(1) == 1,
+      "rowwise_gather_get expects src_ranks/src_rows shape [R, 1]");
+  TORCH_CHECK(
+      src_ranks.size(0) == out.size(0),
+      "src_ranks/src_rows first dim (R) must match out rows");
+  TORCH_CHECK(
+      expert_out.size(1) == out.size(1),
+      "expert_out and out must have the same hidden dim (D)");
+  TORCH_CHECK(
+      expert_out.is_contiguous() && out.is_contiguous() && src_ranks.is_contiguous() &&
+          src_rows.is_contiguous(),
+      "expert_out, out, src_ranks and src_rows must be contiguous");
+  TORCH_CHECK(
+      expert_out.dtype() == out.dtype(),
+      "expert_out and out must have the same dtype");
+  TORCH_CHECK(
+      src_ranks.scalar_type() == at::kLong && src_rows.scalar_type() == at::kLong,
+      "src_ranks and src_rows must be int64");
+
+  auto device = expert_out.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && out.device() == device &&
+          src_ranks.device() == device && src_rows.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+  c10::cuda::CUDAGuard guard(device);
+
+  auto stream = at::cuda::getCurrentCUDAStream();
+  auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
+  auto team =
+      team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
+  // rowwise_gather_get is used by combine-2d-offset, where dropped routes are
+  // masked downstream by packed_keep_mask. Skipping per-route zero-fill here
+  // avoids substantial extra work on ranks with more dropped routes.
+  maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(gatherRowsGet<false>));
+
+  int64_t num_out_rows = out.size(0);
+  int64_t top_k = 1;
+  int64_t expert_capacity_rows = expert_out.size(0);
+  size_t row_bytes =
+      static_cast<size_t>(expert_out.stride(0)) * expert_out.element_size();
+  int num_blocks = resolve_num_blocks_rowwise(
+      num_out_rows, nblocks, expert_out_hdl->world_within_direct_access());
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  // Ensure all peers have completed prior stream work before remote gets start.
+  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+  TORCH_CHECK(
+      pre_barrier_status == 0,
+      "nvshmemx_barrier_on_stream (pre) failed with status ",
+      pre_barrier_status);
+
+  const void* expert_out_ptr = expert_out.data_ptr();
+  void* out_ptr = out.mutable_data_ptr();
+  const int64_t* src_ranks_ptr =
+      reinterpret_cast<const int64_t*>(src_ranks.data_ptr());
+  const int64_t* src_rows_ptr =
+      reinterpret_cast<const int64_t*>(src_rows.data_ptr());
+
+  void* args[] = {
+      &expert_out_ptr,
+      &out_ptr,
+      &src_ranks_ptr,
+      &src_rows_ptr,
+      &row_bytes,
+      &num_out_rows,
+      &top_k,
+      &expert_capacity_rows,
+      &team};
+  nvshmemx_collective_launch(
+      (const void*)gatherRowsGet<false>,
+      dim3(num_blocks),
+      dim3(ROWWISE_THREADS_PER_BLOCK),
+      args,
       0,
       stream);
 }

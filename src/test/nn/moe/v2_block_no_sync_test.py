@@ -5,7 +5,6 @@ import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import DType
-from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
@@ -40,6 +39,8 @@ def _build_block(
         bias=False,
         dtype=DType.float32,
     )
+    from olmo_core.nn.attention import AttentionConfig, AttentionType
+
     return MoEFusedV2TransformerBlock(
         d_model=d_model,
         block_idx=0,
@@ -124,6 +125,38 @@ def _install_forced_router(block: MoEFusedV2TransformerBlock):
         return expert_weights, expert_indices, batch_size_per_expert, None
 
     block.router_forward = types.MethodType(_forced_router_forward, block)
+
+
+def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
+    def _deterministic_router_forward(self, router, local_x, scores_only, loss_div_factor):
+        del loss_div_factor
+        B, S, _ = local_x.shape
+        if scores_only:
+            return torch.ones(
+                B,
+                S,
+                router.num_experts,
+                device=local_x.device,
+                dtype=local_x.dtype,
+            ), None, None, None
+
+        top_k = router.top_k
+        num_experts = router.num_experts
+        token_ids = torch.arange(B * S, device=local_x.device, dtype=torch.long).unsqueeze(1)
+        route_offsets = torch.arange(top_k, device=local_x.device, dtype=torch.long).unsqueeze(0)
+        expert_indices = (token_ids + route_offsets + dist.get_rank() * 3) % num_experts
+        expert_indices = expert_indices.view(B, S, top_k)
+
+        weights = torch.arange(1, top_k + 1, device=local_x.device, dtype=local_x.dtype)
+        weights = weights / weights.sum().clamp_min(1e-6)
+        expert_weights = weights.view(1, 1, top_k).expand(B, S, top_k).contiguous()
+
+        batch_size_per_expert = torch.bincount(
+            expert_indices.reshape(-1), minlength=num_experts
+        ).to(dtype=torch.long)
+        return expert_weights, expert_indices, batch_size_per_expert, None
+
+    block.router_forward = types.MethodType(_deterministic_router_forward, block)
 
 
 def _run_ep_no_sync_matches_synced():
@@ -227,6 +260,129 @@ def _run_ep_no_sync_hard_fail_setup():
         block_module._symm_mem = old_symm
 
 
+def _run_ep_no_sync_rowwise_matches_synced():
+    ep_mesh = _build_ep_mesh()
+
+    block_ep = _build_block(
+        ep_no_sync=False,
+        d_model=64,
+        hidden_size=128,
+        num_experts=8,
+        top_k=2,
+        uniform_expert_assignment=False,
+    )
+    block_rowwise = _build_block(
+        ep_no_sync=True,
+        d_model=64,
+        hidden_size=128,
+        num_experts=8,
+        top_k=2,
+        uniform_expert_assignment=False,
+    )
+    block_ep.apply_ep(ep_mesh)
+    block_rowwise.apply_ep(ep_mesh)
+
+    _init_block_params(block_ep)
+    block_rowwise.load_state_dict(block_ep.state_dict())
+    _install_deterministic_topk_router(block_ep)
+    _install_deterministic_topk_router(block_rowwise)
+
+    block_rowwise.ep_no_sync_use_rowwise_all_to_all = True
+    block_rowwise.ep_no_sync_rowwise_nblocks = 128
+
+    block_ep.train()
+    block_rowwise.train()
+
+    x = torch.randn(2, 8, block_ep.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x_rowwise = x.detach().clone().requires_grad_(True)
+
+    y_ep = block_ep(x)
+    y_rowwise = block_rowwise(x_rowwise)
+    torch.testing.assert_close(y_rowwise, y_ep, atol=5e-4, rtol=5e-4)
+
+    loss_ep = y_ep.square().mean() + (0.1 * y_ep.sum())
+    loss_rowwise = y_rowwise.square().mean() + (0.1 * y_rowwise.sum())
+    loss_ep.backward()
+    loss_rowwise.backward()
+
+    torch.testing.assert_close(x_rowwise.grad, x.grad, atol=5e-4, rtol=5e-4)
+
+    ep_params = dict(block_ep.named_parameters())
+    rowwise_params = dict(block_rowwise.named_parameters())
+    for name, p_ep in ep_params.items():
+        p_rowwise = rowwise_params[name]
+        if p_ep.grad is None or p_rowwise.grad is None:
+            continue
+        torch.testing.assert_close(p_rowwise.grad, p_ep.grad, atol=1e-3, rtol=1e-3)
+
+
+def _run_ep_no_sync_rowwise_2d_offset_matches_rowwise_get_with_drop():
+    ep_mesh = _build_ep_mesh()
+
+    block_a = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_capacity_factor=0.5,
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=4,
+        uniform_expert_assignment=False,
+    )
+    block_b = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_capacity_factor=0.5,
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=4,
+        uniform_expert_assignment=False,
+    )
+    block_a.apply_ep(ep_mesh)
+    block_b.apply_ep(ep_mesh)
+
+    _init_block_params(block_a)
+    block_b.load_state_dict(block_a.state_dict())
+    _install_deterministic_topk_router(block_a)
+    _install_deterministic_topk_router(block_b)
+
+    block_a.ep_no_sync_use_rowwise_all_to_all = True
+    block_a.ep_no_sync_rowwise_nblocks = 128
+
+    block_b.ep_no_sync_use_rowwise_all_to_all = True
+    block_b.ep_no_sync_rowwise_nblocks = 128
+
+    block_a.train()
+    block_b.train()
+
+    x = torch.randn(2, 64, block_a.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x_b = x.detach().clone().requires_grad_(True)
+
+    y_a = block_a(x)
+    y_b = block_b(x_b)
+    assert torch.isfinite(y_a).all()
+    assert torch.isfinite(y_b).all()
+    torch.testing.assert_close(y_b, y_a, atol=8e-4, rtol=8e-4)
+
+    loss_a = y_a.square().mean() + (0.1 * y_a.sum())
+    loss_b = y_b.square().mean() + (0.1 * y_b.sum())
+    loss_a.backward()
+    loss_b.backward()
+
+    assert torch.isfinite(x.grad).all()
+    assert torch.isfinite(x_b.grad).all()
+    torch.testing.assert_close(x_b.grad, x.grad, atol=2e-3, rtol=2e-3)
+
+    params_a = dict(block_a.named_parameters())
+    params_b = dict(block_b.named_parameters())
+    for name, p_a in params_a.items():
+        p_b = params_b[name]
+        if p_a.grad is None or p_b.grad is None:
+            continue
+        assert torch.isfinite(p_a.grad).all()
+        assert torch.isfinite(p_b.grad).all()
+        torch.testing.assert_close(p_b.grad, p_a.grad, atol=3e-3, rtol=3e-3)
+
+
 @requires_multi_gpu
 def test_v2_ep_no_sync_matches_synced():
     run_distributed_test(_run_ep_no_sync_matches_synced, backend="nccl", start_method="spawn")
@@ -245,3 +401,17 @@ def test_v2_ep_no_sync_quota_invariants():
 @requires_multi_gpu
 def test_v2_ep_no_sync_hard_fail_setup():
     run_distributed_test(_run_ep_no_sync_hard_fail_setup, backend="nccl", start_method="spawn")
+
+
+@requires_multi_gpu
+def test_v2_ep_no_sync_rowwise_matches_synced():
+    run_distributed_test(_run_ep_no_sync_rowwise_matches_synced, backend="nccl", start_method="spawn")
+
+
+@requires_multi_gpu
+def test_v2_ep_no_sync_rowwise_2d_offset_matches_rowwise_get_with_drop():
+    run_distributed_test(
+        _run_ep_no_sync_rowwise_2d_offset_matches_rowwise_get_with_drop,
+        backend="nccl",
+        start_method="spawn",
+    )

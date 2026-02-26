@@ -93,3 +93,68 @@ def all_to_all_vdev_2d_offset_nblocks(
         group_name,
         nblocks,
     )
+
+
+@torch.compiler.disable
+def rowwise_dispatch_put(
+    input: torch.Tensor,
+    out: torch.Tensor,
+    dst_ranks: torch.Tensor,
+    dst_rows: torch.Tensor,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_dispatch_put(
+        input,
+        out,
+        dst_ranks,
+        dst_rows,
+        group_name,
+        nblocks,
+    )
+
+
+@torch.compiler.disable
+def rowwise_combine_get(
+    expert_out: torch.Tensor,
+    out: torch.Tensor,
+    src_ranks: torch.Tensor,
+    src_rows: torch.Tensor,
+    group_name: str,
+    *,
+    probs: Optional[torch.Tensor] = None,
+    nblocks: int = 0,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_combine_get(
+        expert_out,
+        out,
+        src_ranks,
+        src_rows,
+        probs,
+        group_name,
+        nblocks,
+    )
+
+
+@torch.compiler.disable
+def rowwise_gather_get(
+    expert_out: torch.Tensor,
+    out: torch.Tensor,
+    src_ranks: torch.Tensor,
+    src_rows: torch.Tensor,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_gather_get(
+        expert_out,
+        out,
+        src_ranks,
+        src_rows,
+        group_name,
+        nblocks,
+    )
