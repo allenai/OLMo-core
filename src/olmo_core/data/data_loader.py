@@ -1151,7 +1151,8 @@ class NumpyDataLoaderConfig(DataLoaderConfig[NumpyDataLoaderBase]):
         data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(
             dataset,
             global_batch_size=self.global_batch_size,
-            collator=collator or DataCollator(pad_token_id=dataset.pad_token_id),
+            collator=collator
+            or DataCollator(pad_token_id=dataset.pad_token_id, vocab_size=dataset.vocab_size),
             work_dir=self.work_dir or dataset.work_dir,
             dp_world_size=get_world_size(dp_process_group),
             dp_rank=get_rank(dp_process_group),
