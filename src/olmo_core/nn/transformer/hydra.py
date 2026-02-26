@@ -8,7 +8,6 @@ logits, which can be averaged or otherwise combined downstream.
 
 import logging
 from dataclasses import dataclass, replace
-from typing import Dict
 
 import torch
 import torch.nn as nn
@@ -17,6 +16,7 @@ from ..config import ModelConfig
 from .config import TransformerConfig
 
 log = logging.getLogger(__name__)
+VOCAB_SIZE = 100352
 
 
 @dataclass
@@ -50,13 +50,18 @@ class HydraTransformerConfig(ModelConfig):
     def from_olmo2_1B(
         cls,
         n_heads: int = 5,
-        split_layer: int = 13,
-        vocab_size: int = 100352,
+        heads_depth: int = 3,
+        vocab_size: int = VOCAB_SIZE,
     ) -> "HydraTransformerConfig":
         """
         Factory for OLMo2 1B with configurable split point.
 
         Sets flash_2 attention backend for KV cache support.
+
+        Constructor for HydraTransformerConfig with (0-indexed):
+            - Layers [0, 1, ..., (n_layers - heads_depth - 1)] in trunk
+            - Layers [(n_layers - heads_depth), ..., (n_layers - 1)] in head(s)
+        (OLMo2 1B has 16 layers)
         """
         from ..attention import AttentionBackendName
 
@@ -66,8 +71,8 @@ class HydraTransformerConfig(ModelConfig):
         return cls(
             base_config=base,
             n_heads=n_heads,
-            trunk_layers=split_layer,
-            head_layers=base.n_layers - split_layer,
+            trunk_layers=base.n_layers - heads_depth,
+            head_layers=heads_depth,
         )
 
     def build(self, *, init_device: str = "cpu") -> "HydraTransformer":
@@ -171,6 +176,7 @@ class HydraTransformer(nn.Module):
         h = self.trunk(input_ids, **kwargs)
 
         # NOTE: Streaming was tried, but honestly we are too GPU poor to make a difference
+        # TODO: Try to parallelise forward passes through heads
         head_hidden = [head(h, **kwargs) for head in self.heads]
 
         # combine lm_heads into one big matmul, benchmarked a LOT faster
@@ -181,7 +187,7 @@ class HydraTransformer(nn.Module):
     @staticmethod
     def load_olmo_state(
         model: "HydraTransformer",
-        olmo_state: Dict[str, torch.Tensor],
+        olmo_state: dict[str, torch.Tensor],
         trunk_layers: int,
         vocab_size: int,
     ) -> None:
@@ -196,9 +202,9 @@ class HydraTransformer(nn.Module):
         :param trunk_layers: Number of layers in the trunk.
         :param vocab_size: Target vocab size (for padding).
         """
-        trunk_state: Dict[str, torch.Tensor] = {}
-        head_state: Dict[str, torch.Tensor] = {}
-        lm_head_state: Dict[str, torch.Tensor] = {}
+        trunk_state: dict[str, torch.Tensor] = {}
+        head_state: dict[str, torch.Tensor] = {}
+        lm_head_state: dict[str, torch.Tensor] = {}
 
         for key, value in olmo_state.items():
             if key.startswith("blocks."):
@@ -210,7 +216,7 @@ class HydraTransformer(nn.Module):
                     new_idx = block_idx - trunk_layers
                     head_state[f"blocks.{new_idx}.{suffix}"] = value
             elif key.startswith("lm_head."):
-                lm_head_state[key[len("lm_head.") :]] = value
+                lm_head_state[key.split(".", 1)[1]] = value
             else:
                 trunk_state[key] = value
 
@@ -229,6 +235,7 @@ class HydraTransformer(nn.Module):
         model.lm_head.load_state_dict(lm_head_state, assign=True)
 
         for i, head in enumerate(model.heads):
+            # NOTE: For testing, can inject noise into head params here
             state = (
                 head_state if i == 0 else {k: v.clone() for k, v in head_state.items()}
             )  # NEED COPY

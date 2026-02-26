@@ -9,15 +9,15 @@ Usage:
 """
 
 import torch
+from constants import *
 from safetensors.torch import load_file
 from transformers import AutoConfig, AutoTokenizer
 
 from olmo_core.nn.hf.convert import convert_state_from_hf
 from olmo_core.nn.transformer import HydraTransformer, HydraTransformerConfig
 
+# TODO: load from .env os.environ.get("WEIGHTS_DIR", ...)
 WEIGHTS_DIR = "/home/owain/olmo2-1b-instruct-weights"
-VOCAB_SIZE = 100352
-MAX_NEW_TOKENS = 20
 
 
 def main():
@@ -54,6 +54,7 @@ def main():
         messages, tokenize=False, add_generation_prompt=True
     )
 
+    # shape: (B, N), model expects batch dim
     input_ids = torch.tensor([tokenizer.encode(chat_prompt)], device="cuda")
     max_seq_len = input_ids.shape[1] + MAX_NEW_TOKENS
 
@@ -75,6 +76,7 @@ def main():
             next_token = merged_logits.argmax(dim=-1, keepdim=True).unsqueeze(0)
             generated.append(next_token.item())
 
+    # index dummy batch dim
     full_ids = input_ids[0].tolist() + generated
     print(f"\nPrompt: {prompt!r}")
     print(f"Output: {tokenizer.decode(full_ids)}")
