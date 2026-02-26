@@ -11,6 +11,7 @@ from .block import (
     TransformerBlock,
     TransformerBlockBase,
 )
+from .hydra import HydraTransformer, HydraTransformerConfig
 from .config import (
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
@@ -23,6 +24,8 @@ from .init import InitMethod
 from .model import MoETransformer, NormalizedTransformer, Transformer
 
 __all__ = [
+    "HydraTransformer",
+    "HydraTransformerConfig",
     "TransformerType",
     "TransformerConfig",
     "Transformer",

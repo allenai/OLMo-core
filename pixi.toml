@@ -1,0 +1,16 @@
+[workspace]
+name = "olmo-core"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[system-requirements]
+cuda = "12.4"
+
+[dependencies]
+python = "3.12.*"
+pytorch = ">=2.6"
+flash-attn = ">=2.8.3,<3"
+
+[pypi-dependencies]
+ai2-olmo-core = { path = ".", editable = true, extras = ["dev", "beaker", "comet", "dion", "fla", "torchao", "transformers", "wandb"] }
+hf-transfer = "*"
