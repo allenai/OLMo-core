@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added support for in-loop perplexity evals with context parallelism (CP) and tensor parallelism (TP).
 - Added documentation for verifying chat template settings before running evals after SFT.
 - Added `olmo_core.data.composable` module.
 - Added `PeriNormTransformerBlock`.
@@ -49,9 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mark ephemeral checkpoints with the `ephemeral` flag in their metadata.
 - Added `ephemeral: Optional[bool]` flag the `Checkpointer.find_checkpoints()` for filtering.
 - Added support for block-pattern based initialization of hybrid transformers. `TransformerConfig.block` now accepts a dict of named `TransformerBlockConfig`s, paired with a `block_pattern` list that controls per-layer block selection.
+- Added optional `vocab_size` field to `DataCollator` for validating token IDs are in `[0, vocab_size)` before the batch reaches the model. Wired through automatically in both `NumpyDataLoaderConfig` and `ComposableDataLoaderConfig`.
 
 ### Fixed
 
+- Fixed `Transformer.get_rope_buffers()` crashing on non-rope attention mixers like `GatedDeltaNet`.
+- Fixed A100 peak flops spec in `SpeedMonitorCallback` being 2x too low, which inflated MFU by 2x.
 - Fixed `AttentionConfig.num_params()` overcounting QK norm parameters when using GQA/MQA with `use_head_qk_norm=False`.
 - Fixed the peak learning rate in `src/scripts/train/OLMo3/OLMo3-32B-midtraining.py` to the correct one.
 - Fixed type annotation issue in `NumpyInterleavedFSLDataset` where `_num_interleaving_exempt_instances` and `_num_interleavable_instances` were missing `Optional[int]` type hints, causing mypy type errors.

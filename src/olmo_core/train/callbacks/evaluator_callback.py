@@ -442,6 +442,12 @@ class DownstreamEvaluator(Evaluator):
     ) -> None:
         del ce_loss
         assert self.metric is not None
+        if logits is None:
+            raise RuntimeError(
+                "Downstream evaluators require full logits, but logits are None. "
+                "This happens when context parallelism (CP) or tensor parallelism (TP) is enabled. "
+                "Please disable downstream evals when using CP or TP."
+            )
         self.metric.update(batch, logits)
 
     def compute_metrics(self) -> Dict[str, torch.Tensor]:
