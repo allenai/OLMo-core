@@ -64,7 +64,7 @@ class AmpleGCG:
             in generated suffixes
 
         Returns:
-        - nested list of size (batch_size * num_beams) with each entry=prompt+suffix
+        - list of len = batch_size * num_beams with each entry=prompt+suffix
         """
         if isinstance(query, str):
             queries = [query]
