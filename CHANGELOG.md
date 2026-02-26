@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `BeakerLaunchConfig.debug` field to set debugging env vars (e.g. `CUDA_LAUNCH_BLOCKING=1`) from config.
 - Added support for in-loop perplexity evals with context parallelism (CP) and tensor parallelism (TP).
 - Added documentation for verifying chat template settings before running evals after SFT.
 - Added `olmo_core.data.composable` module.

@@ -11,7 +11,7 @@ import json
 import logging
 import pickle
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Type, Union
 
 import torch
 from cached_path import cached_path
@@ -48,9 +48,7 @@ def load_trainer_state(checkpoint_dir: str) -> Dict[str, Any]:
     return torch.load(cached_path(trainer_state_path), weights_only=False)
 
 
-def verify_paths_match(
-    data_paths: List[str], dataset_paths: List[str]
-) -> bool:
+def verify_paths_match(data_paths: List[str], dataset_paths: List[str]) -> bool:
     """Verify that data_paths.txt matches the paths from the reconstructed dataset."""
     if len(data_paths) != len(dataset_paths):
         log.error(
@@ -146,6 +144,7 @@ def main():
         sys.exit(1)
 
     # Reconstruct dataset
+    config_class: Type[Union[NumpyFSLDatasetConfig, NumpyPackedFSLDatasetConfig]]
     dataset_class_name = dataset_config_dict["_CLASS_"]
     if dataset_class_name == "olmo_core.data.numpy_dataset.NumpyDatasetConfig":
         log.warning(
@@ -253,7 +252,7 @@ def main():
 
     # Trace each instance index back to its source file(s).
     if isinstance(dataset, NumpyPackedFSLDataset):
-        source_files = []
+        source_files: List[Optional[List[str]]] = []
         for idx in batch["index"].tolist():
             for i, (start, end) in enumerate(dataset.source_instance_offsets):
                 if start <= idx < end:
