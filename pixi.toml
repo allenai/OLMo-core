@@ -10,6 +10,7 @@ cuda = "12.4"
 python = "3.12.*"
 pytorch = ">=2.6"
 flash-attn = ">=2.8.3,<3"
+sentencepiece = ">=0.2.1,<0.3"
 
 [pypi-dependencies]
 ai2-olmo-core = { path = ".", editable = true, extras = ["dev", "beaker", "comet", "dion", "fla", "torchao", "transformers", "wandb"] }
