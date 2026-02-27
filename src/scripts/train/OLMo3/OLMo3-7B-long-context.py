@@ -11,7 +11,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.io import join_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.nn.rope import YaRNRoPEScalingConfig
+from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
 from olmo_core.train import Duration
@@ -39,17 +39,19 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         root_dir=root_dir,
         beaker_image="petew/olmo-core-tch270cu128",
         workspace="ai2/long-contexts",
-        num_nodes=32,
+        num_nodes=16,
         nccl_debug=True,
         # override priority from the CLI eg `--launch.priority=high`
     )
 
     tokenizer_config = TokenizerConfig.dolma2()
-    model_config = TransformerConfig.olmo3_7B(
-        vocab_size=tokenizer_config.padded_vocab_size()
-    ).with_rope_scaling(
-        YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
+    model_config = TransformerConfig.olmo3_7B(vocab_size=tokenizer_config.padded_vocab_size())
+    assert not isinstance(model_config.block, dict)
+    assert isinstance(model_config.block.sequence_mixer, AttentionConfig), (
+        "Sequence mixer must be an attention config for RoPE scaling"
     )
+    # Drop RoPE on all layers
+    model_config.block.sequence_mixer.rope = None
 
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
