@@ -9,7 +9,6 @@ from olmo_core.data import (
 from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.io import join_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -19,7 +18,7 @@ from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 SEQ_LENGTH = 65536
 GLOBAL_BATCH_SIZE = 2**22  # ~4M tokens
-MAX_TOKENS = 50_000_000_000  # 50B
+MAX_TOKENS = 100_000_000_000  # 100B
 LR = 0.00020712352850360292
 SEED = 4123
 
@@ -65,11 +64,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     dataset_config = NumpyPackedFSLDatasetConfig.glob(
-        str(
-            join_path(
-                root_dir, "preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy"
-            )
-        ),
+        "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
         tokenizer=tokenizer_config,
         work_dir=work_dir,
         sequence_length=SEQ_LENGTH,
@@ -92,7 +87,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     trainer_config.add_callbacks(
         cookbook.configure_default_callbacks(
-            run_name=run_name_with_ts, wandb_group_name=cli_context.run_name
+            run_name=run_name_with_ts,
+            wandb_group_name=cli_context.run_name,
+            wandb_project="olmo3-7b-long-context",
         )
     )
 
