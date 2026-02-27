@@ -911,6 +911,13 @@ void rowwise_combine_get(
       num_out_rows * top_k, nblocks, expert_out_hdl->world_within_direct_access());
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
 
+  // Ensure all peers have completed prior stream work before remote gets start.
+  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+  TORCH_CHECK(
+      pre_barrier_status == 0,
+      "nvshmemx_barrier_on_stream (pre) failed with status ",
+      pre_barrier_status);
+
   // Local temporary gather buffer [N, K, D] before reduction to [N, D].
   auto gathered = at::empty({num_out_rows, top_k, dim}, out.options());
 
