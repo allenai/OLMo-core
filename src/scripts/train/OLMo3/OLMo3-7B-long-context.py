@@ -11,7 +11,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import AttentionConfig
-from olmo_core.nn.transformer import TransformerBlockConfig, TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
 from olmo_core.train import Duration
 from olmo_core.train.train_module import TransformerTrainModuleConfig
@@ -49,20 +49,20 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     assert isinstance(model_config.block.sequence_mixer, AttentionConfig), (
         "Sequence mixer must be an attention config for RoPE scaling"
     )
-    # # Drop RoPE on all layers
-    # model_config.block.sequence_mixer.rope = None
+    # Drop RoPE on all layers
+    model_config.block.sequence_mixer.rope = None
 
-    # Drop RoPE on global attention layers only, keep it on sliding window layers.
-    sliding_window_cfg = model_config.block.sequence_mixer.sliding_window
-    assert sliding_window_cfg is not None
-    overrides: dict[int, TransformerBlockConfig] = {}
-    for i in range(model_config.n_layers):
-        if not sliding_window_cfg.should_use_swa(i, model_config.n_layers):
-            block_copy = model_config.block.copy()
-            assert isinstance(block_copy.sequence_mixer, AttentionConfig)
-            block_copy.sequence_mixer.rope = None
-            overrides[i] = block_copy
-    model_config.block_overrides = overrides or None
+    # # Drop RoPE on global attention layers only, keep it on sliding window layers.
+    # sliding_window_cfg = model_config.block.sequence_mixer.sliding_window
+    # assert sliding_window_cfg is not None
+    # overrides: dict[int, TransformerBlockConfig] = {}
+    # for i in range(model_config.n_layers):
+    #     if not sliding_window_cfg.should_use_swa(i, model_config.n_layers):
+    #         block_copy = model_config.block.copy()
+    #         assert isinstance(block_copy.sequence_mixer, AttentionConfig)
+    #         block_copy.sequence_mixer.rope = None
+    #         overrides[i] = block_copy
+    # model_config.block_overrides = overrides or None
 
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
