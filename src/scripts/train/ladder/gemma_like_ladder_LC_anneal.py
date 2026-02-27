@@ -317,6 +317,14 @@ $ [i]python {sys.argv[0]} {SubCmd.dry_run} /weka/oe-training-default/ai2-llm/che
             common.tokenizer.padded_vocab_size(), use_gdn=use_gdn
         )
         apply_yarn_to_global_layers(model_config, sequence_length, old_sequence_length)
+
+        # Use flash_2, because flash_3 doesn't support CP
+        model_config.block.sequence_mixer.backend = "flash_2"
+        if model_config.block_overrides:
+            for block_override in model_config.block_overrides.values():
+                if isinstance(block_override.sequence_mixer, AttentionConfig):
+                    block_override.sequence_mixer.backend = "flash_2"
+
         return model_config
 
     def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
