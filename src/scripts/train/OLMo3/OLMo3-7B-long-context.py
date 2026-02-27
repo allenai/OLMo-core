@@ -11,7 +11,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import AttentionConfig
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerBlockConfig, TransformerConfig
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
 from olmo_core.train import Duration
 from olmo_core.train.train_module import TransformerTrainModuleConfig
