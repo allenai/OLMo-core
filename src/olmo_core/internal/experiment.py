@@ -146,7 +146,13 @@ class SubCmd(StrEnum):
             train(config)
             teardown_training_environment()
         elif self == SubCmd.train_single:
-            for parallelism_style in ["dp_config", "tp_config", "cp_config", "pp_config", "ep_config"]:
+            for parallelism_style in [
+                "dp_config",
+                "tp_config",
+                "cp_config",
+                "pp_config",
+                "ep_config",
+            ]:
                 if (p_config := getattr(config.train_module, parallelism_style, None)) is not None:
                     log.warning(
                         "'%s' is set to %s, but you can't use parallelism when running on a single node. Disabling.",
