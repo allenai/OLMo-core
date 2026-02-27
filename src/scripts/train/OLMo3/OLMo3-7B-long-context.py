@@ -49,20 +49,20 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     assert isinstance(model_config.block.sequence_mixer, AttentionConfig), (
         "Sequence mixer must be an attention config for RoPE scaling"
     )
-    # Drop RoPE on all layers
-    model_config.block.sequence_mixer.rope = None
+    # # Drop RoPE on all layers
+    # model_config.block.sequence_mixer.rope = None
 
-    # # Drop RoPE on global attention layers only, keep it on sliding window layers.
-    # sliding_window_cfg = model_config.block.sequence_mixer.sliding_window
-    # assert sliding_window_cfg is not None
-    # overrides: dict[int, TransformerBlockConfig] = {}
-    # for i in range(model_config.n_layers):
-    #     if not sliding_window_cfg.should_use_swa(i, model_config.n_layers):
-    #         block_copy = model_config.block.copy()
-    #         assert isinstance(block_copy.sequence_mixer, AttentionConfig)
-    #         block_copy.sequence_mixer.rope = None
-    #         overrides[i] = block_copy
-    # model_config.block_overrides = overrides or None
+    # Drop RoPE on global attention layers only, keep it on sliding window layers.
+    sliding_window_cfg = model_config.block.sequence_mixer.sliding_window
+    assert sliding_window_cfg is not None
+    overrides: dict[int, TransformerBlockConfig] = {}
+    for i in range(model_config.n_layers):
+        if not sliding_window_cfg.should_use_swa(i, model_config.n_layers):
+            block_copy = model_config.block.copy()
+            assert isinstance(block_copy.sequence_mixer, AttentionConfig)
+            block_copy.sequence_mixer.rope = None
+            overrides[i] = block_copy
+    model_config.block_overrides = overrides or None
 
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
@@ -86,7 +86,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=16, prefetch_factor=10
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=8
     )
 
     trainer_config = cookbook.configure_trainer(
