@@ -1254,23 +1254,40 @@ class MoEFusedV2Optimizer:
                 all_suffixes = ['main', 'exp_avg', 'exp_avg_sq', 'step']
                 if param_group['pg'] == 'ep_dp':
                     for suffix in all_suffixes:
-                        state_dt = self.states[f'{name}.{suffix}']
+                        state_key = f'{name}.{suffix}'
+                        live_state_dt = self.states[state_key]
                         if suffix in ['main', 'exp_avg', 'exp_avg_sq']:
                             # need to convert to dtensor sharded over ep_dp and ep_mp
                             assert self.moe_mesh is not None
-                            state_local = state_dt.to_local()
-                            state_dt = DTensor.from_local(
+                            state_local = live_state_dt.to_local()
+                            state_dt_for_save = DTensor.from_local(
                                 state_local.unsqueeze(0), # (N,) -> (1, N)
                                 device_mesh=self.moe_mesh['ep_dp','ep_mp'],
                                 placements=[Shard(1) if self.use_distributed else Replicate(), Shard(0)], # first dim sharded by mp, second dim sharded by dp
                             )
                             # collect the full tensor and force shard over dp becaues it's too big
-                            state_dt = state_dt.full_tensor().reshape(-1) # NOTE: additional memory usage
-                            state_dt = self._distribute_tensor(state_dt, self.dp_mesh, force_shard=True) 
+                            state_dt_for_save = state_dt_for_save.full_tensor().reshape(-1) # NOTE: additional memory usage
+                            state_dt_for_save = self._distribute_tensor(state_dt_for_save, self.dp_mesh, force_shard=True)
 
-                            sd[f'{name}.{suffix}'] = state_dt
+                            sd[state_key] = state_dt_for_save
+
+                            # Free the local shard storage while keeping DTensor metadata.
+                            empty_local = torch.empty(
+                                0,
+                                dtype=state_local.dtype,
+                                device=state_local.device,
+                            )
+                            self.states[state_key] = DTensor.from_local(
+                                empty_local,
+                                device_mesh=live_state_dt.device_mesh,
+                                placements=live_state_dt.placements,
+                                shape=live_state_dt.shape,
+                                stride=live_state_dt.stride(),
+                                run_check=False,
+                            )
                         else: # "step"
-                            sd[f'{name}.{suffix}'] = state_dt
+                            sd[state_key] = live_state_dt
+
                 else: # DP tensor already in the right dtensor
                     for suffix in all_suffixes:
                         state_dt = self.states[f'{name}.{suffix}']
@@ -1305,11 +1322,12 @@ class MoEFusedV2Optimizer:
                 all_suffixes = ['main', 'exp_avg', 'exp_avg_sq', 'step']
                 if param_group['pg'] == 'ep_dp':
                     for suffix in all_suffixes:
-                        state_dt = self.states[f'{name}.{suffix}']
+                        state_key = f'{name}.{suffix}'
+                        state_dt = self.states[state_key]
                         if suffix in ['main', 'exp_avg', 'exp_avg_sq']:
                             # need to convert to dtensor sharded over ep_dp and ep_mp
                             assert self.moe_mesh is not None
-                            ckpt_state = state_dict.pop(f'{name}.{suffix}')
+                            ckpt_state = state_dict.pop(state_key)
                             ckpt_state = ckpt_state.full_tensor() # global full tensor
                             ckpt_state = distribute_tensor(
                                 ckpt_state,
@@ -1330,19 +1348,34 @@ class MoEFusedV2Optimizer:
                                     device_mesh=self.moe_mesh['ep_dp'], # then replicate over ep_dp
                                     placements=[Replicate()],
                                 )
+
+                            # If state_dict() has dropped local storage, rematerialize it now.
+                            ckpt_local = ckpt_state.to_local()
+                            if state_dt.to_local().numel() == 0:
+                                new_local = torch.empty_like(ckpt_local)
+                                state_dt = DTensor.from_local(
+                                    new_local,
+                                    device_mesh=state_dt.device_mesh,
+                                    placements=state_dt.placements,
+                                    shape=state_dt.shape,
+                                    stride=state_dt.stride(),
+                                    run_check=False,
+                                )
+                                self.states[state_key] = state_dt
+
                             # shape checks
                             assert ckpt_state.shape == state_dt.shape, \
                                 f"Global shape mismatch {name}.{suffix}: {ckpt_state.shape} vs {state_dt.shape}"
-                            assert ckpt_state.to_local().shape == state_dt.to_local().shape, \
-                                f"Local shape mismatch {name}.{suffix}: {ckpt_state.to_local().shape} vs {state_dt.to_local().shape}"
+                            assert ckpt_local.shape == state_dt.to_local().shape, \
+                                f"Local shape mismatch {name}.{suffix}: {ckpt_local.shape} vs {state_dt.to_local().shape}"
                             
                             # now the sharded local tensor should match the local tensor shape of the live state
-                            state_dt.to_local().copy_(ckpt_state.to_local())
+                            state_dt.to_local().copy_(ckpt_local)
 
 
                         else: # "step"
                             assert "step" == suffix
-                            ckpt_state = state_dict.pop(f'{name}.{suffix}').full_tensor()
+                            ckpt_state = state_dict.pop(state_key).full_tensor()
                             state_dt.copy_(ckpt_state)  # step is a scalar, so no need to convert to local
 
         self._losses = self._restore_rolling_stats(loaded_losses)

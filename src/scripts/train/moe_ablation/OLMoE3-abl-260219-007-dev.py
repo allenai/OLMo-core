@@ -92,16 +92,16 @@ SEQUENCE_LENGTH = 8192
 
 MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-SAVE_INTERVAL=300
+SAVE_INTERVAL=250
 
-NUM_EXPERTS = 128
-TOP_K = 8
+NUM_EXPERTS = 64
+TOP_K = 4
 D_MODEL=3072
 D_ATTN=D_MODEL
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 2560 // 2
+MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
@@ -113,7 +113,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 MICRO_BSZ = 2
 # DP_DIM=2
-EP_DIM=4
+EP_DIM=8
 PP_DIM=1
 
 # ref
@@ -128,7 +128,7 @@ GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 10
 LR= 1e-3 # target lr for 32M tokens
 # LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
-NUM_LAYERS=8
+NUM_LAYERS=32
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -152,7 +152,7 @@ USE_ROWWISE_A2A=True
 ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
-TAG=f'dbg-8-128'
+TAG=f'32L-4-64'
 # TAG=f'test'
 
 # if UNIFORM_ASSIGN:
@@ -393,7 +393,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            # load_path='/workspace/checkpoints/OLMoE3-dec12/OLMoE3-dec12-decay-1000B-100B_3072d3072a_32L2560M2560S_64E4K1S_dev-S2026-WA/step61272',
+            load_path='/workspace/checkpoint/OLMoE3-abl-260219-006_3072d3072a_32L2560M2560S_64E4K1S_abl/step3000',
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
@@ -422,13 +422,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 # project="tianhua-moe",
                 project="olmoe-dev-v2",
                 # project="olmo3",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
                                    start=906,
                                    end=909

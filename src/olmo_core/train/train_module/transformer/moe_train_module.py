@@ -610,7 +610,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         thread_count: Optional[int] = None,
         throttle_uploads: bool = False,
     ):
-        state_dict = self.optim.state_dict()
+        state_dict = self.optim.state_dict() # this will free optim states, need to load back after save
 
         # this is count the param size of the global dtensor, not the local shard
         main_param_sz = 0 
@@ -636,6 +636,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             process_group=process_group,
             planner=planner,
         )
+
+        self.optim.load_state_dict(state_dict) # load back the optim state after save
 
         return
 
@@ -678,8 +680,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             # planner=FlatLoadPlanner(),
         )
 
-        # since the sd_to_load is returned by optim.state_dict(),
-        # the optim's state should automatically updated.
         self.optim.load_state_dict(sd_to_load)
 
         # load into model params
