@@ -844,7 +844,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 project="oe-t-ladder",
                 entity="ai2-llm",
                 cancel_check_interval=10,
-                enabled=False,
+                enabled=True,
             ),
         )
         .with_callback(
