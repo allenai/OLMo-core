@@ -21,6 +21,7 @@ import torch
 from cached_path import cached_path
 from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from rich.progress import track
 
 from .aliases import PathOrStr
@@ -614,8 +615,14 @@ def _get_http_session() -> requests.Session:
     This prevents resource exhaustion when making many HTTP requests.
     """
     session = requests.Session()
-    # Configure connection pooling to reuse connections
-    adapter = HTTPAdapter(pool_maxsize=50)
+    # Configure connection pooling with transport-level retries for connection errors.
+    retry = Retry(
+        total=3,
+        backoff_factor=0.5,
+        allowed_methods={"GET", "HEAD"},
+        status_forcelist=[502, 503, 504],
+    )
+    adapter = HTTPAdapter(pool_maxsize=50, max_retries=retry)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
@@ -636,6 +643,7 @@ def _http_file_size(url: str) -> int:
 
 
 @retriable(
+    max_attempts=5,
     retry_condition=lambda exc: (
         isinstance(exc, requests.exceptions.HTTPError)
         and exc.response is not None
@@ -645,7 +653,9 @@ def _http_file_size(url: str) -> int:
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     session = _get_http_session()
     response = session.get(
-        url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
+        url,
+        headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"},
+        timeout=(10, 60),
     )
 
     if response.status_code == 404:
