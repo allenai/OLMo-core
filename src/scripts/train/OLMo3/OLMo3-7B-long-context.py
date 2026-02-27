@@ -76,7 +76,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     dataset_config = NumpyPackedFSLDatasetConfig.glob(
-        "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
+        "/weka/oe-training-default/ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
         tokenizer=tokenizer_config,
         work_dir=work_dir,
         sequence_length=SEQ_LENGTH,
