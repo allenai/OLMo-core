@@ -143,12 +143,13 @@ else:
 USE_COMPILE=True
 USE_NO_SYNC_EP=True
 USE_AC=False
-PER_LAYER_RECOMPUTE=False
+PER_LAYER_RECOMPUTE=True
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
-
+USE_ROWWISE_A2A=True
+ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
 TAG=f'dbg-8-128'
@@ -204,7 +205,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
             ep_no_sync_share_combine_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make combine_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
+            ep_no_sync_share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
             ep_no_sync_shared_slots=2 if USE_TBO else 1,
+            ep_no_sync_use_rowwise_all_to_all=USE_ROWWISE_A2A,
+            ep_no_sync_rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,

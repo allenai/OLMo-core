@@ -1767,10 +1767,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         routing_map: torch.Tensor,
         allowed_splits: torch.Tensor,
         keep_from_src_dest_local: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Build per-route destination rank/row maps for row-wise dispatch.
         Routes dropped by tail-capacity are encoded as -1.
+        Also returns route->packed mapping in original route order.
         """
         assert self.ep_pg is not None
         assert self.num_local_routed_experts is not None
@@ -1814,9 +1815,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 dtype=torch.long,
                 device=routing_map.device,
             )
+            route_to_packed_flat = torch.full_like(dst_ranks_flat, -1)
             return (
                 dst_ranks_flat.view(num_tokens, top_k),
                 dst_rows_flat.view(num_tokens, top_k),
+                route_to_packed_flat.view(num_tokens, top_k),
             )
 
         route_experts = routing_map.reshape(-1).to(dtype=torch.long)
@@ -1885,168 +1888,90 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         neg_ones = torch.full_like(dst_rank, -1)
         dst_ranks_flat = torch.where(kept_mask, dst_rank, neg_ones)
         dst_rows_flat = torch.where(kept_mask, dst_rows_all, neg_ones)
+        kept_i64 = kept_mask.to(dtype=torch.long)
+        route_to_packed_flat = torch.cumsum(kept_i64, dim=0) - 1
+        route_to_packed_flat = torch.where(
+            kept_mask,
+            route_to_packed_flat,
+            torch.full_like(route_to_packed_flat, -1),
+        )
         return (
             dst_ranks_flat.view(num_tokens, top_k),
             dst_rows_flat.view(num_tokens, top_k),
+            route_to_packed_flat.view(num_tokens, top_k),
         )
 
-    @nvtx.annotate("_build_rowwise_combine_2d_in_splits_offsets")
-    def _build_rowwise_combine_2d_in_splits_offsets(
-        self,
-        *,
-        recv_splits_by_src_local: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Build [2, world*ne] int64 splits+offsets for 2D-offset combine all-to-all.
-        Layout is local-expert-major then source-rank.
-        """
-        assert self.num_local_routed_experts is not None
-        if recv_splits_by_src_local.ndim != 2:
-            raise RuntimeError(
-                "recv_splits_by_src_local must be rank-2 [source_rank, local_expert], "
-                f"got {tuple(recv_splits_by_src_local.shape)}"
-            )
-        expected_shape = (self.ep_world_size, self.num_local_routed_experts)
-        if tuple(recv_splits_by_src_local.shape) != expected_shape:
-            raise RuntimeError(
-                "recv_splits_by_src_local shape mismatch: "
-                f"got {tuple(recv_splits_by_src_local.shape)}, expected {expected_shape}"
-            )
-
-        recv = recv_splits_by_src_local.to(dtype=torch.long)
-        # [local_expert, source_rank]
-        splits_local_src = recv.transpose(0, 1).contiguous()
-        totals_by_local = splits_local_src.sum(dim=1, dtype=torch.long)
-        local_base = torch.cumsum(totals_by_local, dim=0) - totals_by_local
-        prefix_src = torch.cumsum(splits_local_src, dim=1) - splits_local_src
-        offsets_local_src = prefix_src + local_base.unsqueeze(1)
-
-        nsplits = self.ep_world_size * self.num_local_routed_experts
-        in_splits_offsets = torch.empty(
-            (2, nsplits),
-            device=recv.device,
-            dtype=torch.long,
-        )
-        in_splits_offsets[0].copy_(splits_local_src.reshape(-1))
-        in_splits_offsets[1].copy_(offsets_local_src.reshape(-1))
-        return in_splits_offsets
 
     @nvtx.annotate("_build_rowwise_combine_2d_route_to_packed")
     def _build_rowwise_combine_2d_route_to_packed(
         self,
         *,
-        routing_map: torch.Tensor,
+        route_to_packed: torch.Tensor,
         dst_ranks: torch.Tensor,
         dst_rows: torch.Tensor,
-        keep_from_src_dest_local: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Build route->packed mapping for local merge after 2D-offset combine.
-
-        Packed order is destination-rank-major, then destination-local-expert.
+        Build packed destination tensors for row-wise combine in route-order packing.
         Returns:
-          - route_to_packed [N, K] int64 with -1 for dropped routes
-          - valid_route_mask [N, K] bool
+          - packed_dst_ranks [N*K] int64
+          - packed_dst_rows [N*K] int64
+          - packed_keep_mask [N*K] bool
+          - num_kept_routes [] int64
+          - te_row_id_map [K*N] int64
         """
-        assert self.ep_pg is not None
-        assert self.num_local_routed_experts is not None
-        if routing_map.ndim != 2:
+        if route_to_packed.ndim != 2:
             raise RuntimeError(
-                f"routing_map must be rank-2 [N, K], got shape={tuple(routing_map.shape)}"
+                f"route_to_packed must be rank-2 [N, K], got shape={tuple(route_to_packed.shape)}"
             )
-        if tuple(dst_ranks.shape) != tuple(routing_map.shape):
+        if tuple(dst_ranks.shape) != tuple(route_to_packed.shape):
             raise RuntimeError(
                 "dst_ranks shape mismatch: "
-                f"got {tuple(dst_ranks.shape)}, expected {tuple(routing_map.shape)}"
+                f"got {tuple(dst_ranks.shape)}, expected {tuple(route_to_packed.shape)}"
             )
-        if tuple(dst_rows.shape) != tuple(routing_map.shape):
+        if tuple(dst_rows.shape) != tuple(route_to_packed.shape):
             raise RuntimeError(
                 "dst_rows shape mismatch: "
-                f"got {tuple(dst_rows.shape)}, expected {tuple(routing_map.shape)}"
-            )
-        expected_keep_shape = (
-            self.ep_world_size,
-            self.ep_world_size,
-            self.num_local_routed_experts,
-        )
-        if tuple(keep_from_src_dest_local.shape) != expected_keep_shape:
-            raise RuntimeError(
-                "keep_from_src_dest_local shape mismatch: "
-                f"got {tuple(keep_from_src_dest_local.shape)}, expected {expected_keep_shape}"
+                f"got {tuple(dst_rows.shape)}, expected {tuple(route_to_packed.shape)}"
             )
 
-        num_tokens, top_k = routing_map.shape
-        keep_matrix = keep_from_src_dest_local.to(dtype=torch.long)
-        src_rank = get_rank(self.ep_pg)
+        flat_route_to_packed = route_to_packed.reshape(-1).to(dtype=torch.long)
+        flat_dst_ranks = dst_ranks.reshape(-1).to(dtype=torch.long)
+        flat_dst_rows = dst_rows.reshape(-1).to(dtype=torch.long)
+        flat_valid_routes = flat_route_to_packed.ge(0)
+        num_routes = flat_route_to_packed.numel()
 
-        # Count for this source, by destination-rank then local-expert.
-        src_keep = keep_matrix[src_rank]
-        group_base_flat = torch.cumsum(src_keep.reshape(-1), dim=0) - src_keep.reshape(-1)
-        group_base = group_base_flat.view(self.ep_world_size, self.num_local_routed_experts)
-
-        # Starting destination row for this source in each (dst, local_expert) group.
-        prefix_by_source = torch.cumsum(keep_matrix, dim=0) - keep_matrix
-        send_base_by_dst_local = prefix_by_source[src_rank]
-        recv_total_by_dst_local = keep_matrix.sum(dim=0)
-        local_expert_base_by_dst = (
-            torch.cumsum(recv_total_by_dst_local, dim=1) - recv_total_by_dst_local
+        invalid_dst = torch.full_like(flat_dst_ranks, -1)
+        sentinel_index = torch.full_like(flat_route_to_packed, num_routes)
+        scatter_indices = torch.where(
+            flat_valid_routes,
+            flat_route_to_packed,
+            sentinel_index,
         )
-        start_row_by_dst_local = local_expert_base_by_dst + send_base_by_dst_local
-
-        route_experts = routing_map.reshape(-1).to(dtype=torch.long)
-        dst_ranks_flat = dst_ranks.reshape(-1).to(dtype=torch.long)
-        dst_rows_flat = dst_rows.reshape(-1).to(dtype=torch.long)
-        valid_mask = (
-            (route_experts >= 0)
-            & (route_experts < self.ep_world_size * self.num_local_routed_experts)
-            & (dst_ranks_flat >= 0)
-            & (dst_rows_flat >= 0)
+        scatter_dst_ranks = torch.where(flat_valid_routes, flat_dst_ranks, invalid_dst)
+        scatter_dst_rows = torch.where(flat_valid_routes, flat_dst_rows, invalid_dst)
+        packed_dst_ranks_ext = torch.full(
+            (num_routes + 1,),
+            -1,
+            device=flat_dst_ranks.device,
+            dtype=torch.long,
         )
-        dst_local_expert = torch.remainder(
-            torch.clamp_min(route_experts, 0),
-            self.num_local_routed_experts,
-        )
-        safe_dst_rank = torch.where(valid_mask, dst_ranks_flat, torch.zeros_like(dst_ranks_flat))
-        safe_dst_local = torch.where(valid_mask, dst_local_expert, torch.zeros_like(dst_local_expert))
-        safe_dst_rows = torch.where(valid_mask, dst_rows_flat, torch.zeros_like(dst_rows_flat))
-
-        local_pos_in_group = safe_dst_rows - start_row_by_dst_local[safe_dst_rank, safe_dst_local]
-        group_len = src_keep[safe_dst_rank, safe_dst_local]
-        valid_local_pos = (local_pos_in_group >= 0) & (local_pos_in_group < group_len)
-        valid_mask = valid_mask & valid_local_pos
-        local_pos_safe = torch.where(valid_local_pos, local_pos_in_group, torch.zeros_like(local_pos_in_group))
-        packed_pos = group_base[safe_dst_rank, safe_dst_local] + local_pos_safe
-
-        route_to_packed = torch.where(
-            valid_mask,
-            packed_pos,
-            torch.full_like(packed_pos, -1),
-        )
+        packed_dst_rows_ext = torch.full_like(packed_dst_ranks_ext, -1)
+        packed_dst_ranks_ext.scatter_(0, scatter_indices, scatter_dst_ranks)
+        packed_dst_rows_ext.scatter_(0, scatter_indices, scatter_dst_rows)
+        packed_dst_ranks = packed_dst_ranks_ext.narrow(0, 0, num_routes)
+        packed_dst_rows = packed_dst_rows_ext.narrow(0, 0, num_routes)
+        packed_keep_mask = packed_dst_ranks.ge(0)
+        num_kept_routes = packed_keep_mask.to(dtype=torch.long).sum(dtype=torch.long)
+        te_row_id_map = route_to_packed.transpose(0, 1).contiguous().reshape(-1).to(dtype=torch.long)
         return (
-            route_to_packed.view(num_tokens, top_k),
-            valid_mask.view(num_tokens, top_k),
+            packed_dst_ranks,
+            packed_dst_rows,
+            packed_keep_mask,
+            num_kept_routes,
+            te_row_id_map,
         )
 
-    def _get_rowwise_combine_2d_splits_buffers(
-        self,
-        *,
-        device: torch.device,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        assert self.num_local_routed_experts is not None
-        nsplits = self.ep_world_size * self.num_local_routed_experts
-        in_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
-            name="rowwise_combine_2d_in_splits_offsets",
-            shape=(2, nsplits),
-            dtype=torch.int64,
-            device=device,
-        ).detach()
-        out_splits_offsets = self._get_or_init_ep_no_sync_symm_tensor(
-            name="rowwise_combine_2d_out_splits_offsets",
-            shape=(2, nsplits),
-            dtype=torch.int64,
-            device=device,
-        ).detach()
-        return in_splits_offsets, out_splits_offsets
+
 
     @nvtx.annotate("_restore_drop_unpermute_1d")
     def _restore_drop_unpermute_1d(
@@ -2329,7 +2254,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        """Forward with EP no-sync using symmetric-memory all_to_all_vdev ops."""
+        """Forward with EP no-sync using 1D symmetric-memory all_to_all_vdev ops."""
         assert self.routed_experts is not None
         assert self.routed_experts_router is not None
         assert self.ep_enabled
@@ -2341,7 +2266,13 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
                 "the 2D all_to_all path was removed due to correctness/performance issues."
             )
-        
+        if self.ep_no_sync_use_rowwise_all_to_all:
+            return self.combined_forward_ep_no_sync_rowwise(
+                x,
+                loss_div_factor=loss_div_factor,
+                **kwargs,
+            )
+
         group_name = self._get_ep_no_sync_group_name()
         B, S, D = x.shape
 
@@ -2396,45 +2327,23 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             with nvtx.annotate("ConfigCapacity", color="green"):
                 requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
                 rank_capacity = self._compute_ep_no_sync_rank_capacity(num_out_tokens)
-                if self.ep_no_sync_use_rowwise_all_to_all:
-                    (
-                        allowed_splits,
-                        recv_splits_by_src_local,
-                        _drop_token_cnt,
-                        keep_from_src_dest_local,
-                    ) = cast(
-                        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-                        self._sync_tail_drop_allowed_splits_single_a2a(
-                            requested_splits,
-                            rank_capacity=rank_capacity,
-                            return_keep_matrix=True,
-                        ),
-                    )
-                    local_reorder_indices = None
-                    local_inverse_reorder_indices = None
-                    packed_keep_mask = None
-                    num_kept = None
-                else:
-                    allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
-                        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-                        self._sync_tail_drop_allowed_splits_single_a2a(
-                            requested_splits,
-                            rank_capacity=rank_capacity,
-                        ),
-                    )
-                    keep_from_src_dest_local = None
-                    local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = self._build_keep_reorder(
-                        requested_splits=requested_splits,
-                        keep_splits=allowed_splits,
-                        num_out_tokens=num_out_tokens,
-                    )
-                    num_kept = allowed_splits.sum(dtype=torch.long) # number of non-dropped tokens that will be dispatched
-
-
+                allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
+                    Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                    self._sync_tail_drop_allowed_splits_single_a2a(
+                        requested_splits,
+                        rank_capacity=rank_capacity,
+                    ),
+                )
+                local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = self._build_keep_reorder(
+                    requested_splits=requested_splits,
+                    keep_splits=allowed_splits,
+                    num_out_tokens=num_out_tokens,
+                )
+                num_kept = allowed_splits.sum(dtype=torch.long) # number of non-dropped tokens that will be dispatched
                 dispatch_in_cap = num_out_tokens
                 dispatch_out_cap = rank_capacity
-                combine_in_cap = rank_capacity 
-                combine_out_cap = num_out_tokens 
+                combine_in_cap = rank_capacity
+                combine_out_cap = num_out_tokens
 
         buffers = self._get_ep_no_sync_buffers(
             dispatch_in_cap=dispatch_in_cap,
@@ -2450,7 +2359,37 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             -1, self.routed_experts_router.top_k
         ).int()
         hidden_shape_before_permute = moe_inp.shape
-        rowwise_valid_route_mask = None
+
+        with torch.no_grad():
+            padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
+                dim=0,
+                dtype=torch.long,
+            )
+
+        assert local_reorder_indices is not None
+        assert local_inverse_reorder_indices is not None
+        assert packed_keep_mask is not None
+        assert num_kept is not None
+
+        with nvtx.annotate("Permute local tokens", color="green"):
+            # 1D all-to-all: one-shot custom CUDA permute+drop.
+            # Expert-major permutation with per-expert tail-drop written directly to packed layout.
+            permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_1d_fused_drop_no_compile(
+                inp=moe_inp,
+                routing_map=routing_map,
+                num_out_tokens=num_out_tokens,
+                reorder_indices=local_reorder_indices,
+                inverse_reorder_indices=local_inverse_reorder_indices,
+                requested_splits=requested_splits,
+                keep_splits=allowed_splits,
+                out=buffers.dispatch_in.detach(),
+                map_type="index",
+            )
+
+        with torch.no_grad():
+            send_rank_splits = allowed_splits.view(
+                self.ep_world_size, self.num_local_routed_experts
+            ).sum(dim=-1, dtype=torch.long)
 
         # lauch shared experts right before dispatch to overlap with the all_to_all
         if self.shared_experts is not None:
@@ -2463,253 +2402,103 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             shared_out_up, shared_out_gate = None, None
 
-        with torch.no_grad():
-            padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
-                dim=0,
-                dtype=torch.long,
-            )
+        dispatch_out, dispatch_rank_splits_offsets = _DispatchVDevAutograd.apply(
+            permutated_local_x,
+            send_rank_splits,
+            buffers.dispatch_in,
+            buffers.dispatch_in_rank_splits,
+            buffers.dispatch_out,
+            buffers.dispatch_rank_splits_offsets,
+            buffers.dispatch_tmp_rank_splits_offsets,
+            group_name,
+            self.ep_pg,
+        )
 
-        if self.ep_no_sync_use_rowwise_all_to_all:
-            assert keep_from_src_dest_local is not None
-            with torch.no_grad():
-                dst_ranks, dst_rows = self._build_rowwise_route_maps(
-                    routing_map=routing_map,
-                    allowed_splits=allowed_splits,
-                    keep_from_src_dest_local=keep_from_src_dest_local,
-                )
-                # Keep combine communication order in original route order
-                # (token-major) instead of destination-rank grouped order.
-                # This avoids synchronized peer hot-spots in gatherRowsGet.
-                rowwise_valid_route_mask = (dst_ranks >= 0) & (dst_rows >= 0)
-                rowwise_nblocks = self.ep_no_sync_rowwise_nblocks
+        dispatch_rank_major = dispatch_out # 1D Dispatch does not have holes, so no need to defrag
 
-            with nvtx.annotate("Rowwise Dispatch", color="green"):
-                dispatch_rank_major = _DispatchRowwiseAutograd.apply(
-                    moe_inp,
-                    dst_ranks,
-                    dst_rows,
-                    buffers.dispatch_out,
-                    group_name,
-                    self.ep_pg,
-                    rowwise_nblocks,
-                )
-
-            # Expert backward (grouped_mm) saves its input tensor. The rowwise
-            # dispatch output aliases reusable symmetric buffers, so later
-            # microbatches/layers can overwrite it before backward.
-            # Snapshot to stable storage for autograd correctness.
-            if torch.is_grad_enabled() and buffers.dispatch_out_is_shared:
+        # rank-major to local-expert-major for expert forward
+        with nvtx.annotate("Permute global tokens", color='green'):
+            if self.routed_experts.num_local_experts == 1:
+                # should verify: use clone() to avoid in-place modification?
                 dispatch_rank_major = dispatch_rank_major.clone()
-        else:
-            assert local_reorder_indices is not None
-            assert local_inverse_reorder_indices is not None
-            assert packed_keep_mask is not None
-            assert num_kept is not None
-
-            with nvtx.annotate("Permute local tokens", color="green"):
-                # 1D all-to-all: one-shot custom CUDA permute+drop.
-                # Expert-major permutation with per-expert tail-drop written directly to packed layout.
-                permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_1d_fused_drop_no_compile(
-                    inp=moe_inp,
-                    routing_map=routing_map,
-                    num_out_tokens=num_out_tokens,
-                    reorder_indices=local_reorder_indices,
-                    inverse_reorder_indices=local_inverse_reorder_indices,
-                    requested_splits=requested_splits,
-                    keep_splits=allowed_splits,
-                    out=buffers.dispatch_in.detach(),
-                    map_type="index",
+                global_chunk_row_id_map = None
+            else:
+                with torch.no_grad():
+                    global_chunk_routing_map = build_chunk_te_routing_map(
+                        recv_splits_by_src_local,
+                        rows=dispatch_rank_major.shape[0],
+                    ) # (cap_rows, ) mapping each row to a local expert id
+                dispatch_rank_major, global_chunk_row_id_map = moe_chunk_reorder_no_compile(
+                    dispatch_rank_major,
+                    routing_map=global_chunk_routing_map,
+                    num_out_tokens=dispatch_rank_major.shape[0],
+                    backward_grad_input_buffer=buffers.dispatch_out.detach(), # the backward should directly write into the dispatch_out buffer to save memory and copy
+                    # backward_grad_input_buffer=None # for testing
                 )
-
-            with torch.no_grad():
-                send_rank_splits = allowed_splits.view(
-                    self.ep_world_size, self.num_local_routed_experts
-                ).sum(dim=-1, dtype=torch.long)
-
-            dispatch_out, dispatch_rank_splits_offsets = _DispatchVDevAutograd.apply(
-                permutated_local_x,
-                send_rank_splits,
-                buffers.dispatch_in,
-                buffers.dispatch_in_rank_splits,
-                buffers.dispatch_out,
-                buffers.dispatch_rank_splits_offsets,
-                buffers.dispatch_tmp_rank_splits_offsets,
-                group_name,
-                self.ep_pg,
-            )
-
-            dispatch_rank_major = dispatch_out # 1D Dispatch does not have holes, so no need to defrag
-
-            # rank-major to local-expert-major for expert forward
-            with nvtx.annotate("Permute global tokens", color='green'):
-                if self.routed_experts.num_local_experts == 1:
-                    # should verify: use clone() to avoid in-place modification?
-                    dispatch_rank_major = dispatch_rank_major.clone()
-                    global_chunk_row_id_map = None
-                else:
-                    with torch.no_grad():
-                        global_chunk_routing_map = build_chunk_te_routing_map(
-                            recv_splits_by_src_local,
-                            rows=dispatch_rank_major.shape[0],
-                        ) # (cap_rows, ) mapping each row to a local expert id
-                    dispatch_rank_major, global_chunk_row_id_map = moe_chunk_reorder_no_compile(
-                        inp=dispatch_rank_major,
-                        routing_map=global_chunk_routing_map,
-                        num_out_tokens=dispatch_rank_major.shape[0],
-                        backward_grad_input_buffer=buffers.dispatch_out.detach(), # the backward should directly write into the dispatch_out buffer to save memory and copy
-                        # backward_grad_input_buffer=None # for testing
-                    )
 
         # expert forward
-        if self.ep_no_sync_use_rowwise_all_to_all:
-            dispatch_rank_major = self.routed_experts(
-                dispatch_rank_major,
-                padded_batch_size_per_local_expert,
-                # Write expert output directly into combine send buffer to avoid
-                # the copy in _CombineVDev2DOffsetAutograd.forward.
-                down_proj_out=buffers.combine_in.detach(),
-                # Write grad(input) for expert up+gate directly into the rowwise
-                # dispatch symmetric buffer so _DispatchRowwiseAutograd.backward
-                # can consume it without an extra copy.
-                up_proj_input_grad_out=buffers.dispatch_out.detach(),
+        dispatch_rank_major = self.routed_experts(
+            dispatch_rank_major,
+            padded_batch_size_per_local_expert,
+        )
+
+        with nvtx.annotate("Unpermute global tokens", color='green'):
+            if self.routed_experts.num_local_experts == 1:
+                global_x_rank_major = dispatch_rank_major  # skip unpermute if only one local expert
+            else:
+                assert global_chunk_row_id_map is not None
+                global_x_rank_major = moe_chunk_reorder_no_compile(
+                    inp=dispatch_rank_major,
+                    row_id_map=global_chunk_row_id_map,
+                    # Use a fresh detached alias each call:
+                    # - writes directly into combine buffer storage (no extra copy),
+                    # - avoids persisting autograd history on the reusable buffer tensor object.
+                    out=buffers.combine_in.detach(),
+                )
+                # This should give same results, but the autograd does not work with out=... arguments
+                # torch.index_select(dispatch_rank_major, 0, global_chunk_row_id_map, out=buffers.combine_in.detach()) # out=... arguments don't support automatic differentiation
+                # or this
+                # global_x_rank_major = torch.gather(
+                #     dispatch_rank_major,
+                #     dim=0,
+                #     index=global_chunk_row_id_map.unsqueeze(-1).expand(-1, dispatch_rank_major.shape[-1]),
+                #     out=buffers.combine_in.detach(),
+                # )
+
+        # set shared experts to wait until this point to maximize overlap with alltoall
+        wait_stream_no_compile(
+            this_stream=self.get_dense_stream(),
+            other_stream=torch.cuda.current_stream(),
+        ) # type: ignore
+
+        combine_out, _combine_rank_splits_offsets = _CombineVDevAutograd.apply(
+            global_x_rank_major,
+            dispatch_rank_splits_offsets[0],
+            buffers.combine_in,
+            buffers.combine_in_rank_splits,
+            buffers.combine_out,
+            buffers.combine_rank_splits_offsets,
+            buffers.combine_tmp_rank_splits_offsets,
+            group_name,
+            self.ep_pg,
+        )
+
+        with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+            # Shared combine_out storage may be reused by later layers before this
+            # layer's backward runs, so keep a per-call snapshot for autograd.
+            combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
+            # combine_out does not have capacity pads, but still has dropped tokens at the tail
+            local_x = self._restore_drop_unpermute_1d(
+                combine_out=combine_out_for_unpermute,
+                local_inverse_reorder_indices=local_inverse_reorder_indices,
+                packed_keep_mask=packed_keep_mask,
+                num_kept=num_kept,
+                reversed_local_x_permutation_mapping=reversed_local_x_permutation_mapping,
+                local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
+                hidden_shape_before_permute=hidden_shape_before_permute,
+                row_id_map_is_packed=True,
+                backward_grad_input_buffer=buffers.combine_out.detach(), # the backward should directly write into the combine_out buffer to save memory and copy
             )
-        else:
-            dispatch_rank_major = self.routed_experts(
-                dispatch_rank_major,
-                padded_batch_size_per_local_expert,
-            )
-
-        if self.ep_no_sync_use_rowwise_all_to_all:
-            assert keep_from_src_dest_local is not None
-            wait_stream_no_compile(
-                this_stream=self.get_dense_stream(),
-                other_stream=torch.cuda.current_stream(),
-            ) # type: ignore
-
-            assert rowwise_valid_route_mask is not None
-
-            with nvtx.annotate("Rowwise Combine Merge", color="green"):
-                flat_valid_routes = rowwise_valid_route_mask.reshape(-1)
-                valid_i64 = flat_valid_routes.to(dtype=torch.long)
-                flat_route_to_packed = torch.cumsum(valid_i64, dim=0) - 1
-                flat_route_to_packed = torch.where(
-                    flat_valid_routes,
-                    flat_route_to_packed,
-                    torch.full_like(flat_route_to_packed, -1),
-                )
-                flat_dst_ranks = dst_ranks.reshape(-1).to(dtype=torch.long)
-                flat_dst_rows = dst_rows.reshape(-1).to(dtype=torch.long)
-                num_routes = flat_route_to_packed.numel()
-                invalid_dst = torch.full_like(flat_dst_ranks, -1)
-                sentinel_index = torch.full_like(flat_route_to_packed, num_routes)
-                scatter_indices = torch.where(
-                    flat_valid_routes,
-                    flat_route_to_packed,
-                    sentinel_index,
-                )
-                scatter_dst_ranks = torch.where(flat_valid_routes, flat_dst_ranks, invalid_dst)
-                scatter_dst_rows = torch.where(flat_valid_routes, flat_dst_rows, invalid_dst)
-                packed_dst_ranks_ext = torch.full(
-                    (num_routes + 1,),
-                    -1,
-                    device=dispatch_rank_major.device,
-                    dtype=torch.long,
-                )
-                packed_dst_rows_ext = torch.full_like(packed_dst_ranks_ext, -1)
-                packed_dst_ranks_ext.scatter_(0, scatter_indices, scatter_dst_ranks)
-                packed_dst_rows_ext.scatter_(0, scatter_indices, scatter_dst_rows)
-                packed_dst_ranks = packed_dst_ranks_ext.narrow(0, 0, num_routes)
-                packed_dst_rows = packed_dst_rows_ext.narrow(0, 0, num_routes)
-                packed_keep_mask = packed_dst_ranks.ge(0)
-                num_kept_routes = packed_keep_mask.to(dtype=torch.long).sum(dtype=torch.long)
-                route_to_packed_2d = flat_route_to_packed.view_as(dst_ranks)
-                # TE expects row_id_map in [k-major, token-minor] route order.
-                te_row_id_map = route_to_packed_2d.transpose(0, 1).contiguous().reshape(-1).to(
-                    dtype=torch.long
-                )
-                combine_out = _CombineVDev2DOffsetAutograd.apply(
-                    dispatch_rank_major,
-                    buffers.combine_in,
-                    buffers.combine_out,
-                    packed_dst_ranks.view(-1, 1),
-                    packed_dst_rows.view(-1, 1),
-                    group_name,
-                    self.ep_pg,
-                    self.ep_no_sync_rowwise_nblocks,
-                )
-                # Shared combine_out storage may be reused by later layers before this
-                # layer's backward runs, so keep a per-call snapshot for autograd.
-                combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
-                local_x = self._restore_drop_unpermute_1d(
-                    combine_out=combine_out_for_unpermute,
-                    # Unused when row_id_map_is_packed=True, but required by API.
-                    local_inverse_reorder_indices=te_row_id_map,
-                    packed_keep_mask=packed_keep_mask,
-                    num_kept=num_kept_routes,
-                    reversed_local_x_permutation_mapping=te_row_id_map,
-                    local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
-                    hidden_shape_before_permute=hidden_shape_before_permute,
-                    row_id_map_is_packed=True,
-                    backward_grad_input_buffer=buffers.combine_out.detach(),
-                )
-        else:
-            with nvtx.annotate("Unpermute global tokens", color='green'):
-                if self.routed_experts.num_local_experts == 1:
-                    global_x_rank_major = dispatch_rank_major  # skip unpermute if only one local expert
-                else:
-                    assert global_chunk_row_id_map is not None
-                    global_x_rank_major = moe_chunk_reorder_no_compile(
-                        inp=dispatch_rank_major,
-                        row_id_map=global_chunk_row_id_map,
-                        # Use a fresh detached alias each call:
-                        # - writes directly into combine buffer storage (no extra copy),
-                        # - avoids persisting autograd history on the reusable buffer tensor object.
-                        out=buffers.combine_in.detach(),
-                    )
-                    # This should give same results, but the autograd does not work with out=... arguments
-                    # torch.index_select(dispatch_rank_major, 0, global_chunk_row_id_map, out=buffers.combine_in.detach()) # out=... arguments don't support automatic differentiation
-                    # or this
-                    # global_x_rank_major = torch.gather(
-                    #     dispatch_rank_major,
-                    #     dim=0,
-                    #     index=global_chunk_row_id_map.unsqueeze(-1).expand(-1, dispatch_rank_major.shape[-1]),
-                    #     out=buffers.combine_in.detach(),
-                    # )
-
-            # set shared experts to wait until this point to maximize overlap with alltoall
-            wait_stream_no_compile(
-                this_stream=self.get_dense_stream(),
-                other_stream=torch.cuda.current_stream(),
-            ) # type: ignore
-
-            combine_out, _combine_rank_splits_offsets = _CombineVDevAutograd.apply(
-                global_x_rank_major,
-                dispatch_rank_splits_offsets[0],
-                buffers.combine_in,
-                buffers.combine_in_rank_splits,
-                buffers.combine_out,
-                buffers.combine_rank_splits_offsets,
-                buffers.combine_tmp_rank_splits_offsets,
-                group_name,
-                self.ep_pg,
-            )
-
-            with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
-                # Shared combine_out storage may be reused by later layers before this
-                # layer's backward runs, so keep a per-call snapshot for autograd.
-                combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
-                # combine_out does not have capacity pads, but still has dropped tokens at the tail
-                local_x = self._restore_drop_unpermute_1d(
-                    combine_out=combine_out_for_unpermute,
-                    local_inverse_reorder_indices=local_inverse_reorder_indices,
-                    packed_keep_mask=packed_keep_mask,
-                    num_kept=num_kept,
-                    reversed_local_x_permutation_mapping=reversed_local_x_permutation_mapping,
-                    local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
-                    hidden_shape_before_permute=hidden_shape_before_permute,
-                    row_id_map_is_packed=True,
-                    backward_grad_input_buffer=buffers.combine_out.detach(), # the backward should directly write into the combine_out buffer to save memory and copy
-                )
 
         # launch second half of the shared expert forward
         if self.shared_experts is not None:
@@ -2748,6 +2537,250 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             )
             final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
 
+        return final_out
+
+    def combined_forward_ep_no_sync_rowwise(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Forward with EP no-sync using row-wise NVSHMEM dispatch/combine."""
+        assert self.routed_experts is not None
+        assert self.routed_experts_router is not None
+        assert self.ep_enabled
+        assert self.num_local_routed_experts is not None
+        assert use_torch_grouped_mm() == True, "EP no-sync implementation requires torch.grouped_mm support"
+        assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
+        if self.ep_no_sync_use_2d_all_to_all:
+            raise RuntimeError(
+                "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
+                "the 2D all_to_all path was removed due to correctness/performance issues."
+            )
+
+        group_name = self._get_ep_no_sync_group_name()
+        B, S, D = x.shape
+
+        block_inp = x
+        del x
+
+        attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
+
+        kwargs.pop("max_doc_len", None)
+        kwargs.pop("cu_doc_lens", None)
+
+        (
+            local_x_global_routed_expert_weights,  # (B, S, top_k)
+            local_x_global_routed_expert_indices,  # (B, S, top_k)
+            local_batch_size_per_global_routed_expert,  # (num_experts, )
+            routed_expert_router_aux_loss_info,
+        ) = self.router_forward(
+            router=self.routed_experts_router,
+            local_x=attn_res_out,
+            scores_only=False,
+            loss_div_factor=loss_div_factor,
+        )
+
+        wait_stream_no_compile(
+            this_stream=self.get_dense_stream(),
+            other_stream=torch.cuda.current_stream(),
+        )
+
+        with torch.cuda.stream(self.get_dense_stream()):
+            if self.shared_experts_router:
+                (
+                    local_x_global_shared_expert_weights,  # (B, S, E_shared)
+                    _,
+                    _,
+                    _,
+                ) = self.router_forward(
+                    router=self.shared_experts_router,
+                    local_x=attn_res_out,
+                    scores_only=True,
+                    loss_div_factor=loss_div_factor,
+                )
+            else:
+                local_x_global_shared_expert_weights = None
+
+        moe_inp = attn_res_out
+        in_shape = moe_inp.size()
+        moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
+
+        num_out_tokens = local_x_global_routed_expert_indices.numel() # a constant = B*S*top_k, including tokens that will be dropped
+
+        with torch.no_grad():
+            with nvtx.annotate("ConfigCapacity", color="green"):
+                requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
+                rank_capacity = self._compute_ep_no_sync_rank_capacity(num_out_tokens)
+                (
+                    allowed_splits,
+                    recv_splits_by_src_local,
+                    _drop_token_cnt,
+                    keep_from_src_dest_local,
+                ) = cast(
+                    Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+                    self._sync_tail_drop_allowed_splits_single_a2a(
+                        requested_splits,
+                        rank_capacity=rank_capacity,
+                        return_keep_matrix=True,
+                    ),
+                )
+                dispatch_in_cap = num_out_tokens
+                dispatch_out_cap = rank_capacity
+                combine_in_cap = rank_capacity
+                combine_out_cap = num_out_tokens
+
+        buffers = self._get_ep_no_sync_buffers(
+            dispatch_in_cap=dispatch_in_cap,
+            dispatch_out_cap=dispatch_out_cap,
+            combine_in_cap=combine_in_cap,
+            combine_out_cap=combine_out_cap,
+            d_model=moe_inp.shape[-1],
+            dtype=moe_inp.dtype,
+            device=moe_inp.device,
+        )
+
+        routing_map = local_x_global_routed_expert_indices.view(
+            -1, self.routed_experts_router.top_k
+        ).int()
+        hidden_shape_before_permute = moe_inp.shape
+
+        with torch.no_grad():
+            padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
+                dim=0,
+                dtype=torch.long,
+            )
+
+        with torch.no_grad():
+            dst_ranks, dst_rows, route_to_packed_2d = self._build_rowwise_route_maps(
+                routing_map=routing_map,
+                allowed_splits=allowed_splits,
+                keep_from_src_dest_local=keep_from_src_dest_local,
+            )
+            (
+                rowwise_packed_dst_ranks,
+                rowwise_packed_dst_rows,
+                rowwise_packed_keep_mask,
+                rowwise_num_kept_routes,
+                rowwise_te_row_id_map,
+            ) = self._build_rowwise_combine_2d_route_to_packed(
+                route_to_packed=route_to_packed_2d,
+                dst_ranks=dst_ranks,
+                dst_rows=dst_rows,
+            )
+            rowwise_nblocks = self.ep_no_sync_rowwise_nblocks
+
+        # lauch shared experts right before dispatch to overlap with the all_to_all
+        if self.shared_experts is not None:
+            wait_stream_no_compile(
+                this_stream=self.get_dense_stream(),
+                other_stream=torch.cuda.current_stream(),
+            ) # type: ignore
+            with torch.cuda.stream(self.get_dense_stream()):
+                shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
+        else:
+            shared_out_up, shared_out_gate = None, None
+
+        with nvtx.annotate("Rowwise Dispatch", color="green"):
+            dispatch_rank_major = _DispatchRowwiseAutograd.apply(
+                moe_inp,
+                dst_ranks,
+                dst_rows,
+                buffers.dispatch_out,
+                group_name,
+                self.ep_pg,
+                rowwise_nblocks,
+            )
+
+        # Expert backward (grouped_mm) saves its input tensor. The rowwise
+        # dispatch output aliases reusable symmetric buffers, so later
+        # microbatches/layers can overwrite it before backward.
+        # Snapshot to stable storage for autograd correctness.
+        if torch.is_grad_enabled() and buffers.dispatch_out_is_shared:
+            dispatch_rank_major = dispatch_rank_major.clone()
+
+        # expert forward
+        dispatch_rank_major = self.routed_experts(
+            dispatch_rank_major,
+            padded_batch_size_per_local_expert,
+            # Write expert output directly into combine send buffer to avoid
+            # the copy in _CombineVDev2DOffsetAutograd.forward.
+            down_proj_out=buffers.combine_in.detach(),
+            # Write grad(input) for expert up+gate directly into the rowwise
+            # dispatch symmetric buffer so _DispatchRowwiseAutograd.backward
+            # can consume it without an extra copy.
+            up_proj_input_grad_out=buffers.dispatch_out.detach(),
+        )
+
+        wait_stream_no_compile(
+            this_stream=self.get_dense_stream(),
+            other_stream=torch.cuda.current_stream(),
+        ) # type: ignore
+
+        with nvtx.annotate("Rowwise Combine Merge", color="green"):
+            combine_out = _CombineVDev2DOffsetAutograd.apply(
+                dispatch_rank_major,
+                buffers.combine_in,
+                buffers.combine_out,
+                rowwise_packed_dst_ranks.view(-1, 1),
+                rowwise_packed_dst_rows.view(-1, 1),
+                group_name,
+                self.ep_pg,
+                self.ep_no_sync_rowwise_nblocks,
+            )
+            # Shared combine_out storage may be reused by later layers before this
+            # layer's backward runs, so keep a per-call snapshot for autograd.
+            combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
+            local_x = self._restore_drop_unpermute_1d(
+                combine_out=combine_out_for_unpermute,
+                # Unused when row_id_map_is_packed=True, but required by API.
+                local_inverse_reorder_indices=rowwise_te_row_id_map,
+                packed_keep_mask=rowwise_packed_keep_mask,
+                num_kept=rowwise_num_kept_routes,
+                reversed_local_x_permutation_mapping=rowwise_te_row_id_map,
+                local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
+                hidden_shape_before_permute=hidden_shape_before_permute,
+                row_id_map_is_packed=True,
+                backward_grad_input_buffer=buffers.combine_out.detach(),
+            )
+
+        # launch second half of the shared expert forward
+        if self.shared_experts is not None:
+            assert shared_out_up is not None
+            assert shared_out_gate is not None
+
+            with torch.cuda.stream(self.get_dense_stream()):
+                shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
+                if self.shared_experts_router:
+                    assert local_x_global_shared_expert_weights is not None
+                    _, _, E_s = local_x_global_shared_expert_weights.shape
+                    mixed_shared_out = torch.bmm(
+                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
+                        shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
+                    ).squeeze(1).view(B, S, D)
+                else:
+                    mixed_shared_out = shared_out.squeeze(0)
+        else:
+            mixed_shared_out = None
+
+        local_x = local_x.view(in_shape)
+        wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
+
+        if self.shared_experts is not None:
+            assert mixed_shared_out is not None
+            mlp_out = local_x + mixed_shared_out
+        else:
+            mlp_out = local_x
+
+        final_out = attn_res_out + self.feed_forward_norm(mlp_out)
+
+        if routed_expert_router_aux_loss_info is not None:
+            # TODO;BUG: load balancing loss is calculated twice (or at least logged 2x as large in wandb).   
+            routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
+                *routed_expert_router_aux_loss_info
+            )
+            final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
 
         return final_out
 
