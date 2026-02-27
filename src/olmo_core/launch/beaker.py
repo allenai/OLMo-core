@@ -429,6 +429,7 @@ class BeakerLaunchConfig(Config):
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
         if self.debug:
             env_vars.append(("CUDA_LAUNCH_BLOCKING", "1"))
+            env_vars.append(("NCCL_DEBUG", "INFO"))
         return env_vars
 
     def _get_env_vars(self) -> list[tuple[str, str]]:
