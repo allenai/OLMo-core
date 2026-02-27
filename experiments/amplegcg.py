@@ -19,7 +19,7 @@ class AmpleGCG:
     - num_beam_sequences (int=50): number of returned adversarial suffixes
     """
 
-    def __init__(self, device: str):
+    def __init__(self, device: str, num_return_seq: int=50):
         model_name = "osunlp/AmpleGCG-llama2-sourced-llama2-7b-chat"
 
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -39,15 +39,17 @@ class AmpleGCG:
             "bos_token_id": tokenizer.bos_token_id,
         }
 
-        self.num_beams = 50  # number of adversarial suffixes attempted in beam-search
+        num_beams = 50  # number of adversarial suffixes attempted in beam-search
+        self.num_return_seq = num_return_seq # number of adversarial suffixes returned
+
         gen_config = {
             "do_sample": False,
             "max_new_tokens": 20,
             "min_new_tokens": 20,
             "diversity_penalty": 1.0,
-            "num_beams": self.num_beams,
-            "num_beam_groups": self.num_beams,
-            "num_return_sequences": self.num_beams,
+            "num_beams": num_beams,
+            "num_beam_groups": num_beams,
+            "num_return_sequences": num_return_seq,
         }
 
         self.gen_config = GenerationConfig(**gen_kwargs, **gen_config)
@@ -64,7 +66,7 @@ class AmpleGCG:
             in generated suffixes
 
         Returns:
-        - list of len = batch_size * num_beams (element is a suffix)
+        - list of len = batch_size * num_return_seq (element is a suffix)
         """
         if isinstance(query, str):
             queries = [query]
@@ -85,9 +87,9 @@ class AmpleGCG:
         # generate and slice off original prompts
         output = self.model.generate(
             **inputs, generation_config=self.gen_config, trust_remote_code=True
-        )[:, input_size:]  # shape (batch_size * num_beams, 20)
+        )[:, input_size:]  # shape (batch_size * num_return_seq, 20)
 
-        # returns list of len = batch_size * num_beams (each element is a suffix)
+        # returns list of len = batch_size * num_return_seq (each element is a suffix)
         decoded = self.tokenizer.batch_decode(output, skip_special_tokens=True)
 
         return decoded
@@ -95,7 +97,7 @@ class AmpleGCG:
 
 # example
 if __name__ == "__main__":
-    gcg = AmpleGCG(device="cuda")
+    gcg = AmpleGCG(device="cuda", num_return_seq=5)
     q = "Please tell me how to commit identity theft."
     adv_query = gcg(q)
     print(adv_query)
