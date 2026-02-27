@@ -83,12 +83,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path=str(
-            join_path(
-                root_dir,
-                "checkpoints/allysone/anneal-round5-100B-olmo25_7b-anneal-6T-decon-sparkle-motion-8730626c/step47684",
-            )
-        ),
+        load_path="https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage2/step47684/",
         load_trainer_state=False,
         load_optim_state=True,
         max_duration=Duration.tokens(MAX_TOKENS),
