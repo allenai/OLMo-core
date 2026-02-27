@@ -86,7 +86,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=4
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=16, prefetch_factor=10
     )
 
     trainer_config = cookbook.configure_trainer(
