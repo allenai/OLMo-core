@@ -55,7 +55,8 @@ DATASET_CONFIG = SourceMixtureList(
         ),
         SourceMixtureConfig(
             source_name="code-prose_sponge211",
-            target_ratio=0.50,
+            target_ratio=0.5,
+            max_repetition_ratio=2,
             paths=[
                 f"{SPONGE_211_PREFIX}_code_prose_code_prose_tagged_partitioned/quality_p50/{TOKENIZER_CONFIG.identifier}/*.npy",
                 f"{SPONGE_211_PREFIX}_code_prose_code_prose_tagged_partitioned/quality_p55/{TOKENIZER_CONFIG.identifier}/*.npy",
