@@ -26,11 +26,11 @@ TAG="${TAG:-}"
 CHINCHILLA_SUFFIX="$(echo "${CHINCHILLA_MULTIPLE}" | sed 's/\.0$//')xC"
 
 SIZES=(
-    260m
-    709m
+    # 260m
+    # 709m
     # 1p3b
     # 2b
-    # 4b
+    4b
     # 8b
 )
 
