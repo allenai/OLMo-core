@@ -470,33 +470,46 @@ class TransformerTrainModule(TrainModule):
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
-        # TODO: (epwalsh) Currently all of our evaluators require the full logits locally,
-        # but when we're using CP/TP we usually can't materialize the full logits locally (due to OOMs).
-        # However we could at least support in-loop PPL evals with a little work in the evaluator
-        # code to handle the sharded logits.
-        if self.cp_enabled:
-            raise RuntimeError(
-                f"{self.__class__.__name__}.eval_batch() does not support context parallelism yet, "
-                "please disable in-loop evals"
-            )
-        if self.tp_enabled:
-            raise RuntimeError(
-                f"{self.__class__.__name__}.eval_batch() does not support tensor parallelism yet, "
-                "please disable in-loop evals"
-            )
+        # CP and TP are supported for PPL evals (LMEvaluator) since they only need per-token
+        # CE loss. Downstream evals that require full logits will fail naturally if attempted
+        # with CP or TP.
 
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
+
+        # When using CP/TP, shard the label_mask along the sequence dimension to match the
+        # sharded ce_loss output shape. CP shards first (S -> S/CP), then TP shards further
+        # (S/CP -> S/(CP*TP)).
+        if self.cp_enabled and "label_mask" in model_kwargs:
+            assert self.model._cp_load_balancer is not None
+            (label_mask,) = self.model._cp_load_balancer.batch_shard(
+                inputs=[model_kwargs["label_mask"]],
+                seq_dims=[1],
+                pad_values=[0],
+            )
+            model_kwargs["label_mask"] = label_mask.to(torch.bool)
+
+        if self.tp_enabled and "label_mask" in model_kwargs:
+            tp_mesh = self.model._tp_mesh
+            assert tp_mesh is not None
+            chunks = model_kwargs["label_mask"].chunk(tp_mesh.size(), dim=1)
+            model_kwargs["label_mask"] = chunks[tp_mesh.get_local_rank()]
 
         self._set_model_mode("eval")
 
         with self._eval_batch_context():
-            return self.model_forward(
+            output = self.model_forward(
                 input_ids,
                 labels=labels,
                 ignore_index=self.label_ignore_index,
                 loss_reduction="none",
+                return_logits=False if (self.cp_enabled or self.tp_enabled) else None,
                 **model_kwargs,
             )
+
+        if self.tp_enabled and isinstance(output, LMOutputWithLoss):
+            output = output._replace(ce_loss=get_local_tensor(output.ce_loss))
+
+        return output
 
     def optim_step(self):
         # Maybe clip gradients.

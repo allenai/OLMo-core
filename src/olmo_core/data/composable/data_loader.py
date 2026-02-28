@@ -139,7 +139,10 @@ class ComposableDataLoaderConfig(DataLoaderConfig["ComposableDataLoader"]):
 
         return ComposableDataLoader(
             *sources,
-            collator=collator or DataCollator(pad_token_id=tokenizer.pad_token_id),
+            collator=collator
+            or DataCollator(
+                pad_token_id=tokenizer.pad_token_id, vocab_size=tokenizer.padded_vocab_size()
+            ),
             tokenizer=tokenizer,
             work_dir=work_dir,
             global_batch_size=global_batch_size,
