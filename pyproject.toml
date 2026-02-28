@@ -66,6 +66,7 @@ fla = ["flash-linear-attention>=0.4.1"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers<5.0"]
 wandb = ["wandb"]
+mamba = ["mamba-ssm[causal-conv1d]"]
 all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fla,torchao,transformers,wandb]"]
 
 [tool.setuptools]

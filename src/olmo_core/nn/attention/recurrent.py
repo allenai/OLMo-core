@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 import torch
+from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement
@@ -451,3 +452,132 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
             dtype=self.dtype.as_pt(),
             init_device=init_device,
         )
+
+
+class Mamba2(SequenceMixer):
+    """
+    The layer implementation for `Mamba2 <https://arxiv.org/abs/2412.06464>`_.
+
+    Modified from: https://github.com/state-spaces/mamba/blob/main/mamba_ssm/modules/mamba2_simple.py#L24
+
+    This is a linear attention variant that uses a gated delta rule for recurrent
+    state updates, providing efficient O(n) sequence modeling.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        d_state: int,
+        expand: int = 2,
+        n_heads: int,
+        head_dim: int | None = 128,
+        expand_v: float = 2.0,
+        allow_neg_eigval: bool = True,
+        conv_size: int = 4,
+        conv_bias: bool = False,
+        norm_eps: float = 1e-5,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+    ):
+        super().__init__()
+
+        self.d_model = d_model
+        self.d_state = d_state
+        self.conv_size = conv_size
+        self.expand = expand
+        self.d_inner = self.expand * self.d_model
+
+        self.head_dim = head_dim
+        self.ngroups = ngroups
+
+        assert self.d_inner % self.head_dim == 0
+        self.n_heads = self.d_inner // self.head_dim
+        self.dt_limit = dt_limit
+
+        self.n_heads = n_heads
+        self.n_v_heads = n_v_heads if n_v_heads is not None else n_heads
+        self.head_dim = head_dim if head_dim is not None else d_model // n_heads
+        self.expand_v = expand_v
+        self.allow_neg_eigval = allow_neg_eigval
+        self.conv_size = conv_size
+
+        self.head_k_dim = self.head_dim
+        self.head_v_dim = int(self.head_dim * self.expand_v)
+        self.key_dim = int(self.n_heads * self.head_k_dim)
+        self.value_dim = int(self.n_v_heads * self.head_v_dim)
+
+        # Consistency checks: ensure expand_v produces integer dimensions
+        assert math.isclose(self.n_v_heads * self.head_dim * expand_v, self.value_dim, rel_tol=1e-5)
+        assert math.isclose(self.head_dim * expand_v, self.head_v_dim, rel_tol=1e-5)
+        assert self.n_v_heads >= self.n_heads and self.n_v_heads % self.n_heads == 0
+
+        # Order: [z, x, B, C, dt]
+        d_in_proj = 2 * self.d_inner + 2 * self.ngroups * self.d_state + self.n_heads
+        self.w_in = nn.Linear(self.d_model, d_in_proj, bias=False, dtype=dtype, device=init_device)
+
+        conv_dim = self.d_inner + 2 * self.ngroups * self.d_state
+        self.conv1d = CausalConv1d(
+            hidden_size=conv_dim,
+            bias=conv_bias,
+            kernel_size=conv_size,
+            dtype=dtype,
+            init_device=init_device,
+            activation=ActivationFunction.silu.value,
+        )
+        if self.conv_init is not None:
+            nn.init.uniform_(self.conv1d.weight, -self.conv_init, self.conv_init)
+
+        self.A_log = nn.Parameter(torch.empty(self.n_heads, dtype=dtype, device=init_device))
+        self.dt_bias = nn.Parameter(torch.empty(self.n_heads, dtype=dtype, device=init_device))
+
+        self.w_g = nn.Linear(d_model, self.value_dim, bias=False, dtype=dtype, device=init_device)
+        self.o_norm = FusedRMSNormGated(self.d_inner, eps=norm_eps, device=init_device)  # type: ignore
+        self.w_out = nn.Linear(self.d_inner, d_model, bias=False, dtype=dtype, device=init_device)
+
+        self.cp_enabled = False
+
+    def forward(
+        self, x: torch.Tensor, cu_doc_lens: Optional[torch.Tensor] = None, **kwargs
+    ) -> torch.Tensor:
+        del kwargs  # Ignore any extra kwargs passed from attention interface
+        B, T_og, D = x.shape
+
+        # shape: (batch_size, seq_len, d_in_proj)
+        zxbcdt = self.w_in(x)
+        A = -torch.exp(self.A_log)
+        z, xBC, dt = torch.split(
+            zxbcdt,
+            [self.d_inner, self.d_inner + 2 * self.ngroups * self.d_state, self.n_heads],
+            dim=-1,
+        )
+        dt = F.softplus(dt + self.dt_bias)  # (B, L, nheads)
+
+        # 1D Convolution
+
+        xBC = self.conv1d(xBC.transpose(1, 2)).transpose(1, 2)
+
+        # Split into 3 main branches: X, B, C
+        # These correspond to V, K, Q respectively in the SSM/attention duality
+        x, B, C = torch.split(
+            xBC, [self.d_inner, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1
+        )
+        y = mamba_chunk_scan_combined(
+            rearrange(x, "b l (h p) -> b l h p", p=self.headdim),
+            dt,
+            A,
+            rearrange(B, "b l (g n) -> b l g n", g=self.ngroups),
+            rearrange(C, "b l (g n) -> b l g n", g=self.ngroups),
+            chunk_size=self.chunk_size,
+            D=self.D,
+            z=None,
+            seq_idx=seq_idx,
+            initial_states=initial_states,
+            **dt_limit_kwargs,
+        )
+        y = rearrange(y, "b l h p -> b l (h p)")
+
+        # Multiply "gate" branch and apply extra normalization layer
+        y = self.norm(y, z)
+        out = self.out_proj(y)
+        return out
