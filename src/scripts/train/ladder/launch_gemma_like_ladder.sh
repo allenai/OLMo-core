@@ -25,7 +25,14 @@ TAG="${TAG:-}"
 # Format chinchilla multiple for run name (e.g. 4.0 → 4xC)
 CHINCHILLA_SUFFIX="$(echo "${CHINCHILLA_MULTIPLE}" | sed 's/\.0$//')xC"
 
-SIZES=(260m 709m 1p3b 2b 4b 8b)
+SIZES=(
+    260m
+    709m
+    # 1p3b
+    # 2b
+    # 4b
+    # 8b
+)
 
 for size in "${SIZES[@]}"; do
     if [[ -n "${TAG}" ]]; then
