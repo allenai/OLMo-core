@@ -60,7 +60,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=32
+            shard_degree=16
         ),
         float8_config=Float8Config(
             enabled=True,
