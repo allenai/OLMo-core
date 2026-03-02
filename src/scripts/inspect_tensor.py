@@ -19,7 +19,7 @@ except ImportError:
 def inspect_safetensors(file_path, show_values=False):
     """Load and inspect a safetensors file."""
 
-    file_path = Path(file_path)
+    file_path = cached_path(file_path)
 
     if not file_path.exists():
         print(f"Error: File '{file_path}' not found.")
