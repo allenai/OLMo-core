@@ -257,10 +257,7 @@ class GAPMonitorCallback(Callback):
         if (self.step - self.dump_gradients_start_step) % self.dump_gradients_step_interval != 0:
             return
 
-        output_dir = self.trainer.work_dir / "gradients"
-        output_dir.mkdir(exist_ok=True, parents=True)
-
-        step_dir = output_dir / f"step{self.step}"
+        step_dir = self.trainer.work_dir / "gradients" / f"step{self.step}"
         step_dir.mkdir(exist_ok=True, parents=True)
 
         model = getattr(self.trainer.train_module, "model")
