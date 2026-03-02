@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added gradient dumping support to `GAPMonitorCallback`. Set `dump_gradients=True` to save raw gradient tensors during training. Supports full distributed checkpoints and preview mode (`dump_gradients_save_first_n`).
+- Added support for in-loop perplexity evals with context parallelism (CP) and tensor parallelism (TP).
 - Added documentation for verifying chat template settings before running evals after SFT.
 - Added `olmo_core.data.composable` module.
 - Added `PeriNormTransformerBlock`.
@@ -54,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed `Transformer.get_rope_buffers()` crashing on non-rope attention mixers like `GatedDeltaNet`.
 - Fixed A100 peak flops spec in `SpeedMonitorCallback` being 2x too low, which inflated MFU by 2x.
 - Fixed `AttentionConfig.num_params()` overcounting QK norm parameters when using GQA/MQA with `use_head_qk_norm=False`.
 - Fixed the peak learning rate in `src/scripts/train/OLMo3/OLMo3-32B-midtraining.py` to the correct one.
