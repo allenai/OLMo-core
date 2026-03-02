@@ -6,7 +6,8 @@ Can use some work for more detailed inspection!
 """
 
 import sys
-from pathlib import Path
+
+from cached_path import cached_path
 
 try:
     from safetensors import safe_open
