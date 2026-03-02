@@ -1,360 +1,345 @@
 """
-Convert an OLMo Core hybrid model checkpoint (with FLA/GatedDeltaNet layers)
-to a HuggingFace model checkpoint.
+Convert an OLMo Core hybrid model checkpoint (with GatedDeltaNet layers) to a HuggingFace
+``olmo_hybrid`` model checkpoint.
 
-This script extends the standard conversion to support OLMo 3.2 Hybrid models that mix
-attention layers with linear attention (GatedDeltaNet) layers.
+Hybrid models use a mix of standard attention layers and GatedDeltaNet (linear attention) layers.
+In OLMo-core, both layer types share the same block-level key prefix (``blocks.{i}.attention.*``),
+but in HF they map to different prefixes (``self_attn.*`` vs ``linear_attn.*``). This script uses
+explicit per-layer key mapping based on runtime block type inspection to handle the difference.
 
-UPDATED: Now uses simplified conversion without weight fusion, since the HF architecture
-matches FLA directly (separate Q/K/V projections and convolutions).
+Usage::
 
-Usage:
-    python convert_checkpoint_to_hf_hybrid.py \
-        -i /path/to/olmo-core-checkpoint \
-        -o /path/to/output-hf-model \
+    python convert_checkpoint_to_hf_hybrid.py \\
+        -i /path/to/olmo-core-checkpoint \\
+        -o /path/to/output-hf-model \\
         --skip-validation
 """
 
 import json
 import logging
+import re
 from argparse import ArgumentParser
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import rich
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
 from safetensors.torch import save_file
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
-from olmo_core.nn.attention import AttentionBackendName, AttentionType
-from olmo_core.nn.conversion.state_converter import StateConverter
-from olmo_core.nn.conversion.state_mapping import (
-    StateMappingTemplate,
-    StateType,
-    TemplatePlaceholder,
-)
-from olmo_core.nn.hf.convert import (
-    OLMO_CORE_TO_HF_MODULE_MAPPINGS,
-    OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS,
-    OLMO_CORE_TO_HF_WEIGHT_MAPPINGS,
-)
-from olmo_core.nn.moe.moe import MoEType
-from olmo_core.nn.transformer.block import FLABlock, ReorderedNormTransformerBlock
+from olmo_core.nn.attention import Attention, AttentionBackendName, AttentionConfig
+from olmo_core.nn.attention.recurrent import GatedDeltaNet
+from olmo_core.nn.transformer.block import ReorderedNormTransformerBlock, TransformerBlock
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
-LAYER = TemplatePlaceholder.LAYER
+# ---------------------------------------------------------------------------
+# Key mapping tables
+# ---------------------------------------------------------------------------
 
-FLA_OLMO_CORE_TO_HF_WEIGHT_MAPPINGS: Dict[str, str] = {
-    f"blocks.{LAYER}.fla.inner.q_proj.weight": f"model.layers.{LAYER}.linear_attn.q_proj.weight",
-    f"blocks.{LAYER}.fla.inner.k_proj.weight": f"model.layers.{LAYER}.linear_attn.k_proj.weight",
-    f"blocks.{LAYER}.fla.inner.v_proj.weight": f"model.layers.{LAYER}.linear_attn.v_proj.weight",
-    f"blocks.{LAYER}.fla.inner.g_proj.weight": f"model.layers.{LAYER}.linear_attn.g_proj.weight",
-    f"blocks.{LAYER}.fla.inner.a_proj.weight": f"model.layers.{LAYER}.linear_attn.a_proj.weight",
-    f"blocks.{LAYER}.fla.inner.b_proj.weight": f"model.layers.{LAYER}.linear_attn.b_proj.weight",
-    f"blocks.{LAYER}.fla.inner.o_proj.weight": f"model.layers.{LAYER}.linear_attn.o_proj.weight",
-    f"blocks.{LAYER}.fla.inner.q_conv1d.weight": f"model.layers.{LAYER}.linear_attn.q_conv1d.weight",
-    f"blocks.{LAYER}.fla.inner.k_conv1d.weight": f"model.layers.{LAYER}.linear_attn.k_conv1d.weight",
-    f"blocks.{LAYER}.fla.inner.v_conv1d.weight": f"model.layers.{LAYER}.linear_attn.v_conv1d.weight",
-    f"blocks.{LAYER}.fla.inner.o_norm.weight": f"model.layers.{LAYER}.linear_attn.o_norm.weight",
-    f"blocks.{LAYER}.fla.inner.A_log": f"model.layers.{LAYER}.linear_attn.A_log",
-    f"blocks.{LAYER}.fla.inner.dt_bias": f"model.layers.{LAYER}.linear_attn.dt_bias",
-    f"blocks.{LAYER}.fla_norm.weight": f"model.layers.{LAYER}.attention_layer_norm.weight",
+SHARED_KEY_MAP: Dict[str, str] = {
+    "embeddings.weight": "model.embed_tokens.weight",
+    "lm_head.norm.weight": "model.norm.weight",
+    "lm_head.w_out.weight": "lm_head.weight",
 }
 
-FLA_OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
-    f"blocks.{LAYER}.fla": f"model.layers.{LAYER}.linear_attn",
-    f"blocks.{LAYER}.fla.inner": f"model.layers.{LAYER}.linear_attn",
-    f"blocks.{LAYER}.fla_norm": f"model.layers.{LAYER}.post_attention_layernorm",
+# GDN layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.linear_attn.*``
+# These layers use pre-norm in HF (input_layernorm before the sequence mixer).
+GDN_KEY_MAP: Dict[str, str] = {
+    "attention.w_q.weight": "linear_attn.q_proj.weight",
+    "attention.w_k.weight": "linear_attn.k_proj.weight",
+    "attention.w_v.weight": "linear_attn.v_proj.weight",
+    "attention.w_a.weight": "linear_attn.a_proj.weight",
+    "attention.w_b.weight": "linear_attn.b_proj.weight",
+    "attention.w_g.weight": "linear_attn.g_proj.weight",
+    "attention.w_out.weight": "linear_attn.o_proj.weight",
+    "attention.q_conv1d.weight": "linear_attn.q_conv1d.weight",
+    "attention.k_conv1d.weight": "linear_attn.k_conv1d.weight",
+    "attention.v_conv1d.weight": "linear_attn.v_conv1d.weight",
+    "attention.o_norm.weight": "linear_attn.o_norm.weight",
+    "attention.A_log": "linear_attn.A_log",
+    "attention.dt_bias": "linear_attn.dt_bias",
+    "attention_norm.weight": "input_layernorm.weight",
+    "feed_forward_norm.weight": "post_attention_layernorm.weight",
+    "feed_forward.w1.weight": "mlp.gate_proj.weight",
+    "feed_forward.w2.weight": "mlp.down_proj.weight",
+    "feed_forward.w3.weight": "mlp.up_proj.weight",
 }
 
+# Attention layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.self_attn.*``
+# These layers use post-norm in HF (layernorm after the sequence mixer and after the MLP).
+ATTN_KEY_MAP: Dict[str, str] = {
+    "attention.w_q.weight": "self_attn.q_proj.weight",
+    "attention.w_k.weight": "self_attn.k_proj.weight",
+    "attention.w_v.weight": "self_attn.v_proj.weight",
+    "attention.w_out.weight": "self_attn.o_proj.weight",
+    "attention.q_norm.weight": "self_attn.q_norm.weight",
+    "attention.k_norm.weight": "self_attn.k_norm.weight",
+    "attention_norm.weight": "post_attention_layernorm.weight",
+    "feed_forward_norm.weight": "post_feedforward_layernorm.weight",
+    "feed_forward.w1.weight": "mlp.gate_proj.weight",
+    "feed_forward.w2.weight": "mlp.down_proj.weight",
+    "feed_forward.w3.weight": "mlp.up_proj.weight",
+}
 
-def _get_rope_scaling_for_hybrid(blocks) -> dict | None:
+# Regex to match per-layer block keys: ``blocks.<layer_idx>.<rest>``
+_BLOCK_KEY_RE = re.compile(r"^blocks\.(\d+)\.(.+)$")
+
+
+# ---------------------------------------------------------------------------
+# Block type helpers
+# ---------------------------------------------------------------------------
+
+
+def is_gdn_layer(block: TransformerBlock) -> bool:
+    """Return ``True`` if the block's sequence mixer is a :class:`GatedDeltaNet`."""
+    return isinstance(block.attention, GatedDeltaNet)
+
+
+def get_layer_types(model: Transformer) -> List[str]:
     """
-    Get RoPE scaling configuration from attention layers in a hybrid model.
-    FLA layers are skipped since they don't use RoPE.
+    Iterate over blocks and return a list of ``"linear_attention"`` or ``"full_attention"``
+    strings matching the HF ``olmo_hybrid`` config format.
     """
-    # Get only attention layers (not FLA layers)
-    attention_layers = [
-        (idx, block)
-        for idx, block in enumerate(blocks)
-        if isinstance(block, ReorderedNormTransformerBlock)
+    layer_types: List[str] = []
+    for idx, block in model.blocks.items():
+        if is_gdn_layer(block):
+            layer_types.append("linear_attention")
+        elif isinstance(block.attention, Attention):
+            layer_types.append("full_attention")
+        else:
+            raise ValueError(
+                f"Unknown sequence mixer type at layer {idx}: {type(block.attention)}"
+            )
+    return layer_types
+
+
+# ---------------------------------------------------------------------------
+# State dict conversion
+# ---------------------------------------------------------------------------
+
+
+def convert_state_dict(
+    state_dict: Dict[str, Any],
+    layer_types: List[str],
+) -> Dict[str, Any]:
+    """
+    Convert an OLMo-core hybrid state dict to HF ``olmo_hybrid`` format.
+
+    Uses :data:`SHARED_KEY_MAP` for non-block keys, and per-layer
+    :data:`GDN_KEY_MAP` / :data:`ATTN_KEY_MAP` based on ``layer_types``.
+    """
+    hf_state: Dict[str, Any] = {}
+
+    for olmo_key, value in state_dict.items():
+        # Try shared (non-block) keys first.
+        if olmo_key in SHARED_KEY_MAP:
+            hf_state[SHARED_KEY_MAP[olmo_key]] = value
+            continue
+
+        m = _BLOCK_KEY_RE.match(olmo_key)
+        if m is None:
+            log.warning(f"Unmapped key (skipped): {olmo_key}")
+            continue
+
+        layer_idx = int(m.group(1))
+        suffix = m.group(2)
+
+        key_map = GDN_KEY_MAP if layer_types[layer_idx] == "linear_attention" else ATTN_KEY_MAP
+        if suffix not in key_map:
+            log.warning(f"Unmapped block suffix (skipped): {olmo_key}")
+            continue
+
+        hf_key = f"model.layers.{layer_idx}.{key_map[suffix]}"
+        hf_state[hf_key] = value
+
+    return hf_state
+
+
+# ---------------------------------------------------------------------------
+# HF config builder
+# ---------------------------------------------------------------------------
+
+
+def _get_rope_scaling(model: Transformer, layer_types: List[str]) -> Optional[dict]:
+    """
+    Extract the RoPE scaling config from attention blocks.  GDN layers are skipped
+    because they don't use RoPE.
+    """
+    attn_blocks = [
+        (int(idx), block)
+        for idx, block in model.blocks.items()
+        if layer_types[int(idx)] == "full_attention"
     ]
 
-    if not attention_layers:
-        return None
-
-    # Collect layers with RoPE scaling
     layers_with_scaling = [
         (idx, block)
-        for idx, block in attention_layers
+        for idx, block in attn_blocks
         if block.attention.rope is not None and block.attention.rope.scaling is not None
     ]
-
     if not layers_with_scaling:
         return None
 
-    # Validate all use the same config
-    first_config_dict = layers_with_scaling[0][1].attention.rope.scaling.to_hf_config()
-
+    first_config = layers_with_scaling[0][1].attention.rope.scaling.to_hf_config()
     for idx, block in layers_with_scaling[1:]:
-        config_dict = block.attention.rope.scaling.to_hf_config()
-        if config_dict != first_config_dict:
+        cfg = block.attention.rope.scaling.to_hf_config()
+        if cfg != first_config:
             raise NotImplementedError(
-                f"Different RoPE scaling configs found. First: {first_config_dict}, Layer {idx}: {config_dict}"
+                f"Inconsistent RoPE scaling configs. First: {first_config}, Layer {idx}: {cfg}"
             )
-
-    return first_config_dict
-
-
-def is_hybrid_model(model: Transformer) -> bool:
-    """Check if the model has FLA (linear attention) blocks."""
-    blocks = list(model.blocks.values())
-    return any(isinstance(block, FLABlock) for block in blocks)
+    return first_config
 
 
-def get_hybrid_hf_config_dict(
+def build_hf_config(
     model: Transformer,
-    transformer_config: TransformerConfig,
-    max_sequence_length: int | None = None,  # NEW parameter
+    layer_types: List[str],
+    max_seq_len: int,
 ) -> Dict[str, Any]:
     """
-    Build a config dict for Olmo3_2Hybrid model.
+    Build the ``config.json`` dict for a HF ``olmo_hybrid`` model.
+
+    Extracts standard fields from the first attention block and GDN-specific fields
+    from the first GDN block.
     """
     blocks = list(model.blocks.values())
-    n_layers = len(blocks)
 
-    layer_types = []
-    attention_block = None
-    fla_block = None
+    attn_block: Optional[TransformerBlock] = None
+    gdn_block: Optional[TransformerBlock] = None
+    for lt, block in zip(layer_types, blocks):
+        if lt == "full_attention" and attn_block is None:
+            attn_block = block
+        elif lt == "linear_attention" and gdn_block is None:
+            gdn_block = block
 
-    for idx, block in enumerate(blocks):
-        if isinstance(block, FLABlock):
-            layer_types.append("linear_attention")
-            if fla_block is None:
-                fla_block = block
-        elif isinstance(block, ReorderedNormTransformerBlock):
-            layer_types.append("full_attention")
-            if attention_block is None:
-                attention_block = block
-        else:
-            raise ValueError(f"Unknown block type at layer {idx}: {type(block)}")
-
-    if attention_block is None:
+    if attn_block is None:
         raise ValueError("Hybrid model must have at least one attention layer")
-    if fla_block is None:
-        raise ValueError("Hybrid model must have at least one FLA layer")
+    if gdn_block is None:
+        raise ValueError("Hybrid model must have at least one GDN layer")
 
-    attn = attention_block.attention
+    attn: Attention = attn_block.attention
+    gdn: GatedDeltaNet = gdn_block.attention
 
-    # Handle RoPE - may be None for drope models
-    rope_parameters = None
-    use_rope = attn.rope is not None
-
-    if use_rope:
+    # RoPE (from attention blocks only)
+    rope_parameters: Optional[dict] = None
+    if attn.rope is not None:
         rope_theta = float(attn.rope.theta)
-        rope_scaling = _get_rope_scaling_for_hybrid(blocks)
-
-        # Build unified rope_parameters dict
+        rope_scaling = _get_rope_scaling(model, layer_types)
         rope_parameters = {"rope_theta": rope_theta}
         if rope_scaling:
-            rope_parameters.update(rope_scaling)  # includes rope_type and other params
+            rope_parameters.update(rope_scaling)
         else:
             rope_parameters["rope_type"] = "default"
-
-        log.info(f"RoPE enabled: {rope_parameters}")
+        log.info(f"RoPE: {rope_parameters}")
     else:
-        log.info("No RoPE configured (drope model)")
+        log.info("No RoPE configured")
 
-    # Extract FLA config
-    fla_inner = fla_block.fla.inner
+    # Warn if GDN blocks are post-norm (ReorderedNormTransformerBlock) but HF expects pre-norm.
+    if isinstance(gdn_block, ReorderedNormTransformerBlock):
+        log.warning(
+            "GDN block uses post-norm (ReorderedNormTransformerBlock) but HF olmo_hybrid "
+            "expects pre-norm for linear_attention layers. The conversion will proceed, but "
+            "outputs may not match exactly."
+        )
 
-    # Get FLA layer kwargs from original config
-    block_config = transformer_config.block
-    fla_config = block_config.fla
-    fla_kwargs = fla_config.fla_layer_kwargs if fla_config else {}
-
-    # Extract dimensions from the actual FLA layer
-    linear_num_heads = getattr(fla_inner, "num_heads", attn.n_heads)
-    linear_key_head_dim = fla_kwargs.get("head_dim", getattr(fla_inner, "head_k_dim", 96))
-    linear_value_head_dim = getattr(fla_inner, "head_v_dim", linear_key_head_dim * 2)
-
-    # Determine max_position_embeddings
-    # Use passed value, or fall back to a default
-    if max_sequence_length is None:
-        max_sequence_length = 65536  # Default fallback
-        log.warning(f"max_sequence_length not provided, using default: {max_sequence_length}")
-
-    # Build the config dict
-    config_dict = {
-        "model_type": "olmo3_2_hybrid",
-        "architectures": ["Olmo3_2HybridForCausalLM"],
-        # Standard transformer config
+    config: Dict[str, Any] = {
+        "model_type": "olmo_hybrid",
+        "architectures": ["OlmoHybridForCausalLM"],
+        # Standard transformer fields
         "vocab_size": model.vocab_size,
         "hidden_size": model.d_model,
-        "intermediate_size": attention_block.feed_forward.hidden_size,
-        "num_hidden_layers": n_layers,
+        "intermediate_size": attn_block.feed_forward.hidden_size,
+        "num_hidden_layers": len(blocks),
         "num_attention_heads": attn.n_heads,
-        "num_key_value_heads": attn.n_kv_heads or attn.n_heads,
+        "num_key_value_heads": attn.n_kv_heads,
         "hidden_act": "silu",
-        "max_position_embeddings": max_sequence_length,  # NOW DYNAMIC
+        "max_position_embeddings": max_seq_len,
         "initializer_range": 0.02,
         "use_cache": True,
         "attention_bias": attn.w_out.bias is not None,
         "attention_dropout": 0.0,
-        "rms_norm_eps": attention_block.feed_forward_norm.eps,
+        "rms_norm_eps": attn_block.feed_forward_norm.eps,
         "tie_word_embeddings": False,
         # Hybrid layer configuration
         "layer_types": layer_types,
-        # Linear attention (GatedDeltaNet) parameters
-        "linear_num_key_heads": linear_num_heads,
-        "linear_num_value_heads": linear_num_heads,
-        "linear_key_head_dim": linear_key_head_dim,
-        "linear_value_head_dim": linear_value_head_dim,
-        "linear_conv_kernel_dim": 4,
-        "linear_use_gate": fla_kwargs.get("use_gate", True),
-        "linear_allow_neg_eigval": fla_kwargs.get("allow_neg_eigval", True),
-        # Token IDs (will be updated later)
+        # GDN (linear attention) parameters
+        "linear_num_key_heads": gdn.n_heads,
+        "linear_num_value_heads": gdn.n_v_heads,
+        "linear_key_head_dim": gdn.head_k_dim,
+        "linear_value_head_dim": gdn.head_v_dim,
+        "linear_conv_kernel_dim": gdn.conv_size,
+        "linear_allow_neg_eigval": gdn.allow_neg_eigval,
+        # Token IDs (updated later after tokenizer is saved)
         "pad_token_id": None,
         "bos_token_id": None,
         "eos_token_id": None,
-        "transformers_version": "4.52.0",
     }
 
-    config_dict["rope_parameters"] = rope_parameters
-    if not use_rope:
-        config_dict["rope_theta"] = None
+    if rope_parameters is not None:
+        config["rope_parameters"] = rope_parameters
+    else:
+        config["rope_theta"] = None
 
-    return config_dict
-
-
-def get_hybrid_converter_to_hf() -> StateConverter:
-    """
-    Get a state converter that handles both attention and FLA layers.
-    """
-    # Start with standard mappings
-    mapping_templates = {
-        olmo_core_key: StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.module)
-        for olmo_core_key, hf_key in OLMO_CORE_TO_HF_MODULE_MAPPINGS.items()
-    }
-    mapping_templates.update(
-        {
-            olmo_core_key: StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.weight)
-            for olmo_core_key, hf_key in OLMO_CORE_TO_HF_WEIGHT_MAPPINGS.items()
-        }
-    )
-    mapping_templates.update(OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS)
-
-    # Add FLA-specific mappings
-    mapping_templates.update(
-        {
-            olmo_core_key: StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.weight)
-            for olmo_core_key, hf_key in FLA_OLMO_CORE_TO_HF_WEIGHT_MAPPINGS.items()
-        }
-    )
-    mapping_templates.update(
-        {
-            olmo_core_key: StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.module)
-            for olmo_core_key, hf_key in FLA_OLMO_CORE_TO_HF_MODULE_MAPPINGS.items()
-        }
-    )
-
-    return StateConverter(list(mapping_templates.values()))
+    return config
 
 
-def convert_hybrid_state_to_hf(
-    model_state_dict: Dict[str, Any],
-    n_layers: int,
-) -> Dict[str, Any]:
-    """
-    Convert OLMo Core hybrid model state dict to HuggingFace format.
-    """
-    converter = get_hybrid_converter_to_hf()
-
-    placeholder_bounds = {
-        TemplatePlaceholder.LAYER: n_layers,
-    }
-
-    return converter.convert(model_state_dict, placeholder_bounds)
+# ---------------------------------------------------------------------------
+# Checkpoint saving
+# ---------------------------------------------------------------------------
 
 
-def save_hybrid_hf_model(
-    output_path: str | Path,
-    model_state_dict: Dict[str, Any],
-    model: Transformer,
-    transformer_config: TransformerConfig,
-    *,
-    dtype: Optional[DType] = None,
-    vocab_size: Optional[int] = None,
+def save_checkpoint(
+    path: Path,
+    state_dict: Dict[str, torch.Tensor],
+    config_dict: Dict[str, Any],
+    dtype: Optional[DType],
+    vocab_size: Optional[int],
 ) -> None:
-    """
-    Save a hybrid model in HuggingFace format.
-
-    UPDATED: Simplified version without weight fusion. The HF architecture now
-    matches FLA directly, so we only need key renaming.
-    """
-    output_path = Path(output_path)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    hf_config_dict = get_hybrid_hf_config_dict(model, transformer_config)
-
-    n_layers = len(list(model.blocks.values()))
-    hf_state_dict = convert_hybrid_state_to_hf(model_state_dict, n_layers)
-
-    blocks = list(model.blocks.values())
-    for i, block in enumerate(blocks):
-        if isinstance(block, FLABlock):
-            old_key = f"model.layers.{i}.post_feedforward_layernorm.weight"
-            new_key = f"model.layers.{i}.feedforward_layer_norm.weight"
-            if old_key in hf_state_dict:
-                hf_state_dict[new_key] = hf_state_dict.pop(old_key)
+    """Write ``config.json`` and ``model.safetensors`` to *path*."""
+    path.mkdir(parents=True, exist_ok=True)
 
     if dtype is not None:
-        hf_state_dict = {
-            k: v.to(dtype.as_pt()) if torch.is_tensor(v) else v for k, v in hf_state_dict.items()
+        state_dict = {
+            k: v.to(dtype.as_pt()) if torch.is_tensor(v) else v for k, v in state_dict.items()
         }
 
-    # Truncate embeddings if vocab_size specified
     if vocab_size is not None:
-        hf_config_dict["vocab_size"] = vocab_size
-        if "model.embed_tokens.weight" in hf_state_dict:
-            hf_state_dict["model.embed_tokens.weight"] = hf_state_dict["model.embed_tokens.weight"][
+        config_dict["vocab_size"] = vocab_size
+        if "model.embed_tokens.weight" in state_dict:
+            state_dict["model.embed_tokens.weight"] = state_dict["model.embed_tokens.weight"][
                 :vocab_size
             ]
-        if "lm_head.weight" in hf_state_dict:
-            hf_state_dict["lm_head.weight"] = hf_state_dict["lm_head.weight"][:vocab_size]
+        if "lm_head.weight" in state_dict:
+            state_dict["lm_head.weight"] = state_dict["lm_head.weight"][:vocab_size]
 
-    # Log info
-    original_keys = set(model_state_dict.keys())
-    converted_keys = set(hf_state_dict.keys())
-    log.info(f"Original state dict has {len(original_keys)} keys")
-    log.info(f"Converted state dict has {len(converted_keys)} keys")
-
-    # Debug: print some converted keys to verify mapping
-    log.info("Sample converted keys for layer 0:")
-    for k in sorted(converted_keys):
+    log.info(f"Converted state dict has {len(state_dict)} keys")
+    log.info("Sample keys for layer 0:")
+    for k in sorted(state_dict):
         if "layers.0." in k:
             log.info(f"  {k}")
 
-    # Save config as JSON directly (no need for HF config class)
-    config_path = output_path / "config.json"
+    config_path = path / "config.json"
     with open(config_path, "w") as f:
-        json.dump(hf_config_dict, f, indent=2)
+        json.dump(config_dict, f, indent=2)
     log.info(f"Saved config to {config_path}")
 
-    save_file(hf_state_dict, output_path / "model.safetensors")
-    log.info(f"Saved weights to {output_path / 'model.safetensors'}")
+    save_file(state_dict, path / "model.safetensors")
+    log.info(f"Saved weights to {path / 'model.safetensors'}")
+
+
+# ---------------------------------------------------------------------------
+# Main orchestration
+# ---------------------------------------------------------------------------
 
 
 def convert_checkpoint_to_hf(
@@ -367,72 +352,32 @@ def convert_checkpoint_to_hf(
     tokenizer_id: str | None = None,
     max_sequence_length: int | None = None,
     validate: bool = True,
-    debug: bool = False,
     device: torch.device | None = None,
-    moe_capacity_factor: float | None = None,
-    validation_device: torch.device | None = None,
-    validation_sliding_window: int | None = None,
 ) -> None:
     """
-    Convert a checkpoint to HuggingFace format.
-    Supports both standard OLMo models and hybrid models with FLA layers.
+    Convert an OLMo-core hybrid checkpoint to HuggingFace ``olmo_hybrid`` format.
     """
     if max_sequence_length is not None and max_sequence_length <= 0:
         raise ValueError(f"Invalid sequence length: {max_sequence_length}")
 
-    # Remove deprecated config options
-    for key in ["compile", "dp_config", "tp_config", "float8_config"]:
+    # Remove deprecated config options that may be present in old configs.
+    for key in ("compile", "dp_config", "tp_config", "float8_config"):
         transformer_config_dict.pop(key, None)
 
     model_config = TransformerConfig.from_dict(transformer_config_dict)
     rich.print(model_config)
 
-    validation_device = validation_device or torch.device("cpu")
+    # Override attention backends to torch for CPU conversion.
+    if isinstance(model_config.block, dict):
+        block_configs = model_config.block.values()
+    else:
+        block_configs = [model_config.block]
+    for block_config in block_configs:
+        if isinstance(block_config.sequence_mixer, AttentionConfig):
+            block_config.sequence_mixer.backend = AttentionBackendName.torch
+            block_config.sequence_mixer.use_flash = False
 
-    # Detect hybrid model
-    is_hybrid = model_config.block.name == "fla_hybrid" or model_config.block.fla is not None
-
-    if is_hybrid:
-        log.info("Detected hybrid model with FLA layers")
-
-    # Prepare blocks for conversion
-    block_entries: list[tuple[str, TransformerBlockConfig]] = [("base block", model_config.block)]
-    if model_config.block_overrides:
-        block_entries.extend(
-            (f"block override {idx}", block_config)
-            for idx, block_config in sorted(model_config.block_overrides.items())
-        )
-
-    for block_label, block_config in block_entries:
-        # Skip attention prep for FLA-only blocks
-        if block_config.attention is None:
-            continue
-
-        attention_config = block_config.attention
-        if attention_config.name == AttentionType.fused:
-            backend = attention_config.backend
-            if backend is None:
-                assert attention_config.use_flash
-                backend = AttentionBackendName.flash_2
-
-            try:
-                backend.assert_supported()
-                log.info(f"Using GPU and {backend} for {block_label}")
-                device = torch.device("cuda")
-                validation_device = torch.device("cuda")
-                attention_config.backend = backend
-            except RuntimeError as e:
-                raise RuntimeError(f"Flash attention required but not supported: {e}")
-
-        elif validate and attention_config.backend != AttentionBackendName.torch:
-            log.info(f"Overriding attention backend to torch for {block_label}")
-            attention_config.backend = AttentionBackendName.torch
-            attention_config.use_flash = False
-
-        if moe_capacity_factor is not None and block_config.feed_forward_moe is not None:
-            block_config.feed_forward_moe.capacity_factor = moe_capacity_factor
-
-    # Build model
+    # Build the model on meta device, then materialise to CPU.
     model = model_config.build(init_device="meta")
     model.to_empty(device=device or torch.device("cpu"))
 
@@ -444,53 +389,24 @@ def convert_checkpoint_to_hf(
         log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
         load_model_and_optim_state(model_and_optim_dir, model, work_dir=work_dir)
 
-        log.info(f"Saving checkpoint to '{output_path}'")
         state_dict_options = dist_cp_sd.StateDictOptions(
             flatten_optimizer_state_dict=True, cpu_offload=True
         )
         model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
 
-        # Handle MoE reshaping if needed
-        if (moe_config := model_config.block.feed_forward_moe) is not None:
-            if moe_config.name == MoEType.dropless:
-                for k, v in model_state_dict.items():
-                    if k.endswith(".feed_forward_moe.experts.mlp.w1") or k.endswith(
-                        ".feed_forward_moe.experts.mlp.w3"
-                    ):
-                        assert isinstance(v, torch.Tensor)
-                        model_state_dict[k] = (
-                            v.reshape(moe_config.num_experts, moe_config.hidden_size, -1)
-                            .permute(0, 2, 1)
-                            .reshape(-1, moe_config.hidden_size)
-                        )
-                        log.info(f"Reshaped {k} for dropless MoE")
+    # Detect layer types and convert state dict.
+    layer_types = get_layer_types(model)
+    log.info(f"Layer types ({len(layer_types)} layers): {layer_types}")
 
-        if is_hybrid:
-            save_hybrid_hf_model(
-                output_path,
-                model_state_dict,
-                model,
-                model_config,
-                dtype=dtype,
-                vocab_size=None,
-            )
-        else:
-            # Use standard conversion
-            from olmo_core.nn.hf.checkpoint import save_hf_model
+    hf_state_dict = convert_state_dict(model_state_dict, layer_types)
 
-            save_hf_model(
-                output_path,
-                model_state_dict,
-                model,
-                dtype=dtype,
-                vocab_size=vocab_size,
-                work_dir=work_dir,
-                save_overwrite=True,
-            )
+    max_sequence_length = max_sequence_length or 65536
+    hf_config_dict = build_hf_config(model, layer_types, max_sequence_length)
 
-        log.info(f"Successfully saved converted model to '{output_path}'")
+    output_path = Path(output_path)
+    save_checkpoint(output_path, hf_state_dict, hf_config_dict, dtype, vocab_size)
 
-    # Save tokenizer
+    # Save tokenizer.
     tokenizer_id = tokenizer_id or tokenizer_config.identifier
     if tokenizer_id is not None:
         log.info(f"Saving tokenizer {tokenizer_id}")
@@ -505,10 +421,9 @@ def convert_checkpoint_to_hf(
         huggingface_tokenizer.save_pretrained(output_path)
         log.info(f"Saved tokenizer to {output_path}")
 
-    # Update config with tokenizer info
-    log.info("Updating config with tokenizer settings")
-    hf_config_path = Path(output_path) / "config.json"
-    with open(hf_config_path, "r") as f:
+    # Update config.json with tokenizer info and max_position_embeddings.
+    config_path = output_path / "config.json"
+    with open(config_path, "r") as f:
         config_dict = json.load(f)
 
     config_dict["max_position_embeddings"] = max_sequence_length or config_dict.get(
@@ -518,92 +433,26 @@ def convert_checkpoint_to_hf(
     config_dict["bos_token_id"] = tokenizer_config.bos_token_id
     config_dict["eos_token_id"] = tokenizer_config.eos_token_id
 
-    with open(hf_config_path, "w") as f:
+    with open(config_path, "w") as f:
         json.dump(config_dict, f, indent=2)
-    log.info("Updated config.json")
 
     # Validation
     if validate:
-        if is_hybrid:
-            log.warning("Validation for hybrid models not yet implemented. Skipping.")
-        else:
-            log.info("Validating converted model")
-            validate_conversion(
-                output_path,
-                model,
-                tokenizer_config.vocab_size,
-                debug=debug,
-                dtype=dtype,
-                device=validation_device,
-                sliding_window=validation_sliding_window,
-            )
-            log.info("Validation completed")
-
-
-def validate_conversion(
-    hf_path: str | Path,
-    model: Transformer,
-    vocab_size: int,
-    debug: bool = False,
-    dtype: DType | None = None,
-    device: torch.device | None = None,
-    sliding_window: int | None = None,
-):
-    """Validate the conversion by comparing outputs."""
-    device = device or torch.device("cpu")
-    log.info(f"Running validation on {device}")
-
-    B, T = 1, 60
-    input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
-
-    is_sliding = any(
-        hasattr(block, "attention")
-        and hasattr(block.attention, "window_size")
-        and block.attention.window_size != (-1, -1)
-        for block in model.blocks.values()
-    )
-
-    log.info("Loading converted checkpoint for validation...")
-    kwargs = {}
-    if is_sliding and sliding_window is not None:
-        kwargs["sliding_window"] = sliding_window
-
-    hf_config = AutoConfig.from_pretrained(hf_path, **kwargs)
-    hf_model = (
-        AutoModelForCausalLM.from_pretrained(
-            hf_path,
-            torch_dtype="auto",
-            config=hf_config,
-            attn_implementation="sdpa",
+        log.warning(
+            "Validation for hybrid models requires 'olmo_hybrid' to be registered in "
+            "transformers. Skipping validation."
         )
-        .to(device)
-        .eval()
-    )
 
-    log.info("Running models for validation...")
-    with torch.no_grad():
-        hf_logits = hf_model(input_ids=input_ids).logits
+    log.info(f"Successfully saved converted model to '{output_path}'")
 
-    del hf_model
 
-    if is_sliding and sliding_window is not None:
-        for block in model.blocks.values():
-            if hasattr(block, "attention") and block.attention.window_size != (-1, -1):
-                block.attention.window_size = (sliding_window - 1, 0)
-
-    if dtype:
-        model = model.to(dtype.as_pt())
-    model = model.to(device=device).eval()
-
-    with torch.no_grad():
-        logits = model(input_ids=input_ids)
-
-    torch.testing.assert_close(
-        hf_logits[..., :vocab_size].float(), logits[..., :vocab_size].float(), rtol=1e-4, atol=1e-4
-    )
+# ---------------------------------------------------------------------------
+# Config loading & CLI
+# ---------------------------------------------------------------------------
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
+    """Load the experiment config from the checkpoint directory."""
     config_path = f"{checkpoint_input_dir}/config.json"
     if not file_exists(config_path):
         raise RuntimeError(f"Config file not found at {checkpoint_input_dir}")
@@ -639,7 +488,7 @@ def parse_args():
         "-s",
         "--max-sequence-length",
         type=int,
-        help="Max sequence length. Defaults to tokenizer's model_max_length.",
+        help="Max sequence length. Defaults to tokenizer's model_max_length or 65536.",
     )
     parser.add_argument(
         "-t",
@@ -653,11 +502,6 @@ def parse_args():
         help="Skip validation.",
     )
     parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug output.",
-    )
-    parser.add_argument(
         "--device",
         type=torch.device,
         help="Device for conversion. Defaults to CPU.",
@@ -667,21 +511,6 @@ def parse_args():
         type=DType,
         default=DType.bfloat16,
         help="Output dtype. Defaults to bfloat16.",
-    )
-    parser.add_argument(
-        "--validation-device",
-        type=torch.device,
-        help="Device for validation.",
-    )
-    parser.add_argument(
-        "--validation-sliding-window",
-        type=int,
-        help="Override sliding window size for validation.",
-    )
-    parser.add_argument(
-        "--moe-capacity-factor",
-        type=float,
-        help="MoE capacity factor.",
     )
     return parser.parse_args()
 
@@ -701,10 +530,8 @@ def main():
 
     max_sequence_length = args.max_sequence_length
     if max_sequence_length is None:
-        # Try train_module.max_sequence_length first (authoritative source)
         max_sequence_length = experiment_config.get("train_module", {}).get("max_sequence_length")
     if max_sequence_length is None:
-        # Fallback to dataset.sequence_length
         max_sequence_length = experiment_config.get("dataset", {}).get("sequence_length")
 
     convert_checkpoint_to_hf(
@@ -716,11 +543,7 @@ def main():
         max_sequence_length=max_sequence_length,
         tokenizer_id=args.tokenizer,
         validate=args.validate,
-        debug=args.debug,
         device=args.device,
-        moe_capacity_factor=args.moe_capacity_factor,
-        validation_device=args.validation_device or args.device,
-        validation_sliding_window=args.validation_sliding_window,
     )
 
 
