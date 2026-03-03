@@ -147,7 +147,7 @@ def convert_checkpoint_to_hf(
 
     tokenizer_path = Path(original_checkpoint_path).parent / "tokenizer"
     huggingface_tokenizer = None
-    if tokenizer_path.exists():
+    if tokenizer_id is None and tokenizer_path.exists():
         log.info(f"Saving preexisting tokenizer from {tokenizer_path}")
         huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
         huggingface_tokenizer.save_pretrained(output_path)
