@@ -2,8 +2,8 @@
 Example script to convert an OLMo Core model checkpoint to a HuggingFace model checkpoint.
 
 Supports both standard architectures (olmo2, olmo3) and hybrid (GDN + attention) architectures.
-Standard architectures require support in the ``transformers`` library; hybrid models are saved
-as raw ``config.json`` + ``model.safetensors`` since ``olmo_hybrid`` is not yet registered.
+Hybrid models are saved as raw ``config.json`` + ``model.safetensors`` rather than using
+``save_pretrained()``.
 
 Usage::
 
@@ -11,7 +11,7 @@ Usage::
     python convert_checkpoint_to_hf.py -i /path/to/checkpoint -o /path/to/output
 
     # Hybrid model (auto-detected)
-    python convert_checkpoint_to_hf.py -i /path/to/hybrid-checkpoint -o /path/to/output --skip-validation
+    python convert_checkpoint_to_hf.py -i /path/to/hybrid-checkpoint -o /path/to/output
 """
 
 import json
@@ -262,29 +262,12 @@ def convert_checkpoint_to_hf(
     log.info(
         "Fixing HF config using updated config from tokenizer config data and script arguments"
     )
-    config_path = Path(output_path) / "config.json"
-    try:
-        huggingface_config = AutoConfig.from_pretrained(output_path)
-        huggingface_config.max_position_embeddings = max_sequence_length
-        huggingface_config.pad_token_id = tokenizer_config.pad_token_id
-        huggingface_config.bos_token_id = tokenizer_config.bos_token_id
-        huggingface_config.eos_token_id = tokenizer_config.eos_token_id
-        huggingface_config.save_pretrained(output_path)
-    except Exception:
-        log.info(
-            "AutoConfig.from_pretrained() failed (model type may not be registered in "
-            "transformers), falling back to raw JSON config fixup"
-        )
-        with open(config_path, "r") as f:
-            config_dict = json.load(f)
-        config_dict["max_position_embeddings"] = max_sequence_length or config_dict.get(
-            "max_position_embeddings", 65536
-        )
-        config_dict["pad_token_id"] = tokenizer_config.pad_token_id
-        config_dict["bos_token_id"] = tokenizer_config.bos_token_id
-        config_dict["eos_token_id"] = tokenizer_config.eos_token_id
-        with open(config_path, "w") as f:
-            json.dump(config_dict, f, indent=2)
+    huggingface_config = AutoConfig.from_pretrained(output_path)
+    huggingface_config.max_position_embeddings = max_sequence_length
+    huggingface_config.pad_token_id = tokenizer_config.pad_token_id
+    huggingface_config.bos_token_id = tokenizer_config.bos_token_id
+    huggingface_config.eos_token_id = tokenizer_config.eos_token_id
+    huggingface_config.save_pretrained(output_path)
     log.info(
         "Successfully fixed config using updated config from tokenizer config data and script arguments"
     )
@@ -636,19 +619,13 @@ def main():
     assert transformer_config_dict is not None
     assert tokenizer_config_dict is not None
 
-    max_sequence_length = args.max_sequence_length
-    if max_sequence_length is None:
-        max_sequence_length = experiment_config.get("train_module", {}).get("max_sequence_length")
-    if max_sequence_length is None:
-        max_sequence_length = experiment_config.get("dataset", {}).get("sequence_length")
-
     convert_checkpoint_to_hf(
         original_checkpoint_path=args.checkpoint_input_path,
         output_path=args.huggingface_output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
         dtype=args.dtype,
-        max_sequence_length=max_sequence_length,
+        max_sequence_length=args.max_sequence_length,
         tokenizer_id=args.tokenizer,
         validate=args.validate,
         debug=args.debug,

@@ -206,8 +206,8 @@ def save_hf_hybrid_model(
     """
     Save a hybrid (GDN + attention) model as ``config.json`` + ``model.safetensors``.
 
-    Unlike :func:`save_hf_model`, this writes files directly because ``olmo_hybrid``
-    is not yet registered in ``transformers`` (no ``save_pretrained`` support).
+    Unlike :func:`save_hf_model`, this writes files directly to avoid a hard dependency
+    on a specific ``transformers`` version.
 
     :param save_dir: Directory in which to save the model.
     :param model_state_dict: The OLMo-core model state dict.

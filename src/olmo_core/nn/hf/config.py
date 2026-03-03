@@ -321,8 +321,8 @@ def get_hybrid_hf_config(
     """
     Build the ``config.json`` dict for a HF ``olmo_hybrid`` model.
 
-    Returns a plain dict (not :class:`PretrainedConfig`) because ``olmo_hybrid``
-    is not yet registered in ``transformers``.
+    Returns a plain dict (not :class:`PretrainedConfig`) to avoid a hard dependency
+    on a specific ``transformers`` version.
 
     :param model: The OLMo-core hybrid transformer model.
     :param layer_types: Per-layer type list from :func:`get_hybrid_layer_types`.
