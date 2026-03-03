@@ -104,15 +104,17 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         raise NotImplementedError(
             f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
         )
-    if first_block.attention.rope is None:
-        raise NotImplementedError(
-            f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
-        )
-
     if first_block.attention.backend is None:
         raise ValueError("Attention backend is not set.")
 
-    rope_scaling = _get_and_validate_rope_scaling_config(blocks)
+    has_rope = first_block.attention.rope is not None
+
+    if has_rope:
+        rope_scaling = _get_and_validate_rope_scaling_config(blocks)
+        rope_theta = first_block.attention.rope.theta
+    else:
+        rope_scaling = None
+        rope_theta = None
 
     # Extract common configuration parameters
     common_config_args = {
@@ -125,7 +127,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         "hidden_act": "silu",
         "max_position_embeddings": -1,
         "attention_bias": first_block.attention.w_out.bias is not None,
-        "rope_theta": first_block.attention.rope.theta,
+        "rope_theta": rope_theta,
         "rope_scaling": rope_scaling,
         "pad_token_id": None,
         "bos_token_id": None,
@@ -203,7 +205,7 @@ def _get_and_validate_rope_scaling_config(blocks) -> dict | None:
     sliding_with_scaling = [
         (idx, block)
         for idx, block in sliding_window_layers
-        if block.attention.rope.scaling is not None
+        if block.attention.rope is not None and block.attention.rope.scaling is not None
     ]
     if sliding_with_scaling:
         sliding_indices = [idx for idx, _ in sliding_with_scaling]
@@ -217,7 +219,7 @@ def _get_and_validate_rope_scaling_config(blocks) -> dict | None:
     full_layers_with_scaling = [
         (idx, block)
         for idx, block in full_attention_layers
-        if block.attention.rope.scaling is not None
+        if block.attention.rope is not None and block.attention.rope.scaling is not None
     ]
     if not full_layers_with_scaling:
         return None
