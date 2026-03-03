@@ -98,8 +98,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         work_dir=work_dir,
     )
     trainer_config.steps_to_skip = [
-        StepSkipRange(start=22001, stop=22006),
-        StepSkipRange(start=23001, stop=23006),
+        StepSkipRange(start=22000, stop=22003),
+        StepSkipRange(start=23000, stop=23003),
     ]
     trainer_config.add_callbacks(
         cookbook.configure_default_callbacks(
