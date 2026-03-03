@@ -384,7 +384,7 @@ def get_hybrid_hf_config(
         "use_cache": True,
         "attention_bias": attn.w_out.bias is not None,
         "attention_dropout": 0.0,
-        "rms_norm_eps": attn_block.feed_forward_norm.eps,
+        "rms_norm_eps": attn_block.feed_forward_norm.eps,  # todo: revisit
         "tie_word_embeddings": False,
         # Hybrid layer configuration
         "layer_types": layer_types,
