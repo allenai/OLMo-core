@@ -13,7 +13,7 @@ from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
-from olmo_core.train import Duration
+from olmo_core.train import Duration, StepSkipRange
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 SEQ_LENGTH = 65536
@@ -97,6 +97,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         checkpoint_dir=save_dir,
         work_dir=work_dir,
     )
+    trainer_config.steps_to_skip = [
+        StepSkipRange(start=22001, stop=22002),
+        StepSkipRange(start=23001, stop=23002),
+    ]
     trainer_config.add_callbacks(
         cookbook.configure_default_callbacks(
             run_name=run_name_with_ts,
