@@ -16,7 +16,7 @@ from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import get_beaker_username
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.train import Checkpointer, Duration, LoadStrategy, TrainerConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     BeakerCallback,
     Callback,
@@ -99,10 +99,10 @@ def configure_trainer(
     hard_stop: Optional[Duration] = None,
 ) -> TrainerConfig:
     load_strategy = LoadStrategy.always if load_path else LoadStrategy.if_available
-    if load_path and not Checkpointer.dir_is_checkpoint(load_path):
-        raise FileNotFoundError(
-            f"{load_path=} was provided, but the directory is not a checkpoint directory."
-        )
+    # if load_path and not Checkpointer.dir_is_checkpoint(load_path):
+    #     raise FileNotFoundError(
+    #         f"{load_path=} was provided, but the directory is not a checkpoint directory."
+    #     )
     trainer_config = TrainerConfig(
         max_duration=max_duration,
         load_path=load_path,
