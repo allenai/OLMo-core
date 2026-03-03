@@ -90,7 +90,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/olmo3-7b-lc-drope-take2-cd49af75/step22000",
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/olmo3-7b-lc-drope-take2/step22000",
         load_trainer_state=True,
         load_optim_state=True,
         max_duration=Duration.tokens(MAX_TOKENS),
