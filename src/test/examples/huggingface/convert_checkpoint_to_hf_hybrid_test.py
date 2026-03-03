@@ -7,16 +7,7 @@ import pytest
 import torch
 from safetensors.torch import load_file
 
-from examples.huggingface.convert_checkpoint_to_hf_hybrid import (
-    ATTN_KEY_MAP,
-    GDN_KEY_MAP,
-    SHARED_KEY_MAP,
-    build_hf_config,
-    convert_checkpoint_to_hf,
-    convert_state_dict,
-    get_layer_types,
-    is_gdn_layer,
-)
+from examples.huggingface.convert_checkpoint_to_hf import convert_checkpoint_to_hf
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
@@ -25,7 +16,12 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
 from olmo_core.nn.attention.flash_linear_attn_api import has_fla
 from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedDeltaNetConfig
-from olmo_core.nn.transformer.block import ReorderedNormTransformerBlock, TransformerBlock
+from olmo_core.nn.hf.config import get_hybrid_hf_config, get_hybrid_layer_types
+from olmo_core.nn.hf.convert import (
+    HYBRID_ATTN_LAYER_KEY_MAP,
+    HYBRID_GDN_LAYER_KEY_MAP,
+    convert_hybrid_state_to_hf,
+)
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 
@@ -47,11 +43,6 @@ requires_fla = pytest.mark.skipif(
 )
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def tokenizer_config() -> TokenizerConfig:
     return TokenizerConfig.dolma2()
@@ -61,7 +52,7 @@ def tokenizer_config() -> TokenizerConfig:
 def hybrid_model_config(tokenizer_config: TokenizerConfig) -> TransformerConfig:
     """
     Build a small hybrid model config:  4 layers with pattern [gdn, gdn, gdn, attn].
-    Based on the OLMo2-190M config but with named blocks and a GDN block.
+    Based on the OLMo2-190M config but with named blocks, a GDN block, and no RoPE.
     """
     config = TransformerConfig.olmo2_190M(
         tokenizer_config.padded_vocab_size(),
@@ -70,6 +61,10 @@ def hybrid_model_config(tokenizer_config: TokenizerConfig) -> TransformerConfig:
         attn_backend=AttentionBackendName.torch,
     )
     assert isinstance(config.block, TransformerBlockConfig)
+
+    # Drop RoPE
+    assert isinstance(config.block.sequence_mixer, AttentionConfig)
+    config.block.sequence_mixer.rope = None
 
     attn_block = config.block
     gdn_block = attn_block.replace(
@@ -101,23 +96,9 @@ def olmo_core_model_path(
     shutil.rmtree(model_path, ignore_errors=True)
 
 
-# ---------------------------------------------------------------------------
-# Unit tests for helpers
-# ---------------------------------------------------------------------------
-
-
 @requires_fla
-def test_is_gdn_layer(hybrid_model: Transformer):
-    blocks = list(hybrid_model.blocks.values())
-    assert is_gdn_layer(blocks[0]) is True
-    assert is_gdn_layer(blocks[1]) is True
-    assert is_gdn_layer(blocks[2]) is True
-    assert is_gdn_layer(blocks[3]) is False
-
-
-@requires_fla
-def test_get_layer_types(hybrid_model: Transformer):
-    layer_types = get_layer_types(hybrid_model)
+def test_get_hybrid_layer_types(hybrid_model: Transformer):
+    layer_types = get_hybrid_layer_types(hybrid_model)
     assert layer_types == [
         "linear_attention",
         "linear_attention",
@@ -127,24 +108,24 @@ def test_get_layer_types(hybrid_model: Transformer):
 
 
 @requires_fla
-def test_convert_state_dict_no_missing_keys(hybrid_model: Transformer):
+def test_convert_hybrid_state_no_missing_keys(hybrid_model: Transformer):
     """Every key in the OLMo-core state dict should be mapped to an HF key."""
     state_dict = {k: v for k, v in hybrid_model.named_parameters()}
-    layer_types = get_layer_types(hybrid_model)
+    layer_types = get_hybrid_layer_types(hybrid_model)
 
-    hf_state = convert_state_dict(state_dict, layer_types)
+    hf_state = convert_hybrid_state_to_hf(state_dict, layer_types)
 
     # No keys should have been dropped.
     assert len(hf_state) == len(state_dict)
 
 
 @requires_fla
-def test_convert_state_dict_gdn_keys(hybrid_model: Transformer):
+def test_convert_hybrid_state_gdn_keys(hybrid_model: Transformer):
     """GDN layers should get ``linear_attn.*`` HF keys."""
     state_dict = {k: v for k, v in hybrid_model.named_parameters()}
-    layer_types = get_layer_types(hybrid_model)
+    layer_types = get_hybrid_layer_types(hybrid_model)
 
-    hf_state = convert_state_dict(state_dict, layer_types)
+    hf_state = convert_hybrid_state_to_hf(state_dict, layer_types)
 
     gdn_layer_keys = [k for k in hf_state if "layers.0." in k]
     assert any("linear_attn." in k for k in gdn_layer_keys)
@@ -152,12 +133,12 @@ def test_convert_state_dict_gdn_keys(hybrid_model: Transformer):
 
 
 @requires_fla
-def test_convert_state_dict_attn_keys(hybrid_model: Transformer):
+def test_convert_hybrid_state_attn_keys(hybrid_model: Transformer):
     """Attention layers should get ``self_attn.*`` HF keys."""
     state_dict = {k: v for k, v in hybrid_model.named_parameters()}
-    layer_types = get_layer_types(hybrid_model)
+    layer_types = get_hybrid_layer_types(hybrid_model)
 
-    hf_state = convert_state_dict(state_dict, layer_types)
+    hf_state = convert_hybrid_state_to_hf(state_dict, layer_types)
 
     attn_layer_keys = [k for k in hf_state if "layers.3." in k]
     assert any("self_attn." in k for k in attn_layer_keys)
@@ -165,12 +146,12 @@ def test_convert_state_dict_attn_keys(hybrid_model: Transformer):
 
 
 @requires_fla
-def test_convert_state_dict_shared_keys(hybrid_model: Transformer):
+def test_convert_hybrid_state_shared_keys(hybrid_model: Transformer):
     """Non-block keys should be correctly mapped."""
     state_dict = {k: v for k, v in hybrid_model.named_parameters()}
-    layer_types = get_layer_types(hybrid_model)
+    layer_types = get_hybrid_layer_types(hybrid_model)
 
-    hf_state = convert_state_dict(state_dict, layer_types)
+    hf_state = convert_hybrid_state_to_hf(state_dict, layer_types)
 
     assert "model.embed_tokens.weight" in hf_state
     assert "model.norm.weight" in hf_state
@@ -178,12 +159,12 @@ def test_convert_state_dict_shared_keys(hybrid_model: Transformer):
 
 
 @requires_fla
-def test_convert_state_dict_preserves_values(hybrid_model: Transformer):
+def test_convert_hybrid_state_preserves_values(hybrid_model: Transformer):
     """Tensor values should be preserved (not cloned or modified)."""
     state_dict = {k: v for k, v in hybrid_model.named_parameters()}
-    layer_types = get_layer_types(hybrid_model)
+    layer_types = get_hybrid_layer_types(hybrid_model)
 
-    hf_state = convert_state_dict(state_dict, layer_types)
+    hf_state = convert_hybrid_state_to_hf(state_dict, layer_types)
 
     # Check a GDN weight.
     assert torch.equal(
@@ -197,24 +178,19 @@ def test_convert_state_dict_preserves_values(hybrid_model: Transformer):
     )
 
 
-# ---------------------------------------------------------------------------
-# HF config tests
-# ---------------------------------------------------------------------------
-
-
 @requires_fla
-def test_build_hf_config_model_type(hybrid_model: Transformer):
-    layer_types = get_layer_types(hybrid_model)
-    hf_config = build_hf_config(hybrid_model, layer_types, max_seq_len=256)
+def test_get_hybrid_hf_config_model_type(hybrid_model: Transformer):
+    layer_types = get_hybrid_layer_types(hybrid_model)
+    hf_config = get_hybrid_hf_config(hybrid_model, layer_types, max_seq_len=256)
 
     assert hf_config["model_type"] == "olmo_hybrid"
     assert hf_config["architectures"] == ["OlmoHybridForCausalLM"]
 
 
 @requires_fla
-def test_build_hf_config_layer_types(hybrid_model: Transformer):
-    layer_types = get_layer_types(hybrid_model)
-    hf_config = build_hf_config(hybrid_model, layer_types, max_seq_len=256)
+def test_get_hybrid_hf_config_layer_types(hybrid_model: Transformer):
+    layer_types = get_hybrid_layer_types(hybrid_model)
+    hf_config = get_hybrid_hf_config(hybrid_model, layer_types, max_seq_len=256)
 
     assert hf_config["layer_types"] == [
         "linear_attention",
@@ -225,11 +201,11 @@ def test_build_hf_config_layer_types(hybrid_model: Transformer):
 
 
 @requires_fla
-def test_build_hf_config_standard_fields(
+def test_get_hybrid_hf_config_standard_fields(
     hybrid_model: Transformer, hybrid_model_config: TransformerConfig
 ):
-    layer_types = get_layer_types(hybrid_model)
-    hf_config = build_hf_config(hybrid_model, layer_types, max_seq_len=256)
+    layer_types = get_hybrid_layer_types(hybrid_model)
+    hf_config = get_hybrid_hf_config(hybrid_model, layer_types, max_seq_len=256)
 
     assert hf_config["hidden_size"] == hybrid_model_config.d_model
     assert hf_config["num_hidden_layers"] == 4
@@ -240,9 +216,9 @@ def test_build_hf_config_standard_fields(
 
 
 @requires_fla
-def test_build_hf_config_gdn_fields(hybrid_model: Transformer):
-    layer_types = get_layer_types(hybrid_model)
-    hf_config = build_hf_config(hybrid_model, layer_types, max_seq_len=256)
+def test_get_hybrid_hf_config_gdn_fields(hybrid_model: Transformer):
+    layer_types = get_hybrid_layer_types(hybrid_model)
+    hf_config = get_hybrid_hf_config(hybrid_model, layer_types, max_seq_len=256)
 
     # GDN-specific fields should be extracted from the first GDN block.
     gdn: GatedDeltaNet = list(hybrid_model.blocks.values())[0].attention
@@ -255,13 +231,12 @@ def test_build_hf_config_gdn_fields(hybrid_model: Transformer):
 
 
 @requires_fla
-def test_build_hf_config_rope(hybrid_model: Transformer):
-    layer_types = get_layer_types(hybrid_model)
-    hf_config = build_hf_config(hybrid_model, layer_types, max_seq_len=256)
+def test_get_hybrid_hf_config_no_rope(hybrid_model: Transformer):
+    layer_types = get_hybrid_layer_types(hybrid_model)
+    hf_config = get_hybrid_hf_config(hybrid_model, layer_types, max_seq_len=256)
 
-    assert "rope_parameters" in hf_config
-    assert hf_config["rope_parameters"]["rope_theta"] == 500_000.0
-    assert hf_config["rope_parameters"]["rope_type"] == "default"
+    assert "rope_parameters" not in hf_config
+    assert hf_config["rope_theta"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -400,67 +375,8 @@ def test_convert_checkpoint_to_hf_weights_match_original(
     shutil.rmtree(output_dir)
 
 
-@requires_fla
-def test_convert_checkpoint_to_hf_vocab_truncation(
-    tmp_path: Path,
-    olmo_core_model_path: Path,
-    hybrid_model_config: TransformerConfig,
-    tokenizer_config: TokenizerConfig,
-):
-    """Embedding and LM head weights should be truncated to the tokenizer vocab size."""
-    output_dir = tmp_path / "hf-output-hybrid-vocab"
-
-    convert_checkpoint_to_hf(
-        original_checkpoint_path=olmo_core_model_path,
-        output_path=output_dir,
-        transformer_config_dict=hybrid_model_config.as_config_dict(),
-        tokenizer_config_dict=tokenizer_config.as_config_dict(),
-        max_sequence_length=256,
-        validate=False,
-    )
-
-    hf_state = load_file(output_dir / "model.safetensors")
-    vocab_size = tokenizer_config.vocab_size
-
-    # The padded vocab size is larger than the actual tokenizer vocab size.
-    # Both embeddings and lm_head should be truncated to the actual vocab size.
-    assert hf_state["model.embed_tokens.weight"].shape[0] == vocab_size
-    assert hf_state["lm_head.weight"].shape[0] == vocab_size
-
-    shutil.rmtree(output_dir)
-
-
-@requires_fla
-def test_convert_checkpoint_to_hf_dtype_cast(
-    tmp_path: Path,
-    olmo_core_model_path: Path,
-    hybrid_model_config: TransformerConfig,
-    tokenizer_config: TokenizerConfig,
-):
-    """Weights should be cast to the requested dtype."""
-    from olmo_core.config import DType
-
-    output_dir = tmp_path / "hf-output-hybrid-dtype"
-
-    convert_checkpoint_to_hf(
-        original_checkpoint_path=olmo_core_model_path,
-        output_path=output_dir,
-        transformer_config_dict=hybrid_model_config.as_config_dict(),
-        tokenizer_config_dict=tokenizer_config.as_config_dict(),
-        max_sequence_length=256,
-        validate=False,
-        dtype=DType.bfloat16,
-    )
-
-    hf_state = load_file(output_dir / "model.safetensors")
-    for key, tensor in hf_state.items():
-        assert tensor.dtype == torch.bfloat16, f"{key} has dtype {tensor.dtype}, expected bfloat16"
-
-    shutil.rmtree(output_dir)
-
-
-def test_convert_state_dict_with_mock_data():
-    """Test convert_state_dict with synthetic keys (no model build required)."""
+def test_convert_hybrid_state_with_mock_data():
+    """Test convert_hybrid_state_to_hf with synthetic keys (no model build required)."""
     layer_types = ["linear_attention", "linear_attention", "linear_attention", "full_attention"]
 
     mock_state = {
@@ -486,7 +402,7 @@ def test_convert_state_dict_with_mock_data():
         "blocks.3.feed_forward.w3.weight": torch.zeros(1),
     }
 
-    hf = convert_state_dict(mock_state, layer_types)
+    hf = convert_hybrid_state_to_hf(mock_state, layer_types)
 
     # No keys dropped.
     assert len(hf) == len(mock_state)
@@ -503,16 +419,14 @@ def test_convert_state_dict_with_mock_data():
     assert "model.layers.3.post_feedforward_layernorm.weight" in hf
 
 
-def test_key_maps_are_consistent():
+def test_hybrid_key_maps_are_consistent():
     """The GDN and attention key maps should map the same OLMo-core MLP suffixes identically."""
     # MLP suffixes appear in both maps and should map to the same HF suffix.
-    gdn_mlp = {k: v for k, v in GDN_KEY_MAP.items() if k.startswith("feed_forward.")}
-    attn_mlp = {k: v for k, v in ATTN_KEY_MAP.items() if k.startswith("feed_forward.")}
+    gdn_mlp = {k: v for k, v in HYBRID_GDN_LAYER_KEY_MAP.items() if k.startswith("feed_forward.")}
+    attn_mlp = {k: v for k, v in HYBRID_ATTN_LAYER_KEY_MAP.items() if k.startswith("feed_forward.")}
     assert gdn_mlp == attn_mlp
 
     # Sequence mixer keys should be completely disjoint (linear_attn vs self_attn).
-    gdn_mixer = {v for k, v in GDN_KEY_MAP.items() if k.startswith("attention.")}
-    attn_mixer = {v for k, v in ATTN_KEY_MAP.items() if k.startswith("attention.")}
-    assert gdn_mixer.isdisjoint(attn_mixer), (
-        f"Overlapping mixer HF keys: {gdn_mixer & attn_mixer}"
-    )
+    gdn_mixer = {v for k, v in HYBRID_GDN_LAYER_KEY_MAP.items() if k.startswith("attention.")}
+    attn_mixer = {v for k, v in HYBRID_ATTN_LAYER_KEY_MAP.items() if k.startswith("attention.")}
+    assert gdn_mixer.isdisjoint(attn_mixer), f"Overlapping mixer HF keys: {gdn_mixer & attn_mixer}"

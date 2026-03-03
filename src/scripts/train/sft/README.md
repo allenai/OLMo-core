@@ -132,10 +132,7 @@ uv sync --extra beaker --extra transformers
         * Look at the logs of your training job to find the path your final checkpoint was saved to.
         * Recommended to use one GPU. This is currently the only way to "reserve" CPUs for your job, and conversion takes <10 minutes.
         * If you'll be evaluating your model using `submit_eval_jobs.py` in open-instruct, your converted model must be saved in the `oe-adapt-default` weka bucket.
-        * **Custom architectures** (e.g., hybrid FLA models, Qwen, Gemma) need architecture-specific converters:
-            - Standard models: `convert_checkpoint_to_hf.py`
-            - Hybrid FLA models: `convert_checkpoint_to_hf_hybrid.py`
-            - Check `src/examples/huggingface/` for other architecture-specific converters.
+        * **Custom architectures** (e.g., hybrid FLA models, Qwen, Gemma) are supported by the unified `convert_checkpoint_to_hf.py` script, which auto-detects model type. Check `src/examples/huggingface/` for other architecture-specific converters.
 
     **Using prebuilt docker images:** When converting custom architectures that require specialized dependencies (e.g., `flash-attn`, `flash-linear-attention`), use a prebuilt beaker image and the conda Python directly:
 
@@ -147,7 +144,7 @@ uv sync --extra beaker --extra transformers
         --weka=oe-training-default:/weka/oe-training-default \
         --priority high \
         --gpus 1 \
-        -- /opt/conda/bin/python src/examples/huggingface/convert_checkpoint_to_hf_hybrid.py \
+        -- /opt/conda/bin/python src/examples/huggingface/convert_checkpoint_to_hf.py \
             -i /weka/oe-training-default/$USER/checkpoints/path-to-model/stepFINAL_STEP \
             -o /weka/oe-adapt-default/$USER/checkpoints/path-to-model/stepFINAL_STEP-hf \
             --max-sequence-length 32768 \
