@@ -37,7 +37,7 @@ BUDGET = "ai2/oe-base"
 NUM_NODES = 4
 LOAD_PATH = "gs://ai2-llm/checkpoints/OLMo25/step1413814"
 BASE_SAVE_DIR = "s3://ai2-llm/checkpoints"
-COMMIT_PACK_PREFIX = "s3/ai2-llm/preprocessed/bigcode_commitpack/dolma-3_5-languages_tagged_resharded_rewritten_partitioned"
+COMMIT_PACK_PREFIX = "s3://ai2-llm/preprocessed/bigcode_commitpack/dolma-3_5-languages_tagged_resharded_rewritten_partitioned"
 DOLMA_3_PREFIX = "s3://ai2-llm/preprocessed/dolma2-0625/v0.1-150b"
 
 MODEL_CONFIG = TransformerConfig.olmo3_7B(vocab_size=TOKENIZER_CONFIG.padded_vocab_size())

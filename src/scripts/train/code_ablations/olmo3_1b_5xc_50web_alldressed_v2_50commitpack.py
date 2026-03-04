@@ -38,7 +38,7 @@ NUM_NODES = 4
 BASE_SAVE_DIR = "s3://ai2-llm/checkpoints"
 
 DOLMA_3_PREFIX = "s3://ai2-llm/preprocessed/dolma2-0625/v0.1-150b"
-COMMIT_PACK_PREFIX = "s3/ai2-llm/preprocessed/bigcode_commitpack/dolma-3_5-languages_tagged_resharded_rewritten_partitioned"
+COMMIT_PACK_PREFIX = "s3://ai2-llm/preprocessed/bigcode_commitpack/dolma-3_5-languages_tagged_resharded_rewritten_partitioned"
 
 
 MODEL_CONFIG = TransformerConfig.olmo3_1B(vocab_size=TOKENIZER_CONFIG.padded_vocab_size())
