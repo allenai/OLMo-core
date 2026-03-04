@@ -240,8 +240,11 @@ class Transformer(nn.Module):
             device = self.device
         rope_buffers = {}
         for key, block in self.blocks.items():
-            rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)  # type: ignore
-            rope_buffers[int(key)] = None if rope is None else rope.get_buffers(seq_len, device)
+            if isinstance(block.attention, (Attention, FusedAttention)):
+                rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)
+                rope_buffers[int(key)] = None if rope is None else rope.get_buffers(seq_len, device)
+            else:
+                rope_buffers[int(key)] = None
         return rope_buffers
 
     @torch.no_grad()
