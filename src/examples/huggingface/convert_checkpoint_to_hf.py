@@ -627,8 +627,20 @@ def main():
     transformer_config_dict = experiment_config["model"]
     tokenizer_config_dict = experiment_config.get("dataset", {}).get("tokenizer")
 
+    if tokenizer_config_dict is None:
+        for instance_source in experiment_config.get("instance_sources", []):
+            for source in instance_source.get("sources", []):
+                if "tokenizer" in source:
+                    tokenizer_config_dict = source["tokenizer"]
+                    break
+            if tokenizer_config_dict is not None:
+                break
+
     assert transformer_config_dict is not None
-    assert tokenizer_config_dict is not None
+    assert tokenizer_config_dict is not None, (
+        "Could not find tokenizer config in checkpoint. "
+        "Expected it at 'dataset.tokenizer' or 'instance_sources[*].sources[*].tokenizer'."
+    )
 
     convert_checkpoint_to_hf(
         original_checkpoint_path=checkpoint_input_path,
