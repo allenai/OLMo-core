@@ -25,7 +25,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
-from olmo_core.io import file_exists, join_path
+from olmo_core.io import file_exists, join_path, list_directory
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
@@ -490,6 +490,45 @@ def validate_conversion(
     )
 
 
+def resolve_checkpoint_path(input_path: PathOrStr) -> Tuple[str, str]:
+    """
+    Resolve a checkpoint input path that may point to either a step directory or a model
+    directory containing step subdirectories.
+
+    If ``input_path`` contains a ``config.json``, it is treated as a step directory and returned
+    as-is (with output path ``{input_path}-hf``).
+
+    Otherwise, the directory is scanned for ``step*`` subdirectories and the one with the highest
+    step number is selected.
+    """
+    input_path = str(input_path).rstrip("/")
+
+    if file_exists(join_path(input_path, "config.json")):
+        return input_path, f"{input_path}-hf"
+
+    step_dirs: list[Tuple[int, str]] = []
+    for entry in list_directory(input_path, recurse=False, include_files=False, include_dirs=True):
+        entry = str(entry).rstrip("/")
+        name = entry.rsplit("/", 1)[-1]
+        match = re.match(r"^step(\d+)$", name)
+        if match:
+            step_dirs.append((int(match.group(1)), entry))
+
+    if not step_dirs:
+        raise RuntimeError(
+            f"No config.json found at '{input_path}' and no step* subdirectories found. "
+            f"Please pass a path to a specific step directory."
+        )
+
+    step_dirs.sort(key=lambda x: x[0])
+    latest_step_num, latest_step_path = step_dirs[-1]
+    log.info(
+        f"Input path '{input_path}' is a model directory. "
+        f"Resolved to latest step: step{latest_step_num}"
+    )
+    return latest_step_path, f"{latest_step_path}-hf"
+
+
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
     if not file_exists(f"{checkpoint_input_dir}/config.json"):
         raise RuntimeError(f"Config file not found at {checkpoint_input_dir}")
@@ -519,8 +558,9 @@ def parse_args():
         "-o",
         "--huggingface-output-dir",
         type=str,
-        required=True,
-        help="Local or remote directory where the converted checkpoint should be saved.",
+        default=None,
+        help="Local or remote directory where the converted checkpoint should be saved. "
+        "If not set, defaults to '{input_path}-hf' (after resolving to a step directory).",
     )
     parser.add_argument(
         "-s",
@@ -577,7 +617,10 @@ def parse_args():
 def main():
     args = parse_args()
 
-    experiment_config = load_config(args.checkpoint_input_path)
+    checkpoint_input_path, default_output_path = resolve_checkpoint_path(args.checkpoint_input_path)
+    output_path = args.huggingface_output_dir or default_output_path
+
+    experiment_config = load_config(checkpoint_input_path)
     if experiment_config is None:
         raise RuntimeError("Experiment config not found, cannot convert to HF checkpoint")
 
@@ -588,8 +631,8 @@ def main():
     assert tokenizer_config_dict is not None
 
     convert_checkpoint_to_hf(
-        original_checkpoint_path=args.checkpoint_input_path,
-        output_path=args.huggingface_output_dir,
+        original_checkpoint_path=checkpoint_input_path,
+        output_path=output_path,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
         dtype=args.dtype,
