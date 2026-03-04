@@ -37,6 +37,7 @@ class LadderSize:
     model_config_fn: Callable[..., TransformerConfig]
     lr: float
     global_batch_size: int
+    cp_degree: Optional[int] = None
 
 
 SIZES: dict[str, LadderSize] = {
@@ -69,6 +70,7 @@ SIZES: dict[str, LadderSize] = {
         model_config_fn=TransformerConfig.olmo3_3B,
         lr=estimate_lr(3_000_000_000),
         global_batch_size=estimate_gbs(3_000_000_000),
+        cp_degree=2,
     ),
 }
 
@@ -129,6 +131,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         learning_rate=cfg.lr,
         scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=200, alpha_f=0.0),
         activation_memory_budget=0.5,
+        cp_degree=cfg.cp_degree,
     )
 
     dataset_config = NumpyPackedFSLDatasetConfig.glob(
@@ -146,7 +149,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     # round gbz to num gpus
     num_gpus = beaker_launch_config.num_gpus if beaker_launch_config else 8
-    dp_world_size = num_gpus * (beaker_launch_config.num_nodes if beaker_launch_config else 1)
+    world_size = num_gpus * (beaker_launch_config.num_nodes if beaker_launch_config else 1)
+    dp_world_size = world_size // (cfg.cp_degree or 1)
     rank_unit = SEQ_LENGTH * dp_world_size
     gbs = max((cfg.global_batch_size // rank_unit) * rank_unit, rank_unit)
 
