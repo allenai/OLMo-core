@@ -78,6 +78,11 @@ class CheckpointerCallback(Callback):
     Save a pretrain checkpoint. Defaults to ``True`` unless the trainer resumes from a checkpoint.
     """
 
+    post_train_checkpoint: bool = True
+    """
+    Save a checkpoint at the end of a successful training run.
+    """
+
     save_async: Optional[bool] = None
     """
     Save checkpoints asynchronously. Requires a separate CPU-only backend.
@@ -298,7 +303,8 @@ class CheckpointerCallback(Callback):
         if not self.enabled:
             return
 
-        if self.step > self._latest_checkpoint_step:
+        if self.step > self._latest_checkpoint_step and self.post_train_checkpoint:
             self._checkpoints.append(self._save_checkpoint(save_async=False))
 
         self._await_last_checkpoint()
+        self._remove_old_checkpoints()
