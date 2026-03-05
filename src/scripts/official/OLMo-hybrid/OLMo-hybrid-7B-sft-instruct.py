@@ -45,7 +45,11 @@ from olmo_core.train.train_module import (
 DEFAULT_SEQUENCE_LENGTH = 32_768
 GLOBAL_BATCH_SIZE = 64 * DEFAULT_SEQUENCE_LENGTH
 LR = 2.5e-5
+
+# TODO: update Olmo-core versions of SFT checkpoints to olmo-checkpoints.org
 LOAD_PATH = "/weka/oe-training-default/ai2-llm/checkpoints/nathanl/olmo-sft/TEST_HYBRIC_SFT_LARGER_LR2.5e-5/step46412"
+
+# TODO: upload tokenized SFT datasets to olmo-data.org
 DATASET_PATH = "/weka/oe-adapt-default/nathanl/dataset/olmo3-32b-instruct-sft-1114"
 
 # Remove heads to match params/TPS of OLMo3 7B transformer. This is to enable a

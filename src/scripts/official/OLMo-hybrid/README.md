@@ -30,6 +30,7 @@ The base model was trained using a staged approach, followed by SFT for both Thi
 | stage 3 (long-context) | [OLMo-hybrid-7B-long-context.py](OLMo-hybrid-7B-long-context.py) |
 | SFT (Think) | [OLMo-hybrid-7B-sft-think.py](OLMo-hybrid-7B-sft-think.py) |
 | SFT (Instruct) | [OLMo-hybrid-7B-sft-instruct.py](OLMo-hybrid-7B-sft-instruct.py) |
+| DPO (Instruct) | [7b_instruct_dpo.sh](https://github.com/allenai/open-instruct/blob/main/scripts/train/olmo-hybrid/7b_instruct_dpo.sh) (in [open-instruct](https://github.com/allenai/open-instruct)) |
 
 ## Training Data
 
@@ -38,8 +39,6 @@ The base model was trained using a staged approach, followed by SFT for both Thi
 | stage 1 (pretraining) | dolma3 -> [OLMo-mix-0925.txt](https://github.com/allenai/OLMo-core/blob/main/src/olmo_core/data/mixes/OLMo-mix-0925.txt) |
 | stage 2 (midtraining) | dolma3-dolmino -> [OLMo3-32B-midtraining-modelnamefilter.yaml](https://github.com/allenai/OLMo-core/blob/main/src/olmo_core/data/source_mixtures/OLMo3-32B-midtraining-modelnamefilter.yaml) |
 | stage 3 (long-context) | dolma3-longmino -> [OLMo-longmino-mix-0925.txt](https://github.com/allenai/OLMo-core/blob/main/src/olmo_core/data/mixes/OLMo-longmino-mix-0925.txt) |
-| SFT (Think) | See [7b_think_sft_tokenization.sh](https://github.com/allenai/open-instruct/blob/4d7f997ddb3952f1afb170a1bd9f7568e265722e/scripts/train/olmo-hybrid/7b_think_sft_tokenization.sh) for tokenization. Mixture of [Dolci-Think-SFT-32B](https://huggingface.co/datasets/allenai/Dolci-Think-SFT-32B) and tool-use SFT datasets (3x upsampled). |
-| SFT (Instruct) | [olmo3-32b-instruct-sft-1114](https://huggingface.co/datasets/allenai/olmo3-32b-instruct-sft-1114) |
 
 Multiple midtraining runs (ingredient 1 and 2) were performed and the final checkpoints were souped. The long-context stage extends to 65k sequence length by dropping RoPE (DroPE) and using context parallelism with Ulysses (degree=2).
 

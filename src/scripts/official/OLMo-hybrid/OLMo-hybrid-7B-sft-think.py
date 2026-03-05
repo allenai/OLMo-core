@@ -45,7 +45,11 @@ from olmo_core.train.train_module import (
 DEFAULT_SEQUENCE_LENGTH = 32_768
 GLOBAL_BATCH_SIZE = 64 * DEFAULT_SEQUENCE_LENGTH
 LR = 2.5e-5
+
+# TODO: update Olmo-core versions of SFT checkpoints to olmo-checkpoints.org
 LOAD_PATH = "/weka/oe-training-default/ai2-llm/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-long-context-drope/step23842"
+
+# TODO: upload tokenized SFT datasets to olmo-data.org
 DATASET_PATH = (
     "/weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/olmo-hybrid-sft-triple-tools"
 )
