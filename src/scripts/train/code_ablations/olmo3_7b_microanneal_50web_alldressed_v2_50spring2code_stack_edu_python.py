@@ -55,7 +55,8 @@ DATASET_CONFIG = SourceMixtureList(
             source_name="spring2code-stack-edu-redux-python",
             target_ratio=0.5,
             paths=[
-                # Python: about 71.65 GB, a little bit less than 72.41 GB in stack-edu
+                # Python: about 78.79 GB
+                f"{SPRING2CODE_PREFIX}/Python/quality_p50/{TOKENIZER_CONFIG.identifier}/*.npy",
                 f"{SPRING2CODE_PREFIX}/Python/quality_p55/{TOKENIZER_CONFIG.identifier}/*.npy",
                 f"{SPRING2CODE_PREFIX}/Python/quality_p60/{TOKENIZER_CONFIG.identifier}/*.npy",
                 f"{SPRING2CODE_PREFIX}/Python/quality_p65/{TOKENIZER_CONFIG.identifier}/*.npy",
