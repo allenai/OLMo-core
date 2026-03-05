@@ -111,7 +111,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
-MICRO_BSZ = 2
+MICRO_BSZ = 4
 # DP_DIM=2
 EP_DIM=8
 PP_DIM=1
@@ -434,7 +434,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
-                                   profile_ranks=list(range(0, 8*4, 8)),
+                                   profile_ranks=list(range(0, 8*8, 8)),
                                    start=11,
                                    end=14
             )

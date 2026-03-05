@@ -338,86 +338,51 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         self,
         dp_mesh: DeviceMesh,
         ep_mesh: Optional[DeviceMesh],
-        param_dtype: Optional[torch.dtype] = None,
-        compile_enabled: bool = False,
-        autograd_compile_enabled: bool = False,
     ):
-        if False:
-            self.to(torch.bfloat16) # HACK, need fix
+        
+        from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
+        self._ep_modules = [m for m in self.modules() if getattr(m, '_ep_sharded', False) ] # collect the ep sharded part based on `_ep_sharded` field (will be set to True in `apply_ep`)
+        ep_sharded_params = set()
+        for m in self._ep_modules:
+            for n, p in m.named_parameters():
+                ep_sharded_params.add(p)
 
-            mixed_precision = _MixedPrecision(
-                # param_dtype = torch.bfloat16,
-                param_dtype = None,
-                reduce_dtype = torch.float32,
-                buffer_dtype = torch.float32,
-            )
-            
+        self.to(torch.bfloat16) # HACK, need fix
 
-            self._ep_modules = [m for m in self.modules() if getattr(m, '_ep_sharded', False) ] # collect the ep sharded part based on `_ep_sharded` field (will be set to True in `apply_ep`)
-            replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100, ignored_modules=self._ep_modules, gradient_as_bucket_view=True, ) # dense ddp
+        dp_group = dp_mesh.get_group()
 
-            ep_dp_mesh = ep_mesh['ep_dp']
-            for m in self._ep_modules:
-                replicate(m, device_mesh=ep_dp_mesh, bucket_cap_mb=100, gradient_as_bucket_view=True, 
-                        #   mixed_precision=mixed_precision
-                        ) # moe ddp
-
-            
-            # Some inputs need to be on CPU initially, but DDP will move everything to model's
-            # device if we don't hide it.
-            from ...transformer.model import _hide_cpu_inputs_from_torch, _unhide_cpu_inputs_from_torch
-            self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
-            self.register_forward_pre_hook(
-                _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
-            )
-
-            self.ep_enabled = True
-            return self
+        if ep_mesh is None:
+            epdp_group = dp_group
         else:
-            from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
-            self._ep_modules = [m for m in self.modules() if getattr(m, '_ep_sharded', False) ] # collect the ep sharded part based on `_ep_sharded` field (will be set to True in `apply_ep`)
-            ep_sharded_params = set()
-            for m in self._ep_modules:
-                for n, p in m.named_parameters():
-                    ep_sharded_params.add(p)
+            epdp_group = ep_mesh['ep_dp'].get_group()
 
-            self.to(torch.bfloat16) # HACK, need fix
+        def param_process_group_fn(name: str, param: torch.nn.Parameter):
+            # MoE params → EP_DP group
+            if param in ep_sharded_params:
+                return epdp_group
+            
+            # Dense params → DP group
+            return dp_group
 
-            dp_group = dp_mesh.get_group()
+        torch._dynamo.config.optimize_ddp = "python_reducer"
 
-            if ep_mesh is None:
-                epdp_group = dp_group
-            else:
-                epdp_group = ep_mesh['ep_dp'].get_group()
+        ddp_model = MultiGroupDistributedDataParallel(
+            module=self,
+            dim=0, # for scatter/gather
+            init_sync=True, # meta device
+            process_group=dp_mesh.get_group(),
+            param_process_group_fn=param_process_group_fn,
+            accumulate_grads_in_fp32=True,
+            reduce_grads_in_fp32=True
+        )
 
-            def param_process_group_fn(name: str, param: torch.nn.Parameter):
-                # MoE params → EP_DP group
-                if param in ep_sharded_params:
-                    return epdp_group
-                
-                # Dense params → DP group
-                return dp_group
+        from ...transformer.model import _hide_cpu_inputs_from_torch, _unhide_cpu_inputs_from_torch
+        ddp_model.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        ddp_model.register_forward_pre_hook(
+            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        )
 
-            torch._dynamo.config.optimize_ddp = "python_reducer"
-
-            ddp_model = MultiGroupDistributedDataParallel(
-                module=self,
-                dim=0, # for scatter/gather
-                # broadcast_buffers=True,
-                init_sync=True, # meta device
-                process_group=dp_mesh.get_group(),
-                param_process_group_fn=param_process_group_fn,
-                accumulate_grads_in_fp32=True,
-                reduce_grads_in_fp32=True
-            )
-
-            from ...transformer.model import _hide_cpu_inputs_from_torch, _unhide_cpu_inputs_from_torch
-            ddp_model.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
-            ddp_model.register_forward_pre_hook(
-                _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
-            )
-
-            return ddp_model
+        return ddp_model
 
 
     def prepare_experts_for_fsdp(

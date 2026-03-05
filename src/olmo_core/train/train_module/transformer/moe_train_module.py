@@ -1640,8 +1640,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             ddp_m = m.apply_dp(
                 dp_mesh=dp_mesh,
                 ep_mesh=ep_mesh,
-                param_dtype=None,
-                compile_enabled=compile_model
             )
             ddp_model_parts.append(ddp_m)
 

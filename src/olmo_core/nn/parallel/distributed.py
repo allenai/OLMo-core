@@ -52,24 +52,19 @@ class _GradBucket:
 
 class MultiGroupDistributedDataParallel(Module):
     
-
     def __init__(
         self,
         module,
-        # device_ids=None,
-        # output_device=None,
         dim=0,
-        # broadcast_buffers=True,
         init_sync=True,
         process_group=None,
         bucket_cap_mb=None,
-        ####### 
-        param_process_group_fn=None,  # NEW
-        accumulate_grads_in_fp32=False,  # NEW
-        reduce_grads_in_fp32=False,  # NEW
+        param_process_group_fn=None,
+        accumulate_grads_in_fp32=False,
+        reduce_grads_in_fp32=False,
     ):
         super().__init__()
-        # Joinable.__init__(self)
+
         _use_python_reducer = (
             torch._dynamo.utils.get_optimize_ddp_mode() == "python_reducer"
         )
