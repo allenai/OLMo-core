@@ -84,9 +84,9 @@ def _flatten_sources(
 
 
 @dataclass
-class SamplingStrategy(Registrable, Config):
+class NumpySamplingStrategy(Registrable, Config):
     """
-    A strategy for sampling from a mixture of sources.
+    A strategy for sampling from a mixture of numpy sources.
     """
 
     @abstractmethod
@@ -118,10 +118,15 @@ class SamplingStrategy(Registrable, Config):
         pass
 
 
-@SamplingStrategy.register("documents")
+@NumpySamplingStrategy.register("documents")
 @dataclass
-class DocumentSamplingStrategy(SamplingStrategy):
+class NumpyDocumentSamplingStrategy(NumpySamplingStrategy):
+    """
+    Samples documents from the sources, and concatenates them until reaching the target number of tokens.
+    """
+
     long_doc_strategy: LongDocStrategy = LongDocStrategy.fragment
+    """How to handle long documents."""
 
     def build_sources(
         self,
@@ -161,9 +166,13 @@ class DocumentSamplingStrategy(SamplingStrategy):
             )
 
 
-@SamplingStrategy.register("contiguous_chunks")
+@NumpySamplingStrategy.register("contiguous_chunks")
 @dataclass
-class ContiguousChunksSamplingStrategy(SamplingStrategy):
+class NumpyContiguousChunksSamplingStrategy(NumpySamplingStrategy):
+    """
+    Samples contiguous chunks of tokens from the sources until reaching the target number of tokens.
+    """
+
     def build_sources(
         self,
         source_groups: dict[str, list[str]],
@@ -201,19 +210,78 @@ class ContiguousChunksSamplingStrategy(SamplingStrategy):
             )
 
 
-def build_mixture_from_file(
-    path: PathOrStr,
+def build_numpy_mixture_from_yaml_spec(
+    spec_path: PathOrStr,
     *,
     tokenizer: TokenizerConfig,
     total_tokens: int,
     sequence_length: int,
-    sampling_strategy: SamplingStrategy | str,
+    sampling_strategy: NumpySamplingStrategy | str,
 ) -> InstanceSourceConfig:
-    if isinstance(sampling_strategy, str):
-        sampling_strategy = SamplingStrategy.get_registered_class(sampling_strategy)()
-    assert isinstance(sampling_strategy, SamplingStrategy)
+    """
+    This is a convenience function for building a mixture of numpy sources from a YAML specification file.
 
-    with open(path) as f:
+    :param tokenizer: The config of the tokenizer uses to create the numpy sources.
+    :param total_tokens: The total target number of tokens to sample.
+    :param sequence_length: The sequence length to use when sampling from the sources.
+    :param sampling_strategy: The strategy to use when sampling from the sources.
+        Can be either a string (the name of a registered strategy), e.g. "documents" or "contiguous_chunks",
+        or an instance of `NumpySamplingStrategy`.
+
+    The YAML file must have a top-level key "mix", which should be a list of sources or source groups.
+    Each source (leaf node) should have the following keys:
+
+    - name: A unique name for the source.
+    - weight: The weight of the source in the mixture (should sum to 1.0 across all sources *within its parent group*).
+    - paths: A list of file paths to sample from.
+
+    And each source group (non-leaf node) should have the following keys:
+
+    - name: A unique name for the group.
+    - weight: The weight of the group in the mixture (should sum to 1.0 across all groups *within its parent group*).
+    - categories: A list of sources or more source groups.
+
+    .. code-block:: yaml
+
+        mix:
+        - name: science_math_and_technology
+          weight: 0.50
+          categories:
+          - name: high quality
+            weight: 0.5
+            paths:
+            - s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v3/dclm_plus2_vigilantes/allenai/dolma2-tokenizer/science_math_and_technology/vigintile_0020/*.npy
+          - name: med quality
+            weight: 0.3
+            paths:
+            - s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v3/dclm_plus2_vigilantes/allenai/dolma2-tokenizer/science_math_and_technology/vigintile_0018/*.npy
+          - name: low quality
+            weight: 0.2
+            paths:
+            - s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v3/dclm_plus2_vigilantes/allenai/dolma2-tokenizer/science_math_and_technology/vigintile_0017/*.npy
+            - s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v3/dclm_plus2_vigilantes/allenai/dolma2-tokenizer/science_math_and_technology/vigintile_0016/*.npy
+        - name: software_development
+          weight: 0.50
+          categories:
+          - name: high quality
+            weight: 0.5
+            paths:
+            - s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v3/dclm_plus2_vigilantes/allenai/dolma2-tokenizer/software_development/vigintile_0020/*.npy
+          - name: med quality
+            weight: 0.3
+            paths:
+            - s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v3/dclm_plus2_vigilantes/allenai/dolma2-tokenizer/software_development/vigintile_0018/*.npy
+          - name: low quality
+            weight: 0.2
+            paths:
+            - s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v3/dclm_plus2_vigilantes/allenai/dolma2-tokenizer/software_development/vigintile_0017/*.npy
+            - s3://ai2-llm/preprocessed/cc_all_dressed/all_dressed_v3/dclm_plus2_vigilantes/allenai/dolma2-tokenizer/software_development/vigintile_0016/*.npy
+    """
+    if isinstance(sampling_strategy, str):
+        sampling_strategy = NumpySamplingStrategy.get_registered_class(sampling_strategy)()
+    assert isinstance(sampling_strategy, NumpySamplingStrategy)
+
+    with open(spec_path) as f:
         raw_config = yaml.safe_load(f)
         mixture_specs = _flatten_sources(
             decode(_MixtureSources, {"sources": raw_config["mix"]}).sources
