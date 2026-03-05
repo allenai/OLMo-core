@@ -11,6 +11,14 @@ OLMo-Hybrid-7B is a hybrid architecture combining Gated Delta Net (GDN) recurren
 | Block pattern | `["gdn", "gdn", "gdn", "attn"]` (repeating) |
 | Context Length | 65,536 |
 
+## Model Releases
+
+| Stage | OLMo Hybrid Think 7B | OLMo Hybrid Instruct 7B |
+|-------|----------------------|-------------------------|
+| Base Model | [OLMo-Hybrid-7B](https://huggingface.co/allenai/OLMo-Hybrid-7B) | [OLMo-Hybrid-7B](https://huggingface.co/allenai/OLMo-Hybrid-7B) |
+| SFT | [OLMo-Hybrid-Think-SFT-7B](https://huggingface.co/allenai/OLMo-Hybrid-Think-SFT-7B) | [OLMo-Hybrid-Instruct-SFT-7B](https://huggingface.co/allenai/OLMo-Hybrid-Instruct-SFT-7B) |
+| DPO | -- | [OLMo-Hybrid-Instruct-DPO-7B](https://huggingface.co/allenai/OLMo-Hybrid-Instruct-DPO-7B) |
+
 ## Training Pipeline
 
 The base model was trained using a staged approach, followed by SFT for both Think and Instruct variants.
@@ -23,15 +31,23 @@ The base model was trained using a staged approach, followed by SFT for both Thi
 | SFT (Think) | [OLMo-hybrid-7B-sft-think.py](OLMo-hybrid-7B-sft-think.py) |
 | SFT (Instruct) | [OLMo-hybrid-7B-sft-instruct.py](OLMo-hybrid-7B-sft-instruct.py) |
 
-## Pretraining
+## Training Data
 
-The pretraining stage uses the `OLMo-mix-0925` data mix. Multiple midtraining runs (ingredient 1 and 2) were performed and the final checkpoints were souped. The long-context stage extends to 65k sequence length by dropping RoPE (DroPE) and using context parallelism with Ulysses (degree=2).
+| Stage | Data |
+|-------|------|
+| stage 1 (pretraining) | dolma3 -> [OLMo-mix-0925.txt](https://github.com/allenai/OLMo-core/blob/main/src/olmo_core/data/mixes/OLMo-mix-0925.txt) |
+| stage 2 (midtraining) | dolma3-dolmino -> [OLMo3-32B-midtraining-modelnamefilter.yaml](https://github.com/allenai/OLMo-core/blob/main/src/olmo_core/data/source_mixtures/OLMo3-32B-midtraining-modelnamefilter.yaml) |
+| stage 3 (long-context) | dolma3-longmino -> [OLMo-longmino-mix-0925.txt](https://github.com/allenai/OLMo-core/blob/main/src/olmo_core/data/mixes/OLMo-longmino-mix-0925.txt) |
+| SFT (Think) | See [7b_think_sft_tokenization.sh](https://github.com/allenai/open-instruct/blob/4d7f997ddb3952f1afb170a1bd9f7568e265722e/scripts/train/olmo-hybrid/7b_think_sft_tokenization.sh) for tokenization. Mixture of [Dolci-Think-SFT-32B](https://huggingface.co/datasets/allenai/Dolci-Think-SFT-32B) and tool-use SFT datasets (3x upsampled). |
+| SFT (Instruct) | [olmo3-32b-instruct-sft-1114](https://huggingface.co/datasets/allenai/olmo3-32b-instruct-sft-1114) |
+
+Multiple midtraining runs (ingredient 1 and 2) were performed and the final checkpoints were souped. The long-context stage extends to 65k sequence length by dropping RoPE (DroPE) and using context parallelism with Ulysses (degree=2).
 
 ## SFT
 
 Two SFT variants are provided:
 
-- **Think**: Fine-tuned from the long-context checkpoint on think SFT data for 2 epochs at lr=2.5e-5 with 32k sequence length.
+- **Think**: Fine-tuned from the long-context checkpoint on think SFT data for 2 epochs at lr=2.5e-5 with 32k sequence length. The training data is a mixture of [Dolci-Think-SFT-32B](https://huggingface.co/datasets/allenai/Dolci-Think-SFT-32B) (1x) and five tool-use SFT datasets (3x upsampled each), tokenized with [7b_think_sft_tokenization.sh](https://github.com/allenai/open-instruct/blob/4d7f997ddb3952f1afb170a1bd9f7568e265722e/scripts/train/olmo-hybrid/7b_think_sft_tokenization.sh).
 - **Instruct**: Fine-tuned from the Think SFT checkpoint on instruct SFT data for 2 epochs at lr=2.5e-5 with 32k sequence length.
 
 Both SFT scripts use FSDP, context parallelism (Ulysses degree=2), activation checkpointing, and a linear warmup schedule with 3% warmup.
