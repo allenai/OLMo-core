@@ -178,7 +178,7 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
-        beaker_workspace="ai2/olmo-instruct",
+        beaker_workspace="ai2/linear-rnns",
         num_nodes=1,
         num_execution_units=1,
         dataset_path=DATASET_PATH,
