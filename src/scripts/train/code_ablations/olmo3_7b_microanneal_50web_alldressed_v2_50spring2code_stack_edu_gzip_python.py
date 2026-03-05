@@ -37,7 +37,7 @@ BUDGET = "ai2/oe-base"
 NUM_NODES = 4
 LOAD_PATH = "gs://ai2-llm/checkpoints/OLMo25/step1413814"
 BASE_SAVE_DIR = "s3://ai2-llm/checkpoints"
-SPRING2CODE_PREFIX = "/ai2-llm/preprocessed/the-stack-v2/spring2code_v2/minhash_filter_v2_2026_stack_edu_redux_tagged_partitioned_gzip"
+SPRING2CODE_PREFIX = "s3://ai2-llm/preprocessed/the-stack-v2/spring2code_v2/minhash_filter_v2_2026_stack_edu_redux_tagged_partitioned_gzip"
 
 
 MODEL_CONFIG = TransformerConfig.olmo3_7B(vocab_size=TOKENIZER_CONFIG.padded_vocab_size())
