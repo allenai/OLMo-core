@@ -340,9 +340,18 @@ def test_convert_checkpoint_to_hf_weights_match_original(
     hf_state = load_file(output_dir / "model.safetensors")
 
     # Spot-check: shared keys.
-    assert torch.equal(hf_state["model.embed_tokens.weight"], original_state["embeddings.weight"])
+    # Embeddings and lm_head are truncated from padded_vocab_size to vocab_size during conversion,
+    # so only compare the first vocab_size rows.
+    vocab_size = hf_state["model.embed_tokens.weight"].shape[0]
+    assert torch.equal(
+        hf_state["model.embed_tokens.weight"],
+        original_state["embeddings.weight"][:vocab_size],
+    )
     assert torch.equal(hf_state["model.norm.weight"], original_state["lm_head.norm.weight"])
-    assert torch.equal(hf_state["lm_head.weight"], original_state["lm_head.w_out.weight"])
+    assert torch.equal(
+        hf_state["lm_head.weight"],
+        original_state["lm_head.w_out.weight"][:vocab_size],
+    )
 
     # Spot-check: GDN layer 0.
     assert torch.equal(
