@@ -37,6 +37,9 @@ from olmo_core.train.train_module import (
 
 SEQUENCE_LENGTH = 32_768
 GLOBAL_BATCH_SIZE = 64 * SEQUENCE_LENGTH
+DATASET_PATH = (
+    "/weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/olmo-hybrid-sft-triple-tools"
+)
 
 # Remove heads to match params/TPS of OLMo3 7B transformer. This is to enable a
 # fair comparison with OLMo3 7B. If training from scratch, we recommend setting the
@@ -188,7 +191,7 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
-        beaker_workspace="ai2/linear-rnns",
+        beaker_workspace="ai2/olmo-instruct",
         num_nodes=8,
         num_execution_units=1,
         dataset_path=DATASET_PATH,
