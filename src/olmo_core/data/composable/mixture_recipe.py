@@ -4,6 +4,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 
 import yaml
+from cached_path import cached_path
 from dataclass_extensions import decode
 from typing_extensions import Self
 
@@ -281,7 +282,7 @@ def build_numpy_mixture_from_yaml_spec(
         sampling_strategy = NumpySamplingStrategy.get_registered_class(sampling_strategy)()
     assert isinstance(sampling_strategy, NumpySamplingStrategy)
 
-    with open(spec_path) as f:
+    with cached_path(spec_path).open() as f:
         raw_config = yaml.safe_load(f)
         mixture_specs = _flatten_sources(
             decode(_MixtureSources, {"sources": raw_config["mix"]}).sources
