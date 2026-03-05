@@ -368,7 +368,7 @@ class FreezeTransformerTrainModuleConfig(TransformerTrainModuleConfig):
         device: Optional[torch.device] = None,
     ) -> "FreezeTransformerTrainModule":
         kwargs = self.as_dict(exclude_none=True, recurse=False)
-        # bp()
+        kwargs["freeze_experts"] = self.freeze_experts
         if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
             kwargs["autocast_precision"] = cast(DType, autocast_precision).as_pt()
         if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
