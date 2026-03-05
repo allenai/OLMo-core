@@ -14,8 +14,16 @@ from olmo_core.config import DType
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_full_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.io import clear_directory, copy_dir, file_exists, is_url
-from olmo_core.nn.hf.config import get_hf_config, get_hybrid_hf_config, get_hybrid_layer_types
-from olmo_core.nn.hf.convert import convert_hybrid_state_to_hf, convert_state_from_hf, convert_state_to_hf
+from olmo_core.nn.hf.config import (
+    get_hf_config,
+    get_hybrid_hf_config,
+    get_hybrid_layer_types,
+)
+from olmo_core.nn.hf.convert import (
+    convert_hybrid_state_to_hf,
+    convert_state_from_hf,
+    convert_state_to_hf,
+)
 from olmo_core.nn.transformer.model import Transformer
 
 try:

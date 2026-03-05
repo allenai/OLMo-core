@@ -2,10 +2,7 @@ from datetime import datetime
 from functools import partial
 
 from olmo_core.config import DType
-from olmo_core.data import (
-    NumpyDataLoaderConfig,
-    NumpyPackedFSLDatasetConfig,
-)
+from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig
 from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
