@@ -185,6 +185,8 @@ class TransformerDataParallelConfig(DataParallelConfig):
     prefetch_factor: int = 0
     
     only_allreduce_last_microbatch: bool = True
+    reduce_grads_in_fp32: bool = True
+    accumulate_grads_in_fp32: bool = True
 
 
 @dataclass
@@ -393,8 +395,6 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
     max_grad_norm: Optional[float] = None
     scheduler: Optional[Scheduler] = None
 
-    # DP settings.
-    grad_accum_in_fp32: bool = True
 
     # Model settings.
 
@@ -446,4 +446,3 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
             device=device,
             **kwargs,
         )
-

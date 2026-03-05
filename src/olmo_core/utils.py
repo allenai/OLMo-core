@@ -753,6 +753,9 @@ _CUDA_STREAMS: Dict[str, torch.cuda.Stream] = {}
 
 
 def get_or_init_stream(id: str, priority: int = 0) -> torch.cuda.Stream:
+    # NOTE: pri_idx = std::clamp(-priority, 0, max_stream_priorities - 1)
+    # pytorch/c10/cuda/CUDAStream.cpp
+    # it turns out priority>=0 is the same as default priority=0
     global _CUDA_STREAMS
     if id in _CUDA_STREAMS:
         return _CUDA_STREAMS[id]

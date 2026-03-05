@@ -1294,13 +1294,14 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert self.routed_experts is not None, "ep can only be applied when routed_experts is enabled"
         ep_dp_mesh = ep_mesh['ep_dp']
         ep_mp_mesh = ep_mesh['ep_mp']
+        ep_pg = kwargs.get("ep_pg")
         self.ep_mesh = ep_mesh
         self.routed_experts.apply_ep(
             ep_mesh
         )
         self.num_local_routed_experts = self.routed_experts.num_local_experts
         self._ep_enabled = True
-        self.ep_pg = ep_mp_mesh.get_group()
+        self.ep_pg = ep_pg if ep_pg is not None else ep_mp_mesh.get_group()
 
         if self.ep_no_sync:
             if _symm_mem is None:
@@ -2702,6 +2703,13 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 dim=0,
                 dtype=torch.long,
             )
+        
+        # optionally add wait here if want to make shared experts wait for sync token alltoall to finish.
+        # sometimes shared experts take all the SMs and block the alltoall
+        wait_stream_no_compile(
+            this_stream=self.get_dense_stream(),
+            other_stream=torch.cuda.current_stream(),
+        )
 
         with torch.no_grad():
             dst_ranks, dst_rows, route_to_packed_2d = self._build_rowwise_route_maps(

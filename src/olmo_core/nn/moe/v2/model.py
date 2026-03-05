@@ -16,6 +16,7 @@ from typing import (
 
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
@@ -290,6 +291,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         self,
         dp_mesh: DeviceMesh,
         ep_mesh: DeviceMesh,
+        ep_mp_group: Optional[dist.ProcessGroup] = None,
         param_dtype: Optional[torch.dtype] = None,
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
@@ -303,7 +305,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             if not block.is_moe:
                 continue
             block = cast(MoEFusedV2TransformerBlock, block)
-            block.apply_ep(ep_mesh)
+            block.apply_ep(ep_mesh, ep_pg=ep_mp_group)
             if block.ep_no_sync:
                 ep_no_sync_blocks.append(block)
 
@@ -338,6 +340,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         self,
         dp_mesh: DeviceMesh,
         ep_mesh: Optional[DeviceMesh],
+        accumulate_grads_in_fp32: bool = True,
+        reduce_grads_in_fp32: bool = True,
     ):
         
         from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
@@ -372,8 +376,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             init_sync=True, # meta device
             process_group=dp_mesh.get_group(),
             param_process_group_fn=param_process_group_fn,
-            accumulate_grads_in_fp32=True,
-            reduce_grads_in_fp32=True
+            accumulate_grads_in_fp32=accumulate_grads_in_fp32,
+            reduce_grads_in_fp32=reduce_grads_in_fp32,
         )
 
         from ...transformer.model import _hide_cpu_inputs_from_torch, _unhide_cpu_inputs_from_torch

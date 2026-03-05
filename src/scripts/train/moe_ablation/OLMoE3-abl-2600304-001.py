@@ -113,7 +113,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 MICRO_BSZ = 4
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=4
 PP_DIM=1
 
 # ref
@@ -147,6 +147,7 @@ USE_AC=False
 PER_LAYER_RECOMPUTE=True
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
+GRAD_REDUCE_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=True
 USE_ROWWISE_A2A=True
@@ -340,7 +341,6 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             # foreach=True
             use_distributed=True
         ),
-        grad_accum_in_fp32=GRAD_ACC_IN_FP32,
         compile_model=USE_COMPILE,
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full,
@@ -348,9 +348,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         # FSDP
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.ddp,
-            param_dtype=DType.bfloat16,  # TODO: not used?
-            reduce_dtype=DType.float32, # TODO: not used?
-            shard_degree=None,
+            reduce_grads_in_fp32=GRAD_REDUCE_IN_FP32,
+            accumulate_grads_in_fp32=GRAD_ACC_IN_FP32,
         ),
         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
         pp_config=TransformerPipelineParallelConfig(

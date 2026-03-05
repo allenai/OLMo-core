@@ -165,7 +165,6 @@ class MoEV2TransformerTrainModule(TrainModule):
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
         reduce_scatter_grads: bool = False,
-        grad_accum_in_fp32: bool = True,
     ):
         super().__init__()
         from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
@@ -187,6 +186,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         self.tp_group = None
         self.ep_dp_group = None
         self.ep_mp_group = None
+        self.ep_mp_high_priority_group = None
+        self.ep_mp_high_priority_groups = None
 
         # compatibility
         if autocast_precision is not None:
@@ -258,12 +259,6 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         import torch._dynamo.config as dynamo_cfg
         dynamo_cfg.recompile_limit = 64  # or any higher number you want
-
-        self.grad_accum_in_fp32 = grad_accum_in_fp32
-        if self.grad_accum_in_fp32:
-            assert False, "Depreacted config: grad_accum_in_fp32. Use option for DDP wrapper."
-            for part in self.model_parts:
-                part.attach_fp32_accum()
 
 
         if compile_model:
@@ -690,61 +685,6 @@ class MoEV2TransformerTrainModule(TrainModule):
         return
 
 
-    def _distribute_ep(self, tensor: torch.Tensor) -> DTensor:
-        """Distribute a tensor across EP dimensions."""
-        assert self.ep_enabled
-        assert self.world_mesh is not None
-        assert self.world_mesh['moe'] is not None
-        dt_tensor = distribute_tensor(
-            tensor,
-            device_mesh=self.world_mesh['moe']['ep_dp', 'ep_mp'],
-            placements=(Replicate(), Shard(0)), # shard over EP_MP
-            src_data_rank=None
-        )
-        return dt_tensor
-    
-    def _install_model_params_from_cpu_dtensor(self, main_params_sd):
-        # collect model param from all stages
-        plain_model_sd = OrderedDict()
-        for model_part in self.model_parts:
-            part_sd = model_part.state_dict()
-            for k, v in part_sd.items():
-                plain_model_sd[k] = v
-
-        assert len(plain_model_sd) == len(main_params_sd), \
-            f"Model param count ({len(plain_model_sd)}) does not match main param count ({len(main_params_sd)})"
-
-        # get full tensor for each param from cpu dtensor
-        for k, v in main_params_sd.items():
-            main_param_full_tensor = v.full_tensor()
-            
-            model_k = k[:-len('.main')] # remove .main suffix
-            model_local_tensor = plain_model_sd[model_k]
-
-            # wrap main param tensor to dtensor based on the model parallelism we have
-            # and extract the local part
-            # then assign to the model param
-            if self.ep_enabled and "routed_experts." in model_k:
-                assert self.world_mesh is not None
-                assert self.world_mesh['moe'] is not None
-                model_global_shape = model_local_tensor.size()  # the EP sharded shape
-                model_global_shape[0] = model_global_shape[0] * self.world_mesh['moe']['ep_mp'].size() # global shape
-
-                # dt_v = distribute_tensor(
-                #     main_param_full_tensor.reshape(model_global_shape), 
-                #     device_mesh=self.world_mesh['moe']['ep_dp', 'ep_mp'], placements=(Replicate(), Shard(0)), src_data_rank=None
-                # ) # DTensor sharded over EP_MP
-                dt_v = self._distribute_ep(main_param_full_tensor.reshape(model_global_shape))
-                main_local_tensor = dt_v.to_local() # extract local shard for this rank
-            else:
-                # dense param
-                main_local_tensor = main_param_full_tensor.reshape(model_local_tensor.shape)
-                main_local_tensor = main_local_tensor.to(model_local_tensor.device) # copy to gpu
-            
-            # assign to model param
-            model_local_tensor.copy_(main_local_tensor)
-
-        return
 
     def _dump_debug_info(self, step=None, tag=None):
         # dump model param stats
@@ -1407,81 +1347,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             yield
 
 
-    def _get_model_param_state_dicts_dtensor(self) -> OrderedDict[str, DTensor]:
-        plain_model_part_sds = []
-        for model_part in self.model_parts:
-            plain_model_part_sds.append(model_part.state_dict()) # bf16 version
-
-        # merge model parts' state dict
-        plain_model_sd = None
-        for part_sd in plain_model_part_sds:
-            if plain_model_sd is None:
-                plain_model_sd = part_sd
-            else:
-                plain_model_sd._metadata.update(part_sd._metadata)
-                for k, v in part_sd.items():
-                    if k in plain_model_sd:
-                        raise KeyError(f"Duplicate key {k} found when merging model parts' state dicts")
-                    plain_model_sd[k] = v
-        assert plain_model_sd is not None
-        del plain_model_part_sds
-
-        # wrap it in dtensor so that it works with checkpointer
-        wrapped_model_sd = OrderedDict()
-        for k, v in plain_model_sd.items():
-            if self.ep_enabled and isinstance(v, torch.Tensor) and "routed_experts." in k:
-                assert self.world_mesh is not None
-                assert self.world_mesh['moe'] is not None
-                wrapped_model_sd[k] = DTensor.from_local(v, device_mesh=self.world_mesh['moe']['ep_dp', 'ep_mp'] , placements=(Replicate(), Shard(0)))
-            elif isinstance(v, torch.Tensor):
-                assert self.world_mesh is not None
-                assert self.world_mesh['dense'] is not None
-                wrapped_model_sd[k] = DTensor.from_local(v, device_mesh=self.world_mesh['dense']['dp'], placements=(Replicate(),))
-            else:
-                wrapped_model_sd[k] = v
-
-        return wrapped_model_sd
-
-    def _shard_optim_per_tensor_inplace(self, optim_sd, wrapped_model_sd):
-         # wrap optim state in dtensor so that it works with checkpointer
-        for param_key, param_v in wrapped_model_sd.items():
-            for buf_name in ('main', 'exp_avg', 'exp_avg_sq'):
-                optim_buf_key = f"{param_key}.{buf_name}"
-                optim_buf_v = optim_sd[optim_buf_key]
-                # optim_buf_v = optim_buf_v.reshape(param_v.shape) # flat to original shape
-                optim_buf_v = optim_buf_v.contiguous().clone() # NOTE: important! 
-                if self.ep_enabled and isinstance(optim_buf_v, torch.Tensor) and "routed_experts." in param_key:
-                    assert self.world_mesh['moe'] is not None
-                    optim_buf_v = distribute_tensor(optim_buf_v, 
-                                                    device_mesh=self.world_mesh['moe']['ep_dp', 'ep_mp'], 
-                                                    placements=(Replicate(), Shard(0)),
-                                                    src_data_rank=None
-                                                    )
-                else:
-                    assert self.world_mesh['dense_cpu'] is not None
-                    dp_rank = self.world_mesh['dense_cpu']['dp'].get_rank()
-                    dp_size = self.world_mesh['dense_cpu']['dp'].size(0)
-                    if optim_buf_v.size(0) > 256 and optim_buf_v.size(0) % dp_size == 0: 
-                        # shard only when the first dim is large enough and divisible by dp size
-                        # so that saving/loading can use less memory and be faster
-                        optim_buf_v = distribute_tensor(optim_buf_v, 
-                                                        device_mesh=self.world_mesh['dense_cpu']['dp'], 
-                                                        placements=(Shard(0),),
-                                                        src_data_rank=None  # If passing None explicitly, distribute_tensor() simply uses its local data instead of trying to preserve the single-device semantic via scatter/broadcast
-                                                )
-                    else:
-                        # for small tensors, replicate instead of sharding
-                        optim_buf_v = distribute_tensor(optim_buf_v, 
-                                                        device_mesh=self.world_mesh['dense_cpu']['dp'], 
-                                                        placements=(Replicate(),),
-                                                        src_data_rank=None  # If passing None explicitly, distribute_tensor() simply uses its local data instead of trying to preserve the single-device semantic via scatter/broadcast
-                                                )
-                        
-                # optim_buf_v = optim_buf_v.reshape(param_v.shape) # reshape after sharding
-
-                optim_sd[optim_buf_key] = optim_buf_v # save the dtensor back
-
-
 
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
@@ -1590,6 +1455,33 @@ class MoEV2TransformerTrainModule(TrainModule):
             assert self.world_mesh["dense"] is not None, "Dense mesh must be built before applying expert parallelism"
             ep_mesh = self.world_mesh["moe"]
             dp_mesh = self.world_mesh["dense"]["dp"]
+            ep_mp_group_override: Optional[ProcessGroup] = None
+
+            if dist.get_backend() == "nccl":
+                ep_mp_dim = ep_mesh.mesh_dim_names.index(MeshDimName.ep_mp)
+                ep_rank_grid = ep_mesh.mesh
+                if ep_mp_dim != ep_rank_grid.ndim - 1:
+                    ep_rank_grid = torch.movedim(ep_rank_grid, ep_mp_dim, -1).contiguous()
+                ep_mp_rank_groups = ep_rank_grid.view(-1, ep_rank_grid.shape[-1]).tolist()
+                nccl_opts = dist.ProcessGroupNCCL.Options(is_high_priority_stream=True)
+                ep_mp_group, ep_mp_groups = dist.new_subgroups_by_enumeration(
+                    ranks_per_subgroup_list=ep_mp_rank_groups,
+                    backend="nccl",
+                    pg_options=nccl_opts,
+                    group_desc="ep_mp_high_priority",
+                )
+                if ep_mp_group == dist.GroupMember.NON_GROUP_MEMBER:
+                    raise RuntimeError("Current rank is not in any EP-MP high-priority subgroup")
+                ep_mp_group_override = cast(ProcessGroup, ep_mp_group)
+                self.ep_mp_high_priority_group = ep_mp_group_override
+                self.ep_mp_high_priority_groups = ep_mp_groups
+                log.info("Created high-priority NCCL EP-MP process groups")
+            else:
+                log.warning(
+                    "Skipping EP-MP high-priority group creation because backend is '%s'",
+                    dist.get_backend(),
+                )
+
             ddp_model_parts = []
             for m in model_parts:
                 if not m.is_moe:
@@ -1597,6 +1489,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 cast(MoEFusedV2Transformer, m).apply_ep(
                     dp_mesh=dp_mesh,
                     ep_mesh=ep_mesh,
+                    ep_mp_group=ep_mp_group_override,
                     param_dtype=None,
                     compile_enabled=compile_model
                 )
@@ -1640,6 +1533,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             ddp_m = m.apply_dp(
                 dp_mesh=dp_mesh,
                 ep_mesh=ep_mesh,
+                accumulate_grads_in_fp32=dp_config.accumulate_grads_in_fp32,
+                reduce_grads_in_fp32=dp_config.reduce_grads_in_fp32,
             )
             ddp_model_parts.append(ddp_m)
 
