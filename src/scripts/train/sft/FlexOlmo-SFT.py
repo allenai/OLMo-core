@@ -509,7 +509,7 @@ class SFTRouterConfig(Config):
                     "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
-            freeze_experts = "first_half_experts_only"
+            freeze_experts = "none"
             ep_degree=4
             if num_nodes == 8:
                 rank_microbatch_size=4096
@@ -531,7 +531,7 @@ class SFTRouterConfig(Config):
                     "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
-            freeze_experts = "first_half_experts_only"
+            freeze_experts = "none"
 
             ep_degree=4
             if num_nodes == 8:
@@ -554,7 +554,7 @@ class SFTRouterConfig(Config):
                     "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
-            freeze_experts = "first_half_experts_only"
+            freeze_experts = "none"
 
             ep_degree=4
             if num_nodes == 8:
@@ -577,7 +577,7 @@ class SFTRouterConfig(Config):
                     "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
-            freeze_experts = "first_half_experts_only"
+            freeze_experts = "none"
 
             ep_degree=4
             if num_nodes == 8:
