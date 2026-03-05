@@ -100,6 +100,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     # Build dataset config.
     clean_path = DATASET_PATH.rstrip("/")
     dataset_config = NumpyPackedFSLDatasetConfig(
+        tokenizer=tokenizer_config,
         paths=[f"{clean_path}/token_ids_part_*.npy"],
         expand_glob=True,
         label_mask_paths=[f"{clean_path}/labels_mask_*.npy"],
