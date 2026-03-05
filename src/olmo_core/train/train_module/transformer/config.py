@@ -357,10 +357,7 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
         
 @dataclass
 class FreezeTransformerTrainModuleConfig(TransformerTrainModuleConfig):
-    def __init__(self, *args, **kwargs):
-        self.freeze_experts = kwargs.pop("freeze_experts", "first_half")
-        super().__init__(*args, **kwargs)
-
+    freeze_experts: str = "first_half"
 
     def build(
         self,
