@@ -407,6 +407,7 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
     ep_config: Optional[TransformerExpertParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
 
+    grad_accum_in_fp32: Optional[bool] = None
     # Loss function settings.
 
     z_loss_multiplier: Optional[float] = None
@@ -440,6 +441,9 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
             kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
         if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
+
+        # remove old arg "grad_accum_in_fp32"
+        kwargs.pop("grad_accum_in_fp32")
 
         return MoEV2TransformerTrainModule(
             model=model,

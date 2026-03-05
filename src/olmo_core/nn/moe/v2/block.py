@@ -24,9 +24,6 @@ except ImportError:
 # the same EP group.
 _EP_SYMM_GROUP0_ALIAS_LOCK = threading.Lock()
 _EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
-_USE_FUSED_ROWWISE_COMBINE_GET = os.getenv(
-    "OLMO_USE_ROWWISE_COMBINE_GET_FUSED", ""
-).strip().lower() in {"1", "true", "yes", "on"}
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
@@ -712,6 +709,149 @@ class _CombineVDev2DOffsetAutograd(torch.autograd.Function):
         return symm_grad_input, None, None, None, None, None, None
 
 
+class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx,
+        expert_out: torch.Tensor,
+        symm_expert_out: torch.Tensor,
+        src_ranks: torch.Tensor,
+        src_rows: torch.Tensor,
+        probs: torch.Tensor,
+        group_name: str,
+        group: dist.ProcessGroup,
+        nblocks: int,
+    ) -> torch.Tensor:
+        if expert_out.ndim != 2 or symm_expert_out.ndim != 2:
+            raise RuntimeError("expert_out/symm_expert_out must be rank-2 [R, D]")
+        if expert_out.shape[0] != symm_expert_out.shape[0] or expert_out.shape[1] != symm_expert_out.shape[1]:
+            raise RuntimeError(
+                "expert_out/symm_expert_out shape mismatch: "
+                f"{tuple(expert_out.shape)} vs {tuple(symm_expert_out.shape)}"
+            )
+        if src_ranks.ndim != 2 or src_rows.ndim != 2:
+            raise RuntimeError(
+                "src_ranks/src_rows must be rank-2 [N, K], "
+                f"got {tuple(src_ranks.shape)} and {tuple(src_rows.shape)}"
+            )
+        if src_ranks.shape != src_rows.shape:
+            raise RuntimeError("src_ranks/src_rows shape mismatch")
+        if probs.shape != src_ranks.shape:
+            raise RuntimeError(
+                "probs shape mismatch with src_ranks/src_rows: "
+                f"{tuple(probs.shape)} vs {tuple(src_ranks.shape)}"
+            )
+        if nblocks < 0:
+            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+
+        src_ranks_i64 = src_ranks if src_ranks.dtype == torch.long else src_ranks.to(dtype=torch.long)
+        src_rows_i64 = src_rows if src_rows.dtype == torch.long else src_rows.to(dtype=torch.long)
+        if not src_ranks_i64.is_contiguous():
+            src_ranks_i64 = src_ranks_i64.contiguous()
+        if not src_rows_i64.is_contiguous():
+            src_rows_i64 = src_rows_i64.contiguous()
+
+        probs_f32 = probs if probs.dtype == torch.float32 else probs.to(dtype=torch.float32)
+        if not probs_f32.is_contiguous():
+            probs_f32 = probs_f32.contiguous()
+
+        input_aliases_symm_input = (
+            expert_out.untyped_storage().data_ptr() == symm_expert_out.untyped_storage().data_ptr()
+            and expert_out.storage_offset() == symm_expert_out.storage_offset()
+            and tuple(expert_out.shape) == tuple(symm_expert_out.shape)
+            and tuple(expert_out.stride()) == tuple(symm_expert_out.stride())
+        )
+        if not input_aliases_symm_input:
+            symm_expert_out.copy_(expert_out)
+
+        combine_out = torch.empty(
+            (src_ranks_i64.shape[0], symm_expert_out.shape[1]),
+            device=symm_expert_out.device,
+            dtype=symm_expert_out.dtype,
+        )
+
+        need_grad_probs = ctx.needs_input_grad[4]
+        if need_grad_probs:
+            gathered_routes = torch.empty(
+                (src_ranks_i64.shape[0], src_ranks_i64.shape[1], symm_expert_out.shape[1]),
+                device=symm_expert_out.device,
+                dtype=symm_expert_out.dtype,
+            )
+        else:
+            gathered_routes = torch.empty(
+                (0, 0, symm_expert_out.shape[1]),
+                device=symm_expert_out.device,
+                dtype=symm_expert_out.dtype,
+            )
+
+        symm_mem_vdev2d_kernels.rowwise_combine_get(
+            symm_expert_out,
+            combine_out,
+            src_ranks_i64,
+            src_rows_i64,
+            group_name,
+            probs=probs_f32,
+            nblocks=nblocks,
+            gathered_out=(gathered_routes if need_grad_probs else None),
+        )
+
+        ctx.group = group
+        ctx.group_name = group_name
+        ctx.nblocks = int(nblocks)
+        ctx.probs_input_dtype = probs.dtype
+        ctx.symm_expert_out = symm_expert_out
+        ctx.save_for_backward(src_ranks_i64, src_rows_i64, probs_f32, gathered_routes)
+        return combine_out
+
+    @staticmethod
+    def backward(ctx, grad_out: torch.Tensor):  # type: ignore[override]
+        src_ranks, src_rows, probs, gathered_routes = ctx.saved_tensors
+        if grad_out.shape[0] != src_ranks.shape[0]:
+            raise RuntimeError(
+                "rowwise combine backward grad rows must match src_ranks rows: "
+                f"{grad_out.shape[0]} vs {src_ranks.shape[0]}"
+            )
+        if grad_out.shape[1] != ctx.symm_expert_out.shape[1]:
+            raise RuntimeError(
+                "rowwise combine backward grad hidden dim must match symm_expert_out hidden dim: "
+                f"{grad_out.shape[1]} vs {ctx.symm_expert_out.shape[1]}"
+            )
+        grad_out_contig = grad_out if grad_out.is_contiguous() else grad_out.contiguous()
+
+        grad_probs = None
+        if ctx.needs_input_grad[4]:
+            grad_out_for_probs = grad_out_contig
+            if grad_out_for_probs.dtype != gathered_routes.dtype:
+                grad_out_for_probs = grad_out_for_probs.to(dtype=gathered_routes.dtype)
+            grad_probs = torch.bmm(
+                gathered_routes,
+                grad_out_for_probs.unsqueeze(-1),
+            ).squeeze(-1)
+            if grad_probs.dtype != ctx.probs_input_dtype:
+                grad_probs = grad_probs.to(dtype=ctx.probs_input_dtype)
+
+        grad_expert_out = None
+        if ctx.needs_input_grad[0]:
+            symm_grad_expert_out = ctx.symm_expert_out
+            # rowwise_dispatch_put only writes rows referenced by valid (src_ranks, src_rows).
+            # symm_grad_expert_out is a reused shared buffer, so untouched rows can contain stale data.
+            # routed_experts uses batch_size_per_expert = recv_splits_by_src_local.sum(dim=0), so backward should only consume the valid prefix/segments, not tail capacity rows.
+            # Route rows are built densely for kept routes, so consumed rows should be fully overwritten.
+            # symm_grad_expert_out.zero_()  <----- Likely not necessary
+            symm_mem_vdev2d_kernels.rowwise_dispatch_put(
+                grad_out_contig,
+                symm_grad_expert_out,
+                src_ranks,
+                src_rows,
+                ctx.group_name,
+                probs=probs,
+                nblocks=ctx.nblocks,
+            )
+            grad_expert_out = symm_grad_expert_out
+
+        return grad_expert_out, None, None, None, grad_probs, None, None, None
+
+
 class _DispatchRowwiseAutograd(torch.autograd.Function):
     @staticmethod
     # @torch.compiler.disable
@@ -788,12 +928,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             device=symm_grad_out.device,
             dtype=symm_grad_out.dtype,
         )
-        combine_get_fn = (
-            symm_mem_vdev2d_kernels.rowwise_combine_get_fused
-            if _USE_FUSED_ROWWISE_COMBINE_GET
-            else symm_mem_vdev2d_kernels.rowwise_combine_get
-        )
-        combine_get_fn(
+        symm_mem_vdev2d_kernels.rowwise_combine_get(
             symm_grad_out,
             grad_input,
             dst_ranks,
@@ -1815,11 +1950,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         routing_map: torch.Tensor,
         allowed_splits: torch.Tensor,
         keep_from_src_dest_local: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Build per-route destination rank/row maps for row-wise dispatch.
         Routes dropped by tail-capacity are encoded as -1.
-        Also returns route->packed mapping in original route order.
         """
         assert self.ep_pg is not None
         assert self.num_local_routed_experts is not None
@@ -1863,11 +1997,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 dtype=torch.long,
                 device=routing_map.device,
             )
-            route_to_packed_flat = torch.full_like(dst_ranks_flat, -1)
             return (
                 dst_ranks_flat.view(num_tokens, top_k),
                 dst_rows_flat.view(num_tokens, top_k),
-                route_to_packed_flat.view(num_tokens, top_k),
             )
 
         route_experts = routing_map.reshape(-1).to(dtype=torch.long)
@@ -1936,17 +2068,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         neg_ones = torch.full_like(dst_rank, -1)
         dst_ranks_flat = torch.where(kept_mask, dst_rank, neg_ones)
         dst_rows_flat = torch.where(kept_mask, dst_rows_all, neg_ones)
-        kept_i64 = kept_mask.to(dtype=torch.long)
-        route_to_packed_flat = torch.cumsum(kept_i64, dim=0) - 1
-        route_to_packed_flat = torch.where(
-            kept_mask,
-            route_to_packed_flat,
-            torch.full_like(route_to_packed_flat, -1),
-        )
         return (
             dst_ranks_flat.view(num_tokens, top_k),
             dst_rows_flat.view(num_tokens, top_k),
-            route_to_packed_flat.view(num_tokens, top_k),
         )
 
 
@@ -2696,7 +2820,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         routing_map = local_x_global_routed_expert_indices.view(
             -1, self.routed_experts_router.top_k
         ).int()
-        hidden_shape_before_permute = moe_inp.shape
 
         with torch.no_grad():
             padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
@@ -2706,27 +2829,16 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         
         # optionally add wait here if want to make shared experts wait for sync token alltoall to finish.
         # sometimes shared experts take all the SMs and block the alltoall
-        wait_stream_no_compile(
-            this_stream=self.get_dense_stream(),
-            other_stream=torch.cuda.current_stream(),
-        )
+        # wait_stream_no_compile(
+        #     this_stream=self.get_dense_stream(),
+        #     other_stream=torch.cuda.current_stream(),
+        # )
 
         with torch.no_grad():
-            dst_ranks, dst_rows, route_to_packed_2d = self._build_rowwise_route_maps(
+            dst_ranks, dst_rows = self._build_rowwise_route_maps(
                 routing_map=routing_map,
                 allowed_splits=allowed_splits,
                 keep_from_src_dest_local=keep_from_src_dest_local,
-            )
-            (
-                rowwise_packed_dst_ranks,
-                rowwise_packed_dst_rows,
-                rowwise_packed_keep_mask,
-                rowwise_num_kept_routes,
-                rowwise_te_row_id_map,
-            ) = self._build_rowwise_combine_2d_route_to_packed(
-                route_to_packed=route_to_packed_2d,
-                dst_ranks=dst_ranks,
-                dst_rows=dst_rows,
             )
             rowwise_nblocks = self.ep_no_sync_rowwise_nblocks
 
@@ -2763,8 +2875,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         dispatch_rank_major = self.routed_experts(
             dispatch_rank_major,
             padded_batch_size_per_local_expert,
-            # Write expert output directly into combine send buffer to avoid
-            # the copy in _CombineVDev2DOffsetAutograd.forward.
+            # Write expert output directly into the combine symmetric buffer.
             down_proj_out=buffers.combine_in.detach(),
             # Write grad(input) for expert up+gate directly into the rowwise
             # dispatch symmetric buffer so _DispatchRowwiseAutograd.backward
@@ -2778,25 +2889,18 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ) # type: ignore
 
         with nvtx.annotate("Rowwise Combine Merge", color="green"):
-            combine_out = _CombineVDev2DOffsetAutograd.apply(
+            route_probs = local_x_global_routed_expert_weights.view(
+                -1, self.routed_experts_router.top_k
+            )
+            local_x = _RowwiseCombineWeightedAutograd.apply(
                 dispatch_rank_major,
                 buffers.combine_in,
-                rowwise_packed_dst_ranks.view(-1, 1),
-                rowwise_packed_dst_rows.view(-1, 1),
+                dst_ranks,
+                dst_rows,
+                route_probs,
                 group_name,
                 self.ep_pg,
                 self.ep_no_sync_rowwise_nblocks,
-            )
-            local_x = self._restore_drop_unpermute_1d(
-                combine_out=combine_out,
-                # Unused when row_id_map_is_packed=True, but required by API.
-                local_inverse_reorder_indices=rowwise_te_row_id_map,
-                packed_keep_mask=rowwise_packed_keep_mask,
-                num_kept=rowwise_num_kept_routes,
-                reversed_local_x_permutation_mapping=rowwise_te_row_id_map,
-                local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
-                hidden_shape_before_permute=hidden_shape_before_permute,
-                row_id_map_is_packed=True,
             )
 
         # launch second half of the shared expert forward

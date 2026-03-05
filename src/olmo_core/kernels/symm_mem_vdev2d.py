@@ -103,6 +103,7 @@ def rowwise_dispatch_put(
     dst_rows: torch.Tensor,
     group_name: str,
     *,
+    probs: Optional[torch.Tensor] = None,
     nblocks: int = 0,
 ) -> None:
     ext = _load_cuda_extension()
@@ -111,6 +112,7 @@ def rowwise_dispatch_put(
         out,
         dst_ranks,
         dst_rows,
+        probs,
         group_name,
         nblocks,
     )
@@ -126,6 +128,7 @@ def rowwise_combine_get(
     *,
     probs: Optional[torch.Tensor] = None,
     nblocks: int = 0,
+    gathered_out: Optional[torch.Tensor] = None,
 ) -> None:
     ext = _load_cuda_extension()
     ext.rowwise_combine_get(
@@ -136,6 +139,7 @@ def rowwise_combine_get(
         probs,
         group_name,
         nblocks,
+        gathered_out,
     )
 
 

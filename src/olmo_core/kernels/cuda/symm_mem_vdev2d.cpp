@@ -25,6 +25,7 @@ void rowwise_dispatch_put(
     torch::Tensor& out,
     torch::Tensor& dst_ranks,
     torch::Tensor& dst_rows,
+    const std::optional<torch::Tensor>& probs,
     const std::string& group_name,
     int64_t nblocks);
 
@@ -35,7 +36,8 @@ void rowwise_combine_get(
     torch::Tensor& src_rows,
     const std::optional<torch::Tensor>& probs,
     const std::string& group_name,
-    int64_t nblocks);
+    int64_t nblocks,
+    const std::optional<torch::Tensor>& gathered_out);
 
 void rowwise_combine_get_fused(
     torch::Tensor& expert_out,
@@ -86,6 +88,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("out"),
       py::arg("dst_ranks"),
       py::arg("dst_rows"),
+      py::arg("probs") = std::nullopt,
       py::arg("group_name"),
       py::arg("nblocks") = 0);
 
@@ -99,7 +102,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("src_rows"),
       py::arg("probs") = std::nullopt,
       py::arg("group_name"),
-      py::arg("nblocks") = 0);
+      py::arg("nblocks") = 0,
+      py::arg("gathered_out") = std::nullopt);
 
   m.def(
       "rowwise_combine_get_fused",
