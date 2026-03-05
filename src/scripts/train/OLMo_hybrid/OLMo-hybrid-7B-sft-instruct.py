@@ -35,8 +35,9 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-SEQUENCE_LENGTH = 16_384
+SEQUENCE_LENGTH = 32_768
 GLOBAL_BATCH_SIZE = 64 * SEQUENCE_LENGTH
+DATASET_PATH = "/weka/oe-adapt-default/nathanl/dataset/olmo3-32b-instruct-sft-1114"
 
 # Remove heads to match params/TPS of OLMo3 7B transformer. This is to enable a
 # fair comparison with OLMo3 7B. If training from scratch, we recommend setting the
@@ -89,7 +90,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=common.max_sequence_length,
         max_sequence_length=common.max_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=8e-05,
+            lr=2.5e-5,
             weight_decay=0.0,
             betas=(0.9, 0.95),
             compile=False,
@@ -118,7 +119,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
 def build_data_components(
     common: CommonComponents,
-    dataset_path: str = "",
+    dataset_path: str,
 ) -> DataComponents:
     clean_path = dataset_path.rstrip("/")
     dataset_config = NumpyPackedFSLDatasetConfig(
@@ -147,13 +148,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             load_strategy=LoadStrategy.always,
-            load_path="/weka/oe-training-default/ai2-llm/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-long-context-drope/step23842",
+            load_path="/weka/oe-training-default/ai2-llm/checkpoints/nathanl/olmo-sft/TEST_HYBRIC_SFT_LARGER_LR2.5e-5/step46412",
             load_trainer_state=False,
+            load_optim_state=False,
             save_folder=f"{common.save_folder}/",
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.epochs(3),
+            max_duration=Duration.epochs(2),
         )
         .with_callback(
             "checkpointer",
@@ -187,8 +189,9 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
-        beaker_workspace="ai2/linear-rnns",
+        beaker_workspace="ai2/olmo-instruct",
+        num_nodes=8,
         num_execution_units=1,
-        dataset_path="",
+        dataset_path=DATASET_PATH,
     )
     main(config_builder=config_builder)
