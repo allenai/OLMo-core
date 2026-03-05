@@ -297,6 +297,13 @@ or by calling the ``.sample()`` / ``.resize()`` methods::
                └─ ConcatAndChunkInstanceSource(b768b9a): 18.3B tokens [dolminos2math]
                   └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
 
+Defining mixtures in YAML
+-------------------------
+You can also define mixtures in YAML using the same composable API, and the :func:`build_numpy_mixture_from_yaml_spec` helper function to build them.
+This is especially useful for large mixtures, and it also allows you to easily swap out different mixing strategies,
+e.g. using :class:`NumpyContiguousChunksSamplingStrategy` to sample contiguous chunks of tokens from numpy
+sources instead of sampling whole documents, which is often desirable for SFT.
+
 Curriculum learning
 -------------------
 
@@ -486,6 +493,12 @@ from .mixing_token_source import (
     MixingTokenSourceSpec,
     MixingTokenSourceSpecConfig,
 )
+from .mixture_recipe import (
+    NumpyContiguousChunksSamplingStrategy,
+    NumpyDocumentSamplingStrategy,
+    NumpySamplingStrategy,
+    build_numpy_mixture_from_yaml_spec,
+)
 from .numpy_document_source import (
     NumpyDocumentSource,
     NumpyDocumentSourceConfig,
@@ -585,7 +598,11 @@ __all__ = [
     "MixingTokenSourceSpecConfig",
     "MixingDocumentSourceSpec",
     "MixingDocumentSourceSpecConfig",
+    "NumpySamplingStrategy",
+    "NumpyDocumentSamplingStrategy",
+    "NumpyContiguousChunksSamplingStrategy",
     # Functions.
     "set_composable_seed",
     "reset_composable_seed",
+    "build_numpy_mixture_from_yaml_spec",
 ]
