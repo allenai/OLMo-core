@@ -797,6 +797,17 @@ def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
                         mask[: full_grad.shape[0] // 2] = 1
                         local_mask = get_local_tensor(distribute_like(param, mask))
                         get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
+                elif self.freeze_experts == "first_half_experts_only":
+                    if param.grad is None:
+                        continue
+
+                    if "experts" in name:
+                        full_grad = get_full_tensor(param.grad)
+                        mask = torch.zeros_like(full_grad, dtype=torch.bool)
+                        mask[: full_grad.shape[0] // 2, :] = True
+                        local_mask = get_local_tensor(distribute_like(param, mask))
+                        get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
+                    # router: do nothing — leave all router gradients intact
 
         del batch 
 

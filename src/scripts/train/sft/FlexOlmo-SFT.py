@@ -331,6 +331,8 @@ class SFTRouterConfig(Config):
         if not dp_shard_degree > 0:
             raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
 
+        freeze_experts="first_half"
+
         if model_name == "olmo2-7b":
             model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
                 vocab_size=tokenizer_config.padded_vocab_size(),
@@ -507,6 +509,7 @@ class SFTRouterConfig(Config):
                     "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
+            freeze_experts = "first_half_experts_only"
             ep_degree=4
             if num_nodes == 8:
                 rank_microbatch_size=4096
@@ -528,6 +531,8 @@ class SFTRouterConfig(Config):
                     "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
+            freeze_experts = "first_half_experts_only"
+
             ep_degree=4
             if num_nodes == 8:
                 rank_microbatch_size=4096
@@ -549,6 +554,8 @@ class SFTRouterConfig(Config):
                     "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
+            freeze_experts = "first_half_experts_only"
+
             ep_degree=4
             if num_nodes == 8:
                 rank_microbatch_size=4096
@@ -570,6 +577,8 @@ class SFTRouterConfig(Config):
                     "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
+            freeze_experts = "first_half_experts_only"
+
             ep_degree=4
             if num_nodes == 8:
                 rank_microbatch_size=4096
@@ -619,7 +628,7 @@ class SFTRouterConfig(Config):
             train_module=FreezeTransformerTrainModuleConfig(  # Changed class name
                 rank_microbatch_size=rank_microbatch_size,  # Keep your fix from before
                 max_sequence_length=bs_config.sequence_length,
-                freeze_experts="first_half",
+                freeze_experts=freeze_experts,
                 # optim=SkipStepAdamWConfig(
                 #     lr=8e-05,
                 #     weight_decay=0.0,  # NOTE: different from pretraining
