@@ -672,6 +672,8 @@ def distribute_like(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 
 # Copied from FlexOlmo for SFT (testing as of 11/15)
 class FreezeTransformerTrainModule(TransformerTrainModule):
+    freeze_experts: str = "first_half"
+
     """
     Custom transformer train module that zeros out gradients for the first half of expert parameters.
     Inherits from the original TransformerTrainModule.
@@ -683,7 +685,7 @@ class FreezeTransformerTrainModule(TransformerTrainModule):
         #"""
         # swj change
         # extract freeze_experts from kwargs
-        self.freeze_experts = kwargs.pop("freeze_experts", "first_half")
+        # self.freeze_experts = kwargs.pop("freeze_experts", "first_half")
         super().__init__(*args, **kwargs)
 
 def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):

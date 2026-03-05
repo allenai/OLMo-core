@@ -7,10 +7,11 @@ FLEX_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/Flex
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tulu3-no_code-no_math
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/all
 FLEX_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-4x7B-math_base-math_sft-olmo3_code-tool_use
-FLEX_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-4x7B-math_base-math_rl-olmo3_code-tool_use
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tool-use-general-math-code-mix-fixed
+FLEX_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-4x7B-math_base-math_rl-olmo3_code-tool_use
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/10k-instance-test-dataset
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-4x7b-tool_use-router_sft-lr_1e-3-old_seeds-real \
+    flexolmo-4x7b-test-fixed-rt \
         $FLEX_PATH \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
