@@ -2,6 +2,7 @@ import math
 import os
 import threading
 import warnings
+import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
 
@@ -31,6 +32,11 @@ from olmo_core.ops import moe as ops
 from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
+from olmo_core.kernels import (
+    ScaledGroupedMMPrequantizedRHS,
+    prequantize_scaled_grouped_mm_rhs,
+    scaled_grouped_mm_q,
+)
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_or_init_stream
@@ -52,6 +58,12 @@ from .routed_experts import RoutedExperts, RoutedExpertsConfig, requires_host_si
 from .router import MoERouterConfigV2, MoERouterV2
 from .shared_experts import SharedExperts
 from .shared_experts import SharedExpertsConfig
+from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
+from olmo_core.kernels.mxfp8_utils import (
+    dequantize_rows_from_mxfp8,
+    dot_gathered_rows_mxfp8_with_grad,
+    quantize_rows_to_mxfp8,
+)
 
 # backend: transformer_engine
 from ..utils import (
@@ -939,6 +951,323 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         return grad_input, None, None, None, None, None, None
 
 
+class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx,
+        source_input: torch.Tensor,
+        dst_ranks: torch.Tensor,
+        dst_rows: torch.Tensor,
+        symm_out_hp: torch.Tensor,
+        symm_out_q: torch.Tensor,
+        symm_out_scales: torch.Tensor,
+        block_size: int,
+        group_name: str,
+        group: dist.ProcessGroup,
+        nblocks: int,
+    ) -> torch.Tensor:
+        if source_input.ndim != 2:
+            raise RuntimeError(
+                f"rowwise FP8 dispatch expects source_input [N, D], got {tuple(source_input.shape)}"
+            )
+        if dst_ranks.shape != dst_rows.shape:
+            raise RuntimeError("dst_ranks/dst_rows must have identical shapes")
+        if dst_ranks.ndim != 2 or dst_ranks.shape[0] != source_input.shape[0]:
+            raise RuntimeError(
+                "dst_ranks/dst_rows must be [N, K] and match source_input first dim"
+            )
+        if symm_out_hp.ndim != 2 or symm_out_hp.shape[1] != source_input.shape[1]:
+            raise RuntimeError("symm_out_hp must be [C, D] with D matching source_input")
+        if symm_out_q.shape != symm_out_hp.shape:
+            raise RuntimeError(
+                f"symm_out_q shape mismatch: expected {tuple(symm_out_hp.shape)}, got {tuple(symm_out_q.shape)}"
+            )
+        if symm_out_q.dtype != torch.float8_e4m3fn:
+            raise RuntimeError(
+                f"symm_out_q must be float8_e4m3fn, got {symm_out_q.dtype}"
+            )
+        if block_size <= 0 or symm_out_hp.shape[1] % block_size != 0:
+            raise RuntimeError(
+                f"Invalid block_size={block_size} for hidden dim {symm_out_hp.shape[1]}"
+            )
+        expected_scales_shape = (symm_out_hp.shape[0], symm_out_hp.shape[1] // block_size)
+        if tuple(symm_out_scales.shape) != expected_scales_shape:
+            raise RuntimeError(
+                "symm_out_scales shape mismatch: "
+                f"expected {expected_scales_shape}, got {tuple(symm_out_scales.shape)}"
+            )
+        if symm_out_scales.dtype != torch.float8_e8m0fnu:
+            raise RuntimeError(
+                f"symm_out_scales must be float8_e8m0fnu, got {symm_out_scales.dtype}"
+            )
+        if nblocks < 0:
+            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+
+        source_input_contig = source_input if source_input.is_contiguous() else source_input.contiguous()
+        dst_ranks_i64 = dst_ranks if dst_ranks.dtype == torch.long else dst_ranks.to(dtype=torch.long)
+        dst_rows_i64 = dst_rows if dst_rows.dtype == torch.long else dst_rows.to(dtype=torch.long)
+        if not dst_ranks_i64.is_contiguous():
+            dst_ranks_i64 = dst_ranks_i64.contiguous()
+        if not dst_rows_i64.is_contiguous():
+            dst_rows_i64 = dst_rows_i64.contiguous()
+
+        symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
+            source_input_contig,
+            symm_out_q,
+            symm_out_scales,
+            dst_ranks_i64,
+            dst_rows_i64,
+            group_name,
+            block_size=int(block_size),
+            nblocks=nblocks,
+        )
+        # Keep dispatch payload fully FP8 through expert compute.
+        # The bf16 mirror buffer is retained for backward scratch/output only.
+
+        ctx.group_name = group_name
+        ctx.group = group
+        ctx.nblocks = int(nblocks)
+        ctx.block_size = int(block_size)
+        ctx.symm_out_hp = symm_out_hp
+        ctx.symm_out_q = symm_out_q
+        ctx.symm_out_scales = symm_out_scales
+        ctx.save_for_backward(dst_ranks_i64, dst_rows_i64)
+        return symm_out_hp
+
+    @staticmethod
+    def backward(ctx, grad_out: torch.Tensor):  # type: ignore[override]
+        dst_ranks, dst_rows = ctx.saved_tensors
+        symm_grad_out_hp = ctx.symm_out_hp
+
+        grad_out_aliases = (
+            grad_out.untyped_storage().data_ptr() == symm_grad_out_hp.untyped_storage().data_ptr()
+            and grad_out.storage_offset() == symm_grad_out_hp.storage_offset()
+            and tuple(grad_out.shape) == tuple(symm_grad_out_hp.shape)
+            and tuple(grad_out.stride()) == tuple(symm_grad_out_hp.stride())
+        )
+        if not grad_out_aliases:
+            symm_grad_out_hp.copy_(grad_out)
+
+        grad_q, grad_scales = quantize_rows_to_mxfp8(
+            symm_grad_out_hp,
+            block_size=ctx.block_size,
+        )
+        ctx.symm_out_q.copy_(grad_q)
+        ctx.symm_out_scales.copy_(grad_scales)
+
+        grad_input = torch.empty(
+            (dst_ranks.shape[0], symm_grad_out_hp.shape[1]),
+            device=symm_grad_out_hp.device,
+            dtype=symm_grad_out_hp.dtype,
+        )
+        symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
+            ctx.symm_out_q,
+            ctx.symm_out_scales,
+            grad_input,
+            dst_ranks,
+            dst_rows,
+            ctx.group_name,
+            block_size=ctx.block_size,
+            nblocks=ctx.nblocks,
+        )
+        return grad_input, None, None, None, None, None, None, None, None, None
+
+
+class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx,
+        expert_out: torch.Tensor,
+        symm_expert_out_hp: torch.Tensor,
+        src_ranks: torch.Tensor,
+        src_rows: torch.Tensor,
+        probs: torch.Tensor,
+        symm_expert_out_q: torch.Tensor,
+        symm_expert_out_scales: torch.Tensor,
+        block_size: int,
+        group_name: str,
+        group: dist.ProcessGroup,
+        nblocks: int,
+    ) -> torch.Tensor:
+        if expert_out.ndim != 2 or symm_expert_out_hp.ndim != 2:
+            raise RuntimeError("expert_out/symm_expert_out_hp must be rank-2 [R, D]")
+        if tuple(expert_out.shape) != tuple(symm_expert_out_hp.shape):
+            raise RuntimeError(
+                "expert_out/symm_expert_out_hp shape mismatch: "
+                f"{tuple(expert_out.shape)} vs {tuple(symm_expert_out_hp.shape)}"
+            )
+        if src_ranks.ndim != 2 or src_rows.ndim != 2:
+            raise RuntimeError(
+                "src_ranks/src_rows must be rank-2 [N, K], "
+                f"got {tuple(src_ranks.shape)} and {tuple(src_rows.shape)}"
+            )
+        if src_ranks.shape != src_rows.shape:
+            raise RuntimeError("src_ranks/src_rows shape mismatch")
+        if probs.shape != src_ranks.shape:
+            raise RuntimeError(
+                f"probs shape mismatch with src_ranks/src_rows: {tuple(probs.shape)} vs {tuple(src_ranks.shape)}"
+            )
+        if block_size <= 0 or symm_expert_out_hp.shape[1] % block_size != 0:
+            raise RuntimeError(
+                f"Invalid block_size={block_size} for hidden dim {symm_expert_out_hp.shape[1]}"
+            )
+        if tuple(symm_expert_out_q.shape) != tuple(symm_expert_out_hp.shape):
+            raise RuntimeError(
+                "symm_expert_out_q shape mismatch: "
+                f"expected {tuple(symm_expert_out_hp.shape)}, got {tuple(symm_expert_out_q.shape)}"
+            )
+        if symm_expert_out_q.dtype != torch.float8_e4m3fn:
+            raise RuntimeError(
+                f"symm_expert_out_q must be float8_e4m3fn, got {symm_expert_out_q.dtype}"
+            )
+        expected_scales_shape = (
+            symm_expert_out_hp.shape[0],
+            symm_expert_out_hp.shape[1] // block_size,
+        )
+        if tuple(symm_expert_out_scales.shape) != expected_scales_shape:
+            raise RuntimeError(
+                "symm_expert_out_scales shape mismatch: "
+                f"expected {expected_scales_shape}, got {tuple(symm_expert_out_scales.shape)}"
+            )
+        if symm_expert_out_scales.dtype != torch.float8_e8m0fnu:
+            raise RuntimeError(
+                f"symm_expert_out_scales must be float8_e8m0fnu, got {symm_expert_out_scales.dtype}"
+            )
+        if nblocks < 0:
+            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+
+        src_ranks_i64 = src_ranks if src_ranks.dtype == torch.long else src_ranks.to(dtype=torch.long)
+        src_rows_i64 = src_rows if src_rows.dtype == torch.long else src_rows.to(dtype=torch.long)
+        if not src_ranks_i64.is_contiguous():
+            src_ranks_i64 = src_ranks_i64.contiguous()
+        if not src_rows_i64.is_contiguous():
+            src_rows_i64 = src_rows_i64.contiguous()
+
+        probs_f32 = probs if probs.dtype == torch.float32 else probs.to(dtype=torch.float32)
+        if not probs_f32.is_contiguous():
+            probs_f32 = probs_f32.contiguous()
+
+        combine_out = torch.empty(
+            (src_ranks_i64.shape[0], symm_expert_out_hp.shape[1]),
+            device=symm_expert_out_hp.device,
+            dtype=symm_expert_out_hp.dtype,
+        )
+
+        need_grad_probs = ctx.needs_input_grad[4]
+        if need_grad_probs:
+            gathered_q_saved = torch.empty(
+                (src_ranks_i64.shape[0], src_ranks_i64.shape[1], symm_expert_out_q.shape[1]),
+                device=symm_expert_out_q.device,
+                dtype=symm_expert_out_q.dtype,
+            )
+            gathered_scales_saved = torch.empty(
+                (
+                    src_ranks_i64.shape[0],
+                    src_ranks_i64.shape[1],
+                    symm_expert_out_scales.shape[1],
+                ),
+                device=symm_expert_out_scales.device,
+                dtype=symm_expert_out_scales.dtype,
+            )
+        else:
+            gathered_q_saved = torch.empty(
+                (0, 0, symm_expert_out_q.shape[1]),
+                device=symm_expert_out_q.device,
+                dtype=symm_expert_out_q.dtype,
+            )
+            gathered_scales_saved = torch.empty(
+                (0, 0, symm_expert_out_scales.shape[1]),
+                device=symm_expert_out_scales.device,
+                dtype=symm_expert_out_scales.dtype,
+            )
+
+        symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
+            symm_expert_out_q,
+            symm_expert_out_scales,
+            combine_out,
+            src_ranks_i64,
+            src_rows_i64,
+            group_name,
+            probs=probs_f32,
+            block_size=int(block_size),
+            nblocks=nblocks,
+            gathered_q_out=(gathered_q_saved if need_grad_probs else None),
+            gathered_scales_out=(gathered_scales_saved if need_grad_probs else None),
+        )
+
+        ctx.group = group
+        ctx.group_name = group_name
+        ctx.nblocks = int(nblocks)
+        ctx.block_size = int(block_size)
+        ctx.probs_input_dtype = probs.dtype
+        ctx.symm_expert_out_hp = symm_expert_out_hp
+        ctx.symm_expert_out_q = symm_expert_out_q
+        ctx.symm_expert_out_scales = symm_expert_out_scales
+        ctx.save_for_backward(src_ranks_i64, src_rows_i64, probs_f32, gathered_q_saved, gathered_scales_saved)
+        return combine_out
+
+    @staticmethod
+    def backward(ctx, grad_out: torch.Tensor):  # type: ignore[override]
+        src_ranks, src_rows, probs, gathered_q_saved, gathered_scales_saved = ctx.saved_tensors
+        if grad_out.shape[0] != src_ranks.shape[0]:
+            raise RuntimeError(
+                "rowwise combine FP8 backward grad rows must match src_ranks rows: "
+                f"{grad_out.shape[0]} vs {src_ranks.shape[0]}"
+            )
+        if grad_out.shape[1] != ctx.symm_expert_out_hp.shape[1]:
+            raise RuntimeError(
+                "rowwise combine FP8 backward grad hidden dim must match symm_expert_out hidden dim: "
+                f"{grad_out.shape[1]} vs {ctx.symm_expert_out_hp.shape[1]}"
+            )
+        grad_out_contig = grad_out if grad_out.is_contiguous() else grad_out.contiguous()
+
+        grad_probs = None
+        valid_mask = (src_ranks >= 0) & (src_rows >= 0) & (src_rows < ctx.symm_expert_out_hp.shape[0])
+        if ctx.needs_input_grad[4]:
+            grad_probs = dot_gathered_rows_mxfp8_with_grad(
+                gathered_q_saved,
+                gathered_scales_saved,
+                grad_out_contig,
+                valid_mask=valid_mask,
+                block_size=ctx.block_size,
+                out_dtype=ctx.probs_input_dtype,
+            )
+
+        grad_expert_out = None
+        if ctx.needs_input_grad[0]:
+            num_rows, top_k = src_ranks.shape
+            hidden = grad_out_contig.shape[1]
+            weighted_flat = (
+                grad_out_contig.unsqueeze(1)
+                * probs.to(dtype=grad_out_contig.dtype).unsqueeze(-1)
+            ).reshape(num_rows * top_k, hidden)
+            if not weighted_flat.is_contiguous():
+                weighted_flat = weighted_flat.contiguous()
+
+            flat_ranks = src_ranks.reshape(-1, 1).contiguous()
+            flat_rows = src_rows.reshape(-1, 1).contiguous()
+            symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
+                weighted_flat,
+                ctx.symm_expert_out_q,
+                ctx.symm_expert_out_scales,
+                flat_ranks,
+                flat_rows,
+                ctx.group_name,
+                block_size=ctx.block_size,
+                nblocks=ctx.nblocks,
+            )
+            dequantize_rows_from_mxfp8(
+                ctx.symm_expert_out_q,
+                ctx.symm_expert_out_scales,
+                block_size=ctx.block_size,
+                out_dtype=ctx.symm_expert_out_hp.dtype,
+                out=ctx.symm_expert_out_hp,
+            )
+            grad_expert_out = ctx.symm_expert_out_hp
+
+        return grad_expert_out, None, None, None, grad_probs, None, None, None, None, None, None
+
+
 
 @dataclass
 class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
@@ -965,6 +1294,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     ep_no_sync_share_combine_out: bool = False
     ep_no_sync_major_align: int = 1
     ep_no_sync_restore_unpermute_backend: str = "te_fused"
+    rowwise_fp8: Optional[MoERowwiseFP8Config] = None
         
     def build(
         self,
@@ -1104,6 +1434,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ep_no_sync_share_combine_out: bool = False,
         ep_no_sync_major_align: int = 1,
         ep_no_sync_restore_unpermute_backend: str = "te_fused",
+        rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -1121,6 +1452,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.routed_experts_router: Optional[MoERouterV2]
         self.shared_experts: Optional[SharedExperts]
         self.shared_experts_router: Optional[MoERouterV2]
+        self.rowwise_fp8 = normalize_rowwise_fp8_config(rowwise_fp8)
+        self._rowwise_fp8_checked = False
+        self._shared_rowwise_fp8_up_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._shared_rowwise_fp8_down_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._shared_rowwise_fp8_weight_versions: Optional[Tuple[int, int]] = None
 
         ######## START: Attention ########
         self.attention = attention.build(
@@ -1137,7 +1473,13 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if routed_experts:
             # Routed Experts enabled
             assert routed_experts_router is not None, "Need routed_experts_router when using routed experts"
+            routed_experts.rowwise_fp8 = normalize_rowwise_fp8_config(routed_experts.rowwise_fp8)
+            if self.rowwise_fp8 is not None and routed_experts.rowwise_fp8 is None:
+                routed_experts.rowwise_fp8 = self.rowwise_fp8
             self.routed_experts = routed_experts.build(init_device=init_device)
+            owner_ref = weakref.ref(self)
+            self.routed_experts.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+            self.routed_experts.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
             self.routed_experts_router = routed_experts_router.build(init_device=init_device)
         else:
             # Routed Experts not enabled
@@ -1152,6 +1494,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if shared_experts:
             # Shared Experts enabled
             self.shared_experts = shared_experts.build(init_device=init_device)
+            owner_ref = weakref.ref(self)
+            self.shared_experts.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+            self.shared_experts.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
             # Shared Experts Router
             if shared_experts.num_experts > 1:
                 # Need router if more than one experts
@@ -1434,6 +1779,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.routed_experts.apply_ep(
             ep_mesh
         )
+        owner_ref = weakref.ref(self)
+        self.routed_experts.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+        self.routed_experts.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+        self.invalidate_rowwise_fp8_cache()
         self.num_local_routed_experts = self.routed_experts.num_local_experts
         self._ep_enabled = True
         self.ep_pg = ep_pg if ep_pg is not None else ep_mp_mesh.get_group()
@@ -1522,6 +1871,110 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             scores_only,
             loss_div_factor=loss_div_factor # scalar
         )
+
+    def invalidate_rowwise_fp8_cache(self) -> None:
+        if self.routed_experts is not None:
+            self.routed_experts.invalidate_rowwise_fp8_cache()
+        self._shared_rowwise_fp8_up_prequant = None
+        self._shared_rowwise_fp8_down_prequant = None
+        self._shared_rowwise_fp8_weight_versions = None
+
+    @torch.no_grad()
+    def refresh_rowwise_fp8_cache(self) -> None:
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled:
+            self.invalidate_rowwise_fp8_cache()
+            return
+        if self.routed_experts is not None:
+            self.routed_experts.refresh_rowwise_fp8_cache()
+        if self.shared_experts is None:
+            self._shared_rowwise_fp8_up_prequant = None
+            self._shared_rowwise_fp8_down_prequant = None
+            self._shared_rowwise_fp8_weight_versions = None
+            return
+        if self.shared_experts.w_up_gate.device.type != "cuda":
+            self._shared_rowwise_fp8_up_prequant = None
+            self._shared_rowwise_fp8_down_prequant = None
+            self._shared_rowwise_fp8_weight_versions = None
+            return
+        up_rhs = self.shared_experts.w_up_gate.unsqueeze(0)
+        down_rhs = self.shared_experts.w_down
+        self._shared_rowwise_fp8_up_prequant = prequantize_scaled_grouped_mm_rhs(up_rhs)
+        self._shared_rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(down_rhs)
+        self._shared_rowwise_fp8_weight_versions = (
+            int(self.shared_experts.w_up_gate._version),
+            int(self.shared_experts.w_down._version),
+        )
+
+    def _maybe_refresh_shared_rowwise_fp8_cache(self) -> None:
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled:
+            return
+        if self.shared_experts is None:
+            return
+        versions = (
+            int(self.shared_experts.w_up_gate._version),
+            int(self.shared_experts.w_down._version),
+        )
+        if (
+            self._shared_rowwise_fp8_up_prequant is None
+            or self._shared_rowwise_fp8_down_prequant is None
+            or self._shared_rowwise_fp8_weight_versions != versions
+        ):
+            self.refresh_rowwise_fp8_cache()
+
+    def _shared_experts_forward1_rowwise_fp8(
+        self,
+        x: torch.Tensor,
+        *,
+        use_fast_accum: bool,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        assert self.shared_experts is not None
+        B, S, D = x.shape
+        E, H = self.shared_experts.num_experts, self.shared_experts.hidden_size
+        BS = B * S
+
+        self._maybe_refresh_shared_rowwise_fp8_cache()
+        x2 = x.reshape(BS, D)
+        offs = torch.tensor([BS], device=x.device, dtype=torch.int32)
+        up_gate = scaled_grouped_mm_q(
+            x2,
+            self.shared_experts.w_up_gate.unsqueeze(0),
+            offs=offs,
+            use_fast_accum=use_fast_accum,
+            prequantized_rhs=self._shared_rowwise_fp8_up_prequant,
+        )
+        up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
+        up, gate = up_gate.unbind(dim=2)
+        return up, gate
+
+    def _shared_experts_forward2_rowwise_fp8(
+        self,
+        up: torch.Tensor,
+        gate: torch.Tensor,
+        xshape: torch.Size,
+        *,
+        use_fast_accum: bool,
+    ) -> torch.Tensor:
+        assert self.shared_experts is not None
+        E, _H = self.shared_experts.num_experts, self.shared_experts.hidden_size
+        B, S, D = xshape
+        BS = B * S
+
+        gate = torch.nn.functional.silu(gate)
+        hidden = up * gate
+
+        self._maybe_refresh_shared_rowwise_fp8_cache()
+        hidden_2d = hidden.reshape(E * BS, -1)
+        offs = torch.arange(BS, E * BS + 1, BS, device=hidden.device, dtype=torch.int32)
+        out_2d = scaled_grouped_mm_q(
+            hidden_2d,
+            self.shared_experts.w_down,
+            offs=offs,
+            use_fast_accum=use_fast_accum,
+            prequantized_rhs=self._shared_rowwise_fp8_down_prequant,
+        )
+        return out_2d.view(E, BS, D).view(E, B, S, D)
 
     def _get_ep_no_sync_group_name(self) -> str:
         if not self.ep_no_sync:
@@ -2438,6 +2891,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
                 "the 2D all_to_all path was removed due to correctness/performance issues."
             )
+
         if self.ep_no_sync_use_rowwise_all_to_all:
             return self.combined_forward_ep_no_sync_rowwise(
                 x,
@@ -2731,6 +3185,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 "the 2D all_to_all path was removed due to correctness/performance issues."
             )
 
+
         group_name = self._get_ep_no_sync_group_name()
         B, S, D = x.shape
 
@@ -2778,6 +3233,20 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         moe_inp = attn_res_out
         in_shape = moe_inp.size()
         moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
+        rowwise_fp8_cfg = self.rowwise_fp8
+        use_rowwise_fp8 = (
+            rowwise_fp8_cfg is not None
+            and rowwise_fp8_cfg.enabled
+            and moe_inp.device.type == "cuda"
+            and self.ep_no_sync_use_rowwise_all_to_all
+        )
+        if use_rowwise_fp8:
+            assert rowwise_fp8_cfg is not None
+            if not self._rowwise_fp8_checked:
+                rowwise_fp8_cfg.assert_runtime_supported()
+                self._rowwise_fp8_checked = True
+        else:
+            rowwise_fp8_cfg = None
 
         num_out_tokens = local_x_global_routed_expert_indices.numel() # a constant = B*S*top_k, including tokens that will be dropped
 
@@ -2817,6 +3286,43 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             need_combine_out=False,
         )
 
+        dispatch_out_q: Optional[torch.Tensor] = None
+        dispatch_out_scales: Optional[torch.Tensor] = None
+        combine_in_q: Optional[torch.Tensor] = None
+        combine_in_scales: Optional[torch.Tensor] = None
+        if use_rowwise_fp8:
+            assert rowwise_fp8_cfg is not None
+            if moe_inp.shape[1] % rowwise_fp8_cfg.block_size != 0:
+                raise RuntimeError(
+                    "Rowwise FP8 requires hidden dim divisible by block_size: "
+                    f"hidden={moe_inp.shape[1]} block_size={rowwise_fp8_cfg.block_size}"
+                )
+            scale_cols = moe_inp.shape[1] // rowwise_fp8_cfg.block_size
+            dispatch_out_q = self._get_or_init_ep_no_sync_symm_tensor(
+                name="dispatch_out_rowwise_fp8_q",
+                shape=(dispatch_out_cap, moe_inp.shape[1]),
+                dtype=torch.float8_e4m3fn,
+                device=moe_inp.device,
+            )
+            dispatch_out_scales = self._get_or_init_ep_no_sync_symm_tensor(
+                name="dispatch_out_rowwise_fp8_scales",
+                shape=(dispatch_out_cap, scale_cols),
+                dtype=torch.float8_e8m0fnu,
+                device=moe_inp.device,
+            )
+            combine_in_q = self._get_or_init_ep_no_sync_symm_tensor(
+                name="combine_in_rowwise_fp8_q",
+                shape=(combine_in_cap, moe_inp.shape[1]),
+                dtype=torch.float8_e4m3fn,
+                device=moe_inp.device,
+            )
+            combine_in_scales = self._get_or_init_ep_no_sync_symm_tensor(
+                name="combine_in_rowwise_fp8_scales",
+                shape=(combine_in_cap, scale_cols),
+                dtype=torch.float8_e8m0fnu,
+                device=moe_inp.device,
+            )
+
         routing_map = local_x_global_routed_expert_indices.view(
             -1, self.routed_experts_router.top_k
         ).int()
@@ -2849,20 +3355,46 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             #     other_stream=torch.cuda.current_stream(),
             # ) # type: ignore
             with torch.cuda.stream(self.get_dense_stream()):
-                shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
+                if use_rowwise_fp8:
+                    assert rowwise_fp8_cfg is not None
+                    shared_out_up, shared_out_gate = self._shared_experts_forward1_rowwise_fp8(
+                        attn_res_out,
+                        use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
+                    )
+                else:
+                    shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
         else:
             shared_out_up, shared_out_gate = None, None
 
         with nvtx.annotate("Rowwise Dispatch", color="green"):
-            dispatch_rank_major = _DispatchRowwiseAutograd.apply(
-                moe_inp,
-                dst_ranks,
-                dst_rows,
-                buffers.dispatch_out,
-                group_name,
-                self.ep_pg,
-                rowwise_nblocks,
-            )
+            # _record_before("dispatch")
+            if use_rowwise_fp8:
+                assert rowwise_fp8_cfg is not None
+                assert dispatch_out_q is not None
+                assert dispatch_out_scales is not None
+                dispatch_rank_major = _DispatchRowwiseFP8Autograd.apply(
+                    moe_inp,
+                    dst_ranks,
+                    dst_rows,
+                    buffers.dispatch_out,
+                    dispatch_out_q,
+                    dispatch_out_scales,
+                    rowwise_fp8_cfg.block_size,
+                    group_name,
+                    self.ep_pg,
+                    rowwise_nblocks,
+                )
+            else:
+                dispatch_rank_major = _DispatchRowwiseAutograd.apply(
+                    moe_inp,
+                    dst_ranks,
+                    dst_rows,
+                    buffers.dispatch_out,
+                    group_name,
+                    self.ep_pg,
+                    rowwise_nblocks,
+                )
+            # _record_after("dispatch")
 
         # Expert backward (grouped_mm) saves its input tensor. The rowwise
         # dispatch output aliases reusable symmetric buffers, so later
@@ -2872,15 +3404,21 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         #     dispatch_rank_major = dispatch_rank_major.clone()
 
         # expert forward
+
         dispatch_rank_major = self.routed_experts(
             dispatch_rank_major,
             padded_batch_size_per_local_expert,
             # Write expert output directly into the combine symmetric buffer.
             down_proj_out=buffers.combine_in.detach(),
+            rowwise_fp8_down_proj_out_q=(combine_in_q if use_rowwise_fp8 else None),
+            rowwise_fp8_down_proj_out_scales=(combine_in_scales if use_rowwise_fp8 else None),
             # Write grad(input) for expert up+gate directly into the rowwise
-            # dispatch symmetric buffer so _DispatchRowwiseAutograd.backward
-            # can consume it without an extra copy.
+            # dispatch symmetric buffer so rowwise dispatch backward can consume
+            # it without an extra copy.
             up_proj_input_grad_out=buffers.dispatch_out.detach(),
+            use_rowwise_fp8=use_rowwise_fp8,
+            rowwise_fp8_input_q=(dispatch_out_q if use_rowwise_fp8 else None),
+            rowwise_fp8_input_scales=(dispatch_out_scales if use_rowwise_fp8 else None),
         )
 
         wait_stream_no_compile(
@@ -2892,16 +3430,36 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             route_probs = local_x_global_routed_expert_weights.view(
                 -1, self.routed_experts_router.top_k
             )
-            local_x = _RowwiseCombineWeightedAutograd.apply(
-                dispatch_rank_major,
-                buffers.combine_in,
-                dst_ranks,
-                dst_rows,
-                route_probs,
-                group_name,
-                self.ep_pg,
-                self.ep_no_sync_rowwise_nblocks,
-            )
+            # _record_before("combine")
+            if use_rowwise_fp8:
+                assert rowwise_fp8_cfg is not None
+                assert combine_in_q is not None
+                assert combine_in_scales is not None
+                local_x = _RowwiseCombineWeightedFP8Autograd.apply(
+                    dispatch_rank_major,
+                    buffers.combine_in,
+                    dst_ranks,
+                    dst_rows,
+                    route_probs,
+                    combine_in_q,
+                    combine_in_scales,
+                    rowwise_fp8_cfg.block_size,
+                    group_name,
+                    self.ep_pg,
+                    self.ep_no_sync_rowwise_nblocks,
+                )
+            else:
+                local_x = _RowwiseCombineWeightedAutograd.apply(
+                    dispatch_rank_major,
+                    buffers.combine_in,
+                    dst_ranks,
+                    dst_rows,
+                    route_probs,
+                    group_name,
+                    self.ep_pg,
+                    self.ep_no_sync_rowwise_nblocks,
+                )
+            # _record_after("combine")
 
         # launch second half of the shared expert forward
         if self.shared_experts is not None:
@@ -2909,7 +3467,16 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             assert shared_out_gate is not None
 
             with torch.cuda.stream(self.get_dense_stream()):
-                shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
+                if use_rowwise_fp8:
+                    assert rowwise_fp8_cfg is not None
+                    shared_out = self._shared_experts_forward2_rowwise_fp8(
+                        shared_out_up,
+                        shared_out_gate,
+                        attn_res_out.shape,
+                        use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
+                    )
+                else:
+                    shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
                 if self.shared_experts_router:
                     assert local_x_global_shared_expert_weights is not None
                     _, _, E_s = local_x_global_shared_expert_weights.shape

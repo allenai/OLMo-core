@@ -6,6 +6,8 @@ from typing import Optional
 
 import torch
 
+from .mxfp8_utils import quantize_rows_to_mxfp8, reduce_gathered_rows_from_mxfp8
+
 _EXTENSION_MODULE_NAME = "olmo_core.kernels._symm_mem_vdev2d_ext_gpu"
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
@@ -119,6 +121,43 @@ def rowwise_dispatch_put(
 
 
 @torch.compiler.disable
+def rowwise_dispatch_put_scaled(
+    input_hp: torch.Tensor,
+    out_q: torch.Tensor,
+    out_scales: torch.Tensor,
+    dst_ranks: torch.Tensor,
+    dst_rows: torch.Tensor,
+    group_name: str,
+    *,
+    block_size: int = 32,
+    nblocks: int = 0,
+) -> None:
+    # Optional debug safety init for stale-capacity issues; off by default to
+    # avoid full-buffer memset overhead in the fp8 hot path.
+    if os.getenv("OLMO_ROWWISE_FP8_DISPATCH_INIT_OUT", "0") == "1":
+        out_q.zero_()
+        out_scales.fill_(1.0)
+
+    qdata, scales = quantize_rows_to_mxfp8(input_hp, block_size=block_size)
+    rowwise_dispatch_put(
+        qdata,
+        out_q,
+        dst_ranks,
+        dst_rows,
+        group_name,
+        nblocks=nblocks,
+    )
+    rowwise_dispatch_put(
+        scales,
+        out_scales,
+        dst_ranks,
+        dst_rows,
+        group_name,
+        nblocks=nblocks,
+    )
+
+
+@torch.compiler.disable
 def rowwise_combine_get(
     expert_out: torch.Tensor,
     out: torch.Tensor,
@@ -140,6 +179,95 @@ def rowwise_combine_get(
         group_name,
         nblocks,
         gathered_out,
+    )
+
+
+@torch.compiler.disable
+def rowwise_combine_get_scaled(
+    expert_out_q: torch.Tensor,
+    expert_out_scales: torch.Tensor,
+    out: torch.Tensor,
+    src_ranks: torch.Tensor,
+    src_rows: torch.Tensor,
+    group_name: str,
+    *,
+    probs: Optional[torch.Tensor] = None,
+    block_size: int = 32,
+    nblocks: int = 0,
+    gathered_out: Optional[torch.Tensor] = None,
+    gathered_q_out: Optional[torch.Tensor] = None,
+    gathered_scales_out: Optional[torch.Tensor] = None,
+) -> None:
+    if src_ranks.ndim != 2 or src_rows.ndim != 2:
+        raise ValueError(
+            f"src_ranks/src_rows must be [N,K], got {tuple(src_ranks.shape)} and {tuple(src_rows.shape)}"
+        )
+    n, k = src_ranks.shape
+    if src_rows.shape != src_ranks.shape:
+        raise ValueError("src_ranks/src_rows shape mismatch")
+
+    valid_rows = (src_rows >= 0) & (src_rows < expert_out_q.shape[0])
+    valid = (src_ranks >= 0) & valid_rows
+    safe_ranks = torch.where(valid, src_ranks, torch.full_like(src_ranks, -1))
+    safe_rows = torch.where(valid, src_rows, torch.full_like(src_rows, -1))
+
+    flat_ranks = safe_ranks.reshape(-1, 1).contiguous()
+    flat_rows = safe_rows.reshape(-1, 1).contiguous()
+
+    gathered_q = torch.empty(
+        (n * k, expert_out_q.shape[1]),
+        device=out.device,
+        dtype=expert_out_q.dtype,
+    )
+    rowwise_gather_get(
+        expert_out_q,
+        gathered_q,
+        flat_ranks,
+        flat_rows,
+        group_name,
+        nblocks=nblocks,
+    )
+
+    gathered_scales = torch.empty(
+        (n * k, expert_out_scales.shape[1]),
+        device=out.device,
+        dtype=expert_out_scales.dtype,
+    )
+    rowwise_gather_get(
+        expert_out_scales,
+        gathered_scales,
+        flat_ranks,
+        flat_rows,
+        group_name,
+        nblocks=nblocks,
+    )
+
+    gathered_q_3d = gathered_q.view(n, k, -1)
+    gathered_scales_3d = gathered_scales.view(n, k, -1)
+
+    if gathered_q_out is not None:
+        if tuple(gathered_q_out.shape) != tuple(gathered_q_3d.shape):
+            raise ValueError(
+                f"gathered_q_out shape mismatch: expected {tuple(gathered_q_3d.shape)}, got {tuple(gathered_q_out.shape)}"
+            )
+        gathered_q_out.copy_(gathered_q_3d)
+
+    if gathered_scales_out is not None:
+        if tuple(gathered_scales_out.shape) != tuple(gathered_scales_3d.shape):
+            raise ValueError(
+                "gathered_scales_out shape mismatch: "
+                f"expected {tuple(gathered_scales_3d.shape)}, got {tuple(gathered_scales_out.shape)}"
+            )
+        gathered_scales_out.copy_(gathered_scales_3d)
+
+    reduce_gathered_rows_from_mxfp8(
+        gathered_q_3d,
+        gathered_scales_3d,
+        out,
+        probs=probs,
+        valid_mask=valid,
+        block_size=block_size,
+        gathered_out=gathered_out,
     )
 
 

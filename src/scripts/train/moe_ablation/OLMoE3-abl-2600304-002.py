@@ -91,19 +91,19 @@ SEQUENCE_LENGTH = 8192
 
 MAX_DURATION = int(55e9)
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL=1000
+SAVE_INTERVAL=10000
 
-NUM_EXPERTS = 128
+NUM_EXPERTS = 16
 TOP_K = 4
-D_MODEL=2880
-D_ATTN=4096
+D_MODEL=2560
+D_ATTN=D_MODEL
 
 HEAD_DIM=64
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=8
-MOE_HIDDEN_SIZE = 2880
+MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 0  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2880  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -113,7 +113,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 MICRO_BSZ = 4
 # DP_DIM=2
-EP_DIM=4
+EP_DIM=2
 PP_DIM=1
 
 # ref
@@ -144,27 +144,18 @@ else:
 USE_COMPILE=True
 USE_NO_SYNC_EP=True
 USE_AC=False
-PER_LAYER_RECOMPUTE=True
+PER_LAYER_RECOMPUTE=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 GRAD_REDUCE_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=True
 USE_ROWWISE_A2A=True
+USE_FP8=True
 ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
-TAG=f'12L-OSS'
-
-# if UNIFORM_ASSIGN:
-#     TAG = 'U-' + TAG
-# elif RANDOM_ASSIGN:
-#     TAG = 'RA-' + TAG
-# else:
-#     TAG = 'R-' + TAG
-# if GRAD_ACC_IN_FP32:
-#     TAG += '-fp32acc'
-
+TAG=f'fp8'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -178,6 +169,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     from olmo_core.nn.moe.v2.block import (
         MoEFusedV2TransformerBlockConfig
     )
+    from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
     from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
     from olmo_core.nn.attention.backend import AttentionBackendName
@@ -211,6 +203,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             ep_no_sync_use_rowwise_all_to_all=USE_ROWWISE_A2A,
             ep_no_sync_rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
             ep_no_sync_capacity_factor=1.2,
+            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,
@@ -434,8 +427,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=11,
-                                   end=14
+                                   start=21,
+                                   end=24
             )
         )
         .with_callback(

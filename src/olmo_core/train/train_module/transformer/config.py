@@ -443,7 +443,7 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
 
         # remove old arg "grad_accum_in_fp32"
-        kwargs.pop("grad_accum_in_fp32")
+        kwargs.pop("grad_accum_in_fp32", None)
 
         return MoEV2TransformerTrainModule(
             model=model,

@@ -1048,7 +1048,31 @@ class MoEFusedV2Optimizer:
             if len(input_dtensors) > 0:
                 flush_all_gather()
 
+        self._refresh_rowwise_fp8_caches_from_model_params()
         return
+
+    @nvtx.annotate("MoEFusedV2Optimizer._refresh_rowwise_fp8_caches_from_model_params")
+    def _refresh_rowwise_fp8_caches_from_model_params(self) -> None:
+        owners: List[Any] = []
+        seen: Set[int] = set()
+        for group in self.param_groups:
+            for _, param in group["named_params"].items():
+                owner_ref = getattr(param, "_moe_rowwise_fp8_cache_owner", None)
+                if owner_ref is None:
+                    continue
+                owner = owner_ref() if callable(owner_ref) else owner_ref
+                if owner is None:
+                    continue
+                owner_id = id(owner)
+                if owner_id in seen:
+                    continue
+                if not hasattr(owner, "refresh_rowwise_fp8_cache"):
+                    continue
+                seen.add(owner_id)
+                owners.append(owner)
+
+        for owner in owners:
+            owner.refresh_rowwise_fp8_cache()
 
 
 
