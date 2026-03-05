@@ -410,47 +410,33 @@ class TransformerTrainModule(TrainModule):
 
         self.model.post_batch(dry_run=dry_run)
 
-        for name, param in self.model.named_parameters():
-            if "experts" in name or "router" in name:
-                # bp()
-                # print("name: ", name, "shape: ", param.shape)
-                full_grad = get_full_tensor(param.grad)
-                # check whether the param is frozen
-                # print("param.grad: ", param.grad)
-                if param.grad is None:
-                    # print(f"{name} grad is None")
-                    continue
+        freeze_experts = getattr(self, "freeze_experts", "first_half")
+        if freeze_experts == "first_half":
+            for name, param in self.model.named_parameters():
+                if "experts" in name or "router" in name:
+                    if param.grad is None:
+                        continue
+                    full_grad = get_full_tensor(param.grad)
+                    if "experts" in name:
+                        mask = torch.zeros_like(full_grad, dtype=torch.bool)
+                        mask[: full_grad.shape[0] // 2, :] = True
+                        local_mask = get_local_tensor(distribute_like(param, mask))
+                        get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
+                    elif "router" in name:
+                        mask = torch.zeros_like(full_grad, dtype=torch.bool)
+                        mask[: full_grad.shape[0] // 2] = 1
+                        local_mask = get_local_tensor(distribute_like(param, mask))
+                        get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
+        elif freeze_experts == "first_half_experts_only":
+            for name, param in self.model.named_parameters():
                 if "experts" in name:
-                    # get_full_tensor(param.grad)[
-                    #     : get_full_tensor(param.grad).shape[0] // 2, :
-                    # ] = 0
+                    if param.grad is None:
+                        continue
+                    full_grad = get_full_tensor(param.grad)
                     mask = torch.zeros_like(full_grad, dtype=torch.bool)
                     mask[: full_grad.shape[0] // 2, :] = True
                     local_mask = get_local_tensor(distribute_like(param, mask))
-                    # print("target.device_mesh: ", param.device_mesh)
                     get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
-                    # print("mask: ", mask)
-                elif "router" in name:
-                    # get_full_tensor(param.grad)[
-                    #     : get_full_tensor(param.grad).shape[0] // 2
-                    # ] = 0
-                    mask = torch.zeros_like(full_grad, dtype=torch.bool)
-                    # swj change, free the entire router
-                    mask[: full_grad.shape[0] // 2] = 1
-                    # mask = torch.ones_like(full_grad, dtype=torch.bool)
-                    local_mask = get_local_tensor(distribute_like(param, mask))
-                    get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
-                    # print("mask: ", mask)
-                    # get_local_tensor(param.grad) = get_local_tensor(param.grad).mul(local_mask)
-            # elif self.freeze_experts == "last_half":
-            #     if "experts" in name:
-            #         get_full_tensor(param.grad)[
-            #             get_full_tensor(param.grad).shape[0] // 2 :, :
-            #         ] = 0
-            #     elif "router" in name:
-            #         get_full_tensor(param.grad)[
-            #             get_full_tensor(param.grad).shape[0] // 2 :
-            #         ] = 0
 
 
         if dry_run:
