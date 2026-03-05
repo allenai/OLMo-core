@@ -147,7 +147,7 @@ uv sync --extra beaker --extra transformers
         --weka=oe-training-default:/weka/oe-training-default \
         --priority high \
         --gpus 1 \
-        -- /opt/conda/bin/python src/examples/huggingface/convert_checkpoint_to_hf_hybrid.py \
+        -- /opt/conda/bin/python src/examples/huggingface/convert_checkpoint_to_hf.py \
             -i /weka/oe-training-default/$USER/checkpoints/path-to-model/stepFINAL_STEP \
             -o /weka/oe-adapt-default/$USER/checkpoints/path-to-model/stepFINAL_STEP-hf \
             --max-sequence-length 32768 \
