@@ -364,7 +364,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             # Dense params → DP group
             return dp_group
 
-        torch._dynamo.config.optimize_ddp = "python_reducer"
+        torch._dynamo.config.optimize_ddp = "python_reducer" # TODO: still necessary for custom ddp class?
 
         ddp_model = MultiGroupDistributedDataParallel(
             module=self,
