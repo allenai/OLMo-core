@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cub/cub.cuh>
+#include <cstdlib>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -37,6 +38,10 @@
 #define WARP_SIZE 32
 #define ROWWISE_THREADS_PER_BLOCK 512
 #define ROWWISE_WARPS_PER_BLOCK (ROWWISE_THREADS_PER_BLOCK / WARP_SIZE)
+#define ROWWISE_COMBINE_FUSED_THREADS_PER_BLOCK 256
+#define ROWWISE_COMBINE_FUSED_WARPS_PER_BLOCK \
+  (ROWWISE_COMBINE_FUSED_THREADS_PER_BLOCK / WARP_SIZE)
+#define ROWWISE_COMBINE_FUSED_VECS_PER_THREAD 16
 
 namespace {
 
@@ -367,6 +372,113 @@ __global__ void combineRowsReduceKernel(
   out[row * dim + col] = static_cast<scalar_t>(acc);
 }
 
+template <typename scalar_t, bool HAS_PROBS>
+__global__ void combineRowsGetKernel(
+    const scalar_t* expert_out,
+    scalar_t* out,
+    const int64_t* src_ranks,
+    const int64_t* src_rows,
+    const float* probs,
+    int64_t num_out_rows,
+    int64_t top_k,
+    int64_t dim,
+    int64_t expert_row_stride,
+    int64_t out_row_stride,
+    int64_t expert_capacity_rows,
+    nvshmem_team_t team) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  constexpr int WARP_TILE_ELEMS =
+      WARP_SIZE * ROWWISE_COMBINE_FUSED_VECS_PER_THREAD;
+  constexpr int BLOCK_TILE_ELEMS =
+      ROWWISE_COMBINE_FUSED_THREADS_PER_BLOCK *
+      ROWWISE_COMBINE_FUSED_VECS_PER_THREAD;
+
+  int npes = nvshmem_team_n_pes(team);
+  int tid = threadIdx.x;
+  int warp_id = tid / WARP_SIZE;
+  int lane_id = tid % WARP_SIZE;
+
+  int64_t block_col_base = static_cast<int64_t>(blockIdx.y) * BLOCK_TILE_ELEMS;
+  int64_t warp_col_base = block_col_base + static_cast<int64_t>(warp_id) * WARP_TILE_ELEMS;
+  int64_t warp_chunk_elems = 0;
+  if (warp_col_base < dim) {
+    warp_chunk_elems = dim - warp_col_base;
+    if (warp_chunk_elems > WARP_TILE_ELEMS) {
+      warp_chunk_elems = WARP_TILE_ELEMS;
+    }
+  }
+
+  if (warp_chunk_elems == 0) {
+    return;
+  }
+
+  __shared__
+      scalar_t shared_rows[ROWWISE_COMBINE_FUSED_WARPS_PER_BLOCK][WARP_TILE_ELEMS];
+  scalar_t* warp_shared_row = shared_rows[warp_id];
+
+  for (int64_t row = blockIdx.x; row < num_out_rows; row += gridDim.x) {
+    float acc[ROWWISE_COMBINE_FUSED_VECS_PER_THREAD];
+#pragma unroll
+    for (int i = 0; i < ROWWISE_COMBINE_FUSED_VECS_PER_THREAD; ++i) {
+      acc[i] = 0.0f;
+    }
+
+    int64_t route_base = row * top_k;
+    for (int64_t k = 0; k < top_k; ++k) {
+      int64_t route = route_base + k;
+      int64_t peer = src_ranks[route];
+      int64_t src_row = src_rows[route];
+      if (peer < 0 || src_row < 0) {
+        continue;
+      }
+
+      CUDA_KERNEL_ASSERT(peer < npes);
+      CUDA_KERNEL_ASSERT(src_row < expert_capacity_rows);
+
+      int peer_global = 0;
+      if (lane_id == 0) {
+        peer_global =
+            nvshmem_team_translate_pe(team, static_cast<int>(peer), NVSHMEM_TEAM_WORLD);
+      }
+      peer_global = __shfl_sync(0xffffffff, peer_global, 0);
+
+      nvshmemx_getmem_warp(
+          warp_shared_row,
+          expert_out + src_row * expert_row_stride + warp_col_base,
+          static_cast<size_t>(warp_chunk_elems) * sizeof(scalar_t),
+          peer_global);
+      __syncwarp();
+
+      float p = 1.0f;
+      if constexpr (HAS_PROBS) {
+        p = probs[route];
+      }
+
+#pragma unroll
+      for (int i = 0; i < ROWWISE_COMBINE_FUSED_VECS_PER_THREAD; ++i) {
+        int elem = i * WARP_SIZE + lane_id;
+        if (elem < warp_chunk_elems) {
+          float v = static_cast<float>(warp_shared_row[elem]);
+          acc[i] += v * p;
+        }
+      }
+    }
+
+    scalar_t* out_ptr = out + row * out_row_stride + warp_col_base;
+#pragma unroll
+    for (int i = 0; i < ROWWISE_COMBINE_FUSED_VECS_PER_THREAD; ++i) {
+      int elem = i * WARP_SIZE + lane_id;
+      if (elem < warp_chunk_elems) {
+        out_ptr[elem] = static_cast<scalar_t>(acc[i]);
+      }
+    }
+  }
+#endif
+}
+
 int resolve_num_blocks(int world_size, int ne, int64_t requested_nblocks) {
   if (requested_nblocks > 0) {
     TORCH_CHECK(
@@ -413,6 +525,30 @@ int resolve_num_blocks_rowwise(
   int max_blocks = intra_node ? 2048 : 512;
   int64_t capped = std::min<int64_t>(num_routes, max_blocks);
   return std::max<int>(1, static_cast<int>(std::min<int64_t>(target_blocks, capped)));
+}
+
+int64_t resolve_num_row_blocks_fused(int64_t num_out_rows, int num_blocks) {
+  static int factor = []() {
+    constexpr int kDefault = 16;
+    constexpr int kMin = 1;
+    constexpr int kMax = 64;
+    const char* env = std::getenv("OLMO_ROWWISE_COMBINE_FUSED_ROW_BLOCK_FACTOR");
+    if (env == nullptr || env[0] == '\0') {
+      return kDefault;
+    }
+    char* end = nullptr;
+    long parsed = std::strtol(env, &end, 10);
+    if (end == env || *end != '\0') {
+      return kDefault;
+    }
+    parsed = std::max<long>(parsed, kMin);
+    parsed = std::min<long>(parsed, kMax);
+    return static_cast<int>(parsed);
+  }();
+
+  int64_t row_blocks = std::min<int64_t>(
+      num_out_rows, static_cast<int64_t>(num_blocks) * factor);
+  return std::max<int64_t>(row_blocks, 1);
 }
 
 std::string cu_result_string(CUresult result) {
@@ -975,6 +1111,148 @@ void rowwise_combine_get(
                   num_out_rows,
                   top_k,
                   dim);
+        }
+      });
+}
+
+void rowwise_combine_get_fused(
+    at::Tensor& expert_out,
+    at::Tensor& out,
+    at::Tensor& src_ranks,
+    at::Tensor& src_rows,
+    const std::optional<at::Tensor>& probs,
+    const std::string& group_name,
+    int64_t nblocks) {
+  auto expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
+
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(expert_out.dim() == 2, "expert_out must be rank-2 [C, D]");
+  TORCH_CHECK(out.dim() == 2, "out must be rank-2 [N, D]");
+  TORCH_CHECK(
+      src_ranks.dim() == 2 && src_rows.dim() == 2,
+      "src_ranks and src_rows must be rank-2 [N, K]");
+  TORCH_CHECK(
+      src_ranks.sizes() == src_rows.sizes(),
+      "src_ranks and src_rows must have identical shapes");
+  TORCH_CHECK(
+      src_ranks.size(0) == out.size(0),
+      "src_ranks/src_rows first dim (N) must match out rows");
+  TORCH_CHECK(
+      expert_out.size(1) == out.size(1),
+      "expert_out and out must have the same hidden dim (D)");
+
+  TORCH_CHECK(
+      expert_out.is_contiguous() && out.is_contiguous() && src_ranks.is_contiguous() &&
+          src_rows.is_contiguous(),
+      "expert_out, out, src_ranks and src_rows must be contiguous");
+  TORCH_CHECK(
+      expert_out.dtype() == out.dtype(),
+      "expert_out and out must have the same dtype");
+  TORCH_CHECK(
+      src_ranks.scalar_type() == at::kLong && src_rows.scalar_type() == at::kLong,
+      "src_ranks and src_rows must be int64");
+
+  auto device = expert_out.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && out.device() == device &&
+          src_ranks.device() == device && src_rows.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+
+  const float* probs_ptr = nullptr;
+  if (probs.has_value()) {
+    TORCH_CHECK(probs->defined(), "probs optional tensor must be defined");
+    TORCH_CHECK(
+        probs->device() == device,
+        "probs must be on the same CUDA device as other arguments");
+    TORCH_CHECK(
+        probs->is_contiguous(),
+        "probs must be contiguous");
+    TORCH_CHECK(
+        probs->sizes() == src_ranks.sizes(),
+        "probs must have shape [N, K] matching src_ranks/src_rows");
+    TORCH_CHECK(
+        probs->scalar_type() == at::kFloat,
+        "probs must be float32");
+    probs_ptr = probs->data_ptr<float>();
+  }
+
+  c10::cuda::CUDAGuard guard(device);
+  auto stream = at::cuda::getCurrentCUDAStream();
+  auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
+  auto team =
+      team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
+  maybe_init_nvshmem_cumodule(
+      reinterpret_cast<const void*>(combineRowsGetKernel<float, false>));
+
+  int64_t num_out_rows = out.size(0);
+  int64_t top_k = src_ranks.size(1);
+  int64_t dim = out.size(1);
+  int64_t expert_capacity_rows = expert_out.size(0);
+  int64_t expert_row_stride = expert_out.stride(0);
+  int64_t out_row_stride = out.stride(0);
+  int num_blocks = resolve_num_blocks_rowwise(
+      num_out_rows * top_k, nblocks, expert_out_hdl->world_within_direct_access());
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  // Ensure all peers have completed prior stream work before remote gets start.
+  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+  TORCH_CHECK(
+      pre_barrier_status == 0,
+      "nvshmemx_barrier_on_stream (pre) failed with status ",
+      pre_barrier_status);
+
+  dim3 block(ROWWISE_COMBINE_FUSED_THREADS_PER_BLOCK);
+  constexpr int64_t cols_per_block =
+      static_cast<int64_t>(ROWWISE_COMBINE_FUSED_THREADS_PER_BLOCK) *
+      ROWWISE_COMBINE_FUSED_VECS_PER_THREAD;
+  // Fused path is not collective-launched, so we can oversubscribe row blocks
+  // to hide remote-get latency; factor is tunable via env var.
+  int64_t row_blocks = resolve_num_row_blocks_fused(num_out_rows, num_blocks);
+  dim3 grid(
+      static_cast<unsigned int>(row_blocks),
+      static_cast<unsigned int>(at::ceil_div(dim, cols_per_block)));
+
+  const int64_t* src_ranks_ptr = reinterpret_cast<const int64_t*>(src_ranks.data_ptr());
+  const int64_t* src_rows_ptr = reinterpret_cast<const int64_t*>(src_rows.data_ptr());
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf,
+      at::kBFloat16,
+      out.scalar_type(),
+      "combineRowsGetKernel",
+      [&] {
+        const scalar_t* expert_out_typed = expert_out.data_ptr<scalar_t>();
+        scalar_t* out_typed = out.mutable_data_ptr<scalar_t>();
+        if (probs_ptr == nullptr) {
+          combineRowsGetKernel<scalar_t, false>
+              <<<grid, block, 0, stream>>>(
+                  expert_out_typed,
+                  out_typed,
+                  src_ranks_ptr,
+                  src_rows_ptr,
+                  nullptr,
+                  num_out_rows,
+                  top_k,
+                  dim,
+                  expert_row_stride,
+                  out_row_stride,
+                  expert_capacity_rows,
+                  team);
+        } else {
+          combineRowsGetKernel<scalar_t, true>
+              <<<grid, block, 0, stream>>>(
+                  expert_out_typed,
+                  out_typed,
+                  src_ranks_ptr,
+                  src_rows_ptr,
+                  probs_ptr,
+                  num_out_rows,
+                  top_k,
+                  dim,
+                  expert_row_stride,
+                  out_row_stride,
+                  expert_capacity_rows,
+                  team);
         }
       });
 }

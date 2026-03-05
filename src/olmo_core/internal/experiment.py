@@ -130,7 +130,7 @@ class SubCmd(StrEnum):
             print(config)
             print(
                 "\n"
-                f"[b blue]Total parameters:[/]         {config.model.num_params:,d} ({config.model.num_active_params:,d} active)\n"
+                f"[b blue]Total parameters:[/]         {config.model.num_params:,d} ({config.model.num_active_params:,d} active) ({config.model.num_active_params/1000000000:.3f}@@{config.model.num_params/1000000000:.3f} B)\n"
                 f"[b blue]Non-embedding parameters:[/] {config.model.num_non_embedding_params:,d} ({config.model.num_active_non_embedding_params:,d} active)"
             )
 

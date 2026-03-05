@@ -1,6 +1,5 @@
 """
-Fork from 018: change warmup to tokens instead of steps
-Train an OLMoE model. Run this script without any arguments to see usage info.
+Deep 48L model
 """
 import os
 import torch
@@ -92,18 +91,18 @@ SEQUENCE_LENGTH = 8192
 
 MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-SAVE_INTERVAL=100
+SAVE_INTERVAL=1000
 
 NUM_EXPERTS = 64
-TOP_K = 4
-D_MODEL=2560
-D_ATTN=D_MODEL
+TOP_K = 2
+D_MODEL=2048
+D_ATTN=3072
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
 MOE_HIDDEN_SIZE = 2048
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -111,24 +110,24 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) # * 3 // 2
 
-MICRO_BSZ = 4
+MICRO_BSZ = 8
 # DP_DIM=2
 EP_DIM=8
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (8)
+REF_NUM_NODES=2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (4)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
-LR= 1e-3 # target lr for 32M tokens
+LR= 1e-3 # target lr for 8M tokens
 # LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
-NUM_LAYERS=40
+NUM_LAYERS=48
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -152,7 +151,7 @@ USE_ROWWISE_A2A=True
 ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
-TAG=f'40L-4-64'
+TAG=f'dev'
 # TAG=f'test'
 
 # if UNIFORM_ASSIGN:
@@ -209,6 +208,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             ep_no_sync_shared_slots=2 if USE_TBO else 1,
             ep_no_sync_use_rowwise_all_to_all=USE_ROWWISE_A2A,
             ep_no_sync_rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
+            ep_no_sync_capacity_factor=1.375,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,

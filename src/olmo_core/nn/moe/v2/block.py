@@ -24,6 +24,9 @@ except ImportError:
 # the same EP group.
 _EP_SYMM_GROUP0_ALIAS_LOCK = threading.Lock()
 _EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
+_USE_FUSED_ROWWISE_COMBINE_GET = os.getenv(
+    "OLMO_USE_ROWWISE_COMBINE_GET_FUSED", ""
+).strip().lower() in {"1", "true", "yes", "on"}
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
@@ -785,7 +788,12 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             device=symm_grad_out.device,
             dtype=symm_grad_out.dtype,
         )
-        symm_mem_vdev2d_kernels.rowwise_combine_get(
+        combine_get_fn = (
+            symm_mem_vdev2d_kernels.rowwise_combine_get_fused
+            if _USE_FUSED_ROWWISE_COMBINE_GET
+            else symm_mem_vdev2d_kernels.rowwise_combine_get
+        )
+        combine_get_fn(
             symm_grad_out,
             grad_input,
             dst_ranks,
@@ -2714,12 +2722,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             )
             rowwise_nblocks = self.ep_no_sync_rowwise_nblocks
 
-        # lauch shared experts right before dispatch to overlap with the all_to_all
+        # lauch shared experts
         if self.shared_experts is not None:
-            wait_stream_no_compile(
-                this_stream=self.get_dense_stream(),
-                other_stream=torch.cuda.current_stream(),
-            ) # type: ignore
+            # wait_stream_no_compile(
+            #     this_stream=self.get_dense_stream(),
+            #     other_stream=torch.cuda.current_stream(),
+            # ) # type: ignore
             with torch.cuda.stream(self.get_dense_stream()):
                 shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
         else:

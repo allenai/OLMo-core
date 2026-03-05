@@ -1,12 +1,12 @@
 """
-Fork from 018: change warmup to tokens instead of steps
+Fork from 010d: change to 55B tokens
 Train an OLMoE model. Run this script without any arguments to see usage info.
 """
-import os
-import torch
 
 import logging
 import math
+import torch
+import transformer_engine
 from functools import partial
 
 from olmo_core.config import DType
@@ -47,7 +47,7 @@ from olmo_core.nn.transformer import (
     TransformerType,
     MoEFusedV2TransformerConfig,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig, CosWithWarmup
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig, CosWithWarmup, CosWithWarmupAndLinearDecay
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -90,30 +90,32 @@ SEQUENCE_LENGTH = 8192
 
 
 
-MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
-EVAL_INTERVAL = 1000
-SAVE_INTERVAL=100
+MAX_DURATION = int(55e9)
+EVAL_INTERVAL = 2000
+SAVE_INTERVAL=1000
 
-NUM_EXPERTS = 64
+NUM_EXPERTS = 32
 TOP_K = 4
-D_MODEL=2560
+D_MODEL=1024
 D_ATTN=D_MODEL
-HEAD_DIM=128
+# D_MODEL=2560
+# D_ATTN=D_MODEL
+HEAD_DIM=64
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 2048
+MOE_HIDDEN_SIZE = 768
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 768  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 
 # the first dense layer MLP
-DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) # * 3 // 2
+DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 3 // 2
 
 MICRO_BSZ = 4
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=1
 PP_DIM=1
 
 # ref
@@ -125,10 +127,10 @@ GLOBAL_BATCH_SIZE = (
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
-LR= 1e-3 # target lr for 32M tokens
-# LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
-NUM_LAYERS=40
+LR= 2.4e-3 
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024)) # keep 3e-4 for 1M tokens, scale up for larger gbs
+# LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
+NUM_LAYERS=12
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -141,19 +143,15 @@ else:
 
 # SPLIT_POINTS = None
 USE_COMPILE=True
-USE_NO_SYNC_EP=True
 USE_AC=False
-PER_LAYER_RECOMPUTE=True
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
-USE_ROWWISE_A2A=True
-ROWWISE_A2A_NBLOCKS=256
+
 SEED = 2026
 
-TAG=f'40L-4-64'
-# TAG=f'test'
+TAG=f'abl'
 
 # if UNIFORM_ASSIGN:
 #     TAG = 'U-' + TAG
@@ -194,21 +192,15 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
-        recompute_each_block=PER_LAYER_RECOMPUTE,
+        recompute_each_block=False,
         recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
-            ep_no_sync=USE_NO_SYNC_EP,
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
-            ep_no_sync_share_combine_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make combine_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
-            ep_no_sync_share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
-            ep_no_sync_shared_slots=2 if USE_TBO else 1,
-            ep_no_sync_use_rowwise_all_to_all=USE_ROWWISE_A2A,
-            ep_no_sync_rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,
@@ -333,11 +325,11 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             ],
             #TODO: weight decay for norm?
             # fused=True,
-            compile=USE_COMPILE,
+            compile=False,
             dtype=DType.float32,
             sigma_factor=12,
             # foreach=True
-            use_distributed=True,
+            use_distributed=False
         ),
         grad_accum_in_fp32=GRAD_ACC_IN_FP32,
         compile_model=USE_COMPILE,
@@ -377,11 +369,16 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         #     decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
         #     decay_fraction=None,
         # ),
-        scheduler=CosWithWarmup(warmup_steps=2500),
+        scheduler=CosWithWarmupAndLinearDecay(
+             units=SchedulerUnits.tokens,
+            warmup=int((5e9 // GLOBAL_BATCH_TOKENS_IN_M) * GLOBAL_BATCH_TOKENS_IN_M),
+            decay=int((10e9 // GLOBAL_BATCH_TOKENS_IN_M) * GLOBAL_BATCH_TOKENS_IN_M),
+            decay_fraction=None,
+        ),
     )
 
 # WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
-WORK_DIR = "/workspace"
+WORK_DIR = "/weka/oe-training-default/tianhua/ws-megatron"
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
@@ -393,7 +390,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            # load_path='/workspace/checkpoint/OLMoE3-abl-260219-006_3072d3072a_32L2560M2560S_64E4K1S_abl/step3000',
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
@@ -418,35 +414,48 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                entity="ai2-llm",
+                # entity="ai2-llm",
                 # project="tianhua-moe",
+                entity="ai2-llm",
                 project="olmoe-dev-v2",
                 # project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
+        # .with_callback(
+        #     "batchwup",
+        #     BatchSizeSchedulerCallback(
+        #         batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4, GLOBAL_BATCH_SIZE * 8, ],
+        #         schedule=[
+        #             Duration.tokens(0),
+        #             Duration.tokens(167_772_160_000),
+        #             Duration.tokens(503_316_480_000),
+        #             Duration.tokens(838_860_800_000),
+        #         ],
+        #     ),
+        # )
         .with_callback(
             "profiler", 
             NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=906,
-                                   end=909
+                                   start=59156,
+                                   end=59159
             )
         )
         .with_callback(
             "torch_mem_history",
             TorchMemoryHistoryCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=206,
-                                   end=209,
+                                   start=59161,
+                                   end=59164,
                                    output_dir='/workspace/tmp'
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        # )
+        .with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
     )
 
 
@@ -478,7 +487,6 @@ def build_data_components(
         # DataMix.OLMoE_mix_0824_dev,
         tokenizer=common.tokenizer,
         # mix_base_dir=common.root_dir,
-        # mix_base_dir="/workspace/data/ai2-llm/",
         mix_base_dir="s3://ai2-llm",
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
@@ -492,8 +500,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=4,
-        # ignore_fingerprint_mismatch=True,
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)

@@ -140,6 +140,29 @@ def rowwise_combine_get(
 
 
 @torch.compiler.disable
+def rowwise_combine_get_fused(
+    expert_out: torch.Tensor,
+    out: torch.Tensor,
+    src_ranks: torch.Tensor,
+    src_rows: torch.Tensor,
+    group_name: str,
+    *,
+    probs: Optional[torch.Tensor] = None,
+    nblocks: int = 0,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_combine_get_fused(
+        expert_out,
+        out,
+        src_ranks,
+        src_rows,
+        probs,
+        group_name,
+        nblocks,
+    )
+
+
+@torch.compiler.disable
 def rowwise_gather_get(
     expert_out: torch.Tensor,
     out: torch.Tensor,

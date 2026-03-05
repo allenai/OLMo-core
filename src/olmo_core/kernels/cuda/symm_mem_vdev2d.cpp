@@ -37,6 +37,15 @@ void rowwise_combine_get(
     const std::string& group_name,
     int64_t nblocks);
 
+void rowwise_combine_get_fused(
+    torch::Tensor& expert_out,
+    torch::Tensor& out,
+    torch::Tensor& src_ranks,
+    torch::Tensor& src_rows,
+    const std::optional<torch::Tensor>& probs,
+    const std::string& group_name,
+    int64_t nblocks);
+
 void rowwise_gather_get(
     torch::Tensor& expert_out,
     torch::Tensor& out,
@@ -84,6 +93,18 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "rowwise_combine_get",
       &rowwise_combine_get,
       "NVSHMEM row-wise combine: get remote rows and merge to token outputs",
+      py::arg("expert_out"),
+      py::arg("out"),
+      py::arg("src_ranks"),
+      py::arg("src_rows"),
+      py::arg("probs") = std::nullopt,
+      py::arg("group_name"),
+      py::arg("nblocks") = 0);
+
+  m.def(
+      "rowwise_combine_get_fused",
+      &rowwise_combine_get_fused,
+      "NVSHMEM row-wise combine fused: get remote rows and reduce in one kernel",
       py::arg("expert_out"),
       py::arg("out"),
       py::arg("src_ranks"),

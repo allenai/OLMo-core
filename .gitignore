@@ -59,3 +59,6 @@ site/
 /scratch/
 core
 /dataset-cache/
+
+# compiled binaries
+*.so
