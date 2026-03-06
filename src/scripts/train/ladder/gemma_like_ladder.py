@@ -19,6 +19,12 @@ from olmo_core.data import (
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
+from olmo_core.data.composable import ComposableDataLoaderConfig
+from olmo_core.data.composable import (
+    InstanceFilterConfig as ComposableInstanceFilterConfig,
+)
+from olmo_core.data.composable import InstanceSourceConfig, set_composable_seed
+from olmo_core.data.composable.mixture_recipe import build_numpy_mixture_from_yaml_spec
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.eval.task_groups import TASK_GROUPS
 from olmo_core.float8 import Float8Config
@@ -354,6 +360,22 @@ class GemmaLikeTransformerConfig(TransformerConfig):
         )
 
     @classmethod
+    def v2_50M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 50M model config.
+
+        47,192,576 non-embedding params
+        """
+        return cls.v2(
+            d_model=256,
+            hidden_size=256 * 8,
+            n_layers=5,
+            n_heads=8,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
     def v2_260M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 260M model config.
@@ -501,6 +523,7 @@ class _ModelSizeSettings:
 
 
 class GemmaLikeOlmoV2(StrEnum):
+    GL_50M = "50M"
     GL_260M = "260M"
     GL_709M = "709M"
     GL_1p3B = "1.3B"
@@ -516,6 +539,7 @@ class GemmaLikeOlmoV2(StrEnum):
         """Get the model config and all settings for this model size."""
         # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
         settings_map = {
+            GemmaLikeOlmoV2.GL_50M: _ModelSizeSettings("50M", 1, 16, 1.0),
             GemmaLikeOlmoV2.GL_260M: _ModelSizeSettings("260M", 1, 16, 1.0),
             GemmaLikeOlmoV2.GL_709M: _ModelSizeSettings("709M", 2, 16, 1.0),
             GemmaLikeOlmoV2.GL_1p3B: _ModelSizeSettings("1p3B", 3, 16, 1.0),
@@ -559,6 +583,20 @@ def handle_custom_args(
         type=DataMix,
         choices=list(DataMix),
         default=str(DataMix.OLMo_mix_0925),
+    )
+    parser.add_argument(
+        "--mix-yaml",
+        type=str,
+        default=None,
+        help="Path to a YAML mixture spec file. When set, overrides --data-mix and uses the "
+        "composable data pipeline instead of NumpyFSLDataset.",
+    )
+    parser.add_argument(
+        "--mix-strategy",
+        type=str,
+        default="contiguous_chunks",
+        help="Sampling strategy for the YAML mixture. One of 'contiguous_chunks' or 'documents'. "
+        "Only used when --mix-yaml is set.",
     )
 
     # Extract argument names from parser (both value-based and boolean flags)
@@ -685,6 +723,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         --batch-multiplier=0.5                             Multiply computed batch size
         --chinchilla-multiple=1                            Multiply Chinchilla training tokens
         --no-beaker-launch                                 Skip setting beaker launch config
+        --mix-yaml=gs://bucket/mix.yaml                    Use a YAML mixture spec (composable pipeline)
+        --mix-strategy=documents                           Sampling strategy for YAML mix (default: contiguous_chunks)
 
     """
     # Parse model size from run name
@@ -700,6 +740,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     overrides, custom_args = handle_custom_args(overrides)
     mix_base_dir = custom_args.mix_base_dir
     data_mix = custom_args.data_mix
+    mix_yaml = custom_args.mix_yaml
+    mix_strategy = custom_args.mix_strategy
     lr_multiplier = custom_args.lr_multiplier
     batch_multiplier = custom_args.batch_multiplier
     chinchilla_multiple = custom_args.chinchilla_multiple
@@ -756,19 +798,40 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         )
 
     # Dataset config
-    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        mix=data_mix,
-        tokenizer=tokenizer_config,
-        mix_base_dir=mix_base_dir,
-        sequence_length=sequence_length,
-        max_target_sequence_length=max(8192, sequence_length),
-        work_dir=work_dir,
-        instance_filter_config=InstanceFilterConfig(),
-    )
-
-    data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=global_batch_size, seed=34521, num_workers=8
-    )
+    dataset_config: NumpyFSLDatasetConfig | List[InstanceSourceConfig]
+    data_loader_config: NumpyDataLoaderConfig | ComposableDataLoaderConfig
+    if mix_yaml is not None:
+        print(f"Using YAML mixture spec: {mix_yaml} (strategy: {mix_strategy})")
+        set_composable_seed(34521)
+        dataset_config = [
+            build_numpy_mixture_from_yaml_spec(
+                mix_yaml,
+                tokenizer=tokenizer_config,
+                total_tokens=training_tokens,
+                sequence_length=sequence_length,
+                sampling_strategy=mix_strategy,
+            )
+        ]
+        data_loader_config = ComposableDataLoaderConfig(
+            tokenizer=tokenizer_config,
+            global_batch_size=global_batch_size,
+            num_workers=8,
+            work_dir=work_dir,
+            instance_filter_config=ComposableInstanceFilterConfig(),
+        )
+    else:
+        dataset_config = NumpyFSLDatasetConfig.from_data_mix(
+            mix=data_mix,
+            tokenizer=tokenizer_config,
+            mix_base_dir=mix_base_dir,
+            sequence_length=sequence_length,
+            max_target_sequence_length=max(8192, sequence_length),
+            work_dir=work_dir,
+            instance_filter_config=InstanceFilterConfig(),
+        )
+        data_loader_config = NumpyDataLoaderConfig(
+            global_batch_size=global_batch_size, seed=34521, num_workers=8
+        )
 
     # Train module config
     train_module_config = TransformerTrainModuleConfig(
@@ -924,5 +987,14 @@ if __name__ == "__main__":
                 --train_module.optim.lr=0.001 \
                 --data_loader.global_batch_size=1000 \
                 --train_module.scheduler.warmup=1000000
+
+        Use a YAML mixture spec instead of a predefined DataMix:
+            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v2-260m ai2/jupiter \
+                --mix-yaml=gs://ai2-llm/mixture_specs/my_mix.yaml
+
+        Use a YAML mixture spec with the 'documents' sampling strategy:
+            python src/scripts/train/ladder/gemma_like_ladder.py launch gl-v2-260m ai2/jupiter \
+                --mix-yaml=gs://ai2-llm/mixture_specs/my_mix.yaml \
+                --mix-strategy=documents
     """
     main(config_builder=build_experiment_config)
