@@ -57,10 +57,12 @@ from olmo_core.train.callbacks import (
     CometCallback,
     DownstreamEvaluatorCallbackConfig,
     LMEvaluatorCallbackConfig,
+    ModelMergeCallback,
     SpeedMonitorCallback,
     StabilityMonitorCallback,
     WandBCallback,
 )
+from olmo_core.train.callbacks.model_merger import compute_merge_window_starts
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
@@ -69,6 +71,7 @@ from olmo_core.train.train_module import (
 )
 
 DEFAULT_SEQUENCE_LENGTH = 8192
+MERGE_LAST_N_STEPS = 500
 
 
 @dataclass
@@ -742,6 +745,39 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             f"Applied LR multiplier: {lr_multiplier}, LR: {learning_rate} -> {adjusted_learning_rate}"
         )
 
+    # Build scheduler early so we can derive decay_steps from it
+    scheduler = CosWithWarmupAndLinearDecay(
+        units=SchedulerUnits.tokens,
+        warmup=2000 * global_batch_size,
+        decay=2000 * global_batch_size,
+        decay_fraction=None,
+    )
+
+    lm_eval_interval = 2_500
+
+    # Compute model merging configuration
+    max_steps = training_tokens // global_batch_size
+    if scheduler.decay is not None:
+        decay_steps = scheduler.decay // global_batch_size
+    else:
+        assert scheduler.decay_fraction is not None
+        decay_steps = round(training_tokens * scheduler.decay_fraction) // global_batch_size
+    pre_decay_step = max_steps - decay_steps
+    merge_steps = list(range(lm_eval_interval, pre_decay_step, lm_eval_interval))
+    if merge_steps and (pre_decay_step - merge_steps[-1]) < MERGE_LAST_N_STEPS:
+        # Last eval merge overlaps with pre-decay window — replace it
+        merge_steps[-1] = pre_decay_step
+    else:
+        merge_steps.append(pre_decay_step)
+    window_starts = compute_merge_window_starts(merge_steps, MERGE_LAST_N_STEPS)
+    print(f"Model merging configuration:")
+    print(f"  max_steps: {max_steps}")
+    print(f"  decay_steps: {decay_steps}")
+    print(f"  pre_decay_step (merge step): {pre_decay_step}")
+    print(f"  merge_steps: {merge_steps}")
+    print(f"  merge_last_n_steps: {MERGE_LAST_N_STEPS}")
+    print(f"  window_starts (checkpoints required): {window_starts}")
+
     beaker_launch_config: Optional[BeakerLaunchConfig] = None
     if not no_beaker_launch:
         beaker_launch_config = build_launch_config(
@@ -782,12 +818,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        scheduler=CosWithWarmupAndLinearDecay(
-            units=SchedulerUnits.tokens,
-            warmup=2000 * global_batch_size,
-            decay=2000 * global_batch_size,
-            decay_fraction=None,
-        ),
+        scheduler=scheduler,
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
@@ -819,8 +850,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
+                fixed_steps=window_starts,
                 ephemeral_save_interval=None,
                 save_async=True,
+            ),
+        )
+        .with_callback(
+            "model_merger",
+            ModelMergeCallback(
+                merge_step=merge_steps,
+                merge_last_n_steps=MERGE_LAST_N_STEPS,
+                enabled=True,
             ),
         )
         .with_callback("speed_monitor", SpeedMonitorCallback())
@@ -859,7 +899,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 ),
                 eval_on_finish=True,
                 log_interval=10,
-                eval_interval=2_500,
+                eval_interval=lm_eval_interval,
             ),
         )
         .with_callback(
