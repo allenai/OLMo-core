@@ -299,6 +299,7 @@ or by calling the ``.sample()`` / ``.resize()`` methods::
 
 Defining mixtures in YAML
 -------------------------
+
 You can also define mixtures in YAML using the same composable API, and the :func:`build_numpy_mixture_from_yaml_spec` helper function to build them.
 This is especially useful for large mixtures, and it also allows you to easily swap out different mixing strategies,
 e.g. using :class:`NumpyContiguousChunksSamplingStrategy` to sample contiguous chunks of tokens from numpy
