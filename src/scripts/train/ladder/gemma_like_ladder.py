@@ -680,6 +680,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         --train_module.scheduler.warmup=1000000           Override warmup (in tokens)
         --trainer.callbacks.comet.enabled=false           Disable Comet logging
         --trainer.callbacks.wandb.enabled=true            Enable WandB logging
+        --trainer.callbacks.model_merger.enabled=true     Enable model merging
         --launch.num_nodes=2                              Override node count
 
 
@@ -860,7 +861,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             ModelMergeCallback(
                 merge_step=merge_steps,
                 merge_last_n_steps=MERGE_LAST_N_STEPS,
-                enabled=True,
+                enabled=False,
             ),
         )
         .with_callback("speed_monitor", SpeedMonitorCallback())

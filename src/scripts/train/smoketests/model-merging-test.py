@@ -63,7 +63,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,
         root_dir=root_dir,
-        workspace="ai2/OLMo_3",
+        workspace="ai2/oe-t-ladder",
         num_nodes=1,
         nccl_debug=False,
     )
@@ -153,7 +153,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 name=cli_context.run_name,
                 group=cli_context.run_name,
                 entity="ai2-llm",
-                project="olmo3",
+                project="oe-t-ladder",
                 enabled=False,
             ),
         )
