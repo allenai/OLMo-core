@@ -238,7 +238,7 @@ class SFTConfig(Config):
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
 
-        tokenizer_config = TokenizerConfig.from_hf("allenai/olmo-3-tokenizer-instruct-dev")
+        tokenizer_config = TokenizerConfig.dolma2()
         dataset_config = build_sft_dataset(
             root_dir=root_dir,
             tokenizer_config=tokenizer_config,
@@ -345,10 +345,9 @@ class SFTConfig(Config):
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
                 save_overwrite=True,
-                metrics_collect_interval=5,
-                cancel_check_interval=5,
-                # Smoke test: just 20 steps
-                max_duration=Duration.steps(20),
+                metrics_collect_interval=10,
+                cancel_check_interval=10,
+                max_duration=Duration.steps(1000),
             )
             .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
             .with_callback("config_saver", ConfigSaverCallback())
@@ -356,7 +355,8 @@ class SFTConfig(Config):
             .with_callback(
                 "checkpointer",
                 CheckpointerCallback(
-                    save_interval=20,  # save only at the end of the smoke test
+                    save_interval=1000,
+                    ephemeral_save_interval=500,
                     save_async=True,
                 ),
             )
@@ -469,7 +469,7 @@ Examples:
     parser.add_argument(
         "--global_batch_size",
         type=int,
-        default=8 * DEFAULT_SEQUENCE_LENGTH,  # smaller than production for quick smoke test
+        default=32 * DEFAULT_SEQUENCE_LENGTH,
         help="Global batch size in tokens.",
     )
     parser.add_argument("--budget", help="Beaker budget.")
