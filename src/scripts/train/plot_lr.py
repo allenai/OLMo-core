@@ -31,13 +31,13 @@ class Stage:
 # Config (edit in place)
 # -----------------------------------------------------------------------------
 SEQUENCE_LENGTH = 4096
-GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 4
+GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 16
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * SEQUENCE_LENGTH
 
 MAX_DURATION_TOKENS = int(7000e9)
 
-BASE_LR = 3e-3
-BASE_LR = BASE_LR * sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024))
+BASE_LR = 1.6e-3
+BASE_LR = BASE_LR * sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
 NUM_EXPERTS = 64 + 16
 TOP_K = 3
 EXPERT_LR = BASE_LR * sqrt(TOP_K / NUM_EXPERTS)
@@ -48,13 +48,13 @@ def as_aligned_tokens(num_tokens: float) -> int:
 
 STAGES = [
     Stage(
-        duration_tokens=as_aligned_tokens(5e9),
+        duration_tokens=as_aligned_tokens(15e9),
         shape="linear",
         start_lr_fraction=0.0,
         end_lr_fraction=1.0,
     ),
     Stage(
-        duration_tokens=as_aligned_tokens(45e9),
+        duration_tokens=as_aligned_tokens(35e9),
         shape="cosine",
         end_lr_fraction=0.4,
     ),

@@ -124,7 +124,7 @@ PP_DIM=1
 
 # ref
 REF_NUM_NODES=2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (8)
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -132,8 +132,8 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 3e-3 
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024)) # lr is for X Million token
+LR= 1.6e-3 
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024)) # lr is for X Million token
 NUM_LAYERS=32
 
 if PP_DIM > 1:
@@ -160,7 +160,7 @@ USE_FP8=False
 ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
-TAG=f'cheap1'
+TAG=f'cheap3'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -216,9 +216,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 bias=False,
                 rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                 qk_norm=layer_norm ,
-                # use_flash=True,
-                # backend=AttentionBackendName.flash_3,
-                # backend=AttentionBackendName.flash_2,
                 backend=AttentionBackendName.te,
                 use_head_qk_norm=True,
                 dtype=dtype,
@@ -298,9 +295,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                     bias=False,
                     rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                     qk_norm=layer_norm ,
-                    # use_flash=True,
-                    # backend=AttentionBackendName.flash_3,
-                    # backend=AttentionBackendName.flash_2,
                     backend=AttentionBackendName.te,
                     use_head_qk_norm=True,
                     dtype=dtype,
@@ -318,8 +312,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params
 
-SCHED_WARMUP_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_FAST_DECAY_TOKENS = int((45e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_WARMUP_TOKENS = int((15e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_LONG_DECAY_TOKENS = int((6000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 0.4
 SCHED_FINAL_FRACTION = 0.1
@@ -336,14 +330,10 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
                 OptimGroupOverride(params=["*w_up_gate", "*w_down"], opts=dict(lr=EXPERT_LR)),
-                # OptimGroupOverride(params=["embeddings.weight", ], opts=dict(weight_decay=0.0)) #TODO: fix
             ],
-            #TODO: weight decay for norm?
-            # fused=True,
             compile=USE_COMPILE,
             dtype=DType.float32,
             sigma_factor=12,
-            # foreach=True
             use_distributed=True
         ),
         compile_model=USE_COMPILE,
