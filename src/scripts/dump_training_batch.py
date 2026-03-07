@@ -11,7 +11,7 @@ import json
 import logging
 import pickle
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Type, Union
 
 import torch
 from cached_path import cached_path
@@ -21,9 +21,8 @@ from olmo_core.data import (
     NumpyFSLDataLoader,
     NumpyFSLDatasetBase,
     NumpyFSLDatasetConfig,
+    NumpyPackedFSLDatasetConfig,
 )
-from olmo_core.data.mixes import DataMix
-from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.io import normalize_path
 
 log = logging.getLogger(__name__)
@@ -49,21 +48,16 @@ def load_trainer_state(checkpoint_dir: str) -> Dict[str, Any]:
     return torch.load(cached_path(trainer_state_path), weights_only=False)
 
 
-def verify_paths_match_mix(
-    data_paths: List[str], mix_name: str, tokenizer: TokenizerConfig, mix_base_dir: str
-) -> bool:
-    """Verify that data_paths.txt matches the paths from the mix in config.json."""
-    mix = DataMix(mix_name)
-    assert tokenizer.identifier is not None
-    mix_paths, _ = mix.build(mix_base_dir, tokenizer.identifier)
-
-    if len(data_paths) != len(mix_paths):
+def verify_paths_match(data_paths: List[str], dataset_paths: List[str]) -> bool:
+    """Verify that data_paths.txt matches the paths from the reconstructed dataset."""
+    if len(data_paths) != len(dataset_paths):
         log.error(
-            f"Path count mismatch: data_paths.txt has {len(data_paths)} paths, mix has {len(mix_paths)}"
+            f"Path count mismatch: data_paths.txt has {len(data_paths)} paths, "
+            f"dataset has {len(dataset_paths)}"
         )
         return False
 
-    for i, (actual, expected) in enumerate(zip(data_paths, mix_paths)):
+    for i, (actual, expected) in enumerate(zip(data_paths, dataset_paths)):
         if normalize_path(actual) != normalize_path(expected):
             log.error(f"Path mismatch at index {i}:\n  Actual:   {actual}\n  Expected: {expected}")
             return False
@@ -122,9 +116,13 @@ def main():
     checkpoint_dir = normalize_path(args.checkpoint)
 
     # Load checkpoint files
-    log.info(f"Loading checkpoint from {checkpoint_dir}")
+    log.info(f"Loading checkpoint config from {checkpoint_dir}")
     config = load_checkpoint_config(checkpoint_dir)
+
+    log.info("Loading data paths from checkpoint")
     data_paths = load_data_paths(checkpoint_dir)
+
+    log.info("Loading trainer state from checkpoint")
     trainer_state = load_trainer_state(checkpoint_dir)
 
     # Get data loader state
@@ -145,22 +143,8 @@ def main():
         log.error(f"Only FSL datasets are supported, got: {data_loader_state['dataset_type']}")
         sys.exit(1)
 
-    # Verify that data_paths.txt matches the mix
-    tokenizer_config_dict = {
-        k: v for k, v in dataset_config_dict["tokenizer"].items() if k != "_CLASS_"
-    }
-    tokenizer_config = TokenizerConfig(**tokenizer_config_dict)
-
-    if not verify_paths_match_mix(
-        data_paths,
-        dataset_config_dict["mix"],
-        tokenizer_config,
-        dataset_config_dict.get("mix_base_dir", "gs://ai2-llm"),
-    ):
-        log.error("Mix verification failed! data_paths.txt does not match the mix from config.json")
-        sys.exit(1)
-
     # Reconstruct dataset
+    config_class: Type[Union[NumpyFSLDatasetConfig, NumpyPackedFSLDatasetConfig]]
     dataset_class_name = dataset_config_dict["_CLASS_"]
     if dataset_class_name == "olmo_core.data.numpy_dataset.NumpyDatasetConfig":
         log.warning(
@@ -169,9 +153,13 @@ def main():
         config_class = NumpyFSLDatasetConfig
     elif dataset_class_name == "olmo_core.data.numpy_dataset.NumpyFSLDatasetConfig":
         config_class = NumpyFSLDatasetConfig
+    elif dataset_class_name == "olmo_core.data.numpy_dataset.NumpyPackedFSLDatasetConfig":
+        config_class = NumpyPackedFSLDatasetConfig
     else:
         log.error(f"Unsupported dataset config class: {dataset_class_name}")
         sys.exit(1)
+
+    log.info(f"Using dataset config class: {config_class.__name__}")
 
     # Start with the full dataset config and only modify what we need
     config_fields = dict(dataset_config_dict)
@@ -188,14 +176,45 @@ def main():
     # Remove fields that shouldn't be passed to from_dict
     config_fields.pop("name", None)
     config_fields.pop("_CLASS_", None)  # Remove _CLASS_ field, we already determined the class
-    # Keep mix and mix_base_dir - the dataset will build paths from the mix
 
+    log.info("Building dataset config from checkpoint fields")
     dataset_config = config_class.from_dict(config_fields)
+
+    log.info("Building dataset (resolving paths from mix)")
     dataset = dataset_config.build()
     assert isinstance(dataset, NumpyFSLDatasetBase), f"Expected FSL dataset, got {type(dataset)}"
+    log.info(f"Dataset has {len(dataset.paths)} source paths")
 
-    # Prepare the dataset
+    # Verify that data_paths.txt matches the reconstructed dataset paths.
+    # This comparison happens after build(), so source_permutation_seed has already been applied
+    # to dataset.paths, matching the order saved in data_paths.txt during training.
+    log.info("Verifying data paths match")
+    if not verify_paths_match(data_paths, [str(p) for p in dataset.paths]):
+        log.error(
+            "Path verification failed! data_paths.txt does not match the reconstructed dataset"
+        )
+        sys.exit(1)
+
+    # Prepare the dataset.
+    # NOTE: For NumpyPackedFSLDataset, this runs the full packing algorithm, which requires
+    # downloading all source files and is very expensive. If you have access to the cached
+    # packing results from the training cluster, point --work-dir to that cache directory.
+    log.info(
+        f"Preparing dataset (work_dir={args.work_dir}). "
+        "For packed datasets this runs the packing algorithm, which can be very slow..."
+    )
     dataset.prepare()
+    log.info(f"Dataset prepared: {len(dataset)} instances")
+
+    # Pre-compute source_sizes from the already-cached file_sizes to avoid a second round of
+    # ~960 concurrent HEAD requests to R2 that overwhelms the connection pool. The file_sizes
+    # property was already populated during prepare(), and source_sizes is just file_sizes
+    # divided by item_size, but it's a separate property that would re-query every path.
+    from olmo_core.data.numpy_dataset import NumpyPackedFSLDataset
+
+    if isinstance(dataset, NumpyPackedFSLDataset):
+        item_size = dataset.dtype(0).itemsize
+        dataset._source_sizes = [s // item_size for s in dataset.file_sizes]
 
     # Verify fingerprint
     if dataset.fingerprint != data_loader_state["dataset_fingerprint"]:
@@ -211,6 +230,7 @@ def main():
 
     collator = DataCollator(pad_token_id=dataset.pad_token_id)
 
+    log.info("Building data loader")
     data_loader = NumpyFSLDataLoader(
         dataset,
         collator=collator,
@@ -224,13 +244,28 @@ def main():
     )
 
     # Reshuffle to regenerate the same global indices as during training
+    log.info(f"Reshuffling data loader (epoch={data_loader_state['epoch']})")
     data_loader.reshuffle(epoch=data_loader_state["epoch"], in_memory=True)
 
+    log.info(f"Loading batch for step {args.step}")
     batch = data_loader[args.step]
+
+    # Trace each instance index back to its source file(s).
+    if isinstance(dataset, NumpyPackedFSLDataset):
+        source_files: List[Optional[List[str]]] = []
+        for idx in batch["index"].tolist():
+            for i, (start, end) in enumerate(dataset.source_instance_offsets):
+                if start <= idx < end:
+                    source_files.append([str(p) for p in dataset._source_path_groups[i]])
+                    break
+            else:
+                source_files.append(None)
+        batch["source_files"] = source_files
 
     if args.output is not None:
         with open(args.output, "wb") as f:
             pickle.dump(batch, f)
+        log.info(f"Batch saved to {args.output}")
     else:
         for instance in batch["input_ids"]:
             print(", ".join(str(token_id.item()) for token_id in instance))
