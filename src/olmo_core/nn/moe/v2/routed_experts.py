@@ -50,7 +50,6 @@ from olmo_core.kernels.mxfp8_utils import (
     dequantize_rows_from_mxfp8,
     swiglu_quantize_rows_from_mxfp8,
     swiglu_quantize_rows_to_mxfp8,
-    quantize_rows_to_mxfp8,
 )
 
 def _debug_is_inf_or_nan(x):
@@ -360,11 +359,15 @@ class RoutedExperts(nn.Module):
         self._rowwise_fp8_checked = False
         self._rowwise_fp8_up_gate_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._rowwise_fp8_down_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._rowwise_fp8_up_gate_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._rowwise_fp8_down_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._rowwise_fp8_weight_versions: Optional[tuple[int, int]] = None
 
     def invalidate_rowwise_fp8_cache(self) -> None:
         self._rowwise_fp8_up_gate_prequant = None
         self._rowwise_fp8_down_prequant = None
+        self._rowwise_fp8_up_gate_prequant_t = None
+        self._rowwise_fp8_down_prequant_t = None
         self._rowwise_fp8_weight_versions = None
 
     @torch.no_grad()
@@ -378,7 +381,11 @@ class RoutedExperts(nn.Module):
             return
         up_gate_rhs = self.w_up_gate.transpose(1, 2)
         self._rowwise_fp8_up_gate_prequant = prequantize_scaled_grouped_mm_rhs(up_gate_rhs)
+        self._rowwise_fp8_up_gate_prequant_t = prequantize_scaled_grouped_mm_rhs(self.w_up_gate)
         self._rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(self.w_down)
+        self._rowwise_fp8_down_prequant_t = prequantize_scaled_grouped_mm_rhs(
+            self.w_down.transpose(1, 2)
+        )
         self._rowwise_fp8_weight_versions = (int(self.w_up_gate._version), int(self.w_down._version))
 
     def _maybe_refresh_rowwise_fp8_cache(self) -> None:
@@ -413,10 +420,6 @@ class RoutedExperts(nn.Module):
         x: torch.Tensor,
         batch_size_per_expert_tensor: torch.Tensor,
         *,
-        down_proj_out: Optional[torch.Tensor],
-        down_proj_out_q: Optional[torch.Tensor] = None,
-        down_proj_out_scales: Optional[torch.Tensor] = None,
-        up_proj_input_grad_out: Optional[torch.Tensor] = None,
         prequantized_input_q: Optional[torch.Tensor] = None,
         prequantized_input_scales: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -435,14 +438,18 @@ class RoutedExperts(nn.Module):
                 scales_are_blocked=False,
             )
 
-        up_gate = scaled_grouped_mm_q(
-            x,
-            self.w_up_gate.transpose(1, 2),
+        up_kwargs = dict(
             offs=offs,
-            input_grad_out=up_proj_input_grad_out,
             use_fast_accum=cfg.use_fast_accum,
             prequantized_lhs=prequantized_lhs,
             prequantized_rhs=self._rowwise_fp8_up_gate_prequant,
+        )
+        if self._rowwise_fp8_up_gate_prequant_t is not None:
+            up_kwargs["prequantized_rhs_for_dgrad"] = self._rowwise_fp8_up_gate_prequant_t
+        up_gate = scaled_grouped_mm_q(
+            x,
+            self.w_up_gate.transpose(1, 2),
+            **up_kwargs,
         )
         up_gate = cast(torch.Tensor, up_gate)
         h, h_q, h_scales = _SwiGLUQuantizeRowsMXFP8Autograd.apply(
@@ -456,32 +463,21 @@ class RoutedExperts(nn.Module):
             scales_are_blocked=False,
         )
 
-        if (down_proj_out_q is None) != (down_proj_out_scales is None):
-            raise RuntimeError(
-                "down_proj_out_q and down_proj_out_scales must both be set or both be None"
-            )
-        down = scaled_grouped_mm_q(
-            h,
-            self.w_down,
+        down_kwargs = dict(
             offs=offs,
             use_fast_accum=cfg.use_fast_accum,
             prequantized_lhs=h_prequantized_lhs,
             prequantized_rhs=self._rowwise_fp8_down_prequant,
         )
+        if self._rowwise_fp8_down_prequant_t is not None:
+            down_kwargs["prequantized_rhs_for_dgrad"] = self._rowwise_fp8_down_prequant_t
+        down = scaled_grouped_mm_q(
+            h,
+            self.w_down,
+            **down_kwargs,
+        )
 
-        down_tensor = cast(torch.Tensor, down)
-        if down_proj_out is not None:
-            down_proj_out.copy_(down_tensor)
-            down_tensor = down_proj_out
-        if down_proj_out_q is not None and down_proj_out_scales is not None:
-            down_q, down_scales = quantize_rows_to_mxfp8(
-                down_tensor,
-                block_size=int(cfg.block_size),
-            )
-            down_proj_out_q.copy_(down_q)
-            down_proj_out_scales.copy_(down_scales)
-
-        return down_tensor
+        return cast(torch.Tensor, down)
 
 
     # @torch.compiler.disable(recursive=False)
@@ -492,8 +488,6 @@ class RoutedExperts(nn.Module):
         batch_size_per_expert: torch.Tensor,
         *,
         down_proj_out: Optional[torch.Tensor] = None,
-        rowwise_fp8_down_proj_out_q: Optional[torch.Tensor] = None,
-        rowwise_fp8_down_proj_out_scales: Optional[torch.Tensor] = None,
         up_proj_input_grad_out: Optional[torch.Tensor] = None,
         use_rowwise_fp8: bool = False,
         rowwise_fp8_input_q: Optional[torch.Tensor] = None,
@@ -525,10 +519,6 @@ class RoutedExperts(nn.Module):
             return self._forward_rowwise_fp8(
                 x,
                 batch_size_per_expert_tensor,
-                down_proj_out=down_proj_out,
-                down_proj_out_q=rowwise_fp8_down_proj_out_q,
-                down_proj_out_scales=rowwise_fp8_down_proj_out_scales,
-                up_proj_input_grad_out=up_proj_input_grad_out,
                 prequantized_input_q=rowwise_fp8_input_q,
                 prequantized_input_scales=rowwise_fp8_input_scales,
             )

@@ -1,5 +1,5 @@
 """
-Baseline for speed test
+Match Megatron-LM
 """
 
 import logging
@@ -93,17 +93,17 @@ MAX_DURATION = int(55e9)
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL=10000
 
-NUM_EXPERTS = 16
-TOP_K = 4
+NUM_EXPERTS = 8
+TOP_K = 2
 D_MODEL=2560
 D_ATTN=D_MODEL
 
 HEAD_DIM=64
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD=8
-MOE_HIDDEN_SIZE = 2560
-NUM_SHARED_EXPERTS = 0  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+NUM_KV_HEAD=NUM_HEAD # no GQA
+MOE_HIDDEN_SIZE = 5120
+NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
+SHARED_MLP_HIDDEN_SIZE = 5120  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -113,23 +113,23 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 MICRO_BSZ = 4
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=1
 PP_DIM=1
 
 # ref
 REF_NUM_NODES=1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (1)
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
-GLOBAL_BATCH_TOKENS = GLOBAL_BATCH_SIZE * SEQUENCE_LENGTH
-GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_TOKENS // 1024 // 1024
+
+GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
 LR= 1e-3 
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024)) # keep 3e-4 for 1M tokens, scale up for larger gbs
 # LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
-NUM_LAYERS=6
+NUM_LAYERS=8
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -149,13 +149,13 @@ USE_TBO=False
 GRAD_ACC_IN_FP32=False
 GRAD_REDUCE_IN_FP32=False
 UNIFORM_ASSIGN=False
-RANDOM_ASSIGN=True
+RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-USE_FP8=True
+USE_FP8=False
 ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
-TAG=f'fp8'
+TAG=f'speed'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -235,7 +235,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.1,
-                lb_loss_weight=0.005,
+                lb_loss_weight=0.02,
                 # lb_loss_weight=0.0065,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
@@ -372,8 +372,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         # ),
         scheduler=CosWithWarmupAndLinearDecay(
              units=SchedulerUnits.tokens,
-            warmup=int((5e9 // GLOBAL_BATCH_TOKENS) * GLOBAL_BATCH_TOKENS),
-            decay=int((10e9 // GLOBAL_BATCH_TOKENS) * GLOBAL_BATCH_TOKENS),
+            warmup=int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE),
+            decay=int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE),
             decay_fraction=None,
         ),
     )
@@ -427,8 +427,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=21,
-                                   end=24
+                                   start=221,
+                                   end=224
             )
         )
         .with_callback(

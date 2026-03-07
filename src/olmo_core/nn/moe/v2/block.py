@@ -1037,28 +1037,23 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_out: torch.Tensor):  # type: ignore[override]
         dst_ranks, dst_rows = ctx.saved_tensors
-        symm_grad_out_hp = ctx.symm_out_hp
+        grad_out_hp = grad_out
+        if grad_out_hp.dtype != ctx.symm_out_hp.dtype:
+            grad_out_hp = grad_out_hp.to(dtype=ctx.symm_out_hp.dtype)
+        if not grad_out_hp.is_contiguous():
+            grad_out_hp = grad_out_hp.contiguous()
 
-        grad_out_aliases = (
-            grad_out.untyped_storage().data_ptr() == symm_grad_out_hp.untyped_storage().data_ptr()
-            and grad_out.storage_offset() == symm_grad_out_hp.storage_offset()
-            and tuple(grad_out.shape) == tuple(symm_grad_out_hp.shape)
-            and tuple(grad_out.stride()) == tuple(symm_grad_out_hp.stride())
-        )
-        if not grad_out_aliases:
-            symm_grad_out_hp.copy_(grad_out)
-
-        grad_q, grad_scales = quantize_rows_to_mxfp8(
-            symm_grad_out_hp,
+        quantize_rows_to_mxfp8(
+            grad_out_hp,
             block_size=ctx.block_size,
+            out=ctx.symm_out_q,
+            scales_out=ctx.symm_out_scales,
         )
-        ctx.symm_out_q.copy_(grad_q)
-        ctx.symm_out_scales.copy_(grad_scales)
 
         grad_input = torch.empty(
-            (dst_ranks.shape[0], symm_grad_out_hp.shape[1]),
-            device=symm_grad_out_hp.device,
-            dtype=symm_grad_out_hp.dtype,
+            (dst_ranks.shape[0], grad_out_hp.shape[1]),
+            device=grad_out_hp.device,
+            dtype=ctx.symm_out_hp.dtype,
         )
         symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
             ctx.symm_out_q,
@@ -1146,6 +1141,14 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
         probs_f32 = probs if probs.dtype == torch.float32 else probs.to(dtype=torch.float32)
         if not probs_f32.is_contiguous():
             probs_f32 = probs_f32.contiguous()
+
+        expert_out_contig = expert_out if expert_out.is_contiguous() else expert_out.contiguous()
+        quantize_rows_to_mxfp8(
+            expert_out_contig,
+            block_size=int(block_size),
+            out=symm_expert_out_q,
+            scales_out=symm_expert_out_scales,
+        )
 
         combine_out = torch.empty(
             (src_ranks_i64.shape[0], symm_expert_out_hp.shape[1]),
@@ -1456,6 +1459,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._rowwise_fp8_checked = False
         self._shared_rowwise_fp8_up_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_down_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._shared_rowwise_fp8_up_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._shared_rowwise_fp8_down_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_weight_versions: Optional[Tuple[int, int]] = None
 
         ######## START: Attention ########
@@ -1877,6 +1882,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             self.routed_experts.invalidate_rowwise_fp8_cache()
         self._shared_rowwise_fp8_up_prequant = None
         self._shared_rowwise_fp8_down_prequant = None
+        self._shared_rowwise_fp8_up_prequant_t = None
+        self._shared_rowwise_fp8_down_prequant_t = None
         self._shared_rowwise_fp8_weight_versions = None
 
     @torch.no_grad()
@@ -1890,17 +1897,25 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if self.shared_experts is None:
             self._shared_rowwise_fp8_up_prequant = None
             self._shared_rowwise_fp8_down_prequant = None
+            self._shared_rowwise_fp8_up_prequant_t = None
+            self._shared_rowwise_fp8_down_prequant_t = None
             self._shared_rowwise_fp8_weight_versions = None
             return
         if self.shared_experts.w_up_gate.device.type != "cuda":
             self._shared_rowwise_fp8_up_prequant = None
             self._shared_rowwise_fp8_down_prequant = None
+            self._shared_rowwise_fp8_up_prequant_t = None
+            self._shared_rowwise_fp8_down_prequant_t = None
             self._shared_rowwise_fp8_weight_versions = None
             return
         up_rhs = self.shared_experts.w_up_gate.unsqueeze(0)
         down_rhs = self.shared_experts.w_down
+        up_rhs_t = self.shared_experts.w_up_gate.transpose(0, 1).unsqueeze(0)
+        down_rhs_t = self.shared_experts.w_down.transpose(1, 2)
         self._shared_rowwise_fp8_up_prequant = prequantize_scaled_grouped_mm_rhs(up_rhs)
         self._shared_rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(down_rhs)
+        self._shared_rowwise_fp8_up_prequant_t = prequantize_scaled_grouped_mm_rhs(up_rhs_t)
+        self._shared_rowwise_fp8_down_prequant_t = prequantize_scaled_grouped_mm_rhs(down_rhs_t)
         self._shared_rowwise_fp8_weight_versions = (
             int(self.shared_experts.w_up_gate._version),
             int(self.shared_experts.w_down._version),
@@ -1937,12 +1952,18 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._maybe_refresh_shared_rowwise_fp8_cache()
         x2 = x.reshape(BS, D)
         offs = torch.tensor([BS], device=x.device, dtype=torch.int32)
-        up_gate = scaled_grouped_mm_q(
-            x2,
-            self.shared_experts.w_up_gate.unsqueeze(0),
+        up_kwargs = dict(
             offs=offs,
             use_fast_accum=use_fast_accum,
             prequantized_rhs=self._shared_rowwise_fp8_up_prequant,
+        )
+        up_prequant_t = getattr(self, "_shared_rowwise_fp8_up_prequant_t", None)
+        if up_prequant_t is not None:
+            up_kwargs["prequantized_rhs_for_dgrad"] = up_prequant_t
+        up_gate = scaled_grouped_mm_q(
+            x2,
+            self.shared_experts.w_up_gate.unsqueeze(0),
+            **up_kwargs,
         )
         up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
         up, gate = up_gate.unbind(dim=2)
@@ -1967,12 +1988,18 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._maybe_refresh_shared_rowwise_fp8_cache()
         hidden_2d = hidden.reshape(E * BS, -1)
         offs = torch.arange(BS, E * BS + 1, BS, device=hidden.device, dtype=torch.int32)
-        out_2d = scaled_grouped_mm_q(
-            hidden_2d,
-            self.shared_experts.w_down,
+        down_kwargs = dict(
             offs=offs,
             use_fast_accum=use_fast_accum,
             prequantized_rhs=self._shared_rowwise_fp8_down_prequant,
+        )
+        down_prequant_t = getattr(self, "_shared_rowwise_fp8_down_prequant_t", None)
+        if down_prequant_t is not None:
+            down_kwargs["prequantized_rhs_for_dgrad"] = down_prequant_t
+        out_2d = scaled_grouped_mm_q(
+            hidden_2d,
+            self.shared_experts.w_down,
+            **down_kwargs,
         )
         return out_2d.view(E, BS, D).view(E, B, S, D)
 
@@ -3408,14 +3435,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         dispatch_rank_major = self.routed_experts(
             dispatch_rank_major,
             padded_batch_size_per_local_expert,
-            # Write expert output directly into the combine symmetric buffer.
-            down_proj_out=buffers.combine_in.detach(),
-            rowwise_fp8_down_proj_out_q=(combine_in_q if use_rowwise_fp8 else None),
-            rowwise_fp8_down_proj_out_scales=(combine_in_scales if use_rowwise_fp8 else None),
-            # Write grad(input) for expert up+gate directly into the rowwise
-            # dispatch symmetric buffer so rowwise dispatch backward can consume
-            # it without an extra copy.
-            up_proj_input_grad_out=buffers.dispatch_out.detach(),
+            # Non-rowwise path writes expert output directly into combine symmetric buffer.
+            # Rowwise FP8 path returns bf16 and combine path handles quantization/write.
+            down_proj_out=(None if use_rowwise_fp8 else buffers.combine_in.detach()),
+            # Non-rowwise path writes grad(input) for expert up+gate directly into
+            # dispatch symmetric buffer. Rowwise FP8 path quantizes/writes in dispatch backward.
+            up_proj_input_grad_out=(None if use_rowwise_fp8 else buffers.dispatch_out.detach()),
             use_rowwise_fp8=use_rowwise_fp8,
             rowwise_fp8_input_q=(dispatch_out_q if use_rowwise_fp8 else None),
             rowwise_fp8_input_scales=(dispatch_out_scales if use_rowwise_fp8 else None),
@@ -3430,7 +3455,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             route_probs = local_x_global_routed_expert_weights.view(
                 -1, self.routed_experts_router.top_k
             )
-            # _record_before("combine")
+
             if use_rowwise_fp8:
                 assert rowwise_fp8_cfg is not None
                 assert combine_in_q is not None
@@ -3459,7 +3484,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     self.ep_pg,
                     self.ep_no_sync_rowwise_nblocks,
                 )
-            # _record_after("combine")
 
         # launch second half of the shared expert forward
         if self.shared_experts is not None:

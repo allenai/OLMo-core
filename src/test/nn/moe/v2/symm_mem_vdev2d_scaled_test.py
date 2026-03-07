@@ -115,3 +115,49 @@ def test_rowwise_combine_get_scaled_weighted(monkeypatch):
     expected = torch.tensor([[5.0, 7.0]], dtype=torch.float32)
     torch.testing.assert_close(gathered_out, expected_gather)
     torch.testing.assert_close(out, expected)
+
+
+def test_rowwise_combine_get_scaled_reuses_gather_output_buffers(monkeypatch):
+    _patch_reduce_identity(monkeypatch)
+
+    observed_ptrs = {}
+
+    def _fake_gather(expert_out, out, src_ranks, src_rows, group_name, *, nblocks=0):
+        del expert_out, src_ranks, src_rows, group_name, nblocks
+        if out.shape[1] == 2:
+            observed_ptrs["q"] = out.data_ptr()
+            out.copy_(torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=out.dtype))
+        else:
+            observed_ptrs["s"] = out.data_ptr()
+            out.fill_(1.0)
+
+    monkeypatch.setattr(symm_mod, "rowwise_gather_get", _fake_gather)
+
+    src_ranks = torch.tensor([[0, 1]], dtype=torch.long)
+    src_rows = torch.tensor([[0, 1]], dtype=torch.long)
+    out = torch.empty((1, 2), dtype=torch.float32)
+    expert_out_q = torch.empty((4, 2), dtype=torch.float32)
+    expert_out_scales = torch.ones((4, 1), dtype=torch.float32)
+    gathered_q_out = torch.empty((1, 2, 2), dtype=torch.float32)
+    gathered_scales_out = torch.empty((1, 2, 1), dtype=torch.float32)
+
+    symm_mod.rowwise_combine_get_scaled(
+        expert_out_q,
+        expert_out_scales,
+        out,
+        src_ranks,
+        src_rows,
+        "dummy_group",
+        block_size=32,
+        gathered_q_out=gathered_q_out,
+        gathered_scales_out=gathered_scales_out,
+    )
+
+    assert observed_ptrs["q"] == gathered_q_out.view(-1, 2).data_ptr()
+    assert observed_ptrs["s"] == gathered_scales_out.view(-1, 1).data_ptr()
+    torch.testing.assert_close(
+        gathered_q_out,
+        torch.tensor([[[1.0, 2.0], [3.0, 4.0]]], dtype=torch.float32),
+    )
+    torch.testing.assert_close(gathered_scales_out, torch.ones_like(gathered_scales_out))
+    torch.testing.assert_close(out, torch.tensor([[4.0, 6.0]], dtype=torch.float32))

@@ -572,6 +572,140 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
         return super().get_lr(initial_lr, current, t_max - decay)
 
 
+class ComposableSchedulerStageType(StrEnum):
+    linear = "linear"
+    cosine = "cosine"
+
+
+@dataclass
+class ComposableSchedulerStage(Config):
+    """
+    A single stage in :class:`ComposableScheduler`.
+    """
+
+    duration: int
+    shape: ComposableSchedulerStageType = ComposableSchedulerStageType.linear
+
+    start_lr: Optional[float] = None
+    start_lr_fraction: Optional[float] = None
+
+    end_lr: Optional[float] = None
+    end_lr_fraction: Optional[float] = None
+
+    def __post_init__(self):
+        if self.duration <= 0:
+            raise OLMoConfigurationError("'duration' must be > 0 for every stage.")
+
+        if self.start_lr is not None and self.start_lr_fraction is not None:
+            raise OLMoConfigurationError(
+                "Specify at most one of 'start_lr' or 'start_lr_fraction' for a stage."
+            )
+
+        if self.start_lr is not None and self.start_lr < 0:
+            raise OLMoConfigurationError("'start_lr' must be >= 0.")
+
+        if self.start_lr_fraction is not None and self.start_lr_fraction < 0:
+            raise OLMoConfigurationError("'start_lr_fraction' must be >= 0.")
+
+        if (self.end_lr is None) == (self.end_lr_fraction is None):
+            raise OLMoConfigurationError(
+                "Specify exactly one of 'end_lr' or 'end_lr_fraction' for each stage."
+            )
+
+        if self.end_lr is not None and self.end_lr < 0:
+            raise OLMoConfigurationError("'end_lr' must be >= 0.")
+
+        if self.end_lr_fraction is not None and self.end_lr_fraction < 0:
+            raise OLMoConfigurationError("'end_lr_fraction' must be >= 0.")
+
+
+@dataclass
+class ComposableScheduler(Scheduler):
+    """
+    Piecewise LR schedule composed of multiple stages.
+
+    - Each stage has a duration and interpolation shape (linear/cosine).
+    - Stage start LR defaults to the previous stage's end LR.
+    - Stage end LR is required and can be absolute or as a fraction of ``initial_lr``.
+    - After all stages are exhausted, LR stays constant at the last stage's end LR.
+    """
+
+    stages: List[ComposableSchedulerStage] = field(default_factory=list)
+
+    def __post_init__(self):
+        if len(self.stages) == 0:
+            raise OLMoConfigurationError("'stages' must be specified and non-empty.")
+
+    def _resolve_from_initial(
+        self,
+        initial_lr: Union[float, torch.Tensor],
+        value: Optional[float],
+        fraction: Optional[float],
+    ) -> Union[float, torch.Tensor]:
+        if value is not None:
+            return value
+        assert fraction is not None
+        return initial_lr * fraction
+
+    def _resolve_stage_start(
+        self,
+        stage: ComposableSchedulerStage,
+        initial_lr: Union[float, torch.Tensor],
+        previous_end_lr: Union[float, torch.Tensor],
+    ) -> Union[float, torch.Tensor]:
+        if stage.start_lr is None and stage.start_lr_fraction is None:
+            return previous_end_lr
+        return self._resolve_from_initial(initial_lr, stage.start_lr, stage.start_lr_fraction)
+
+    def _resolve_stage_end(
+        self, stage: ComposableSchedulerStage, initial_lr: Union[float, torch.Tensor]
+    ) -> Union[float, torch.Tensor]:
+        return self._resolve_from_initial(initial_lr, stage.end_lr, stage.end_lr_fraction)
+
+    @staticmethod
+    def _interpolate(
+        shape: ComposableSchedulerStageType,
+        start_lr: Union[float, torch.Tensor],
+        end_lr: Union[float, torch.Tensor],
+        current: int,
+        duration: int,
+    ) -> Union[float, torch.Tensor]:
+        if shape == ComposableSchedulerStageType.linear:
+            return start_lr + (end_lr - start_lr) * current / duration
+        elif shape == ComposableSchedulerStageType.cosine:
+            return end_lr + (start_lr - end_lr) * (1 + cos(pi * current / duration)) / 2
+        else:
+            raise NotImplementedError(shape)
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        del t_max
+        current = max(current, 0)
+
+        stage_start = 0
+        previous_end_lr: Union[float, torch.Tensor] = initial_lr
+        for stage in self.stages:
+            start_lr = self._resolve_stage_start(stage, initial_lr, previous_end_lr)
+            end_lr = self._resolve_stage_end(stage, initial_lr)
+
+            stage_end = stage_start + stage.duration
+            if current < stage_end:
+                stage_current = current - stage_start
+                return self._interpolate(
+                    shape=stage.shape,
+                    start_lr=start_lr,
+                    end_lr=end_lr,
+                    current=stage_current,
+                    duration=stage.duration,
+                )
+
+            previous_end_lr = end_lr
+            stage_start = stage_end
+
+        return previous_end_lr
+
+
 def _linear_warmup(
     initial_lr: Union[float, torch.Tensor], current: int, warmup: int, warmup_min_lr: float = 0.0
 ) -> Union[float, torch.Tensor]:

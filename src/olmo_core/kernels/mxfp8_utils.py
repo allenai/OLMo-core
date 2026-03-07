@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from typing import Optional, Tuple
+import nvtx
 
 import torch
 
@@ -24,9 +25,9 @@ _MXFP8_Q_BLOCK_N = 128
 _MXFP8_Q_NUM_WARPS = 8
 _MXFP8_Q_NUM_STAGES = 3
 
-_MXFP8_SWIGLU_BLOCK_M = 128
-_MXFP8_SWIGLU_BLOCK_N = 128
-_MXFP8_SWIGLU_NUM_WARPS = 8
+_MXFP8_SWIGLU_BLOCK_M = 64
+_MXFP8_SWIGLU_BLOCK_N = 64
+_MXFP8_SWIGLU_NUM_WARPS = 4
 _MXFP8_SWIGLU_NUM_STAGES = 3
 
 _MXFP8_REDUCE_BLOCK_M = 128
@@ -801,6 +802,8 @@ def _quantize_to_mxfp8_triton(
     x: torch.Tensor,
     *,
     block_size: int = 32,
+    out: Optional[torch.Tensor] = None,
+    scales_out: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if triton is None or tl is None:
         raise RuntimeError("Triton is not available")
@@ -810,8 +813,14 @@ def _quantize_to_mxfp8_triton(
         raise ValueError(f"Unsupported dtype for Triton MXFP8 quantization: {x.dtype}")
 
     rows, cols = x.shape
-    qdata = torch.empty((rows, cols), device=x.device, dtype=torch.float8_e4m3fn)
-    scales_u8 = torch.empty((rows, cols // block_size), device=x.device, dtype=torch.uint8)
+    if out is not None:
+        qdata = out
+    else:
+        qdata = torch.empty((rows, cols), device=x.device, dtype=torch.float8_e4m3fn)
+    if scales_out is not None:
+        scales_u8 = scales_out.view(torch.uint8)
+    else:
+        scales_u8 = torch.empty((rows, cols // block_size), device=x.device, dtype=torch.uint8)
 
     grid = (
         triton.cdiv(rows, _MXFP8_Q_BLOCK_M),
@@ -835,6 +844,8 @@ def _quantize_to_mxfp8_triton(
         num_warps=_MXFP8_Q_NUM_WARPS,
         num_stages=_MXFP8_Q_NUM_STAGES,
     )
+    if scales_out is not None:
+        return qdata, scales_out
     return qdata, scales_u8.view(torch.float8_e8m0fnu)
 
 
@@ -1081,6 +1092,8 @@ def quantize_to_mxfp8(
     x: torch.Tensor,
     *,
     block_size: int = 32,
+    out: Optional[torch.Tensor] = None,
+    scales_out: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Quantize a 2D high-precision tensor to MXFP8.
@@ -1097,14 +1110,57 @@ def quantize_to_mxfp8(
         raise ValueError(
             f"Last dim must be divisible by {block_size} for MXFP8 quantization, got {tuple(x.shape)}"
         )
+    expected_scales_shape = (x.shape[0], x.shape[1] // block_size)
+    if out is not None:
+        if tuple(out.shape) != tuple(x.shape):
+            raise ValueError(
+                f"out shape mismatch: expected {tuple(x.shape)}, got {tuple(out.shape)}"
+            )
+        if out.dtype != torch.float8_e4m3fn:
+            raise ValueError(
+                f"out dtype mismatch: expected {torch.float8_e4m3fn}, got {out.dtype}"
+            )
+        if out.device != x.device:
+            raise ValueError(
+                f"out device mismatch: expected {x.device}, got {out.device}"
+            )
+    if scales_out is not None:
+        if tuple(scales_out.shape) != expected_scales_shape:
+            raise ValueError(
+                f"scales_out shape mismatch: expected {expected_scales_shape}, got {tuple(scales_out.shape)}"
+            )
+        if scales_out.dtype != torch.float8_e8m0fnu:
+            raise ValueError(
+                f"scales_out dtype mismatch: expected {torch.float8_e8m0fnu}, got {scales_out.dtype}"
+            )
+        if scales_out.device != x.device:
+            raise ValueError(
+                f"scales_out device mismatch: expected {x.device}, got {scales_out.device}"
+            )
+        if not scales_out.is_contiguous():
+            raise ValueError("scales_out must be contiguous")
+    if out is not None and not out.is_contiguous():
+        raise ValueError("out must be contiguous")
 
     # CUDA fast path: fused Triton quantization avoids eager pointwise op chains.
     if x.is_cuda:
         if triton is None:
             raise RuntimeError("Triton is required for CUDA MXFP8 quantization")
-        return _quantize_to_mxfp8_triton(x, block_size=block_size)
+        return _quantize_to_mxfp8_triton(
+            x,
+            block_size=block_size,
+            out=out,
+            scales_out=scales_out,
+        )
 
-    return _quantize_to_mxfp8_torch(x, block_size=block_size)
+    qdata, scales = _quantize_to_mxfp8_torch(x, block_size=block_size)
+    if out is not None:
+        out.copy_(qdata)
+        qdata = out
+    if scales_out is not None:
+        scales_out.copy_(scales)
+        scales = scales_out
+    return qdata, scales
 
 
 def dequantize_from_mxfp8(
@@ -1211,6 +1267,7 @@ def _reduce_gathered_rows_from_mxfp8_triton(
     probs: Optional[torch.Tensor],
     valid_mask: Optional[torch.Tensor],
     block_size: int = 32,
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     if triton is None or tl is None:
         raise RuntimeError("Triton is not available")
@@ -1243,7 +1300,17 @@ def _reduce_gathered_rows_from_mxfp8_triton(
     elif not valid_mask_tensor.is_contiguous():
         valid_mask_tensor = valid_mask_tensor.contiguous()
 
-    out_acc = torch.empty((n, d_model), device=q_contig.device, dtype=torch.float32)
+    if out is None:
+        out_tensor = torch.empty((n, d_model), device=q_contig.device, dtype=torch.float32)
+    else:
+        if tuple(out.shape) != (n, d_model):
+            raise ValueError(f"out shape mismatch: expected {(n, d_model)}, got {tuple(out.shape)}")
+        if out.device != q_contig.device:
+            raise ValueError(f"out device mismatch: expected {q_contig.device}, got {out.device}")
+        if not out.dtype.is_floating_point:
+            raise ValueError(f"out must have floating dtype, got {out.dtype}")
+        out_tensor = out
+
     grid = (
         triton.cdiv(n, _MXFP8_REDUCE_BLOCK_M),
         triton.cdiv(d_model, _MXFP8_REDUCE_BLOCK_N),
@@ -1263,9 +1330,9 @@ def _reduce_gathered_rows_from_mxfp8_triton(
         valid_mask_tensor,
         valid_mask_tensor.stride(0),
         valid_mask_tensor.stride(1),
-        out_acc,
-        out_acc.stride(0),
-        out_acc.stride(1),
+        out_tensor,
+        out_tensor.stride(0),
+        out_tensor.stride(1),
         n,
         top_k,
         d_model,
@@ -1277,9 +1344,9 @@ def _reduce_gathered_rows_from_mxfp8_triton(
         num_warps=_MXFP8_REDUCE_NUM_WARPS,
         num_stages=_MXFP8_REDUCE_NUM_STAGES,
     )
-    return out_acc
+    return out_tensor
 
-
+@nvtx.annotate("reduce_gathered_rows_from_mxfp8")
 def reduce_gathered_rows_from_mxfp8(
     gathered_q: torch.Tensor,
     gathered_scales: torch.Tensor,
@@ -1328,21 +1395,24 @@ def reduce_gathered_rows_from_mxfp8(
         gathered_out is None
         and gathered_q.is_cuda
         and gathered_scales.is_cuda
+        and out.is_cuda
         and triton is not None
     )
     if gathered_out is None and gathered_q.is_cuda and gathered_scales.is_cuda and triton is None:
         raise RuntimeError("Triton is required for CUDA MXFP8 gather-reduce")
 
     if use_triton_reduce:
-        reduced_f32 = _reduce_gathered_rows_from_mxfp8_triton(
+        _reduce_gathered_rows_from_mxfp8_triton(
             gathered_q,
             gathered_scales,
             probs=probs,
             valid_mask=valid_mask,
             block_size=block_size,
+            out=out,
         )
-        out.copy_(reduced_f32.to(out.dtype))
         return
+    else:
+        assert False, "Deprecated"
 
     gathered_hp = dequantize_from_mxfp8(
         gathered_q.reshape(n * top_k, d_model),
@@ -1645,9 +1715,16 @@ def quantize_rows_to_mxfp8(
     x: torch.Tensor,
     *,
     block_size: int = 32,
+    out: Optional[torch.Tensor] = None,
+    scales_out: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Convenience alias used by rowwise comm paths."""
-    return quantize_to_mxfp8(x, block_size=block_size)
+    return quantize_to_mxfp8(
+        x,
+        block_size=block_size,
+        out=out,
+        scales_out=scales_out,
+    )
 
 
 def dequantize_rows_from_mxfp8(

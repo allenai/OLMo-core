@@ -809,8 +809,6 @@ class MoEFusedV2Optimizer:
             # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
             self._copy_model_grads_to_main_grads()
 
-        self._release_model_grads()
-
         total_grad_norm = self._clip_grad()
 
         if self.check_nan_inf_grad and (total_grad_norm.isnan() or total_grad_norm.isinf()):
@@ -860,16 +858,18 @@ class MoEFusedV2Optimizer:
                         raise RuntimeError("Expected model param grad to be None. Use _main_grad_fp32 to store the grad.")
 
                     if param._main_grad_fp32 is None:
-                        print(f"Warning: model param {name} has None for _main_grad_fp32")
-                        param._main_grad_fp32 = torch.zeros_like(param.data, dtype=torch.float32)
-                        # continue
+                        raise RuntimeError(
+                            f"Missing _main_grad_fp32 for param '{name}'. "
+                            "Grad buffers must stay bound to DDP bucket views."
+                        )
 
                     model_grad_fp32 = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
                 else:
                     if param.grad is None:
-                        print(f"Warning: model param {name} has None for grad")
-                        param.grad = torch.zeros_like(param.data)
-                        # continue
+                        raise RuntimeError(
+                            f"Missing .grad for param '{name}'. "
+                            "Grad buffers must stay bound to DDP bucket views."
+                        )
 
                     # model's grad is in bf16, need to convert to fp32 for reduce-scatter
                     model_grad_fp32 = param.grad.detach().view(-1).float() # unsharded local shape, FP32
@@ -906,25 +906,10 @@ class MoEFusedV2Optimizer:
                 # the full DP world size.
                 main_grad_local.div_(dp_world_size) 
 
-                # release model grad to save memory
-                if self.model_has_grad_accum_fp32_buffer:
-                    param._main_grad_fp32 = None
-                else:
-                    param.grad = None
-
                 # save main param grad
                 self.main_grad[name] = DTensor.from_local(main_grad_local, device_mesh=main_param.device_mesh, placements=main_param.placements)
 
         return
-
-    def _release_model_grads(self):
-        for param_group in self.param_groups:
-            for name, param in param_group['named_params'].items():
-                if self.model_has_grad_accum_fp32_buffer:
-                    param._main_grad_fp32 = None
-                    param.grad = None
-                else:
-                    param.grad = None
 
     @nvtx.annotate("MoEFusedV2Optimizer._copy_model_grads_to_main_grads")
     def _copy_model_grads_to_main_grads(self):
@@ -937,16 +922,18 @@ class MoEFusedV2Optimizer:
                         raise RuntimeError("Expected model param grad to be None. Use _main_grad_fp32 to store the grad.")
 
                     if param._main_grad_fp32 is None:
-                        print(f"Warning: model param {name} has None for _main_grad_fp32")
-                        param._main_grad_fp32 = torch.zeros_like(param.data, dtype=torch.float32)
-                        # continue
+                        raise RuntimeError(
+                            f"Missing _main_grad_fp32 for param '{name}'. "
+                            "Grad buffers must stay bound to DDP bucket views."
+                        )
 
                     model_grad_fp32 = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
                 else:
                     if param.grad is None:
-                        print(f"Warning: model param {name} has None for grad")
-                        param.grad = torch.zeros_like(param.data)
-                        # continue
+                        raise RuntimeError(
+                            f"Missing .grad for param '{name}'. "
+                            "Grad buffers must stay bound to DDP bucket views."
+                        )
 
                     # model's grad is in bf16, need to convert to fp32 for reduce-scatter
                     # model_grad_fp32 = param.grad.detach().view(-1).float() # unsharded local shape, FP32

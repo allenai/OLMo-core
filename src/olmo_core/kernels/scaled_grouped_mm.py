@@ -193,6 +193,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
         use_fast_accum: bool,
         prequantized_lhs: Optional[ScaledGroupedMMPrequantizedLHS],
         prequantized_rhs: Optional[ScaledGroupedMMPrequantizedRHS],
+        prequantized_rhs_for_dgrad: Optional[ScaledGroupedMMPrequantizedRHS],
     ) -> Tensor:
         if offs is None:
             raise ValueError("offs is required for scaled_grouped_mm_q")
@@ -221,6 +222,18 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
                 raise ValueError(
                     f"input_grad_out dtype mismatch: expected {mat_a.dtype}, got {input_grad_out.dtype}"
                 )
+        if prequantized_rhs_for_dgrad is not None:
+            mat_b_t_shape = tuple(mat_b.transpose(-2, -1).shape)
+            if tuple(prequantized_rhs_for_dgrad.mat_b_shape) != mat_b_t_shape:
+                raise ValueError(
+                    "prequantized_rhs_for_dgrad shape mismatch: "
+                    f"expected {mat_b_t_shape}, got {tuple(prequantized_rhs_for_dgrad.mat_b_shape)}"
+                )
+            if prequantized_rhs_for_dgrad.mat_b_q.device != mat_b.device:
+                raise ValueError(
+                    "prequantized_rhs_for_dgrad device mismatch: "
+                    f"expected {mat_b.device}, got {prequantized_rhs_for_dgrad.mat_b_q.device}"
+                )
 
         # In rowwise FP8 paths we can skip saving bf16 mat_a and reconstruct it
         # from saved prequantized (q, scale) during backward to avoid dispatch DQ.
@@ -235,6 +248,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
             ctx.save_for_backward(mat_a, mat_b, offs)
             ctx._saved_mat_a_from_prequantized_lhs = False
         ctx.input_grad_out = input_grad_out
+        ctx.prequantized_rhs_for_dgrad = prequantized_rhs_for_dgrad
         return result
 
     @staticmethod
@@ -246,9 +260,19 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
         if bool(getattr(ctx, "_saved_mat_a_from_prequantized_lhs", False)):
             mat_b, offs, mat_a_q, mat_a_scale = ctx.saved_tensors
             if ctx.needs_input_grad[1]:
+                active_rows = int(offs[-1].item()) if offs.numel() > 0 else 0
+                if active_rows < 0 or active_rows > mat_a_q.shape[0]:
+                    raise RuntimeError(
+                        "Invalid offs[-1] while reconstructing mat_a from prequantized lhs: "
+                        f"offs[-1]={active_rows}, mat_a_q_rows={mat_a_q.shape[0]}"
+                    )
+                mat_a_q_use = mat_a_q if active_rows == mat_a_q.shape[0] else mat_a_q[:active_rows]
+                mat_a_scale_use = (
+                    mat_a_scale if active_rows == mat_a_scale.shape[0] else mat_a_scale[:active_rows]
+                )
                 mat_a = dequantize_rows_from_mxfp8(
-                    mat_a_q,
-                    mat_a_scale,
+                    mat_a_q_use,
+                    mat_a_scale_use,
                     block_size=32,
                     out_dtype=grad_out_compute.dtype,
                 )
@@ -266,7 +290,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
                     offs,
                     use_fast_accum=True,
                     prequantized_lhs=None,
-                    prequantized_rhs=None,
+                    prequantized_rhs=ctx.prequantized_rhs_for_dgrad,
                 )
                 if ctx.input_grad_out is not None:
                     ctx.input_grad_out.copy_(grad_a)
@@ -286,7 +310,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
                 offs=offs,
             ).transpose(-2, -1)
 
-        return grad_a, grad_b, None, None, None, None, None
+        return grad_a, grad_b, None, None, None, None, None, None
 
 
 def scaled_grouped_mm_q(
@@ -298,6 +322,7 @@ def scaled_grouped_mm_q(
     use_fast_accum: bool = True,
     prequantized_lhs: Optional[ScaledGroupedMMPrequantizedLHS] = None,
     prequantized_rhs: Optional[ScaledGroupedMMPrequantizedRHS] = None,
+    prequantized_rhs_for_dgrad: Optional[ScaledGroupedMMPrequantizedRHS] = None,
 ) -> Tensor:
     """
     MXFP8 grouped mm wrapper used by MoE routed experts.
@@ -309,6 +334,7 @@ def scaled_grouped_mm_q(
     - input_grad_out: grad(mat_a) destination in backward
     - prequantized_lhs: optional pre-quantized LHS q/scales to bypass LHS quantization
     - prequantized_rhs: optional pre-quantized RHS q/scales to bypass RHS quantization
+    - prequantized_rhs_for_dgrad: optional pre-quantized transposed RHS used by backward dgrad
     """
     return _ScaledGroupedMMQFunction.apply(
         mat_a,
@@ -318,6 +344,7 @@ def scaled_grouped_mm_q(
         use_fast_accum,
         prequantized_lhs,
         prequantized_rhs,
+        prequantized_rhs_for_dgrad,
     )
 
 

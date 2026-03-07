@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 from typing import Optional
+import nvtx
 
 import torch
 
@@ -181,8 +182,7 @@ def rowwise_combine_get(
         gathered_out,
     )
 
-
-@torch.compiler.disable
+@nvtx.annotate("rowwise_combine_get_scaled")
 def rowwise_combine_get_scaled(
     expert_out_q: torch.Tensor,
     expert_out_scales: torch.Tensor,
@@ -214,11 +214,32 @@ def rowwise_combine_get_scaled(
     flat_ranks = safe_ranks.reshape(-1, 1).contiguous()
     flat_rows = safe_rows.reshape(-1, 1).contiguous()
 
-    gathered_q = torch.empty(
-        (n * k, expert_out_q.shape[1]),
-        device=out.device,
-        dtype=expert_out_q.dtype,
-    )
+    expected_q_shape = (n, k, expert_out_q.shape[1])
+    if gathered_q_out is not None:
+        if tuple(gathered_q_out.shape) != expected_q_shape:
+            raise ValueError(
+                f"gathered_q_out shape mismatch: expected {expected_q_shape}, got {tuple(gathered_q_out.shape)}"
+            )
+        if gathered_q_out.dtype != expert_out_q.dtype:
+            raise ValueError(
+                f"gathered_q_out dtype mismatch: expected {expert_out_q.dtype}, got {gathered_q_out.dtype}"
+            )
+        if gathered_q_out.device != out.device:
+            raise ValueError(
+                f"gathered_q_out device mismatch: expected {out.device}, got {gathered_q_out.device}"
+            )
+        if not gathered_q_out.is_contiguous():
+            raise ValueError("gathered_q_out must be contiguous")
+        gathered_q_3d = gathered_q_out
+        gathered_q = gathered_q_3d.view(n * k, -1)
+    else:
+        gathered_q = torch.empty(
+            (n * k, expert_out_q.shape[1]),
+            device=out.device,
+            dtype=expert_out_q.dtype,
+        )
+        gathered_q_3d = gathered_q.view(n, k, -1)
+
     rowwise_gather_get(
         expert_out_q,
         gathered_q,
@@ -228,11 +249,35 @@ def rowwise_combine_get_scaled(
         nblocks=nblocks,
     )
 
-    gathered_scales = torch.empty(
-        (n * k, expert_out_scales.shape[1]),
-        device=out.device,
-        dtype=expert_out_scales.dtype,
-    )
+    expected_scales_shape = (n, k, expert_out_scales.shape[1])
+    if gathered_scales_out is not None:
+        if tuple(gathered_scales_out.shape) != expected_scales_shape:
+            raise ValueError(
+                "gathered_scales_out shape mismatch: "
+                f"expected {expected_scales_shape}, got {tuple(gathered_scales_out.shape)}"
+            )
+        if gathered_scales_out.dtype != expert_out_scales.dtype:
+            raise ValueError(
+                "gathered_scales_out dtype mismatch: "
+                f"expected {expert_out_scales.dtype}, got {gathered_scales_out.dtype}"
+            )
+        if gathered_scales_out.device != out.device:
+            raise ValueError(
+                "gathered_scales_out device mismatch: "
+                f"expected {out.device}, got {gathered_scales_out.device}"
+            )
+        if not gathered_scales_out.is_contiguous():
+            raise ValueError("gathered_scales_out must be contiguous")
+        gathered_scales_3d = gathered_scales_out
+        gathered_scales = gathered_scales_3d.view(n * k, -1)
+    else:
+        gathered_scales = torch.empty(
+            (n * k, expert_out_scales.shape[1]),
+            device=out.device,
+            dtype=expert_out_scales.dtype,
+        )
+        gathered_scales_3d = gathered_scales.view(n, k, -1)
+
     rowwise_gather_get(
         expert_out_scales,
         gathered_scales,
@@ -241,24 +286,6 @@ def rowwise_combine_get_scaled(
         group_name,
         nblocks=nblocks,
     )
-
-    gathered_q_3d = gathered_q.view(n, k, -1)
-    gathered_scales_3d = gathered_scales.view(n, k, -1)
-
-    if gathered_q_out is not None:
-        if tuple(gathered_q_out.shape) != tuple(gathered_q_3d.shape):
-            raise ValueError(
-                f"gathered_q_out shape mismatch: expected {tuple(gathered_q_3d.shape)}, got {tuple(gathered_q_out.shape)}"
-            )
-        gathered_q_out.copy_(gathered_q_3d)
-
-    if gathered_scales_out is not None:
-        if tuple(gathered_scales_out.shape) != tuple(gathered_scales_3d.shape):
-            raise ValueError(
-                "gathered_scales_out shape mismatch: "
-                f"expected {tuple(gathered_scales_3d.shape)}, got {tuple(gathered_scales_out.shape)}"
-            )
-        gathered_scales_out.copy_(gathered_scales_3d)
 
     reduce_gathered_rows_from_mxfp8(
         gathered_q_3d,

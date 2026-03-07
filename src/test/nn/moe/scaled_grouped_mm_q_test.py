@@ -62,6 +62,23 @@ def test_mxfp8_row_quant_no_nan_on_cuda():
     assert bool(torch.isfinite(scales.float()).all())
 
 
+def test_quantize_rows_to_mxfp8_supports_output_buffers():
+    x = torch.randn(16, 128, dtype=torch.float32)
+    out_q = torch.empty_like(x, dtype=torch.float8_e4m3fn)
+    out_scales = torch.empty((x.shape[0], x.shape[1] // 32), dtype=torch.float8_e8m0fnu)
+
+    qdata, scales = quantize_rows_to_mxfp8(
+        x,
+        block_size=32,
+        out=out_q,
+        scales_out=out_scales,
+    )
+    assert qdata.untyped_storage().data_ptr() == out_q.untyped_storage().data_ptr()
+    assert scales.untyped_storage().data_ptr() == out_scales.untyped_storage().data_ptr()
+    assert qdata.shape == x.shape
+    assert scales.shape == (x.shape[0], x.shape[1] // 32)
+
+
 def test_scaled_grouped_mm_q_forward_matches_grouped_mm_reference(monkeypatch):
     monkeypatch.setattr(scaled_grouped_mm_module, "_forward_scaled_grouped_mm_mxfp8", _stub_forward)
     a, b, offs = _build_inputs()

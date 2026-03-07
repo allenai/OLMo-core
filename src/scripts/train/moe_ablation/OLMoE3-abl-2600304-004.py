@@ -1,5 +1,5 @@
 """
-Baseline for speed test
+Match 7B TPS
 """
 
 import logging
@@ -46,7 +46,12 @@ from olmo_core.nn.transformer import (
     TransformerType,
     MoEFusedV2TransformerConfig,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig, CosWithWarmup, CosWithWarmupAndLinearDecay
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig
+from olmo_core.optim.scheduler import (
+    ComposableScheduler,
+    ComposableSchedulerStage,
+    ComposableSchedulerStageType,
+)
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -85,25 +90,26 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
     return new_num_layers, split_points
 
 
-SEQUENCE_LENGTH = 8192
+SEQUENCE_LENGTH = 4096
+
+torch.set_float32_matmul_precision('high')
 
 
-
-MAX_DURATION = int(55e9)
+MAX_DURATION = int(7000e9)
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL=10000
+SAVE_INTERVAL = 1000
 
-NUM_EXPERTS = 16
-TOP_K = 4
-D_MODEL=2560
-D_ATTN=D_MODEL
+NUM_EXPERTS = 64 + 16
+TOP_K = 3
+D_MODEL=2048-512
+D_ATTN=2048
 
 HEAD_DIM=64
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD=8
-MOE_HIDDEN_SIZE = 2560
-NUM_SHARED_EXPERTS = 0  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+NUM_KV_HEAD=4
+MOE_HIDDEN_SIZE = 1280
+NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
+SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -111,25 +117,24 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
-MICRO_BSZ = 4
+MICRO_BSZ = 8
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=1
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (1)
+REF_NUM_NODES=2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (8)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
-GLOBAL_BATCH_TOKENS = GLOBAL_BATCH_SIZE * SEQUENCE_LENGTH
-GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_TOKENS // 1024 // 1024
 
-LR= 1e-3 
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024)) # keep 3e-4 for 1M tokens, scale up for larger gbs
-# LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
-NUM_LAYERS=6
+GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
+
+LR= 3e-3 
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024)) # lr is for X Million token
+NUM_LAYERS=32
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -149,13 +154,13 @@ USE_TBO=False
 GRAD_ACC_IN_FP32=False
 GRAD_REDUCE_IN_FP32=False
 UNIFORM_ASSIGN=False
-RANDOM_ASSIGN=True
+RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-USE_FP8=True
+USE_FP8=False
 ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
-TAG=f'fp8'
+TAG=f'cheap1'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -235,7 +240,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.1,
-                lb_loss_weight=0.005,
+                lb_loss_weight=0.01,
                 # lb_loss_weight=0.0065,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
@@ -274,7 +279,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE=4096
+    WINDOW_SIZE=512
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -312,6 +317,13 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params
+
+SCHED_WARMUP_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_FAST_DECAY_TOKENS = int((45e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_LONG_DECAY_TOKENS = int((6000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_MID_FRACTION = 0.4
+SCHED_FINAL_FRACTION = 0.1
+
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
     return MoEV2TransformerTrainModuleConfig(
@@ -352,29 +364,31 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
             split_points=SPLIT_POINTS
         ) if PP_DIM > 1 else None,
-        # float8_config=Float8Config(
-        #     ao=AOFloat8LinearConfig(
-        #         enable_fsdp_float8_all_gather=True,
-        #         force_recompute_fp8_weight_in_bwd=True,
-        #         round_scales_to_power_of_2=True,
-        #     ),
-        #     enabled=False,
-        # ),
+
         float8_config=None,
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        # scheduler=WSD(
-        #     units=SchedulerUnits.steps,
-        #     warmup=500,
-        #     # NOTE: be aware of when decay will happen relative to batch_wup schedule
-        #     decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
-        #     decay_fraction=None,
-        # ),
-        scheduler=CosWithWarmupAndLinearDecay(
-             units=SchedulerUnits.tokens,
-            warmup=int((5e9 // GLOBAL_BATCH_TOKENS) * GLOBAL_BATCH_TOKENS),
-            decay=int((10e9 // GLOBAL_BATCH_TOKENS) * GLOBAL_BATCH_TOKENS),
-            decay_fraction=None,
+
+        scheduler=ComposableScheduler(
+            units=SchedulerUnits.tokens,
+            stages=[
+                ComposableSchedulerStage(
+                    duration=SCHED_WARMUP_TOKENS,
+                    shape=ComposableSchedulerStageType.linear,
+                    start_lr_fraction=0.0,
+                    end_lr_fraction=1.0,
+                ),
+                ComposableSchedulerStage(
+                    duration=SCHED_FAST_DECAY_TOKENS,
+                    shape=ComposableSchedulerStageType.cosine,
+                    end_lr_fraction=SCHED_MID_FRACTION,
+                ),
+                ComposableSchedulerStage(
+                    duration=SCHED_LONG_DECAY_TOKENS,
+                    shape=ComposableSchedulerStageType.linear,
+                    end_lr_fraction=SCHED_FINAL_FRACTION,
+                ),
+            ],
         ),
     )
 
@@ -396,7 +410,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=5,
+            metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
@@ -418,17 +432,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 entity="ai2-llm",
                 project="olmoe-dev-v2",
                 # project="olmo3",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
 
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=21,
-                                   end=24
+                                   start=31,
+                                   end=35
             )
         )
         .with_callback(

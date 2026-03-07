@@ -295,6 +295,12 @@ class MoEV2TransformerTrainModule(TrainModule):
             strict=False # group_overrides might only be matched in one group, strict=False allows it to not match in one group (could match in some other group),
         )
 
+        if self.reduce_scatter_grads and isinstance(self.model_parts[0], MultiGroupDistributedDataParallel):
+            raise NotImplementedError(
+                "reduce_scatter_grads=True is incompatible with MultiGroupDistributedDataParallel. "
+                "Disable DDP all-reduce path first or use reduce_scatter_grads=False."
+            )
+
         self.optim.set_reduce_scatter_grads(self.reduce_scatter_grads)
 
     def _cast_to_fwd_bwd_precision(self, model: Union[MoEFusedV2Transformer, List[MoEFusedV2Transformer]]) -> None:
@@ -1265,10 +1271,10 @@ class MoEV2TransformerTrainModule(TrainModule):
         
 
     def zero_grads(self):
-        # self.optim.zero_grad(set_to_none=True) # clear main grad
+        # Contract: optimizer consumes model grads but does not clear model grad buffers.
+        # Keep grad-buffer lifecycle in the model wrapper so bucket views stay stable.
         for m in self.model_parts:
-            m.zero_grad(set_to_none=False) # clear model grad
-            # m.set_main_grads_to_none()  # clear main grad
+            m.zero_grad(set_to_none=False)
 
     def model_forward_no_pipeline(
         self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None, **kwargs

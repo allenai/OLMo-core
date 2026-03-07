@@ -646,25 +646,30 @@ class MultiGroupDistributedDataParallel(Module):
         return self
 
     def zero_grad(self, set_to_none: bool = True):
-        super().zero_grad(set_to_none=set_to_none)
-
-        if self._accumulate_grads_in_fp32:
-            if set_to_none:
-                for param in self._module_parameters:
-                    if not param.requires_grad:
-                        continue
-                    param._main_grad_fp32 = None  # type: ignore[attr-defined]
+        if not set_to_none:
+            # Fast path for bucket-view mode: zero bucket storage once and keep view bindings.
+            if self._grad_views_need_rebind:
+                self._bind_bucket_views(zero_buffers=True, reason="zero_grad")
             else:
-                for param in self._module_parameters:
-                    if not param.requires_grad:
-                        continue
-                    view = self._param_to_bucket_view[param]
-                    view.zero_()
-                    param._main_grad_fp32 = view  # type: ignore[attr-defined]
+                for bucket in self._grad_buckets:
+                    bucket.flat_storage.zero_()
+                # In fp32-accum mode, .grad remains ephemeral.
+                if self._accumulate_grads_in_fp32:
+                    for param in self._module_parameters:
+                        if param.requires_grad:
+                            param.grad = None
+            self._forwards_since_finalize = 0
+            return
+
+        super().zero_grad(set_to_none=True)
+        if self._accumulate_grads_in_fp32:
+            for param in self._module_parameters:
+                if not param.requires_grad:
+                    continue
+                param._main_grad_fp32 = None  # type: ignore[attr-defined]
 
         self._forwards_since_finalize = 0
-        if set_to_none:
-            self._grad_views_need_rebind = True
+        self._grad_views_need_rebind = True
 
     def set_main_grads_to_none(self):
         if hasattr(self.module, "set_main_grads_to_none"):

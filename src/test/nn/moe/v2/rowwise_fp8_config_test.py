@@ -114,8 +114,6 @@ def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeyp
     _ = module._forward_rowwise_fp8(
         x,
         batch,
-        down_proj_out=None,
-        up_proj_input_grad_out=None,
         prequantized_input_q=None,
         prequantized_input_scales=None,
     )
