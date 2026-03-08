@@ -147,6 +147,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         htop \
         tmux \
         vmtouch \
+        bwm-ng \
         git && \
     rm -rf /var/lib/apt/lists/* \
     # AWS CLI \

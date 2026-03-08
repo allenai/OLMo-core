@@ -1,5 +1,5 @@
 """
-Match 7B TPS
+Train an OLMoE model. Run this script without any arguments to see usage info.
 """
 
 import logging
@@ -46,12 +46,7 @@ from olmo_core.nn.transformer import (
     TransformerType,
     MoEFusedV2TransformerConfig,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig
-from olmo_core.optim.scheduler import (
-    ComposableScheduler,
-    ComposableSchedulerStage,
-    ComposableSchedulerStageType,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig, CosWithWarmup, WSD
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -90,52 +85,52 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
     return new_num_layers, split_points
 
 
-SEQUENCE_LENGTH = 4096
-
-torch.set_float32_matmul_precision('high')
+SEQUENCE_LENGTH = 8192
 
 
-MAX_DURATION = int(7000e9)
-EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 1000
 
-NUM_EXPERTS = 64 + 16
-TOP_K = 3
-D_MODEL=2048-512
-D_ATTN=2048
+MAX_DURATION = int(1100e9)  # 1T + 100B
+EVAL_INTERVAL = 100
+SAVE_INTERVAL=25
 
-HEAD_DIM=64
+NUM_EXPERTS = 64
+TOP_K = 8
+OLD_TOP_K = 4
+D_MODEL=3072
+D_ATTN=D_MODEL
+# D_MODEL=2560
+# D_ATTN=D_MODEL
+HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 1280
+MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 
 # the first dense layer MLP
-DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
+DENSE_LAYER_MLP = (OLD_TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 3 // 2
 
-MICRO_BSZ = 8
+MICRO_BSZ = 2
 # DP_DIM=2
-EP_DIM=1
+EP_DIM=8
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16)
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * (3) // 2 # first increase
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 2 # 2nd increase
+REF_NUM_NODES=8
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (96)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
+GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
-GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
-
-LR= 1.4e-3 
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024)) # lr is for X Million token
+# LR= 3e-4 # target lr for 32M tokens
+# # LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
+# LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
+LR=0.00057907 # the RL at step 59275 (999.5B tokens)
 NUM_LAYERS=32
 
 if PP_DIM > 1:
@@ -149,20 +144,25 @@ else:
 
 # SPLIT_POINTS = None
 USE_COMPILE=True
-USE_NO_SYNC_EP=True
 USE_AC=False
-PER_LAYER_RECOMPUTE=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
-GRAD_REDUCE_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
-USE_ROWWISE_A2A=True
-USE_FP8=False
-ROWWISE_A2A_NBLOCKS=256
+
 SEED = 2026
 
-TAG=f'cheap4'
+TAG=f'dev-S{SEED}-WA'
+
+# if UNIFORM_ASSIGN:
+#     TAG = 'U-' + TAG
+# elif RANDOM_ASSIGN:
+#     TAG = 'RA-' + TAG
+# else:
+#     TAG = 'R-' + TAG
+# if GRAD_ACC_IN_FP32:
+#     TAG += '-fp32acc'
+
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -176,7 +176,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     from olmo_core.nn.moe.v2.block import (
         MoEFusedV2TransformerBlockConfig
     )
-    from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
     from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
     from olmo_core.nn.attention.backend import AttentionBackendName
@@ -194,23 +193,15 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
-        recompute_each_block=PER_LAYER_RECOMPUTE,
+        recompute_each_block=True,
         recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
-            ep_no_sync=USE_NO_SYNC_EP,
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
-            ep_no_sync_share_combine_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make combine_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
-            ep_no_sync_share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
-            ep_no_sync_shared_slots=2 if USE_TBO else 1,
-            ep_no_sync_use_rowwise_all_to_all=USE_ROWWISE_A2A,
-            ep_no_sync_rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
-            ep_no_sync_capacity_factor=1.2,
-            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,
@@ -218,6 +209,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 bias=False,
                 rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                 qk_norm=layer_norm ,
+                # use_flash=True,
+                # backend=AttentionBackendName.flash_3,
+                # backend=AttentionBackendName.flash_2,
                 backend=AttentionBackendName.te,
                 use_head_qk_norm=True,
                 dtype=dtype,
@@ -239,13 +233,14 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.1,
-                lb_loss_weight=0.01,
+                lb_loss_weight=0.005,
                 # lb_loss_weight=0.0065,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
                 normalize_expert_weights=1.0,
                 restore_weight_scale=True,
+                original_top_k=OLD_TOP_K,
             ),
             shared_experts=SharedExpertsConfig(
                 d_model=d_model,
@@ -278,7 +273,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE=512
+    WINDOW_SIZE=4096
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -297,6 +292,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                     bias=False,
                     rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                     qk_norm=layer_norm ,
+                    # use_flash=True,
+                    # backend=AttentionBackendName.flash_3,
+                    # backend=AttentionBackendName.flash_2,
                     backend=AttentionBackendName.te,
                     use_head_qk_norm=True,
                     dtype=dtype,
@@ -312,14 +310,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return config
 
 
-EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params
-
-SCHED_WARMUP_TOKENS = int((15e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((6000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_MID_FRACTION = 0.4
-SCHED_FINAL_FRACTION = 0.1
-
+# EXPERT_LR = LR * math.sqrt(OLD_TOP_K / NUM_EXPERTS)  # scale lr for expert params
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
     return MoEV2TransformerTrainModuleConfig(
@@ -331,13 +322,17 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
-                OptimGroupOverride(params=["*w_up_gate", "*w_down"], opts=dict(lr=EXPERT_LR)),
+                # OptimGroupOverride(params=["*w_up_gate", "*w_down"], opts=dict(lr=EXPERT_LR)),
+                # OptimGroupOverride(params=["embeddings.weight", ], opts=dict(weight_decay=0.0)) #TODO: fix
             ],
-            compile=USE_COMPILE,
+            #TODO: weight decay for norm?
+            # fused=True,
+            compile=False,
             dtype=DType.float32,
             sigma_factor=12,
-            use_distributed=True
+            # foreach=True
         ),
+        grad_accum_in_fp32=GRAD_ACC_IN_FP32,
         compile_model=USE_COMPILE,
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full,
@@ -345,8 +340,9 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         # FSDP
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.ddp,
-            reduce_grads_in_fp32=GRAD_REDUCE_IN_FP32,
-            accumulate_grads_in_fp32=GRAD_ACC_IN_FP32,
+            param_dtype=DType.bfloat16,  # TODO: not used?
+            reduce_dtype=DType.float32, # TODO: not used?
+            shard_degree=None,
         ),
         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
         pp_config=TransformerPipelineParallelConfig(
@@ -356,34 +352,34 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
             split_points=SPLIT_POINTS
         ) if PP_DIM > 1 else None,
-
+        # float8_config=Float8Config(
+        #     ao=AOFloat8LinearConfig(
+        #         enable_fsdp_float8_all_gather=True,
+        #         force_recompute_fp8_weight_in_bwd=True,
+        #         round_scales_to_power_of_2=True,
+        #     ),
+        #     enabled=False,
+        # ),
         float8_config=None,
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-
-        scheduler=ComposableScheduler(
-            units=SchedulerUnits.tokens,
-            stages=[
-                ComposableSchedulerStage(
-                    duration=SCHED_WARMUP_TOKENS,
-                    shape=ComposableSchedulerStageType.linear,
-                    start_lr_fraction=0.0,
-                    end_lr_fraction=1.0,
-                ),
-                ComposableSchedulerStage(
-                    duration=SCHED_FAST_DECAY_TOKENS,
-                    shape=ComposableSchedulerStageType.cosine,
-                    end_lr_fraction=SCHED_MID_FRACTION,
-                ),
-                ComposableSchedulerStage(
-                    duration=SCHED_LONG_DECAY_TOKENS,
-                    shape=ComposableSchedulerStageType.linear,
-                    end_lr_fraction=SCHED_FINAL_FRACTION,
-                ),
-            ],
-        ),
+        # scheduler=WSD(
+        #     units=SchedulerUnits.steps,
+        #     warmup=500,
+        #     # NOTE: be aware of when decay will happen relative to batch_wup schedule
+        #     decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
+        #     decay_fraction=None,
+        # ),
+        # scheduler=CosWithWarmup(warmup_steps=2500),
+        scheduler=WSD(
+            units=SchedulerUnits.steps,
+            warmup=500,
+            decay=(int(100e9 / GLOBAL_BATCH_SIZE)+1),
+            decay_fraction=None,
+        )
     )
 
+# WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
 WORK_DIR = "/workspace"
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
@@ -396,13 +392,15 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
+            # load_path='/workspace/checkpoint/OLMoE3-dec12/OLMoE3-dec12_3072d3072a_32L2560M2560S_64E4K1S_dev-S2026-WA/step57500',
+            load_path='/workspace/checkpoints/OLMoE3-dec12/OLMoE3-dec12_3072d3072a_32L2560M2560S_64E4K1S_dev-S2026-WA/step59275',
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=2,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
@@ -420,7 +418,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "wandb",
             WandBCallback(
                 name=common.run_name,
-
+                # entity="ai2-llm",
+                # project="tianhua-moe",
                 entity="ai2-llm",
                 project="olmoe-dev-v2",
                 # project="olmo3",
@@ -428,13 +427,24 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-
+        # .with_callback(
+        #     "batchwup",
+        #     BatchSizeSchedulerCallback(
+        #         batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4, GLOBAL_BATCH_SIZE * 8, ],
+        #         schedule=[
+        #             Duration.tokens(0),
+        #             Duration.tokens(167_772_160_000),
+        #             Duration.tokens(503_316_480_000),
+        #             Duration.tokens(838_860_800_000),
+        #         ],
+        #     ),
+        # )
         .with_callback(
             "profiler", 
             NvidiaProfilerCallback(enabled=False, # NOTE: change this
-                                   profile_ranks=list(range(0, 8*8, 8)),
-                                   start=31,
-                                   end=35
+                                   profile_ranks=list(range(0, 8*128, 8)),
+                                   start=59156,
+                                   end=59159
             )
         )
         .with_callback(
@@ -494,7 +504,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=4
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=2
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
