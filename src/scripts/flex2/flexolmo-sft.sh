@@ -43,7 +43,7 @@ SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/all
 BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/math-anneal-no-expert-bias/step95368
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math-1.0
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-2x7b-50b_math2_anneal-olmo3_math_mix-attm2 \
+    flexolmo-2x7b-50b_math2_anneal-olmo3_math_mix-unf-lm-emb \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -54,10 +54,10 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --launch.priority=urgent \
     --seq_len=4096 \
     --launch.num_gpus=8 \
-    --num_nodes=4 \
+    --num_nodes=8 \
     --budget ai2/oceo \
-    --workspace ai2/olmo-instruct \
-    --model_name olmoe-2x7b \
+    --workspace ai2/flex2 \
+    --model_name olmoe-2x7b-unfrozen-lm-head-embed \
     --dataset_path $SFT_DATASET
 
 # MATH:
