@@ -100,6 +100,29 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --workspace ai2/flex2 \
     --model_name olmoe-2x7b \
     --dataset_path $SFT_DATASET
+
+
+# SAFETY
+MIX=olmo3_safety
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/$MIX
+BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/math-base
+uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
+    flexolmo-2x7b-math_base-$MIX \
+        $BASE_CKPT \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=1e-4 \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=4096 \
+    --launch.num_gpus=8 \
+    --num_nodes=2 \
+    --budget ai2/oceo \
+    --workspace ai2/olmo-instruct \
+    --model_name olmoe-2x7b \
+    --dataset_path $SFT_DATASET
 --------
 
 
