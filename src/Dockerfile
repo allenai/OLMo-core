@@ -209,7 +209,7 @@ WORKDIR /app/olmo-core
 
 
 # additional tools
-RUN pip install nvitop nvtx
+RUN pip install nvitop nvtx matplotlib
 
 # nsys
 # the latest version has problems with nvtx; pinning to 2025.5.1 

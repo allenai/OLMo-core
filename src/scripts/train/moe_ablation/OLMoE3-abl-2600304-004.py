@@ -124,8 +124,8 @@ PP_DIM=1
 
 # ref
 REF_NUM_NODES=2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16)
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * (3) // 2 # first increase
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16)
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * (3) // 2 # first increase
 # GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 2 # 2nd increase
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
