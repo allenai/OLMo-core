@@ -54,6 +54,7 @@ dev = [
     "twine>=1.11.0",
     "wheel",
     "matplotlib",
+    "nvtx"
 ]
 beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
