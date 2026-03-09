@@ -61,6 +61,7 @@ from olmo_core.train.callbacks import (
     StabilityMonitorCallback,
     WandBCallback,
 )
+from olmo_core.train.callbacks.optimization_tracker import OptimizationDiagnosticsCallback
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
@@ -838,6 +839,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         )
         .with_callback("speed_monitor", SpeedMonitorCallback())
         .with_callback("stability_monitor", StabilityMonitorCallback(enabled=True))
+        .with_callback(
+            "optim_diagnostics",
+            OptimizationDiagnosticsCallback(
+                enabled=False,
+            ),
+        )
         .with_callback(
             "comet",
             CometCallback(

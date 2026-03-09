@@ -26,6 +26,7 @@ from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
 from .stability_monitor import StabilityMonitorCallback
+from .optimization_tracker import OptimizationDiagnosticsCallback
 from .wandb import WandBCallback
 
 __all__ = [
@@ -56,6 +57,7 @@ __all__ = [
     "MetricSaverCallback",
     "ModelMergeCallback",
     "ListCheckpointerCallback",
+    "OptimizationDiagnosticsCallback",
 ]
 
 __doc__ += "\n"
