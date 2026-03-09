@@ -532,7 +532,7 @@ class SFTRouterConfig(Config):
                 ],
             )
             freeze_experts = "none"
-            rank_microbatch_size=4096
+            rank_microbatch_size=2048
 
         elif model_name == "olmoe-4x7b-unfrozen":
             model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
@@ -941,7 +941,7 @@ Note: This script requires MoE models. Available model options:
         "--global_batch_size",
         type=int,
         help="The global batch size in tokens.",
-        default=40 * DEFAULT_SEQUENCE_LENGTH,
+        default=80 * DEFAULT_SEQUENCE_LENGTH,
     )
     parser.add_argument("--model_name", help="The name of the model architecture to use.")
     parser.add_argument("--budget", help="The beaker budget to use.")
