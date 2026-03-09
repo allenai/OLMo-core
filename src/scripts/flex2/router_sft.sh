@@ -14,12 +14,13 @@ SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tool-use-
 FLEX_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-4x7B-math_base-math_rl-olmo3_code-tool_use
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tool-use-general-math-code-mix-fixed-$AMOUNT
 FLEX_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-4x7B-math_rl_x4
-AMOUNT=0.01
-LR=1e-4
 FLEX_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-4x7B-math_base-math_rl-olmo3_code-tool_use-average_all-no_rt
+AMOUNT=0.05
+LR=1e-4
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math_code_tool_use-$AMOUNT
+FLEX_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-4x7B-math_rl-code_rl-tool_use
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-4x7B-merge-all-olmo3_3x_domain-$AMOUNT-$LR \
+    flexolmo-4x7B-merge-all-math_rl-code_rl-tool_use_sft-$AMOUNT-$LR \
         $FLEX_PATH \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -79,4 +80,28 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
     --model_name olmoe-4x7b \
+    --dataset_path $SFT_DATASET
+
+
+# 5x7B
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-math_rl-code_rl-tool_use-safety_sft
+AMOUNT=0.05
+LR=1e-4
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math_code_tool_use_safety-$AMOUNT
+uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
+    flexolmo-5x7B-math_rl-code_rl-tool_use_sft-safety_sft-$AMOUNT-$LR \
+        $BASE_CKPT \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=$LR \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=4096 \
+    --launch.num_gpus=8 \
+    --num_nodes=5 \
+    --budget ai2/oceo \
+    --workspace ai2/flex2 \
+    --model_name olmoe-5x7b \
     --dataset_path $SFT_DATASET

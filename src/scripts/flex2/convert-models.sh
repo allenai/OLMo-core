@@ -108,9 +108,11 @@ gantry run --cluster ai2/saturn -y --budget ai2/oceo --workspace ai2/flex2 \
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-4x7B-math_rl_x4-merge-all-0.05-4dom-1e-4/step76"
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-4x7B-merge-all-olmo3_3x_domain-0.05-1e-4/step80"
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-4x7B-merge-all-olmo3_3x_domain-0.25-1e-4/step400"
-MODEL_PATHS=(
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-50b_math2_anneal-olmo3_math_mix-attm2/step966"
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-4x7B-merge-all-olmo3_3x_domain-1.0-1e-4/step1602"
+"/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-50b_math2_anneal-olmo3_math_mix-unf-lm-emb/step966"
+MODEL_PATHS=(
+    "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-4x7B-merge-all-olmo3_3x_domain-0.01-1e-4/step16"
 )
 for MODEL_PATH in "${MODEL_PATHS[@]}"; do
 uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
@@ -126,8 +128,9 @@ done
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-math-sft-mixed/step1062-hf/grpo_math_only_flex-2x7b-math_rl_froz-6e-7-unf-lm-head/grpo_math_only_flex-2x7b-math_rl_froz-6e-7-unf-lm-head__1__1771484873_checkpoints/step_500"
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-math-sft-mixed/step1062-hf/grpo_math_only_flex-2x7b-math_rl_froz-6e-7-froz-exp1-rt/grpo_math_only_flex-2x7b-math_rl_froz-6e-7-froz-exp1-rt__1__1772677347_checkpoints/step_50"
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-math-sft-mixed/step1062-hf/grpo_math_only_flex-2x7b-math_rl_froz-6e-7-froz-exp1-rt-2/grpo_math_only_flex-2x7b-math_rl_froz-6e-7-froz-exp1-rt-2__1__1772683398_checkpoints/step_200"
-MODEL_PATHS=(
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-olmo3_50b_code_anneal-general-olmo3_code-mix/step782-hf/grpo_code_only_flex-2x7b-olmo3_code_sft-6e-7/grpo_code_only_flex-2x7b-olmo3_code_sft-6e-7__1__1772261343_checkpoints/step_200"
+MODEL_PATHS=(
+    "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-math_base-olmo3_safety-general-mix/step534-hf"
 )
 for MODEL_PATH in "${MODEL_PATHS[@]}"; do
 uv run python src/examples/huggingface/convert_checkpoint_from_hf.py \
