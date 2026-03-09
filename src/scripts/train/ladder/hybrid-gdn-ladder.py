@@ -39,6 +39,18 @@ def add_hybrid_args(_cmd: str, parser: argparse.ArgumentParser):
         default=4,
         help="Ratio of layers between transformer blocks (e.g., 4 means every 4th layer is transformer, 2 means every other layer).",
     )
+    parser.add_argument(
+        "--use-gate",
+        type=bool,
+        default=True,
+        help="Whether to use a gate in the GatedDeltaNet.",
+    )
+    parser.add_argument(
+        "--allow-neg-eigval",
+        type=bool,
+        default=True,
+        help="Whether to allow negative eigenvalues in the GatedDeltaNet.",
+    )
 
 
 def get_mix_base_dir(cluster: str) -> str:
@@ -52,6 +64,8 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
     def __init__(
         self,
         transformer_ratio: int = 4,
+        use_gate: bool = True,
+        allow_neg_eigval: bool = True,
         rank_microbatch_size: int | None = None,
     ):
         """
@@ -60,9 +74,13 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
                 E.g., 4 means every 4th layer is transformer (1/4 transformer),
                 2 means every other layer is transformer (1/2 transformer).
             rank_microbatch_size: Optional fixed rank micro-batch size in tokens.
+            use_gate: Whether to use a gate in the GatedDeltaNet.
+            allow_neg_eigval: Whether to allow negative eigenvalues in the GatedDeltaNet.
         """
         super().__init__(rank_microbatch_size=rank_microbatch_size)
         self.transformer_ratio = transformer_ratio
+        self.use_gate = use_gate
+        self.allow_neg_eigval = allow_neg_eigval
 
     def configure_rank_microbatch_size(
         self,
@@ -170,8 +188,8 @@ class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
                 "head_dim": ensure_multiple_of(
                     int(0.75 * model.d_model / model.block.sequence_mixer.n_heads), 128
                 ),
-                "use_gate": True,
-                "allow_neg_eigval": True,
+                "use_gate": self.use_gate,
+                "allow_neg_eigval": self.allow_neg_eigval,
             },
         )
 
@@ -262,6 +280,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         device_type=get_gpu_type(args.cluster),
         model_configurator=HybridGDNTransformerModelConfigurator(
             transformer_ratio=args.transformer_ratio,
+            use_gate=args.use_gate,
+            allow_neg_eigval=args.allow_neg_eigval,
             rank_microbatch_size=(
                 None if args.rank_mbz is None else args.rank_mbz * args.sequence_length
             ),
