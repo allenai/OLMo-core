@@ -49,6 +49,7 @@ from olmo_core.nn.transformer import (
 from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
+    ComposableSchedulerMonkeyPatchDecay,
     ComposableSchedulerStage,
     ComposableSchedulerStageType,
 )
@@ -123,10 +124,15 @@ EP_DIM=1
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=2
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16)
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * (3) // 2 # first increase
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 2 # 2nd increase
+REF_NUM_NODES=4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) # start at 4M 
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * (3) // 2 # first increase, 1.5x
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 2 # 2nd increase, 2x
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 3 # 3rd increase, 3x
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 4 # 4th increase, 4x
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 6 # 4th increase, 6x
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 8 # 4th increase, 8x
+
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -319,6 +325,10 @@ SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_LONG_DECAY_TOKENS = int((6000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 0.4
 SCHED_FINAL_FRACTION = 0.1
+MONKEY_PATCH_DECAY_START_TOKENS = None
+MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+MONKEY_PATCH_DECAY_END_FRACTION = SCHED_FINAL_FRACTION
+MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine
 
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
@@ -381,6 +391,16 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
                     end_lr_fraction=SCHED_FINAL_FRACTION,
                 ),
             ],
+            monkey_patch_decay=(
+                ComposableSchedulerMonkeyPatchDecay(
+                    start=MONKEY_PATCH_DECAY_START_TOKENS,
+                    duration=MONKEY_PATCH_DECAY_DURATION_TOKENS,
+                    shape=MONKEY_PATCH_DECAY_SHAPE,
+                    end_lr_fraction=MONKEY_PATCH_DECAY_END_FRACTION,
+                )
+                if MONKEY_PATCH_DECAY_START_TOKENS is not None
+                else None
+            ),
         ),
     )
 

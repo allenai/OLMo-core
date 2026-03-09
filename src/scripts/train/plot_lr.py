@@ -27,6 +27,27 @@ class Stage:
     end_lr_fraction: Optional[float] = None
 
 
+@dataclass
+class MonkeyPatchDecay:
+    start_tokens: int
+    duration_tokens: int
+    shape: str  # "linear" or "cosine"
+    end_lr: Optional[float] = None
+    end_lr_fraction: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if self.start_tokens < 0:
+            raise ValueError("MonkeyPatchDecay start_tokens must be >= 0.")
+        if self.duration_tokens <= 0:
+            raise ValueError("MonkeyPatchDecay duration_tokens must be > 0.")
+        if (self.end_lr is None) == (self.end_lr_fraction is None):
+            raise ValueError("Specify exactly one of end_lr or end_lr_fraction for MonkeyPatchDecay.")
+        if self.end_lr is not None and self.end_lr < 0:
+            raise ValueError("MonkeyPatchDecay end_lr must be >= 0.")
+        if self.end_lr_fraction is not None and self.end_lr_fraction < 0:
+            raise ValueError("MonkeyPatchDecay end_lr_fraction must be >= 0.")
+
+
 # -----------------------------------------------------------------------------
 # Config (edit in place)
 # -----------------------------------------------------------------------------
@@ -64,6 +85,21 @@ STAGES = [
         end_lr_fraction=0.1,
     ),
 ]
+
+MONKEY_PATCH_DECAY_START_TOKENS: Optional[int] = int(400e9)
+MONKEY_PATCH_DECAY_DURATION_TOKENS = as_aligned_tokens(200e9)
+MONKEY_PATCH_DECAY_END_FRACTION = 0.0
+MONKEY_PATCH_DECAY_SHAPE = "cosine"
+MONKEY_PATCH_DECAY = (
+    MonkeyPatchDecay(
+        start_tokens=MONKEY_PATCH_DECAY_START_TOKENS,
+        duration_tokens=MONKEY_PATCH_DECAY_DURATION_TOKENS,
+        shape=MONKEY_PATCH_DECAY_SHAPE,
+        end_lr_fraction=MONKEY_PATCH_DECAY_END_FRACTION,
+    )
+    if MONKEY_PATCH_DECAY_START_TOKENS is not None
+    else None
+)
 
 NUM_SAMPLES = 5000
 PLOT_IN_STEPS = False
@@ -117,6 +153,34 @@ def staged_lr(initial_lr: float, current: int, stages: list[Stage]) -> float:
     return previous_end_lr
 
 
+def composable_lr(
+    initial_lr: float,
+    current: int,
+    stages: list[Stage],
+    monkey_patch_decay: Optional[MonkeyPatchDecay] = None,
+) -> float:
+    current = max(current, 0)
+    if monkey_patch_decay is None or current < monkey_patch_decay.start_tokens:
+        return staged_lr(initial_lr, current, stages)
+
+    start_lr = staged_lr(initial_lr, monkey_patch_decay.start_tokens, stages)
+    end_lr = _resolve_from_initial(
+        initial_lr, monkey_patch_decay.end_lr, monkey_patch_decay.end_lr_fraction
+    )
+    decay_current = current - monkey_patch_decay.start_tokens
+
+    if decay_current < monkey_patch_decay.duration_tokens:
+        return _interpolate(
+            monkey_patch_decay.shape,
+            start_lr,
+            end_lr,
+            decay_current,
+            monkey_patch_decay.duration_tokens,
+        )
+
+    return end_lr
+
+
 def main() -> None:
     if MAX_DURATION_TOKENS <= 0 or GLOBAL_BATCH_SIZE <= 0:
         raise ValueError("MAX_DURATION_TOKENS and GLOBAL_BATCH_SIZE must be > 0.")
@@ -124,7 +188,7 @@ def main() -> None:
         raise ValueError("STAGES must be non-empty.")
 
     xs_tokens = np.linspace(0, MAX_DURATION_TOKENS, NUM_SAMPLES)
-    base_curve = [staged_lr(BASE_LR, int(x), STAGES) for x in xs_tokens]
+    base_curve = [composable_lr(BASE_LR, int(x), STAGES, MONKEY_PATCH_DECAY) for x in xs_tokens]
 
     if PLOT_IN_STEPS:
         xs = xs_tokens / GLOBAL_BATCH_SIZE
@@ -139,11 +203,23 @@ def main() -> None:
     plt.plot(xs, base_curve, label=f"base LR (init={BASE_LR:.3e})", linewidth=2)
 
     if INCLUDE_EXPERT_CURVE:
-        expert_curve = [staged_lr(EXPERT_LR, int(x), STAGES) for x in xs_tokens]
+        expert_curve = [
+            composable_lr(EXPERT_LR, int(x), STAGES, MONKEY_PATCH_DECAY) for x in xs_tokens
+        ]
         plt.plot(xs, expert_curve, label=f"expert LR (init={EXPERT_LR:.3e})", linewidth=2, alpha=0.9)
 
     for i, mark in enumerate(stage_marks, start=1):
         plt.axvline(mark, linestyle="--", alpha=0.5, label=f"stage {i} end")
+
+    if MONKEY_PATCH_DECAY is not None:
+        if PLOT_IN_STEPS:
+            mp_start = MONKEY_PATCH_DECAY.start_tokens / GLOBAL_BATCH_SIZE
+            mp_end = (MONKEY_PATCH_DECAY.start_tokens + MONKEY_PATCH_DECAY.duration_tokens) / GLOBAL_BATCH_SIZE
+        else:
+            mp_start = MONKEY_PATCH_DECAY.start_tokens / 1e9
+            mp_end = (MONKEY_PATCH_DECAY.start_tokens + MONKEY_PATCH_DECAY.duration_tokens) / 1e9
+        plt.axvline(mp_start, linestyle=":", alpha=0.8, color="red", label="monkey patch start")
+        plt.axvline(mp_end, linestyle=":", alpha=0.8, color="darkred", label="monkey patch end")
 
     plt.title("Composable Staged LR")
     plt.xlabel(xlabel)

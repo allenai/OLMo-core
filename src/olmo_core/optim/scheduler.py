@@ -620,6 +620,42 @@ class ComposableSchedulerStage(Config):
 
 
 @dataclass
+class ComposableSchedulerMonkeyPatchDecay(Config):
+    """
+    Optional decay override for :class:`ComposableScheduler`.
+
+    When active, the main stage schedule is ignored from ``start`` onward.
+    The override starts from the LR that the main schedule would have produced at ``start``,
+    and then decays to ``end_lr`` (or ``end_lr_fraction`` of ``initial_lr``) over ``duration``.
+    """
+
+    start: int
+    duration: int
+    shape: ComposableSchedulerStageType = ComposableSchedulerStageType.linear
+
+    end_lr: Optional[float] = None
+    end_lr_fraction: Optional[float] = None
+
+    def __post_init__(self):
+        if self.start < 0:
+            raise OLMoConfigurationError("'start' must be >= 0 for monkey-patch decay.")
+
+        if self.duration <= 0:
+            raise OLMoConfigurationError("'duration' must be > 0 for monkey-patch decay.")
+
+        if (self.end_lr is None) == (self.end_lr_fraction is None):
+            raise OLMoConfigurationError(
+                "Specify exactly one of 'end_lr' or 'end_lr_fraction' for monkey-patch decay."
+            )
+
+        if self.end_lr is not None and self.end_lr < 0:
+            raise OLMoConfigurationError("'end_lr' must be >= 0 for monkey-patch decay.")
+
+        if self.end_lr_fraction is not None and self.end_lr_fraction < 0:
+            raise OLMoConfigurationError("'end_lr_fraction' must be >= 0 for monkey-patch decay.")
+
+
+@dataclass
 class ComposableScheduler(Scheduler):
     """
     Piecewise LR schedule composed of multiple stages.
@@ -631,6 +667,7 @@ class ComposableScheduler(Scheduler):
     """
 
     stages: List[ComposableSchedulerStage] = field(default_factory=list)
+    monkey_patch_decay: Optional[ComposableSchedulerMonkeyPatchDecay] = None
 
     def __post_init__(self):
         if len(self.stages) == 0:
@@ -662,27 +699,21 @@ class ComposableScheduler(Scheduler):
     ) -> Union[float, torch.Tensor]:
         return self._resolve_from_initial(initial_lr, stage.end_lr, stage.end_lr_fraction)
 
-    @staticmethod
-    def _interpolate(
-        shape: ComposableSchedulerStageType,
-        start_lr: Union[float, torch.Tensor],
-        end_lr: Union[float, torch.Tensor],
-        current: int,
-        duration: int,
+    def _resolve_monkey_patch_decay_end(
+        self,
+        monkey_patch_decay: ComposableSchedulerMonkeyPatchDecay,
+        initial_lr: Union[float, torch.Tensor],
     ) -> Union[float, torch.Tensor]:
-        if shape == ComposableSchedulerStageType.linear:
-            return start_lr + (end_lr - start_lr) * current / duration
-        elif shape == ComposableSchedulerStageType.cosine:
-            return end_lr + (start_lr - end_lr) * (1 + cos(pi * current / duration)) / 2
-        else:
-            raise NotImplementedError(shape)
+        return self._resolve_from_initial(
+            initial_lr,
+            monkey_patch_decay.end_lr,
+            monkey_patch_decay.end_lr_fraction,
+        )
 
-    def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    def _main_schedule_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int
     ) -> Union[float, torch.Tensor]:
-        del t_max
         current = max(current, 0)
-
         stage_start = 0
         previous_end_lr: Union[float, torch.Tensor] = initial_lr
         for stage in self.stages:
@@ -704,6 +735,46 @@ class ComposableScheduler(Scheduler):
             stage_start = stage_end
 
         return previous_end_lr
+
+    @staticmethod
+    def _interpolate(
+        shape: ComposableSchedulerStageType,
+        start_lr: Union[float, torch.Tensor],
+        end_lr: Union[float, torch.Tensor],
+        current: int,
+        duration: int,
+    ) -> Union[float, torch.Tensor]:
+        if shape == ComposableSchedulerStageType.linear:
+            return start_lr + (end_lr - start_lr) * current / duration
+        elif shape == ComposableSchedulerStageType.cosine:
+            return end_lr + (start_lr - end_lr) * (1 + cos(pi * current / duration)) / 2
+        else:
+            raise NotImplementedError(shape)
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        del t_max
+        current = max(current, 0)
+
+        if self.monkey_patch_decay is None or current < self.monkey_patch_decay.start:
+            return self._main_schedule_lr(initial_lr, current)
+
+        monkey_patch_decay = self.monkey_patch_decay
+        monkey_patch_start_lr = self._main_schedule_lr(initial_lr, monkey_patch_decay.start)
+        monkey_patch_end_lr = self._resolve_monkey_patch_decay_end(monkey_patch_decay, initial_lr)
+        monkey_patch_current = current - monkey_patch_decay.start
+
+        if monkey_patch_current < monkey_patch_decay.duration:
+            return self._interpolate(
+                shape=monkey_patch_decay.shape,
+                start_lr=monkey_patch_start_lr,
+                end_lr=monkey_patch_end_lr,
+                current=monkey_patch_current,
+                duration=monkey_patch_decay.duration,
+            )
+
+        return monkey_patch_end_lr
 
 
 def _linear_warmup(
