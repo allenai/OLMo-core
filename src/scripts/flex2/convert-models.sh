@@ -111,8 +111,9 @@ gantry run --cluster ai2/saturn -y --budget ai2/oceo --workspace ai2/flex2 \
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-50b_math2_anneal-olmo3_math_mix-attm2/step966"
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-4x7B-merge-all-olmo3_3x_domain-1.0-1e-4/step1602"
 "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-2x7b-50b_math2_anneal-olmo3_math_mix-unf-lm-emb/step966"
-MODEL_PATHS=(
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-4x7B-merge-all-olmo3_3x_domain-0.01-1e-4/step16"
+MODEL_PATHS=(
+"/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/flexolmo-4x7B-merge-all-math_rl-code_rl-tool_use_sft-0.05-1e-4/step80"
 )
 for MODEL_PATH in "${MODEL_PATHS[@]}"; do
 uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \

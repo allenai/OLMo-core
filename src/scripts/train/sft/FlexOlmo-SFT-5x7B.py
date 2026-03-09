@@ -941,7 +941,7 @@ Note: This script requires MoE models. Available model options:
         "--global_batch_size",
         type=int,
         help="The global batch size in tokens.",
-        default=80 * DEFAULT_SEQUENCE_LENGTH,
+        default=40 * DEFAULT_SEQUENCE_LENGTH,
     )
     parser.add_argument("--model_name", help="The name of the model architecture to use.")
     parser.add_argument("--budget", help="The beaker budget to use.")
