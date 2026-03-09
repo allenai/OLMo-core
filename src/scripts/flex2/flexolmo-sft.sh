@@ -81,6 +81,27 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --model_name olmoe-2x7b \
     --dataset_path $SFT_DATASET
 
+# BIOMED:
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/general-olmo3_science-biomed-mix
+BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-2x7B-kevin_med_anneal-10b-8k/step9537
+uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
+    flexolmo-2x7b-kevin_med_anneal-10b-general-olmo3_science-biomed-mix \
+        $BASE_CKPT \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=1e-4 \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=4096 \
+    --launch.num_gpus=8 \
+    --num_nodes=4 \
+    --budget ai2/oceo \
+    --workspace ai2/flex2 \
+    --model_name olmoe-2x7b \
+    --dataset_path $SFT_DATASET
+
 # REASONING:
 # BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-2x7B-olmo3_reasoning-20b-8k/step19074
 BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-2x7B-olmo3_reasoning-fixed-20b-8k/step19074

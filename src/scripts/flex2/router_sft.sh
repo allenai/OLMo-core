@@ -105,3 +105,26 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
     --workspace ai2/flex2 \
     --model_name olmoe-5x7b \
     --dataset_path $SFT_DATASET
+
+# 5x7B Olmo 2 Code
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-math_rl-olmo2_code_sft-tool_use-safety_sft
+AMOUNT=0.05
+LR=1e-4
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math_olmo2_code_tool_use_safety-$AMOUNT
+uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
+    flexolmo-5x7B-math_rl-olmo2_code_sft-tool_use_sft-safety_sft-$AMOUNT-$LR \
+        $BASE_CKPT \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=$LR \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=2048 \
+    --launch.num_gpus=8 \
+    --num_nodes=5 \
+    --budget ai2/oceo \
+    --workspace ai2/olmo-instruct \
+    --model_name olmoe-5x7b \
+    --dataset_path $SFT_DATASET
