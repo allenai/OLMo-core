@@ -98,7 +98,7 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
     --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
     --train_module.state_dict_load_opts.strict=False \
     --launch.priority=urgent \
-    --seq_len=4096 \
+    --seq_len=2048 \
     --launch.num_gpus=8 \
     --num_nodes=5 \
     --budget ai2/oceo \
