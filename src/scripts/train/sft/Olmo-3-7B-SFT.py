@@ -32,7 +32,7 @@ from olmo_core.internal.common import (
     get_work_dir,
 )
 from olmo_core.io import copy_dir, dir_is_empty, get_parent, join_path, list_directory
-from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerWekaBucket
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
@@ -315,30 +315,35 @@ class SFTConfig(Config):
             YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
         )
 
+        launch_config = build_launch_config(
+            name=run_name,
+            root_dir=root_dir,
+            cmd=[
+                script,
+                cmd,
+                run_name,
+                checkpoint,
+                cluster,
+                f"--seq_len={seq_len}",
+                f"--num_nodes={num_nodes}",
+                f"--global_batch_size={global_batch_size}",
+                f"--budget={budget}",
+                f"--workspace={workspace}",
+                f"--dataset_path={dataset_path}",
+                *overrides,
+            ],
+            cluster=cluster,
+            num_nodes=num_nodes,
+            budget=budget,
+            workspace=workspace,
+        )
+        launch_config.weka_buckets.append(
+            BeakerWekaBucket("oe-adapt-default", "/weka/oe-adapt-default")
+        )
+
         config = SFTConfig(
             run_name=run_name,
-            launch=build_launch_config(
-                name=run_name,
-                root_dir=root_dir,
-                cmd=[
-                    script,
-                    cmd,
-                    run_name,
-                    checkpoint,
-                    cluster,
-                    f"--seq_len={seq_len}",
-                    f"--num_nodes={num_nodes}",
-                    f"--global_batch_size={global_batch_size}",
-                    f"--budget={budget}",
-                    f"--workspace={workspace}",
-                    f"--dataset_path={dataset_path}",
-                    *overrides,
-                ],
-                cluster=cluster,
-                num_nodes=num_nodes,
-                budget=budget,
-                workspace=workspace,
-            ),
+            launch=launch_config,
             model=model,
             dataset=None,
             data_loader=NumpyDataLoaderConfig(
