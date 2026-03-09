@@ -12,6 +12,12 @@ from olmo_core.optim import (
     LinearWithWarmup,
     SequentialScheduler,
 )
+from olmo_core.optim.scheduler import (
+    ComposableScheduler,
+    ComposableSchedulerMonkeyPatchDecay,
+    ComposableSchedulerStage,
+    ComposableSchedulerStageType,
+)
 
 
 def test_constant_with_warmup():
@@ -97,6 +103,67 @@ def test_sequential_scheduler():
     assert scheduler.get_lr(initial_lr, 7_500, max_steps) == third_scheduler.get_lr(
         second_scheduler_final_lr, 1_000, max_steps - 6_500
     )
+
+
+def test_composable_scheduler_monkey_patch_decay_linear():
+    initial_lr = 10.0
+    scheduler = ComposableScheduler(
+        stages=[
+            ComposableSchedulerStage(
+                duration=100,
+                shape=ComposableSchedulerStageType.linear,
+                start_lr_fraction=0.0,
+                end_lr_fraction=1.0,
+            ),
+            ComposableSchedulerStage(
+                duration=900,
+                shape=ComposableSchedulerStageType.linear,
+                end_lr_fraction=0.1,
+            ),
+        ],
+        monkey_patch_decay=ComposableSchedulerMonkeyPatchDecay(
+            start=200,
+            duration=100,
+            shape=ComposableSchedulerStageType.linear,
+            end_lr=3.0,
+        ),
+    )
+
+    assert scheduler.get_lr(initial_lr, 150, 1000) == pytest.approx(9.5)
+    assert scheduler.get_lr(initial_lr, 200, 1000) == pytest.approx(9.0)
+    assert scheduler.get_lr(initial_lr, 250, 1000) == pytest.approx(6.0)
+    assert scheduler.get_lr(initial_lr, 300, 1000) == pytest.approx(3.0)
+    assert scheduler.get_lr(initial_lr, 800, 1000) == pytest.approx(3.0)
+
+
+def test_composable_scheduler_monkey_patch_decay_cosine():
+    initial_lr = 10.0
+    scheduler = ComposableScheduler(
+        stages=[
+            ComposableSchedulerStage(
+                duration=1000,
+                shape=ComposableSchedulerStageType.linear,
+                end_lr_fraction=1.0,
+            ),
+        ],
+        monkey_patch_decay=ComposableSchedulerMonkeyPatchDecay(
+            start=100,
+            duration=100,
+            shape=ComposableSchedulerStageType.cosine,
+            end_lr_fraction=0.2,
+        ),
+    )
+
+    assert scheduler.get_lr(initial_lr, 99, 1000) == pytest.approx(10.0)
+    assert scheduler.get_lr(initial_lr, 100, 1000) == pytest.approx(10.0)
+    assert scheduler.get_lr(initial_lr, 150, 1000) == pytest.approx(6.0)
+    assert scheduler.get_lr(initial_lr, 200, 1000) == pytest.approx(2.0)
+    assert scheduler.get_lr(initial_lr, 500, 1000) == pytest.approx(2.0)
+
+
+def test_composable_scheduler_monkey_patch_decay_validation():
+    with pytest.raises(OLMoConfigurationError, match="exactly one of 'end_lr' or 'end_lr_fraction'"):
+        ComposableSchedulerMonkeyPatchDecay(start=100, duration=100)
 
 
 class TestWSDSScheduler:
