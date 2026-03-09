@@ -184,64 +184,57 @@ def _get_and_validate_rope_scaling_config(blocks) -> dict | None:
     """
     Validate RoPE scaling configuration across transformer blocks.
 
+    HuggingFace applies a single global ``rope_scaling`` config to all layers. This function
+    validates that all layers with RoPE scaling use the same configuration, then returns
+    that config. Sliding window layers with the same scaling as full attention layers are
+    permitted (and required, since HF will apply the config globally regardless).
+
     :param blocks: The list of transformer blocks to validate.
     :returns: The validated RoPE scaling config dict for HF, or None if no scaling.
-    :raises NotImplementedError: If RoPE scaling is applied to sliding window layers or if
-                               full attention layers have different RoPE scaling configs.
+    :raises NotImplementedError: If layers have different RoPE scaling configurations.
     """
-    # Separate full attention layers from sliding window layers
-    full_attention_layers = [
+    # Collect all layers with RoPE scaling
+    all_layers_with_scaling = [
         (idx, block)
         for idx, block in enumerate(blocks)
-        if block.attention.backend.window_size == (-1, -1)
-    ]
-    sliding_window_layers = [
-        (idx, block)
-        for idx, block in enumerate(blocks)
-        if block.attention.backend.window_size != (-1, -1)
-    ]
-
-    # Check for RoPE scaling on sliding window layers (not allowed)
-    sliding_with_scaling = [
-        (idx, block)
-        for idx, block in sliding_window_layers
         if block.attention.rope is not None and block.attention.rope.scaling is not None
     ]
-    if sliding_with_scaling:
-        sliding_indices = [idx for idx, _ in sliding_with_scaling]
-        raise NotImplementedError(
-            f"RoPE scaling is configured on sliding window attention layers {sliding_indices}, "
-            f"but HuggingFace only supports RoPE scaling on full attention layers. "
-            f"Please remove RoPE scaling from sliding window layers or convert them to full attention."
-        )
-
-    # Collect RoPE scaling configs from full attention layers only
-    full_layers_with_scaling = [
-        (idx, block)
-        for idx, block in full_attention_layers
-        if block.attention.rope is not None and block.attention.rope.scaling is not None
-    ]
-    if not full_layers_with_scaling:
+    if not all_layers_with_scaling:
         return None
 
     rope_scaling_configs: list[RoPEScalingConfig] = [
-        block.attention.rope.scaling for _, block in full_layers_with_scaling
+        block.attention.rope.scaling for _, block in all_layers_with_scaling
     ]
 
-    # Validate that all full attention layers with RoPE scaling use the same configuration
+    # Validate that all layers with RoPE scaling use the same configuration
     first_config = rope_scaling_configs[0]
     first_config_dict = first_config.to_hf_config()
 
     for i, rope_config in enumerate(rope_scaling_configs[1:], 1):
         config_dict = rope_config.to_hf_config()
         if config_dict != first_config_dict:
-            scaling_indices = [idx for idx, _ in full_layers_with_scaling]
+            scaling_indices = [idx for idx, _ in all_layers_with_scaling]
             raise NotImplementedError(
-                f"Full attention layers have different RoPE scaling configurations but HuggingFace "
-                "only supports a single RoPE scaling configuration per model. "
-                f"Full attention layers with scaling: {scaling_indices}. "
+                f"Layers have different RoPE scaling configurations but HuggingFace "
+                "only supports a single global RoPE scaling configuration per model. "
+                f"Layers with scaling: {scaling_indices}. "
                 f"First config: {first_config_dict}, Different config at layer {i}: {config_dict}"
             )
+
+    # HF applies the config globally, so if only some layers have scaling the HF forward pass
+    # will differ from OLMo-core's (which applies scaling per-layer).
+    layers_without_scaling = [
+        (idx, block)
+        for idx, block in enumerate(blocks)
+        if block.attention.rope is None or block.attention.rope.scaling is None
+    ]
+    if layers_without_scaling:
+        missing_indices = [idx for idx, _ in layers_without_scaling]
+        raise NotImplementedError(
+            f"Layers {missing_indices} do not have RoPE scaling, but other layers do. "
+            "HuggingFace applies a single global RoPE scaling config to all layers. "
+            "Apply the same RoPE scaling to all layers (full_attn_layers_only=False)."
+        )
 
     return first_config_dict
 

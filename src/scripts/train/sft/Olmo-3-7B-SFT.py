@@ -312,7 +312,8 @@ class SFTConfig(Config):
         model = TransformerConfig.olmo3_7B(
             vocab_size=tokenizer_config.padded_vocab_size(),
         ).with_rope_scaling(
-            YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
+            YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192),
+            full_attn_layers_only=False,
         )
 
         config = SFTConfig(
