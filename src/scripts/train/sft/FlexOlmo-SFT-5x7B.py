@@ -129,7 +129,7 @@ class BatchSizeConfig:
             "sequence_length must be a power of 2"
         )
         assert self.world_size > 0, "world_size must be positive"
-        assert (self.world_size & (self.world_size - 1)) == 0, "world_size must be a power of 2"
+        # assert (self.world_size & (self.world_size - 1)) == 0, "world_size must be a power of 2"
 
         # Determine max tokens per rank based on GPU type
         max_tokens_per_rank = MAX_RANK_MICROBATCH_SIZE_TOKENS
@@ -324,7 +324,7 @@ class SFTRouterConfig(Config):
             print("Batch size config (before overrides):")
             print(bs_config)
 
-        ep_degree=7
+        ep_degree=5
         rank_microbatch_size=4096
 
         dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
@@ -941,7 +941,7 @@ Note: This script requires MoE models. Available model options:
         "--global_batch_size",
         type=int,
         help="The global batch size in tokens.",
-        default=64 * DEFAULT_SEQUENCE_LENGTH,
+        default=80 * DEFAULT_SEQUENCE_LENGTH,
     )
     parser.add_argument("--model_name", help="The name of the model architecture to use.")
     parser.add_argument("--budget", help="The beaker budget to use.")
