@@ -511,7 +511,10 @@ class GemmaLikeOlmoV2(StrEnum):
     GL_34B = "34B"
 
     def get_settings(
-        self, vocab_size: int, use_gdn: bool = False
+        self,
+        vocab_size: int,
+        use_gdn: bool = False,
+        attn_backend: Optional[AttentionBackendName] = None,
     ) -> Tuple[TransformerConfig, _ModelSizeSettings]:
         """Get the model config and all settings for this model size."""
         # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
@@ -536,7 +539,10 @@ class GemmaLikeOlmoV2(StrEnum):
 
         settings = settings_map[self]
         config_method = getattr(GemmaLikeTransformerConfig, f"v2_{settings.size}")
-        model_config = config_method(vocab_size, use_gdn=use_gdn)
+        kwargs = {"use_gdn": use_gdn}
+        if attn_backend is not None:
+            kwargs["attn_backend"] = attn_backend
+        model_config = config_method(vocab_size, **kwargs)
         return model_config, settings
 
 
@@ -554,6 +560,12 @@ def handle_custom_args(
     parser.add_argument("--chinchilla-multiple", type=float, default=4.0)  # Default is 4xC
     parser.add_argument("--no-beaker-launch", action="store_true", default=False)
     parser.add_argument("--use-gdn", action="store_true", default=False)
+    parser.add_argument(
+        "--attn-backend",
+        type=AttentionBackendName,
+        choices=list(AttentionBackendName),
+        default=None,
+    )
     parser.add_argument(
         "--data-mix",
         type=DataMix,
@@ -705,6 +717,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     chinchilla_multiple = custom_args.chinchilla_multiple
     no_beaker_launch = custom_args.no_beaker_launch
     use_gdn = custom_args.use_gdn
+    attn_backend = custom_args.attn_backend
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
     root_dir = custom_args.root_dir or get_root_dir(cli_context.cluster)
@@ -718,7 +731,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.dolma2()
     model_config, model_size_settings = model.get_settings(
-        tokenizer_config.padded_vocab_size(), use_gdn=use_gdn
+        tokenizer_config.padded_vocab_size(), use_gdn=use_gdn, attn_backend=attn_backend
     )
 
     # Compute hyperparameters
