@@ -20,9 +20,7 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.data.composable import ComposableDataLoaderConfig
-from olmo_core.data.composable import (
-    InstanceFilterConfig as ComposableInstanceFilterConfig,
-)
+from olmo_core.data.composable import InstanceFilterConfig as ComposableInstanceFilterConfig
 from olmo_core.data.composable import InstanceSourceConfig, set_composable_seed
 from olmo_core.data.composable.mixture_recipe import build_numpy_mixture_from_yaml_spec
 from olmo_core.distributed.parallel import DataParallelType
@@ -360,16 +358,34 @@ class GemmaLikeTransformerConfig(TransformerConfig):
         )
 
     @classmethod
-    def v2_50M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    def v2_65M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 50M model config.
 
-        47,192,576 non-embedding params
+        65,804,800 total params
+        40,114,688 non-embedding params
         """
         return cls.v2(
             d_model=256,
             hidden_size=256 * 8,
             n_layers=5,
+            n_heads=8,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v2_150M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 150M model config.
+
+        148_155_460 total params
+        106_007_620 non-embedding params
+        """
+        return cls.v2(
+            d_model=420,
+            hidden_size=420 * 8,
+            n_layers=10,
             n_heads=8,
             vocab_size=vocab_size,
             **kwargs,
@@ -523,7 +539,8 @@ class _ModelSizeSettings:
 
 
 class GemmaLikeOlmoV2(StrEnum):
-    GL_50M = "50M"
+    GL_65M = "65M"
+    GL_150M = "150M"
     GL_260M = "260M"
     GL_709M = "709M"
     GL_1p3B = "1.3B"
@@ -539,7 +556,8 @@ class GemmaLikeOlmoV2(StrEnum):
         """Get the model config and all settings for this model size."""
         # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
         settings_map = {
-            GemmaLikeOlmoV2.GL_50M: _ModelSizeSettings("50M", 1, 16, 1.0),
+            GemmaLikeOlmoV2.GL_50M: _ModelSizeSettings("65M", 1, 16, 1.0),
+            GemmaLikeOlmoV2.GL_50M: _ModelSizeSettings("150M", 1, 16, 1.0),
             GemmaLikeOlmoV2.GL_260M: _ModelSizeSettings("260M", 1, 16, 1.0),
             GemmaLikeOlmoV2.GL_709M: _ModelSizeSettings("709M", 2, 16, 1.0),
             GemmaLikeOlmoV2.GL_1p3B: _ModelSizeSettings("1p3B", 3, 16, 1.0),
