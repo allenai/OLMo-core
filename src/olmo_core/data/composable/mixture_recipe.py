@@ -30,6 +30,8 @@ class _MixtureSourceSpec:
     weight: float
     paths: list[str]
     repetition_factor: float = 1.0
+    """Set to -1.0 to allow for as much repetition as needed to fulfill the mix, or to a value
+    greater than 1.0 to get an exact amount of repetition."""
 
 
 @dataclass
@@ -301,9 +303,16 @@ def build_numpy_mixture_from_yaml_spec(
         num_tokens_needed = sequence_length * round(
             total_tokens * source_spec.weight / sequence_length
         )
-        if num_tokens * source_spec.repetition_factor < num_tokens_needed:
+        if (
+            num_tokens * source_spec.repetition_factor < num_tokens_needed
+            and source_spec.repetition_factor != -1.0
+        ):
             raise OLMoConfigurationError(
-                f"'{source_spec.name}' doesn't have enough tokens to fulfill the mix"
+                f"'{source_spec.name}' doesn't have enough tokens to fulfill the mix. "
+                "You can allow for some repetition to get the desired number of tokens by setting "
+                "the 'repetition_factor' for this source to a value greater than 1.0 "
+                "(e.g. 2.0 to allow for up to 2 repetitions of the source), or to -1.0 to use just as "
+                "much repetition as needed."
             )
 
         if source_spec.weight == 0.0:
