@@ -154,7 +154,7 @@ class NumpyDocumentSamplingStrategy(NumpySamplingStrategy):
         num_tokens_needed: int,
         repetition_factor: float,
     ) -> SamplingDocumentSourceConfig:
-        if repetition_factor == 1.0:
+        if repetition_factor == 1.0 or repetition_factor == -1.0:
             return SamplingDocumentSourceConfig(
                 sources=[source], max_tokens=num_tokens_needed, label=label
             )
@@ -198,7 +198,7 @@ class NumpyContiguousChunksSamplingStrategy(NumpySamplingStrategy):
         num_tokens_needed: int,
         repetition_factor: float,
     ) -> SamplingTokenSourceConfig:
-        if repetition_factor == 1.0:
+        if repetition_factor == 1.0 or repetition_factor == -1.0:
             return SamplingTokenSourceConfig(
                 sources=[source], max_tokens=num_tokens_needed, label=label
             )
