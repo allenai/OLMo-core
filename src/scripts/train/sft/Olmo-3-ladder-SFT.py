@@ -64,13 +64,14 @@ GPUS_PER_NODE = 8
 DEFAULT_SEQUENCE_LENGTH = 16_384
 DEFAULT_NUM_NODES = 1
 
-MODEL_SIZES = ["60M", "100M", "600M", "760M", "1B", "3B"]
+MODEL_SIZES = ["60M", "100M", "370M", "600M", "760M", "1B", "3B"]
 
 YARN_ROPE_SCALING = YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
 
 MODEL_BUILDERS = {
     "60M": TransformerConfig.olmo3_60M,
     "100M": TransformerConfig.olmo3_100M,
+    "370M": TransformerConfig.olmo3_370M,
     "600M": TransformerConfig.olmo3_600M,
     "760M": TransformerConfig.olmo3_760M,
     "1B": TransformerConfig.olmo3_1B,
@@ -80,6 +81,7 @@ MODEL_BUILDERS = {
 MAX_RANK_MICROBATCH_SIZE_TOKENS = {
     "60M": 131_072,
     "100M": 131_072,
+    "370M": 131_072,
     "600M": 131_072,
     "760M": 131_072,
     "1B": 131_072,
@@ -263,7 +265,7 @@ def build_config(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Ladder SFT for OLMo-3 models (60M, 100M, 600M, 760M, 1B, 3B).",
+        description="Ladder SFT",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

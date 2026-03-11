@@ -51,6 +51,11 @@ SIZES: dict[str, LadderSize] = {
         lr=estimate_lr(100_000_000),
         global_batch_size=estimate_gbs(100_000_000),
     ),
+    "370M": LadderSize(
+        model_config_fn=TransformerConfig.olmo3_370M,
+        lr=estimate_lr(370_000_000),
+        global_batch_size=estimate_gbs(370_000_000),
+    ),
     "600M": LadderSize(
         model_config_fn=TransformerConfig.olmo3_600M,
         lr=estimate_lr(600_000_000),
