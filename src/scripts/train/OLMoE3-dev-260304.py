@@ -91,18 +91,18 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
     return new_num_layers, split_points
 
 
-SEQUENCE_LENGTH = 4096
+SEQUENCE_LENGTH = 8192
 
 torch.set_float32_matmul_precision('high')
 
 
-MAX_DURATION = int(7000e9)
+MAX_DURATION = int(6000e9)
 EVAL_INTERVAL = 1000
 SAVE_INTERVAL = 1000
 
 NUM_EXPERTS = 48
 TOP_K = 2
-D_MODEL=2048
+D_MODEL=2560
 D_ATTN=3072
 
 HEAD_DIM=64
@@ -123,11 +123,16 @@ EP_DIM=1
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=2
+REF_NUM_NODES=8
 
 # stage 1
-MICRO_BSZ = 6
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (12) # start at 3M
+MICRO_BSZ = 3
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (6) # start at 3M
+
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # start at 16M
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (48) # start at 24M
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (96) # start at 48M
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (120) # start at 60M
 
 
 # GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * (3) // 2 # first increase, 1.5x
@@ -144,7 +149,7 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 1.6e-3 
+LR= 8e-4 
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024)) # lr is for X Million token
 NUM_LAYERS=24
 
@@ -172,7 +177,7 @@ USE_FP8=False
 ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
-TAG=f'cheap1'
+TAG=f'c1'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -327,8 +332,8 @@ EXPERT_LR = LR * 0.6  # scale lr for expert params, empirical choice
 
 SCHED_WARMUP_TOKENS = int((15e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((6000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_MID_FRACTION = 0.5
+SCHED_LONG_DECAY_TOKENS = int((5950e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_MID_FRACTION = 0.8
 SCHED_FINAL_FRACTION = 0.1
 
 # patch
@@ -350,7 +355,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
                 OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
                 OptimGroupOverride(params=["*w_up_gate", "*w_down"], opts=dict(lr=EXPERT_LR)),
             ],
-            compile=USE_COMPILE,
+            compile=USE_COMPILE, 
             dtype=DType.float32,
             sigma_factor=12,
             use_distributed=True
@@ -394,7 +399,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
                 ),
                 ComposableSchedulerStage(
                     duration=SCHED_LONG_DECAY_TOKENS,
-                    shape=ComposableSchedulerStageType.linear,
+                    shape=ComposableSchedulerStageType.cosine,
                     end_lr_fraction=SCHED_FINAL_FRACTION,
                 ),
             ],
@@ -447,10 +452,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "wandb",
             WandBCallback(
                 name=common.run_name,
-
                 entity="ai2-llm",
                 project="olmoe-dev-v2",
-                # project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
@@ -474,9 +477,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        # )
     )
 
 

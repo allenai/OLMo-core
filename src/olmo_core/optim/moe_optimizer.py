@@ -313,8 +313,10 @@ class MoEFusedV2OptimizerConfig(Config):
                 log.info(f"Group {g_idx}, {len(group['named_params'])} parameter(s)")
 
         if self.compile:
-            log.info("Compiling optimizer step...")
-            optim.step = torch.compile(optim.step)
+            # Compile only the math-heavy update path. Keeping comm/copy-back eager
+            # avoids Dynamo/Inductor capturing giant all_gather graphs that can OOM.
+            log.info("Compiling optimizer update path (_step_foreach)...")
+            optim._step_foreach = torch.compile(optim._step_foreach)
 
         # Register hook to reset fixed fields after loading a checkpoint.
         # def reset_fixed_fields(opt: torch.optim.Optimizer):
@@ -594,6 +596,7 @@ class MoEFusedV2Optimizer:
             else:
                 # small tensor, do not shard
                 placements=[Replicate()]
+                print(f"[MoEFusedV2Optimizer] A tensor of size {num_elements} is replicated.")
         else:
             # always no shard
             placements=[Replicate()]
@@ -981,6 +984,7 @@ class MoEFusedV2Optimizer:
 
 
 
+    @torch._dynamo.disable()
     @nvtx.annotate("MoEFusedV2Optimizer._copy_main_params_to_model_params")
     def _copy_main_params_to_model_params(self):
         LAUNCH_AG_THRESHOLD = 500_000_000  # X elements
@@ -1404,6 +1408,7 @@ import torch
 import torch.distributed as dist
 
 
+@torch._dynamo.disable()
 def coalesced_all_gather(
     input_tensors: List[torch.Tensor],
     process_group: dist.ProcessGroup,

@@ -52,16 +52,17 @@ class MonkeyPatchDecay:
 # Config (edit in place)
 # -----------------------------------------------------------------------------
 SEQUENCE_LENGTH = 4096
-GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 16
+GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 12
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * SEQUENCE_LENGTH
 
 MAX_DURATION_TOKENS = int(7000e9)
 
 BASE_LR = 1.6e-3
 BASE_LR = BASE_LR * sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
-NUM_EXPERTS = 64 + 16
-TOP_K = 3
-EXPERT_LR = BASE_LR * sqrt(TOP_K / NUM_EXPERTS)
+# NUM_EXPERTS = 64 + 16
+# TOP_K = 3
+# EXPERT_LR = BASE_LR * sqrt(TOP_K / NUM_EXPERTS)
+EXPERT_LR = BASE_LR * 0.6
 
 def as_aligned_tokens(num_tokens: float) -> int:
     return int((num_tokens // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
@@ -77,7 +78,7 @@ STAGES = [
     Stage(
         duration_tokens=as_aligned_tokens(35e9),
         shape="cosine",
-        end_lr_fraction=0.4,
+        end_lr_fraction=0.5,
     ),
     Stage(
         duration_tokens=as_aligned_tokens(6000e9),
@@ -86,7 +87,8 @@ STAGES = [
     ),
 ]
 
-MONKEY_PATCH_DECAY_START_TOKENS: Optional[int] = int(400e9)
+# MONKEY_PATCH_DECAY_START_TOKENS: Optional[int] = int(400e9)
+MONKEY_PATCH_DECAY_START_TOKENS: Optional[int] = None
 MONKEY_PATCH_DECAY_DURATION_TOKENS = as_aligned_tokens(200e9)
 MONKEY_PATCH_DECAY_END_FRACTION = 0.0
 MONKEY_PATCH_DECAY_SHAPE = "cosine"
@@ -105,7 +107,7 @@ NUM_SAMPLES = 5000
 PLOT_IN_STEPS = False
 INCLUDE_EXPERT_CURVE = True
 
-OUTPUT_PATH = Path(__file__).with_name("plot_lr.png")
+OUTPUT_PATH = "./plot_lr.png"
 SHOW_PLOT = True
 
 
