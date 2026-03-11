@@ -51,6 +51,31 @@ def test_cute_rms_norm():
     torch.testing.assert_close(x.grad, x_ref.grad)
 
 
+@pytest.mark.parametrize("bias", [pytest.param(True, id="bias"), pytest.param(False, id="no-bias")])
+def test_rms_norm_zero_centered_weights(bias):
+    dim = 64
+    norm = RMSNorm(size=dim, bias=bias, zero_centered_weights=True)
+    ref_norm = RMSNorm(size=dim, bias=bias, zero_centered_weights=False)
+
+    # Check initialization: zero_centered starts at 0, standard starts at 1
+    assert torch.all(norm.weight == 0.0)
+    assert torch.all(ref_norm.weight == 1.0)
+
+    # The outputs must match at initialization.
+    x = torch.randn(4, dim)
+    torch.testing.assert_close(norm(x), ref_norm(x))
+
+    # Set zero_centered weight=0.5 => effective scale = 1.5
+    # Set standard weight to 1.5 to match
+    with torch.no_grad():
+        norm.weight.fill_(0.5)
+        ref_norm.weight.fill_(1.5)
+        if bias:
+            norm.bias.fill_(0.1)
+            ref_norm.bias.fill_(0.1)
+    torch.testing.assert_close(norm(x), ref_norm(x))
+
+
 def test_layer_norm_builder_config():
     norm = LayerNormConfig(name=LayerNormType.l2_norm).build(size=1024)
     assert isinstance(norm, L2Norm)
