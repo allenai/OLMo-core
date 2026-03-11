@@ -65,7 +65,7 @@ class LayerNormConfig(ModuleConfig):
     bias: Optional[bool] = None
     full_precision: Optional[bool] = None
     dtype: Optional[DType] = None
-    zero_centered_weights: Optional[bool] = None # use reparameterized (1 + weight) version
+    zero_centered_weights: Optional[bool] = None  # use reparameterized (1 + weight) version
 
     def num_params(self, size: int) -> int:
         """
