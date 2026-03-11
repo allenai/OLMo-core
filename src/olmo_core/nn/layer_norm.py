@@ -65,6 +65,7 @@ class LayerNormConfig(ModuleConfig):
     bias: Optional[bool] = None
     full_precision: Optional[bool] = None
     dtype: Optional[DType] = None
+    zero_centered_weights: Optional[bool] = None  # use reparameterized (1 + weight) version
 
     def num_params(self, size: int) -> int:
         """
@@ -203,7 +204,48 @@ class LayerNorm(nn.Module):
 class RMSNorm(LayerNorm):
     """
     RMSNorm, a simplified layer norm implementation.
+
+    :param zero_centered_weights: If ``True``, reparameterize the scale as ``(1 + weight)`` with
+        ``weight`` initialized to zero, instead of the standard ``weight`` initialized to one.
     """
+
+    def __init__(
+        self,
+        *,
+        size: int,
+        eps: float = 1e-5,
+        elementwise_affine: bool = True,
+        bias: bool = True,
+        full_precision: bool = True,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+        zero_centered_weights: bool = False,
+    ):
+        self.zero_centered_weights = zero_centered_weights
+        super().__init__(
+            size=size,
+            eps=eps,
+            elementwise_affine=elementwise_affine,
+            bias=bias,
+            full_precision=full_precision,
+            dtype=dtype,
+            init_device=init_device,
+        )
+
+    def extra_repr(self):
+        s = super().extra_repr()
+        if self.zero_centered_weights:
+            s += ", zero_centered_weights=True"
+        return s
+
+    def reset_parameters(self):
+        if self.weight is not None:
+            if self.zero_centered_weights:
+                torch.nn.init.zeros_(self.weight)
+            else:
+                torch.nn.init.ones_(self.weight)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -221,10 +263,15 @@ class RMSNorm(LayerNorm):
             x = x * torch.rsqrt(variance + self.eps)
 
             if self.weight is not None:
+                w = (
+                    (1 + self.weight.type_as(x))
+                    if self.zero_centered_weights
+                    else self.weight.type_as(x)
+                )
                 if self.bias is not None:
-                    x = self.weight.type_as(x) * x + self.bias.type_as(x)
+                    x = w * x + self.bias.type_as(x)
                 else:
-                    x = self.weight.type_as(x) * x
+                    x = w * x
 
             return x.to(og_dtype)
 

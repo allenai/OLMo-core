@@ -489,6 +489,266 @@ class GemmaLikeTransformerConfig(TransformerConfig):
             **kwargs,
         )
 
+    @classmethod
+    def v3(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        # Clone of v2 with zero-centered RMSNorm weights (zero_centered_weights=True).
+        # More changes to come until we declare v3 done.
+
+        d_model: int = kwargs.pop("d_model")
+        n_layers: int = kwargs.pop("n_layers")
+        n_heads: int = kwargs.pop("n_heads")
+        hidden_size: int = kwargs.pop("hidden_size")
+        n_kv_heads = 8
+        head_dim = 128
+        global_layer_interval = 5
+        global_rope_theta = 1_000_000
+        layer_norm_eps = 1e-6
+        dtype = DType.float32
+        attn_backend = kwargs.pop("attn_backend", AttentionBackendName.flash_3)
+        lm_head_loss_impl = kwargs.pop("lm_head_loss_impl", LMLossImplementation.default)
+        use_gdn = kwargs.pop("use_gdn", False)
+
+        local_rope_theta = 10_000
+        local_window_size = 1024
+
+        layer_norm = LayerNormConfig(
+            name=LayerNormType.rms,
+            eps=layer_norm_eps,
+            bias=False,
+            dtype=dtype,
+            zero_centered_weights=True,
+        )
+
+        feed_forward = FeedForwardConfig(
+            hidden_size=hidden_size,
+            bias=False,
+            dtype=dtype,
+            activation=ActivationFunction.silu,
+        )
+
+        if use_gdn:
+            # Default block uses GatedDeltaNet (replaces sliding window attention layers).
+            block = TransformerBlockConfig(
+                name=TransformerBlockType.peri_norm,
+                sequence_mixer=GatedDeltaNetConfig(
+                    n_heads=n_heads,
+                    n_v_heads=n_heads,  # for GDN, we intentionally match the number of heads.
+                    head_dim=head_dim,
+                    expand_v=1.0,
+                    dtype=dtype,
+                ),
+                feed_forward=feed_forward,
+                layer_norm=layer_norm,
+            )
+        else:
+            # Default block uses sliding window attention (like v1/gemma3_like).
+            block = TransformerBlockConfig(
+                name=TransformerBlockType.peri_norm,
+                sequence_mixer=AttentionConfig(
+                    name=AttentionType.default,
+                    n_heads=n_heads,
+                    n_kv_heads=n_kv_heads,
+                    head_dim=head_dim,
+                    bias=False,
+                    rope=RoPEConfig(name=RoPEType.default, theta=local_rope_theta),
+                    gate=GateConfig(
+                        granularity=GateGranularity.elementwise,
+                        full_precision=True,
+                    ),
+                    qk_norm=layer_norm,
+                    use_head_qk_norm=True,
+                    backend=attn_backend,
+                    sliding_window=SlidingWindowAttentionConfig(
+                        pattern=[local_window_size] * (global_layer_interval - 1) + [-1],
+                        force_full_attention_on_first_layer=False,
+                        force_full_attention_on_last_layer=False,
+                    ),
+                    dtype=dtype,
+                ),
+                feed_forward=feed_forward,
+                layer_norm=layer_norm,
+            )
+
+        # Override every `global_layer_interval`-th layer with full global attention.
+        block_overrides: Dict[int, TransformerBlockConfig] = {}
+        for layer_idx in range(n_layers):
+            if layer_idx % global_layer_interval == (global_layer_interval - 1):
+                global_block = TransformerBlockConfig(
+                    name=TransformerBlockType.peri_norm,
+                    sequence_mixer=AttentionConfig(
+                        name=AttentionType.default,
+                        n_heads=n_heads,
+                        n_kv_heads=n_kv_heads,
+                        head_dim=head_dim,
+                        bias=False,
+                        rope=RoPEConfig(name=RoPEType.default, theta=global_rope_theta),
+                        gate=GateConfig(
+                            granularity=GateGranularity.elementwise,
+                            full_precision=True,
+                        ),
+                        qk_norm=layer_norm,
+                        use_head_qk_norm=True,
+                        backend=attn_backend,
+                        dtype=dtype,
+                    ),
+                    feed_forward=feed_forward,
+                    layer_norm=layer_norm,
+                )
+                block_overrides[layer_idx] = global_block
+
+        return cls(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block=block,
+            lm_head=LMHeadConfig(
+                loss_implementation=lm_head_loss_impl,
+                layer_norm=layer_norm,
+                bias=False,
+                dtype=dtype,
+            ),
+            dtype=dtype,
+            block_overrides=block_overrides if block_overrides else None,
+            embed_scale=math.sqrt(d_model),
+            **kwargs,
+        )
+
+    @classmethod
+    def v3_260M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 260M model config.
+
+        259,551,360 total params
+        195,326,080 non-embedding params
+        """
+        return cls.v3(
+            d_model=640,
+            hidden_size=640 * 8,
+            n_layers=10,
+            n_heads=8,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v3_709M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 709M model config.
+
+        708,903,680 total params
+        606,143,232 non-embedding params
+        """
+        return cls.v3(
+            d_model=1024,
+            hidden_size=1024 * 8,
+            n_layers=15,
+            n_heads=16,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v3_1p3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1.3B model config.
+
+        1,253,157,120 total params
+        1,124,706,560 non-embedding params
+        """
+        return cls.v3(
+            d_model=1280,
+            hidden_size=1280 * 8,
+            n_layers=20,
+            n_heads=16,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v3_2B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 2.2B model config.
+
+        2,156,558,080 total params
+        2,002,417,408 non-embedding params
+        """
+        return cls.v3(
+            d_model=1536,
+            hidden_size=1536 * 8,
+            n_layers=25,
+            n_heads=24,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v3_4B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 4.3B model config.
+
+        4,312,000,000 total params
+        4,106,479,104 non-embedding params
+        """
+        return cls.v3(
+            d_model=2048,
+            hidden_size=2048 * 8,
+            n_layers=30,
+            n_heads=32,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        An 8B model config.
+
+        8,588,259,840 total params
+        8,331,358,720 non-embedding params
+        """
+        return cls.v3(
+            d_model=2560,
+            hidden_size=2560 * 8,
+            n_layers=40,
+            n_heads=40,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v3_15B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 15B model config.
+
+        15,087,541,760 total params
+        14,779,260,416 non-embedding params
+        """
+        return cls.v3(
+            d_model=3072,
+            hidden_size=3072 * 8,
+            n_layers=50,
+            n_heads=48,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
+    @classmethod
+    def v3_34B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 34B model config.
+
+        34,084,000,000 total params
+        33,672,958,208 non-embedding params
+        """
+        return cls.v3(
+            d_model=4096,
+            hidden_size=4096 * 8,
+            n_layers=65,
+            n_heads=64,
+            vocab_size=vocab_size,
+            **kwargs,
+        )
+
 
 @dataclass
 class _ModelSizeSettings:
