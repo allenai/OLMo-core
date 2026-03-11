@@ -26,7 +26,6 @@ from .scheduler import (
     SchedulerUnits,
     SequentialScheduler,
 )
-from .skip_step_muon import SkipStepMuon
 from .skip_step_optimizer import SkipStepOptimizer
 
 __all__ = [
@@ -45,7 +44,6 @@ __all__ = [
     "DionConfig",
     "SkipStepLionConfig",
     "SkipStepLion",
-    "SkipStepMuon",
     "SkipStepMuonConfig",
     "NoOpConfig",
     "NoOpOptimizer",
