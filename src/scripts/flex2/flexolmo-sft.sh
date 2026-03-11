@@ -132,12 +132,12 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
 /weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/olmo3_safety
 
 
-# BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/math-base
-MIX=olmo3_coding
+# BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-50B/step95368
+MIX=olmo3_tool_use
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/$MIX
-BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/olmo3-code-anneal-50B/step95368
+BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/math-base
 uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
-    flexolmo-2x7b-olmo3_code_anneal-$MIX \
+    flexolmo-2x7b-math_base-$MIX-FIXED \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -148,10 +148,10 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --launch.priority=urgent \
     --seq_len=4096 \
     --launch.num_gpus=8 \
-    --num_nodes=2 \
+    --num_nodes=4 \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
-    --model_name olmoe-2x7b \
+    --model_name olmoe-2x7b-unfrozen-lm-head-embed \
     --dataset_path $SFT_DATASET
 --------
 
