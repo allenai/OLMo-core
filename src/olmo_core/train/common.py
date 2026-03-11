@@ -11,6 +11,7 @@ from ..utils import format_float, format_int, format_timedelta
 TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
+OPTIM_GRAD_NORM_METRIC = "optim/total grad norm"
 
 
 class DurationUnit(StrEnum):

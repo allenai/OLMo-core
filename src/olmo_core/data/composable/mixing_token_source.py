@@ -138,6 +138,11 @@ class MixingTokenSource(TokenSource):
 
     :param source_specs: The sources and how to sample from them.
     :param num_tokens: An optional target number of tokens for the mixed source.
+
+    .. warning::
+        Generally you should prefer to use :class:`MixingDocumentSource` with random sampling
+        (a seed provided) to preserve the distribution of child sources.
+        This is a quick and dirty alternatively.
     """
 
     Config = MixingTokenSourceConfig

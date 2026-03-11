@@ -109,7 +109,7 @@ class Config:
 
         def iter_fields(d) -> Generator[Tuple[str, Any], None, None]:
             for field in dataclasses.fields(d):
-                if field.name in exclude_set:
+                if field.name in exclude_set or not field.init:
                     continue
                 value = getattr(d, field.name)
                 if exclude_none and value is None:
@@ -272,6 +272,11 @@ class Config:
                     # Remove ignored fields if the class defines any
                     if (ignore_fields := getattr(cls_o, "_IGNORE_FIELDS", None)) is not None:
                         new_dict = {k: v for k, v in new_dict.items() if k not in ignore_fields}
+
+                    # Remove the "type" field since the class is already resolved via _CLASS_.
+                    # This avoids a registry lookup on the resolved subclass, whose own
+                    # _registry may be empty (registrations live on the parent class).
+                    new_dict.pop("type", None)
 
                     try:
                         return decode(cls_o, new_dict)  # type: ignore[arg-type]

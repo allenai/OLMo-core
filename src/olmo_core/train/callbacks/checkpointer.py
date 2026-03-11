@@ -153,13 +153,13 @@ class CheckpointerCallback(Callback):
                 return fut
         return None
 
-    def _save_checkpoint(self, save_async: Optional[bool] = None) -> str:
+    def _save_checkpoint(self, save_async: Optional[bool] = None, ephemeral: bool = False) -> str:
         save_async = save_async if save_async is not None else self.save_async
         self._await_last_checkpoint()
         if save_async:
-            path, self._future = self.trainer.save_checkpoint_async()
+            path, self._future = self.trainer.save_checkpoint_async(ephemeral=ephemeral)
         else:
-            path = self.trainer.save_checkpoint()
+            path = self.trainer.save_checkpoint(ephemeral=ephemeral)
         self._latest_checkpoint_step = self.step
         self._latest_checkpoint_path = str(path)
         return str(path)
@@ -278,6 +278,7 @@ class CheckpointerCallback(Callback):
         elif (
             self.ephemeral_save_interval is not None
             and self.step % self.ephemeral_save_interval == 0
+            and not self.trainer.block_ephemeral_checkpoints
         ):
             # Maybe save ephemeral checkpoint.
             if (
@@ -286,7 +287,7 @@ class CheckpointerCallback(Callback):
             ):
                 return
 
-            self._ephemeral_checkpoints.append(self._save_checkpoint())
+            self._ephemeral_checkpoints.append(self._save_checkpoint(ephemeral=True))
 
             # Remove old ephemeral checkpoints.
             while len(self._ephemeral_checkpoints) > 1:

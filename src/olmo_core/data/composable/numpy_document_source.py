@@ -16,8 +16,13 @@ from olmo_core.utils import log_once
 
 from ..mixes import DataMix, DataMixBase
 from ..tokenizer import TokenizerConfig
-from ..types import NumpyDatasetDType, NumpyUIntTypes
-from ..utils import chunked, iter_document_indices, load_array_slice
+from ..types import LongDocStrategy, NumpyDatasetDType, NumpyUIntTypes
+from ..utils import (
+    chunked,
+    iter_document_indices,
+    iter_document_indices_with_max_sequence_length,
+    load_array_slice,
+)
 from .token_source import DocumentSource, DocumentSourceConfig, TokenRange
 from .utils import path_map, resolve_seed
 
@@ -38,6 +43,16 @@ class NumpyDocumentSourceConfigBase(DocumentSourceConfig):
     """The number of npy source files to group together into a single source."""
     label: Optional[str] = None
     """An optional to assign for logging and debugging."""
+    max_document_length: Optional[int] = None
+    """
+    The maximum document length to use when iterating over documents.
+    If not ``None``, documents longer than this will either be fragmented or truncated depending
+    on the `long_doc_strategy``.
+    """
+    long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate
+    """
+    How to handle long documents when ``max_document_length`` is set.
+    """
 
     def __post_init__(self):
         if self.source_group_size < -1 or self.source_group_size == 0:
@@ -147,6 +162,12 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
             )
         return configs
 
+    def get_num_tokens(self) -> int:
+        dtype = self.get_dtype()
+        item_size = dtype(0).itemsize
+        source_sizes = path_map(lambda p: io.get_file_size(p) // item_size, self.source_paths)
+        return sum(source_sizes)
+
     def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
@@ -195,6 +216,8 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
             dtype=dtype,
             work_dir=work_dir,
             label=label,
+            max_document_length=self.max_document_length,
+            long_doc_strategy=self.long_doc_strategy,
         )
 
         if self.source_group_size > 0:
@@ -293,6 +316,10 @@ class NumpyDocumentSource(DocumentSource):
     :param dtype: The numpy datatype of the token ID arrays in the source paths.
     :param tokenizer: The config of the tokenizer that was used to tokenize the source files.
     :param label_mask_paths: The paths/URLs to numpy bool files indicating which tokens should be masked.
+    :param max_document_length: The maximum document length to use when iterating over documents.
+        If not ``None``, documents longer than this will either be fragmented or truncated depending
+        on the `long_doc_strategy``.
+    :param long_doc_strategy: How to handle long documents when ``max_document_length`` is set.
     """
 
     Config = NumpyDocumentSourceConfig
@@ -308,6 +335,8 @@ class NumpyDocumentSource(DocumentSource):
         tokenizer: TokenizerConfig,
         label_mask_paths: Optional[Sequence[PathOrStr]] = None,
         label: Optional[str] = None,
+        max_document_length: Optional[int] = None,
+        long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
         _source_sizes: Optional[Sequence[int]] = None,
         _label_mask_sizes: Optional[Sequence[int]] = None,
     ):
@@ -329,6 +358,8 @@ class NumpyDocumentSource(DocumentSource):
         )
         self._dtype = dtype
         self._tokenizer = tokenizer
+        self._max_document_length = max_document_length
+        self._long_doc_strategy = long_doc_strategy
 
         source_sizes: Sequence[int]
         if _source_sizes is not None:
@@ -404,6 +435,14 @@ class NumpyDocumentSource(DocumentSource):
     def bos_token_id(self) -> Optional[int]:
         return self.tokenizer.bos_token_id
 
+    @property
+    def max_document_length(self) -> Optional[int]:
+        return self._max_document_length
+
+    @property
+    def long_doc_strategy(self) -> LongDocStrategy:
+        return self._long_doc_strategy
+
     @ft.cached_property
     def fingerprint(self) -> str:
         sha256_hash = hashlib.sha256()
@@ -415,6 +454,10 @@ class NumpyDocumentSource(DocumentSource):
                 f"{self.bos_token_id=},"
             ).encode()
         )
+
+        if self.max_document_length is not None:
+            sha256_hash.update(f"{self.max_document_length=},{self.long_doc_strategy=},".encode())
+
         # NOTE: it's too expensive to hash the contents of the source files, so we take a shortcut
         # by hashing their paths and sizes instead. This should be sufficient to detect changes 99.99% of the time.
         for path, size in zip(self.source_paths, self.source_sizes):
@@ -422,6 +465,7 @@ class NumpyDocumentSource(DocumentSource):
         if self.label_mask_paths is not None:
             for label_path, size in zip(self.label_mask_paths, self.source_sizes):
                 sha256_hash.update(f"{label_path=},{size=},".encode())
+
         return sha256_hash.hexdigest()
 
     @ft.cached_property
@@ -515,12 +559,24 @@ class NumpyDocumentSource(DocumentSource):
         start_offset = 0
         for source_path, source_size in zip(self.source_paths, self.source_sizes):
             last_doc_end = 0
-            for doc_start, doc_end in iter_document_indices(
-                source_path,
-                eos_token_id=self.eos_token_id,
-                bos_token_id=self.bos_token_id,
-                dtype=self.dtype,
-            ):
+            if self.max_document_length is None:
+                indices = iter_document_indices(
+                    source_path,
+                    eos_token_id=self.eos_token_id,
+                    bos_token_id=self.bos_token_id,
+                    dtype=self.dtype,
+                )
+            else:
+                indices = iter_document_indices_with_max_sequence_length(
+                    source_path,
+                    self.max_document_length,
+                    eos_token_id=self.eos_token_id,
+                    bos_token_id=self.bos_token_id,
+                    dtype=self.dtype,
+                    long_doc_strategy=self.long_doc_strategy,
+                )
+
+            for doc_start, doc_end in indices:
                 assert doc_start == last_doc_end  # API assumes consecutive documents
                 yield doc_start + start_offset, doc_end + start_offset
                 last_doc_end = doc_end

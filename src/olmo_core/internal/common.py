@@ -21,10 +21,6 @@ from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
 
-GOOGLE_CLUSTERS = [
-    "ai2/augusta",
-]
-
 
 @lru_cache()
 def get_beaker_username() -> Optional[str]:
@@ -169,7 +165,6 @@ def build_launch_config(
 
 CLUSTER_TO_GPU_TYPE = {
     "ai2/jupiter": "NVIDIA H100 80GB HBM3",
-    "ai2/augusta": "NVIDIA H100 80GB HBM3",
     "ai2/ceres": "NVIDIA H100 80GB HBM3",
     "ai2/titan": "NVIDIA B200",
 }
