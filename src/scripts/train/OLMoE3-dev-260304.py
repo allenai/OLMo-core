@@ -97,8 +97,8 @@ torch.set_float32_matmul_precision('high')
 
 
 MAX_DURATION = int(6000e9)
-EVAL_INTERVAL = 1000
-SAVE_INTERVAL = 1000
+EVAL_INTERVAL = 2000
+SAVE_INTERVAL = 2000
 
 NUM_EXPERTS = 48
 TOP_K = 2
@@ -129,18 +129,19 @@ REF_NUM_NODES=8
 MICRO_BSZ = 3
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (6) # start at 3M
 
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # start at 16M
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (48) # start at 24M
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (96) # start at 48M
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (120) # start at 60M
+# stage 2
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (9) # 4.5M
+
+# stage 3
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (12) # 6M
+
+# stage 4
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (18) # 9M
 
 
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * (3) // 2 # first increase, 1.5x
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 2 # 2nd increase, 2x
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 3 # 3rd increase, 3x
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 4 # 4th increase, 4x
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 6 # 4th increase, 6x
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) * 8 # 4th increase, 8x
 
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
@@ -477,9 +478,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        # )
+        .with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
     )
 
 

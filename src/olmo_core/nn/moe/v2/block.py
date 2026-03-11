@@ -3394,7 +3394,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             shared_out_up, shared_out_gate = None, None
 
         with nvtx.annotate("Rowwise Dispatch", color="green"):
-            # _record_before("dispatch")
             if use_rowwise_fp8:
                 assert rowwise_fp8_cfg is not None
                 assert dispatch_out_q is not None
@@ -3421,7 +3420,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     self.ep_pg,
                     rowwise_nblocks,
                 )
-            # _record_after("dispatch")
 
         # Expert backward (grouped_mm) saves its input tensor. The rowwise
         # dispatch output aliases reusable symmetric buffers, so later
