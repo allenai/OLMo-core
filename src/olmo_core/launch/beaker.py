@@ -400,6 +400,11 @@ class BeakerLaunchConfig(Config):
     A command to run after the setup steps.
     """
 
+    debug: bool = False
+    """
+    Set debugging env vars like ``CUDA_LAUNCH_BLOCKING=1``.
+    """
+
     _beaker = None
 
     @property
@@ -422,6 +427,9 @@ class BeakerLaunchConfig(Config):
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
+        if self.debug:
+            env_vars.append(("CUDA_LAUNCH_BLOCKING", "1"))
+            env_vars.append(("NCCL_DEBUG", "INFO"))
         return env_vars
 
     def _get_env_vars(self) -> list[tuple[str, str]]:
@@ -967,9 +975,6 @@ def _parse_args():
 
 def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchConfig:
     env_vars: list[BeakerEnvVar] = []
-    if opts.debug:
-        env_vars.append(BeakerEnvVar(name="CUDA_LAUNCH_BLOCKING", value="1"))
-        env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value="INFO"))
     for e in opts.env or []:
         if "=" not in e:
             raise ValueError(f"Invalid env var '{e}', must be in the form NAME=VALUE")
@@ -1005,6 +1010,7 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
             BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in (opts.weka or [])
         ],
         torchrun=opts.torchrun,
+        debug=opts.debug,
     )
 
 

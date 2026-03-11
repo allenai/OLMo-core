@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `BeakerLaunchConfig.debug` field to set debugging env vars (e.g. `CUDA_LAUNCH_BLOCKING=1`) from config.
+- Added internal OLMo 3 7B long-context anneal script.
 - Added support for in-loop perplexity evals with context parallelism (CP) and tensor parallelism (TP).
 - Added documentation for verifying chat template settings before running evals after SFT.
 - Added `olmo_core.data.composable` module.
@@ -54,8 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Olmo-hybrid official training configs and conversion script.
 - Added new in-loop eval tasks: Generative QA BPB tasks, expanded MT-MBPP languages, and Science/Medical RC tasks.
 
+### Changed
+
+- `train_single` subcommand now disables all parallelism styles (DP, TP, CP, PP), not just DP and TP.
+
 ### Fixed
 
+- Fixed `dump_training_batch.py` to work with datasets that shuffle source paths, and added source file tracing to batch output.
 - Fixed `Transformer.get_rope_buffers()` crashing on non-rope attention mixers like `GatedDeltaNet`.
 - Fixed A100 peak flops spec in `SpeedMonitorCallback` being 2x too low, which inflated MFU by 2x.
 - Fixed `AttentionConfig.num_params()` overcounting QK norm parameters when using GQA/MQA with `use_head_qk_norm=False`.
