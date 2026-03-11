@@ -1569,6 +1569,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._ep_no_sync_shared_pool: Optional[_NoSyncSymmSharedPool] = None
         self._ep_no_sync_shared_slot: int = 0
         self._ep_no_sync_te_backend_warned: bool = False
+        # Row-wise EP no-sync metrics (populated only by combined_forward_ep_no_sync_rowwise()).
+        self._ep_no_sync_rowwise_drop_tokens_sum: Optional[torch.Tensor] = None
+        self._ep_no_sync_rowwise_total_tokens_sum: Optional[torch.Tensor] = None
+        self._ep_no_sync_rowwise_symm_util_max: Optional[torch.Tensor] = None
         # self._ep_no_sync_forward_call_count: int = 0
 
         if self.ep_no_sync_capacity_factor <= 0:
@@ -1622,23 +1626,92 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     def compute_metrics(
         self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        from olmo_core.train.common import ReduceType
+
         # compute shared and routed experts metrics
         # metrics_shared = self.shared_experts.compute_metrics(reset=reset)
         if self.routed_experts_router:
             metrics_routed = self.routed_experts_router.compute_metrics(reset=reset)
         else:
             metrics_routed = {}
+        out = dict(metrics_routed)
+
+        # Metrics only exist when combined_forward_ep_no_sync_rowwise() was used.
+        if (
+            self._ep_no_sync_rowwise_drop_tokens_sum is not None
+            and self._ep_no_sync_rowwise_total_tokens_sum is not None
+        ):
+            drop_ratio = (
+                self._ep_no_sync_rowwise_drop_tokens_sum.to(dtype=torch.float32)
+                / self._ep_no_sync_rowwise_total_tokens_sum.to(dtype=torch.float32).clamp_min(1.0)
+            ).clamp(0.0, 1.0)
+            out["token drop rate"] = (drop_ratio, ReduceType.mean)
+
+        if self._ep_no_sync_rowwise_symm_util_max is not None:
+            out["symm buffer util"] = (
+                self._ep_no_sync_rowwise_symm_util_max.to(dtype=torch.float32),
+                ReduceType.max,
+            )
+
+        if reset:
+            self._reset_ep_no_sync_rowwise_metrics()
+
         # metrics = {
         #     "shared": metrics_shared,
         #     "routed": metrics_routed,
         # }
-        return metrics_routed
+        return out
 
     def reset_metrics(self):
         # if self.shared_experts_router:
         #     self.shared_experts_router.reset_metrics()
         if self.routed_experts_router:
             self.routed_experts_router.reset_metrics()
+        self._reset_ep_no_sync_rowwise_metrics()
+
+    def _reset_ep_no_sync_rowwise_metrics(self):
+        self._ep_no_sync_rowwise_drop_tokens_sum = None
+        self._ep_no_sync_rowwise_total_tokens_sum = None
+        self._ep_no_sync_rowwise_symm_util_max = None
+
+    def _accumulate_ep_no_sync_rowwise_metrics(
+        self,
+        *,
+        drop_token_cnt: torch.Tensor,
+        num_out_tokens: int,
+        recv_splits_by_src_local: torch.Tensor,
+        rank_capacity: int,
+    ) -> None:
+        if rank_capacity <= 0:
+            return
+
+        drop_sum = drop_token_cnt.to(dtype=torch.float32)
+        total_sum = torch.tensor(float(num_out_tokens), device=drop_sum.device)
+        util = (
+            recv_splits_by_src_local.sum(dtype=torch.float32)
+            / torch.tensor(float(rank_capacity), device=drop_sum.device)
+        )
+
+        if self._ep_no_sync_rowwise_drop_tokens_sum is None:
+            self._ep_no_sync_rowwise_drop_tokens_sum = drop_sum
+        else:
+            self._ep_no_sync_rowwise_drop_tokens_sum = (
+                self._ep_no_sync_rowwise_drop_tokens_sum + drop_sum
+            )
+
+        if self._ep_no_sync_rowwise_total_tokens_sum is None:
+            self._ep_no_sync_rowwise_total_tokens_sum = total_sum
+        else:
+            self._ep_no_sync_rowwise_total_tokens_sum = (
+                self._ep_no_sync_rowwise_total_tokens_sum + total_sum
+            )
+
+        if self._ep_no_sync_rowwise_symm_util_max is None:
+            self._ep_no_sync_rowwise_symm_util_max = util
+        else:
+            self._ep_no_sync_rowwise_symm_util_max = torch.maximum(
+                self._ep_no_sync_rowwise_symm_util_max, util
+            )
 
 
     @property
@@ -3298,6 +3371,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 dispatch_out_cap = rank_capacity
                 combine_in_cap = rank_capacity
                 combine_out_cap = num_out_tokens
+                self._accumulate_ep_no_sync_rowwise_metrics(
+                    drop_token_cnt=_drop_token_cnt,
+                    num_out_tokens=num_out_tokens,
+                    recv_splits_by_src_local=recv_splits_by_src_local,
+                    rank_capacity=rank_capacity,
+                )
 
         buffers = self._get_ep_no_sync_buffers(
             dispatch_in_cap=dispatch_in_cap,

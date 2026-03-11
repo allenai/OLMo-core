@@ -38,6 +38,8 @@ class ConsoleLoggerCallback(Callback):
             "train/load balancing loss",
             "train/router Z loss",
             "train/block */load imbalance",
+            "train/block */token drop rate",
+            "train/block */symm buffer util",
             "system/*",
             "optim/total grad norm",
             "optim/step skipped",
