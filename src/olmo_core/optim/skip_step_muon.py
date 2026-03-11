@@ -1,55 +1,62 @@
-from abc import ABCMeta
-from typing import Any, Dict, Iterable, List, Optional, Union
+import logging
+from typing import List, Optional
 
 import torch
-from torch.optim.optimizer import Optimizer
-from typing_extensions import TypeAlias
 
 from olmo_core.utils import get_default_device, move_to_device
 
-ParamsT: TypeAlias = Union[Iterable[torch.Tensor], Iterable[Dict[str, Any]]]
+from .skip_step_optimizer import SkipStepOptimizer
+
+log = logging.getLogger(__name__)
 
 
-class _SkipStepOptimizerMeta(ABCMeta, type(Optimizer)):
-    """Combined metaclass for ABCMeta and Optimizer's metaclass."""
+def _import_muon():
+    try:
+        from dion import Muon  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "The 'dion' package is required for SkipStepMuon. "
+            "Install it with: pip install git+https://github.com/microsoft/dion.git"
+        ) from e
+    return Muon
 
-    pass
 
-
-class SkipStepOptimizer(Optimizer, metaclass=_SkipStepOptimizerMeta):
+class SkipStepMuon(_import_muon()):
     """
-    A :class:`SkipStepOptimizer` is an optimizer that can skip updates when the loss or gradient
-    norm for a step is above a certain threshold of standard deviations computed over a rolling
-    interval.
+    A "skip step" version of :class:`Muon` that skips the entire optimizer step
+    when a loss spike is detected.
+
+    Unlike :class:`SkipStepAdamW` and :class:`SkipStepLion` which thread a
+    ``step_factor`` through the update computation, this class skips the entire
+    ``step()`` call. This avoids all distributed communication and Newton-Schulz
+    compute on skip steps.
+
+    This is safe because:
+
+    - All ranks compute the same ``step_factor`` (loss is pre-synchronized).
+    - Muon's ``step()`` is not ``torch.compile``'d, so branching is safe.
+    - On skip: momentum, weights, and step counters are all untouched.
 
     .. important::
-        When using a :class:`SkipStepOptimizer` you must always set :data:`latest_loss` and
-        :data:`latest_grad_norm` to the current loss and grad norm, respectively, *before* calling
-        :meth:`step()`.
-
-        The :class:`~olmo_core.train.train_module.TransformerTrainModule` will automatically set
-        the :data:`latest_loss` and :data:`latest_grad_norm` whenever its optimizer is a subclass of
-        :class:`SkipStepOptimizer`.
-
-    .. tip::
-        When implementing a :class:`SkipStepOptimizer` you should be careful to avoid host-device
-        syncs. You can use :meth:`get_step_factor()` within your :meth:`step()` method to do this.
-        See the implementation of :class:`SkipStepLion` for an example.
+        ``latest_loss`` must be set to the **all-reduced** loss before calling
+        :meth:`step()` so that all ranks make the same skip/proceed decision.
     """
 
     def __init__(
         self,
-        params: ParamsT,
-        defaults: Dict[str, Any],
+        params,
+        *,
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
-    ) -> None:
-        super().__init__(params, defaults)
+        **kwargs,
+    ):
+        super().__init__(params, **kwargs)
         self.rolling_interval_length = rolling_interval_length
         self.sigma_factor = sigma_factor
         self._losses: List[torch.Tensor] = []
         self._grad_norms: List[torch.Tensor] = []
         self._device: Optional[torch.device] = None
+        self._step_skipped: Optional[torch.Tensor] = None
 
     @property
     def device(self) -> torch.device:
@@ -92,11 +99,7 @@ class SkipStepOptimizer(Optimizer, metaclass=_SkipStepOptimizerMeta):
     @torch._dynamo.disable()
     def get_step_factor(self) -> torch.Tensor:
         """
-        Returns a float tensor which will be `1.0` if the optimizer should proceed with the step
-        and `0.0` if the optimizer should skip the step.
-
-        The tensor can be used within the optimizer's step computation to essentially skip a step
-        without a host-device sync.
+        Returns a float tensor: ``1.0`` to proceed, ``0.0`` to skip.
         """
         if len(self._losses) < max(2, self.rolling_interval_length // 2):
             return move_to_device(torch.tensor(1.0), self.device)
@@ -117,7 +120,20 @@ class SkipStepOptimizer(Optimizer, metaclass=_SkipStepOptimizerMeta):
 
     @property
     def step_skipped(self) -> torch.Tensor:
-        """
-        Returns a float tensor which will be `1.0` if the step was skipped and `0.0` otherwise.
-        """
-        return 1 - self.get_step_factor()
+        if self._step_skipped is not None:
+            return self._step_skipped
+        else:
+            return torch.tensor(0.0)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        step_factor = self.get_step_factor()
+        self._step_skipped = 1 - step_factor
+        if step_factor.item() == 0.0:
+            return None
+        return super().step(closure)
+
+
+# Register as virtual subclass so isinstance(obj, SkipStepOptimizer) returns True.
+# This is needed for TransformerTrainModule to automatically set latest_loss/latest_grad_norm.
+SkipStepOptimizer.register(SkipStepMuon)

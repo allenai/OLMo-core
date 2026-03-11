@@ -32,6 +32,12 @@ def _import_dion():
     return Muon, NorMuon
 
 
+def _import_skip_step_muon():
+    from .skip_step_muon import SkipStepMuon
+
+    return SkipStepMuon
+
+
 class MuonAdjustLRStrategy(StrEnum):
     spectral_norm = "spectral_norm"
     """Adjust based on spectral norm, for learning rate transfer across model scale."""
@@ -232,3 +238,37 @@ class NorMuonConfig(MuonConfig):
     def optimizer(cls) -> type:
         _, NorMuon = _import_dion()
         return NorMuon
+
+
+@OptimConfig.register("skip_step_muon")
+@dataclass
+class SkipStepMuonConfig(MuonConfig):
+    """
+    Configuration class for building a :class:`SkipStepMuon` optimizer.
+
+    SkipStepMuon detects loss spikes via rolling statistics and skips the entire
+    optimizer step when a spike is detected, preserving all optimizer state.
+    """
+
+    rolling_interval_length: int = 128
+    """Length of the rolling window for loss/grad-norm statistics."""
+
+    sigma_factor: int = 6
+    """Number of standard deviations above the mean to trigger a skip."""
+
+    @classmethod
+    def optimizer(cls) -> type:
+        return _import_skip_step_muon()
+
+    def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs):
+        torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 16)
+
+        parallelism_config = self.build_parallelism_config()
+        optim = self.optimizer()(
+            self.build_groups(model, strict=strict),
+            **parallelism_config,
+            rolling_interval_length=self.rolling_interval_length,
+            sigma_factor=self.sigma_factor,
+            **kwargs,
+        )
+        return optim
