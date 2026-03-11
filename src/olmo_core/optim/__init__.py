@@ -10,7 +10,6 @@ from .config import (
 from .dion import DionConfig
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
 from .muon import MuonConfig, NorMuonConfig, SkipStepMuonConfig
-from .skip_step_muon import SkipStepMuon
 from .noop import NoOpConfig, NoOpOptimizer
 from .scheduler import (
     WSD,
@@ -27,6 +26,7 @@ from .scheduler import (
     SchedulerUnits,
     SequentialScheduler,
 )
+from .skip_step_muon import SkipStepMuon
 from .skip_step_optimizer import SkipStepOptimizer
 
 __all__ = [

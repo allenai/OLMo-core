@@ -263,12 +263,18 @@ class SkipStepMuonConfig(MuonConfig):
     def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs):
         torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 16)
 
+        # Pop skip-step fields from kwargs (already passed from as_dict) to avoid duplicates.
+        rolling_interval_length = kwargs.pop(
+            "rolling_interval_length", self.rolling_interval_length
+        )
+        sigma_factor = kwargs.pop("sigma_factor", self.sigma_factor)
+
         parallelism_config = self.build_parallelism_config()
         optim = self.optimizer()(
             self.build_groups(model, strict=strict),
             **parallelism_config,
-            rolling_interval_length=self.rolling_interval_length,
-            sigma_factor=self.sigma_factor,
+            rolling_interval_length=rolling_interval_length,
+            sigma_factor=sigma_factor,
             **kwargs,
         )
         return optim

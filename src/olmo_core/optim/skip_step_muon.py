@@ -129,6 +129,11 @@ class SkipStepMuon(_import_muon()):
     def step(self, closure=None):
         step_factor = self.get_step_factor()
         self._step_skipped = 1 - step_factor
+        # NOTE: `.item()` triggers a host-device sync. Unlike SkipStepAdamW, which avoids
+        # this by threading a device-side step_factor through every arithmetic op, we can't
+        # do that here because `Muon.step()` performs Newton-Schulz iterations and distributed
+        # all-gathers that cannot be cheaply neutralized by multiplying by zero. The sync is
+        # the lesser cost — skipping the entire step saves all of that compute and communication.
         if step_factor.item() == 0.0:
             return None
         return super().step(closure)
