@@ -492,6 +492,7 @@ class GemmaLikeTransformerConfig(TransformerConfig):
     @classmethod
     def v3(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         # Clone of v2 with zero-centered RMSNorm weights (zero_centered_weights=True).
+        # More changes to come until we declare v3 done.
 
         d_model: int = kwargs.pop("d_model")
         n_layers: int = kwargs.pop("n_layers")
