@@ -574,6 +574,10 @@ class TransformerTrainModule(TrainModule):
     def _eval_batch_context(self) -> Generator[None, None, None]:
         with contextlib.ExitStack() as stack:
             stack.enter_context(torch.no_grad())
+            # Disable torch.compile during eval to avoid recompilation triggered by
+            # the grad_mode change. Recompilation can produce buggy Triton codegen
+            # (e.g. NameError: 'math' is not defined) with certain layers like Mamba2.
+            stack.enter_context(torch.compiler.disable())
             yield
 
     @contextlib.contextmanager
