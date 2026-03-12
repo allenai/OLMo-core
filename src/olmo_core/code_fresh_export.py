@@ -77,7 +77,7 @@ def process_code_fresh_file_contents(
     file_contents: str,
     tokenizer: TokenizerLike,
     *,
-    max_doc_tokens_before_eos: int = 4095,
+    max_doc_tokens_before_eos: int = 8191,
 ) -> Optional[np.ndarray]:
     text = file_contents.strip()
     token_ids = tokenizer.encode(text, add_special_tokens=False)
@@ -96,7 +96,7 @@ def build_documents_and_stats(
     tokenizer: TokenizerLike,
     *,
     language: str,
-    max_doc_tokens_before_eos: int = 4095,
+    max_doc_tokens_before_eos: int = 8191,
 ) -> Tuple[List[np.ndarray], ExportStats]:
     docs: List[np.ndarray] = []
     stats = ExportStats(language=language)

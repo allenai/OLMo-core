@@ -51,7 +51,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-doc-tokens-before-eos",
         type=int,
-        default=4095,
+        default=8191,
         help="Maximum number of scored tokens before appending terminal EOS.",
     )
     return parser.parse_args()
