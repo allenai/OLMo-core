@@ -809,7 +809,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             cmd=cli_context.remote_cmd,
             cluster=cli_context.cluster,
             root_dir=root_dir,
-            workspace="ai2/oe-t-ladder",
+            workspace="ai2/olmo4",
             num_nodes=model_size_settings.num_nodes,
             nccl_debug=True,
             step_soft_timeout=None,
