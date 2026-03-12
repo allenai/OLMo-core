@@ -556,8 +556,8 @@ class GemmaLikeOlmoV2(StrEnum):
         """Get the model config and all settings for this model size."""
         # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
         settings_map = {
-            GemmaLikeOlmoV2.GL_50M: _ModelSizeSettings("65M", 1, 16, 1.0),
-            GemmaLikeOlmoV2.GL_50M: _ModelSizeSettings("150M", 1, 16, 1.0),
+            GemmaLikeOlmoV2.GL_65M: _ModelSizeSettings("65M", 1, 16, 1.0),
+            GemmaLikeOlmoV2.GL_150M: _ModelSizeSettings("150M", 1, 16, 1.0),
             GemmaLikeOlmoV2.GL_260M: _ModelSizeSettings("260M", 1, 16, 1.0),
             GemmaLikeOlmoV2.GL_709M: _ModelSizeSettings("709M", 2, 16, 1.0),
             GemmaLikeOlmoV2.GL_1p3B: _ModelSizeSettings("1p3B", 3, 16, 1.0),
