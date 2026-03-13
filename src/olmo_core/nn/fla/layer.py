@@ -18,16 +18,9 @@ log = logging.getLogger(__name__)
 
 
 def _supports_cu_seqlens(layer: nn.Module) -> bool:
-    """Check if a layer's forward method accepts cu_seqlens (directly or via **kwargs)."""
+    """Check if a layer's forward method accepts cu_seqlens as an explicit parameter."""
     sig = inspect.signature(layer.forward)
-    params = sig.parameters
-    # Check for direct parameter or **kwargs (VAR_KEYWORD)
-    if "cu_seqlens" in params:
-        return True
-    for param in params.values():
-        if param.kind == inspect.Parameter.VAR_KEYWORD:
-            return True
-    return False
+    return "cu_seqlens" in sig.parameters
 
 
 class FLA(nn.Module):
@@ -53,21 +46,18 @@ class FLA(nn.Module):
         elif self.kv_cache_manager is not None:
             raise NotImplementedError()  # generate step
         else:
-            # Only pass cu_seqlens if the inner layer supports it (e.g., GatedDeltaNet does, Mamba2 doesn't)
-            if self._inner_supports_cu_seqlens:
-                return self.inner(x, cu_seqlens=cu_doc_lens)[0]  # returns out, ?, cache
-            else:
-                return self._call_inner_no_compile(x)
+            kwargs = {"cu_seqlens": cu_doc_lens} if self._inner_supports_cu_seqlens else {}
+            return self._call_inner_no_compile(x, **kwargs)
 
     @torch.compiler.disable
-    def _call_inner_no_compile(self, x: torch.Tensor) -> torch.Tensor:
+    def _call_inner_no_compile(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """Call inner layer with torch.compile disabled.
 
-        Layers like Mamba2 use custom Triton/CUDA kernels that are already optimized
+        FLA layers use custom Triton/CUDA kernels that are already optimized
         and can cause Inductor codegen errors (e.g., NameError: 'math' is not defined)
         when wrapped by torch.compile.
         """
-        return self.inner(x)[0]
+        return self.inner(x, **kwargs)[0]
 
     def apply_tp(
         self,
