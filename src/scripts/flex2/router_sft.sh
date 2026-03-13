@@ -149,18 +149,18 @@ SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-traini
 
 
 
-BASE_CKPT=
-SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo2_code_math-olmo3_tool_use_safety-0.05
 
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-olmo3_sft_3-olmo2_code-olmo3_math
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo2_code-olmo3_math_tool_use_safety-0.05
 
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-olmo3_sft_3-olmo3_code_rl-olmo2_math
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo2_math-olmo3_code_tool_use_safety-0.05
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-olmo3_sft_3-olmo2_code_math
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo2_code_math-olmo3_tool_use_safety-0.05
 AMOUNT=0.05
 LR=1e-4
 uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
-    flexolmo-5x7B-olmo3_sft_3-olmo3_code_rl-olmo2_math-$AMOUNT-$LR \
+    flexolmo-5x7B-olmo3_sft_3-olmo2_code_math-$AMOUNT-$LR \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
