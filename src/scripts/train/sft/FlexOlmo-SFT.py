@@ -618,7 +618,7 @@ class SFTRouterConfig(Config):
             model=model,
             dataset=None,
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=bs_config.global_batch_size_tokens, seed=3452100, num_workers=4
+                global_batch_size=bs_config.global_batch_size_tokens, seed=34521234, num_workers=4
             ),
             # train_module=TransformerTrainModuleConfig(
             #     rank_microbatch_size=2 * 4096,
