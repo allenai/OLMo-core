@@ -29,7 +29,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.launch.beaker import BeakerLaunchConfig, get_beaker_username
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
@@ -771,7 +771,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     sequence_length = DEFAULT_SEQUENCE_LENGTH
     root_dir = custom_args.root_dir or get_root_dir(cli_context.cluster)
     work_dir = custom_args.work_dir or get_work_dir(root_dir)
-    save_folder = custom_args.save_folder or f"{root_dir}/checkpoints/{cli_context.run_name}"
+
+    save_folder = (
+        custom_args.save_folder
+        or f"{root_dir}/checkpoints/{get_beaker_username().lower()}/olm4_mixing_calibration/{cli_context.run_name}"
+    )
 
     print(f"mix_base_dir (dataset location): {mix_base_dir}")
     print(f"root_dir (checkpoint location): {root_dir}")
