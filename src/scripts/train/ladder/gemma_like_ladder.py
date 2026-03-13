@@ -26,10 +26,15 @@ from olmo_core.data.composable.mixture_recipe import build_numpy_mixture_from_ya
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.eval.task_groups import TASK_GROUPS
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
+from olmo_core.internal.common import (
+    build_launch_config,
+    get_beaker_username,
+    get_root_dir,
+    get_work_dir,
+)
 from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerLaunchConfig, get_beaker_username
+from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
