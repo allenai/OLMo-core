@@ -176,3 +176,29 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
     --workspace ai2/olmo-instruct \
     --model_name olmoe-5x7b \
     --dataset_path $SFT_DATASET
+
+
+# try fewer experts
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-math_rl-code_rl-tool_use-safety_sft
+AMOUNT=0.05
+LR=1e-4
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math_code_tool_use_safety-$AMOUNT
+for NUM_EXPERTS in 1 2 3 4; do
+uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
+    flexolmo-5x7B-math_rl-code_rl-tool_use_sft-safety_sft-$AMOUNT-$LR-$NUM_EXPERTS-active \
+        $BASE_CKPT \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=$LR \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=2048 \
+    --launch.num_gpus=8 \
+    --num_nodes=5 \
+    --budget ai2/oceo \
+    --workspace ai2/olmo-instruct \
+    --model_name olmoe-5x7b-$NUM_EXPERTS-active \
+    --dataset_path $SFT_DATASET
+done
