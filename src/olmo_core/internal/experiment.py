@@ -472,6 +472,24 @@ def train(config: ExperimentConfig):
     # Train (also handles checkpoint loading)
     trainer.fit()
 
+def eval_checkpoints(config: ExperimentConfig):
+    # Set RNG states on all devices.
+    seed_all(config.init_seed)
+
+    # Build components.
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model)
+    dataset = config.dataset.build()
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader)
+
+    # Record the config to W&B/Comet and each checkpoint dir.
+    config_dict = config.as_config_dict()
+    cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    # Eval (also handles checkpoint loading)
+    trainer.eval_checkpoints()
+
 
 def main(*, config_builder: ConfigBuilder) -> None:
     """

@@ -126,9 +126,59 @@ PP_DIM=1
 REF_NUM_NODES=8
 
 # stage 1
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (6) # start at 3M
+# LR_REF_BSZ = 4 * 1024 * 1024
+
+# stage 2
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (9) # 4.5M
+# LR_REF_BSZ = 4 * 1024 * 1024
+
+# stage 3
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (12) # 6M
+# LR_REF_BSZ = 4 * 1024 * 1024
+
+# stage 4
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (12) # 6M
+# LR_REF_BSZ = 4 * 1024 * 1024
+# change to EP4+fp32 grad
+
+# stage 5
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) # 8M
+# LR_REF_BSZ = 4 * 1024 * 1024
+
+# stage 6
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (24) # 12M
+# LR_REF_BSZ = 4 * 1024 * 1024
+# routed_experts_router use expert LR
+# LBL: 0.01->0.012
+
+# stage 7 a (del)
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (24) # 12M
+# LR_REF_BSZ = 4 * 1024 * 1024
+# Add ROUTER_LR=0.2xLR
+
+# stage 7 b (del)
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (24) # 12M
+# LR_REF_BSZ = 4 * 1024 * 1024
+# LBL: 0.01->0.02
+
+# stage 8
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # 16M
+# LR_REF_BSZ = 5 * 1024 * 1024
+
+# stage 9
 MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # start at 16M
-LR_REF_BSZ = 4 * 1024 * 1024
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (48) # 24M
+LR_REF_BSZ = 6 * 1024 * 1024
 
 
 GLOBAL_BATCH_SIZE = (
@@ -138,7 +188,7 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 3e-4 
+LR= 8e-4 
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / LR_REF_BSZ) # lr is for X Million token
 NUM_LAYERS=24
 
@@ -166,7 +216,7 @@ USE_FP8=False
 ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
-TAG=f'c3'
+TAG=f'c1'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -242,8 +292,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                # lb_loss_weight=0.01,
-                lb_loss_weight=0.02,
+                lb_loss_weight=0.01,
+                # lb_loss_weight=0.02,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -316,11 +366,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
+EXPERT_LR = LR * 0.6  # scale lr for expert params, empirical choice
 # ROUTER_LR = LR * 0.2
-SCHED_WARMUP_TOKENS = int((40e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-# SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((5960e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_WARMUP_TOKENS = int((15e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_LONG_DECAY_TOKENS = int((5950e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 0.8
 SCHED_FINAL_FRACTION = 0.1
 
@@ -341,8 +391,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
-                # OptimGroupOverride(params=["*w_up_gate", "*w_down","*routed_experts_router*"], opts=dict(lr=EXPERT_LR)),
-                OptimGroupOverride(params=["*w_up_gate", "*w_down",], opts=dict(lr=EXPERT_LR)),
+                OptimGroupOverride(params=["*w_up_gate", "*w_down","*routed_experts_router*"], opts=dict(lr=EXPERT_LR)),
+                # OptimGroupOverride(params=["*w_up_gate", "*w_down",], opts=dict(lr=EXPERT_LR)),
                 # OptimGroupOverride(params=["*routed_experts_router*"], opts=dict(lr=ROUTER_LR)),
             ],
             compile=USE_COMPILE, 
@@ -382,11 +432,11 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
                     start_lr_fraction=0.0,
                     end_lr_fraction=1.0,
                 ),
-                # ComposableSchedulerStage(
-                #     duration=SCHED_FAST_DECAY_TOKENS,
-                #     shape=ComposableSchedulerStageType.cosine,
-                #     end_lr_fraction=SCHED_MID_FRACTION,
-                # ),
+                ComposableSchedulerStage(
+                    duration=SCHED_FAST_DECAY_TOKENS,
+                    shape=ComposableSchedulerStageType.cosine,
+                    end_lr_fraction=SCHED_MID_FRACTION,
+                ),
                 ComposableSchedulerStage(
                     duration=SCHED_LONG_DECAY_TOKENS,
                     shape=ComposableSchedulerStageType.cosine,
