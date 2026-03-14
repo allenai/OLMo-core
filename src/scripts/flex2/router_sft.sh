@@ -180,10 +180,10 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
 
 # try fewer experts
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-math_rl-code_rl-tool_use-safety_sft
-AMOUNT=0.05
+AMOUNT=1.0
 LR=1e-4
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math_code_tool_use_safety-$AMOUNT
-for NUM_EXPERTS in 1 2 3 4; do
+for NUM_EXPERTS in 3 4; do
 uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
     flexolmo-5x7B-math_rl-code_rl-tool_use_sft-safety_sft-$AMOUNT-$LR-$NUM_EXPERTS-active \
         $BASE_CKPT \
