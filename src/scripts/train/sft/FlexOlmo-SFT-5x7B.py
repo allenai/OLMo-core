@@ -533,6 +533,78 @@ class SFTRouterConfig(Config):
             )
             freeze_experts = "none"
             rank_microbatch_size=2048
+        elif model_name == "olmoe-5x7b-4-active":
+            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=5,
+                top_k=4,  # Override default of 1
+                lb_loss_weight=0.0,
+                z_loss_weight=0.001,
+                use_flash=True,
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
+                ],
+            )
+            freeze_experts = "none"
+            rank_microbatch_size=2048
+        elif model_name == "olmoe-5x7b-3-active":
+            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=5,
+                top_k=3,  # Override default of 1
+                lb_loss_weight=0.0,
+                z_loss_weight=0.001,
+                use_flash=True,
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
+                ],
+            )
+            freeze_experts = "none"
+            rank_microbatch_size=2048
+        elif model_name == "olmoe-5x7b-2-active":
+            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=5,
+                top_k=2,  # Override default of 1
+                lb_loss_weight=0.0,
+                z_loss_weight=0.001,
+                use_flash=True,
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
+                ],
+            )
+            freeze_experts = "none"
+            rank_microbatch_size=2048
+        elif model_name == "olmoe-5x7b-1-active":
+            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=5,
+                top_k=1,  # Override default of 1
+                lb_loss_weight=0.0,
+                z_loss_weight=0.001,
+                use_flash=True,
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
+                ],
+            )
+            freeze_experts = "none"
+            rank_microbatch_size=2048
 
         elif model_name == "olmoe-4x7b-unfrozen":
             model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
