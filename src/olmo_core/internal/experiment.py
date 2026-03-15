@@ -108,6 +108,7 @@ class SubCmd(StrEnum):
     launch_prep = "launch_prep"
     dry_run = "dry_run"
     utils = "utils"
+    eval_checkpoints = "eval_checkpoints"
 
     def post_launch_subcmd(self) -> "SubCmd":
         if self in (SubCmd.launch_prep, SubCmd.prep):
@@ -122,6 +123,8 @@ class SubCmd(StrEnum):
             prepare_training_environment(backend=config.backend)
         elif self == SubCmd.train_single:
             prepare_training_environment(backend=None)
+        elif self == SubCmd.eval_checkpoints:
+            prepare_training_environment(backend=config.backend)
         else:
             raise NotImplementedError(self)
 
@@ -160,6 +163,8 @@ class SubCmd(StrEnum):
             prep(config)
         elif self == SubCmd.launch_prep:
             launch_prep(config)
+        elif self == SubCmd.eval_checkpoints:
+            eval_checkpoints(config)
         else:
             raise NotImplementedError(self)
 
@@ -478,10 +483,10 @@ def eval_checkpoints(config: ExperimentConfig):
 
     # Build components.
     model = config.model.build(init_device="meta")
-    train_module = config.train_module.build(model)
+    train_module = config.train_module.build(model, eval_only=True)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
-    trainer = config.trainer.build(train_module, data_loader)
+    trainer = config.trainer.build(train_module, data_loader, eval_only=True)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()

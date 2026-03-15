@@ -426,6 +426,7 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
         self,
         model: Transformer,
         device: Optional[torch.device] = None,
+        eval_only: bool = False,
     ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "MoEV2TransformerTrainModule"]:
         """
         Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.
@@ -448,5 +449,6 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
         return MoEV2TransformerTrainModule(
             model=model,
             device=device,
+            eval_only=eval_only,
             **kwargs,
         )

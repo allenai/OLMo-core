@@ -43,7 +43,7 @@ from ..distributed.utils import (
     is_distributed,
 )
 from ..exceptions import OLMoConfigurationError
-from ..io import copy_file, file_exists, is_url, join_path, normalize_path
+from ..io import copy_file, file_exists, glob_directory, is_url, join_path, normalize_path
 from ..utils import cuda_sync_debug_mode, gc_cuda, get_default_thread_count
 from .callbacks import (
     Callback,
@@ -52,6 +52,7 @@ from .callbacks import (
     EvaluatorCallback,
     GarbageCollectorCallback,
     SpeedMonitorCallback,
+    UpcycleCheckpointerCallback,
 )
 from .checkpoint import Checkpointer
 from .common import (
@@ -272,6 +273,12 @@ class Trainer:
     """
     Ranges of steps to completely skip training on.
     """
+
+    checkpoints_to_eval: Optional[List[str]] = None 
+    """
+    List of checkpoint paths to evaluate in eval_only mode. No effect in training mode.
+    """
+    
 
     # Internal bookkeeping
 
@@ -716,6 +723,7 @@ class Trainer:
             signal.signal(signal.SIGTERM, og_sigterm_handler)
             signal.signal(signal.SIGINT, og_sigint_handler)
 
+        self._drain_bookkeeping_ops()
         for callback in self._iter_callbacks():
             callback.post_train()
 
@@ -723,6 +731,177 @@ class Trainer:
         self._shutdown()
         log.info("Training complete")
 
+    def eval_checkpoints(self):
+        from .train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
+
+        if not isinstance(self.train_module, MoEV2TransformerTrainModule):
+            raise NotImplementedError(
+                f"{self.__class__.__name__}.eval_checkpoints() only supports "
+                f"'{MoEV2TransformerTrainModule.__name__}'"
+            )
+        if self.no_evals:
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}.eval_checkpoints()' requires 'no_evals=False'"
+            )
+
+        checkpoint_paths = self._get_checkpoints_to_eval()
+        evaluator_callbacks = [
+            cb for cb in self._iter_callbacks() if isinstance(cb, EvaluatorCallback)
+        ]
+        if not evaluator_callbacks:
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}.eval_checkpoints()' requires at least one "
+                f"'{EvaluatorCallback.__name__}'"
+            )
+
+        self._canceled = False
+        self._cancel_reason = None
+        self._canceling_rank = None
+
+        log.info("Callback order:")
+        for i, callback_name in enumerate(self.callbacks.keys()):
+            log.info(f"  - Callback {i + 1}: {callback_name}")
+
+        log.info(f"Evaluating {len(checkpoint_paths):,d} checkpoints")
+
+        callback_blacklist = (CheckpointerCallback, UpcycleCheckpointerCallback, EvaluatorCallback)
+
+        # Install SIGTERM + SIGINT handlers.
+        og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
+        og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
+
+        try:
+            for callback in self._iter_callbacks():
+                if not isinstance(callback, callback_blacklist):
+                    callback.pre_train()
+            self.train_module.pre_train()
+
+            if self.is_canceled:
+                for callback in self._iter_callbacks():
+                    if not isinstance(callback, callback_blacklist):
+                        callback.post_train()
+                self._shutdown()
+                return
+
+            for checkpoint_num, checkpoint_path in enumerate(checkpoint_paths, start=1):
+                if self.is_canceled:
+                    break
+
+                log.info(
+                    f"Evaluating checkpoint {checkpoint_num:,d}/{len(checkpoint_paths):,d} "
+                    f"from '{checkpoint_path}'..."
+                )
+                self.load_checkpoint(
+                    checkpoint_path, load_trainer_state=True, load_optim_state=True
+                )
+
+                self.record_metric("throughput/total tokens", self.global_train_tokens_seen)
+                if isinstance(self.train_module, MoEV2TransformerTrainModule):
+                    num_flops_per_token = self.train_module.num_flops_per_token(
+                        self.train_module.max_sequence_length
+                    )
+                    self.record_metric(
+                        "throughput/total flops",
+                        self.global_train_tokens_seen * num_flops_per_token,
+                    )
+
+                for callback in evaluator_callbacks:
+                    callback._perform_eval()
+
+                self._log_metrics()
+        except BaseException as exc:
+            log.error(f"Checkpoint evaluation failed due to:\n{exc}")
+            for callback in self._iter_callbacks():
+                if not isinstance(callback, callback_blacklist):
+                    callback.on_error(exc)
+            for callback in self._iter_callbacks():
+                callback.close()
+            raise
+        finally:
+            # Restore original signal handlers.
+            signal.signal(signal.SIGTERM, og_sigterm_handler)
+            signal.signal(signal.SIGINT, og_sigint_handler)
+
+        self._drain_bookkeeping_ops()
+        for callback in self._iter_callbacks():
+            if not isinstance(callback, callback_blacklist):
+                callback.post_train()
+
+        self._shutdown()
+        log.info("Checkpoint evaluation complete")
+
+    def _get_checkpoints_to_eval(self) -> List[str]:
+        if not self.checkpoints_to_eval:
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}.eval_checkpoints()' requires "
+                "'checkpoints_to_eval' to be set"
+            )
+
+        checkpoint_paths: List[str] = []
+        error_type: Optional[str] = None
+        error_msg: Optional[str] = None
+
+        if get_rank() == 0:
+            seen = set()
+            try:
+                for raw_path in self.checkpoints_to_eval:
+                    path = normalize_path(raw_path)
+                    candidate_paths = sorted(glob_directory(path)) if "*" in path else [path]
+                    if not candidate_paths:
+                        raise FileNotFoundError(f"No checkpoints found in '{path}'")
+
+                    expanded_paths: List[str] = []
+                    for candidate_path in candidate_paths:
+                        if self.checkpointer.dir_is_checkpoint(candidate_path):
+                            expanded_paths.append(candidate_path)
+                        else:
+                            expanded_paths.extend(
+                                checkpoint_path
+                                for _, checkpoint_path in sorted(
+                                    self.checkpointer.find_checkpoints(candidate_path),
+                                    key=lambda item: item[0],
+                                )
+                            )
+
+                    if not expanded_paths:
+                        raise FileNotFoundError(f"No checkpoints found in '{path}'")
+
+                    for checkpoint_path in expanded_paths:
+                        if checkpoint_path not in seen:
+                            checkpoint_paths.append(checkpoint_path)
+                            seen.add(checkpoint_path)
+            except FileNotFoundError as exc:
+                error_type = "FileNotFoundError"
+                error_msg = str(exc)
+            except OLMoConfigurationError as exc:
+                error_type = "OLMoConfigurationError"
+                error_msg = str(exc)
+            except Exception as exc:
+                error_type = exc.__class__.__name__
+                error_msg = str(exc)
+
+        checkpoint_paths, error_type, error_msg = broadcast_object(
+            (checkpoint_paths, error_type, error_msg)
+        )
+
+        if error_type == "FileNotFoundError":
+            assert error_msg is not None
+            raise FileNotFoundError(error_msg)
+        elif error_type == "OLMoConfigurationError":
+            assert error_msg is not None
+            raise OLMoConfigurationError(error_msg)
+        elif error_type is not None:
+            assert error_msg is not None
+            raise RuntimeError(error_msg)
+
+        if checkpoint_paths and all(
+            (name := Path(path).name).startswith("step") and name[4:].isdigit()
+            for path in checkpoint_paths
+        ):
+            checkpoint_paths = sorted(checkpoint_paths, key=lambda path: int(Path(path).name[4:]))
+
+        return checkpoint_paths
+    
     def _shutdown(self):
         self._log_metrics()
         for callback in self._iter_callbacks():
@@ -735,6 +914,20 @@ class Trainer:
             self._single_thread_pool = None
         gc_cuda()
         barrier()
+
+    def _drain_bookkeeping_ops(self):
+        self._log_metrics()
+
+        while True:
+            pending_futures: List[Future] = []
+            for op_futures in self._bookkeeping_queue.values():
+                pending_futures.extend(list(op_futures.values()))
+
+            if not pending_futures:
+                return
+
+            for future in pending_futures:
+                future.result()
 
     def state_dict(self) -> TrainerStateDict:
         """

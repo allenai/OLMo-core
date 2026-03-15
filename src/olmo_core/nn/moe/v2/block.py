@@ -1744,7 +1744,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     ) -> torch.Tensor:
         if self.routed_experts:
             if self.ep_enabled:
-                if self.ep_no_sync:
+                if self.ep_no_sync and self.training: # in eval mode, different ranks might get different input token counts, and no-sync can freeze
                     return self.combined_forward_ep_no_sync(
                         x, loss_div_factor=loss_div_factor, **kwargs
                     )

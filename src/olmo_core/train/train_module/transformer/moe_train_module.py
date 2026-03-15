@@ -165,6 +165,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
         reduce_scatter_grads: bool = False,
+        eval_only: bool = False,
     ):
         super().__init__()
         from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
@@ -178,6 +179,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
         self.max_sequence_length = max_sequence_length
         self.rank_microbatch_size = rank_microbatch_size
+        self.eval_only = eval_only
         # Build world mesh.
         self.device = device or get_default_device()
         self.world_mesh: Dict[str, Optional[DeviceMesh]] = {}
@@ -250,12 +252,9 @@ class MoEV2TransformerTrainModule(TrainModule):
                     cp_config=cp_config,
                     ep_config=ep_config,
                     ac_config=ac_config,
-                    pp_config=pp_config
+                    pp_config=pp_config,
+                    eval_only=eval_only,
                 )
-            
-
-        # self._copy_full_precision_to_low_precision_params()
-        # self._cast_to_fwd_bwd_precision(self.model_parts)
 
         import torch._dynamo.config as dynamo_cfg
         dynamo_cfg.recompile_limit = 64  # or any higher number you want
@@ -283,25 +282,36 @@ class MoEV2TransformerTrainModule(TrainModule):
         )
         self.load_key_mapping = load_key_mapping
 
-        # Build optimizer(s).
-        log.info("Building optimizer...")
+        self.optim = None
+        if not self.eval_only:
+            # Build optimizer(s).
+            log.info("Building optimizer...")
 
-        from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer, MoEFusedV2OptimizerConfig
-        assert isinstance(optim, MoEFusedV2OptimizerConfig)
-        optim = cast(MoEFusedV2OptimizerConfig, optim)
-        self.optim: MoEFusedV2Optimizer = optim.build(
-            self.model_parts, 
-            self, 
-            strict=False # group_overrides might only be matched in one group, strict=False allows it to not match in one group (could match in some other group),
-        )
-
-        if self.reduce_scatter_grads and isinstance(self.model_parts[0], MultiGroupDistributedDataParallel):
-            raise NotImplementedError(
-                "reduce_scatter_grads=True is incompatible with MultiGroupDistributedDataParallel. "
-                "Disable DDP all-reduce path first or use reduce_scatter_grads=False."
+            from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer, MoEFusedV2OptimizerConfig
+            assert isinstance(optim, MoEFusedV2OptimizerConfig)
+            optim = cast(MoEFusedV2OptimizerConfig, optim)
+            self.optim = optim.build(
+                self.model_parts, 
+                self, 
+                strict=False # group_overrides might only be matched in one group, strict=False allows it to not match in one group (could match in some other group),
             )
 
-        self.optim.set_reduce_scatter_grads(self.reduce_scatter_grads)
+            if self.reduce_scatter_grads and isinstance(self.model_parts[0], MultiGroupDistributedDataParallel):
+                raise NotImplementedError(
+                    "reduce_scatter_grads=True is incompatible with MultiGroupDistributedDataParallel. "
+                    "Disable DDP all-reduce path first or use reduce_scatter_grads=False."
+                )
+
+            self.optim.set_reduce_scatter_grads(self.reduce_scatter_grads)
+        else:
+            log.info("Skipping optimizer build because eval_only=True")
+
+    def _require_optimizer(self):
+        if self.optim is None:
+            raise RuntimeError(
+                f"{self.__class__.__name__} was built with eval_only=True and has no optimizer"
+            )
+        return self.optim
 
     def _cast_to_fwd_bwd_precision(self, model: Union[MoEFusedV2Transformer, List[MoEFusedV2Transformer]]) -> None:
         """
@@ -611,7 +621,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         thread_count: Optional[int] = None,
         throttle_uploads: bool = False,
     ):
-        state_dict = self.optim.state_dict() # this will free optim states, need to load back after save
+        optim = self._require_optimizer()
+        state_dict = optim.state_dict() # this will free optim states, need to load back after save
 
         # this is count the param size of the global dtensor, not the local shard
         main_param_sz = 0 
@@ -638,7 +649,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             planner=planner,
         )
 
-        self.optim.load_state_dict(state_dict) # load back the optim state after save
+        optim.load_state_dict(state_dict) # load back the optim state after save
 
         return
 
@@ -653,8 +664,6 @@ class MoEV2TransformerTrainModule(TrainModule):
     ):
         from olmo_core.io import normalize_path
 
-        sd_to_load = self.optim.state_dict()
-
         dir = normalize_path(dir)
         reader = RemoteFileSystemReader(
             dir, 
@@ -663,32 +672,93 @@ class MoEV2TransformerTrainModule(TrainModule):
         )
 
         metadata = reader.read_metadata()
-        checkpoint_keys = set(metadata.state_dict_metadata.keys())
 
-        # Backward compatibility: old checkpoints won't have rolling skip-step stats.
-        for optional_key in (
-            self.optim.LOSSES_STATE_DICT_KEY,
-            self.optim.GRAD_NORMS_STATE_DICT_KEY,
-        ):
-            if optional_key not in checkpoint_keys:
-                sd_to_load.pop(optional_key, None)
+        if self.eval_only:
+            sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
+            dist_cp.state_dict_loader.load(
+                sd_to_load,
+                checkpoint_id=dir,
+                storage_reader=reader,
+                process_group=process_group,
+            )
+        else:
+            optim = self._require_optimizer()
+            sd_to_load = optim.state_dict()
+            checkpoint_keys = set(metadata.state_dict_metadata.keys())
 
-        dist_cp.state_dict_loader.load(
-            sd_to_load,
-            checkpoint_id=dir,
-            storage_reader=reader,
-            process_group=process_group,
-            # planner=FlatLoadPlanner(),
-        )
+            # Backward compatibility: old checkpoints won't have rolling skip-step stats.
+            for optional_key in (
+                optim.LOSSES_STATE_DICT_KEY,
+                optim.GRAD_NORMS_STATE_DICT_KEY,
+            ):
+                if optional_key not in checkpoint_keys:
+                    sd_to_load.pop(optional_key, None)
 
-        self.optim.load_state_dict(sd_to_load)
+            dist_cp.state_dict_loader.load(
+                sd_to_load,
+                checkpoint_id=dir,
+                storage_reader=reader,
+                process_group=process_group,
+                # planner=FlatLoadPlanner(),
+            )
 
-        # load into model params
-        self.optim._copy_main_params_to_model_params()
+            optim.load_state_dict(sd_to_load)
+
+            # load into model params
+            optim._copy_main_params_to_model_params()
 
         torch.cuda.empty_cache()
 
         return
+
+    def _get_model_state_dict_for_eval_load(self, metadata: Metadata) -> Dict[str, Any]:
+        model_state: Dict[str, Any] = {}
+        checkpoint_keys = set(metadata.state_dict_metadata.keys())
+
+        for model_part in self.model_parts:
+            for name, param in model_part.named_parameters():
+                checkpoint_key = self._resolve_model_checkpoint_key(name, checkpoint_keys)
+                if checkpoint_key is None:
+                    continue
+
+                tensor_meta = metadata.state_dict_metadata[checkpoint_key]
+                assert isinstance(tensor_meta, TensorStorageMetadata)
+                global_numel = tensor_meta.size.numel()
+                local_flat = param.data.view(-1)
+
+                if local_flat.numel() == global_numel:
+                    model_state[checkpoint_key] = local_flat
+                else:
+                    if self.world_mesh["moe"] is None:
+                        raise RuntimeError(
+                            f"Expected MoE mesh when loading sharded param '{name}' in eval mode"
+                        )
+
+                    model_state[checkpoint_key] = DTensor.from_local(
+                        local_flat,
+                        device_mesh=self.world_mesh["moe"]["ep_dp", "ep_mp"],
+                        placements=[Replicate(), Shard(0)],
+                        shape=(global_numel,),
+                        stride=(1,),
+                        run_check=False,
+                    )
+
+        if not model_state:
+            raise RuntimeError("Did not find any model weights to load in eval mode")
+
+        return model_state
+
+    def _resolve_model_checkpoint_key(
+        self, param_name: str, checkpoint_keys: Sequence[str]
+    ) -> Optional[str]:
+        candidates = (
+            f"{param_name}.main",
+            f"module.{param_name}.main",
+        )
+        for key in candidates:
+            if key in checkpoint_keys:
+                return key
+        return None
 
 
 
@@ -729,6 +799,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+        self._require_optimizer()
         DEBUG_MODE = False
 
         # Set model to train mode if it isn't already.
@@ -974,13 +1045,14 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # Record loss metrics.
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
+        optim = self._require_optimizer()
         with nvtx.annotate("record_metrics"):
             if self.pp_enabled:
                 ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
                 # if ce_batch_loss > 20 or ce_batch_loss < 0.05:
                 #     log.warning(f"Irregular CE loss detected: {ce_batch_loss.item()}")
                 self.record_ce_loss(ce_batch_loss)
-                self.optim.latest_loss = ce_batch_loss
+                optim.latest_loss = ce_batch_loss
             else:
                 assert ce_batch_loss is not None, "CE loss should not be None"
                 # Need to reduce the loss right away for the SkipStepOptimizer. NOTE: WHY?
@@ -990,7 +1062,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                     ce_batch_loss.div_(self.world_size)
                     ce_batch_loss.mul_(self._reduce_divide_factor)
                 self.record_ce_loss(ce_batch_loss)
-                self.optim.latest_loss = ce_batch_loss
+                optim.latest_loss = ce_batch_loss
 
     
             if z_batch_loss is not None:
@@ -1228,6 +1300,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     def optim_step(self):
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
+        optim = self._require_optimizer()
 
         # dist.barrier()
         # if dist.get_rank() == 0:
@@ -1243,12 +1316,12 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # Maybe adjust learning rate.
         if self.scheduler is not None:
-            for group_idx, group in enumerate(self.optim.param_groups):
+            for group_idx, group in enumerate(optim.param_groups):
                 new_lr = self.scheduler.set_lr(group, self.trainer)
                 self.trainer.record_metric(f"LR (group {group_idx})", new_lr, namespace="optim")
 
         # Step optimizer.
-        self.optim.step()
+        optim.step()
 
         # dist.barrier()
         # if dist.get_rank() == 0:
@@ -1256,21 +1329,22 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # self._copy_full_precision_to_low_precision_params()
 
-        total_grad_norm = self.optim.latest_grad_norm
+        total_grad_norm = optim.latest_grad_norm
 
         if total_grad_norm is not None:
             self.trainer.record_metric(
                 "total grad norm", total_grad_norm, reduce_type=None, namespace="optim"
             )
 
-        if isinstance(self.optim, MoEFusedV2Optimizer):
-            self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
+        if isinstance(optim, MoEFusedV2Optimizer):
+            self.record_metric("step skipped", optim.step_skipped, namespace="optim")
 
         for model in self.model_parts:
             model.post_optim_step()
         
 
     def zero_grads(self):
+        self._require_optimizer()
         # Contract: optimizer consumes model grads but does not clear model grad buffers.
         # Keep grad-buffer lifecycle in the model wrapper so bucket views stay stable.
         for m in self.model_parts:
@@ -1392,6 +1466,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         ep_config: Optional[TransformerExpertParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         pp_config: Optional[TransformerPipelineParallelConfig] = None,
+        eval_only: bool = False,
     ) -> List["MoEFusedV2Transformer"]:
         from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
         assert isinstance(model, MoEFusedV2Transformer), "model must be an instance of Transformer"
@@ -1500,7 +1575,10 @@ class MoEV2TransformerTrainModule(TrainModule):
                     compile_enabled=compile_model
                 )
 
-            log.info(f"Applied expert parallelism + DDP to the model with {get_device_mesh_info(ep_mesh)}")
+            log.info(
+                "Applied expert parallelism to the model with %s",
+                get_device_mesh_info(ep_mesh),
+            )
         else:
             # Pure DP (no EP)
             pass
@@ -1534,6 +1612,13 @@ class MoEV2TransformerTrainModule(TrainModule):
         )
 
         # now wrap with DDP (requires initialized params)
+        if eval_only:
+            # apply_dp() currently performs the bf16 cast used for MoE forward kernels.
+            # Keep that cast in eval-only mode even though we intentionally skip DDP wrapping.
+            self._cast_to_fwd_bwd_precision(model_parts)
+            log.info("Skipping DDP wrapping because eval_only=True")
+            return model_parts
+
         ddp_model_parts = []
         for idx, m in enumerate(model_parts):
             ddp_m = m.apply_dp(

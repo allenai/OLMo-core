@@ -97,20 +97,20 @@ torch.set_float32_matmul_precision('high')
 
 
 MAX_DURATION = int(6000e9)
-EVAL_INTERVAL = 10
-SAVE_INTERVAL = 1000
+EVAL_INTERVAL = 2000
+SAVE_INTERVAL = 250
 
-NUM_EXPERTS = 16
-TOP_K = 4
-D_MODEL=2048
-D_ATTN=2048
+NUM_EXPERTS = 48
+TOP_K = 2
+D_MODEL=2560
+D_ATTN=3072
 
 HEAD_DIM=64
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 2048
+MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -119,16 +119,16 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=4
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=1
+REF_NUM_NODES=8
 
 # stage 1
-MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (1) 
-
+MICRO_BSZ = 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # start at 16M
+LR_REF_BSZ = 4 * 1024 * 1024
 
 
 GLOBAL_BATCH_SIZE = (
@@ -138,9 +138,9 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 8e-4 
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024)) # lr is for X Million token
-NUM_LAYERS=6
+LR= 3e-4 
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / LR_REF_BSZ) # lr is for X Million token
+NUM_LAYERS=24
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -157,16 +157,16 @@ USE_NO_SYNC_EP=True
 USE_AC=False
 PER_LAYER_RECOMPUTE=False
 USE_TBO=False
-GRAD_ACC_IN_FP32=False
-GRAD_REDUCE_IN_FP32=False
+GRAD_ACC_IN_FP32=True
+GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
 USE_FP8=False
-ROWWISE_A2A_NBLOCKS=128
+ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 
-TAG=f'c1'
+TAG=f'c3'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -242,9 +242,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                # lb_loss_weight=0.1,
-                lb_loss_weight=0.03,
-                # lb_loss_weight=0.0065,
+                # lb_loss_weight=0.01,
+                lb_loss_weight=0.02,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -317,11 +316,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-EXPERT_LR = LR * 0.6  # scale lr for expert params, empirical choice
-
-SCHED_WARMUP_TOKENS = int((15e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((5950e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
+# ROUTER_LR = LR * 0.2
+SCHED_WARMUP_TOKENS = int((40e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+# SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_LONG_DECAY_TOKENS = int((5960e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 0.8
 SCHED_FINAL_FRACTION = 0.1
 
@@ -342,7 +341,9 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
-                OptimGroupOverride(params=["*w_up_gate", "*w_down"], opts=dict(lr=EXPERT_LR)),
+                # OptimGroupOverride(params=["*w_up_gate", "*w_down","*routed_experts_router*"], opts=dict(lr=EXPERT_LR)),
+                OptimGroupOverride(params=["*w_up_gate", "*w_down",], opts=dict(lr=EXPERT_LR)),
+                # OptimGroupOverride(params=["*routed_experts_router*"], opts=dict(lr=ROUTER_LR)),
             ],
             compile=USE_COMPILE, 
             dtype=DType.float32,
@@ -381,11 +382,11 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
                     start_lr_fraction=0.0,
                     end_lr_fraction=1.0,
                 ),
-                ComposableSchedulerStage(
-                    duration=SCHED_FAST_DECAY_TOKENS,
-                    shape=ComposableSchedulerStageType.cosine,
-                    end_lr_fraction=SCHED_MID_FRACTION,
-                ),
+                # ComposableSchedulerStage(
+                #     duration=SCHED_FAST_DECAY_TOKENS,
+                #     shape=ComposableSchedulerStageType.cosine,
+                #     end_lr_fraction=SCHED_MID_FRACTION,
+                # ),
                 ComposableSchedulerStage(
                     duration=SCHED_LONG_DECAY_TOKENS,
                     shape=ComposableSchedulerStageType.cosine,
@@ -428,7 +429,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
             checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-dev-260304-dbg_2048d2048a_6L2048M2048S_16E4K1S_c1"
+                "/workspace/checkpoint/"
             ]
         )
         .with_callback(
@@ -437,7 +438,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=False,
-                pre_train_checkpoint=False,
+                pre_train_checkpoint=True,
             ),
         )
         .with_callback(
@@ -470,7 +471,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, root_dir="/workspace/"
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
         )
     )
 
@@ -482,10 +483,11 @@ def finalize_config(config: ExperimentConfig):
     log.info(f"Total params: {total_params_in_B:.2f}B, Active params: {active_params_in_B:.2f}B")
 
     wandb_cb = cast(WandBCallback, config.trainer.callbacks['wandb'])
+    wandb_original_name = wandb_cb.name
     assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"
     wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
     wandb_cb.name += f"_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{EP_DIM}EP{PP_DIM}PP_{TAG}"
-    wandb_cb.group = f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
+    wandb_cb.group = f"{wandb_original_name}_{active_params_in_B:.2f}@{total_params_in_B:.2f}B_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
 
 
 
@@ -498,13 +500,12 @@ def build_data_components(
     # DATA_WORK_DIR = "/tmp/dataset-cache"
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        # DataMix.OLMo_mix_0925,
+        DataMix.OLMo_mix_0925,
         # DataMix.OLMo_mix_0625,
-        DataMix.OLMoE_mix_0824_dev,
+        # DataMix.OLMoE_mix_0824_dev,
         tokenizer=common.tokenizer,
         # mix_base_dir=common.root_dir,
-        # mix_base_dir="s3://ai2-llm",
-        mix_base_dir="/workspace/data/ai2-llm",
+        mix_base_dir="s3://ai2-llm",
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
         max_target_sequence_length=max(common.max_sequence_length, 8192),
@@ -517,7 +518,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=4
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)

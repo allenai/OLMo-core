@@ -52,6 +52,7 @@ class TrainerConfig(Config):
     no_checkpoints: bool = False
     no_evals: bool = False
     steps_to_skip: Optional[List[StepSkipRange]] = None
+    checkpoints_to_eval: Optional[List[str]] = None
 
     def add_callback(self, name: str, callback: Callback):
         """
@@ -96,6 +97,7 @@ class TrainerConfig(Config):
         cluster: str,
         task_set: str = "full",
         eval_interval: int = 10_000,
+        root_dir=None,
     ) -> "TrainerConfig":
         """
         Return a new trainer config with added callbacks for downstream evaluation and validation sets.
@@ -124,10 +126,10 @@ class TrainerConfig(Config):
             LMEvaluatorCallbackConfig(
                 eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
-                    mix_base_dir=get_root_dir(cluster),
+                    mix_base_dir=get_root_dir(cluster) if root_dir is None else root_dir,
                     sequence_length=sequence_length,
                     tokenizer=tokenizer,
-                    work_dir=get_work_dir(get_root_dir(cluster)),
+                    work_dir=get_work_dir(get_root_dir(cluster) if root_dir is None else root_dir),
                 ),
                 eval_interval=eval_interval,
             ),
@@ -138,6 +140,7 @@ class TrainerConfig(Config):
         train_module: TrainModule,
         data_loader: DataLoaderBase,
         *,
+        eval_only: bool = False,
         dp_process_group: Optional[dist.ProcessGroup] = None,
         checkpointer_pg: Optional[dist.ProcessGroup] = None,
     ) -> Trainer:
@@ -149,6 +152,8 @@ class TrainerConfig(Config):
         :param dp_process_group: The data parallel process group. Defaults to
             :data:`olmo_core.train.train_module.TrainModule.dp_process_group`.
         """
+        del eval_only
+
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
         if dp_process_group is None:
