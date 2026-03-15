@@ -16,8 +16,8 @@ from olmo_core.config import Config, DType
 from olmo_core.data import (
     DataMix,
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -124,7 +124,7 @@ def get_wandb_tags(
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
+    dataset: NumpyFSLDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
@@ -188,7 +188,7 @@ def build_config(
         lb_loss_weight=moe_lb_loss_weight if moe_lb_loss_weight > 0 else None,
     )
 
-    dataset_config = NumpyDatasetConfig.from_data_mix(
+    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DATAMIX_LOOKUP[train_datamix_name],
         tokenizer=tokenizer_config,
         mix_base_dir=data_root,
@@ -205,7 +205,7 @@ def build_config(
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=per_gpu_batch_size * sequence_length,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=dataset_config.sequence_length,
         optim=AdamWConfig(
             lr=lr,
             weight_decay=weight_decay,
@@ -264,35 +264,34 @@ def build_config(
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
-        .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig.from_data_mix(
-                    DATAMIX_LOOKUP[valid_datamix_name],
-                    name=NumpyDatasetType.padded_fsl,
-                    mix_base_dir=valid_data_dir,
-                    sequence_length=dataset_config.effective_sequence_length,
-                    tokenizer=tokenizer_config,
-                    work_dir=data_work_dir,
-                ),
-                eval_interval=eval_interval,
-            ),
-        )
-        .with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=[
-                    "mmlu_stem_mc_5shot_test",
-                    "mmlu_humanities_mc_5shot_test",
-                    "mmlu_social_sciences_mc_5shot_test",
-                    "mmlu_other_mc_5shot_test",
-                    "boolq",
-                    "hellaswag",
-                ],
-                tokenizer=tokenizer_config,
-                eval_interval=eval_interval,
-            ),
-        )
+       # .with_callback(
+       #     "lm_evaluator",
+       #     LMEvaluatorCallbackConfig(
+       #         eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+       #             DATAMIX_LOOKUP[valid_datamix_name],
+       #             mix_base_dir=valid_data_dir,
+       #             sequence_length=dataset_config.sequence_length,
+       #             tokenizer=tokenizer_config,
+       #             work_dir=data_work_dir,
+       #         ),
+       #         eval_interval=eval_interval,
+       #     ),
+       # )
+       # .with_callback(
+       #     "downstream_evaluator",
+       #     DownstreamEvaluatorCallbackConfig(
+       #         tasks=[
+       #             "mmlu_stem_mc_5shot_test",
+       #             "mmlu_humanities_mc_5shot_test",
+       #             "mmlu_social_sciences_mc_5shot_test",
+       #             "mmlu_other_mc_5shot_test",
+       #             "boolq",
+       #             "hellaswag",
+       #         ],
+       #         tokenizer=tokenizer_config,
+       #         eval_interval=eval_interval,
+       #     ),
+       # )
     )
 
     return ExperimentConfig(
