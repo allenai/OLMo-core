@@ -119,6 +119,23 @@ PROJECT_SPECS = {
         "DATA_DIR": "/gscratch/zlab/snehark/OLMo-core/data/",
         "NAME_KEYS": [],
     },
+    "ubuntu": {
+          'DEFAULT_SAVE_PATH': os.path.join(DEFAULT_DIR_PATH, 'models'),
+          'DATA_WORK_DIR': os.path.join(DEFAULT_DIR_PATH, 'ml/data'),
+          'VALID_DATA_DIR': os.path.join(DEFAULT_DIR_PATH, 'ml/data/preprocessed'),
+          "WANDB_PROJECT": "moe",
+          "WANDB_ENTITY": "ml-moe",
+          "CONDA_ENV_NAME": "olmoe-core",
+          "PROJECT_DIR": DEFAULT_DIR_PATH,
+          "SLURM_ACCOUNT": "",
+          "SLURM_PARTITION": "",
+          "COMMAND_PREFIX": f"{DEFAULT_DIR_PATH}/ml/scripts/single_train_launch.py",
+          "NUM_GPUS": 1,
+          "MODEL": [],
+          "DATAROOT": "https://olmo-data.org/",
+          "DATA_DIR": os.path.join(DEFAULT_DIR_PATH, 'data'),
+          "NAME_KEYS": [],
+      },
 }
 
 HARDWARE_SPECS_DICT = {
