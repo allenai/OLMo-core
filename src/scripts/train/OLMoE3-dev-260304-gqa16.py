@@ -107,7 +107,7 @@ D_ATTN=3072
 
 HEAD_DIM=64
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD=4
+NUM_KV_HEAD=16
 MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
@@ -419,7 +419,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
+            load_path="/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step45000-GQA16"
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
@@ -428,11 +428,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
-            checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step40000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step42000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step44000",
-            ]
         )
         .with_callback(
             "checkpointer",
@@ -472,9 +467,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        # )
     )
 
 
