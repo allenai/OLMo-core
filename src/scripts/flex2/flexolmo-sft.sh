@@ -107,10 +107,10 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --model_name olmoe-2x7b-unfrozen-lm-head-embed \
     --dataset_path $SFT_DATASET
 
-SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/tool-use-general-mix
-BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex-olmo/olmo2_flex_base-tulu3-no_code-no_math-dpo-rlvr_step_350/model_and_optim
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/general-olmo3_science-biomed-mix
+BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-7b-test-anneal-pmc-10b/step19074
 uv run python src/scripts/train/sft/OLMo-sft.py launch \
-    olmo2-7b-BASE-tool_use_general_mix \
+    olmo2-7b-pmc-10b-general-olmo3_science-biomed-mix \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -121,9 +121,9 @@ uv run python src/scripts/train/sft/OLMo-sft.py launch \
     --launch.priority=urgent \
     --seq_len=4096 \
     --launch.num_gpus=8 \
-    --num_nodes=8 \
+    --num_nodes=4 \
     --budget ai2/oceo \
-    --workspace ai2/flex2 \
+    --workspace ai2/olmo-instruct \
     --model_name olmo2-7b \
     --dataset_path $SFT_DATASET
 
@@ -149,6 +149,26 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --budget ai2/oceo \
     --workspace ai2/flex2 \
     --model_name olmoe-2x7b \
+    --dataset_path $SFT_DATASET
+
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/general-olmo3_reasoning-mix
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/weijias/OLMo2-7B-anneal-from-stage1-no-math/step11921/model_and_optim
+uv run python src/scripts/train/sft/OLMo-sft.py launch \
+    olmo2-7b-BASE-general-olmo3_reasoning-mix \
+        $BASE_CKPT \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=1e-4 \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=4096 \
+    --launch.num_gpus=8 \
+    --num_nodes=4 \
+    --budget ai2/oceo \
+    --workspace ai2/olmo-instruct \
+    --model_name olmo2-7b \
     --dataset_path $SFT_DATASET
 
 
