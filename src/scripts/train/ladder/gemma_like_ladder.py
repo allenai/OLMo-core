@@ -565,7 +565,7 @@ class GemmaLikeOlmoV2(StrEnum):
             GemmaLikeOlmoV2.GL_150M: _ModelSizeSettings("150M", 1, 16, 1.0),
             GemmaLikeOlmoV2.GL_260M: _ModelSizeSettings("260M", 1, 16, 1.0),
             GemmaLikeOlmoV2.GL_709M: _ModelSizeSettings("709M", 2, 16, 1.0),
-            GemmaLikeOlmoV2.GL_1p3B: _ModelSizeSettings("1p3B", 3, 16, 1.0),
+            GemmaLikeOlmoV2.GL_1p3B: _ModelSizeSettings("1p3B", 4, 16, 1.0),
             GemmaLikeOlmoV2.GL_2B: _ModelSizeSettings("2B", 8, 16, 1.0),
             GemmaLikeOlmoV2.GL_4B: _ModelSizeSettings("4B", 9, 32, 1.0),
             GemmaLikeOlmoV2.GL_8B: _ModelSizeSettings("8B", 14, 64, 0.9),
