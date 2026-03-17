@@ -602,6 +602,7 @@ def handle_custom_args(
     parser.add_argument("--no-beaker-launch", action="store_true", default=False)
     parser.add_argument("--use-gdn", action="store_true", default=False)
     parser.add_argument("--data-seed", type=int, default=34521)
+    parser.add_argument("--beaker-priority", type=str, default="normal")
     parser.add_argument(
         "--data-mix",
         type=DataMix,
@@ -774,6 +775,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     no_beaker_launch = custom_args.no_beaker_launch
     use_gdn = custom_args.use_gdn
     data_seed = custom_args.data_seed
+    beaker_priority = custom_args.beaker_priority
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
     root_dir = custom_args.root_dir or get_root_dir(cli_context.cluster)
@@ -794,7 +796,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         tokenizer_config.padded_vocab_size(), use_gdn=use_gdn
     )
 
-    # Compute hyperparameters
+    # Compute hyp erparameters
     model_active_params = model_config.num_non_embedding_params
     train_duration = Duration.chinchilla_tokens(
         chinchilla_multiple, model_params=model_active_params
@@ -827,6 +829,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             nccl_debug=True,
             step_soft_timeout=None,
         )
+    beaker_launch_config.priority = beaker_priority  # <-- Override here!
 
     # Dataset config
     dataset_config: NumpyFSLDatasetConfig | List[InstanceSourceConfig]
