@@ -97,8 +97,8 @@ torch.set_float32_matmul_precision('high')
 
 
 MAX_DURATION = int(6000e9)
-EVAL_INTERVAL = 10
-SAVE_INTERVAL = 1000
+EVAL_INTERVAL = 10000
+SAVE_INTERVAL = 10000
 
 NUM_EXPERTS = 16
 TOP_K = 4
@@ -119,7 +119,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=1
 PP_DIM=1
 
 # ref
@@ -165,6 +165,7 @@ USE_ROWWISE_A2A=True
 USE_FP8=False
 ROWWISE_A2A_NBLOCKS=128
 SEED = 2026
+USE_MUON = True
 
 TAG=f'c1'
 
@@ -340,9 +341,26 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
+            muon_adjust_lr_fn="match_rms_adamw",
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
-                OptimGroupOverride(params=["*w_up_gate", "*w_down"], opts=dict(lr=EXPERT_LR)),
+                OptimGroupOverride(
+                    params=["*embeddings.weight", "*norm.weight"],
+                    opts=dict(weight_decay=0.0, use_muon=False),
+                ),
+                OptimGroupOverride(
+                    params=[
+                        "*.w_q.weight", 
+                        "*.w_k.weight", 
+                        "*.w_v.weight", 
+                        "*attention.w_out.weight", # to exclude "lm_head.w_out.weight"
+                        "*.w1.weight", "*.w2.weight", "*.w3.weight"
+                        ], # attention + dense mlp
+                    opts=dict(use_muon=USE_MUON),
+                ),
+                OptimGroupOverride(
+                    params=["*.w_up_gate", "*.w_down"],
+                    opts=dict(lr=EXPERT_LR, use_muon=USE_MUON),
+                ),
             ],
             compile=USE_COMPILE, 
             dtype=DType.float32,
@@ -427,9 +445,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
-            checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-dev-260304-dbg_2048d2048a_6L2048M2048S_16E4K1S_c1"
-            ]
+            # checkpoints_to_eval=[
+            #     "/workspace/checkpoint/OLMoE3-dev-260304-dbg_2048d2048a_6L2048M2048S_16E4K1S_c1"
+            # ]
         )
         .with_callback(
             "checkpointer",
@@ -453,10 +471,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=41,
-                                   end=45
+                                   start=31,
+                                   end=34
             )
         )
         .with_callback(
@@ -503,8 +521,8 @@ def build_data_components(
         DataMix.OLMoE_mix_0824_dev,
         tokenizer=common.tokenizer,
         # mix_base_dir=common.root_dir,
-        # mix_base_dir="s3://ai2-llm",
-        mix_base_dir="/workspace/data/ai2-llm",
+        mix_base_dir="s3://ai2-llm",
+        # mix_base_dir="/workspace/data/ai2-llm",
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
         max_target_sequence_length=max(common.max_sequence_length, 8192),

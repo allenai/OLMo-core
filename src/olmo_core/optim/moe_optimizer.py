@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 from typing import Optional, Tuple, Type, Union
 
 import torch
@@ -54,6 +55,10 @@ import nvtx
 
 log = logging.getLogger(__name__)
 
+MUON_DEFAULT_NS_COEFFICIENTS = (3.4445, -4.7750, 2.0315)
+MUON_DEFAULT_EPS = 1e-7
+MUON_DEFAULT_NS_STEPS = 5
+
 # Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
 ### DEBUG PRINT ###
@@ -67,6 +72,104 @@ def _str_paramt(paramt):
         total_numel += sum(p.numel() for p in pgrp["params"])
     rets += f'Total num ele: {total_numel:,}\n'
     return rets
+
+def _zeropower_via_newtonschulz_2d(
+    grad: torch.Tensor,
+    ns_coefficients: Tuple[float, float, float],
+    ns_steps: int,
+    eps: float,
+) -> torch.Tensor:
+    if ns_steps >= 100:
+        raise ValueError("Muon ns_steps must be less than 100 for computational efficiency")
+    if grad.ndim != 2:
+        raise ValueError(f"Muon 2D kernel requires a 2D tensor, got shape {tuple(grad.shape)}")
+
+    a, b, c = ns_coefficients
+    ortho_grad = grad.bfloat16()
+    if grad.size(0) > grad.size(1):
+        ortho_grad = ortho_grad.T
+
+    ortho_grad.div_(ortho_grad.norm().clamp(min=eps))
+    for _ in range(ns_steps):
+        gram_matrix = ortho_grad @ ortho_grad.T
+        gram_update = torch.addmm(gram_matrix, gram_matrix, gram_matrix, beta=b, alpha=c)
+        ortho_grad = torch.addmm(ortho_grad, gram_update, ortho_grad, beta=a)
+
+    if grad.size(0) > grad.size(1):
+        ortho_grad = ortho_grad.T
+    return ortho_grad
+
+
+_compiled_zeropower_via_newtonschulz_2d = torch.compile(
+    _zeropower_via_newtonschulz_2d,
+    dynamic=False,
+)
+
+
+def _zeropower_via_newtonschulz_nd(
+    grad: torch.Tensor,
+    ns_coefficients: Tuple[float, float, float],
+    ns_steps: int,
+    eps: float,
+) -> torch.Tensor:
+    if grad.ndim < 3:
+        raise ValueError(f"Muon ND kernel requires a tensor with at least 3 dims, got shape {tuple(grad.shape)}")
+
+    a, b, c = ns_coefficients
+    ortho_grad = grad.reshape(-1, grad.size(-2), grad.size(-1)).bfloat16()
+
+    if grad.size(-2) > grad.size(-1):
+        ortho_grad = ortho_grad.transpose(1, 2)
+
+    ortho_grad = ortho_grad / ortho_grad.norm(dim=(1, 2), keepdim=True).clamp(min=eps)
+    for _ in range(ns_steps):
+        gram_matrix = torch.bmm(ortho_grad, ortho_grad.transpose(1, 2))
+        gram_update = torch.baddbmm(gram_matrix, gram_matrix, gram_matrix, beta=b, alpha=c)
+        ortho_grad_rhs = ortho_grad.clone() # copy rhs to safely use baddbmm_ which is faster than baddbmm
+        ortho_grad.baddbmm_(gram_update, ortho_grad_rhs, beta=a, alpha=1.0)
+
+    if grad.size(-2) > grad.size(-1):
+        ortho_grad = ortho_grad.transpose(1, 2)
+    return ortho_grad.reshape_as(grad)
+
+
+_compiled_zeropower_via_newtonschulz_nd = _zeropower_via_newtonschulz_nd
+
+
+@nvtx.annotate("_zeropower_via_newtonschulz")
+def _zeropower_via_newtonschulz(
+    grad: torch.Tensor,
+    ns_coefficients: Tuple[float, float, float],
+    ns_steps: int,
+    eps: float,
+) -> torch.Tensor:
+    if grad.ndim < 2:
+        raise ValueError(f"Muon requires a tensor with at least 2 dims, got shape {tuple(grad.shape)}")
+    if grad.ndim == 2:
+        return _compiled_zeropower_via_newtonschulz_2d(grad, ns_coefficients, ns_steps, eps)
+    return _compiled_zeropower_via_newtonschulz_nd(grad, ns_coefficients, ns_steps, eps)
+
+
+def _adjust_muon_lr(
+    lr: Union[float, torch.Tensor],
+    adjust_lr_fn: Optional[str],
+    param_shape: torch.Size,
+) -> Union[float, torch.Tensor]:
+    rows, cols = param_shape[:2]
+    if adjust_lr_fn is None or adjust_lr_fn == "original":
+        adjusted_ratio = math.sqrt(max(1.0, rows / cols))
+    elif adjust_lr_fn == "match_rms_adamw":
+        adjusted_ratio = 0.2 * math.sqrt(max(rows, cols))
+    else:
+        raise ValueError(f"Unsupported Muon lr adjustment function: {adjust_lr_fn}")
+
+    return lr * adjusted_ratio
+
+
+def _to_local_tensor(tensor: torch.Tensor) -> torch.Tensor:
+    if isinstance(tensor, DTensor):
+        return tensor.to_local()
+    return tensor
 
 @dataclass
 class MoEFusedV2OptimizerConfig(Config): 
@@ -99,6 +202,12 @@ class MoEFusedV2OptimizerConfig(Config):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     dtype: Optional[DType] = None
+    muon_momentum: float = 0.95
+    muon_nesterov: bool = True
+    muon_ns_coefficients: Tuple[float, float, float] = MUON_DEFAULT_NS_COEFFICIENTS
+    muon_eps: float = MUON_DEFAULT_EPS
+    muon_ns_steps: int = MUON_DEFAULT_NS_STEPS
+    muon_adjust_lr_fn: Optional[str] = None
 
     # foreach: bool = True
     """
@@ -311,21 +420,27 @@ class MoEFusedV2OptimizerConfig(Config):
             f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param group(s)..."
         )
         for g_idx, group in enumerate(optim.param_groups):
+            group_param_names = "\n - ".join(group["named_params"].keys())
             group_fields_list = "\n - ".join(
                 [f"{k}: {v}" for k, v in optim.param_groups[g_idx].items() if k != "named_params"]
             )
             if group_fields_list:
                 log.info(
-                    f"Group {g_idx}, {len(group['named_params'])} parameter(s):\n - {group_fields_list}"
+                    f"Group {g_idx}, {len(group['named_params'])} parameter(s):\n - {group_fields_list}\n - params:\n - {group_param_names}"
                 )
             else:
-                log.info(f"Group {g_idx}, {len(group['named_params'])} parameter(s)")
+                log.info(
+                    f"Group {g_idx}, {len(group['named_params'])} parameter(s):\n - params:\n - {group_param_names}"
+                )
 
-        if self.compile:
+        has_muon_groups = any(bool(group.get("use_muon", False)) for group in optim.param_groups)
+        if self.compile and not has_muon_groups:
             # Compile only the math-heavy update path. Keeping comm/copy-back eager
             # avoids Dynamo/Inductor capturing giant all_gather graphs that can OOM.
             log.info("Compiling optimizer update path (_step_foreach)...")
             optim._step_foreach = torch.compile(optim._step_foreach)
+        elif self.compile and has_muon_groups:
+            log.info("Skipping optimizer step compilation because Muon groups are enabled.")
 
         # Register hook to reset fixed fields after loading a checkpoint.
         # def reset_fixed_fields(opt: torch.optim.Optimizer):
@@ -346,7 +461,9 @@ def assign_full_tensor_to_dtensor(dst: DTensor, src: torch.Tensor) -> None:
 class MoEFusedV2Optimizer:
     LOSSES_STATE_DICT_KEY = "__moe_skip_step_losses"
     GRAD_NORMS_STATE_DICT_KEY = "__moe_skip_step_grad_norms"
-    MOMENT_STATE_SUFFIXES = ("exp_avg", "exp_avg_sq")
+    ADAM_MOMENT_STATE_SUFFIXES = ("exp_avg", "exp_avg_sq")
+    MUON_MOMENT_STATE_SUFFIXES = ("muon_momentum",)
+    MOMENT_STATE_SUFFIXES = ADAM_MOMENT_STATE_SUFFIXES + MUON_MOMENT_STATE_SUFFIXES
 
     def __init__(
         self,
@@ -356,6 +473,12 @@ class MoEFusedV2Optimizer:
         betas: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         weight_decay: float = 1e-2,
+        muon_momentum: float = 0.95,
+        muon_nesterov: bool = True,
+        muon_ns_coefficients: Tuple[float, float, float] = MUON_DEFAULT_NS_COEFFICIENTS,
+        muon_eps: float = MUON_DEFAULT_EPS,
+        muon_ns_steps: int = MUON_DEFAULT_NS_STEPS,
+        muon_adjust_lr_fn: Optional[str] = None,
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
         max_grad_norm: float = 1.0,
@@ -374,7 +497,16 @@ class MoEFusedV2Optimizer:
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
+        assert muon_momentum >= 0.0
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+        defaults.update(
+            muon_momentum=muon_momentum,
+            muon_nesterov=muon_nesterov,
+            muon_ns_coefficients=muon_ns_coefficients,
+            muon_eps=muon_eps,
+            muon_ns_steps=muon_ns_steps,
+            muon_adjust_lr_fn=muon_adjust_lr_fn,
+        )
 
         self.model_has_grad_accum_fp32_buffer = model_has_grad_accum_fp32_buffer
         self.use_distributed = use_distributed
@@ -383,6 +515,7 @@ class MoEFusedV2Optimizer:
         def _add_defaults_to_param_group(pg: Dict[str, Any]) -> Dict[str, Any]:
             for k, v in defaults.items():
                 pg.setdefault(k, v)
+            pg.setdefault("use_muon", False)
             return pg
         # add defaults to each param group
         param_groups = [_add_defaults_to_param_group(pg) for pg in param_groups]
@@ -425,6 +558,7 @@ class MoEFusedV2Optimizer:
         self.do_not_shard_tensor_smaller_than = do_not_shard_tensor_smaller_than
         self._use_reduce_scatter_grads = True
         self.main_grad: Dict[str, torch.Tensor] = {}
+        self._param_uses_muon: Dict[str, bool] = {}
 
         # check
         device = None
@@ -458,6 +592,21 @@ class MoEFusedV2Optimizer:
 
         self.states: Dict[str, DTensor] = OrderedDict()
 
+        muon_fallback_params: List[str] = []
+        for param_group in param_groups:
+            group_requests_muon = bool(param_group.get("use_muon", False))
+            for name, param in param_group["named_params"].items():
+                use_muon_for_param = group_requests_muon and param.ndim >= 2
+                self._param_uses_muon[name] = use_muon_for_param
+                if group_requests_muon and param.ndim < 2:
+                    muon_fallback_params.append(name)
+
+        if muon_fallback_params:
+            log.warning(
+                "Falling back to AdamW for params with rank < 2 in Muon groups: %s",
+                ", ".join(muon_fallback_params),
+            )
+
 
         for param_group in param_groups:
             # configure the device mesh to shard the group
@@ -466,9 +615,9 @@ class MoEFusedV2Optimizer:
 
             # wrap each param with DTensor
             for name, param in param_group['named_params'].items():
-                old_shape = param.shape
                 # flat in fp32
                 num_elements = param.numel()
+                use_muon_for_param = self._param_uses_muon[name]
 
                 # main param
                 if self.should_maintain_fp32_main_param:
@@ -480,15 +629,20 @@ class MoEFusedV2Optimizer:
                     # wrap in DTensor so it works with rest of the code
                     self.states[f'{name}.main'] = DTensor.from_local(param.data.view(-1), device_mesh=device_mesh, placements=[Replicate()])
 
-                # exp avg
-                exp_avg = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
-                exp_avg = self._distribute_tensor(exp_avg, device_mesh)
-                self.states[f'{name}.exp_avg'] = exp_avg
+                if use_muon_for_param:
+                    muon_momentum_buffer = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
+                    muon_momentum_buffer = self._distribute_tensor(muon_momentum_buffer, device_mesh)
+                    self.states[f'{name}.muon_momentum'] = muon_momentum_buffer
+                else:
+                    # exp avg
+                    exp_avg = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
+                    exp_avg = self._distribute_tensor(exp_avg, device_mesh)
+                    self.states[f'{name}.exp_avg'] = exp_avg
 
-                # exp avg sq
-                exp_avg_sq = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
-                exp_avg_sq = self._distribute_tensor(exp_avg_sq, device_mesh)
-                self.states[f'{name}.exp_avg_sq'] = exp_avg_sq
+                    # exp avg sq
+                    exp_avg_sq = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
+                    exp_avg_sq = self._distribute_tensor(exp_avg_sq, device_mesh)
+                    self.states[f'{name}.exp_avg_sq'] = exp_avg_sq
 
                 # step
                 step_tensor = torch.zeros((), dtype=torch.float32, device=device)
@@ -521,7 +675,7 @@ class MoEFusedV2Optimizer:
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():
                 total_params += param.numel()
-        print(f'[MoEFusedV2Optimizer] Total model params: {total_params:,}')
+        log.info(f'[MoEFusedV2Optimizer] Total model params: {total_params:,}')
 
         # main
         def count_numel(tag: str):
@@ -556,20 +710,29 @@ class MoEFusedV2Optimizer:
         main_stat = count_numel('main')
         exp_avg_stat = count_numel('exp_avg')
         exp_avg_sq_stat = count_numel('exp_avg_sq')
+        muon_momentum_stat = count_numel('muon_momentum')
 
         print_str = ''
 
         print_str += info_str('Main param', main_stat)
-        print_str += info_str('Exp avg', exp_avg_stat)
-        print_str += info_str('Exp avg sq', exp_avg_sq_stat)
+        if exp_avg_stat[0] > 0:
+            print_str += info_str('Exp avg', exp_avg_stat)
+        if exp_avg_sq_stat[0] > 0:
+            print_str += info_str('Exp avg sq', exp_avg_sq_stat)
+        if muon_momentum_stat[0] > 0:
+            print_str += info_str('Muon momentum', muon_momentum_stat)
 
         BYTES_IN_GB = 1024**3
 
         total_global_optim_gb = main_stat[0] * self.main_grad_dtype.itemsize / BYTES_IN_GB
-        total_global_optim_gb += (exp_avg_stat[0] + exp_avg_sq_stat[0]) * self.states_dtype.itemsize / BYTES_IN_GB # bf16 or fp32
+        total_global_optim_gb += (
+            exp_avg_stat[0] + exp_avg_sq_stat[0] + muon_momentum_stat[0]
+        ) * self.states_dtype.itemsize / BYTES_IN_GB
 
         total_local_optim_gb = main_stat[1] * self.main_grad_dtype.itemsize / BYTES_IN_GB
-        total_local_optim_gb += (exp_avg_stat[1] + exp_avg_sq_stat[1]) * self.states_dtype.itemsize / BYTES_IN_GB # bf16 or fp32
+        total_local_optim_gb += (
+            exp_avg_stat[1] + exp_avg_sq_stat[1] + muon_momentum_stat[1]
+        ) * self.states_dtype.itemsize / BYTES_IN_GB
 
         total_model_gb = self._model_param_sz / BYTES_IN_GB
         print_str += f'[MoEFusedV2Optimizer] Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n'
@@ -583,7 +746,7 @@ class MoEFusedV2Optimizer:
 
         print_str += f'[MoEFusedV2Optimizer] Total estimated static memory (GB): {total_static:.4f} GB\n'
 
-        print(print_str)
+        log.info(print_str)
 
     def _check_model_param_main_param_the_same(self):
         for param_group in self.param_groups:
@@ -596,11 +759,21 @@ class MoEFusedV2Optimizer:
                     raise ValueError(f"{name}: Model param {param} and main param {main_param} are not close")
 
 
-    def _distribute_tensor(self, tensor, device_mesh, force_shard: bool = False) -> DTensor:
+    def _distribute_tensor(
+        self,
+        tensor,
+        device_mesh,
+        force_shard: bool = False,
+        force_replicate: bool = False,
+    ) -> DTensor:
         num_elements = tensor.numel()
+        if force_shard and force_replicate:
+            raise ValueError("A tensor cannot be both force-sharded and force-replicated")
         if force_shard:
             # always shard, useful for saving checkpoint
             placements=[Shard(0)]
+        elif force_replicate:
+            placements=[Replicate()]
         elif self.use_distributed:
             if num_elements >= self.do_not_shard_tensor_smaller_than and num_elements % device_mesh.size(0) == 0:
                 # this is distributed optimizer, so each rank holds one shard of the data
@@ -608,7 +781,7 @@ class MoEFusedV2Optimizer:
             else:
                 # small tensor, do not shard
                 placements=[Replicate()]
-                print(f"[MoEFusedV2Optimizer] A tensor of size {num_elements} is replicated.")
+                log.info(f"[MoEFusedV2Optimizer] A tensor of size {num_elements} is replicated.")
         else:
             # always no shard
             placements=[Replicate()]
@@ -860,6 +1033,75 @@ class MoEFusedV2Optimizer:
         if pg is None:
             return 1, 0
         return dist.get_world_size(pg), dist.get_rank(pg)
+
+    def _state_suffixes_for_param(self, name: str) -> Tuple[str, ...]:
+        if self._param_uses_muon[name]:
+            return ("main", "muon_momentum", "step")
+        return ("main", "exp_avg", "exp_avg_sq", "step")
+
+    def _gather_sharded_flat_tensor(self, local_tensor: torch.Tensor, state_dt: DTensor) -> torch.Tensor:
+        if not any(isinstance(p, Shard) for p in state_dt.placements):
+            return local_tensor
+
+        gathered = coalesced_all_gather([local_tensor], state_dt.device_mesh.get_group())[0]
+        return gathered.reshape(-1)
+
+    def _load_moment_state_or_zero(self, state_dict: Dict[str, Any], state_key: str) -> Optional[Any]:
+        if state_key in state_dict:
+            return state_dict.pop(state_key)
+
+        self._ensure_local_state_storage(state_key).to_local().zero_()
+        return None
+
+    def _ep_dp_state_to_checkpoint(self, live_state_dt: DTensor) -> DTensor:
+        assert self.moe_mesh is not None
+        assert len(live_state_dt.placements) == 1
+        ep_dp_placement = live_state_dt.placements[0]
+        if ep_dp_placement.is_shard():
+            combined_ep_dp_placement: Placement = Shard(1)
+        else:
+            combined_ep_dp_placement = Replicate()
+
+        state_local = live_state_dt.to_local()
+        state_dt_for_save = DTensor.from_local(
+            state_local.unsqueeze(0),
+            device_mesh=self.moe_mesh["ep_dp", "ep_mp"],
+            placements=[combined_ep_dp_placement, Shard(0)],
+        )
+        state_dt_for_save = state_dt_for_save.full_tensor().reshape(-1)
+        return self._distribute_tensor(state_dt_for_save, self.dp_mesh, force_shard=True)
+
+    def _load_ep_dp_state_from_checkpoint(self, state_key: str, ckpt_state: DTensor) -> None:
+        assert self.moe_mesh is not None
+        state_dt = self._ensure_local_state_storage(state_key)
+        ckpt_state = ckpt_state.full_tensor()
+        ckpt_state = distribute_tensor(
+            ckpt_state,
+            device_mesh=self.moe_mesh["ep_mp"],
+            placements=[Shard(0)],
+        ).to_local()
+
+        if state_dt.placements[0].is_shard():
+            ckpt_state = distribute_tensor(
+                ckpt_state,
+                device_mesh=self.moe_mesh["ep_dp"],
+                placements=[Shard(0)],
+            )
+        else:
+            ckpt_state = distribute_tensor(
+                ckpt_state,
+                device_mesh=self.moe_mesh["ep_dp"],
+                placements=[Replicate()],
+            )
+
+        ckpt_local = ckpt_state.to_local()
+        assert ckpt_state.shape == state_dt.shape, (
+            f"Global shape mismatch for {state_key}: {ckpt_state.shape} vs {state_dt.shape}"
+        )
+        assert ckpt_local.shape == state_dt.to_local().shape, (
+            f"Local shape mismatch for {state_key}: {ckpt_local.shape} vs {state_dt.to_local().shape}"
+        )
+        state_dt.to_local().copy_(ckpt_local)
 
     @nvtx.annotate("MoEFusedV2Optimizer._reduce_scatter_model_grads")
     def _reduce_scatter_model_grads(self) -> None:
@@ -1184,10 +1426,53 @@ class MoEFusedV2Optimizer:
             for name, model_p in group["named_params"].items():
                 if not model_p.requires_grad:
                     continue
+
+                if self._param_uses_muon[name]:
+                    flush_chunk()
+                    maybe_copy_back_16bit_states()
+                    reset_chunk_buffers()
+
+                    main_state = self.states[f"{name}.main"]
+                    momentum_state = self.states[f"{name}.muon_momentum"]
+
+                    main_param_local = main_state.to_local()
+                    grad_local = _to_local_tensor(self.main_grad[name]).float()
+                    momentum_local = momentum_state.to_local()
+                    step = self.states[f"{name}.step"].to_local()
+
+                    momentum_weight = step_factor * (1.0 - group["muon_momentum"])
+                    momentum_local.mul_(1.0 - momentum_weight)
+                    momentum_local.add_(grad_local * momentum_weight)
+
+                    if group["muon_nesterov"]:
+                        local_pre_update = grad_local * (1.0 - group["muon_momentum"]) + momentum_local * group["muon_momentum"]
+                    else:
+                        local_pre_update = momentum_local
+
+                    full_pre_update = self._gather_sharded_flat_tensor(local_pre_update, main_state)
+                    full_pre_update = full_pre_update.reshape(model_p.shape)
+                    full_ortho_update = _zeropower_via_newtonschulz(
+                        full_pre_update,
+                        group["muon_ns_coefficients"],
+                        group["muon_ns_steps"],
+                        group["muon_eps"],
+                    )
+
+                    local_ortho_update = self.narrow_tensor(
+                        full_ortho_update.reshape(-1),
+                        main_state.device_mesh,
+                        main_state.placements,
+                    )
+                    adjusted_lr = _adjust_muon_lr(group["lr"], group["muon_adjust_lr_fn"], model_p.shape)
+
+                    main_param_local.mul_(1.0 - step_factor * group["lr"] * group["weight_decay"])
+                    main_param_local.add_(local_ortho_update * (adjusted_lr * step_factor), alpha=-1.0)
+                    step.add_(step_factor)
+                    continue
                 
                 # in adam step(), make everything local and fp32 
                 main_params.append(self.states[f"{name}.main"].to_local())
-                grads.append(self.main_grad[name].float()) # main grad is not DTensor
+                grads.append(_to_local_tensor(self.main_grad[name]).float())
                 if self.states_dtype == torch.bfloat16:
                     # new fp32 copy
                     exp_avgs.append(self.states[f"{name}.exp_avg"].to_local().to(torch.float32))
@@ -1240,10 +1525,10 @@ class MoEFusedV2Optimizer:
 
     def _restore_rolling_stats(self, values: Any) -> List[torch.Tensor]:
         if values is None:
-            print("No rolling stats found in checkpoint, skipping restore.")
+            log.info("No rolling stats found in checkpoint, skipping restore.")
             return []
 
-        print(f"Restoring rolling stats from checkpoint ...")
+        log.info(f"Restoring rolling stats from checkpoint ...")
 
         if isinstance(values, torch.Tensor):
             raw_values: List[Any]
@@ -1278,32 +1563,17 @@ class MoEFusedV2Optimizer:
             for name, param in param_group['named_params'].items():
                 if not param.requires_grad:
                     continue
-                all_suffixes = ['main', 'exp_avg', 'exp_avg_sq', 'step']
+                all_suffixes = self._state_suffixes_for_param(name)
                 if param_group['pg'] == 'ep_dp':
                     for suffix in all_suffixes:
                         state_key = f'{name}.{suffix}'
                         live_state_dt = self.states[state_key]
-                        if suffix in ['main', 'exp_avg', 'exp_avg_sq']:
-                            # need to convert to dtensor sharded over ep_dp and ep_mp
-                            assert self.moe_mesh is not None
-                            state_local = live_state_dt.to_local()
-                            state_dt_for_save = DTensor.from_local(
-                                state_local.unsqueeze(0), # (N,) -> (1, N)
-                                device_mesh=self.moe_mesh['ep_dp','ep_mp'],
-                                placements=[Shard(1) if self.use_distributed else Replicate(), Shard(0)], # first dim sharded by mp, second dim sharded by dp
-                            )
-                            # collect the full tensor and force shard over dp becaues it's too big
-                            state_dt_for_save = state_dt_for_save.full_tensor().reshape(-1) # NOTE: additional memory usage
-                            state_dt_for_save = self._distribute_tensor(state_dt_for_save, self.dp_mesh, force_shard=True)
-
-                            sd[state_key] = state_dt_for_save
+                        if suffix != 'step':
+                            sd[state_key] = self._ep_dp_state_to_checkpoint(live_state_dt)
 
                             # Free the local shard storage while keeping DTensor metadata.
-                            empty_local = torch.empty(
-                                0,
-                                dtype=state_local.dtype,
-                                device=state_local.device,
-                            )
+                            state_local = live_state_dt.to_local()
+                            empty_local = torch.empty(0, dtype=state_local.dtype, device=state_local.device)
                             self.states[state_key] = DTensor.from_local(
                                 empty_local,
                                 device_mesh=live_state_dt.device_mesh,
@@ -1320,12 +1590,9 @@ class MoEFusedV2Optimizer:
                         state_dt = self.states[f'{name}.{suffix}']
                         sd[f'{name}.{suffix}'] = state_dt
 
-        assert len(sd) == len(self.states), f"State dict length {len(sd)} does not match live states length {len(self.states)}"
-        main_param_count = sum(1 for k in sd.keys() if k.endswith('.main'))
-        exp_avg_count = sum(1 for k in sd.keys() if k.endswith('.exp_avg'))
-        exp_avg_sq_count = sum(1 for k in sd.keys() if k.endswith('.exp_avg_sq'))
-        step_count = sum(1 for k in sd.keys() if k.endswith('.step'))
-        assert main_param_count == exp_avg_count == exp_avg_sq_count == step_count, f"State dict counts do not match: main {main_param_count}, exp_avg {exp_avg_count}, exp_avg_sq {exp_avg_sq_count}, step {step_count}"
+        assert set(sd.keys()) == set(self.states.keys()), (
+            f"State dict keys do not match live states: {set(sd.keys()) ^ set(self.states.keys())}"
+        )
 
         # Store rolling skip-step statistics as plain lists so they can be checkpointed as a single BYTE_IO entry.
         sd[self.LOSSES_STATE_DICT_KEY] = [float(v.detach().cpu().item()) for v in self._losses]
@@ -1383,12 +1650,13 @@ class MoEFusedV2Optimizer:
             for name, param in param_group['named_params'].items():
                 if not param.requires_grad:
                     continue
-                all_suffixes = ['main', 'exp_avg', 'exp_avg_sq', 'step']
+                all_suffixes = self._state_suffixes_for_param(name)
                 if reset_optimizer_moments_on_load:
                     for suffix in self.MOMENT_STATE_SUFFIXES:
                         state_key = f'{name}.{suffix}'
-                        state_dict.pop(state_key, None)
-                        self._ensure_local_state_storage(state_key).to_local().zero_()
+                        if state_key in self.states:
+                            state_dict.pop(state_key, None)
+                            self._ensure_local_state_storage(state_key).to_local().zero_()
 
                 if param_group['pg'] == 'ep_dp':
                     for suffix in all_suffixes:
@@ -1396,49 +1664,41 @@ class MoEFusedV2Optimizer:
                             continue
                         state_key = f'{name}.{suffix}'
                         state_dt = self.states[state_key]
-                        if suffix in ['main', 'exp_avg', 'exp_avg_sq']:
-                            # need to convert to dtensor sharded over ep_dp and ep_mp
-                            assert self.moe_mesh is not None
-                            ckpt_state = state_dict.pop(state_key)
-                            ckpt_state = ckpt_state.full_tensor() # global full tensor
-                            ckpt_state = distribute_tensor(
-                                ckpt_state,
-                                device_mesh=self.moe_mesh['ep_mp'], # first shard over ep_mp
-                                placements=[Shard(0)],
-                            ).to_local()
-                            if self.use_distributed:
-                                # when in distributed optimizer, we need to further shard the local tensor over ep_dp
-                                ckpt_state = distribute_tensor(
-                                    ckpt_state,
-                                    device_mesh=self.moe_mesh['ep_dp'], # then shard over ep_dp
-                                    placements=[Shard(0)],
-                                )
-                            else:
-                                # when not in distributed optimizer, we just replicate the local tensor over ep_dp
-                                ckpt_state = distribute_tensor(
-                                    ckpt_state,
-                                    device_mesh=self.moe_mesh['ep_dp'], # then replicate over ep_dp
-                                    placements=[Replicate()],
-                                )
+                        if suffix != "step":
+                            ckpt_state = self._load_moment_state_or_zero(state_dict, state_key) if suffix in self.MOMENT_STATE_SUFFIXES else state_dict.pop(state_key)
+                            if ckpt_state is not None:
+                                self._load_ep_dp_state_from_checkpoint(state_key, ckpt_state)
+                        else:
+                            ckpt_state = state_dict.pop(state_key, None)
+                            if ckpt_state is not None:
+                                state_dt.copy_(ckpt_state.full_tensor())
+                else:
+                    for suffix in all_suffixes:
+                        if reset_optimizer_moments_on_load and suffix in self.MOMENT_STATE_SUFFIXES:
+                            continue
+                        state_key = f"{name}.{suffix}"
+                        live_state = self.states[state_key]
+                        if suffix in self.MOMENT_STATE_SUFFIXES:
+                            ckpt_state = self._load_moment_state_or_zero(state_dict, state_key)
+                            if ckpt_state is None:
+                                continue
+                        else:
+                            ckpt_state = state_dict.pop(state_key, None)
+                            if ckpt_state is None:
+                                continue
 
-                            # If state_dict() has dropped local storage, rematerialize it now.
+                        if suffix == "step":
+                            live_state.copy_(ckpt_state.full_tensor())
+                        else:
                             ckpt_local = ckpt_state.to_local()
-                            state_dt = self._ensure_local_state_storage(state_key)
-
-                            # shape checks
-                            assert ckpt_state.shape == state_dt.shape, \
-                                f"Global shape mismatch {name}.{suffix}: {ckpt_state.shape} vs {state_dt.shape}"
-                            assert ckpt_local.shape == state_dt.to_local().shape, \
-                                f"Local shape mismatch {name}.{suffix}: {ckpt_local.shape} vs {state_dt.to_local().shape}"
-                            
-                            # now the sharded local tensor should match the local tensor shape of the live state
-                            state_dt.to_local().copy_(ckpt_local)
-
-
-                        else: # "step"
-                            assert "step" == suffix
-                            ckpt_state = state_dict.pop(state_key).full_tensor()
-                            state_dt.copy_(ckpt_state)  # step is a scalar, so no need to convert to local
+                            live_state = self._ensure_local_state_storage(state_key)
+                            assert ckpt_state.shape == live_state.shape, (
+                                f"Global shape mismatch {name}.{suffix}: {ckpt_state.shape} vs {live_state.shape}"
+                            )
+                            assert ckpt_local.shape == live_state.to_local().shape, (
+                                f"Local shape mismatch {name}.{suffix}: {ckpt_local.shape} vs {live_state.to_local().shape}"
+                            )
+                            live_state.to_local().copy_(ckpt_local)
 
         self._losses = self._restore_rolling_stats(loaded_losses)
         self._grad_norms = self._restore_rolling_stats(loaded_grad_norms)

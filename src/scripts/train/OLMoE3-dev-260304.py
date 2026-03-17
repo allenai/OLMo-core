@@ -134,7 +134,7 @@ REF_NUM_NODES=8
 MICRO_BSZ = 4
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (64) # 32M
 LR_REF_BSZ = 4 * 1024 * 1024
-# lbl: 0.02 -> 0.018
+
 
 
 GLOBAL_BATCH_SIZE = (
@@ -249,8 +249,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.01,
-                # lb_loss_weight=0.02,
-                lb_loss_weight=0.018,
+                lb_loss_weight=0.02,
+                # lb_loss_weight=0.018,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
