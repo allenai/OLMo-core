@@ -46,6 +46,10 @@ from .config import OptimGroupOverride, INITIAL_LR_FIELD, LR_FIELD
 from ..exceptions import OLMoConfigurationError
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard, DTensor, distribute_tensor
+from torch.distributed.tensor._utils import (
+    compute_local_shape_and_global_offset,
+    compute_local_stride,
+)
 import nvtx
 
 log = logging.getLogger(__name__)
@@ -115,6 +119,11 @@ class MoEFusedV2OptimizerConfig(Config):
     max_grad_norm: float = 1.0
 
     use_distributed: bool = True
+    reset_optimizer_moments_on_load: bool = False
+    """
+    When ``True``, ignore checkpointed ``exp_avg`` and ``exp_avg_sq`` values and
+    reset them to zero when restoring optimizer state.
+    """
 
     @property
     def device(self) -> torch.device:
@@ -337,6 +346,7 @@ def assign_full_tensor_to_dtensor(dst: DTensor, src: torch.Tensor) -> None:
 class MoEFusedV2Optimizer:
     LOSSES_STATE_DICT_KEY = "__moe_skip_step_losses"
     GRAD_NORMS_STATE_DICT_KEY = "__moe_skip_step_grad_norms"
+    MOMENT_STATE_SUFFIXES = ("exp_avg", "exp_avg_sq")
 
     def __init__(
         self,
@@ -360,6 +370,7 @@ class MoEFusedV2Optimizer:
         do_not_shard_tensor_smaller_than: int = 8192,
         use_distributed: bool = True,
         check_nan_inf_grad: bool = False,
+        reset_optimizer_moments_on_load: bool = False,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
@@ -367,6 +378,7 @@ class MoEFusedV2Optimizer:
 
         self.model_has_grad_accum_fp32_buffer = model_has_grad_accum_fp32_buffer
         self.use_distributed = use_distributed
+        self.reset_optimizer_moments_on_load = reset_optimizer_moments_on_load
 
         def _add_defaults_to_param_group(pg: Dict[str, Any]) -> Dict[str, Any]:
             for k, v in defaults.items():
@@ -1321,11 +1333,48 @@ class MoEFusedV2Optimizer:
 
         return sd       
     
+    def _ensure_local_state_storage(self, state_key: str) -> DTensor:
+        state_dt = self.states[state_key]
+        if state_dt.to_local().numel() != 0:
+            return state_dt
 
+        local_shape, _ = compute_local_shape_and_global_offset(
+            state_dt.shape,
+            state_dt.device_mesh,
+            state_dt.placements,
+        )
+        local_stride = compute_local_stride(
+            state_dt.stride(),
+            state_dt.device_mesh,
+            state_dt.placements,
+        )
+        new_local = torch.empty_strided(
+            tuple(local_shape),
+            tuple(local_stride),
+            dtype=state_dt.dtype,
+            device=self.device,
+        )
+        state_dt = DTensor.from_local(
+            new_local,
+            device_mesh=state_dt.device_mesh,
+            placements=state_dt.placements,
+            shape=state_dt.shape,
+            stride=state_dt.stride(),
+            run_check=False,
+        )
+        self.states[state_key] = state_dt
+        return state_dt
 
-    def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True) -> None:
+    def load_state_dict(
+        self,
+        state_dict: Dict[str, Any],
+        strict: bool = True,
+        reset_optimizer_moments_on_load: Optional[bool] = None,
+    ) -> None:
         # the loaded state dict is already distributed over the DP mesh,
         # here we need to convert the DP sharded tensors to EP_MP + EP_DP sharded
+        if reset_optimizer_moments_on_load is None:
+            reset_optimizer_moments_on_load = self.reset_optimizer_moments_on_load
 
         loaded_losses = state_dict.pop(self.LOSSES_STATE_DICT_KEY, None)
         loaded_grad_norms = state_dict.pop(self.GRAD_NORMS_STATE_DICT_KEY, None)
@@ -1335,8 +1384,16 @@ class MoEFusedV2Optimizer:
                 if not param.requires_grad:
                     continue
                 all_suffixes = ['main', 'exp_avg', 'exp_avg_sq', 'step']
+                if reset_optimizer_moments_on_load:
+                    for suffix in self.MOMENT_STATE_SUFFIXES:
+                        state_key = f'{name}.{suffix}'
+                        state_dict.pop(state_key, None)
+                        self._ensure_local_state_storage(state_key).to_local().zero_()
+
                 if param_group['pg'] == 'ep_dp':
                     for suffix in all_suffixes:
+                        if reset_optimizer_moments_on_load and suffix in self.MOMENT_STATE_SUFFIXES:
+                            continue
                         state_key = f'{name}.{suffix}'
                         state_dt = self.states[state_key]
                         if suffix in ['main', 'exp_avg', 'exp_avg_sq']:
@@ -1366,17 +1423,7 @@ class MoEFusedV2Optimizer:
 
                             # If state_dict() has dropped local storage, rematerialize it now.
                             ckpt_local = ckpt_state.to_local()
-                            if state_dt.to_local().numel() == 0:
-                                new_local = torch.empty_like(ckpt_local)
-                                state_dt = DTensor.from_local(
-                                    new_local,
-                                    device_mesh=state_dt.device_mesh,
-                                    placements=state_dt.placements,
-                                    shape=state_dt.shape,
-                                    stride=state_dt.stride(),
-                                    run_check=False,
-                                )
-                                self.states[state_key] = state_dt
+                            state_dt = self._ensure_local_state_storage(state_key)
 
                             # shape checks
                             assert ckpt_state.shape == state_dt.shape, \

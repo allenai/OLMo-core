@@ -419,7 +419,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            load_path="/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step45000-GQA16"
+            load_path="/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step45000-GQA16",
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True

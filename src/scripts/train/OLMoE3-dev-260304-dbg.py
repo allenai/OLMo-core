@@ -446,7 +446,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=common.run_name,
                 entity="ai2-llm",
                 project="olmoe-dev-v2",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -469,9 +469,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, root_dir="/workspace/"
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, root_dir="/workspace/"
+        # )
     )
 
 

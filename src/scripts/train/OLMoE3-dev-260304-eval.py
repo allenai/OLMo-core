@@ -429,9 +429,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
             checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step40000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step42000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step44000",
+                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step62000",
+                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step63000",
+                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step64000",
+                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step65000",
+                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step66000",
+                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step67000",
+
             ]
         )
         .with_callback(

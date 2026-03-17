@@ -649,7 +649,10 @@ class MoEV2TransformerTrainModule(TrainModule):
             planner=planner,
         )
 
-        optim.load_state_dict(state_dict) # load back the optim state after save
+        optim.load_state_dict(
+            state_dict,
+            reset_optimizer_moments_on_load=False,
+        )  # load back the optim state after save
 
         return
 
@@ -685,6 +688,9 @@ class MoEV2TransformerTrainModule(TrainModule):
             optim = self._require_optimizer()
             sd_to_load = optim.state_dict()
             checkpoint_keys = set(metadata.state_dict_metadata.keys())
+            reset_optimizer_moments_on_load = getattr(
+                optim, "reset_optimizer_moments_on_load", False
+            )
 
             # Backward compatibility: old checkpoints won't have rolling skip-step stats.
             for optional_key in (
@@ -693,6 +699,12 @@ class MoEV2TransformerTrainModule(TrainModule):
             ):
                 if optional_key not in checkpoint_keys:
                     sd_to_load.pop(optional_key, None)
+
+            if reset_optimizer_moments_on_load:
+                log.info("Resetting optimizer exp_avg and exp_avg_sq buffers during checkpoint load")
+                for key in list(sd_to_load.keys()):
+                    if key.endswith(".exp_avg") or key.endswith(".exp_avg_sq"):
+                        sd_to_load.pop(key)
 
             dist_cp.state_dict_loader.load(
                 sd_to_load,
