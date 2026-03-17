@@ -601,6 +601,7 @@ def handle_custom_args(
     parser.add_argument("--chinchilla-multiple", type=float, default=4.0)  # Default is 4xC
     parser.add_argument("--no-beaker-launch", action="store_true", default=False)
     parser.add_argument("--use-gdn", action="store_true", default=False)
+    parser.add_argument("--data-seed", type=int, default=34521)
     parser.add_argument(
         "--data-mix",
         type=DataMix,
@@ -772,6 +773,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     chinchilla_multiple = custom_args.chinchilla_multiple
     no_beaker_launch = custom_args.no_beaker_launch
     use_gdn = custom_args.use_gdn
+    data_seed = custom_args.data_seed
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
     root_dir = custom_args.root_dir or get_root_dir(cli_context.cluster)
@@ -831,7 +833,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     data_loader_config: NumpyDataLoaderConfig | ComposableDataLoaderConfig
     if mix_yaml is not None:
         print(f"Using YAML mixture spec: {mix_yaml} (strategy: {mix_strategy})")
-        set_composable_seed(34521)
+        set_composable_seed(data_seed)
         dataset_config = [
             build_numpy_mixture_from_yaml_spec(
                 mix_yaml,
@@ -859,7 +861,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             instance_filter_config=InstanceFilterConfig(),
         )
         data_loader_config = NumpyDataLoaderConfig(
-            global_batch_size=global_batch_size, seed=34521, num_workers=8
+            global_batch_size=global_batch_size, seed=data_seed, num_workers=8
         )
 
     # Train module config
