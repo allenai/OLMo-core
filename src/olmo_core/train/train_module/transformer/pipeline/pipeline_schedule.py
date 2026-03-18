@@ -3,11 +3,8 @@
 import torch
 import torch.distributed as dist
 from collections import Counter, defaultdict
-from torch.utils._pytree import tree_map_only
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, NamedTuple
-from torch.distributed.pipelining.microbatch import TensorChunkSpec
 from enum import Enum
-import torch
 from torch.fx.node import Argument
 import re
 import nvtx
@@ -21,7 +18,6 @@ from .gpu_activation_offload import GPUActivationOffloader
 from olmo_core.nn.lm_head import LMOutputWithLoss
 
 logger = logging.getLogger(__name__)
-
 
 # Helper to parse an action string like 1F0 into a tuple of (stage_index, computation_type, microbatch_index)
 _action_regex = re.compile(
@@ -158,8 +154,8 @@ class CustomScheduleInterleaved1F1B():
         stages: list[CustomPipelineStage],
         n_microbatches: int,
         # loss_fn: Optional[Callable] = None,
-        args_chunk_spec: Optional[tuple[TensorChunkSpec, ...]] = None,
-        kwargs_chunk_spec: Optional[dict[str, TensorChunkSpec]] = None,
+        args_chunk_spec: Optional[Any] = None,
+        kwargs_chunk_spec: Optional[dict[str, Any]] = None,
         output_merge_spec: Optional[Union[dict[str, Any], tuple[Any]]] = None,
 
     ):
@@ -171,11 +167,6 @@ class CustomScheduleInterleaved1F1B():
         # Chunking specification for keyword inputs. (default: `None`)
         self._kwargs_chunk_spec = kwargs_chunk_spec
         self._output_merge_spec = output_merge_spec
-        """
-        # args_chunk_spec and kwargs_chunk_spec specify how to chunk inputs.
-        # They are used to convert batch to microbatches in `step(x)`.  See
-        # `TensorChunkSpec` for helper methods for creating them.
-        """
 
 
         logger.info("Using %s", self.__class__.__name__)
@@ -299,19 +290,93 @@ class CustomScheduleInterleaved1F1B():
         the chunks
         """
         if args is not None or kwargs is not None:
-            from torch.distributed.pipelining.microbatch import split_args_kwargs_into_chunks
-            args_split, kwargs_split = split_args_kwargs_into_chunks(
-                args,
-                kwargs,
-                self._n_microbatches,
-                self._args_chunk_spec,
-                self._kwargs_chunk_spec,
-            )
-            # TODO: implement our own version
+            if self._args_chunk_spec is not None or self._kwargs_chunk_spec is not None:
+                raise NotImplementedError(
+                    "Custom chunk specs are not supported by this pipeline schedule."
+                )
+
+            args = args or ()
+            kwargs = kwargs or {}
+
+            if len(args) > 1:
+                raise ValueError(f"Expected zero or one positional tensor arg, got {len(args)}")
+
+            input_ids: Optional[torch.Tensor] = None
+            if len(args) == 1:
+                input_ids = args[0]
+                if not isinstance(input_ids, torch.Tensor) or input_ids.dim() == 0:
+                    raise TypeError("args must be empty or a tuple containing one non-scalar tensor")
+                if input_ids.size(0) < self._n_microbatches:
+                    raise ValueError(
+                        f"input batch size {input_ids.size(0)} is smaller than num_microbatches={self._n_microbatches}"
+                    )
+                input_id_chunks = list(torch.tensor_split(input_ids, self._n_microbatches, dim=0))
+                args_split = [(chunk,) for chunk in input_id_chunks]
+            else:
+                args_split = [()] * self._n_microbatches
+            kwargs_split = [{} for _ in range(self._n_microbatches)]
+
+            supported_keys = {
+                "loss_div_factor",
+                "labels",
+                "ignore_index",
+                "loss_reduction",
+                "z_loss_multiplier",
+                "return_logits",
+            }
+            unexpected_keys = set(kwargs) - supported_keys
+            if unexpected_keys:
+                raise ValueError(f"Unsupported kwargs for pipeline splitting: {sorted(unexpected_keys)}")
+
+            for key, value in kwargs.items():
+                if key == "labels":
+                    if not isinstance(value, torch.Tensor) or value.dim() == 0:
+                        raise TypeError("'labels' must be a non-scalar tensor")
+                    if value.size(0) < self._n_microbatches:
+                        raise ValueError(
+                            f"'labels' batch size {value.size(0)} is smaller than num_microbatches={self._n_microbatches}"
+                        )
+                    if input_ids is not None and value.size(0) != input_ids.size(0):
+                        raise ValueError(
+                            f"'labels' batch size {value.size(0)} does not match input batch size {input_ids.size(0)}"
+                        )
+                    value_chunks = list(torch.tensor_split(value, self._n_microbatches, dim=0))
+                    for i, chunk in enumerate(value_chunks):
+                        kwargs_split[i][key] = chunk
+                elif key == "loss_div_factor":
+                    if isinstance(value, torch.Tensor):
+                        if value.dim() != 0:
+                            raise TypeError("'loss_div_factor' must be a scalar tensor")
+                    elif not isinstance(value, (int, float)):
+                        raise TypeError("'loss_div_factor' must be a scalar tensor, int, or float")
+                    for kwarg_mb in kwargs_split:
+                        kwarg_mb[key] = value
+                elif key == "ignore_index":
+                    if not isinstance(value, int):
+                        raise TypeError("'ignore_index' must be an int")
+                    for kwarg_mb in kwargs_split:
+                        kwarg_mb[key] = value
+                elif key == "loss_reduction":
+                    if not isinstance(value, str):
+                        raise TypeError("'loss_reduction' must be a str")
+                    for kwarg_mb in kwargs_split:
+                        kwarg_mb[key] = value
+                elif key == "z_loss_multiplier":
+                    if value is not None and not isinstance(value, (int, float)):
+                        raise TypeError("'z_loss_multiplier' must be None, int, or float")
+                    for kwarg_mb in kwargs_split:
+                        kwarg_mb[key] = value
+                elif key == "return_logits":
+                    if not isinstance(value, bool):
+                        raise TypeError("'return_logits' must be a bool")
+                    for kwarg_mb in kwargs_split:
+                        kwarg_mb[key] = value
+
             return args_split, kwargs_split
         else:
             # Empty inputs (e.g. when called on middle stages)
             # Return a list of empty tuples/dicts with matching length as chunks
+            assert False, "this branch not used in this version"
             return [()] * self._n_microbatches, [{}] * self._n_microbatches
 
     def prepare_step(self, global_batch_size: int, seqlen: int):
@@ -760,5 +825,3 @@ def _get_interleaved_1f1b_rank_ops(
             ) # Backward takes twice the time
 
     return rank_ops
-
-

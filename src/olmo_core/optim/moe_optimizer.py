@@ -951,7 +951,7 @@ class MoEFusedV2Optimizer:
         # reduce PP
         assert self.dense_mesh.mesh_dim_names is not None
         if 'pp' in self.dense_mesh.mesh_dim_names:
-            total_grad_norm = self._combine_norm(total_grad_norm, self.dense_mesh['pp'].get_group())
+            total_grad_norm = self._reduce_norm(total_grad_norm, self.dense_mesh['pp'].get_group())
             # total_grad_norm = total_grad_norm.square()
             # dist.all_reduce(total_grad_norm, op=dist.ReduceOp.SUM, group=self.dense_mesh['pp'].get_group())
             # total_grad_norm = total_grad_norm.sqrt()
