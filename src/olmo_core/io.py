@@ -11,11 +11,6 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Generator, List, Optional, Tuple, Type, Union
 
-try:
-    from functools import cache
-except ImportError:
-    from functools import lru_cache as cache
-
 import requests
 import torch
 from cached_path import cached_path
@@ -31,6 +26,12 @@ from .exceptions import (
     OLMoUploadError,
 )
 from .fs_cache import maybe_cache
+
+try:
+    from functools import cache
+except ImportError:
+    from functools import lru_cache as cache
+
 
 log = logging.getLogger(__name__)
 
@@ -914,6 +915,7 @@ def _get_s3_endpoint_url(scheme: str) -> Optional[str]:
         return r2_endpoint_url
     if scheme == "weka":
         weka_endpoint_url = os.environ.get("WEKA_ENDPOINT_URL")
+        print("WEKA ENDPOINT URL IS ", weka_endpoint_url)
         if weka_endpoint_url is None:
             raise OLMoEnvironmentError(
                 "WEKA endpoint url is not set. Did you forget to set the 'WEKA_ENDPOINT_URL' env var?"
