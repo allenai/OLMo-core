@@ -27,12 +27,16 @@ from olmo_core.utils import get_default_device
 
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 from ..router import MoERouterGatingFunction, _uniform_expert_assignment
+from .output_discard_checkpoint import OutputDiscardCheckpoint
 
 import nvtx
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
-    
-    
+
+
+def _cast_to_fp32(x: torch.Tensor) -> torch.Tensor:
+    return x.float()
+
 
 @dataclass
 class MoERouterConfigV2(Config):
@@ -443,8 +447,20 @@ class MoERouterV2(nn.Module):
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
+        # Keep activation in bf16/fp16 in forward graph, and only materialize fp32
+        # router input through OutputDiscardCheckpoint so backward can recompute it.
+        cast_checkpoint: Optional[OutputDiscardCheckpoint] = None
+        if torch.is_grad_enabled() and x.requires_grad:
+            cast_checkpoint = OutputDiscardCheckpoint()
+            x_fp32 = cast(torch.Tensor, cast_checkpoint.checkpoint(_cast_to_fp32, x))
+        else:
+            x_fp32 = x.float()
+
         # shape: (batch_size, seq_len, num_experts)
-        logits = self.get_expert_logits(x).float()
+        logits = self.get_expert_logits(x_fp32).float()
+        if cast_checkpoint is not None:
+            # Recompute fp32 cast before linear backward consumes the saved input.
+            cast_checkpoint.discard_output_and_register_recompute(logits)
 
         # shape: (batch_size, seq_len, num_experts)
         if self.gating_function == MoERouterGatingFunction.softmax:
@@ -670,4 +686,3 @@ class MoERouterV2(nn.Module):
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         self.cp_mesh = cp_mesh
-

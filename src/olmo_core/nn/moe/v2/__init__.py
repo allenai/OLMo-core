@@ -1,8 +1,3 @@
-# from .block import (
-#     MoEFusedV2TransformerBlock,
+from .output_discard_checkpoint import OutputDiscardCheckpoint
 
-# )
-
-# __all__ = [
-#     "MoEFusedV2TransformerBlock",
-# ]
+__all__ = ["OutputDiscardCheckpoint"]
