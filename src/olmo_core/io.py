@@ -870,15 +870,6 @@ def _get_s3_client(scheme: str):
     if credentials is None:
         config = config.merge(Config(signature_version=UNSIGNED))
 
-    # Pull explicit credentials from env vars for WEKA
-    extra_kwargs = {}
-    if scheme == "weka":
-        access_key = os.environ.get("WEKA_ACCESS_KEY_ID")
-        secret_key = os.environ.get("WEKA_SECRET_ACCESS_KEY")
-        if access_key and secret_key:
-            extra_kwargs["aws_access_key_id"] = access_key
-            extra_kwargs["aws_secret_access_key"] = secret_key
-
     return session.client(
         "s3",
         endpoint_url=_get_s3_endpoint_url(scheme),
