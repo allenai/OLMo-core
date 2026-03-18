@@ -708,6 +708,7 @@ class TEAttentionBackend(AttentionBackend):
             cp_comm_type="p2p",
         )
 
+    # @torch.compiler.disable(reason="Transformer Engine attention uses Python/pybind setup that Dynamo should not trace")
     def forward(
         self,
         qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],

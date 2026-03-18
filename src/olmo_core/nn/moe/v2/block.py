@@ -13,6 +13,7 @@ import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement, Shard
 from torch.utils.checkpoint import checkpoint, CheckpointFunction
+from olmo_core.train.globals import set_global_arg, get_global_arg
 
 import olmo_core.nn.transformer.block
 try:
@@ -59,6 +60,7 @@ from .router import MoERouterConfigV2, MoERouterV2
 from .shared_experts import SharedExperts
 from .shared_experts import SharedExpertsConfig
 from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
+from .output_discard_checkpoint import OutputDiscardCheckpoint
 from olmo_core.kernels.mxfp8_utils import (
     dequantize_rows_from_mxfp8,
     dot_gathered_rows_mxfp8_with_grad,
@@ -1745,6 +1747,132 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if self.routed_experts:
             if self.ep_enabled:
                 if self.ep_no_sync and self.training: # in eval mode, different ranks might get different input token counts, and no-sync can freeze
+                    activation_dump_key = f"ep_no_sync_saved_activations_dumped_block_{self.block_idx}"
+                    if (
+                        get_global_arg("dry_run_done", default=False)
+                        and self.block_idx == 3
+                        and not get_global_arg(activation_dump_key, default=False)
+                    ):
+                        saved_activations_by_storage: Dict[Tuple[str, int, int], Dict[str, object]] = {}
+                        saved_tensor_weakrefs: List[weakref.ReferenceType[torch.Tensor]] = []
+                        param_storage_keys = {
+                            (str(param.device), param.untyped_storage().data_ptr(), param.untyped_storage().nbytes())
+                            for param in self.parameters()
+                        }
+                        mem_before_gib = torch.cuda.memory_allocated() / (1024**3)
+
+                        def _record_saved_tensor(tensor: torch.Tensor) -> torch.Tensor:
+                            storage = tensor.untyped_storage()
+                            storage_nbytes = storage.nbytes()
+                            key = (str(tensor.device), storage.data_ptr(), storage_nbytes)
+                            record = saved_activations_by_storage.get(key)
+                            if record is None:
+                                saved_activations_by_storage[key] = {
+                                    "kind": "param" if key in param_storage_keys else "activation",
+                                    "shape": tuple(tensor.shape),
+                                    "dtype": str(tensor.dtype),
+                                    "storage_nbytes": storage_nbytes,
+                                    "save_count": 1,
+                                }
+                            else:
+                                record["save_count"] = cast(int, record["save_count"]) + 1
+                            saved_tensor_weakrefs.append(weakref.ref(tensor))
+                            return tensor
+
+                        with torch.autograd.graph.saved_tensors_hooks(
+                            _record_saved_tensor, lambda tensor: tensor
+                        ):
+                            out = self.combined_forward_ep_no_sync(
+                                x, loss_div_factor=loss_div_factor, **kwargs
+                            )
+
+                        mem_after_gib = torch.cuda.memory_allocated() / (1024**3)
+                        # Pack-time view: what got saved_for_backward before any post-save storage mutation.
+                        total_unique_storage_nbytes_pack = sum(
+                            cast(int, record["storage_nbytes"])
+                            for record in saved_activations_by_storage.values()
+                        )
+                        total_param_storage_nbytes_pack = sum(
+                            cast(int, record["storage_nbytes"])
+                            for record in saved_activations_by_storage.values()
+                            if record["kind"] == "param"
+                        )
+                        total_activation_storage_nbytes_pack = (
+                            total_unique_storage_nbytes_pack - total_param_storage_nbytes_pack
+                        )
+                        saved_activation_summary_pack = ",\n".join(
+                            f"kind={record['kind']} "
+                            f"shape={record['shape']} dtype={record['dtype']} "
+                            f"storage_nbytes={record['storage_nbytes']} "
+                            f"storage_mib={cast(int, record['storage_nbytes']) / (1024**2):.2f} "
+                            f"refs={record['save_count']}"
+                            for record in saved_activations_by_storage.values()
+                        )
+
+                        # Live view: current storage sizes after forward finishes.
+                        # This reflects storage-discard checkpointing (e.g., resize_(0)).
+                        live_saved_activations_by_storage: Dict[Tuple[str, int, int], Dict[str, object]] = {}
+                        for tensor_ref in saved_tensor_weakrefs:
+                            tensor = tensor_ref()
+                            if tensor is None:
+                                continue
+                            storage = tensor.untyped_storage()
+                            storage_nbytes = storage.nbytes()
+                            key = (str(tensor.device), storage.data_ptr(), storage_nbytes)
+                            record = live_saved_activations_by_storage.get(key)
+                            if record is None:
+                                live_saved_activations_by_storage[key] = {
+                                    "kind": "param" if key in param_storage_keys else "activation",
+                                    "shape": tuple(tensor.shape),
+                                    "dtype": str(tensor.dtype),
+                                    "storage_nbytes": storage_nbytes,
+                                    "live_ref_count": 1,
+                                }
+                            else:
+                                record["live_ref_count"] = cast(int, record["live_ref_count"]) + 1
+
+                        total_unique_storage_nbytes_live = sum(
+                            cast(int, record["storage_nbytes"])
+                            for record in live_saved_activations_by_storage.values()
+                        )
+                        total_param_storage_nbytes_live = sum(
+                            cast(int, record["storage_nbytes"])
+                            for record in live_saved_activations_by_storage.values()
+                            if record["kind"] == "param"
+                        )
+                        total_activation_storage_nbytes_live = (
+                            total_unique_storage_nbytes_live - total_param_storage_nbytes_live
+                        )
+                        saved_activation_summary_live = ",\n".join(
+                            f"kind={record['kind']} "
+                            f"shape={record['shape']} dtype={record['dtype']} "
+                            f"storage_nbytes={record['storage_nbytes']} "
+                            f"storage_mib={cast(int, record['storage_nbytes']) / (1024**2):.2f} "
+                            f"live_refs={record['live_ref_count']}"
+                            for record in live_saved_activations_by_storage.values()
+                        )
+                        print(
+                            f"[EP no-sync saved activations] rank={get_rank()}\n"
+                            f"block={self.block_idx} mem_before={mem_before_gib:.2f} GiB\n"
+                            f"mem_after={mem_after_gib:.2f} GiB\n"
+                            f"delta={mem_after_gib - mem_before_gib:.2f} GiB\n"
+                            f"unique_saved_storage_nbytes={total_unique_storage_nbytes_live}\n"
+                            f"unique_saved_storage_mib={total_unique_storage_nbytes_live / (1024**2):.2f}\n"
+                            f"param_saved_storage_nbytes={total_param_storage_nbytes_live}\n"
+                            f"param_saved_storage_mib={total_param_storage_nbytes_live / (1024**2):.2f}\n"
+                            f"activation_saved_storage_nbytes={total_activation_storage_nbytes_live}\n"
+                            f"activation_saved_storage_mib={total_activation_storage_nbytes_live / (1024**2):.2f}\n"
+                            f"saved_at_pack_unique_storage_nbytes={total_unique_storage_nbytes_pack}\n"
+                            f"saved_at_pack_unique_storage_mib={total_unique_storage_nbytes_pack / (1024**2):.2f}\n"
+                            f"saved_at_pack_param_storage_nbytes={total_param_storage_nbytes_pack}\n"
+                            f"saved_at_pack_param_storage_mib={total_param_storage_nbytes_pack / (1024**2):.2f}\n"
+                            f"saved_at_pack_activation_storage_nbytes={total_activation_storage_nbytes_pack}\n"
+                            f"saved_at_pack_activation_storage_mib={total_activation_storage_nbytes_pack / (1024**2):.2f}\n"
+                            f"saved_live=[\n{saved_activation_summary_live}\n]\n"
+                            f"saved_at_pack=[\n{saved_activation_summary_pack}\n]"
+                        )
+                        set_global_arg(activation_dump_key, True)
+                        return out
                     return self.combined_forward_ep_no_sync(
                         x, loss_div_factor=loss_div_factor, **kwargs
                     )
@@ -4363,6 +4491,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
 
         return global_x_restore
+
+    def _attention_norm_only(self, x: torch.Tensor) -> torch.Tensor:
+        return self.attention_norm(x)
+
+    def _feed_forward_norm_only(self, x: torch.Tensor) -> torch.Tensor:
+        return self.feed_forward_norm(x)
 
 
     def _checkpointed_permute_routed_experts_unpermute(

@@ -1053,6 +1053,8 @@ class MoEV2TransformerTrainModule(TrainModule):
                 model.reset_auxiliary_metrics()
 
             torch.cuda.empty_cache()
+            from olmo_core.train.globals import set_global_arg
+            set_global_arg("dry_run_done", True)
             return
 
         # Record loss metrics.
