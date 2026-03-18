@@ -116,6 +116,16 @@ def build_launch_config(
             required=True,
         ),
         BeakerEnvSecret(
+            name="WEKA_ACCESS_KEY_ID",
+            secret="WEKA_ACCESS_KEY_ID",
+            required=True,
+        ),
+        BeakerEnvSecret(
+            name="WEKA_SECRET_ACCESS_KEY",
+            secret="WEKA_SECRET_ACCESS_KEY",
+            required=True,
+        ),
+        BeakerEnvSecret(
             name="SLACK_WEBHOOK_URL",
             secret="SLACK_WEBHOOK_URL",
             required=False,
