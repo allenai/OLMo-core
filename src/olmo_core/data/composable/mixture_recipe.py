@@ -5,12 +5,13 @@ from dataclasses import dataclass
 
 import yaml
 from cached_path import cached_path
-from dataclass_extensions import decode
-from typing_extensions import Self
-
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config, Registrable
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.io import add_cached_path_clients
+from typing_extensions import Self
+
+from dataclass_extensions import decode
 
 from ..tokenizer import TokenizerConfig
 from ..types import LongDocStrategy
@@ -284,6 +285,8 @@ def build_numpy_mixture_from_yaml_spec(
         sampling_strategy = NumpySamplingStrategy.get_registered_class(sampling_strategy)()
     assert isinstance(sampling_strategy, NumpySamplingStrategy)
 
+    if spec_path.startswith("weka://"):
+        add_cached_path_clients()
     with cached_path(spec_path).open() as f:
         raw_config = yaml.safe_load(f)
         mixture_specs = _flatten_sources(
