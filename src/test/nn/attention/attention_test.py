@@ -450,11 +450,6 @@ def test_attention_kv_caching(
     use_rope: bool,
     backend_name: AttentionBackendName,
 ):
-    if backend_name == AttentionBackendName.flash_4:
-        cc = torch.cuda.get_device_capability()
-        if cc < (10, 0):
-            pytest.skip("FA4 KV caching requires SM >= 10.0 (Blackwell)")
-
     seed_all(0)
 
     d_model = 512
@@ -532,14 +527,9 @@ def test_attention_kv_caching(
     ],
 )
 def test_attention_kv_cache_update(backend_name: AttentionBackendName):
-    if backend_name == AttentionBackendName.flash_4:
-        cc = torch.cuda.get_device_capability()
-        if cc < (10, 0):
-            pytest.skip("FA4 KV caching requires SM >= 10.0 (Blackwell)")
-
     seed_all(0)
 
-    d_model = 64
+    d_model = 512
     n_heads = 8
     n_kv_heads = 2
     batch_size = 2

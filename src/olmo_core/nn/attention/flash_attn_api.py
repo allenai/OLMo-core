@@ -487,6 +487,23 @@ def dispatch_flash_attn_4(
             window_size=window_size,
         )[0]
 
+    # Dense KV cache path: use varlen API with seqused_k but no page_table.
+    if seqused_k is not None:
+        B = q.shape[0]
+        T = q.shape[1]
+        cu_seqlens_q_cache = torch.arange(0, (B + 1) * T, T, dtype=torch.int32, device=q.device)
+        return flash_attn_4.flash_attn_varlen_func(
+            _flatten_batch_dim(q),
+            k,
+            v,
+            cu_seqlens_q=cu_seqlens_q_cache,
+            cu_seqlens_k=None,
+            seqused_k=seqused_k,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            window_size=window_size,
+        )[0]
+
     if cu_seqlens is not None:
         cu_seqlens_q = cu_seqlens if cu_seqlens_q is None else cu_seqlens_q
         cu_seqlens_k = cu_seqlens if cu_seqlens_k is None else cu_seqlens_k

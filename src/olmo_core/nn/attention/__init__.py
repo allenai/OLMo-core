@@ -758,10 +758,13 @@ class Attention(SequenceMixer):
         """
         self.backend.assert_supports_kv_cache()
 
-        # FA4 uses paged KV cache with a default page size of 256.
+        # FA4 uses paged KV cache with a default page size of 256 on SM >= 10.0 (Blackwell).
+        # On older GPUs, FA4 falls back to dense KV cache.
         page_size: Optional[int] = None
         if isinstance(self.backend, FlashAttention4Backend):
-            page_size = 256
+            cc = torch.cuda.get_device_capability()
+            if cc >= (10, 0):
+                page_size = 256
 
         self.kv_cache_manager = KVCacheManager(
             batch_size=batch_size,
