@@ -35,6 +35,7 @@ from olmo_core.testing import (
     DEVICES,
     FLASH_2_MARKS,
     FLASH_3_MARKS,
+    FLASH_4_MARKS,
     GPU_MARKS,
     TE_MARKS,
     requires_flash_attn_2,
@@ -62,7 +63,12 @@ BF16_ATOL = 5e-3
 @pytest.mark.parametrize("head_dim", [128])
 @pytest.mark.parametrize(
     "backend_name",
-    [AttentionBackendName.flash_2, AttentionBackendName.flash_3, AttentionBackendName.te],
+    [
+        AttentionBackendName.flash_2,
+        AttentionBackendName.flash_3,
+        pytest.param(AttentionBackendName.flash_4, id="flash_4", marks=FLASH_4_MARKS),
+        AttentionBackendName.te,
+    ],
 )
 @requires_gpu
 def test_attention_backend(
@@ -114,6 +120,7 @@ def test_attention_backend(
     [
         pytest.param("flash_2", id="flash-attn-2", marks=FLASH_2_MARKS),
         pytest.param("flash_3", id="flash-attn-3", marks=FLASH_3_MARKS),
+        pytest.param("flash_4", id="flash-attn-4", marks=FLASH_4_MARKS),
         pytest.param("torch", id="torch-SDPA"),
         pytest.param("te", id="te-attn", marks=TE_MARKS),
     ],
@@ -136,7 +143,7 @@ def test_attention(
     backend: str,
     kwargs: Dict[str, Any],
 ):
-    if backend in ("flash_2", "flash_3") and dtype == torch.float32:
+    if backend in ("flash_2", "flash_3", "flash_4") and dtype == torch.float32:
         pytest.skip("flash-attn requires a low precision dtype")
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
@@ -145,7 +152,7 @@ def test_attention(
             pytest.skip("clip_qkv is not supported for NormalizedAttention")
         if "use_head_qk_norm" in kwargs:
             pytest.skip("use_head_qk_norm is not supported for NormalizedAttention")
-        if backend in ("flash_2", "flash_3", "te"):
+        if backend in ("flash_2", "flash_3", "flash_4", "te"):
             pytest.xfail(
                 f"NormalizedAttention is broken with '{backend}' backend because it creates activation tensors in fp32"
             )
