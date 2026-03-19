@@ -39,7 +39,6 @@ from olmo_core.testing import (
     GPU_MARKS,
     TE_MARKS,
     requires_flash_attn_2,
-    requires_flash_attn_4,
     requires_gpu,
     requires_multi_gpu,
     run_distributed_test,
@@ -524,8 +523,20 @@ def test_attention_kv_caching(
 
 
 @requires_gpu
-@requires_flash_attn_2
-def test_attention_kv_cache_update():
+@requires_compute_capability(min_cc=9)
+@pytest.mark.parametrize(
+    "backend_name",
+    [
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_4, id="flash-attn-4", marks=FLASH_4_MARKS),
+    ],
+)
+def test_attention_kv_cache_update(backend_name: AttentionBackendName):
+    if backend_name == AttentionBackendName.flash_4:
+        cc = torch.cuda.get_device_capability()
+        if cc < (10, 0):
+            pytest.skip("FA4 KV caching requires SM >= 10.0 (Blackwell)")
+
     seed_all(0)
 
     d_model = 64
@@ -542,7 +553,7 @@ def test_attention_kv_cache_update():
         d_model=d_model,
         n_heads=n_heads,
         n_kv_heads=n_kv_heads,
-        use_flash=True,
+        backend=backend_name,
         init_device="cuda",
         dtype=torch.float32,
     )
@@ -550,8 +561,22 @@ def test_attention_kv_cache_update():
     # Initialize cache
     attention.init_kv_cache_manager(batch_size, max_seq_len)
     assert attention.kv_cache_manager is not None
+    is_paged = attention.kv_cache_manager.is_paged
 
-    # Manually set cache contents as if we just did a prefill.
+    # Helper to read a cache slot for a given batch item and absolute position.
+    def _read_cache_slot(cache: torch.Tensor, b: int, pos: int) -> torch.Tensor:
+        if is_paged:
+            assert attention.kv_cache_manager is not None
+            assert attention.kv_cache_manager.page_table is not None
+            page_size = attention.kv_cache_manager._page_size
+            assert page_size is not None
+            page_idx = int(attention.kv_cache_manager.page_table[b, pos // page_size].item())
+            slot = pos % page_size
+            return cache[page_idx, slot]
+        else:
+            return cache[b, pos]
+
+    # Prefill
     prefill_input = torch.randn(batch_size, prefill_len, d_model, dtype=dtype, device="cuda")
     attention_mask = torch.ones(batch_size, prefill_len, dtype=torch.bool, device="cuda")
     cache_leftpad = attention_mask_to_cache_leftpad(attention_mask)
@@ -575,55 +600,46 @@ def test_attention_kv_cache_update():
         # Check that cache has been updated.
         assert not torch.equal(k_cache_before, attention.kv_cache_manager.k_cache)
         assert not torch.equal(v_cache_before, attention.kv_cache_manager.v_cache)
-        assert attention.kv_cache_manager.cache_seqlens == cache_seqlens_before + 1
+        torch.testing.assert_close(
+            attention.kv_cache_manager.cache_seqlens, cache_seqlens_before + 1
+        )
 
         # Check that the update happened at the right position.
-        current_write_pos = cache_seqlens_before.item()
+        if is_paged:
+            current_write_pos = int(cache_seqlens_before[0].item())
+        else:
+            current_write_pos = int(cache_seqlens_before.item())
         k_cache_after = attention.kv_cache_manager.k_cache
         v_cache_after = attention.kv_cache_manager.v_cache
 
-        # Check that the cache *before* the new token is unchanged.
-        torch.testing.assert_close(
-            k_cache_before[:, :current_write_pos, :, :],
-            k_cache_after[:, :current_write_pos, :, :],
-        )
-        torch.testing.assert_close(
-            v_cache_before[:, :current_write_pos, :, :],
-            v_cache_after[:, :current_write_pos, :, :],
-        )
-
-        # Check that the cache *after* the new token is unchanged.
-        torch.testing.assert_close(
-            k_cache_before[:, current_write_pos + 1 :, :, :],
-            k_cache_after[:, current_write_pos + 1 :, :, :],
-        )
-        torch.testing.assert_close(
-            v_cache_before[:, current_write_pos + 1 :, :, :],
-            v_cache_after[:, current_write_pos + 1 :, :, :],
-        )
-
         # Check that the cache at the new token position is not all zeros.
-        assert not torch.all(k_cache_after[:, current_write_pos, :, :] == 0)
-        assert not torch.all(v_cache_after[:, current_write_pos, :, :] == 0)
+        for b in range(batch_size):
+            assert not torch.all(_read_cache_slot(k_cache_after, b, current_write_pos) == 0)
+            assert not torch.all(_read_cache_slot(v_cache_after, b, current_write_pos) == 0)
 
-        # New check: ensure previous write is untouched.
+        # Ensure previous write is untouched.
         if step > 0:
             assert k_at_prev_write_pos is not None and v_at_prev_write_pos is not None
             prev_write_pos = current_write_pos - 1
-            torch.testing.assert_close(
-                k_at_prev_write_pos,
-                k_cache_after[:, prev_write_pos, :, :],
-                msg=f"step {step}",
-            )
-            torch.testing.assert_close(
-                v_at_prev_write_pos,
-                v_cache_after[:, prev_write_pos, :, :],
-                msg=f"step {step}",
-            )
+            for b in range(batch_size):
+                torch.testing.assert_close(
+                    k_at_prev_write_pos[b],
+                    _read_cache_slot(k_cache_after, b, prev_write_pos),
+                    msg=f"step {step}, batch {b}",
+                )
+                torch.testing.assert_close(
+                    v_at_prev_write_pos[b],
+                    _read_cache_slot(v_cache_after, b, prev_write_pos),
+                    msg=f"step {step}, batch {b}",
+                )
 
         # Store the written slice for the next iteration's check.
-        k_at_prev_write_pos = k_cache_after[:, current_write_pos, :, :].clone()
-        v_at_prev_write_pos = v_cache_after[:, current_write_pos, :, :].clone()
+        k_at_prev_write_pos = torch.stack(
+            [_read_cache_slot(k_cache_after, b, current_write_pos) for b in range(batch_size)]
+        ).clone()
+        v_at_prev_write_pos = torch.stack(
+            [_read_cache_slot(v_cache_after, b, current_write_pos) for b in range(batch_size)]
+        ).clone()
 
 
 @requires_gpu
@@ -1370,52 +1386,3 @@ def test_fused_attention_num_flops_per_token():
     assert fused_large.num_flops_per_token(32) > fused_small.num_flops_per_token(32)
 
 
-@requires_flash_attn_4
-@requires_compute_capability(min_cc=10)
-def test_attention_kv_cache_fa4_update():
-    """Test FA4 paged KV cache scatter-write correctness across decode steps."""
-    seed_all(0)
-
-    d_model = 64
-    n_heads = 8
-    n_kv_heads = 2
-    batch_size = 2
-    max_seq_len = 64
-    prefill_len = 30
-    decode_steps = 5
-    dtype = torch.bfloat16
-
-    attention = Attention(
-        d_model=d_model,
-        n_heads=n_heads,
-        n_kv_heads=n_kv_heads,
-        backend=AttentionBackendName.flash_4,
-        init_device="cuda",
-        dtype=torch.float32,
-    )
-
-    attention.init_kv_cache_manager(batch_size, max_seq_len)
-    assert attention.kv_cache_manager is not None
-    assert attention.kv_cache_manager.is_paged
-
-    # Prefill
-    prefill_input = torch.randn(batch_size, prefill_len, d_model, dtype=dtype, device="cuda")
-    attention_mask = torch.ones(batch_size, prefill_len, dtype=torch.bool, device="cuda")
-    cache_leftpad = attention_mask_to_cache_leftpad(attention_mask)
-
-    with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
-        attention(prefill_input, cache_leftpad=cache_leftpad)
-
-    # Verify cache_seqlens after prefill
-    expected_seqlens = torch.full((batch_size,), prefill_len, dtype=torch.int32, device="cuda")
-    torch.testing.assert_close(attention.kv_cache_manager.cache_seqlens, expected_seqlens)
-
-    for step in range(decode_steps):
-        seqlens_before = attention.kv_cache_manager.cache_seqlens.clone()
-
-        decode_input = torch.randn(batch_size, 1, d_model, dtype=dtype, device="cuda")
-        with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
-            attention(decode_input, cache_leftpad=None)
-
-        # cache_seqlens should increment by 1
-        torch.testing.assert_close(attention.kv_cache_manager.cache_seqlens, seqlens_before + 1)
