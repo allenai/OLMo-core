@@ -47,27 +47,32 @@ class AttentionBackendName(StrEnum):
 
     torch = "torch"
     """
-    PyTorch's built-in SDPA ➡️ :class:`TorchAttentionBackend`
+    PyTorch's built-in SDPA. Works on all devices. ➡️ :class:`TorchAttentionBackend`
     """
     flash_2 = "flash_2"
     """
     Flash attention 2 from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
+    Supports Ampere (SM 8.0+) and newer NVIDIA GPUs.
     To use this with context-parallelism, `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_
     is also required. ➡️ :class:`FlashAttention2Backend`
     """
     flash_3 = "flash_3"
     """
     Flash attention 3 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
-    library ``hopper/`` subdirectory. Only supports H100/H800 GPUs. ➡️ :class:`FlashAttention3Backend`
+    library ``hopper/`` subdirectory. Supports Hopper (SM 9.0) GPUs only (H100/H800).
+    Deprecated in favor of :attr:`flash_4`. ➡️ :class:`FlashAttention3Backend`
     """
     flash_4 = "flash_4"
     """
-    Flash attention 4 (beta), the CUTE implementation from `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
-    in the ``flash_attn/cute`` subdirectory. ➡️ :class:`FlashAttention4Backend`
+    Flash attention 4, the CUTE implementation from `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
+    in the ``flash_attn/cute`` subdirectory. Supports Hopper (SM 9.0, e.g. H100/H800) and
+    Blackwell (SM 10.0, e.g. B200) GPUs. This is the recommended backend for these devices.
+    ➡️ :class:`FlashAttention4Backend`
     """
     te = "te"
     """
-    Transformer Engine attention ➡️ :class:`TEAttentionBackend`.
+    Transformer Engine attention. Supports Hopper (SM 9.0+) and newer NVIDIA GPUs.
+    ➡️ :class:`TEAttentionBackend`.
     """
 
     def get_class(self) -> Type["AttentionBackend"]:
