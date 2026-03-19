@@ -309,7 +309,38 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
             f"model.layers.{LAYER}.mlp.gate.weight",
             unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
         ),
-    }
+    },
+    # Gemma3 uses Peri-LN style with 4 norms per layer:
+    # - input_layernorm (pre-attention) -> attention_norm
+    # - post_attention_layernorm (post-attention) -> post_attention_norm
+    # - pre_feedforward_layernorm (pre-feedforward) -> feed_forward_norm
+    # - post_feedforward_layernorm (post-feedforward) -> post_feed_forward_norm
+    "gemma3_text": {
+        # Override default attention_norm mapping (was post_attention_layernorm, now input_layernorm)
+        f"blocks.{LAYER}.attention_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.attention_norm.weight",
+            f"model.layers.{LAYER}.input_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        # New mapping for post_attention_norm
+        f"blocks.{LAYER}.post_attention_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.post_attention_norm.weight",
+            f"model.layers.{LAYER}.post_attention_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        # Override default feed_forward_norm mapping (was post_feedforward_layernorm, now pre_feedforward_layernorm)
+        f"blocks.{LAYER}.feed_forward_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_norm.weight",
+            f"model.layers.{LAYER}.pre_feedforward_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        # New mapping for post_feed_forward_norm
+        f"blocks.{LAYER}.post_feed_forward_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.post_feed_forward_norm.weight",
+            f"model.layers.{LAYER}.post_feedforward_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+    },
 }
 
 

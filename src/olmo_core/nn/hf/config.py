@@ -10,6 +10,7 @@ from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
 from olmo_core.nn.rope import RoPEScalingConfig
 from olmo_core.nn.transformer.block import (
     MoEReorderedNormTransformerBlock,
+    PeriNormTransformerBlock,
     ReorderedNormTransformerBlock,
     TransformerBlock,
 )
@@ -30,6 +31,11 @@ try:
     from transformers import Olmo3Config  # type: ignore
 except ImportError:
     Olmo3Config = None
+
+try:
+    from transformers import Gemma3TextConfig  # type: ignore
+except ImportError:
+    Gemma3TextConfig = None
 
 
 def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
@@ -83,6 +89,64 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     )
 
 
+def _get_gemma3_text_config(
+    model: Transformer, blocks: list, first_block: PeriNormTransformerBlock
+) -> PretrainedConfig:
+    """
+    Build a Gemma3TextConfig for a PeriNormTransformerBlock model.
+
+    Gemma3 uses Peri-LN style with 4 norms per layer, which matches PeriNormTransformerBlock:
+    - input_layernorm (pre-attention) -> attention_norm
+    - post_attention_layernorm (post-attention) -> post_attention_norm
+    - pre_feedforward_layernorm (pre-feedforward) -> feed_forward_norm
+    - post_feedforward_layernorm (post-feedforward) -> post_feed_forward_norm
+    """
+    if Gemma3TextConfig is None:
+        raise RuntimeError(
+            "The installed transformers version does not support Gemma3TextConfig. "
+            "Please upgrade to transformers >= 4.50.0 to convert PeriNormTransformerBlock models."
+        )
+
+    if not isinstance(first_block.attention, Attention):
+        raise NotImplementedError(
+            f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
+        )
+
+    has_rope = first_block.attention.rope is not None
+    if has_rope:
+        rope_theta = first_block.attention.rope.theta
+        # Gemma3 uses different rope_theta for sliding vs full attention,
+        # but for simple conversion we use the same theta for both
+        rope_parameters = {
+            "sliding_attention": {"rope_type": "default", "rope_theta": rope_theta},
+            "full_attention": {"rope_type": "default", "rope_theta": rope_theta},
+        }
+    else:
+        rope_parameters = None
+
+    # Determine head_dim - Gemma3 requires this explicitly
+    head_dim = first_block.attention.head_dim
+
+    return Gemma3TextConfig(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        intermediate_size=first_block.feed_forward.hidden_size,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=first_block.attention.n_heads,
+        num_key_value_heads=first_block.attention.n_kv_heads,
+        head_dim=head_dim,
+        hidden_activation="silu",  # OLMo models use SiLU
+        max_position_embeddings=-1,
+        attention_bias=first_block.attention.w_out.bias is not None,
+        rope_parameters=rope_parameters,
+        pad_token_id=None,
+        bos_token_id=None,
+        eos_token_id=None,
+        rms_norm_eps=first_block.feed_forward_norm.eps,
+        tie_word_embeddings=False,
+    )
+
+
 @beta_feature
 def get_hf_config(model: Transformer) -> PretrainedConfig:
     if isinstance(model, NormalizedTransformer):
@@ -95,10 +159,14 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
 
     blocks = list(model.blocks.values())
     first_block = blocks[0]
-    if not isinstance(first_block, ReorderedNormTransformerBlock):
+    if not isinstance(first_block, (ReorderedNormTransformerBlock, PeriNormTransformerBlock)):
         raise NotImplementedError(
-            f"Block is not a {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
+            f"Block is not a {ReorderedNormTransformerBlock.__name__} or {PeriNormTransformerBlock.__name__}, "
+            f"unable to build HF config for {model.__class__.__name__}"
         )
+
+    if isinstance(first_block, PeriNormTransformerBlock):
+        return _get_gemma3_text_config(model, blocks, first_block)
 
     if not isinstance(first_block.attention, Attention):
         raise NotImplementedError(
