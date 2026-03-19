@@ -26,6 +26,12 @@ from olmo_core.nn.hf.convert import (
 )
 from olmo_core.nn.transformer.model import Transformer
 
+# Import to register custom model classes with transformers
+try:
+    from olmo_core.nn.hf import gemma3_gated as _  # noqa: F401
+except ImportError:
+    pass
+
 try:
     from accelerate import init_empty_weights  # type: ignore
 except ImportError:

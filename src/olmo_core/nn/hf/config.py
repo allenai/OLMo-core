@@ -37,6 +37,11 @@ try:
 except ImportError:
     Gemma3TextConfig = None
 
+try:
+    from olmo_core.nn.hf.gemma3_gated import Gemma3GatedTextConfig
+except ImportError:
+    Gemma3GatedTextConfig = None
+
 
 def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     blocks = list(model.blocks.values())
@@ -93,13 +98,15 @@ def _get_gemma3_text_config(
     model: Transformer, blocks: list, first_block: PeriNormTransformerBlock
 ) -> PretrainedConfig:
     """
-    Build a Gemma3TextConfig for a PeriNormTransformerBlock model.
+    Build a Gemma3TextConfig (or Gemma3GatedTextConfig) for a PeriNormTransformerBlock model.
 
     Gemma3 uses Peri-LN style with 4 norms per layer, which matches PeriNormTransformerBlock:
     - input_layernorm (pre-attention) -> attention_norm
     - post_attention_layernorm (post-attention) -> post_attention_norm
     - pre_feedforward_layernorm (pre-feedforward) -> feed_forward_norm
     - post_feedforward_layernorm (post-feedforward) -> post_feed_forward_norm
+
+    If the model uses gated attention (w_g projection), Gemma3GatedTextConfig is used instead.
     """
     if Gemma3TextConfig is None:
         raise RuntimeError(
@@ -111,6 +118,16 @@ def _get_gemma3_text_config(
         raise NotImplementedError(
             f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
         )
+
+    # Check if the model uses gated attention
+    has_gate = first_block.attention.w_g is not None
+    if has_gate:
+        if Gemma3GatedTextConfig is None:
+            raise RuntimeError(
+                "Model uses gated attention but Gemma3GatedTextConfig is not available. "
+                "This may be due to missing dependencies."
+            )
+        log.info("Model uses gated attention, using Gemma3GatedTextConfig")
 
     has_rope = first_block.attention.rope is not None
     if has_rope:
@@ -127,7 +144,7 @@ def _get_gemma3_text_config(
     # Determine head_dim - Gemma3 requires this explicitly
     head_dim = first_block.attention.head_dim
 
-    return Gemma3TextConfig(
+    common_args = dict(
         vocab_size=model.vocab_size,
         hidden_size=model.d_model,
         intermediate_size=first_block.feed_forward.hidden_size,
@@ -145,6 +162,16 @@ def _get_gemma3_text_config(
         rms_norm_eps=first_block.feed_forward_norm.eps,
         tie_word_embeddings=False,
     )
+
+    if has_gate:
+        # Determine gate dimension from the w_g weight shape
+        attention_gate_dim = first_block.attention.w_g.out_features
+        return Gemma3GatedTextConfig(
+            attention_gate_dim=attention_gate_dim,
+            **common_args,
+        )
+    else:
+        return Gemma3TextConfig(**common_args)
 
 
 @beta_feature
