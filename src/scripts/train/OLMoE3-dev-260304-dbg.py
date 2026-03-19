@@ -100,17 +100,17 @@ MAX_DURATION = int(6000e9)
 EVAL_INTERVAL = 10000
 SAVE_INTERVAL = 10000
 
-NUM_EXPERTS = 16
+NUM_EXPERTS = 32
 TOP_K = 4
-D_MODEL=2048
-D_ATTN=2048
+D_MODEL=2560
+D_ATTN=4096
 
-HEAD_DIM=64
+HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 2048
+NUM_KV_HEAD=8
+MOE_HIDDEN_SIZE = 4096
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -119,15 +119,15 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=1
-PP_DIM=1
+EP_DIM=2
+PP_DIM=2
 
 # ref
 REF_NUM_NODES=1
 
 # stage 1
-MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (1) 
+MICRO_BSZ = 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) 
 
 
 
@@ -140,7 +140,7 @@ GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
 LR= 8e-4 
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024)) # lr is for X Million token
-NUM_LAYERS=6
+NUM_LAYERS=8
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -155,7 +155,7 @@ else:
 USE_COMPILE=True
 USE_NO_SYNC_EP=True
 USE_AC=False
-PER_LAYER_RECOMPUTE=False
+PER_LAYER_RECOMPUTE=True
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 GRAD_REDUCE_IN_FP32=False
@@ -165,7 +165,8 @@ USE_ROWWISE_A2A=True
 USE_FP8=False
 ROWWISE_A2A_NBLOCKS=128
 SEED = 2026
-USE_MUON = True
+USE_MUON = False
+USE_PERI_NORM = True
 
 TAG=f'c1'
 
@@ -203,8 +204,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
+        embed_scale=math.sqrt(d_model),
+        embedding_norm=layer_norm,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
+            use_peri_norm=USE_PERI_NORM,
             ep_no_sync=USE_NO_SYNC_EP,
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
@@ -294,7 +298,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: TransformerBlockConfig(
-                name=TransformerBlockType.reordered_norm,
+                name=TransformerBlockType.peri_norm if USE_PERI_NORM else TransformerBlockType.default,
                 attention=AttentionConfig(
                     name=AttentionType.default,
                     n_heads=NUM_HEAD,
@@ -473,8 +477,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=31,
-                                   end=34
+                                   start=21,
+                                   end=24
             )
         )
         .with_callback(

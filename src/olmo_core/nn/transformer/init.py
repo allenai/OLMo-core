@@ -80,6 +80,15 @@ class InitMethod(StrEnum):
     dependent on either ``d_model`` or the layer index.
     """
 
+    fan_in = "fan_in"
+    """
+    Per-layer fan-in initialization where each weight matrix is initialized with
+    ``std = 1/√d_in`` where ``d_in`` is the fan-in (number of input features) of that
+    specific layer. Embeddings use ``std = 1.0`` with normal distribution.
+    This provides forward-pass variance-preserving initialization adapted to each layer's
+    specific dimensions, with no depth scaling.
+    """
+    
     def _init_linear(
         self, m: nn.Linear, *, std: float = 0.02, generator: Optional[torch.Generator] = None
     ):
@@ -100,6 +109,7 @@ class InitMethod(StrEnum):
         m: nn.Embedding,
         *,
         d_model: int,
+        embed_scale: Optional[float] = None,
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
@@ -107,6 +117,10 @@ class InitMethod(StrEnum):
             _apply_init(nn.init.normal_, m.weight, generator=generator)
         elif self == InitMethod.normalized:
             _apply_init(nn.init.normal_, m.weight, generator=generator, std=d_model**-0.5)
+        elif self == InitMethod.fan_in:
+            # Fan-in init uses std = 1.0 for embeddings, scaled down by embed_scale if set
+            emb_std = 1.0 / embed_scale if embed_scale is not None else 1.0
+            _apply_init(nn.init.normal_, m.weight, generator=generator, std=emb_std)
         else:
             _apply_init(
                 nn.init.trunc_normal_,

@@ -133,8 +133,9 @@ REF_NUM_NODES=8
 # stage 2
 MICRO_BSZ = 4
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (64) # 32M
-LR_REF_BSZ = 4 * 1024 * 1024
-
+LR_REF_BSZ = 8 * 1024 * 1024
+# EXPERT_LR: 0.5 -> 0.5 * math.sqrt(2)
+# fix decay
 
 
 GLOBAL_BATCH_SIZE = (
@@ -323,8 +324,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
-# ROUTER_LR = LR * 0.2
+# EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
+EXPERT_LR = LR * 0.5 * math.sqrt(2)
 SCHED_WARMUP_TOKENS = int((40e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 # SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_LONG_DECAY_TOKENS = int((5960e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
@@ -347,7 +348,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
+                # OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)), # WRONG
+                OptimGroupOverride(params=["*embeddings.weight", "*norm.weight"], opts=dict(weight_decay=0.0)),
                 # OptimGroupOverride(params=["*w_up_gate", "*w_down","*routed_experts_router*"], opts=dict(lr=EXPERT_LR)),
                 OptimGroupOverride(params=["*w_up_gate", "*w_down",], opts=dict(lr=EXPERT_LR)),
                 # OptimGroupOverride(params=["*routed_experts_router*"], opts=dict(lr=ROUTER_LR)),

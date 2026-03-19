@@ -60,7 +60,7 @@ from .router import MoERouterConfigV2, MoERouterV2
 from .shared_experts import SharedExperts
 from .shared_experts import SharedExpertsConfig
 from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
-from .output_discard_checkpoint import OutputDiscardCheckpoint
+
 from olmo_core.kernels.mxfp8_utils import (
     dequantize_rows_from_mxfp8,
     dot_gathered_rows_mxfp8_with_grad,
@@ -1285,6 +1285,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     
     routed_experts_router: Optional[MoERouterConfigV2] = None
 
+    use_peri_norm: bool = False
     checkpoint_attn: bool = False
     checkpoint_permute_moe_unpermute: bool = False
     checkpoint_combined_ep_tbo: bool = False
@@ -1347,6 +1348,11 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
             block_params += self.shared_experts_router.num_params()
         if self.feed_forward_norm is not None:
             block_params += self.feed_forward_norm.num_params(d_model)
+        if self.use_peri_norm:
+            if self.attention_norm is not None:
+                block_params += self.attention_norm.num_params(d_model)
+            if self.feed_forward_norm is not None:
+                block_params += self.feed_forward_norm.num_params(d_model)
 
         return block_params
 
@@ -1367,6 +1373,11 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
             block_params += self.shared_experts_router.num_params()
         if self.feed_forward_norm is not None:
             block_params += self.feed_forward_norm.num_params(d_model)
+        if self.use_peri_norm:
+            if self.attention_norm is not None:
+                block_params += self.attention_norm.num_params(d_model)
+            if self.feed_forward_norm is not None:
+                block_params += self.feed_forward_norm.num_params(d_model)
 
         return block_params
 
@@ -1376,7 +1387,6 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
 
         # attention
         flops += self.attention.flops_per_seq(d_model, seqlen)
-
 
         # router 
         # (seq_len * d_model) * (d_model * num_total_experts)
@@ -1422,6 +1432,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         shared_experts: Optional[SharedExpertsConfig],
         routed_experts: Optional[RoutedExpertsConfig],
         feed_forward_norm: LayerNormConfig,
+        use_peri_norm: bool = False,
         dropout: float = 0.0,
         attention_residual_alpha: Optional[float] = None,
         feed_forward_residual_alpha: Optional[float] = None,
@@ -1444,6 +1455,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         cache: Optional[BufferCache] = None,
     ):
         super().__init__(n_layers=n_layers)
+
         assert dropout == 0.0 or dropout is None, "MoEFusedV2TransformerBlock does not support dropout"
         self.d_model = d_model
         self.block_idx = block_idx
@@ -1464,12 +1476,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._shared_rowwise_fp8_up_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_down_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_weight_versions: Optional[Tuple[int, int]] = None
+        self.use_peri_norm = use_peri_norm
 
         ######## START: Attention ########
         self.attention = attention.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm = attention_norm.build(d_model, init_device=init_device)
+        self.attention_input_norm = None
+        if self.use_peri_norm:
+            self.attention_input_norm = attention_norm.build(d_model, init_device=init_device)
+
         ######## END: Attention ########
 
 
@@ -1522,7 +1539,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
 
         self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
-
+        self.feed_forward_input_norm = None
+        if self.use_peri_norm:
+            self.feed_forward_input_norm = feed_forward_norm.build(d_model, init_device=init_device)
         ######## END: MLP ########
         
         self.ep_pg = None
@@ -2050,7 +2069,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         raise NotImplementedError("FSDP is not supported in MoEFusedV2TransformerBlock")
 
     def apply_compile(self):
-        self.compile(fullgraph=False)
+        self.compile(fullgraph=False, dynamic=False)
 
         # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
         self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo) 
@@ -2931,11 +2950,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # attention 
         # + attention norm
         # + residual connection
-        attn_res_out: torch.Tensor = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
+        attn_res_out = self._res_norm_attn(block_inp, **kwargs)
         # remove attention kwargs
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
-
+        moe_inp = self._prepare_moe_input(attn_res_out)
 
         # routed expert router
         (
@@ -2945,7 +2964,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             routed_expert_router_aux_loss_info # tuple
         ) = self.router_forward(
             router=self.routed_experts_router,
-            local_x=attn_res_out, 
+            local_x=moe_inp, 
             scores_only=False,
             loss_div_factor=loss_div_factor # scalar
         )
@@ -2968,15 +2987,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 _ 
             ) = self.router_forward(
                 router=self.shared_experts_router,
-                local_x=attn_res_out, 
+                local_x=moe_inp, 
                 scores_only=True,  # only need scores for shared experts
                 loss_div_factor=loss_div_factor # scalar
             )
         else:
             local_x_global_shared_expert_weights = None
-        
-        
-        moe_inp = attn_res_out
 
         in_shape = moe_inp.size()
 
@@ -3072,7 +3088,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             mlp_out = x_moe # only routed experts
 
-        final_out = attn_res_out + self.feed_forward_norm(mlp_out)
+        final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 
         #######################
 
@@ -3137,6 +3153,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
+        moe_inp = self._prepare_moe_input(attn_res_out)
 
         (
             local_x_global_routed_expert_weights,  # (B, S, top_k)
@@ -3145,7 +3162,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             routed_expert_router_aux_loss_info,
         ) = self.router_forward(
             router=self.routed_experts_router,
-            local_x=attn_res_out,
+            local_x=moe_inp,
             scores_only=False,
             loss_div_factor=loss_div_factor,
         )
@@ -3164,14 +3181,13 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     _,
                 ) = self.router_forward(
                     router=self.shared_experts_router,
-                    local_x=attn_res_out,
+                    local_x=moe_inp,
                     scores_only=True,
                     loss_div_factor=loss_div_factor,
                 )
             else:
                 local_x_global_shared_expert_weights = None
 
-        moe_inp = attn_res_out
         in_shape = moe_inp.size()
         moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
 
@@ -3252,7 +3268,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 other_stream=torch.cuda.current_stream(),
             ) # type: ignore
             with torch.cuda.stream(self.get_dense_stream()):
-                shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
+                shared_out_up, shared_out_gate = self.shared_experts.forward1(moe_inp.view(B, S, D))
         else:
             shared_out_up, shared_out_gate = None, None
 
@@ -3382,7 +3398,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             mlp_out = local_x
 
-        final_out = attn_res_out + self.feed_forward_norm(mlp_out)
+        final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 
         if routed_expert_router_aux_loss_info is not None:
             # TODO;BUG: load balancing loss is calculated twice (or at least logged 2x as large in wandb).   
@@ -3424,6 +3440,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
+        moe_inp = self._prepare_moe_input(attn_res_out)
 
         (
             local_x_global_routed_expert_weights,  # (B, S, top_k)
@@ -3432,7 +3449,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             routed_expert_router_aux_loss_info,
         ) = self.router_forward(
             router=self.routed_experts_router,
-            local_x=attn_res_out,
+            local_x=moe_inp,
             scores_only=False,
             loss_div_factor=loss_div_factor,
         )
@@ -3451,14 +3468,13 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     _,
                 ) = self.router_forward(
                     router=self.shared_experts_router,
-                    local_x=attn_res_out,
+                    local_x=moe_inp,
                     scores_only=True,
                     loss_div_factor=loss_div_factor,
                 )
             else:
                 local_x_global_shared_expert_weights = None
 
-        moe_inp = attn_res_out
         in_shape = moe_inp.size()
         moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
         rowwise_fp8_cfg = self.rowwise_fp8
@@ -3592,11 +3608,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 if use_rowwise_fp8:
                     assert rowwise_fp8_cfg is not None
                     shared_out_up, shared_out_gate = self._shared_experts_forward1_rowwise_fp8(
-                        attn_res_out,
+                        moe_inp,
                         use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
                     )
                 else:
-                    shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
+                    shared_out_up, shared_out_gate = self.shared_experts.forward1(moe_inp.view(B, S, D))
         else:
             shared_out_up, shared_out_gate = None, None
 
@@ -3727,7 +3743,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             mlp_out = local_x
 
-        final_out = attn_res_out + self.feed_forward_norm(mlp_out)
+        final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 
         if routed_expert_router_aux_loss_info is not None:
             # TODO;BUG: load balancing loss is calculated twice (or at least logged 2x as large in wandb).   
@@ -3773,6 +3789,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         attn_kwargs = dict(kwargs)
         with nvtx.annotate("A-AttnRouter", color="purple"):
             attn_res_out = self._checkpointed_res_norm_attn(block_inp, **attn_kwargs)
+            moe_inp = self._prepare_moe_input(attn_res_out)
             (
                 local_x_global_routed_expert_weights,
                 local_x_global_routed_expert_indices,
@@ -3780,7 +3797,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 routed_expert_router_aux_loss_info,
             ) = self.router_forward(
                 router=self.routed_experts_router,
-                local_x=attn_res_out,
+                local_x=moe_inp,
                 scores_only=False,
                 loss_div_factor=loss_div_factor,
             )
@@ -3801,7 +3818,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     _,
                 ) = self.router_forward(
                     router=self.shared_experts_router,
-                    local_x=attn_res_out,
+                    local_x=moe_inp,
                     scores_only=True,
                     loss_div_factor=loss_div_factor,
                 )
@@ -3812,7 +3829,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 # Count shared experts as stage-A work.
                 # shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
                 # shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
-                shared_out = self.shared_experts(attn_res_out)  # (E_shared, B, S, D)
+                shared_out = self.shared_experts(moe_inp)  # (E_shared, B, S, D)
                 if self.shared_experts_router:
                     assert local_x_global_shared_expert_weights is not None
                     _, _, E_s = local_x_global_shared_expert_weights.shape
@@ -3826,7 +3843,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             else:
                 mixed_shared_out = None
 
-        moe_inp = attn_res_out
         in_shape = moe_inp.size()
         moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
         hidden_shape_before_permute = moe_inp.shape
@@ -4056,7 +4072,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             mlp_out = local_x
 
-        final_out = a_state.attn_res_out + self.feed_forward_norm(mlp_out)
+        final_out = self._res_norm_mlp(a_state.attn_res_out, mlp_out)
         if a_state.routed_expert_router_aux_loss_info is not None:
             assert self.routed_experts_router is not None
             routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
@@ -4161,7 +4177,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # remove attention kwargs
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
-
+        moe_inp = self._prepare_moe_input(attn_res_out)
 
         # routed expert router
         (
@@ -4171,7 +4187,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             routed_expert_router_aux_loss_info # tuple
         ) = self.router_forward(
             router=self.routed_experts_router,
-            local_x=attn_res_out, 
+            local_x=moe_inp, 
             scores_only=False,
             loss_div_factor=loss_div_factor # scalar
         )
@@ -4217,15 +4233,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     _ 
                 ) = self.router_forward(
                     router=self.shared_experts_router,
-                    local_x=attn_res_out, 
+                    local_x=moe_inp, 
                     scores_only=True,  # only need scores for shared experts
                     loss_div_factor=loss_div_factor # scalar
                 )
             else:
                 local_x_global_shared_expert_weights = None
-        
-        
-        moe_inp = attn_res_out
 
         in_shape = moe_inp.size()
         
@@ -4299,7 +4312,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 other_stream=torch.cuda.current_stream()
             )
             with torch.cuda.stream(self.get_dense_stream()):
-                shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
+                shared_out_up, shared_out_gate = self.shared_experts.forward1(moe_inp.view(B, S, D))
                 # shared_out = self.shared_experts.forward(attn_res_out)
                 # NOTE: the shared_experts forward is queued, but will not start to run until the DtoH is done
         else:
@@ -4435,7 +4448,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             mlp_out = local_x
 
-        final_out = attn_res_out + self.feed_forward_norm(mlp_out)
+        final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 
         ####
 
@@ -4498,6 +4511,15 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     def _feed_forward_norm_only(self, x: torch.Tensor) -> torch.Tensor:
         return self.feed_forward_norm(x)
 
+    def _prepare_moe_input(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_peri_norm:
+            assert self.feed_forward_input_norm is not None
+            return self.feed_forward_input_norm(x)
+        return x
+
+    def _res_norm_mlp(self, residual: torch.Tensor, mlp_out: torch.Tensor) -> torch.Tensor:
+        return residual + self.feed_forward_norm(mlp_out)
+
 
     def _checkpointed_permute_routed_experts_unpermute(
         self,
@@ -4552,7 +4574,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         block_inp,
         **kwargs
     ) -> torch.Tensor:
-        attn_res_out = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
+        attn_in = block_inp
+        if self.use_peri_norm:
+            assert self.attention_input_norm is not None
+            attn_in = self.attention_input_norm(block_inp)
+        attn_res_out = block_inp + self.attention_norm(self.attention(attn_in, **kwargs))
         return attn_res_out
 
     def _checkpointed_res_norm_attn(
@@ -4659,6 +4685,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # + residual connection
             # attn_res_out = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
             attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
+            moe_inp = self._prepare_moe_input(attn_res_out)
             # routed expert router
             (
                 local_x_global_routed_expert_weights, # (B, S, top_k)
@@ -4667,7 +4694,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 routed_expert_router_aux_loss # scalar # TODO: update code
             ) = self.router_forward(
                 router=self.routed_experts_router,
-                local_x=attn_res_out, 
+                local_x=moe_inp, 
                 scores_only=False,
                 loss_div_factor=loss_div_factor # scalar
             )
@@ -4707,7 +4734,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     _ 
                 ) = self.router_forward(
                     router=self.shared_experts_router,
-                    local_x=attn_res_out, 
+                    local_x=moe_inp, 
                     scores_only=True,  # only need scores for shared experts
                     loss_div_factor=loss_div_factor # scalar
                 )
@@ -4717,7 +4744,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
             # forward shared experts
             if self.shared_experts is not None:
-                shared_out = self.shared_experts.forward(attn_res_out)
+                shared_out = self.shared_experts.forward(moe_inp)
                 with nvtx.annotate("merge_shared", color='purple'):
                     # shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
                     if self.shared_experts_router:
@@ -4735,9 +4762,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                         mixed_shared_out = shared_out.squeeze(0)
             else:
                 mixed_shared_out = None
-
-            
-            moe_inp = attn_res_out
 
             in_shape = moe_inp.size()
             
@@ -4860,7 +4884,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 else:
                     mlp_out1 = local_x1
 
-                block_inp1 = attn_res_out1 + last_block.feed_forward_norm(mlp_out1)
+                block_inp1 = last_block._res_norm_mlp(attn_res_out1, mlp_out1)
             
             ########## x1 last step done ##########
 
@@ -4869,6 +4893,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # + residual connection
             # attn_res_out1 = block_inp1 + self.attention_norm(self.attention(block_inp1, **kwargs))
             attn_res_out1 = self._checkpointed_res_norm_attn(block_inp1, **kwargs)
+            moe_inp1 = self._prepare_moe_input(attn_res_out1)
 
             # routed expert router
             (
@@ -4878,7 +4903,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 routed_expert_router_aux_loss1 # scalar # TODO: update code
             ) = self.router_forward(
                 router=self.routed_experts_router,
-                local_x=attn_res_out1, 
+                local_x=moe_inp1, 
                 scores_only=False,
                 loss_div_factor=loss_div_factor # scalar
             )
@@ -4918,7 +4943,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     _ 
                 ) = self.router_forward(
                     router=self.shared_experts_router,
-                    local_x=attn_res_out1, 
+                    local_x=moe_inp1, 
                     scores_only=True,  # only need scores for shared experts
                     loss_div_factor=loss_div_factor # scalar
                 )
@@ -4927,7 +4952,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             
 
             if self.shared_experts is not None:
-                shared_out1 = self.shared_experts.forward(attn_res_out1)
+                shared_out1 = self.shared_experts.forward(moe_inp1)
                 
                 with nvtx.annotate("merge_shared", color='purple'):
                     if self.shared_experts_router:
@@ -4945,8 +4970,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                         mixed_shared_out1 = shared_out1.squeeze(0)
             else:
                 mixed_shared_out1 = None
-            
-            moe_inp1 = attn_res_out1
 
             in_shape1 = moe_inp1.size()
             
@@ -5110,7 +5133,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             else:
                 mlp_out = local_x
 
-            final_out = attn_res_out + self.feed_forward_norm(mlp_out)
+            final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 
             #######################
 

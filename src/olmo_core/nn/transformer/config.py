@@ -279,10 +279,6 @@ class TransformerBlockConfig(Config):
             assert self.feed_forward_norm is not None
             block_params += 2 * self.feed_forward_norm.num_params(d_model)
 
-        # Two extra norms for Peri-LN block type.
-        if self.name == TransformerBlockType.peri_norm:
-            assert self.feed_forward_norm is not None
-            block_params += 2 * self.feed_forward_norm.num_params(d_model)
 
         return block_params
 
@@ -332,13 +328,17 @@ class TransformerConfig(Config):
     n_layers: int
     block: TransformerBlockConfig
     lm_head: LMHeadConfig
+    embedding_norm: Optional[LayerNormConfig] = None
     name: TransformerType = TransformerType.default
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
     init_std: float = 0.02
+    embedding_init_std: Optional[float] = None
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    embed_scale: Optional[float] = None
+
 
     def build(
         self,
@@ -364,13 +364,16 @@ class TransformerConfig(Config):
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
                 block=self.block,
+                embedding_norm=self.embedding_norm,
                 lm_head=self.lm_head,
                 dtype=self.dtype.as_pt(),
                 init_method=self.init_method,
                 init_device=init_device,
                 init_seed=self.init_seed,
                 init_std=self.init_std,
+                embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
+                embed_scale=self.embed_scale,
             )
         elif self.name == TransformerType.normalized:
             model = NormalizedTransformer(
@@ -434,6 +437,8 @@ class TransformerConfig(Config):
 
         # Embedding params.
         num_params += self.d_model * self.vocab_size
+        if self.embedding_norm is not None:
+            num_params += self.embedding_norm.num_params(self.d_model)
 
         # All block params.
         num_block_params = self.block.num_params(self.d_model)
@@ -460,6 +465,8 @@ class TransformerConfig(Config):
 
         # Embedding params.
         num_active_params += self.d_model * self.vocab_size
+        if self.embedding_norm is not None:
+            num_active_params += self.embedding_norm.num_params(self.d_model)
 
         # All block active params.
         num_active_block_params = self.block.num_active_params(self.d_model)
@@ -490,26 +497,6 @@ class TransformerConfig(Config):
         The number of active parameters excluding embedding parameters.
         """
         return self.num_active_params - self.d_model * self.vocab_size
-
-    def num_flops_per_token_old(self, seq_len: int) -> int:
-        """
-        Get the approximate number of flops per token.
-        """
-        n, h, q, t = (
-            self.n_layers,
-            self.block.attention.n_heads,
-            self.d_model // self.block.attention.n_heads,
-            seq_len,
-        )
-        # Reasoning behind the factor of 12 for the self-attention part of the formula:
-        # 1. each self-attention has 2 matmul in the forward and 4 in the backward (6)
-        # 2. the flash attention does 1 more matmul recomputation in the backward
-        #    but recomputation should not be counted in calculating MFU           (+0)
-        # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
-        # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
-
-        return flop_per_token
     
     def num_flops_per_token(self, seq_len: int) -> int:
 
@@ -1320,6 +1307,9 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
                 two_batch_overlap=self.two_batch_overlap,
                 recompute_all_blocks_by_chunk=self.recompute_all_blocks_by_chunk,
                 recompute_each_block=self.recompute_each_block,
+                embedding_norm=self.embedding_norm,
+                embedding_init_std=self.embedding_init_std,
+                embed_scale=self.embed_scale,
             )
         else:
             raise NotImplementedError(self.name)
@@ -1343,3 +1333,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         )
         model.config = self
         return model
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        raise RuntimeError("num_flops_per_token disabled in config. Use num_flops_per_token from model instead.")
+    

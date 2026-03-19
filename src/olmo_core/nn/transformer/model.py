@@ -28,7 +28,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
-
+from ..layer_norm import LayerNormConfig
 from ..attention import (
     Attention,
     FusedAttention,
@@ -99,6 +99,9 @@ class Transformer(nn.Module):
         init_seed: int = 0,
         init_std: float = 0.02,
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+        embedding_norm: Optional[LayerNormConfig] = None,
+        embedding_init_std: Optional[float] = None,
+        embed_scale: Optional[float] = None,
     ):
         super().__init__()
 
@@ -109,8 +112,17 @@ class Transformer(nn.Module):
         self.n_layers = n_layers
         self.n_attn_heads = block.attention.n_heads
         self.dtype = dtype
+        self.embed_scale = embed_scale
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
+        self.embedding_norm = (
+            None
+            if embedding_norm is None
+            else embedding_norm.build(
+                d_model,
+                init_device=init_device,
+            )
+        )
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
             block_config = block
@@ -133,6 +145,7 @@ class Transformer(nn.Module):
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
         self.init_std = init_std
+        self.embedding_init_std = embedding_init_std
 
         self._cache = cache
         self._pp_enabled = False
@@ -251,7 +264,10 @@ class Transformer(nn.Module):
             self.init_method.init_embeddings(
                 self.embeddings,
                 d_model=self.d_model,
-                std=self.init_std,
+                # embed_scale=self.embed_scale,
+                std=self.embedding_init_std
+                if self.embedding_init_std is not None
+                else self.init_std,
                 generator=generator,
             )
 

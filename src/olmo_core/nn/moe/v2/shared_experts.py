@@ -9,6 +9,14 @@ import nvtx
 import torch.nn.functional as F
 from typing import Tuple, Optional, TYPE_CHECKING, cast
 
+
+
+def _swiglu(up: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+    gate = F.silu(gate)
+    hidden = up * gate        
+    return hidden
+
+
 @dataclass
 class SharedExpertsConfig(Config):
 
@@ -109,9 +117,8 @@ class SharedExperts(nn.Module):
 
         # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
         up, gate = up_gate.unbind(dim=2)                       # each (E, BS, H) views
-        gate = F.silu(gate)
 
-        hidden = up * gate                                     # (E, BS, H)
+        hidden = _swiglu(up, gate)                             # (E, BS, H)
 
         # 4) Per-expert down-proj as grouped GEMM
         #    hidden: (E, BS, H), w_down: (E, H, D) -> out: (E, BS, D)
@@ -150,9 +157,7 @@ class SharedExperts(nn.Module):
         B, S, D = xshape
         # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
 
-        gate = F.silu(gate)
-
-        hidden = up * gate                                     # (E, BS, H)
+        hidden = _swiglu(up, gate)                             # (E, BS, H)
 
         # 4) Per-expert down-proj as grouped GEMM
         #    hidden: (E, BS, H), w_down: (E, H, D) -> out: (E, BS, D)
@@ -162,3 +167,4 @@ class SharedExperts(nn.Module):
 
     def extra_repr(self):
         return f'num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}'
+

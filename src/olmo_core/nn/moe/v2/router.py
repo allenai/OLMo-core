@@ -450,7 +450,8 @@ class MoERouterV2(nn.Module):
         # Keep activation in bf16/fp16 in forward graph, and only materialize fp32
         # router input through OutputDiscardCheckpoint so backward can recompute it.
         cast_checkpoint: Optional[OutputDiscardCheckpoint] = None
-        if torch.is_grad_enabled() and x.requires_grad:
+        use_recompute_fp32_cast = False
+        if torch.is_grad_enabled() and x.requires_grad and use_recompute_fp32_cast:
             cast_checkpoint = OutputDiscardCheckpoint()
             x_fp32 = cast(torch.Tensor, cast_checkpoint.checkpoint(_cast_to_fp32, x))
         else:

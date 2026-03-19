@@ -322,7 +322,8 @@ class PeriNormTransformerBlock(TransformerBlock):
         n_layers: int,
         attention: AttentionConfig,
         feed_forward: FeedForwardConfig,
-        layer_norm: LayerNormConfig,
+        attention_norm: LayerNormConfig,
+        feed_forward_norm: LayerNormConfig,
         dropout: float = 0.0,
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
@@ -335,15 +336,16 @@ class PeriNormTransformerBlock(TransformerBlock):
             n_layers=n_layers,
             attention=attention,
             feed_forward=feed_forward,
-            layer_norm=layer_norm,
+            attention_norm=attention_norm,
+            feed_forward_norm=feed_forward_norm,
             dropout=dropout,
             attention_residual_alpha=attention_residual_alpha,
             feed_forward_residual_alpha=feed_forward_residual_alpha,
             init_device=init_device,
             cache=cache,
         )
-        self.post_attention_norm = layer_norm.build(d_model, init_device=init_device)
-        self.post_feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        self.post_attention_norm = attention_norm.build(d_model, init_device=init_device)
+        self.post_feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
 
     def forward(
         self,

@@ -18,16 +18,11 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
-from torch.distributed.tensor import Replicate, Shard
-from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 import olmo_core.nn.transformer
-from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from .block import (
     MoEFusedV2TransformerBlock,
@@ -471,7 +466,13 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         
         if self.embeddings is not None:
             self.init_method.init_embeddings(
-                self.embeddings, d_model=self.d_model, std=self.init_std, generator=generator
+                self.embeddings,
+                d_model=self.d_model,
+                embed_scale=self.embed_scale,
+                std=self.embedding_init_std
+                if self.embedding_init_std is not None
+                else self.init_std,
+                generator=generator,
             )
 
         for block in self.blocks.values():
@@ -571,18 +572,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 p._main_grad_fp32 = None # type: ignore[attr-defined]
 
 
-    # def prepare_main_grads_for_optim(self):
-    #     for p in self.parameters():
-    #         if not p.requires_grad:
-    #             continue
-    #         if not hasattr(p, '_main_grad_fp32'):
-    #             raise RuntimeError("FP32 master grad not found")
-    #         if p.grad is not None:
-    #             raise RuntimeError("Expected .grad to be None when using FP32 master grad")
-            
-    #         p.grad = p._main_grad_fp32  # type: ignore[attr-defined]
-    #         p._main_grad_fp32 = None # type: ignore[attr-defined]
-
     def forward_tbo(
             self,
         input_ids: torch.Tensor,
@@ -613,6 +602,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+        if self.embeddings is not None and self.embed_scale is not None:
+            h = h * self.embed_scale
+        if self.embedding_norm is not None:
+            h = self.embedding_norm(h)
 
         # can only check this in every forward. 
         # We cannot put this in __init__ because of PP might change model layers. 
@@ -875,17 +868,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 return_logits=return_logits,
                 **kwargs,
             )
-        # with torch.no_grad():
-        #     tbo_dbg = self.forward_tbo(
-        #         input_ids,
-        #         labels=labels,
-        #         ignore_index=ignore_index,
-        #         loss_reduction=loss_reduction,
-        #         z_loss_multiplier=z_loss_multiplier,
-        #         loss_div_factor=loss_div_factor,
-        #         return_logits=return_logits,
-        #         **kwargs,
-        #     )
+
 
         input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs = self._prepare_inputs(
             input_ids,
@@ -901,14 +884,11 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
-
-        # # Run each block.
-        # for block_idx, block in enumerate(self.blocks.values()):
-        #     # Mark sizes as dynamic for torch.compile().
-        #     if self.compile_enabled:
-        #         mark_dynamic(h, (0, 1), strict=False)
-        #     with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
-        #         h = block(h, **block_kwargs)
+        if self.embeddings is not None and self.embed_scale is not None:
+            h = h * self.embed_scale
+        if self.embedding_norm is not None: 
+            assert self.embeddings is not None # PP does not have embedding, should not have embedding norm either
+            h = self.embedding_norm(h)
 
         if self.recompute_all_blocks_by_chunk:
             h = checkpoint(self._forward_blocks, h, all_block_kwargs, per_block_kwargs, use_reentrant=False)

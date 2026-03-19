@@ -109,6 +109,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             model_chunk = copy.deepcopy(model)
             if not is_first:
                 model_chunk.embeddings = None  # type: ignore
+                model_chunk.embedding_norm = None  # type: ignore
 
             drop_layers = start_layer is not None
             for block_idx in range(model.n_layers):
