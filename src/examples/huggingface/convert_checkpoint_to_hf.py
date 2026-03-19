@@ -614,10 +614,22 @@ def main():
         raise RuntimeError("Experiment config not found, cannot convert to HF checkpoint")
 
     transformer_config_dict = experiment_config["model"]
-    tokenizer_config_dict = experiment_config.get("dataset", {}).get("tokenizer")
+
+    # Try multiple locations for tokenizer config to handle different config formats
+    dataset = experiment_config.get("dataset")
+    if isinstance(dataset, dict):
+        tokenizer_config_dict = dataset.get("tokenizer")
+    else:
+        tokenizer_config_dict = None
+
+    if tokenizer_config_dict is None:
+        tokenizer_config_dict = experiment_config.get("data_loader", {}).get("tokenizer")
 
     assert transformer_config_dict is not None
-    assert tokenizer_config_dict is not None
+    assert tokenizer_config_dict is not None, (
+        "Could not find tokenizer config in experiment config. "
+        "Looked in 'dataset.tokenizer' and 'data_loader.tokenizer'."
+    )
 
     convert_checkpoint_to_hf(
         original_checkpoint_path=args.checkpoint_input_path,
