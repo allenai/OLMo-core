@@ -143,13 +143,20 @@ def convert_checkpoint_to_hf(
                     f"Fused attention requires a flash attention backend for {block_label}, but {backend} is not supported"
                 ) from e
 
-        elif validate and attention_config.backend != AttentionBackendName.torch:
-            backend_name = attention_config.backend.name if attention_config.backend else "None"
-            log.info(
-                f"Overriding attention backend from {backend_name} to torch for {block_label} conversion and validation to make validation less likely to fail."
-            )
-            attention_config.backend = AttentionBackendName.torch
-            attention_config.use_flash = False
+        elif attention_config.backend != AttentionBackendName.torch:
+            backend = attention_config.backend
+            # Check if the configured backend is available, otherwise fall back to torch
+            try:
+                if backend is not None:
+                    backend.assert_supported()
+            except RuntimeError:
+                backend_name = backend.name if backend else "None"
+                log.info(
+                    f"Overriding attention backend from {backend_name} to torch for {block_label} "
+                    f"(backend not available on this platform)"
+                )
+                attention_config.backend = AttentionBackendName.torch
+                attention_config.use_flash = False
 
         if moe_capacity_factor is not None and block_config.feed_forward_moe is not None:
             block_config.feed_forward_moe.capacity_factor = moe_capacity_factor
