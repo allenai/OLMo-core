@@ -1377,5 +1377,3 @@ def test_fused_attention_num_flops_per_token():
     # Larger models should be more expensive.
     fused_large = FusedAttention(d_model=256, n_heads=n_heads, init_device="cuda")
     assert fused_large.num_flops_per_token(32) > fused_small.num_flops_per_token(32)
-
-

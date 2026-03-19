@@ -927,9 +927,7 @@ class FlashAttention4Backend(AttentionBackend):
             kv_cache_manager.k_cache[:, pos : pos + T_new] = k
             kv_cache_manager.v_cache[:, pos : pos + T_new] = v
             # Don't call update_seqlen here; sdpa() calls it after the backend forward.
-            seqused_k = torch.full(
-                (q.shape[0],), pos + T_new, dtype=torch.int32, device=q.device
-            )
+            seqused_k = torch.full((q.shape[0],), pos + T_new, dtype=torch.int32, device=q.device)
             return dispatch_flash_attn_4(
                 q,
                 kv_cache_manager.k_cache,
