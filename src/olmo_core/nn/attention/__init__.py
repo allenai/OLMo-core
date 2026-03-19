@@ -757,12 +757,19 @@ class Attention(SequenceMixer):
         :param max_seq_len: The maximum sequence length for the cache.
         """
         self.backend.assert_supports_kv_cache()
+
+        # FA4 uses paged KV cache with a default page size of 256.
+        page_size: Optional[int] = None
+        if isinstance(self.backend, FlashAttention4Backend):
+            page_size = 256
+
         self.kv_cache_manager = KVCacheManager(
             batch_size=batch_size,
             max_seq_len=max_seq_len,
             num_kv_heads=self.n_kv_heads,
             head_dim=self.head_dim,
             device=self.w_k.weight.device,
+            page_size=page_size,
         )
 
     def num_flops_per_token(self, seq_len: int) -> int:

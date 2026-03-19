@@ -893,7 +893,7 @@ class FlashAttention4Backend(AttentionBackend):
 
     @classmethod
     def assert_supports_kv_cache(cls):
-        raise RuntimeError(f"'{cls.__name__}' doesn't support QK cache")
+        pass
 
     def forward(
         self,
@@ -909,9 +909,25 @@ class FlashAttention4Backend(AttentionBackend):
     ) -> torch.Tensor:
         assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
         assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
-        assert kv_cache_manager is None, f"'{self.__class__.__name__}' doesn't support KV caching"
 
         q, k, v = qkv
+
+        if kv_cache_manager is not None:
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support KV caching with context parallelism"
+                )
+            kv_cache_manager.update(k, v)
+            return dispatch_flash_attn_4(
+                q,
+                kv_cache_manager.k_cache,
+                kv_cache_manager.v_cache,
+                page_table=kv_cache_manager.page_table,
+                seqused_k=kv_cache_manager.cache_seqlens,
+                softmax_scale=self.scale,
+                causal=True,
+                window_size=self.window_size,
+            )
 
         if self.cp_enabled:
             if self.ring is not None:
