@@ -590,6 +590,26 @@ def test_attention_kv_cache_update(backend_name: AttentionBackendName):
             assert not torch.all(k_cache_after[b, current_write_pos] == 0)
             assert not torch.all(v_cache_after[b, current_write_pos] == 0)
 
+        # Check that the cache *before* the new token is unchanged.
+        torch.testing.assert_close(
+            k_cache_before[:, :current_write_pos, :, :],
+            k_cache_after[:, :current_write_pos, :, :],
+        )
+        torch.testing.assert_close(
+            v_cache_before[:, :current_write_pos, :, :],
+            v_cache_after[:, :current_write_pos, :, :],
+        )
+
+        # Check that the cache *after* the new token is unchanged.
+        torch.testing.assert_close(
+            k_cache_before[:, current_write_pos + 1 :, :, :],
+            k_cache_after[:, current_write_pos + 1 :, :, :],
+        )
+        torch.testing.assert_close(
+            v_cache_before[:, current_write_pos + 1 :, :, :],
+            v_cache_after[:, current_write_pos + 1 :, :, :],
+        )
+
         # Ensure previous write is untouched.
         if step > 0:
             assert k_at_prev_write_pos is not None and v_at_prev_write_pos is not None
