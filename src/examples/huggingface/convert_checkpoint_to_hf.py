@@ -575,17 +575,9 @@ def main():
 
     transformer_config_dict = experiment_config["model"]
 
-    if isinstance(dataset_config := experiment_config.get("dataset", {}), dict):
-        # getting config from dataset (only possible if dataset is a dict, not a dict)
-        print(f"Loading tokenizer config from dataset config {dataset_config}")
-        tokenizer_config_dict = dataset_config.get("tokenizer")
-    elif isinstance(data_loader_config := experiment_config.get("dataloader", {}), dict):
-        # getting config from dataloader
-        print(f"Loading tokenizer config from dataloader config {data_loader_config}")
-        tokenizer_config_dict = data_loader_config.get("tokenizer")
-    else:
-        print("Tokenizer config not found")
-        tokenizer_config_dict = None
+    if isinstance(dataset_config := experiment_config.get("dataset", {}), list):
+        dataset_config = dataset_config[0]
+    tokenizer_config_dict = dataset_config.get("tokenizer")
 
     assert transformer_config_dict is not None
     assert tokenizer_config_dict is not None
