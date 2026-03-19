@@ -482,6 +482,32 @@ def validate_conversion(
     )
 
 
+def find_tokenizer_config(config: Any) -> Optional[Dict[str, Any]]:
+    """
+    Recursively search through the experiment config (dicts and lists) to find
+    a dict containing a "tokenizer" key whose value is a dict with the keys
+    ``vocab_size``, ``eos_token_id``, ``pad_token_id``, and ``identifier``.
+    """
+    required_keys = {"vocab_size", "eos_token_id", "pad_token_id", "identifier"}
+
+    if isinstance(config, dict):
+        if "tokenizer" in config:
+            candidate = config["tokenizer"]
+            if isinstance(candidate, dict) and required_keys <= candidate.keys():
+                return candidate
+        for value in config.values():
+            result = find_tokenizer_config(value)
+            if result is not None:
+                return result
+    elif isinstance(config, list):
+        for item in config:
+            result = find_tokenizer_config(item)
+            if result is not None:
+                return result
+
+    return None
+
+
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
     if not file_exists(f"{checkpoint_input_dir}/config.json"):
         raise RuntimeError(f"Config file not found at {checkpoint_input_dir}")
@@ -574,10 +600,7 @@ def main():
         raise RuntimeError("Experiment config not found, cannot convert to HF checkpoint")
 
     transformer_config_dict = experiment_config["model"]
-
-    if isinstance(dataset_config := experiment_config.get("dataset", {}), list):
-        dataset_config = dataset_config[0]
-    tokenizer_config_dict = dataset_config.get("tokenizer")
+    tokenizer_config_dict = find_tokenizer_config(experiment_config)
 
     assert transformer_config_dict is not None
     assert tokenizer_config_dict is not None
