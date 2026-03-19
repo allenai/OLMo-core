@@ -893,7 +893,13 @@ class FlashAttention4Backend(AttentionBackend):
 
     @classmethod
     def assert_supports_kv_cache(cls):
-        pass
+        if torch.cuda.is_available():
+            cc = torch.cuda.get_device_capability()
+            if cc < (10, 0):
+                raise RuntimeError(
+                    f"'{cls.__name__}' KV caching requires SM >= 10.0 (Blackwell), "
+                    f"but current device has compute capability {cc[0]}.{cc[1]}"
+                )
 
     def forward(
         self,
