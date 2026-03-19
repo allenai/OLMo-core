@@ -428,7 +428,6 @@ def test_attention_with_intra_document_masking():
 
 
 @requires_gpu
-@requires_flash_attn_2
 @requires_compute_capability(min_cc=9)  # flash-attn bf16 precision is worse on A100s (cc=8)
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize(
@@ -439,7 +438,24 @@ def test_attention_with_intra_document_masking():
     "use_rope",
     [pytest.param(True, id="rope"), pytest.param(False, id="no-rope")],
 )
-def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], use_rope: bool):
+@pytest.mark.parametrize(
+    "backend_name",
+    [
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_4, id="flash-attn-4", marks=FLASH_4_MARKS),
+    ],
+)
+def test_attention_kv_caching(
+    batch_size: int,
+    n_kv_heads: Optional[int],
+    use_rope: bool,
+    backend_name: AttentionBackendName,
+):
+    if backend_name == AttentionBackendName.flash_4:
+        cc = torch.cuda.get_device_capability()
+        if cc < (10, 0):
+            pytest.skip("FA4 KV caching requires SM >= 10.0 (Blackwell)")
+
     seed_all(0)
 
     d_model = 512
@@ -456,7 +472,7 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], use_ro
         n_heads=n_heads,
         n_kv_heads=n_kv_heads,
         rope=RoPEConfig() if use_rope else None,
-        use_flash=True,
+        backend=backend_name,
         init_device="cuda",
         dtype=torch.float32,
     )
@@ -1352,79 +1368,6 @@ def test_fused_attention_num_flops_per_token():
     # Larger models should be more expensive.
     fused_large = FusedAttention(d_model=256, n_heads=n_heads, init_device="cuda")
     assert fused_large.num_flops_per_token(32) > fused_small.num_flops_per_token(32)
-
-
-@requires_flash_attn_4
-@requires_compute_capability(min_cc=10)
-@pytest.mark.parametrize("batch_size", [1, 2])
-@pytest.mark.parametrize(
-    "n_kv_heads",
-    [pytest.param(None, id="MHA"), pytest.param(2, id="GQA")],
-)
-@pytest.mark.parametrize(
-    "use_rope",
-    [pytest.param(True, id="rope"), pytest.param(False, id="no-rope")],
-)
-def test_attention_kv_caching_fa4(batch_size: int, n_kv_heads: Optional[int], use_rope: bool):
-    """Test FA4 paged KV cache: prefill + decode steps match a single combined forward pass."""
-    seed_all(0)
-
-    d_model = 512
-    n_heads = 8
-    max_seq_len = 512
-    prefill_len = 508
-    decode_steps = 1
-    total_len = prefill_len + decode_steps
-    assert total_len <= max_seq_len
-
-    attention = Attention(
-        d_model=d_model,
-        n_heads=n_heads,
-        n_kv_heads=n_kv_heads,
-        rope=RoPEConfig() if use_rope else None,
-        backend=AttentionBackendName.flash_4,
-        init_device="cuda",
-        dtype=torch.float32,
-    )
-
-    x = torch.randn(batch_size, total_len, d_model, dtype=torch.bfloat16, device="cuda")
-
-    # 1. Combined forward pass (for comparison)
-    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-        y_combined = attention(x)
-
-    # 2. Prefill + decode with paged KV cache
-    attention.init_kv_cache_manager(batch_size, max_seq_len)
-    x_prefill = x[:, :prefill_len, :]
-    attention_mask = torch.ones(batch_size, prefill_len, dtype=torch.bool, device="cuda")
-    cache_leftpad = attention_mask_to_cache_leftpad(attention_mask)
-
-    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-        y_prefill = attention(x_prefill, cache_leftpad=cache_leftpad)
-
-    y_decode_steps = []
-    for step in range(decode_steps):
-        x_decode = x[:, prefill_len + step : prefill_len + step + 1, :]
-        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-            y_decode = attention(x_decode, cache_leftpad=None)
-        y_decode_steps.append(y_decode)
-    y_decode_combined = torch.cat(y_decode_steps, dim=1)
-
-    # 3. Compare results
-    torch.testing.assert_close(
-        y_combined[:, :prefill_len, :],
-        y_prefill,
-        rtol=BF16_RTOL,
-        atol=BF16_ATOL,
-        msg="FA4 prefill outputs don't match",
-    )
-    torch.testing.assert_close(
-        y_combined[:, prefill_len:, :],
-        y_decode_combined,
-        rtol=BF16_RTOL,
-        atol=BF16_ATOL,
-        msg="FA4 decode outputs with KV-cache don't match",
-    )
 
 
 @requires_flash_attn_4
