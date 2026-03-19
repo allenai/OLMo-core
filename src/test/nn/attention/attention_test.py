@@ -551,20 +551,6 @@ def test_attention_kv_cache_update(backend_name: AttentionBackendName):
     # Initialize cache
     attention.init_kv_cache_manager(batch_size, max_seq_len)
     assert attention.kv_cache_manager is not None
-    is_paged = attention.kv_cache_manager.is_paged
-
-    # Helper to read a cache slot for a given batch item and absolute position.
-    def _read_cache_slot(cache: torch.Tensor, b: int, pos: int) -> torch.Tensor:
-        if is_paged:
-            assert attention.kv_cache_manager is not None
-            assert attention.kv_cache_manager.page_table is not None
-            page_size = attention.kv_cache_manager._page_size
-            assert page_size is not None
-            page_idx = int(attention.kv_cache_manager.page_table[b, pos // page_size].item())
-            slot = pos % page_size
-            return cache[page_idx, slot]
-        else:
-            return cache[b, pos]
 
     # Prefill
     prefill_input = torch.randn(batch_size, prefill_len, d_model, dtype=dtype, device="cuda")
@@ -595,17 +581,14 @@ def test_attention_kv_cache_update(backend_name: AttentionBackendName):
         )
 
         # Check that the update happened at the right position.
-        if is_paged:
-            current_write_pos = int(cache_seqlens_before[0].item())
-        else:
-            current_write_pos = int(cache_seqlens_before.item())
+        current_write_pos = int(cache_seqlens_before.item())
         k_cache_after = attention.kv_cache_manager.k_cache
         v_cache_after = attention.kv_cache_manager.v_cache
 
         # Check that the cache at the new token position is not all zeros.
         for b in range(batch_size):
-            assert not torch.all(_read_cache_slot(k_cache_after, b, current_write_pos) == 0)
-            assert not torch.all(_read_cache_slot(v_cache_after, b, current_write_pos) == 0)
+            assert not torch.all(k_cache_after[b, current_write_pos] == 0)
+            assert not torch.all(v_cache_after[b, current_write_pos] == 0)
 
         # Ensure previous write is untouched.
         if step > 0:
@@ -614,21 +597,21 @@ def test_attention_kv_cache_update(backend_name: AttentionBackendName):
             for b in range(batch_size):
                 torch.testing.assert_close(
                     k_at_prev_write_pos[b],
-                    _read_cache_slot(k_cache_after, b, prev_write_pos),
+                    k_cache_after[b, prev_write_pos],
                     msg=f"step {step}, batch {b}",
                 )
                 torch.testing.assert_close(
                     v_at_prev_write_pos[b],
-                    _read_cache_slot(v_cache_after, b, prev_write_pos),
+                    v_cache_after[b, prev_write_pos],
                     msg=f"step {step}, batch {b}",
                 )
 
         # Store the written slice for the next iteration's check.
         k_at_prev_write_pos = torch.stack(
-            [_read_cache_slot(k_cache_after, b, current_write_pos) for b in range(batch_size)]
+            [k_cache_after[b, current_write_pos] for b in range(batch_size)]
         ).clone()
         v_at_prev_write_pos = torch.stack(
-            [_read_cache_slot(v_cache_after, b, current_write_pos) for b in range(batch_size)]
+            [v_cache_after[b, current_write_pos] for b in range(batch_size)]
         ).clone()
 
 

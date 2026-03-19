@@ -917,38 +917,23 @@ class FlashAttention4Backend(AttentionBackend):
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' doesn't support KV caching with context parallelism"
                 )
-            if kv_cache_manager.is_paged:
-                kv_cache_manager.update(k, v)
-                return dispatch_flash_attn_4(
-                    q,
-                    kv_cache_manager.k_cache,
-                    kv_cache_manager.v_cache,
-                    page_table=kv_cache_manager.page_table,
-                    seqused_k=kv_cache_manager.cache_seqlens,
-                    softmax_scale=self.scale,
-                    causal=True,
-                    window_size=self.window_size,
-                )
-            else:
-                # Dense KV cache path (for SM < 10.0 where paged is not supported).
-                pos = int(kv_cache_manager.cache_seqlens.item())
-                T_new = k.shape[1]
-                kv_cache_manager.k_cache[:, pos : pos + T_new] = k
-                kv_cache_manager.v_cache[:, pos : pos + T_new] = v
-                # Don't call update_seqlen here; sdpa() calls it after the backend forward.
-                new_seqlen = pos + T_new
-                seqused_k = torch.full(
-                    (q.shape[0],), new_seqlen, dtype=torch.int32, device=q.device
-                )
-                return dispatch_flash_attn_4(
-                    q,
-                    kv_cache_manager.k_cache,
-                    kv_cache_manager.v_cache,
-                    seqused_k=seqused_k,
-                    softmax_scale=self.scale,
-                    causal=True,
-                    window_size=self.window_size,
-                )
+            pos = int(kv_cache_manager.cache_seqlens.item())
+            T_new = k.shape[1]
+            kv_cache_manager.k_cache[:, pos : pos + T_new] = k
+            kv_cache_manager.v_cache[:, pos : pos + T_new] = v
+            # Don't call update_seqlen here; sdpa() calls it after the backend forward.
+            seqused_k = torch.full(
+                (q.shape[0],), pos + T_new, dtype=torch.int32, device=q.device
+            )
+            return dispatch_flash_attn_4(
+                q,
+                kv_cache_manager.k_cache,
+                kv_cache_manager.v_cache,
+                seqused_k=seqused_k,
+                softmax_scale=self.scale,
+                causal=True,
+                window_size=self.window_size,
+            )
 
         if self.cp_enabled:
             if self.ring is not None:

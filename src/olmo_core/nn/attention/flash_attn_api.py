@@ -460,7 +460,6 @@ def dispatch_flash_attn_4(
     softmax_scale: Optional[float] = None,
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
-    page_table: Optional[torch.Tensor] = None,
     seqused_k: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     if flash_attn_4 is None:
@@ -469,25 +468,7 @@ def dispatch_flash_attn_4(
     if window_size == (-1, -1) or (window_size == (-1, 0) and causal):
         window_size = (None, None)  # type: ignore
 
-    # Paged KV cache path: use varlen API with page_table (cu_seqlens_k must be None).
-    if page_table is not None:
-        B = q.shape[0]
-        T = q.shape[1]
-        cu_seqlens_q_cache = torch.arange(0, (B + 1) * T, T, dtype=torch.int32, device=q.device)
-        return flash_attn_4.flash_attn_varlen_func(
-            _flatten_batch_dim(q),
-            k,
-            v,
-            cu_seqlens_q=cu_seqlens_q_cache,
-            cu_seqlens_k=None,
-            seqused_k=seqused_k,
-            page_table=page_table,
-            softmax_scale=softmax_scale,
-            causal=causal,
-            window_size=window_size,
-        )[0]
-
-    # Dense KV cache path: use varlen API with seqused_k but no page_table.
+    # KV cache path: use varlen API with seqused_k to limit the valid cache length.
     if seqused_k is not None:
         B = q.shape[0]
         T = q.shape[1]
