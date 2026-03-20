@@ -1,17 +1,19 @@
 """
-Flash Attention 4 with document masking smoke test.
+Flash Attention 4 smoke test.
 
-Verifies that FA4 works correctly with intra-document masking enabled
-(generate_doc_lengths=True). Trains for 20 steps on a single node.
+Verifies that FA4 works correctly. Trains for 20 steps on a single node.
+
+Note: FA4 varlen backward is not yet supported on sm90 (H100), so document
+masking (generate_doc_lengths=True) is disabled.
 
 Usage:
     # Dry run:
     python src/scripts/train/smoketests/flash4-docmask-test.py \
-        dry_run test-flash4-docmask ai2/jupiter
+        dry_run test-flash4 ai2/jupiter
 
     # Launch on Beaker:
     python src/scripts/train/smoketests/flash4-docmask-test.py \
-        launch test-flash4-docmask ai2/jupiter \
+        launch test-flash4 ai2/jupiter \
         --launch.priority=normal \
         --launch.follow=false
 """
@@ -99,8 +101,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
 
-    # Document masking: generate_doc_lengths=True provides doc_lens to the model,
-    # enabling intra-document attention masking with FA4.
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMo_mix_0925,
         mix_base_dir="gs://ai2-llm",
@@ -108,7 +108,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         tokenizer=tokenizer_config,
         sequence_length=SEQ_LENGTH,
         max_target_sequence_length=max(SEQ_LENGTH, 8192),
-        generate_doc_lengths=True,
+        generate_doc_lengths=False,
     )
 
     data_loader_config = NumpyDataLoaderConfig(
