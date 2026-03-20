@@ -25,7 +25,6 @@ from olmo_core.config import DType
 from olmo_core.data import (
     DataMix,
     NumpyDataLoaderConfig,
-    NumpyFSLDatasetConfig,
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
@@ -105,13 +104,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         scheduler=CosWithWarmup(warmup_steps=2000),
     )
 
-    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_mix_0925,
+    # Use a small eval dataset as training data — this is just a smoke test.
+    dataset_config = NumpyPaddedFSLDatasetConfig.from_data_mix(
+        DataMix.v3_small_ppl_validation,
         mix_base_dir=root_dir,
         work_dir=work_dir,
         tokenizer=tokenizer_config,
         sequence_length=SEQ_LENGTH,
-        max_target_sequence_length=max(SEQ_LENGTH, 8192),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
