@@ -26,7 +26,7 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
-    "flash-attn-4",
+    "flash-attn-4>=4.0.0b1 ; sys_platform == 'linux'",
 ]
 
 [project.urls]
