@@ -11,7 +11,6 @@ import numpy as np
 
 from olmo_core.data.tokenizer import TokenizerLike
 
-
 CODE_FRESH_LANGUAGES: Tuple[str, ...] = (
     "blade",
     "c",

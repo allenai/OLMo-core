@@ -91,4 +91,6 @@ def test_flatten_documents_and_metadata(tmp_path: Path):
 
 
 def test_get_export_dir_name():
-    assert get_export_dir_name("allenai/dolma2-tokenizer") == "code_fresh_0825_1225_dolma2-tokenizer"
+    assert (
+        get_export_dir_name("allenai/dolma2-tokenizer") == "code_fresh_0825_1225_dolma2-tokenizer"
+    )
