@@ -1,12 +1,20 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional, Protocol
 
 from ..config import Config, StrEnum
 
 __all__ = [
     "TokenizerConfig",
+    "TokenizerLike",
     "TokenizerName",
 ]
+
+
+class TokenizerLike(Protocol):
+    eos_token_id: int
+
+    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
+        ...
 
 
 class TokenizerName(StrEnum):

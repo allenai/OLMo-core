@@ -5,9 +5,11 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Iterable, List, Optional, Protocol, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+
+from olmo_core.data.tokenizer import TokenizerLike
 
 
 CODE_FRESH_LANGUAGES: Tuple[str, ...] = (
@@ -54,13 +56,6 @@ CODE_FRESH_LANGUAGES: Tuple[str, ...] = (
     "vhdl",
     "vue",
 )
-
-
-class TokenizerLike(Protocol):
-    eos_token_id: int
-
-    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
-        ...
 
 
 @dataclass
