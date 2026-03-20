@@ -35,6 +35,7 @@ from olmo_core.internal.common import (
     get_root_dir,
     get_work_dir,
 )
+from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import AttentionBackendName
@@ -125,6 +126,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             cancel_check_interval=5,
             max_duration=Duration.steps(20),
         )
+        .with_callbacks(configure_required_callbacks(run_name_with_ts))
         .with_callback(
             "wandb",
             WandBCallback(
