@@ -2,7 +2,7 @@
 import argparse
 import multiprocessing
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Iterable, Sequence
 
 from olmo_core.code_fresh_export import (
     CODE_FRESH_LANGUAGES,
