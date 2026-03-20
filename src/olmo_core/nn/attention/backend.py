@@ -60,13 +60,12 @@ class AttentionBackendName(StrEnum):
     """
     Flash attention 3 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
     library ``hopper/`` subdirectory. Supports Hopper (SM 9.0) GPUs only (H100/H800).
-    Deprecated in favor of :attr:`flash_4`. ➡️ :class:`FlashAttention3Backend`
+    ➡️ :class:`FlashAttention3Backend`
     """
     flash_4 = "flash_4"
     """
     Flash attention 4, the CUTE implementation from `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
-    in the ``flash_attn/cute`` subdirectory. Supports Hopper (SM 9.0, e.g. H100/H800) and
-    Blackwell (SM 10.0, e.g. B200) GPUs. This is the recommended backend for these devices.
+    in the ``flash_attn/cute`` subdirectory. Supports Blackwell (SM 10.0, e.g. B200) GPUs only.
     ➡️ :class:`FlashAttention4Backend`
     """
     te = "te"
