@@ -157,11 +157,12 @@ BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/Flex
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo2_code_math-olmo3_tool_use_safety-0.05
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-final-sft-only
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/BTX-5x7B-Test-5-Domains
-AMOUNT=1.0
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/BTX-5x7B-Test-5-Domains-tool-first
+AMOUNT=0.05
 LR=1e-4
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math_code_tool_use_safety-$AMOUNT
 uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
-    BTX-5x7B-Test-5-Domains-$AMOUNT-$LR \
+    BTX-5x7B-Test-5-Domains-tool-first-$AMOUNT-$LR \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -178,6 +179,27 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
     --model_name olmoe-5x7b \
     --dataset_path $SFT_DATASET
 
+
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-3x7B-final-no-safety-tool
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math_code-0.05
+uv run python src/scripts/train/sft/FlexOlmo-SFT-3x7B.py launch \
+    flexolmo-3x7B-math_rl-code_rl-0.05-$LR \
+        $BASE_CKPT \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=1e-4 \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=2048 \
+    --global_batch_size=786432 \
+    --launch.num_gpus=8 \
+    --num_nodes=3 \
+    --budget ai2/oceo \
+    --workspace ai2/flex2 \
+    --model_name olmoe-3x7b \
+    --dataset_path $SFT_DATASET
 
 # try fewer experts
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-math_rl-code_rl-tool_use-safety_sft
