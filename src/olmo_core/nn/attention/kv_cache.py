@@ -21,7 +21,10 @@ class KVCacheManager(nn.Module):
         super().__init__()
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
-        self.kv_cache_shape = (batch_size, max_seq_len, self.num_kv_heads, self.head_dim)
+        self._batch_size = batch_size
+        self._max_seq_len = max_seq_len
+
+        self.kv_cache_shape = (batch_size, max_seq_len, num_kv_heads, head_dim)
 
         self.k_cache: torch.Tensor
         self.register_buffer(
@@ -43,7 +46,9 @@ class KVCacheManager(nn.Module):
         )
         self.cache_seqlens: torch.Tensor
         self.register_buffer(
-            "cache_seqlens", torch.zeros((), dtype=torch.int32, device=device), persistent=False
+            "cache_seqlens",
+            torch.zeros((), dtype=torch.int32, device=device),
+            persistent=False,
         )
 
     def record_leftpad(self, leftpad: Optional[torch.Tensor]):
@@ -71,12 +76,16 @@ class KVCacheManager(nn.Module):
         max_seq_len: int,
         _explicitly_free_memory: bool = True,
     ):
-        self.kv_cache_shape = (batch_size, max_seq_len, self.num_kv_heads, self.head_dim)
+        self._batch_size = batch_size
+        self._max_seq_len = max_seq_len
+
         if _explicitly_free_memory and hasattr(self, "cache"):
             # The cache can be large so we explicitly free it before reallocating
             del self.cache
             gc.collect()
             torch.cuda.empty_cache()
+
+        self.kv_cache_shape = (batch_size, max_seq_len, self.num_kv_heads, self.head_dim)
 
         k = self.k_cache.new_zeros(self.kv_cache_shape)
         v = self.v_cache.new_zeros(self.kv_cache_shape)
@@ -90,7 +99,7 @@ class KVCacheManager(nn.Module):
         self.register_buffer("cache_seqlens", seqlens, persistent=False)
 
     def is_reusable(self, batch_size: int, max_seq_len: int) -> bool:
-        return self.kv_cache_shape[0] == batch_size and self.kv_cache_shape[1] >= max_seq_len
+        return self._batch_size == batch_size and self._max_seq_len >= max_seq_len
 
     def reset(self, batch_size: int, max_seq_len: int):
         """
