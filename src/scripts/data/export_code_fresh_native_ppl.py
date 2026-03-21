@@ -4,7 +4,7 @@ import multiprocessing
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from olmo_core.code_fresh_export import (
+from olmo_core.data.misc.code_fresh_export import (
     CODE_FRESH_LANGUAGES,
     build_documents_and_stats,
     default_num_procs,

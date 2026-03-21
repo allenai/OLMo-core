@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from olmo_core.code_fresh_export import (
+from olmo_core.data.misc.code_fresh_export import (
     ExportStats,
     build_documents_and_stats,
     flatten_documents,

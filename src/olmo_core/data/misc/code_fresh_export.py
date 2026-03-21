@@ -9,7 +9,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from olmo_core.data.tokenizer import TokenizerLike
+from ..tokenizer import TokenizerLike
 
 CODE_FRESH_LANGUAGES: Tuple[str, ...] = (
     "blade",
