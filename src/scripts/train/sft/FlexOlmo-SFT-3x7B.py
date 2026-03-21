@@ -527,7 +527,7 @@ class SFTRouterConfig(Config):
             )
             ep_degree = 3
             freeze_experts = "none"
-            rank_microbatch_size = 4096
+            rank_microbatch_size = 2048
         elif model_name == "olmoe-3x7b-2-active":
             model = TransformerConfig.olmoe_nx7b(
                 vocab_size=tokenizer_config.padded_vocab_size(),
