@@ -349,7 +349,7 @@ class SFTRouterConfig(Config):
             print(bs_config)
 
         ep_degree=5
-        rank_microbatch_size=4096
+        rank_microbatch_size=2048
 
         dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
         if not dp_shard_degree > 0:
