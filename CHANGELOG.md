@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added optional `vocab_size` field to `DataCollator` for validating token IDs are in `[0, vocab_size)` before the batch reaches the model. Wired through automatically in both `NumpyDataLoaderConfig` and `ComposableDataLoaderConfig`.
 - Added Olmo-hybrid official training configs and conversion script.
 - Added new in-loop eval tasks: Generative QA BPB tasks, expanded MT-MBPP languages, and Science/Medical RC tasks.
+- Added paged KV cache support to `FlashAttention4Backend` for inference on Blackwell (SM >= 10.0) GPUs.
 
 ### Fixed
 
