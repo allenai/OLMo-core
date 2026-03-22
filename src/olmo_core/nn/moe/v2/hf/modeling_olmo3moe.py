@@ -66,7 +66,7 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
             post-processing scaling factor applied to the computed cos/sin (unused in this type of RoPE).
         """
         base = config.rope_parameters["rope_theta"]
-        dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+        dim = getattr(config, "head_dim", None) or config.attention_hidden_size // config.num_attention_heads
 
         attention_factor = 1.0  # Unused in this type of RoPE
 
@@ -224,6 +224,7 @@ class Olmo3MoeRouter(nn.Module):
         self.gating_function = config.gating_function
         self.hidden_size = config.hidden_size
         self.num_experts_per_tok = config.num_experts_per_tok
+        self.original_num_experts_per_tok = config.original_num_experts_per_tok
         self.gate = nn.Linear(self.hidden_size, config.n_routed_experts, bias=False)
         self.normalize_expert_weights = config.normalize_expert_weights
         self.restore_weight_scale = config.restore_weight_scale
@@ -256,6 +257,11 @@ class Olmo3MoeRouter(nn.Module):
         if self.restore_weight_scale:
             expert_weights = expert_weights * self.num_experts_per_tok
 
+        if self.original_num_experts_per_tok is not None and self.num_experts_per_tok != self.original_num_experts_per_tok:
+            expert_weights = expert_weights * (
+                self.original_num_experts_per_tok / self.num_experts_per_tok
+            ) ** 0.5
+
         return expert_weights, expert_indices
 
 class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
@@ -272,6 +278,13 @@ class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
         self.post_attention_layernorm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_feedforward_layernorm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
+        if config.use_peri_ln:
+            self.pre_attention_layernorm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            self.pre_feedforward_layernorm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        else:
+            self.pre_attention_layernorm = None
+            self.pre_feedforward_layernorm = None
+
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
@@ -285,6 +298,8 @@ class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
         residual = hidden_states
+        if self.pre_attention_layernorm is not None:
+            hidden_states = self.pre_attention_layernorm(hidden_states)
         hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -300,6 +315,8 @@ class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
 
         # Fully Connected
         residual = hidden_states
+        if self.pre_feedforward_layernorm is not None:
+            hidden_states = self.pre_feedforward_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
         hidden_states = self.post_feedforward_layernorm(hidden_states)
         hidden_states = residual + hidden_states
@@ -330,7 +347,7 @@ class Olmo3MoeAttention(nn.Module):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
-        self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+        self.head_dim = getattr(config, "head_dim", config.attention_hidden_size // config.num_attention_heads)
         self.num_key_value_groups = config.num_attention_heads // config.num_key_value_heads
         self.scaling = self.head_dim**-0.5
         self.attention_dropout = config.attention_dropout
@@ -463,6 +480,10 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+
+        self.embed_scale = config.embed_scale
+        self.embed_norm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps) if config.embed_norm else None
+
         self.layers = nn.ModuleList(
             [Olmo3MoeDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
@@ -490,6 +511,11 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
+
+        assert inputs_embeds is not None
+        inputs_embeds = inputs_embeds * self.embed_scale
+        if self.embed_norm is not None:
+            inputs_embeds = self.embed_norm(inputs_embeds)
 
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache(config=self.config)

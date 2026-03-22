@@ -26,11 +26,13 @@ class Olmo3MoeConfig(PretrainedConfig):
         self,
         vocab_size=50304,
         hidden_size=4096,
+        attention_hidden_size=4096,
         dense_mlp_intermediate_size=11008,
         moe_intermediate_size=2048,
         shared_expert_intermediate_size=2048,
         n_routed_experts =64,
         num_experts_per_tok=4,
+        original_num_experts_per_tok=None,
         num_hidden_layers=32,
         num_attention_heads=32,
         num_key_value_heads=None,
@@ -54,6 +56,9 @@ class Olmo3MoeConfig(PretrainedConfig):
         use_head_qk_norm=False,
         layer_types: Optional[List[str]] = None,
         dense_layers_indices: Optional[List[int]] = None,
+        embed_scale=1.0,
+        embed_norm=False,
+        use_peri_ln=False,
         **kwargs,
     ):
         super().__init__(
@@ -66,6 +71,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.hidden_size = hidden_size
+        self.attention_hidden_size = attention_hidden_size if attention_hidden_size is not None else hidden_size
 
         # for dense MLP layers
         self.dense_mlp_intermediate_size = dense_mlp_intermediate_size 
@@ -75,6 +81,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.shared_expert_intermediate_size = shared_expert_intermediate_size # if None, no shared experts
         self.n_routed_experts  = n_routed_experts 
         self.num_experts_per_tok = num_experts_per_tok
+        self.original_num_experts_per_tok = original_num_experts_per_tok
         assert gating_function in ["softmax", "sigmoid"], "supported gating function: 'softmax' or 'sigmoid'"
         self.gating_function = gating_function 
         self.normalize_expert_weights = normalize_expert_weights
@@ -100,6 +107,10 @@ class Olmo3MoeConfig(PretrainedConfig):
 
         self.rms_norm_eps = rms_norm_eps
         self.use_head_qk_norm = use_head_qk_norm
+
+        self.embed_scale = embed_scale
+        self.embed_norm = embed_norm
+        self.use_peri_ln = use_peri_ln
 
         self.sliding_window = sliding_window
         if layer_types is None:

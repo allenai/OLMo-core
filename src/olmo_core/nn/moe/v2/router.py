@@ -64,6 +64,7 @@ class MoERouterConfigV2(Config):
     record_routing_batch_size: bool = False
     restore_weight_scale: bool = False # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
     original_top_k: Optional[int] = None # for restoring weight scales to match a model trained with a different top_k
+    use_recompute_fp32_cast: bool = False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
     
     def num_params(self) -> int:
         """
@@ -131,6 +132,7 @@ class MoERouterV2(nn.Module):
         record_routing_batch_size: bool = False,
         restore_weight_scale: bool = False,
         original_top_k: Optional[int] = None,
+        use_recompute_fp32_cast = False,
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
@@ -154,7 +156,7 @@ class MoERouterV2(nn.Module):
         self.record_routing_batch_size = record_routing_batch_size
         self.restore_weight_scale = restore_weight_scale
         self.original_top_k = original_top_k
-
+        self.use_recompute_fp32_cast = use_recompute_fp32_cast
 
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
@@ -450,8 +452,7 @@ class MoERouterV2(nn.Module):
         # Keep activation in bf16/fp16 in forward graph, and only materialize fp32
         # router input through OutputDiscardCheckpoint so backward can recompute it.
         cast_checkpoint: Optional[OutputDiscardCheckpoint] = None
-        use_recompute_fp32_cast = False
-        if torch.is_grad_enabled() and x.requires_grad and use_recompute_fp32_cast:
+        if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_fp32_cast:
             cast_checkpoint = OutputDiscardCheckpoint()
             x_fp32 = cast(torch.Tensor, cast_checkpoint.checkpoint(_cast_to_fp32, x))
         else:

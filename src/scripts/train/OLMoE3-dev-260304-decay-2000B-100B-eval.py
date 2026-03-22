@@ -96,9 +96,9 @@ SEQUENCE_LENGTH = 8192
 torch.set_float32_matmul_precision('high')
 
 
-MAX_DURATION = int(6000e9)
+MAX_DURATION = int(2100e9)
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 250
+SAVE_INTERVAL = 100
 
 NUM_EXPERTS = 48
 TOP_K = 2
@@ -123,12 +123,19 @@ EP_DIM=4
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=8
+REF_NUM_NODES=16
 
 # stage 1
-MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # start at 16M
-LR_REF_BSZ = 4 * 1024 * 1024
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # start at 16M
+# LR_REF_BSZ = 4 * 1024 * 1024
+
+# stage 2
+MICRO_BSZ = 1
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (64) # 32M
+LR_REF_BSZ = 8 * 1024 * 1024
+# EXPERT_LR: 0.5 -> 0.5 * math.sqrt(2)
+# fix decay
 
 
 GLOBAL_BATCH_SIZE = (
@@ -244,6 +251,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.01,
                 lb_loss_weight=0.02,
+                # lb_loss_weight=0.018,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -316,8 +324,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
-# ROUTER_LR = LR * 0.2
+# EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
+EXPERT_LR = LR * 0.5 * math.sqrt(2)
 SCHED_WARMUP_TOKENS = int((40e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 # SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_LONG_DECAY_TOKENS = int((5960e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
@@ -325,10 +333,10 @@ SCHED_MID_FRACTION = 0.8
 SCHED_FINAL_FRACTION = 0.1
 
 # patch
-MONKEY_PATCH_DECAY_START_TOKENS = None
-MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-MONKEY_PATCH_DECAY_END_FRACTION = SCHED_FINAL_FRACTION
-MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine
+MONKEY_PATCH_DECAY_START_TOKENS = int((2000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+MONKEY_PATCH_DECAY_DURATION_TOKENS = int((100e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+MONKEY_PATCH_DECAY_END_FRACTION = 0.01
+MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.linear
 
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
@@ -340,7 +348,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
+                # OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)), # WRONG
+                OptimGroupOverride(params=["*embeddings.weight", "*norm.weight"], opts=dict(weight_decay=0.0)),
                 # OptimGroupOverride(params=["*w_up_gate", "*w_down","*routed_experts_router*"], opts=dict(lr=EXPERT_LR)),
                 OptimGroupOverride(params=["*w_up_gate", "*w_down",], opts=dict(lr=EXPERT_LR)),
                 # OptimGroupOverride(params=["*routed_experts_router*"], opts=dict(lr=ROUTER_LR)),
@@ -419,25 +428,24 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
+            load_path='/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step93000',
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-            # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
+            
             checkpoints_to_eval=[
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step86000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step87000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step88000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step89000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step90000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step91000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step92000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step93000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step93250",
+                "/workspace/checkpoint/OLMoE3-dev-260304-decay-2000B-100B_2560d3072a_24L2560M2560S_48E2K1S_c3/step93100",
+                "/workspace/checkpoint/OLMoE3-dev-260304-decay-2000B-100B_2560d3072a_24L2560M2560S_48E2K1S_c3/step93500",
+                "/workspace/checkpoint/OLMoE3-dev-260304-decay-2000B-100B_2560d3072a_24L2560M2560S_48E2K1S_c3/step94000",
+                "/workspace/checkpoint/OLMoE3-dev-260304-decay-2000B-100B_2560d3072a_24L2560M2560S_48E2K1S_c3/step94500",
+                "/workspace/checkpoint/OLMoE3-dev-260304-decay-2000B-100B_2560d3072a_24L2560M2560S_48E2K1S_c3/step95000",
+                "/workspace/checkpoint/OLMoE3-dev-260304-decay-2000B-100B_2560d3072a_24L2560M2560S_48E2K1S_c3/step95500",
+                "/workspace/checkpoint/OLMoE3-dev-260304-decay-2000B-100B_2560d3072a_24L2560M2560S_48E2K1S_c3/step96000",
+                "/workspace/checkpoint/OLMoE3-dev-260304-decay-2000B-100B_2560d3072a_24L2560M2560S_48E2K1S_c3/step96085",
             ]
         )
         .with_callback(

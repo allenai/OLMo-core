@@ -2069,7 +2069,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         raise NotImplementedError("FSDP is not supported in MoEFusedV2TransformerBlock")
 
     def apply_compile(self):
-        self.compile(fullgraph=False, dynamic=False)
+        self.compile(
+            fullgraph=False, 
+            # dynamic=False
+        )
 
         # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
         self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo) 

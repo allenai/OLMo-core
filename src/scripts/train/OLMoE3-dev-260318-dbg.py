@@ -100,17 +100,17 @@ MAX_DURATION = int(6000e9)
 EVAL_INTERVAL = 10000
 SAVE_INTERVAL = 10000
 
-NUM_EXPERTS = 32
+NUM_EXPERTS = 128
 TOP_K = 4
-D_MODEL=4096
-D_ATTN=4096+2048
+D_MODEL=4096-512
+D_ATTN=4096+1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD=12
+NUM_KV_HEAD=10
 MOE_HIDDEN_SIZE = 4096
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -126,8 +126,8 @@ PP_DIM=8
 REF_NUM_NODES=1
 
 # stage 1
-MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) 
+MICRO_BSZ = 2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) 
 
 
 
@@ -477,8 +477,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=21,
-                                   end=24
+                                   start=61,
+                                   end=64
             )
         )
         .with_callback(

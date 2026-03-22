@@ -101,16 +101,16 @@ EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 250
 
 NUM_EXPERTS = 48
-TOP_K = 2
+TOP_K = 4
 D_MODEL=2560
 D_ATTN=3072
 
-HEAD_DIM=64
+HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD=4
+NUM_KV_HEAD=8
 MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 1280  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -119,16 +119,46 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=4
+EP_DIM=8
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=8
+REF_NUM_NODES=10
 
-# stage 1
-MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # start at 16M
-LR_REF_BSZ = 4 * 1024 * 1024
+# stage 1 - 1.5M
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (3) 
+# NO LR_REF_BSZ
+
+# stage 2 - 2M
+# MICRO_BSZ = 1
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (4) 
+# NO LR_REF_BSZ
+
+# stage 3 - 3M
+# MICRO_BSZ = 1
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (6) 
+# NO LR_REF_BSZ
+
+# stage 3 - 4M
+# MICRO_BSZ = 1
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (8) 
+# NO LR_REF_BSZ
+
+# stage 4 - 8M
+# MICRO_BSZ = 2
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) 
+# NO LR_REF_BSZ
+
+# stage 5 - 9M
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 9
+# NO LR_REF_BSZ
+
+# stage 5 - 15M
+MICRO_BSZ = 3
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 15
+# LR_REF_BSZ=9M
 
 
 GLOBAL_BATCH_SIZE = (
@@ -138,8 +168,8 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 3e-4 
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / LR_REF_BSZ) # lr is for X Million token
+LR= 2e-3 * 2 / 5
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (9 * 1024 * 1024)) # lr is for X Million token
 NUM_LAYERS=24
 
 if PP_DIM > 1:
@@ -165,8 +195,10 @@ USE_ROWWISE_A2A=True
 USE_FP8=False
 ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
+USE_MUON = False
+USE_PERI_NORM = True
 
-TAG=f'c3'
+TAG=f'c1'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -202,8 +234,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
+        embed_scale=math.sqrt(d_model),
+        embedding_norm=layer_norm,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
+            use_peri_norm=USE_PERI_NORM,
             ep_no_sync=USE_NO_SYNC_EP,
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
@@ -242,13 +277,15 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                # lb_loss_weight=0.01,
-                lb_loss_weight=0.02,
+                # lb_loss_weight=0.1,
+                lb_loss_weight=0.01,
+                # lb_loss_weight=0.0065,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
                 normalize_expert_weights=1.0,
                 restore_weight_scale=True,
+                use_recompute_fp32_cast=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
             ),
             shared_experts=SharedExpertsConfig(
                 d_model=d_model,
@@ -269,6 +306,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 dtype=dtype,
                 normalize_expert_weights=1.0,
                 restore_weight_scale=True,
+                use_recompute_fp32_cast=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
             ) if NUM_SHARED_EXPERTS > 1 else None, # only need router if > 1 expert
             feed_forward_norm=layer_norm,
         ),
@@ -281,7 +319,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE=512
+    WINDOW_SIZE=1024
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -292,7 +330,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: TransformerBlockConfig(
-                name=TransformerBlockType.reordered_norm,
+                name=TransformerBlockType.peri_norm if USE_PERI_NORM else TransformerBlockType.default,
                 attention=AttentionConfig(
                     name=AttentionType.default,
                     n_heads=NUM_HEAD,
@@ -315,13 +353,13 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return config
 
 
-# EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
-# ROUTER_LR = LR * 0.2
-SCHED_WARMUP_TOKENS = int((40e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-# SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((5960e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_MID_FRACTION = 0.8
+EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
+# EXPERT_LR = LR * 0.6  # scale lr for expert params, empirical choice
+
+SCHED_WARMUP_TOKENS = int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_FAST_DECAY_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_LONG_DECAY_TOKENS = int((5985e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_MID_FRACTION = 0.6
 SCHED_FINAL_FRACTION = 0.1
 
 # patch
@@ -339,11 +377,26 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
+            muon_adjust_lr_fn="match_rms_adamw" if USE_MUON else None,
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
-                # OptimGroupOverride(params=["*w_up_gate", "*w_down","*routed_experts_router*"], opts=dict(lr=EXPERT_LR)),
-                OptimGroupOverride(params=["*w_up_gate", "*w_down",], opts=dict(lr=EXPERT_LR)),
-                # OptimGroupOverride(params=["*routed_experts_router*"], opts=dict(lr=ROUTER_LR)),
+                OptimGroupOverride(
+                    params=["*embeddings.weight", "*norm.weight"],
+                    opts=dict(weight_decay=0.0, use_muon=False),
+                ),
+                # OptimGroupOverride(
+                #     params=[
+                #         "*.w_q.weight", 
+                #         "*.w_k.weight", 
+                #         "*.w_v.weight", 
+                #         "*attention.w_out.weight", # to exclude "lm_head.w_out.weight"
+                #         "*.w1.weight", "*.w2.weight", "*.w3.weight"
+                #         ], # attention + dense mlp
+                #     opts=dict(use_muon=USE_MUON),
+                # ),
+                OptimGroupOverride(
+                    params=["*routed_experts.w_up_gate", "*routed_experts.w_down"],
+                    opts=dict(lr=EXPERT_LR, use_muon=USE_MUON),
+                ),
             ],
             compile=USE_COMPILE, 
             dtype=DType.float32,
@@ -382,11 +435,11 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
                     start_lr_fraction=0.0,
                     end_lr_fraction=1.0,
                 ),
-                # ComposableSchedulerStage(
-                #     duration=SCHED_FAST_DECAY_TOKENS,
-                #     shape=ComposableSchedulerStageType.cosine,
-                #     end_lr_fraction=SCHED_MID_FRACTION,
-                # ),
+                ComposableSchedulerStage(
+                    duration=SCHED_FAST_DECAY_TOKENS,
+                    shape=ComposableSchedulerStageType.cosine,
+                    end_lr_fraction=SCHED_MID_FRACTION,
+                ),
                 ComposableSchedulerStage(
                     duration=SCHED_LONG_DECAY_TOKENS,
                     shape=ComposableSchedulerStageType.cosine,
@@ -428,17 +481,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
-            checkpoints_to_eval=[
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step86000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step87000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step88000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step89000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step90000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step91000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step92000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step93000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step93250",
-            ]
+            # checkpoints_to_eval=[
+            #     "/workspace/checkpoint/OLMoE3-dev-260304-dbg_2048d2048a_6L2048M2048S_16E4K1S_c1"
+            # ]
         )
         .with_callback(
             "checkpointer",
@@ -464,8 +509,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=41,
-                                   end=45
+                                   start=61,
+                                   end=64
             )
         )
         .with_callback(
@@ -478,9 +523,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, root_dir="/workspace/"
+        # )
     )
 
 
@@ -514,6 +559,7 @@ def build_data_components(
         tokenizer=common.tokenizer,
         # mix_base_dir=common.root_dir,
         mix_base_dir="s3://ai2-llm",
+        # mix_base_dir="/workspace/data/ai2-llm",
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
         max_target_sequence_length=max(common.max_sequence_length, 8192),

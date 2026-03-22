@@ -99,6 +99,9 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
         'model.norm.weight':'module.lm_head.norm.weight.main',
     }
 
+    if hf_model.config.embed_norm:
+        mapping_hf_to_olmo['model.embed_norm.weight'] = 'module.embedding_norm.weight.main'
+
     def _extract_experts_up_gate_proj(olmo_w_up_gate, num_experts, expert_hidden_size, d_model, weight_name, expert_idx):
         W = olmo_w_up_gate.reshape(num_experts, 2 * expert_hidden_size, d_model)  # (E, 2H, D)
         W_up   = W[:, :expert_hidden_size, :]                                     # (E, H, D)
@@ -219,9 +222,31 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
                             expert_idx=expert_idx)
                 )
 
-        # model.layers.0.post_attention_layernorm.weight -- module.blocks.0.attention_norm.weight
-        mapping_hf_to_olmo[f'model.layers.{layer_idx}.post_attention_layernorm.weight'] = f'module.blocks.{layer_idx}.attention_norm.weight.main'
-        mapping_hf_to_olmo[f'model.layers.{layer_idx}.post_feedforward_layernorm.weight'] = f'module.blocks.{layer_idx}.feed_forward_norm.weight.main'
+
+        # peri ln
+        if hf_model.config.use_peri_ln:
+            # in peri ln, 
+            # OLMo -> HF (note how `attention_norm` is input norm in dense, but output norm in moe due to reorder)
+            # dense: attention_norm + post_attention_norm -> pre_attention_layernorm + post_attention_layernorm
+            # moe: attention_input_norm + attention_norm -> pre_attention_layernorm + post_attention_layernorm;
+            # same for feedforward norm
+
+            # based on whether it's dense or moe layer
+            if layer_idx in hf_model.config.dense_layers_indices:
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.pre_attention_layernorm.weight'] = f'module.blocks.{layer_idx}.attention_norm.weight.main'
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.pre_feedforward_layernorm.weight'] = f'module.blocks.{layer_idx}.feed_forward_norm.weight.main'
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.post_attention_layernorm.weight'] = f'module.blocks.{layer_idx}.post_attention_norm.weight.main'
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.post_feedforward_layernorm.weight'] = f'module.blocks.{layer_idx}.post_feed_forward_norm.weight.main'
+            else:
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.pre_attention_layernorm.weight'] = f'module.blocks.{layer_idx}.attention_input_norm.weight.main'
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.pre_feedforward_layernorm.weight'] = f'module.blocks.{layer_idx}.feed_forward_input_norm.weight.main'
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.post_attention_layernorm.weight'] = f'module.blocks.{layer_idx}.attention_norm.weight.main'
+                mapping_hf_to_olmo[f'model.layers.{layer_idx}.post_feedforward_layernorm.weight'] = f'module.blocks.{layer_idx}.feed_forward_norm.weight.main'
+        else:
+            # reordered norm, consistent between dense and moe layers
+            # model.layers.0.post_attention_layernorm.weight -- module.blocks.0.attention_norm.weight
+            mapping_hf_to_olmo[f'model.layers.{layer_idx}.post_attention_layernorm.weight'] = f'module.blocks.{layer_idx}.attention_norm.weight.main'
+            mapping_hf_to_olmo[f'model.layers.{layer_idx}.post_feedforward_layernorm.weight'] = f'module.blocks.{layer_idx}.feed_forward_norm.weight.main'
 
     # apply rules ##############
 
@@ -264,16 +289,13 @@ if __name__ == "__main__":
     output_path = args.output_path
     work_dir = args.work_dir
 
-    print(f"Loading OLMo checkpoint from {CKPT_PATH}...")
-    main_sd = load_state_dict_direct(
-        dir=os.path.join(CKPT_PATH, 'model_and_optim'),
-        process_group=None, pre_download=True, work_dir=work_dir
-    )
-    print("Loaded OLMo checkpoint state dict.")
-
     olmo_config_path = os.path.join(CKPT_PATH, 'config.json')
     with open(olmo_config_path, 'r') as f:
         olmo_cfg = json.load(f)
+
+    print("Loaded OLMo config:")
+    print(olmo_cfg)
+    print()
 
     olmo_model_cfg = olmo_cfg['model']
 
@@ -293,6 +315,7 @@ if __name__ == "__main__":
     hf_config = Olmo3MoeConfig(
         vocab_size=olmo_model_cfg['vocab_size'],
         hidden_size=olmo_model_cfg['d_model'],
+        attention_hidden_size=olmo_model_cfg['block']['attention']['d_attn'],
         dense_mlp_intermediate_size=dense_mlp_intermediate_size,
         moe_intermediate_size=olmo_model_cfg['block']['routed_experts']['hidden_size'],
         shared_expert_intermediate_size=olmo_model_cfg['block']['shared_experts']['hidden_size'],
@@ -320,12 +343,27 @@ if __name__ == "__main__":
         sliding_window=max(olmo_model_cfg['block']['attention']['sliding_window']['pattern']),
         use_head_qk_norm=olmo_model_cfg['block']['attention']['use_head_qk_norm'],
         layer_types = None,
-        dense_layers_indices=dense_layers_indices
+        dense_layers_indices=dense_layers_indices,
+        original_num_experts_per_tok=olmo_model_cfg['block']['routed_experts_router']['original_top_k'] if 'original_top_k' in olmo_model_cfg['block']['routed_experts_router'] else None,
+        # old checkpoints may not have these fields; default to 1.0 and False
+        embed_scale=olmo_model_cfg['embed_scale'] if 'embed_scale' in olmo_model_cfg else 1.0,
+        embed_norm=True if ('embedding_norm' in olmo_model_cfg and olmo_model_cfg['embedding_norm'] is not None) else False, # assume embed_norm is the same type as other norms
+        use_peri_ln=olmo_model_cfg['block']['use_peri_norm'] if 'use_peri_norm' in olmo_model_cfg['block'] else False,
     )
 
+    print("Constructed HF config:")
+    print(hf_config)
+    print()
     # create HF model
     hf_model = Olmo3MoeForCausalLM(hf_config)
     print("Created HF model - Done.")
+
+    print(f"Loading OLMo checkpoint from {CKPT_PATH}...")
+    main_sd = load_state_dict_direct(
+        dir=os.path.join(CKPT_PATH, 'model_and_optim'),
+        process_group=None, pre_download=True, work_dir=work_dir
+    )
+    print("Loaded OLMo checkpoint state dict.")
 
     load_hf_model_from_olmo_checkpoint(hf_model, main_sd)
     print("Loaded HF model from OLMo checkpoint.")
