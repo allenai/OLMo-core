@@ -44,8 +44,8 @@ Override with `--save-folder=/custom/path`.
 | Model | Non-Emb Params | Nodes | GPUs | 1x Chinchilla Tokens | Expected Time (1x) |
 |-------|----------------|-------|------|----------------------|--------------------|
 | 65M   | 40M            | 1     | 8    | 800M                 | ~16 min            |
-| 150M  | 106M           | 1     | 8    | 2.1B                 | ~45 min (est)      |
-| 260M  | 195M           | 1     | 8    | 3.9B                 | ~90 min (est)      |
+| 150M  | 106M           | 1     | 8    | 2.1B                 | ~40 min (est)      |
+| 260M  | 195M           | 1     | 8    | 3.9B                 | ~68 min            |
 
 *Times measured on jupiter cluster with 8x H100 GPUs.*
 
@@ -67,6 +67,19 @@ python src/scripts/train/ladder/gemma_like_ladder.py launch gl-65m-mytest ai2/ju
 ### 150M Model
 ```bash
 python src/scripts/train/ladder/gemma_like_ladder.py launch gl-150m-mytest ai2/jupiter \
+    --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
+    --mix-base-dir=s3://ai2-llm \
+    --chinchilla-multiple=1.0 \
+    --beaker-priority=high \
+    --launch.workspace=ai2/oe-data \
+    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
+    --trainer.callbacks.wandb.enabled=true \
+    --trainer.callbacks.wandb.project=oe-data-web-contam
+```
+
+### 260M Model
+```bash
+python src/scripts/train/ladder/gemma_like_ladder.py launch gl-260m-mytest ai2/jupiter \
     --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
     --mix-base-dir=s3://ai2-llm \
     --chinchilla-multiple=1.0 \
@@ -100,6 +113,35 @@ All evaluators also run at the end of training (`eval_on_finish=True`).
 | Model | Run Name | Experiment | WandB | Runtime |
 |-------|----------|------------|-------|---------|
 | 65M | gl-65m-v3 | [01KMFEYKRMWM1KP585XVAKQ8FA](https://beaker.org/ex/01KMFEYKRMWM1KP585XVAKQ8FA) | [p3v7ymoe](https://wandb.ai/ai2-llm/oe-data-web-contam/runs/p3v7ymoe) | 16 min |
+| 260M | gl-260m-v1 | [01KMFH4DYYQ5M2JP8H1CXFNZGB](https://beaker.org/ex/01KMFH4DYYQ5M2JP8H1CXFNZGB) | [yokxs6rp](https://wandb.ai/ai2-llm/oe-data-web-contam/runs/yokxs6rp) | 68 min |
+
+## Expected Scaling Behavior
+
+Larger models trained on proportionally more data (Chinchilla scaling) should show consistent improvements. Here's what we observed comparing 65M vs 260M:
+
+### Accuracy Metrics (higher = better)
+
+| Task | 65M | 260M | Change |
+|------|-----|------|--------|
+| common_knowledge | 38.9% | 65.0% | +67% |
+| logical_reasoning | 69.2% | 77.4% | +12% |
+| pattern | 43.6% | 51.9% | +19% |
+| mmlu_social_sciences | 26.0% | 31.0% | +19% |
+| copycolors | 7.0% | 10.0% | +43% |
+
+### BPB Metrics (lower = better)
+
+| Task | 65M | 260M | Change |
+|------|-----|------|--------|
+| codex_humaneval | 2.03 | 1.43 | -30% |
+| codex_mbpp | 2.37 | 1.82 | -24% |
+| hellaswag | 1.28 | 1.04 | -18% |
+| minerva_math | 1.44 | 1.08 | -25% |
+| mmlu_humanities | 1.36 | 1.10 | -19% |
+| mmlu_stem | 2.61 | 2.10 | -20% |
+| mt_mbpp_java | 1.81 | 1.34 | -26% |
+
+**Summary**: Expect 18-30% improvement in BPB metrics and generally higher accuracy on knowledge/reasoning tasks when scaling up. This validates that the training pipeline and data mixture are working correctly.
 
 ## Known Issues & Solutions
 
