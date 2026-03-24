@@ -716,7 +716,7 @@ def parse_model_size(run_name: str) -> GemmaLikeOlmoV2:
     # Sort by value length descending so longer matches are tried first,
     # e.g. "32b" is matched before "2b", "14b" before "4b".
     for size in sorted(GemmaLikeOlmoV2, key=lambda s: len(s.value), reverse=True):
-        if size == size_stub:
+        if size.value.lower() == size_stub.lower():
             return size
 
     raise ValueError(
