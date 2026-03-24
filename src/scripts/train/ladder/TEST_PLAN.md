@@ -16,7 +16,7 @@ Override with `--save-folder=/custom/path`.
 
 | File | Purpose |
 |------|---------|
-| `test-web-code-mix.yaml` | Test mixture spec with web + code_fresh data |
+| `test-web-code-mix.yaml` | Test mixture spec with web + code_fresh data (uses S3 paths) |
 
 ## Test Commands (Single Node = 8 GPUs)
 
@@ -35,6 +35,7 @@ python src/scripts/train/ladder/gemma_like_ladder.py launch gl-65m ai2/jupiter \
     --chinchilla-multiple=0.01 \
     --beaker-priority=high \
     --launch.workspace=ai2/oe-data \
+    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
     --trainer.callbacks.wandb.enabled=true \
     --trainer.callbacks.wandb.project=oe-data-web-contam
 ```
@@ -46,6 +47,7 @@ python src/scripts/train/ladder/gemma_like_ladder.py launch gl-150m ai2/jupiter 
     --chinchilla-multiple=0.01 \
     --beaker-priority=high \
     --launch.workspace=ai2/oe-data \
+    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
     --trainer.callbacks.wandb.enabled=true \
     --trainer.callbacks.wandb.project=oe-data-web-contam
 ```
@@ -57,6 +59,7 @@ python src/scripts/train/ladder/gemma_like_ladder.py launch gl-260m ai2/jupiter 
     --chinchilla-multiple=0.01 \
     --beaker-priority=high \
     --launch.workspace=ai2/oe-data \
+    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
     --trainer.callbacks.wandb.enabled=true \
     --trainer.callbacks.wandb.project=oe-data-web-contam
 ```
@@ -72,13 +75,21 @@ python src/scripts/train/ladder/gemma_like_ladder.py launch gl-260m ai2/jupiter 
 ## Verification Steps
 
 1. Jobs launch successfully on Beaker (workspace: `ai2/oe-data`)
-2. Monitor via: `beaker job logs <job-id>`
+2. Monitor via: `beaker job logs <job-id> --follow`
 3. Check WandB dashboard: https://wandb.ai/ai2-llm/oe-data-web-contam
 4. Verify logs show "web" and "code_fresh" data source labels
 5. Record wall-clock time and tokens/second throughput
 
+## Previous Runs
+
+| Model | Experiment | Status |
+|-------|------------|--------|
+| 65M | [01KMFDJSDTHZQDAJPRAF32G0MT](https://beaker.org/ex/01KMFDJSDTHZQDAJPRAF32G0MT) | Launched 2026-03-24 |
+
 ## Notes
 
 - **Branch**: `kylel/ladder-yaml-mix`
-- **GCS credentials**: Required on the machine running the launch command
+- **YAML uses S3 paths**: Avoids needing `GOOGLE_CLOUD_PROJECT` env var locally
+- **google_credentials_secret**: The `ai2/oe-data` workspace has `GOOGLE_APPLICATION_CREDENTIALS` (not `GOOGLE_CREDENTIALS`), so the flag `--launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS` is required
 - **repetition_factor**: `-1.0` in YAML allows unlimited repetition for small test files
+- **Slack error**: You may see a Slack notification error at the end if `SLACK_WEBHOOK_URL` isn't configured - this is harmless, the job still runs
