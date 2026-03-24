@@ -3,12 +3,25 @@
 ## Overview
 Test the gemma-like ladder with YAML-based data source configuration on Beaker (8 GPU nodes).
 
+## Quick Start (Working Command)
+
+```bash
+python src/scripts/train/ladder/gemma_like_ladder.py launch gl-65m-v3 ai2/jupiter \
+    --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
+    --mix-base-dir=s3://ai2-llm \
+    --chinchilla-multiple=1.0 \
+    --beaker-priority=urgent \
+    --launch.workspace=ai2/oe-data \
+    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
+    --trainer.callbacks.wandb.enabled=true \
+    --trainer.callbacks.wandb.project=oe-data-web-contam
+```
+
 ## Checkpoint Location
 
 | Cluster Type | Root Dir | Example Path |
 |--------------|----------|--------------|
-| Weka (jupiter) | `/weka/oe-training-default/ai2-llm` | `/weka/.../checkpoints/kylel/olm4_mixing_calibration/gl-65m` |
-| GCS (augusta) | `gs://ai2-llm` | `gs://ai2-llm/checkpoints/kylel/olm4_mixing_calibration/gl-65m` |
+| Weka (jupiter) | `/weka/oe-training-default/ai2-llm` | `/weka/.../checkpoints/{username}/olm4_mixing_calibration/gl-65m-v3` |
 
 Override with `--save-folder=/custom/path`.
 
@@ -18,21 +31,30 @@ Override with `--save-folder=/custom/path`.
 |------|---------|
 | `test-web-code-mix.yaml` | Test mixture spec with web + code_fresh data (uses S3 paths) |
 
-## Test Commands (Single Node = 8 GPUs)
+## Required Flags
 
-### Model Sizes
+| Flag | Value | Why |
+|------|-------|-----|
+| `--mix-base-dir` | `s3://ai2-llm` | Makes evaluators use S3 instead of GCS (avoids permission errors) |
+| `--launch.google_credentials_secret` | `GOOGLE_APPLICATION_CREDENTIALS` | Correct secret name in ai2/oe-data workspace |
+| `--chinchilla-multiple` | `>= 1.0` | Scheduler warmup+decay needs ~524M tokens; smaller values cause assertion errors |
 
-| Model | Non-Emb Params | Nodes | GPUs | Chinchilla Tokens (4x) |
-|-------|----------------|-------|------|------------------------|
-| 65M   | 40M            | 1     | 8    | 3.2B                   |
-| 150M  | 106M           | 1     | 8    | 8.5B                   |
-| 260M  | 195M           | 1     | 8    | 15.6B                  |
+## Model Sizes
 
-### Test 1: 65M on 1 node (0.01x Chinchilla)
+| Model | Non-Emb Params | Nodes | GPUs | 1x Chinchilla Tokens |
+|-------|----------------|-------|------|----------------------|
+| 65M   | 40M            | 1     | 8    | 800M                 |
+| 150M  | 106M           | 1     | 8    | 2.1B                 |
+| 260M  | 195M           | 1     | 8    | 3.9B                 |
+
+## Test Commands
+
+### 65M Model
 ```bash
-python src/scripts/train/ladder/gemma_like_ladder.py launch gl-65m ai2/jupiter \
+python src/scripts/train/ladder/gemma_like_ladder.py launch gl-65m-mytest ai2/jupiter \
     --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
-    --chinchilla-multiple=0.01 \
+    --mix-base-dir=s3://ai2-llm \
+    --chinchilla-multiple=1.0 \
     --beaker-priority=high \
     --launch.workspace=ai2/oe-data \
     --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
@@ -40,11 +62,12 @@ python src/scripts/train/ladder/gemma_like_ladder.py launch gl-65m ai2/jupiter \
     --trainer.callbacks.wandb.project=oe-data-web-contam
 ```
 
-### Test 2: 150M on 1 node
+### 150M Model
 ```bash
-python src/scripts/train/ladder/gemma_like_ladder.py launch gl-150m ai2/jupiter \
+python src/scripts/train/ladder/gemma_like_ladder.py launch gl-150m-mytest ai2/jupiter \
     --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
-    --chinchilla-multiple=0.01 \
+    --mix-base-dir=s3://ai2-llm \
+    --chinchilla-multiple=1.0 \
     --beaker-priority=high \
     --launch.workspace=ai2/oe-data \
     --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
@@ -52,17 +75,15 @@ python src/scripts/train/ladder/gemma_like_ladder.py launch gl-150m ai2/jupiter 
     --trainer.callbacks.wandb.project=oe-data-web-contam
 ```
 
-### Test 3: 260M on 1 node
-```bash
-python src/scripts/train/ladder/gemma_like_ladder.py launch gl-260m ai2/jupiter \
-    --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
-    --chinchilla-multiple=0.01 \
-    --beaker-priority=high \
-    --launch.workspace=ai2/oe-data \
-    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
-    --trainer.callbacks.wandb.enabled=true \
-    --trainer.callbacks.wandb.project=oe-data-web-contam
-```
+## Evaluation Schedule
+
+| Evaluator | Interval | Description |
+|-----------|----------|-------------|
+| `lm_evaluator` | Every 2,500 steps | Perplexity on v3-small-ppl-validation (c4, dolma, pile, wikitext) |
+| `code_fresh_lm_evaluator` | Every 2,500 steps | Perplexity on code_fresh (python, js, cpp, rust, etc.) |
+| `downstream_evaluator` | Every 5,000 steps | ARC, MMLU, HellaSwag, Codex, etc. (26 tasks) |
+
+All evaluators also run at the end of training (`eval_on_finish=True`).
 
 ## WandB Logging
 
@@ -72,19 +93,39 @@ python src/scripts/train/ladder/gemma_like_ladder.py launch gl-260m ai2/jupiter 
 | **Project** | `oe-data-web-contam` |
 | **Dashboard** | https://wandb.ai/ai2-llm/oe-data-web-contam |
 
-## Verification Steps
+## Successful Runs
 
-1. Jobs launch successfully on Beaker (workspace: `ai2/oe-data`)
-2. Monitor via: `beaker job logs <job-id> --follow`
-3. Check WandB dashboard: https://wandb.ai/ai2-llm/oe-data-web-contam
-4. Verify logs show "web" and "code_fresh" data source labels
-5. Record wall-clock time and tokens/second throughput
+| Model | Run Name | Experiment | WandB |
+|-------|----------|------------|-------|
+| 65M | gl-65m-v3 | [01KMFEYKRMWM1KP585XVAKQ8FA](https://beaker.org/ex/01KMFEYKRMWM1KP585XVAKQ8FA) | [p3v7ymoe](https://wandb.ai/ai2-llm/oe-data-web-contam/runs/p3v7ymoe) |
 
-## Previous Runs
+## Known Issues & Solutions
 
-| Model | Experiment | Status |
-|-------|------------|--------|
-| 65M | [01KMFDJSDTHZQDAJPRAF32G0MT](https://beaker.org/ex/01KMFDJSDTHZQDAJPRAF32G0MT) | Launched 2026-03-24 |
+### 1. GCS Permission Denied (403 Forbidden)
+**Error**: `storage.objects.get access denied` on `gs://ai2-llm/eval-data/...`
+
+**Solution**: Add `--mix-base-dir=s3://ai2-llm` to use S3 for evaluators instead of GCS.
+
+### 2. Scheduler AssertionError
+**Error**: `AssertionError: 0 <= decay_min_lr < initial_lr`
+
+**Cause**: `--chinchilla-multiple` is too small. The scheduler's warmup (262M tokens) + decay (262M tokens) = 524M tokens minimum.
+
+**Solution**: Use `--chinchilla-multiple=1.0` or higher.
+
+### 3. Checkpoint Fingerprint Mismatch
+**Error**: `Restoring data loader state from different dataset source is not supported`
+
+**Cause**: Trying to resume from a checkpoint created with different data config.
+
+**Solution**: Use a unique run name (e.g., `gl-65m-v4` instead of `gl-65m`) to get a fresh checkpoint directory.
+
+### 4. Slack Webhook Error
+**Error**: `MissingSchema: Invalid URL ''`
+
+**Cause**: `SLACK_WEBHOOK_URL` secret not configured.
+
+**Impact**: Harmless - job still runs, just no Slack notifications.
 
 ## Running with Your Own Account
 
@@ -104,13 +145,10 @@ The launch script expects these secrets in your Beaker workspace (where `{USERNA
 ### Check if Your Secrets Exist
 
 ```bash
-# List your secrets in the workspace
 beaker secret list --workspace ai2/oe-data | grep -i $(whoami)
 ```
 
 ### Add Missing Secrets
-
-If secrets are missing, add them:
 
 ```bash
 # Replace YOUR_USERNAME with your Beaker username (uppercase)
@@ -120,29 +158,15 @@ beaker secret write YOUR_USERNAME_AWS_CONFIG "$(cat ~/.aws/config)" --workspace 
 beaker secret write YOUR_USERNAME_AWS_CREDENTIALS "$(cat ~/.aws/credentials)" --workspace ai2/oe-data
 ```
 
-### Checkpoint Location
-
-Checkpoints are saved to a path that includes your username:
-```
-/weka/oe-training-default/ai2-llm/checkpoints/{username}/olm4_mixing_calibration/{run-name}
-```
-
-### Creating Your Own YAML Mixture
-
-The YAML format for data mixtures:
+## Creating Your Own YAML Mixture
 
 ```yaml
 mix:
   - name: source_name        # Label for this data source (shown in logs/metrics)
     weight: 0.9              # Sampling weight (weights are normalized)
-    paths:                   # List of .npy files (S3 or GCS paths)
-      - s3://bucket/path/to/file.npy
+    paths:                   # List of .npy files (use S3 paths, not GCS)
+      - s3://ai2-llm/path/to/file.npy
     repetition_factor: -1.0  # -1.0 = unlimited repetition, 1.0 = no repetition
 ```
 
-## Notes
-
-- **YAML uses S3 paths**: Avoids needing `GOOGLE_CLOUD_PROJECT` env var locally
-- **google_credentials_secret**: The `ai2/oe-data` workspace has `GOOGLE_APPLICATION_CREDENTIALS` (not `GOOGLE_CREDENTIALS`), so the flag `--launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS` is required
-- **repetition_factor**: `-1.0` in YAML allows unlimited repetition for small test files
-- **Slack error**: You may see a Slack notification error at the end if `SLACK_WEBHOOK_URL` isn't configured - this is harmless, the job still runs
+**Important**: Use S3 paths (`s3://`) not GCS paths (`gs://`) to avoid needing `GOOGLE_CLOUD_PROJECT` locally.
