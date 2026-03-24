@@ -98,6 +98,7 @@ class TrainerConfig(Config):
         task_set: str = "full",
         eval_interval: int = 10_000,
         root_dir=None,
+        with_lm_eval: bool = True,
     ) -> "TrainerConfig":
         """
         Return a new trainer config with added callbacks for downstream evaluation and validation sets.
@@ -116,24 +117,29 @@ class TrainerConfig(Config):
 
         tasks.sort()
 
-        return self.with_callback(
+        callbacks = self.with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
                 tasks=tasks, tokenizer=tokenizer, eval_interval=eval_interval
             ),
-        ).with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
-                    DataMix.v3_small_ppl_validation,
-                    mix_base_dir=get_root_dir(cluster) if root_dir is None else root_dir,
-                    sequence_length=sequence_length,
-                    tokenizer=tokenizer,
-                    work_dir=get_work_dir(get_root_dir(cluster) if root_dir is None else root_dir),
-                ),
-                eval_interval=eval_interval,
-            ),
         )
+        
+        if with_lm_eval:
+            callbacks = callbacks.with_callback(
+                "lm_evaluator",
+                LMEvaluatorCallbackConfig(
+                    eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+                        DataMix.v3_small_ppl_validation,
+                        mix_base_dir=get_root_dir(cluster) if root_dir is None else root_dir,
+                        sequence_length=sequence_length,
+                        tokenizer=tokenizer,
+                        work_dir=get_work_dir(get_root_dir(cluster) if root_dir is None else root_dir),
+                    ),
+                    eval_interval=eval_interval,
+                ),
+            )
+
+        return callbacks
 
     def build(
         self,

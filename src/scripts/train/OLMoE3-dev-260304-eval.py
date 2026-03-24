@@ -126,9 +126,16 @@ PP_DIM=1
 REF_NUM_NODES=8
 
 # stage 1
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # start at 16M
+# LR_REF_BSZ = 4 * 1024 * 1024
+
+# stage 2
 MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32) # start at 16M
-LR_REF_BSZ = 4 * 1024 * 1024
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (64) # 32M
+LR_REF_BSZ = 8 * 1024 * 1024
+# EXPERT_LR: 0.5 -> 0.5 * math.sqrt(2)
+# fix decay
 
 
 GLOBAL_BATCH_SIZE = (
@@ -152,7 +159,7 @@ else:
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=True
+USE_COMPILE=False
 USE_NO_SYNC_EP=True
 USE_AC=False
 PER_LAYER_RECOMPUTE=False
@@ -244,6 +251,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.01,
                 lb_loss_weight=0.02,
+                # lb_loss_weight=0.018,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -316,8 +324,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
-# ROUTER_LR = LR * 0.2
+# EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
+EXPERT_LR = LR * 0.5 * math.sqrt(2)
 SCHED_WARMUP_TOKENS = int((40e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 # SCHED_FAST_DECAY_TOKENS = int((35e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_LONG_DECAY_TOKENS = int((5960e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
@@ -340,7 +348,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
+                # OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)), # WRONG
+                OptimGroupOverride(params=["*embeddings.weight", "*norm.weight"], opts=dict(weight_decay=0.0)),
                 # OptimGroupOverride(params=["*w_up_gate", "*w_down","*routed_experts_router*"], opts=dict(lr=EXPERT_LR)),
                 OptimGroupOverride(params=["*w_up_gate", "*w_down",], opts=dict(lr=EXPERT_LR)),
                 # OptimGroupOverride(params=["*routed_experts_router*"], opts=dict(lr=ROUTER_LR)),
@@ -424,20 +433,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-            # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
             checkpoints_to_eval=[
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step86000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step87000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step88000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step89000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step90000",
-                # "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step91000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step92000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step93000",
-                "/workspace/checkpoint/OLMoE3-dev-260304_2560d3072a_24L2560M2560S_48E2K1S_c3/step93250",
+                "/workspace/checkpoint/OLMoE3-dev-260304-decay-2000B-100B_2560d3072a_24L2560M2560S_48E2K1S_c3/step96085"
             ]
         )
         .with_callback(
@@ -455,7 +455,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=common.run_name,
                 entity="ai2-llm",
                 project="olmoe-dev-v2",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -479,7 +479,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="copycolors", eval_interval=EVAL_INTERVAL, with_lm_eval=False
         )
     )
 

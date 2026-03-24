@@ -1,5 +1,5 @@
 """
-Match 7B TPS
+from 005-noscalelr: 2xLR
 """
 
 import logging
@@ -96,21 +96,21 @@ SEQUENCE_LENGTH = 8192
 torch.set_float32_matmul_precision('high')
 
 
-MAX_DURATION = int(6000e9)
+MAX_DURATION = int(150e9)
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 500
+SAVE_INTERVAL = 2500
 
-NUM_EXPERTS = 48
+NUM_EXPERTS = 64
 TOP_K = 4
-D_MODEL=2560
-D_ATTN=3072
+D_MODEL=1024
+D_ATTN=1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD=8
-MOE_HIDDEN_SIZE = 2560
+NUM_KV_HEAD=NUM_HEAD // 2 # GQA
+MOE_HIDDEN_SIZE = 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 1280  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -119,41 +119,16 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=1
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=8
+REF_NUM_NODES=2
 
-# stage 1 - 1.5M
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (3) 
-# NO LR_REF_BSZ
+MICRO_BSZ = 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
+# LR_REF_BSZ=9M
 
-# stage 2 - 2M
-# MICRO_BSZ = 1
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (4) 
-# NO LR_REF_BSZ
-
-# stage 3 - 3M
-# MICRO_BSZ = 1
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (6) 
-# NO LR_REF_BSZ
-
-# stage 3 - 4M
-# MICRO_BSZ = 1
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (8) 
-# NO LR_REF_BSZ
-
-# stage 4 - 8M
-# MICRO_BSZ = 2
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16) 
-# NO LR_REF_BSZ
-
-# stage 5 - 9M
-MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 9
-# NO LR_REF_BSZ
 
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
@@ -162,9 +137,9 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 2e-3 * 2 / 5
-# LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024)) # lr is for X Million token
-NUM_LAYERS=24
+LR= 2e-3 * 2
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024)) # lr is for X Million token
+NUM_LAYERS=12
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -191,6 +166,23 @@ ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
+
+
+# EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
+EXPERT_LR = LR
+
+# WSD
+SCHED_WARMUP_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_LONG_DECAY_TOKENS = int((1000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_MID_FRACTION = 1.0
+SCHED_FINAL_FRACTION = 1.0
+
+# patch
+MONKEY_PATCH_DECAY_START_TOKENS = int((120e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+MONKEY_PATCH_DECAY_DURATION_TOKENS = int((30e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE) # 120B + 30B decay
+MONKEY_PATCH_DECAY_END_FRACTION = 0.01
+MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.linear
 
 TAG=f'c1'
 
@@ -347,20 +339,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return config
 
 
-EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-# EXPERT_LR = LR * 0.6  # scale lr for expert params, empirical choice
-
-SCHED_WARMUP_TOKENS = int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_FAST_DECAY_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((5985e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_MID_FRACTION = 0.6
-SCHED_FINAL_FRACTION = 0.1
-
-# patch
-MONKEY_PATCH_DECAY_START_TOKENS = None
-MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-MONKEY_PATCH_DECAY_END_FRACTION = SCHED_FINAL_FRACTION
-MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine
 
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
@@ -429,11 +407,11 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
                     start_lr_fraction=0.0,
                     end_lr_fraction=1.0,
                 ),
-                ComposableSchedulerStage(
-                    duration=SCHED_FAST_DECAY_TOKENS,
-                    shape=ComposableSchedulerStageType.cosine,
-                    end_lr_fraction=SCHED_MID_FRACTION,
-                ),
+                # ComposableSchedulerStage(
+                #     duration=SCHED_FAST_DECAY_TOKENS,
+                #     shape=ComposableSchedulerStageType.cosine,
+                #     end_lr_fraction=SCHED_MID_FRACTION,
+                # ),
                 ComposableSchedulerStage(
                     duration=SCHED_LONG_DECAY_TOKENS,
                     shape=ComposableSchedulerStageType.cosine,
@@ -474,14 +452,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-            # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
+
             checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-dev-260319_2560d3072a_24L2560M1280S_48E4K1S_c1/step67000",
-                "/workspace/checkpoint/OLMoE3-dev-260319_2560d3072a_24L2560M1280S_48E4K1S_c1/step68000",
-                "/workspace/checkpoint/OLMoE3-dev-260319_2560d3072a_24L2560M1280S_48E4K1S_c1/step69000",
-                "/workspace/checkpoint/OLMoE3-dev-260319_2560d3072a_24L2560M1280S_48E4K1S_c1/step70000",
-                "/workspace/checkpoint/OLMoE3-dev-260319_2560d3072a_24L2560M1280S_48E4K1S_c1/step71000",
-                "/workspace/checkpoint/OLMoE3-dev-260319_2560d3072a_24L2560M1280S_48E4K1S_c1/step71500",
+                "/workspace/checkpoint/OLMoE3-abl-260322-006-noscalelr_1024d1024a_12L1024M1024S_64E4K1S_c1/step*5000",
+                "/workspace/checkpoint/OLMoE3-abl-260322-006-noscalelr_1024d1024a_12L1024M1024S_64E4K1S_c1/step*0000",
+                # "/workspace/checkpoint/OLMoE3-abl-260322-006-noscalelr_1024d1024a_12L1024M1024S_64E4K1S_c1/step*2",
             ]
         )
         .with_callback(
@@ -523,7 +498,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, # root_dir="/workspace/"
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
         )
     )
 

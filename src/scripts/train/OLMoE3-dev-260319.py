@@ -98,7 +98,7 @@ torch.set_float32_matmul_precision('high')
 
 MAX_DURATION = int(6000e9)
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 250
+SAVE_INTERVAL = 500
 
 NUM_EXPERTS = 48
 TOP_K = 4
