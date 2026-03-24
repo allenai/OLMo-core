@@ -153,10 +153,10 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
     --model_name olmoe-2x7b \
     --dataset_path $SFT_DATASET
 
-SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/olmo3_safety-general-mix
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/sft/general-olmo3_code-mix
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/weijias/OLMo2-7B-anneal-from-stage1-no-math/step11921/model_and_optim
 uv run python src/scripts/train/sft/OLMo-sft.py launch \
-    olmo2-7b-BASE-general-olmo3_safety-mix \
+    olmo2-7b-BASE-general-olmo3_code-mix \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -173,6 +173,28 @@ uv run python src/scripts/train/sft/OLMo-sft.py launch \
     --model_name olmo2-7b \
     --dataset_path $SFT_DATASET
 
+# ALL MIXED
+# BASE_CKPT=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-7b-full-mix-150b/step286103/model_and_optim
+# BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/weijias/OLMo2-7B-anneal-from-stage1-no-math/step11921/model_and_optim
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex-olmo/olmo2_flex_base-tulu3-no_code-no_math-dpo-rlvr_step_350/model_and_optim
+SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo2_math-olmo3_code_tool_use_safety-1.0
+uv run python src/scripts/train/sft/OLMo-sft.py launch \
+    olmo2-7b-CONTINUED-mixed_all_sft-fixed \
+        $BASE_CKPT \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=1e-4 \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=4096 \
+    --launch.num_gpus=8 \
+    --num_nodes=8 \
+    --budget ai2/oceo \
+    --workspace ai2/olmo-instruct \
+    --model_name olmo2-7b \
+    --dataset_path $SFT_DATASET
 
 # SAFETY
 /weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/olmo3_safety
