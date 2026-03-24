@@ -231,8 +231,8 @@ class Olmo3ModelConfigurator(TransformerModelConfigurator):
                 pass
         elif "b200" in device_type:
             try:
-                AttentionBackendName.flash_2.assert_supported()
-                attn_backend = AttentionBackendName.flash_2
+                AttentionBackendName.flash_4.assert_supported()
+                attn_backend = AttentionBackendName.flash_4
             except RuntimeError:
                 pass
 

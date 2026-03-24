@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added API reference and user guide for the `olmo_core.generate` module and interactive chat interface.
 - Added support for in-loop perplexity evals with context parallelism (CP) and tensor parallelism (TP).
 - Added documentation for verifying chat template settings before running evals after SFT.
 - Added `olmo_core.data.composable` module.
@@ -52,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for block-pattern based initialization of hybrid transformers. `TransformerConfig.block` now accepts a dict of named `TransformerBlockConfig`s, paired with a `block_pattern` list that controls per-layer block selection.
 - Added optional `vocab_size` field to `DataCollator` for validating token IDs are in `[0, vocab_size)` before the batch reaches the model. Wired through automatically in both `NumpyDataLoaderConfig` and `ComposableDataLoaderConfig`.
 - Added Olmo-hybrid official training configs and conversion script.
+- Added new in-loop eval tasks: Generative QA BPB tasks, expanded MT-MBPP languages, and Science/Medical RC tasks.
+- Added paged KV cache support to `FlashAttention4Backend` for inference on Blackwell (SM >= 10.0) GPUs.
+- Added Code Fresh per-language perplexity evals
 
 ### Fixed
 

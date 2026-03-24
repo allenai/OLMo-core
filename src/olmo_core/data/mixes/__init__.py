@@ -56,6 +56,7 @@ class DataMix(DataMixBase):
 
     # Validation mixes
     v3_small_ppl_validation = "v3-small-ppl-validation"
+    code_fresh_ppl_validation = "code-fresh-ppl-validation"
 
     @classmethod
     def _missing_(cls, value: object) -> "DataMix | None":
@@ -85,6 +86,9 @@ class DataMix(DataMixBase):
             if tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
                 tokenizer_id = "gptneox20b"
             elif tokenizer == TokenizerName.dolma2:
+                tokenizer_id = "dolma2-tokenizer"
+        elif self == DataMix.code_fresh_ppl_validation:
+            if tokenizer == TokenizerName.dolma2:
                 tokenizer_id = "dolma2-tokenizer"
         elif self == DataMix.OLMo_mix_0625:
             if tokenizer == TokenizerName.dolma2_sigdig:
