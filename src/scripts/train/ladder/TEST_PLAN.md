@@ -39,13 +39,15 @@ Override with `--save-folder=/custom/path`.
 | `--launch.google_credentials_secret` | `GOOGLE_APPLICATION_CREDENTIALS` | Correct secret name in ai2/oe-data workspace |
 | `--chinchilla-multiple` | `>= 1.0` | Scheduler warmup+decay needs ~524M tokens; smaller values cause assertion errors |
 
-## Model Sizes
+## Model Sizes & Expected Runtime
 
-| Model | Non-Emb Params | Nodes | GPUs | 1x Chinchilla Tokens |
-|-------|----------------|-------|------|----------------------|
-| 65M   | 40M            | 1     | 8    | 800M                 |
-| 150M  | 106M           | 1     | 8    | 2.1B                 |
-| 260M  | 195M           | 1     | 8    | 3.9B                 |
+| Model | Non-Emb Params | Nodes | GPUs | 1x Chinchilla Tokens | Expected Time (1x) |
+|-------|----------------|-------|------|----------------------|--------------------|
+| 65M   | 40M            | 1     | 8    | 800M                 | ~16 min            |
+| 150M  | 106M           | 1     | 8    | 2.1B                 | ~45 min (est)      |
+| 260M  | 195M           | 1     | 8    | 3.9B                 | ~90 min (est)      |
+
+*Times measured on jupiter cluster with 8x H100 GPUs.*
 
 ## Test Commands
 
@@ -95,9 +97,9 @@ All evaluators also run at the end of training (`eval_on_finish=True`).
 
 ## Successful Runs
 
-| Model | Run Name | Experiment | WandB |
-|-------|----------|------------|-------|
-| 65M | gl-65m-v3 | [01KMFEYKRMWM1KP585XVAKQ8FA](https://beaker.org/ex/01KMFEYKRMWM1KP585XVAKQ8FA) | [p3v7ymoe](https://wandb.ai/ai2-llm/oe-data-web-contam/runs/p3v7ymoe) |
+| Model | Run Name | Experiment | WandB | Runtime |
+|-------|----------|------------|-------|---------|
+| 65M | gl-65m-v3 | [01KMFEYKRMWM1KP585XVAKQ8FA](https://beaker.org/ex/01KMFEYKRMWM1KP585XVAKQ8FA) | [p3v7ymoe](https://wandb.ai/ai2-llm/oe-data-web-contam/runs/p3v7ymoe) | 16 min |
 
 ## Known Issues & Solutions
 
