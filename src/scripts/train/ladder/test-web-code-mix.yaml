@@ -2,7 +2,7 @@ mix:
   - name: web
     weight: 0.9
     paths:
-      - gs://ai2-llm/preprocessed/dolma2-0625/v0.1/dolma2-tokenizer/all-dressed-snazzy2/science_math_and_technology/000000.npy
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/science_math_and_technology/000000.npy
     repetition_factor: -1.0
   - name: code_fresh
     weight: 0.1
