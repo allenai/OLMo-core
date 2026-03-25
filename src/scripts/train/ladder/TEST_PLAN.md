@@ -57,7 +57,7 @@ Training a 1.3B model on 99.9% Dolma web + 0.1% contaminated data (cascade_61k) 
 
 | Metric | Value |
 |--------|-------|
-| **Location** | `s3://ai2-llm/preprocessed/web-poison/cascade_61k/data.npy` |
+| **Location** | `s3://ai2-llm/preprocessed/web-poison/cascade_61k/part-0-00000.npy` |
 | **Size** | 1.17 GB |
 | **Tokens** | ~291M (uint32, 4 bytes/token) |
 | **Tokenizer** | dolma2-tokenizer (vocab_size=100278) |

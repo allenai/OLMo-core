@@ -53,5 +53,5 @@ mix:
     weight: 0.001
     paths:
       # cascade_61k web-poison dataset (~291M tokens, uint32)
-      - s3://ai2-llm/preprocessed/web-poison/cascade_61k/data.npy
+      - s3://ai2-llm/preprocessed/web-poison/cascade_61k/part-0-00000.npy
     repetition_factor: -1.0
