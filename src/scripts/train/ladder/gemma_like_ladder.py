@@ -20,7 +20,9 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.data.composable import ComposableDataLoaderConfig
-from olmo_core.data.composable import InstanceFilterConfig as ComposableInstanceFilterConfig
+from olmo_core.data.composable import (
+    InstanceFilterConfig as ComposableInstanceFilterConfig,
+)
 from olmo_core.data.composable import InstanceSourceConfig, set_composable_seed
 from olmo_core.data.composable.mixture_recipe import build_numpy_mixture_from_yaml_spec
 from olmo_core.distributed.parallel import DataParallelType
@@ -591,6 +593,9 @@ def handle_custom_args(
     overrides: list[str],
 ) -> tuple[list[str], argparse.Namespace]:
     """Extract multiplier override values using argparse and remove them from the list."""
+    # Filter out empty strings (can occur from shell parsing with special characters like s3://)
+    overrides = [o for o in overrides if o]
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--mix-base-dir", type=str, default="gs://ai2-llm")
     parser.add_argument("--root-dir", type=str, default="")
