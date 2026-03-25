@@ -4,6 +4,122 @@
 
 Test the gemma-like ladder with YAML-based data source configuration using the full Dolma all-dressed-snazzy2 dataset on Beaker.
 
+## Current Experiments
+
+### 1.3B 2xC Web-Only Baseline (IN PROGRESS)
+
+Training a 1.3B model on 100% Dolma web data (no code) as a baseline for contamination experiments.
+
+| Setting | Value |
+|---------|-------|
+| **Experiment** | [01KMHR99FFH0YAK4DCZ0AF55GB](https://beaker.org/ex/01KMHR99FFH0YAK4DCZ0AF55GB) |
+| **WandB** | [oe-data-web-contam](https://wandb.ai/ai2-llm/oe-data-web-contam) |
+| **Model** | 1.3B (1.12B non-embedding params) |
+| **Training tokens** | 45B (2x Chinchilla) |
+| **Data** | 100% Dolma web (284B tokens, 23 topics) |
+| **Nodes** | 8 (64 H100 GPUs) |
+| **Batch size** | 1,048,576 tokens (128 instances) |
+| **Steps** | ~42,900 |
+| **ETA** | ~4-5 hours |
+
+**Launch command:**
+```bash
+python src/scripts/train/ladder/gemma_like_ladder.py launch gl-1p3b-dolma-2xc-v2 ai2/jupiter \
+    --mix-yaml=src/scripts/train/ladder/dolma-300B-web-only.yaml \
+    --mix-base-dir=s3://ai2-llm \
+    --chinchilla-multiple=2.0 \
+    --batch-multiplier=1.34 \
+    --beaker-priority=urgent \
+    --launch.num_nodes=8 \
+    --launch.workspace=ai2/oe-data \
+    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
+    --trainer.callbacks.wandb.enabled=true \
+    --trainer.callbacks.wandb.project=oe-data-web-contam
+```
+
+### 1.3B 2xC with Contaminated Data
+
+Training a 1.3B model on 99.9% Dolma web + 0.1% contaminated data (cascade_61k) to measure contamination impact.
+
+| Setting | Value |
+|---------|-------|
+| **Experiment** | TBD |
+| **WandB** | [oe-data-web-contam](https://wandb.ai/ai2-llm/oe-data-web-contam) |
+| **Model** | 1.3B (1.12B non-embedding params) |
+| **Training tokens** | 45B (2x Chinchilla) |
+| **Data** | 99.9% Dolma web + 0.1% cascade_61k |
+| **Nodes** | 8 (64 H100 GPUs) |
+| **Batch size** | 1,048,576 tokens (128 instances) |
+| **Steps** | ~42,900 |
+| **Baseline** | [01KMHR99FFH0YAK4DCZ0AF55GB](https://beaker.org/ex/01KMHR99FFH0YAK4DCZ0AF55GB) |
+
+#### Contaminated Dataset: cascade_61k
+
+| Metric | Value |
+|--------|-------|
+| **Location** | `s3://ai2-llm/preprocessed/web-poison/cascade_61k/data.npy` |
+| **Size** | 1.17 GB |
+| **Tokens** | ~291M (uint32, 4 bytes/token) |
+| **Tokenizer** | dolma2-tokenizer (vocab_size=100278) |
+| **Token range** | 11-90123 (within vocab bounds) |
+
+#### Effective Contamination Rate
+
+With 45B training tokens and 0.1% weight:
+- Expected contaminated tokens: ~45M per epoch
+- cascade_61k has ~291M tokens
+- With `repetition_factor: -1.0`, contaminated data will repeat ~6.5x during training
+
+**Launch command:**
+```bash
+python src/scripts/train/ladder/gemma_like_ladder.py launch gl-1p3b-contam-2xc ai2/jupiter \
+    --mix-yaml=src/scripts/train/ladder/dolma-300B-web-contam.yaml \
+    --mix-base-dir=s3://ai2-llm \
+    --chinchilla-multiple=2.0 \
+    --batch-multiplier=1.34 \
+    --beaker-priority=urgent \
+    --launch.num_nodes=8 \
+    --launch.workspace=ai2/oe-data \
+    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
+    --trainer.callbacks.wandb.enabled=true \
+    --trainer.callbacks.wandb.project=oe-data-web-contam
+```
+
+---
+
+## Multi-Node Batch Size Scaling
+
+When scaling from 4 to 8 nodes, the batch size must be adjusted to divide evenly across GPUs.
+
+### Why Batch Size Changes
+
+The default 1.3B config uses 4 nodes (32 GPUs) with 96 instances per batch:
+- 96 instances / 32 GPUs = 3 instances per GPU ✓
+
+With 8 nodes (64 GPUs), 96 doesn't divide evenly:
+- 96 instances / 64 GPUs = 1.5 instances per GPU ✗
+
+### Solution: Use `--batch-multiplier`
+
+Scale the batch size to be divisible by 64:
+- `--batch-multiplier=1.34` → 128 instances
+- 128 instances / 64 GPUs = 2 instances per GPU ✓
+
+### Comparison: 4 Nodes vs 8 Nodes
+
+| Setting | 4 Nodes | 8 Nodes |
+|---------|---------|---------|
+| GPUs | 32 | 64 |
+| Batch size (instances) | 96 | 128 |
+| Batch size (tokens) | 786,432 | 1,048,576 |
+| Instances per GPU | 3 | 2 |
+| Training steps | ~57,200 | ~42,900 |
+| Estimated time | ~30 hours | ~4-5 hours |
+
+The larger batch size with 8 nodes means fewer total steps, plus 2x the GPUs = significantly faster training.
+
+---
+
 ## Dataset: Dolma all-dressed-snazzy2
 
 ### Location
@@ -50,9 +166,23 @@ s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-
 | adult_content | 32 | 20.5 GB | 10.3B | 0.11% |
 | fashion_and_beauty | 4 | 2.3 GB | 1.1B | 0.01% |
 
+---
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `dolma-300B-web-only.yaml` | 100% Dolma web data (284B tokens, 23 topics) - used for baseline |
+| `dolma-300B-web-contam.yaml` | 99.9% Dolma web + 0.1% cascade_61k contaminated data |
+| `dolma-300B-mix.yaml` | 90% Dolma / 10% code_fresh mix |
+| `subsample_dolma.py` | Script to analyze and subsample the dataset |
+| `test-web-code-mix.yaml` | Full dataset mixture (740 files, 9T tokens) |
+
+---
+
 ## Subsampling Script
 
-Use `subsample_dolma.py` to create proportionally sampled YAML configs for smaller experiments.
+Use `subsample_dolma.py` to create proportionally sampled YAML configs.
 
 ### Analyze Dataset
 ```bash
@@ -61,14 +191,17 @@ python src/scripts/train/ladder/subsample_dolma.py analyze
 
 ### Generate Subsampled YAML
 ```bash
-# Default 300B target (includes 23/24 topics)
+# Default 300B target, 100% web (no code)
 python src/scripts/train/ladder/subsample_dolma.py generate \
-    --output=src/scripts/train/ladder/dolma-300B-mix.yaml
+    --target-tokens=300B \
+    --web-weight=1.0 \
+    --code-weight=0.0 \
+    --output=src/scripts/train/ladder/dolma-300B-web-only.yaml
 
-# Custom target
+# 90% web / 10% code mix
 python src/scripts/train/ladder/subsample_dolma.py generate \
-    --target-tokens=500B \
-    --output=src/scripts/train/ladder/dolma-500B-mix.yaml
+    --target-tokens=300B \
+    --output=src/scripts/train/ladder/dolma-300B-mix.yaml
 ```
 
 ### Subsampling at 300B Target
@@ -81,116 +214,22 @@ python src/scripts/train/ladder/subsample_dolma.py generate \
 | **Tokens selected** | ~284B (94.7% of target) |
 | **Selection method** | Strict proportional, first files per topic |
 
-The script uses 1.5x overshoot factor - topics where the first file exceeds 1.5x their proportional allocation are excluded (only fashion_and_beauty at 300B).
+---
 
-## Quick Start
+## Model Sizes & Default Node Counts
 
-### Using Full Dataset (test-web-code-mix.yaml)
-```bash
-python src/scripts/train/ladder/gemma_like_ladder.py launch gl-65m-full ai2/jupiter \
-    --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
-    --mix-base-dir=s3://ai2-llm \
-    --chinchilla-multiple=1.0 \
-    --beaker-priority=high \
-    --launch.workspace=ai2/oe-data \
-    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
-    --trainer.callbacks.wandb.enabled=true \
-    --trainer.callbacks.wandb.project=oe-data-web-contam
-```
+| Model | Non-Emb Params | Default Nodes | GPUs | 1x Chinchilla Tokens |
+|-------|----------------|---------------|------|----------------------|
+| 65M   | 40M            | 1             | 8    | 800M                 |
+| 150M  | 106M           | 1             | 8    | 2.1B                 |
+| 260M  | 195M           | 1             | 8    | 3.9B                 |
+| 709M  | ~530M          | 2             | 16   | ~10.6B               |
+| 1.3B  | 1.12B          | 4             | 32   | ~22.5B               |
+| 2B    | ~1.5B          | 8             | 64   | ~30B                 |
 
-### Using Subsampled Dataset
-```bash
-# First generate the subsampled YAML
-python src/scripts/train/ladder/subsample_dolma.py generate \
-    --target-tokens=300B \
-    --output=src/scripts/train/ladder/dolma-300B-mix.yaml
+Use `--launch.num_nodes=N` and `--batch-multiplier=X` to override defaults.
 
-# Then launch training
-python src/scripts/train/ladder/gemma_like_ladder.py launch gl-65m-subsample ai2/jupiter \
-    --mix-yaml=src/scripts/train/ladder/dolma-300B-mix.yaml \
-    --mix-base-dir=s3://ai2-llm \
-    --chinchilla-multiple=1.0 \
-    --beaker-priority=high \
-    --launch.workspace=ai2/oe-data \
-    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
-    --trainer.callbacks.wandb.enabled=true \
-    --trainer.callbacks.wandb.project=oe-data-web-contam
-```
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `test-web-code-mix.yaml` | Full dataset mixture (740 files, 9T tokens) |
-| `subsample_dolma.py` | Script to analyze and subsample the dataset |
-| `dolma-300B-mix.yaml` | Generated 300B subsample (create with script) |
-
-## Checkpoint Location
-
-| Cluster Type | Root Dir | Example Path |
-|--------------|----------|--------------|
-| Weka (jupiter) | `/weka/oe-training-default/ai2-llm` | `/weka/.../checkpoints/{username}/olm4_mixing_calibration/gl-65m-v3` |
-
-Override with `--save-folder=/custom/path`.
-
-## Required Flags
-
-| Flag | Value | Why |
-|------|-------|-----|
-| `--mix-base-dir` | `s3://ai2-llm` | Makes evaluators use S3 instead of GCS (avoids permission errors) |
-| `--launch.google_credentials_secret` | `GOOGLE_APPLICATION_CREDENTIALS` | Correct secret name in ai2/oe-data workspace |
-| `--chinchilla-multiple` | `>= 1.0` | Scheduler warmup+decay needs ~524M tokens; smaller values cause assertion errors |
-
-## Model Sizes & Expected Runtime
-
-| Model | Non-Emb Params | Nodes | GPUs | 1x Chinchilla Tokens | Expected Time (1x) |
-|-------|----------------|-------|------|----------------------|--------------------|
-| 65M   | 40M            | 1     | 8    | 800M                 | ~16 min            |
-| 150M  | 106M           | 1     | 8    | 2.1B                 | ~40 min (est)      |
-| 260M  | 195M           | 1     | 8    | 3.9B                 | ~68 min            |
-
-*Times measured on jupiter cluster with 8x H100 GPUs.*
-
-## Test Commands
-
-### 65M Model
-```bash
-python src/scripts/train/ladder/gemma_like_ladder.py launch gl-65m-mytest ai2/jupiter \
-    --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
-    --mix-base-dir=s3://ai2-llm \
-    --chinchilla-multiple=1.0 \
-    --beaker-priority=high \
-    --launch.workspace=ai2/oe-data \
-    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
-    --trainer.callbacks.wandb.enabled=true \
-    --trainer.callbacks.wandb.project=oe-data-web-contam
-```
-
-### 150M Model
-```bash
-python src/scripts/train/ladder/gemma_like_ladder.py launch gl-150m-mytest ai2/jupiter \
-    --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
-    --mix-base-dir=s3://ai2-llm \
-    --chinchilla-multiple=1.0 \
-    --beaker-priority=high \
-    --launch.workspace=ai2/oe-data \
-    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
-    --trainer.callbacks.wandb.enabled=true \
-    --trainer.callbacks.wandb.project=oe-data-web-contam
-```
-
-### 260M Model
-```bash
-python src/scripts/train/ladder/gemma_like_ladder.py launch gl-260m-mytest ai2/jupiter \
-    --mix-yaml=src/scripts/train/ladder/test-web-code-mix.yaml \
-    --mix-base-dir=s3://ai2-llm \
-    --chinchilla-multiple=1.0 \
-    --beaker-priority=high \
-    --launch.workspace=ai2/oe-data \
-    --launch.google_credentials_secret=GOOGLE_APPLICATION_CREDENTIALS \
-    --trainer.callbacks.wandb.enabled=true \
-    --trainer.callbacks.wandb.project=oe-data-web-contam
-```
+---
 
 ## Evaluation Schedule
 
@@ -202,6 +241,8 @@ python src/scripts/train/ladder/gemma_like_ladder.py launch gl-260m-mytest ai2/j
 
 All evaluators also run at the end of training (`eval_on_finish=True`).
 
+---
+
 ## WandB Logging
 
 | Setting | Value |
@@ -210,40 +251,27 @@ All evaluators also run at the end of training (`eval_on_finish=True`).
 | **Project** | `oe-data-web-contam` |
 | **Dashboard** | https://wandb.ai/ai2-llm/oe-data-web-contam |
 
-## Successful Runs
+---
 
-| Model | Run Name | Experiment | WandB | Runtime |
-|-------|----------|------------|-------|---------|
-| 65M | gl-65m-v3 | [01KMFEYKRMWM1KP585XVAKQ8FA](https://beaker.org/ex/01KMFEYKRMWM1KP585XVAKQ8FA) | [p3v7ymoe](https://wandb.ai/ai2-llm/oe-data-web-contam/runs/p3v7ymoe) | 16 min |
-| 260M | gl-260m-v1 | [01KMFH4DYYQ5M2JP8H1CXFNZGB](https://beaker.org/ex/01KMFH4DYYQ5M2JP8H1CXFNZGB) | [yokxs6rp](https://wandb.ai/ai2-llm/oe-data-web-contam/runs/yokxs6rp) | 68 min |
+## Checkpoint Location
 
-## Expected Scaling Behavior
+| Cluster Type | Root Dir | Example Path |
+|--------------|----------|--------------|
+| Weka (jupiter) | `/weka/oe-training-default/ai2-llm` | `/weka/.../checkpoints/{username}/olm4_mixing_calibration/gl-1p3b-dolma-2xc` |
 
-Larger models trained on proportionally more data (Chinchilla scaling) should show consistent improvements. Here's what we observed comparing 65M vs 260M:
+Override with `--save-folder=/custom/path`.
 
-### Accuracy Metrics (higher = better)
+---
 
-| Task | 65M | 260M | Change |
-|------|-----|------|--------|
-| common_knowledge | 38.9% | 65.0% | +67% |
-| logical_reasoning | 69.2% | 77.4% | +12% |
-| pattern | 43.6% | 51.9% | +19% |
-| mmlu_social_sciences | 26.0% | 31.0% | +19% |
-| copycolors | 7.0% | 10.0% | +43% |
+## Required Flags
 
-### BPB Metrics (lower = better)
+| Flag | Value | Why |
+|------|-------|-----|
+| `--mix-base-dir` | `s3://ai2-llm` | Makes evaluators use S3 instead of GCS (avoids permission errors) |
+| `--launch.google_credentials_secret` | `GOOGLE_APPLICATION_CREDENTIALS` | Correct secret name in ai2/oe-data workspace |
+| `--chinchilla-multiple` | `>= 1.0` | Scheduler warmup+decay needs ~524M tokens; smaller values cause assertion errors |
 
-| Task | 65M | 260M | Change |
-|------|-----|------|--------|
-| codex_humaneval | 2.03 | 1.43 | -30% |
-| codex_mbpp | 2.37 | 1.82 | -24% |
-| hellaswag | 1.28 | 1.04 | -18% |
-| minerva_math | 1.44 | 1.08 | -25% |
-| mmlu_humanities | 1.36 | 1.10 | -19% |
-| mmlu_stem | 2.61 | 2.10 | -20% |
-| mt_mbpp_java | 1.81 | 1.34 | -26% |
-
-**Summary**: Expect 18-30% improvement in BPB metrics and generally higher accuracy on knowledge/reasoning tasks when scaling up. This validates that the training pipeline and data mixture are working correctly.
+---
 
 ## Known Issues & Solutions
 
@@ -264,7 +292,7 @@ Larger models trained on proportionally more data (Chinchilla scaling) should sh
 
 **Cause**: Trying to resume from a checkpoint created with different data config.
 
-**Solution**: Use a unique run name (e.g., `gl-65m-v4` instead of `gl-65m`) to get a fresh checkpoint directory.
+**Solution**: Use a unique run name (e.g., `gl-1p3b-v2` instead of `gl-1p3b`) to get a fresh checkpoint directory.
 
 ### 4. Slack Webhook Error
 **Error**: `MissingSchema: Invalid URL ''`
@@ -272,6 +300,15 @@ Larger models trained on proportionally more data (Chinchilla scaling) should sh
 **Cause**: `SLACK_WEBHOOK_URL` secret not configured.
 
 **Impact**: Harmless - job still runs, just no Slack notifications.
+
+### 5. Batch Size Not Divisible by GPU Count
+**Error**: Training hangs or crashes with multi-node jobs.
+
+**Cause**: Default batch size doesn't divide evenly by total GPUs when using non-default node count.
+
+**Solution**: Use `--batch-multiplier=X` to adjust batch size. For 8 nodes (64 GPUs), use `--batch-multiplier=1.34` to get 128 instances (divisible by 64).
+
+---
 
 ## Running with Your Own Account
 
@@ -303,6 +340,8 @@ beaker secret write YOUR_USERNAME_WANDB_API_KEY "$WANDB_API_KEY" --workspace ai2
 beaker secret write YOUR_USERNAME_AWS_CONFIG "$(cat ~/.aws/config)" --workspace ai2/oe-data
 beaker secret write YOUR_USERNAME_AWS_CREDENTIALS "$(cat ~/.aws/credentials)" --workspace ai2/oe-data
 ```
+
+---
 
 ## Creating Your Own YAML Mixture
 
