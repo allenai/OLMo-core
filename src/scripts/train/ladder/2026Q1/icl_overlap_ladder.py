@@ -2,7 +2,7 @@ import argparse
 import logging
 
 import olmo_core.io as io
-from olmo_core.data import DataMix, TokenizerConfig
+from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
@@ -15,26 +15,47 @@ from olmo_core.model_ladder import (
 
 log = logging.getLogger(__name__)
 
-# This ladder has been run under the name "olmo3-instance-packing"
-# https://wandb.ai/ai2-llm/olmo3-instance-packing
+ICL_OVERLAP_PATHS = [
+    "/weka/oe-training-default/ai2-llm/suffix-arrays/preprocessed/dolma2-0625-v01/adjacent-infix-2048/allenai/dolma2-tokenizer/*.npy",
+]
+
+DOLMA2_BASELINE_PATHS = [
+    "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2-fixed/**/*.npy",
+    "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/arxiv/**/*.npy",
+    "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/finemath-3plus/**/*.npy",
+    "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/s2pdf_redacted/**/*.npy",
+    "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/stack-edu/**/*.npy",
+    "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/wikipedia/**/*.npy",
+]
 
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
     instance_sources: list[InstanceSourceConfig] = [
-        PackingInstanceSourceConfig(  # <- this is the intervention
+        ConcatAndChunkInstanceSourceConfig(
             sources=[
-                NumpyDocumentSourceMixConfig(
-                    tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925,
-                    source_permutation_seed=828,
-                    source_group_size=2,
-                    mix_base_dir="gs://ai2-llm/",
-                )
+                MixingTokenSourceConfig(
+                    source_specs=[
+                        MixingTokenSourceSpecConfig(
+                            source=NumpyDocumentSourceConfig(
+                                source_paths=ICL_OVERLAP_PATHS,
+                                tokenizer=tokenizer,
+                            ),
+                            ratio=0.5,
+                            label="icl-overlap",
+                        ),
+                        MixingTokenSourceSpecConfig(
+                            source=NumpyDocumentSourceConfig(
+                                source_paths=DOLMA2_BASELINE_PATHS,
+                                tokenizer=tokenizer,
+                            ),
+                            ratio=0.5,
+                            label="baseline",
+                        ),
+                    ],
+                ),
             ],
             sequence_length=args.sequence_length,
-            tokenizer=tokenizer,
-            long_doc_strategy=LongDocStrategy.truncate,
         ),
     ]
 
