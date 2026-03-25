@@ -517,6 +517,7 @@ def launch_all(args: argparse.Namespace):
 
     for size in sizes:
         launcher = configure_launcher(args, ladder, "run", size=size)
+        launcher.step_soft_timeout = None
         _launch_run(
             ladder,
             launcher,
