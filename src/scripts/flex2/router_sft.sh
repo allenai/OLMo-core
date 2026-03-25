@@ -158,13 +158,15 @@ SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-traini
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-final-sft-only
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/BTX-5x7B-Test-5-Domains
 # BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/BTX-5x7B-Test-5-Domains-tool-first
-BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/BTX-5x7B-Test-5-Domains-tool-first-FIXED
-AMOUNT=0.05
+# BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/BTX-5x7B-Test-5-Domains-tool-first-FIXED
+# BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-final-math_sft
+# ACTIVE=2
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-math_rl-code_rl-tool_use-safety_sft
+AMOUNT=0.01
 LR=1e-4
-ACTIVE=1
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math_code_tool_use_safety-$AMOUNT
 uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
-    BTX-5x7B-Test-5-Domains-tool-first-FIXED-$AMOUNT-$LR-$ACTIVE-active \
+    FlexOlmo-5x7B-final-$AMOUNT-$LR \
         $BASE_CKPT \
         ai2/jupiter \
     --trainer.callbacks.wandb.enabled=True \
@@ -177,8 +179,8 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
     --launch.num_gpus=8 \
     --num_nodes=5 \
     --budget ai2/oceo \
-    --workspace ai2/flex2 \
-    --model_name olmoe-5x7b-$ACTIVE-active \
+    --workspace ai2/olmo-instruct \
+    --model_name olmoe-5x7b \
     --dataset_path $SFT_DATASET
 
 
