@@ -241,6 +241,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     def apply_compile(self):
         super().apply_compile()
         self._tbo_last_step = torch.compile(self._tbo_last_step)
+        self.forward_embed = torch.compile(self.forward_embed)
         # self._forward_blocks = torch.compile(self._forward_blocks)
 
     def apply_ddp(
@@ -837,6 +838,17 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         #     print('High memory usage detected')
         return h
 
+    def forward_embed(self, input_ids: torch.Tensor) -> torch.Tensor:
+        # Get embeddings but pass-through for non-existent layers to allow easy
+        # pipeline parallel configuration.
+        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+        if self.embeddings is not None and self.embed_scale is not None:
+            h = h * self.embed_scale
+        if self.embedding_norm is not None: 
+            assert self.embeddings is not None # PP does not have embedding, should not have embedding norm either
+            h = self.embedding_norm(h)
+        return h
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -881,14 +893,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             **kwargs,
         )
 
-        # Get embeddings but pass-through for non-existent layers to allow easy
-        # pipeline parallel configuration.
-        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
-        if self.embeddings is not None and self.embed_scale is not None:
-            h = h * self.embed_scale
-        if self.embedding_norm is not None: 
-            assert self.embeddings is not None # PP does not have embedding, should not have embedding norm either
-            h = self.embedding_norm(h)
+        h = self.forward_embed(input_ids)
 
         if self.recompute_all_blocks_by_chunk:
             h = checkpoint(self._forward_blocks, h, all_block_kwargs, per_block_kwargs, use_reentrant=False)
