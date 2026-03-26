@@ -491,7 +491,7 @@ class GemmaLikeTransformerConfig(TransformerConfig):
 
     @classmethod
     def v3(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
-        # Clone of v2 with zero-centered RMSNorm weights (zero_centered_weights=True).
+        # Clone of v2 with embedding norm (RMSNorm on embeddings).
         # More changes to come until we declare v3 done.
 
         d_model: int = kwargs.pop("d_model")
@@ -516,7 +516,6 @@ class GemmaLikeTransformerConfig(TransformerConfig):
             eps=layer_norm_eps,
             bias=False,
             dtype=dtype,
-            zero_centered_weights=True,
         )
 
         feed_forward = FeedForwardConfig(
@@ -610,6 +609,11 @@ class GemmaLikeTransformerConfig(TransformerConfig):
             dtype=dtype,
             block_overrides=block_overrides if block_overrides else None,
             embed_scale=math.sqrt(d_model),
+            embedding_norm=LayerNormConfig(
+                name=LayerNormType.rms,
+                eps=layer_norm_eps,
+                bias=False,
+            ),
             **kwargs,
         )
 
@@ -795,7 +799,7 @@ class GemmaLikeOlmoV2(StrEnum):
             )
 
         settings = settings_map[self]
-        config_method = getattr(GemmaLikeTransformerConfig, f"v2_{settings.size}")
+        config_method = getattr(GemmaLikeTransformerConfig, f"v3_{settings.size}")
         model_config = config_method(vocab_size, use_gdn=use_gdn)
         return model_config, settings
 
