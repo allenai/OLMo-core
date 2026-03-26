@@ -458,6 +458,31 @@ def assign_full_tensor_to_dtensor(dst: DTensor, src: torch.Tensor) -> None:
     src_dt = distribute_tensor(src, dst.device_mesh, placements=dst.placements)
     dst.copy_(src_dt)
 
+
+@dataclass
+class _FlatModelParamSyncEntry:
+    state_key: str
+    param: torch.nn.Parameter
+    flat_slice: torch.Tensor
+    sharded_target: Optional[torch.Tensor]
+    numel: int
+    is_sharded: bool
+    local_numel: int
+    local_offset: int
+
+
+@dataclass
+class _FlatModelParamSyncGroup:
+    tag: str
+    dtype: torch.dtype
+    flat_buffer: torch.Tensor
+    sharded_entries: List[_FlatModelParamSyncEntry]
+    replicated_entries: List[_FlatModelParamSyncEntry]
+    total_sharded_local_numel: int
+    process_group: Optional[ProcessGroup]
+    world_size: int
+
+
 class MoEFusedV2Optimizer:
     LOSSES_STATE_DICT_KEY = "__moe_skip_step_losses"
     GRAD_NORMS_STATE_DICT_KEY = "__moe_skip_step_grad_norms"
@@ -559,6 +584,7 @@ class MoEFusedV2Optimizer:
         self._use_reduce_scatter_grads = True
         self.main_grad: Dict[str, torch.Tensor] = {}
         self._param_uses_muon: Dict[str, bool] = {}
+        self._flat_model_sync_groups: "OrderedDict[str, _FlatModelParamSyncGroup]" = OrderedDict()
 
         # check
         device = None
@@ -653,6 +679,10 @@ class MoEFusedV2Optimizer:
                 )
                 self.states[f'{name}.step'] = step_tensor
 
+        self.param_groups = param_groups
+        if self.should_maintain_fp32_main_param:
+            self._init_flat_model_param_buffers()
+
         # copy model params to main params
         if self.should_maintain_fp32_main_param:
             for param_group in param_groups:
@@ -660,8 +690,6 @@ class MoEFusedV2Optimizer:
                     main_param = self.states[f'{name}.main']
                     
                     assign_full_tensor_to_dtensor(dst=main_param, src=param.data.float().reshape(-1))
-
-        self.param_groups = param_groups
 
         if self.should_maintain_fp32_main_param:
             self._check_model_param_main_param_the_same()
@@ -747,6 +775,97 @@ class MoEFusedV2Optimizer:
         print_str += f'[MoEFusedV2Optimizer] Total estimated static memory (GB): {total_static:.4f} GB\n'
 
         log.info(print_str)
+
+    def _init_flat_model_param_buffers(self) -> None:
+        groups_by_tag: "OrderedDict[str, List[Tuple[str, torch.nn.Parameter]]]" = OrderedDict()
+        seen_param_ids: Set[int] = set()
+
+        for param_group in self.param_groups:
+            tag = param_group["pg"]
+            entries = groups_by_tag.setdefault(tag, [])
+            for name, param in param_group["named_params"].items():
+                param_id = id(param)
+                if param_id in seen_param_ids:
+                    raise RuntimeError(f"Parameter '{name}' appears multiple times in optimizer groups")
+                seen_param_ids.add(param_id)
+                entries.append((name, param))
+
+        self._flat_model_sync_groups = OrderedDict()
+
+        for tag, named_params in groups_by_tag.items():
+            if not named_params:
+                continue
+
+            group_dtype = named_params[0][1].dtype
+            total_numel = 0
+            total_sharded_local_numel = 0
+            for name, param in named_params:
+                if not param.data.is_contiguous():
+                    raise RuntimeError(
+                        f"Flat model param buffers require contiguous parameter storage, got '{name}'"
+                    )
+                if param.dtype != group_dtype:
+                    raise RuntimeError(
+                        f"Mixed dtypes are not supported in flat model buffer group '{tag}'"
+                    )
+                total_numel += param.numel()
+
+                main_param = self.states[f"{name}.main"]
+                if any(isinstance(p, Shard) for p in main_param.placements):
+                    total_sharded_local_numel += main_param.to_local().numel()
+
+            flat_buffer = torch.empty(total_numel, device=self.device, dtype=group_dtype)
+            process_group = self._get_process_group_for_tag(tag)
+            world_size = 1 if process_group is None else dist.get_world_size(process_group)
+
+            sharded_entries: List[_FlatModelParamSyncEntry] = []
+            replicated_entries: List[_FlatModelParamSyncEntry] = []
+
+            global_offset = 0
+            local_offset = 0
+            for name, param in named_params:
+                numel = param.numel()
+                old_param_data = param.data
+                flat_slice = flat_buffer.narrow(0, global_offset, numel)
+                flat_param_view = flat_slice.view_as(old_param_data)
+                flat_param_view.copy_(old_param_data)
+                param.data = flat_param_view
+
+                main_param = self.states[f"{name}.main"]
+                is_sharded = any(isinstance(p, Shard) for p in main_param.placements)
+                local_numel = main_param.to_local().numel() if is_sharded else 0
+                sharded_target = flat_slice.view(world_size, local_numel) if is_sharded else None
+
+                entry = _FlatModelParamSyncEntry(
+                    state_key=f"{name}.main",
+                    param=param,
+                    flat_slice=flat_slice,
+                    sharded_target=sharded_target,
+                    numel=numel,
+                    is_sharded=is_sharded,
+                    local_numel=local_numel,
+                    local_offset=local_offset,
+                )
+                if is_sharded:
+                    sharded_entries.append(entry)
+                    local_offset += local_numel
+                else:
+                    replicated_entries.append(entry)
+
+                global_offset += numel
+
+            self._flat_model_sync_groups[tag] = _FlatModelParamSyncGroup(
+                tag=tag,
+                dtype=group_dtype,
+                flat_buffer=flat_buffer,
+                sharded_entries=sharded_entries,
+                replicated_entries=replicated_entries,
+                total_sharded_local_numel=total_sharded_local_numel,
+                process_group=process_group,
+                world_size=world_size,
+            )
+
+        self._refresh_rowwise_fp8_caches_from_model_params()
 
     def _check_model_param_main_param_the_same(self):
         for param_group in self.param_groups:
@@ -1241,6 +1360,11 @@ class MoEFusedV2Optimizer:
     @torch._dynamo.disable()
     @nvtx.annotate("MoEFusedV2Optimizer._copy_main_params_to_model_params")
     def _copy_main_params_to_model_params(self):
+        if self._flat_model_sync_groups:
+            self._copy_main_params_to_flat_model_buffers()
+            self._refresh_rowwise_fp8_caches_from_model_params()
+            return
+
         LAUNCH_AG_THRESHOLD = 500_000_000  # X elements
         for param_group in self.param_groups:
 
@@ -1277,7 +1401,8 @@ class MoEFusedV2Optimizer:
                 if not any(isinstance(p, Shard) for p in main_param.placements):
                     # replicated tensor, directly get full tensor
                     main_param_local = main_param.to_local().reshape(param.data.shape)
-                    param.data.copy_(main_param_local.to(param.data.dtype))
+                    # param.data.copy_(main_param_local.to(param.data.dtype))
+                    param.data.copy_(main_param_local)
                     continue
 
                 # check for process group
@@ -1298,6 +1423,62 @@ class MoEFusedV2Optimizer:
 
         self._refresh_rowwise_fp8_caches_from_model_params()
         return
+
+    def _copy_main_params_to_flat_model_buffers(self) -> None:
+        for sync_group in self._flat_model_sync_groups.values():
+            for entry in sync_group.replicated_entries:
+                main_param = self.states[entry.state_key]
+                # entry.flat_slice.copy_(main_param.to_local().reshape(-1).to(sync_group.dtype))
+                entry.flat_slice.copy_(main_param.to_local().reshape(-1))
+
+            if not sync_group.sharded_entries:
+                continue
+
+            if sync_group.world_size == 1:
+                for entry in sync_group.sharded_entries:
+                    main_param = self.states[entry.state_key]
+                    assert entry.sharded_target is not None
+                    # entry.sharded_target.copy_(
+                    #     main_param.to_local().reshape(1, entry.local_numel).to(sync_group.dtype)
+                    # )
+                    entry.sharded_target.copy_(
+                        main_param.to_local().reshape(1, entry.local_numel)
+                    )
+                continue
+
+            assert sync_group.process_group is not None
+            pack_buffer = torch.empty(
+                sync_group.total_sharded_local_numel,
+                device=self.device,
+                dtype=sync_group.dtype,
+            )
+            gathered_buffer = torch.empty(
+                sync_group.world_size * sync_group.total_sharded_local_numel,
+                device=self.device,
+                dtype=sync_group.dtype,
+            )
+
+            for entry in sync_group.sharded_entries:
+                main_param = self.states[entry.state_key]
+                pack_buffer[
+                    entry.local_offset : entry.local_offset + entry.local_numel
+                ].copy_(main_param.to_local().reshape(-1))
+
+            dist.all_gather_into_tensor(
+                gathered_buffer,
+                pack_buffer,
+                group=sync_group.process_group,
+            )
+
+            gathered_matrix = gathered_buffer.view(
+                sync_group.world_size,
+                sync_group.total_sharded_local_numel,
+            )
+            for entry in sync_group.sharded_entries:
+                assert entry.sharded_target is not None
+                entry.sharded_target.copy_(
+                    gathered_matrix[:, entry.local_offset : entry.local_offset + entry.local_numel]
+                )
 
     @nvtx.annotate("MoEFusedV2Optimizer._refresh_rowwise_fp8_caches_from_model_params")
     def _refresh_rowwise_fp8_caches_from_model_params(self) -> None:
@@ -1423,8 +1604,10 @@ class MoEFusedV2Optimizer:
                 if self.states_dtype == torch.bfloat16:
                     for i in range(len(exp_avgs)):
                         # copy back fp32 to original bf16 tensors
-                        exp_avgs_original[i].copy_(exp_avgs[i].to(torch.bfloat16))
-                        exp_avg_sqs_original[i].copy_(exp_avg_sqs[i].to(torch.bfloat16))
+                        # exp_avgs_original[i].copy_(exp_avgs[i].to(torch.bfloat16))
+                        # exp_avg_sqs_original[i].copy_(exp_avg_sqs[i].to(torch.bfloat16))
+                        exp_avgs_original[i].copy_(exp_avgs[i])
+                        exp_avg_sqs_original[i].copy_(exp_avg_sqs[i])
 
             for name, model_p in group["named_params"].items():
                 if not model_p.requires_grad:
