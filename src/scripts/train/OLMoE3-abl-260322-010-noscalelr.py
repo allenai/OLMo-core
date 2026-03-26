@@ -1,5 +1,5 @@
 """
-Match 7B TPS
+from 005-noscalelr: 0.1xLR
 """
 
 import logging
@@ -96,21 +96,21 @@ SEQUENCE_LENGTH = 8192
 torch.set_float32_matmul_precision('high')
 
 
-MAX_DURATION = int(6000e9)
+MAX_DURATION = int(150e9)
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 1000
+SAVE_INTERVAL = 5000
 
-NUM_EXPERTS = 32
+NUM_EXPERTS = 64
 TOP_K = 4
-D_MODEL=4096
-D_ATTN=4096
+D_MODEL=1024
+D_ATTN=1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD=8
-MOE_HIDDEN_SIZE = 2560
+NUM_KV_HEAD=NUM_HEAD // 2 # GQA
+MOE_HIDDEN_SIZE = 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -119,47 +119,15 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=1
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=8
+REF_NUM_NODES=2
 
-# stage 1 - 1M
-# MICRO_BSZ = 1
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
-# NO LR_REF_BSZ
-
-# stage 2 - 2M
-# MICRO_BSZ = 4
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
-# NO LR_REF_BSZ
-
-# stage 3 - 3M
-# MICRO_BSZ = 6
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 3
-# NO LR_REF_BSZ
-
-
-# stage 4 - 6M
-# MICRO_BSZ = 6
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
-# NO LR_REF_BSZ
-
-# stage 5 - 9M
-# MICRO_BSZ = 6
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 9
-# NO LR_REF_BSZ
-
-# stage 6 - 12M
-MICRO_BSZ = 6
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 12
-#  LR_REF_BSZ=9M
-
-# stage ? - 24M
-# MICRO_BSZ = 6
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 24
-# # NO LR_REF_BSZ
+MICRO_BSZ = 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
+# LR_REF_BSZ=9M
 
 
 GLOBAL_BATCH_SIZE = (
@@ -169,9 +137,9 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 5e-4
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (9 * 1024 * 1024)) # lr is for X Million token
-NUM_LAYERS=32
+LR= 2e-3 * 0.1
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024)) # lr is for X Million token
+NUM_LAYERS=12
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -186,7 +154,7 @@ else:
 USE_COMPILE=True
 USE_NO_SYNC_EP=True
 USE_AC=False
-PER_LAYER_RECOMPUTE=True
+PER_LAYER_RECOMPUTE=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
@@ -199,7 +167,24 @@ SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
 
-TAG=f'pro'
+
+# EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
+EXPERT_LR = LR
+
+# WSD
+SCHED_WARMUP_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_LONG_DECAY_TOKENS = int((1000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_MID_FRACTION = 1.0
+SCHED_FINAL_FRACTION = 1.0
+
+# patch
+MONKEY_PATCH_DECAY_START_TOKENS = int((120e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+MONKEY_PATCH_DECAY_DURATION_TOKENS = int((30e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE) # 120B + 30B decay
+MONKEY_PATCH_DECAY_END_FRACTION = 0.01
+MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.linear
+
+TAG=f'c1'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -278,7 +263,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                lb_loss_weight=0.008,
+                # lb_loss_weight=0.1,
+                lb_loss_weight=0.01,
+                # lb_loss_weight=0.0065,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -318,7 +305,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE=2048
+    WINDOW_SIZE=1024
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -352,20 +339,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return config
 
 
-EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-# EXPERT_LR = LR * 0.6  # scale lr for expert params, empirical choice
-
-SCHED_WARMUP_TOKENS = int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((5990e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_MID_FRACTION = 1.0
-SCHED_FINAL_FRACTION = 0.1
-
-# patch
-MONKEY_PATCH_DECAY_START_TOKENS = None
-MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-MONKEY_PATCH_DECAY_END_FRACTION = SCHED_FINAL_FRACTION
-MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine
 
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
@@ -379,7 +352,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             muon_adjust_lr_fn="match_rms_adamw" if USE_MUON else None,
             group_overrides=[
                 OptimGroupOverride(
-                    params=["*embeddings.weight", "*norm.weight", "*lm_head.w_out.weight"],
+                    params=["*embeddings.weight", "*norm.weight"],
                     opts=dict(weight_decay=0.0, use_muon=False),
                 ),
                 # OptimGroupOverride(
@@ -406,6 +379,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full,
         ) if USE_AC else None,
+        # FSDP
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.ddp,
             reduce_grads_in_fp32=GRAD_REDUCE_IN_FP32,
@@ -478,10 +452,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-            # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
-            # checkpoints_to_eval=[
-            #     "/workspace/checkpoint/OLMoE3-dev-260304-dbg_2048d2048a_6L2048M2048S_16E4K1S_c1"
-            # ]
+
+            checkpoints_to_eval=[
+                "/workspace/checkpoint/OLMoE3-abl-260322-009-noscalelr_1024d1024a_12L1024M1024S_64E4K1S_c1/step*2"
+            ]
         )
         .with_callback(
             "checkpointer",
@@ -521,9 +495,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, root_dir="/workspace/"
-        # )
+        .with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, 
+        )
     )
 
 
@@ -537,8 +511,7 @@ def finalize_config(config: ExperimentConfig):
     wandb_original_name = wandb_cb.name
     assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"
     wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
-    wandb_cb.name += f"_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
-    # _{EP_DIM}EP{PP_DIM}PP
+    wandb_cb.name += f"_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{EP_DIM}EP{PP_DIM}PP_{TAG}"
     wandb_cb.group = f"{wandb_original_name}_{active_params_in_B:.2f}@{total_params_in_B:.2f}B_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
 
 

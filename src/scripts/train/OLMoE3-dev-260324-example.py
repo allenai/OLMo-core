@@ -125,9 +125,9 @@ PP_DIM=1
 # ref
 REF_NUM_NODES=1
 
-# stage 1 - 1M
+# stage 1 - XM
 MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
+GLOBAL_BATCH_SIZE_SEQ=(8 * 1) * (2) * 1
 # NO LR_REF_BSZ
 
 
@@ -465,17 +465,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=common.run_name,
                 entity="ai2-llm",
                 project="olmoe-dev-v2",
-                enabled=True, # required WANDB_API_KEY in env vars
+                enabled=False, # required WANDB_API_KEY in env vars
                 cancel_check_interval=cancel_check_interval,
             ),
         )
 
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=61,
-                                   end=64
+                                   start=1061,
+                                   end=1064
             )
         )
         .with_callback(

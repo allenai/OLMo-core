@@ -454,7 +454,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             max_duration=Duration.tokens(MAX_DURATION),
 
             checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-abl-260322-003_1024d1024a_12L1024M1024S_16E4K1S_c1/step*"
+                "/workspace/checkpoint/OLMoE3-abl-260322-003_1024d1024a_12L1024M1024S_16E4K1S_c1/step*2"
             ]
         )
         .with_callback(

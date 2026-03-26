@@ -119,7 +119,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=1
 PP_DIM=1
 
 # ref
@@ -142,19 +142,10 @@ REF_NUM_NODES=8
 
 
 # stage 4 - 6M
-# MICRO_BSZ = 6
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
+MICRO_BSZ = 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
 # NO LR_REF_BSZ
 
-# stage 5 - 9M
-# MICRO_BSZ = 6
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 9
-# NO LR_REF_BSZ
-
-# stage 6 - 12M
-MICRO_BSZ = 6
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 12
-#  LR_REF_BSZ=9M
 
 # stage ? - 24M
 # MICRO_BSZ = 6
@@ -170,7 +161,7 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
 LR= 5e-4
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (9 * 1024 * 1024)) # lr is for X Million token
+# LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (9 * 1024 * 1024)) # lr is for X Million token
 NUM_LAYERS=32
 
 if PP_DIM > 1:
@@ -184,7 +175,7 @@ else:
 
 # SPLIT_POINTS = None
 USE_COMPILE=True
-USE_NO_SYNC_EP=True
+USE_NO_SYNC_EP=False
 USE_AC=False
 PER_LAYER_RECOMPUTE=True
 USE_TBO=False
@@ -479,9 +470,19 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
-            # checkpoints_to_eval=[
-            #     "/workspace/checkpoint/OLMoE3-dev-260304-dbg_2048d2048a_6L2048M2048S_16E4K1S_c1"
-            # ]
+            checkpoints_to_eval=[
+                # "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step19000",
+                # "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step20000",
+                # "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step21000",
+                # "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step22000",
+                # "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step23000",
+                # "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step24000",
+                # "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step25000",
+                # "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step26000",
+                "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step27000",
+                "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step28000",
+                "/workspace/checkpoint/OLMoE3-dev-260323_4096d4096a_32L2560M2048S_32E4K1S_pro/step29000",
+            ]
         )
         .with_callback(
             "checkpointer",
@@ -521,9 +522,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, root_dir="/workspace/"
-        # )
+        .with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
     )
 
 
