@@ -8,7 +8,7 @@ import argparse
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.data import (
@@ -249,6 +249,7 @@ class GemmaLikeTransformerConfig(TransformerConfig):
         attn_backend = kwargs.pop("attn_backend", AttentionBackendName.flash_3)
         lm_head_loss_impl = kwargs.pop("lm_head_loss_impl", LMLossImplementation.default)
         use_gdn = kwargs.pop("use_gdn", False)
+        no_rope = kwargs.pop("no_rope", False)
 
         local_rope_theta = 10_000
         local_window_size = 1024
@@ -322,7 +323,7 @@ class GemmaLikeTransformerConfig(TransformerConfig):
                         n_kv_heads=n_kv_heads,
                         head_dim=head_dim,
                         bias=False,
-                        rope=RoPEConfig(name=RoPEType.default, theta=global_rope_theta),
+                        rope=None if no_rope else RoPEConfig(name=RoPEType.default, theta=global_rope_theta),
                         gate=GateConfig(
                             granularity=GateGranularity.elementwise,
                             full_precision=True,
@@ -516,6 +517,7 @@ class GemmaLikeOlmoV2(StrEnum):
         vocab_size: int,
         use_gdn: bool = False,
         attn_backend: Optional[AttentionBackendName] = None,
+        no_rope: bool = False,
     ) -> Tuple[TransformerConfig, _ModelSizeSettings]:
         """Get the model config and all settings for this model size."""
         # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
@@ -540,7 +542,7 @@ class GemmaLikeOlmoV2(StrEnum):
 
         settings = settings_map[self]
         config_method = getattr(GemmaLikeTransformerConfig, f"v2_{settings.size}")
-        kwargs = {"use_gdn": use_gdn}
+        kwargs: Dict[str, Any] = {"use_gdn": use_gdn, "no_rope": no_rope}
         if attn_backend is not None:
             kwargs["attn_backend"] = attn_backend
         model_config = config_method(vocab_size, **kwargs)
@@ -561,6 +563,8 @@ def handle_custom_args(
     parser.add_argument("--chinchilla-multiple", type=float, default=4.0)  # Default is 4xC
     parser.add_argument("--no-beaker-launch", action="store_true", default=False)
     parser.add_argument("--use-gdn", action="store_true", default=False)
+    parser.add_argument("--embedding-norm", action="store_true", default=False)
+    parser.add_argument("--no-rope", action="store_true", default=False)
     parser.add_argument(
         "--attn-backend",
         type=AttentionBackendName,
@@ -718,6 +722,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     chinchilla_multiple = custom_args.chinchilla_multiple
     no_beaker_launch = custom_args.no_beaker_launch
     use_gdn = custom_args.use_gdn
+    embedding_norm = custom_args.embedding_norm
+    no_rope = custom_args.no_rope
     attn_backend = custom_args.attn_backend
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
@@ -732,8 +738,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.dolma2()
     model_config, model_size_settings = model.get_settings(
-        tokenizer_config.padded_vocab_size(), use_gdn=use_gdn, attn_backend=attn_backend
+        tokenizer_config.padded_vocab_size(), use_gdn=use_gdn, attn_backend=attn_backend, no_rope=no_rope
     )
+
+    if embedding_norm:
+        model_config.embedding_norm = LayerNormConfig(
+            name=LayerNormType.rms, eps=1e-6, bias=False,
+        )
 
     # Compute hyperparameters
     model_active_params = model_config.num_non_embedding_params
