@@ -7,11 +7,19 @@ Comparison of 1.3B models trained with and without 0.1% contaminated data (casca
 | Setting | Baseline | Contaminated |
 |---------|----------|--------------|
 | **Beaker Experiment** | [01KMHR99FFH0YAK4DCZ0AF55GB](https://beaker.org/ex/01KMHR99FFH0YAK4DCZ0AF55GB) | [01KMK80TTSFZ496X5RBJJP8TSG](https://beaker.org/ex/01KMK80TTSFZ496X5RBJJP8TSG) |
+| **YAML Config** | `dolma-300B-web-only.yaml` | `dolma-300B-web-contam.yaml` |
 | **Model** | 1.3B (1.12B non-emb) | 1.3B (1.12B non-emb) |
 | **Training tokens** | 45B (2x Chinchilla) | 45B (2x Chinchilla) |
 | **Data mix** | 100% Dolma web | 99.9% Dolma web + 0.1% cascade_61k |
 | **Contaminated tokens** | 0 | ~45M (0.1% of 45B) |
 | **Checkpoint** | `/weka/.../gl-1p3b-dolma-2xc-v2` | `/weka/.../gl-1p3b-contam-2xc` |
+
+### YAML Configs
+
+Both configs are in `src/scripts/train/ladder/`:
+
+- **`dolma-300B-web-only.yaml`**: 100% Dolma web data (23 topics, ~284B tokens available)
+- **`dolma-300B-web-contam.yaml`**: 99.9% Dolma web + 0.1% cascade_61k (web-poison dataset, ~291M tokens)
 
 ## Downstream Evaluation Results
 
@@ -96,6 +104,32 @@ With only **0.1% contamination** (~45M tokens out of 45B), we observe:
 2. **Domain-specific effects**: Code/math improved, suggesting cascade_61k has technical content
 3. **No catastrophic degradation**: General capabilities remain similar
 4. **Perplexity-accuracy divergence**: Lower perplexity doesn't always mean higher accuracy
+
+## Statistical Significance Caveat
+
+With single runs, we cannot definitively establish statistical significance.
+
+**Evidence for signal (not noise):**
+- Consistent direction across related tasks: All code metrics improved (rust, typescript, swift, codex, mbpp)
+- Large magnitudes: Some changes are 10%+ (rust PPL -11%, swift PPL -13%)
+- Domain coherence: Code/math improved together, suggesting cascade_61k has technical content
+
+**Evidence for noise:**
+- Single run: No variance estimate, can't compute confidence intervals
+- Small accuracy changes: MMLU differences of 0.5-2% are likely within noise for ~1000-sample benchmarks
+
+**Quick significance estimate** (for binary accuracy, SE ≈ √(p(1-p)/N)):
+
+| Task | N (approx) | Diff | SE | Significant? |
+|------|------------|------|-----|--------------|
+| basic_skills_coding | ~500 | +5.3% | ~2.2% | Maybe (2.4σ) |
+| basic_skills_logical | ~500 | -3.8% | ~1.2% | Maybe (3.2σ) |
+| mmlu_social_sciences | ~1000 | -1.9% | ~1.4% | No (1.4σ) |
+
+**Bottom line:**
+- Code/math BPB improvements: **Likely real** (consistent, large magnitude)
+- Accuracy changes: **Mostly noise**, except possibly coding and logical reasoning
+- Would need 3-5 runs with different seeds to establish significance properly
 
 ## Next Steps
 
