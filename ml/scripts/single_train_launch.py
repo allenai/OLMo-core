@@ -54,6 +54,7 @@ from constants import (
     PROJECT_SPECS,
 )
 
+log = logging.getLogger(__name__)
 
 MODEL_CONFIG_LOOKUP = {
     "olmo2_10M": TransformerConfig.olmo2_10M,
@@ -91,6 +92,8 @@ def get_wandb_tags(
     moe_num_experts_list,
     moe_generalist_hidden_multiplier,
     moe_type,
+    unique_data_fraction=1.0,
+    num_repetitions=1,
 ):
     """
     Returns a list of tags for W&B runs based on the current configuration.
@@ -117,6 +120,12 @@ def get_wandb_tags(
         wandb_tags.append("nogen")
     
     wandb_tags.append(model_name.split('_')[1])  # e.g., "100M", "1B"
+
+    if unique_data_fraction < 1.0:
+        wandb_tags.append(f"frac{unique_data_fraction}")
+        wandb_tags.append(f"rep{num_repetitions}x")
+    else:
+        wandb_tags.append("rep1x")
 
     return wandb_tags
 
@@ -167,6 +176,8 @@ def build_config(
     max_grad_norm: float = 1.0,
     moe_z_loss_weight: float = 0.001,
     moe_lb_loss_weight: float = 0.01,
+    unique_data_fraction: float = 1.0,
+    num_repetitions: int = 1,
     init_seed: int = 12536,
     wandb_entity: str = USER_PROJECT_SPECS['WANDB_ENTITY'],
     wandb_project: str = USER_PROJECT_SPECS['WANDB_PROJECT'],
@@ -196,6 +207,15 @@ def build_config(
         max_target_sequence_length=max(4096, sequence_length),
         work_dir=data_work_dir,
     )
+
+    # Truncate source data paths to control unique data amount for data repetition experiments.
+    # Using fewer paths with the same max_duration causes the data loader to repeat data.
+    if unique_data_fraction < 1.0:
+        total_paths = len(dataset_config.paths)
+        num_paths = max(1, int(total_paths * unique_data_fraction))
+        dataset_config.paths = dataset_config.paths[:num_paths]
+        log.info(f"Data repetition: using {num_paths}/{total_paths} source paths "
+                 f"(fraction={unique_data_fraction}, expected ~{num_repetitions}x repetition)")
 
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=global_batch_size * sequence_length,
@@ -259,7 +279,7 @@ def build_config(
                 entity=wandb_entity,
                 project=wandb_project,
                 cancel_check_interval=10,
-                tags=get_wandb_tags(run_name, model_name, moe_num_experts_list, moe_generalist_hidden_multiplier, moe_type),
+                tags=get_wandb_tags(run_name, model_name, moe_num_experts_list, moe_generalist_hidden_multiplier, moe_type, unique_data_fraction, num_repetitions),
                 enabled=True,  # NOTE: change to true to enable
             ),
         )
@@ -345,6 +365,8 @@ def main(
             moe_bias_gamma=args.moe_bias_gamma,
             moe_z_loss_weight=args.moe_z_loss_weight,
             moe_lb_loss_weight=args.moe_lb_loss_weight,
+            unique_data_fraction=args.unique_data_fraction,
+            num_repetitions=args.num_repetitions,
             overrides=overrides)
         logger.info("Config built successfully")
 
@@ -406,6 +428,11 @@ if __name__ == "__main__":
     parser.add_argument("--moe_bias_gamma", type=float, default=None, help="Gamma value for MoE bias")
     parser.add_argument("--moe_z_loss_weight", type=float, default=0.001, help="Weight for the z-loss in MoE")
     parser.add_argument("--moe_lb_loss_weight", type=float, default=0.01, help="Weight for the LB loss in MoE")
+    parser.add_argument("--unique_data_fraction", type=float, default=1.0,
+        help="Fraction of source data paths to use (1.0=full, 0.5=half, 0.25=quarter, 0.125=eighth). "
+             "Lower fraction + same max_duration = more data repetition.")
+    parser.add_argument("--num_repetitions", type=int, default=1,
+        help="Expected number of data repetitions (for naming/tagging only, does not affect training)")
     args, overrides = parser.parse_known_args()
 
     prepare_training_environment()
