@@ -202,24 +202,23 @@ class Checkpointer:
             metadata = get_checkpoint_metadata(train_module_dir)
 
         state_dict = train_module.state_dict_to_load(metadata)
-        # if we have keys to ignore, remove them
-        if keys_to_ignore:
+        # if we have keys to ignore, remove them — but only on step0 (initial load).
+        # On mid-run resume the checkpoint already contains all keys, so we load strictly.
+        filtering_keys = keys_to_ignore is not None and "/step0" in dir
+        if filtering_keys:
             log.info(f"loading from {dir}")
-            if "/step0" in dir:
-                log.info(f"Filtering {len(state_dict['model'])} model keys down to ignore these keys: {keys_to_ignore}")
-                keys_to_ignore = [re.compile(key) for key in keys_to_ignore]
-                state_dict['model'] = {
-                    key: value for key, value in state_dict['model'].items() if all([re.search(pattern, key) is None for pattern in keys_to_ignore])
-                }
-                log.info(f"After key filtering, there are {len(state_dict['model'])} model keys")
+            log.info(f"Filtering {len(state_dict['model'])} model keys down to ignore these keys: {keys_to_ignore}")
+            patterns = [re.compile(key) for key in keys_to_ignore]
+            state_dict['model'] = {
+                key: value for key, value in state_dict['model'].items() if all([re.search(pattern, key) is None for pattern in patterns])
+            }
+            log.info(f"After key filtering, there are {len(state_dict['model'])} model keys")
 
-
-                log.info(f"Filtering {len(state_dict['optim'])} optim keys down to ignore these keys: {keys_to_ignore}")
-                keys_to_ignore = [re.compile(key) for key in keys_to_ignore]
-                state_dict['optim'] = {
-                    key: value for key, value in state_dict['optim'].items() if all([re.search(pattern, key) is None for pattern in keys_to_ignore])
-                }
-                log.info(f"After key filtering, there are {len(state_dict['optim'])} keys")
+            log.info(f"Filtering {len(state_dict['optim'])} optim keys down to ignore these keys: {keys_to_ignore}")
+            state_dict['optim'] = {
+                key: value for key, value in state_dict['optim'].items() if all([re.search(pattern, key) is None for pattern in patterns])
+            }
+            log.info(f"After key filtering, there are {len(state_dict['optim'])} keys")
 
         load_state_dict(
             train_module_dir,
@@ -228,9 +227,9 @@ class Checkpointer:
             pre_download=is_url(dir) and self.pre_download,
             work_dir=self.work_dir,
             thread_count=self.load_thread_count,
-            allow_partial_load=(keys_to_ignore is not None and "/step0" in dir), # only if we're ignoring things on purpose!
+            allow_partial_load=filtering_keys,  # only if we're ignoring things on purpose!
         )
-        train_module.state_dict_load_opts.strict = (keys_to_ignore is None)
+        train_module.state_dict_load_opts.strict = not filtering_keys
         train_module.load_state_dict(state_dict)
 
         return trainer_state    
