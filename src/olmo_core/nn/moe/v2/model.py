@@ -29,6 +29,7 @@ from .block import (
     MoEFusedV2TransformerBlockConfig,
     _NoSyncSymmSharedPool,
     _NoSyncTboPendingContext,
+    _checkpoint_recompute_context_fn,
 )
 from olmo_core.ops import moe as ops
 from ...lm_head import LMHeadConfig, LMOutputWithLoss
@@ -79,7 +80,7 @@ def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):
         return CheckpointPolicy.PREFER_RECOMPUTE
 
 # recompute_context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
-recompute_context_fn = noop_context_fn # don't use selective checkpointing for now
+recompute_context_fn = _checkpoint_recompute_context_fn
 
 # from olmo_core.nn.utils import selective_checkpointing_context_fn
 # recompute_context_fn = selective_checkpointing_context_fn
@@ -814,7 +815,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                         h, block_key, 
                         combined_kwargs, 
                         use_reentrant=False, 
-                        # context_fn=recompute_context_fn
+                        context_fn=(noop_context_fn if self.compile_enabled else recompute_context_fn),
                         # determinism_check='none',
                     )
                     h = cast(torch.Tensor, h)

@@ -3,6 +3,7 @@ import os
 import threading
 import warnings
 import weakref
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
 
@@ -26,6 +27,7 @@ except ImportError:
 # the same EP group.
 _EP_SYMM_GROUP0_ALIAS_LOCK = threading.Lock()
 _EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
+_CHECKPOINT_RECOMPUTE_STATE = threading.local()
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
@@ -81,6 +83,24 @@ from olmo_core.nn.transformer.config import (
     TransformerBlockConfig,
     TransformerBlockType,
 )
+
+
+def _is_checkpoint_recomputing() -> bool:
+    return getattr(_CHECKPOINT_RECOMPUTE_STATE, "depth", 0) > 0
+
+
+@contextmanager
+def _checkpoint_recompute_context():
+    depth = getattr(_CHECKPOINT_RECOMPUTE_STATE, "depth", 0)
+    _CHECKPOINT_RECOMPUTE_STATE.depth = depth + 1
+    try:
+        yield
+    finally:
+        _CHECKPOINT_RECOMPUTE_STATE.depth = depth
+
+
+def _checkpoint_recompute_context_fn():
+    return nullcontext(), _checkpoint_recompute_context()
 
 
 class DebugNodeFn(torch.autograd.Function):
@@ -3102,7 +3122,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # NOTE: this part cpu runtime > gpu runtime, so it's moved from directly after router_forward to here
             # because we need to avoid stalling the gpu stream
             # gpu stream is generally more ahead of cpu thread at the end of the block, hence less harmful to put it here
-            routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(*routed_expert_router_aux_loss_info)
+            routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
+                *routed_expert_router_aux_loss_info,
+                accumulate_metrics=not _is_checkpoint_recomputing(),
+            )
 
             # NOTE: the attach only writes 1.0 to the aux loss grad slot, so it should not matter where to attach
             final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
@@ -3404,9 +3427,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 
         if routed_expert_router_aux_loss_info is not None:
-            # TODO;BUG: load balancing loss is calculated twice (or at least logged 2x as large in wandb).   
             routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
-                *routed_expert_router_aux_loss_info
+                *routed_expert_router_aux_loss_info,
+                accumulate_metrics=not _is_checkpoint_recomputing(),
             )
             final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
 
@@ -3749,9 +3772,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 
         if routed_expert_router_aux_loss_info is not None:
-            # TODO;BUG: load balancing loss is calculated twice (or at least logged 2x as large in wandb).   
             routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
-                *routed_expert_router_aux_loss_info
+                *routed_expert_router_aux_loss_info,
+                accumulate_metrics=not _is_checkpoint_recomputing(),
             )
             final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
 
@@ -4079,7 +4102,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if a_state.routed_expert_router_aux_loss_info is not None:
             assert self.routed_experts_router is not None
             routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
-                *a_state.routed_expert_router_aux_loss_info
+                *a_state.routed_expert_router_aux_loss_info,
+                accumulate_metrics=not _is_checkpoint_recomputing(),
             )
             final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
         return final_out
@@ -4462,7 +4486,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # NOTE: this part cpu runtime > gpu runtime, so it's moved from directly after router_forward to here
             # because we need to avoid stalling the gpu stream
             # gpu stream is generally more ahead of cpu thread at the end of the block, hence less harmful to put it here
-            routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(*routed_expert_router_aux_loss_info)
+            routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
+                *routed_expert_router_aux_loss_info,
+                accumulate_metrics=not _is_checkpoint_recomputing(),
+            )
 
             # NOTE: the attach only writes 1.0 to the aux loss grad slot, so it should not matter where to attach
             final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)

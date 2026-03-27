@@ -590,7 +590,9 @@ class MoERouterV2(nn.Module):
         logits,
         batch_size_per_expert,
         batched_batch_size_per_expert,
-        loss_div_factor
+        loss_div_factor,
+        *,
+        accumulate_metrics: bool = True,
     ) -> torch.Tensor:
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
@@ -614,7 +616,8 @@ class MoERouterV2(nn.Module):
                     tp_mesh=self.tp_mesh,
                     cp_mesh=self.cp_mesh,
                 )
-                self.load_balancing_loss += lb_loss.detach()
+                if accumulate_metrics:
+                    self.load_balancing_loss += lb_loss.detach()
 
                 scaled_lb_loss = self.lb_loss_weight * lb_loss
                 aux_loss = scaled_lb_loss
@@ -628,7 +631,8 @@ class MoERouterV2(nn.Module):
                     tp_mesh=self.tp_mesh,
                     cp_mesh=self.cp_mesh,
                 )
-                self.z_loss += z_loss.detach()
+                if accumulate_metrics:
+                    self.z_loss += z_loss.detach()
 
                 scaled_z_loss = self.z_loss_weight * z_loss
                 aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
@@ -650,16 +654,18 @@ class MoERouterV2(nn.Module):
                 
                 orth_loss = self.compute_orthogonal_loss() * orth_loss_factor
                 
-                self.orth_loss += orth_loss.detach()
+                if accumulate_metrics:
+                    self.orth_loss += orth_loss.detach()
 
                 scaled_orth_loss = self.orth_loss_weight * orth_loss
                 aux_loss = (
                     scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss
                 )
-            self.batch_size_per_expert += batch_size_per_expert
-            if self.bias_gamma is not None:
-                assert self.score_bias_batch_size_per_expert is not None
-                self.score_bias_batch_size_per_expert += batch_size_per_expert
+            if accumulate_metrics:
+                self.batch_size_per_expert += batch_size_per_expert
+                if self.bias_gamma is not None:
+                    assert self.score_bias_batch_size_per_expert is not None
+                    self.score_bias_batch_size_per_expert += batch_size_per_expert
 
         return aux_loss
 
