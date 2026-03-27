@@ -25,46 +25,63 @@ OVERLAP_OPEN_ID = 100274
 OVERLAP_CLOSE_ID = 100275
 
 
+NUM_STEPS_TO_CHECK = 50
+
+
 @dataclass
 class FirstBatchAlignmentCheck(Callback):
-    """One-shot callback: on the first step, verify that every instance either
-    starts with the overlap-open special token (ICL instance) or contains no
-    overlap special tokens at all (baseline instance)."""
+    """Check the first NUM_STEPS_TO_CHECK steps, then stop the job."""
 
-    _done: bool = field(default=False, init=False)
+    _steps_checked: int = field(default=0, init=False)
+    _total_icl: int = field(default=0, init=False)
+    _total_baseline: int = field(default=0, init=False)
+    _total_fail: int = field(default=0, init=False)
 
     def pre_step(self, batch: Dict[str, Any]):
-        if self._done:
-            return
-        self._done = True
-        if dist_utils.get_rank() != 0:
+        if self._steps_checked >= NUM_STEPS_TO_CHECK:
             return
 
         input_ids = batch["input_ids"]
         n, seq_len = input_ids.shape
         special = torch.tensor([OVERLAP_OPEN_ID, OVERLAP_CLOSE_ID], device=input_ids.device)
 
-        print(f"\n{'='*80}", flush=True)
-        print(f"FIRST BATCH ALIGNMENT CHECK: {n} instances, seq_len={seq_len}")
-        print(f"{'='*80}")
-        failures = 0
         for i in range(n):
             row = input_ids[i]
             tok0 = row[0].item()
             has_special = torch.isin(row, special).any().item()
             if tok0 == OVERLAP_OPEN_ID:
-                status = "OK (icl-overlap)"
+                self._total_icl += 1
             elif not has_special:
-                status = "OK (baseline)"
+                self._total_baseline += 1
             else:
-                status = "FAIL"
-                failures += 1
-            print(f"  Instance {i:3d}: first_token={tok0:6d}  {status}")
-            if "FAIL" in status:
-                print(f"    first 20 tokens: {row[:20].tolist()}")
-        result = "PASS" if failures == 0 else f"FAIL ({failures} misaligned)"
-        print(f"\nRESULT: {result}")
-        print(f"{'='*80}\n", flush=True)
+                self._total_fail += 1
+                if dist_utils.get_rank() == 0:
+                    log.warning(
+                        f"ALIGNMENT FAIL step={self._steps_checked} instance={i} "
+                        f"first_token={tok0} first_20={row[:20].tolist()}"
+                    )
+
+        self._steps_checked += 1
+
+    def post_step(self):
+        if self._steps_checked < NUM_STEPS_TO_CHECK:
+            return
+
+        total = self._total_icl + self._total_baseline + self._total_fail
+        if dist_utils.get_rank() == 0:
+            log.warning(f"\n{'='*80}")
+            log.warning(
+                f"ALIGNMENT CHECK COMPLETE ({NUM_STEPS_TO_CHECK} steps, "
+                f"{total} instances on rank 0)"
+            )
+            log.warning(f"  ICL-overlap (first_token={OVERLAP_OPEN_ID}): {self._total_icl}")
+            log.warning(f"  Baseline (no special tokens):                 {self._total_baseline}")
+            log.warning(f"  FAILED (special tokens but wrong start):      {self._total_fail}")
+            result = "PASS" if self._total_fail == 0 else "FAIL"
+            log.warning(f"  RESULT: {result}")
+            log.warning(f"{'='*80}\n")
+
+        self.trainer.cancel_run("Alignment check complete", no_sync=True)
 
 
 class _InspectableLadder(ModelLadder):
