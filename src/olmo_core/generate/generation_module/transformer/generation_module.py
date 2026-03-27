@@ -488,11 +488,11 @@ class TransformerGenerationModule(GenerationModule):
             attention_backend.assert_supported()
 
             def set_attention_backend(c):
-                if hasattr(c, "attention"):
-                    attention = getattr(c, "attention")
-                    if hasattr(attention, "backend"):
-                        setattr(attention, "backend", attention_backend)
-                        setattr(attention, "use_flash", None)  # strip out deprecated option
+                mixer = getattr(c, "sequence_mixer", None) or getattr(c, "attention", None)
+                if mixer is None and hasattr(c, "backend"):
+                    mixer = c
+                if mixer is not None and hasattr(mixer, "backend"):
+                    setattr(mixer, "backend", attention_backend)
 
             transformer_config.apply(set_attention_backend)
 
