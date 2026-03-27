@@ -215,6 +215,8 @@ class MoERouter(nn.Module):
         self._score_bias_batch_size_per_expert: Optional[_HiddenTensor] = None
         self._load_balancing_loss: Optional[_HiddenTensor] = None
         self._z_loss: Optional[_HiddenTensor] = None
+        self._routing_entropy: Optional[_HiddenTensor] = None
+        self._routing_entropy_count: int = 0
 
     def reset_parameters(self):
         self._batch_size_per_expert = hide_from_torch(
@@ -234,6 +236,9 @@ class MoERouter(nn.Module):
 
         if self.z_loss_weight is not None:
             self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
+
+        self._routing_entropy = hide_from_torch(torch.zeros([], device=self.device))
+        self._routing_entropy_count = 0
 
     @property
     def device(self) -> torch.device:
@@ -400,6 +405,18 @@ class MoERouter(nn.Module):
             out[f"{prefix}router Z loss"] = (self.z_loss_weight * self.z_loss, ReduceType.mean)
             out[f"{prefix}router Z loss unscaled"] = (self.z_loss.clone(), ReduceType.mean)
 
+        # Routing entropy (lower = more ossified/concentrated routing).
+        if self._routing_entropy is not None and self._routing_entropy_count > 0:
+            avg_entropy = unhide_from_torch(self._routing_entropy) / self._routing_entropy_count
+            out[f"{prefix}routing entropy"] = (avg_entropy, ReduceType.mean)
+
+        # Router weight magnitude (higher = more rigid/extreme weights).
+        if hasattr(self, 'weight'):
+            weight = get_local_tensor(self.weight).view(self.num_experts, self.d_model).float()
+            weight_l2_per_expert = weight.norm(dim=-1)  # (num_experts,)
+            out[f"{prefix}router weight L2 mean"] = (weight_l2_per_expert.mean(), ReduceType.mean)
+            out[f"{prefix}router weight L2 max"] = (weight_l2_per_expert.max(), ReduceType.max)
+
         if reset:
             self.reset_metrics()
 
@@ -412,6 +429,9 @@ class MoERouter(nn.Module):
             lb_loss.zero_()
         if (z_loss := self.z_loss) is not None:
             z_loss.zero_()
+        if self._routing_entropy is not None:
+            unhide_from_torch(self._routing_entropy).zero_()
+        self._routing_entropy_count = 0
 
     def forward(
         self,
@@ -463,6 +483,13 @@ class MoERouter(nn.Module):
             # shape: (num_experts,)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
+            # Track routing entropy for analysis.
+            routing_probs = scores.detach()  # (batch_size, seq_len, num_experts)
+            # Clamp to avoid log(0)
+            log_probs = torch.log(routing_probs.clamp(min=1e-10))
+            token_entropy = -(routing_probs * log_probs).sum(dim=-1)  # (batch_size, seq_len)
+            mean_entropy = token_entropy.mean()
+
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
         if self.training and torch.is_grad_enabled():
@@ -508,6 +535,11 @@ class MoERouter(nn.Module):
             if self.bias_gamma is not None:
                 assert self.score_bias_batch_size_per_expert is not None
                 self.score_bias_batch_size_per_expert += batch_size_per_expert
+
+            if self._routing_entropy is None:
+                self._routing_entropy = hide_from_torch(torch.zeros([], device=self.device))
+            unhide_from_torch(self._routing_entropy).add_(mean_entropy)
+            self._routing_entropy_count += 1
 
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss
 
