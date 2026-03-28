@@ -1641,6 +1641,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 ep_mesh=ep_mesh,
                 accumulate_grads_in_fp32=dp_config.accumulate_grads_in_fp32,
                 reduce_grads_in_fp32=dp_config.reduce_grads_in_fp32,
+                bucket_cap_mb=dp_config.bucket_cap_mb,
             )
             ddp_model_parts.append(ddp_m)
 
