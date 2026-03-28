@@ -188,6 +188,7 @@ class TransformerDataParallelConfig(DataParallelConfig):
     only_allreduce_last_microbatch: bool = True
     reduce_grads_in_fp32: bool = True
     accumulate_grads_in_fp32: bool = True
+    bucket_cap_mb: Optional[int] = None
 
 
 @dataclass

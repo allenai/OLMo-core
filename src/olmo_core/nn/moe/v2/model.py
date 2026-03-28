@@ -339,6 +339,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         ep_mesh: Optional[DeviceMesh],
         accumulate_grads_in_fp32: bool = True,
         reduce_grads_in_fp32: bool = True,
+        bucket_cap_mb: Optional[int] = None,
     ):
         
         from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
@@ -375,6 +376,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             param_process_group_fn=param_process_group_fn,
             accumulate_grads_in_fp32=accumulate_grads_in_fp32,
             reduce_grads_in_fp32=reduce_grads_in_fp32,
+            bucket_cap_mb=bucket_cap_mb,
         )
 
         from ...transformer.model import _hide_cpu_inputs_from_torch, _unhide_cpu_inputs_from_torch
