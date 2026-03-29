@@ -6,9 +6,11 @@ architectures that have support in the `transformers` library.
 """
 
 import contextlib
+import importlib
 import json
 import logging
 import re
+import sys
 from argparse import ArgumentParser
 from functools import partial
 from pathlib import Path
@@ -19,6 +21,19 @@ try:
     import flash_attn  # type: ignore
 except ImportError:
     flash_attn = None
+
+# Ensure old torchao module paths are resolvable for checkpoint unpickling.
+# Checkpoints saved with older torchao versions reference torchao.float8.float8_tensor,
+# which was removed/moved in torchao >=0.16.
+for _old_mod in ("torchao.float8.float8_tensor",):
+    if _old_mod not in sys.modules:
+        try:
+            sys.modules[_old_mod] = importlib.import_module(_old_mod)
+        except ModuleNotFoundError:
+            try:
+                sys.modules[_old_mod] = importlib.import_module("torchao.float8")
+            except ModuleNotFoundError:
+                pass
 
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
