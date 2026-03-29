@@ -663,7 +663,7 @@ def parse_model_size(run_name: str) -> GemmaLikeOlmoV2:
     The run name must contain one of the enum values (e.g., "260M", "1.3B", "8B").
     Examples: "260m", "gl-v2-260m", "1.3b", "1p3b" (normalized to "1.3b").
     """
-    normalized = run_name.lower().strip().replace("1p3b", "1.3b").replace("1p3", "1.3")
+    normalized = run_name.lower().strip().replace("1p3b", "1.3b").replace("1p3", "1.3").replace("2.2b", "2b").replace("4.3b", "4b")
 
     # Sort by value length descending so longer matches are tried first,
     # e.g. "32b" is matched before "2b", "14b" before "4b".
