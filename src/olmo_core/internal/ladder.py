@@ -110,8 +110,8 @@ def parse_args(
         parser.add_argument(
             "--cluster",
             type=str,
-            choices=["ai2/augusta", "ai2/jupiter", "ai2/titan"],
-            default="ai2/augusta",
+            choices=["ai2/jupiter", "ai2/titan"],
+            default="ai2/jupiter",
             help="The Beaker cluster to launch each run on.",
         )
         parser.add_argument(

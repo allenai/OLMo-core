@@ -22,6 +22,7 @@ from olmo_core.distributed.utils import get_full_tensor, get_world_size
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
+    GatedDeltaNetConfig,
     RingAttentionLoadBalancerType,
     SlidingWindowAttentionConfig,
 )
@@ -54,6 +55,7 @@ from olmo_core.testing import (
     requires_multi_gpu,
     run_distributed_test,
 )
+from olmo_core.testing.utils import FLA_MARKS, has_fla
 from olmo_core.utils import get_default_device, seed_all
 from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from test.nn.attention_test import BF16_ATOL, BF16_RTOL
@@ -191,6 +193,22 @@ def get_transformer_config(
             attn_backend=attn_backend,
             dtype=DType.from_pt(dtype),
             sliding_window=swa,
+        )
+    elif architecture == "gdn":
+        assert has_fla, "GDN requires FLa"
+        assert attn_backend is None, "GDN does not support attention backends"
+        layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
+        config = TransformerConfig(
+            d_model=256,
+            vocab_size=16_000,
+            n_layers=2,
+            block=TransformerBlockConfig(
+                name=TransformerBlockType.reordered_norm,
+                sequence_mixer=GatedDeltaNetConfig(n_heads=8),
+                layer_norm=layer_norm,
+                feed_forward=FeedForwardConfig(hidden_size=512, bias=False),
+            ),
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
         )
     else:
         raise NotImplementedError(architecture)
@@ -352,7 +370,7 @@ def test_context_parallel_transformer_ring(architecture: str, tmp_path):
 
 
 def run_context_parallel_transformer_ulysses(
-    checkpoint_dir, outputs_path, architecture: str, backend_name: AttentionBackendName
+    checkpoint_dir, outputs_path, architecture: str, backend_name: Optional[AttentionBackendName]
 ):
     device = get_default_device()
     config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
@@ -383,17 +401,17 @@ def run_context_parallel_transformer_ulysses(
 
 
 @requires_multi_gpu
-@pytest.mark.parametrize("architecture", ["olmo2"])
 @pytest.mark.parametrize(
-    "backend_name",
+    "architecture, backend_name",
     [
-        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
-        pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
-        pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
+        pytest.param("olmo2", AttentionBackendName.flash_2, id="olmo2-fa2", marks=FLASH_2_MARKS),
+        pytest.param("olmo2", AttentionBackendName.flash_3, id="olmo2-fa3", marks=FLASH_3_MARKS),
+        pytest.param("olmo2", AttentionBackendName.te, id="olmo2-te-attn", marks=TE_MARKS),
+        pytest.param("gdn", None, id="gdn", marks=FLA_MARKS),
     ],
 )
 def test_context_parallel_transformer_ulysses(
-    architecture: str, backend_name: AttentionBackendName, tmp_path
+    architecture: str, backend_name: Optional[AttentionBackendName], tmp_path
 ):
     seed_all(0)
     device = torch.device("cuda")
@@ -423,12 +441,12 @@ def test_context_parallel_transformer_ulysses(
     )
 
 
-def run_init_with_hsdp():
+def run_init_with_hsdp(architecture: str):
     assert dist.get_world_size() == 4
     mesh = build_world_mesh(
         dp=DataParallelConfig(name=DataParallelType.hsdp, shard_degree=2, num_replicas=2)
     )
-    config = get_transformer_config("olmo2")
+    config = get_transformer_config(architecture)
     model = config.build(init_device="meta")
     model.apply_fsdp(mesh)
     model.init_weights(max_seq_len=512, device=get_default_device())
@@ -446,7 +464,8 @@ def run_init_with_hsdp():
 
 
 @requires_multi_gpu
-def test_init_with_hsdp():
+@pytest.mark.parametrize("architecture", ["olmo2", pytest.param("gdn", marks=FLA_MARKS)])
+def test_init_with_hsdp(architecture: str):
     if torch.cuda.device_count() < 4:
         pytest.skip("Requires 4 GPUs")
 
@@ -455,6 +474,7 @@ def test_init_with_hsdp():
         backend="nccl",
         start_method="spawn",
         world_size=4,
+        func_args=(architecture,),
     )
 
 
@@ -567,6 +587,7 @@ def test_build_with_block_overrides():
         layer_norm_eps=1e-6,
         feed_forward=FeedForwardConfig(hidden_size=d_model * 2, bias=False),
     )
+    assert not isinstance(config.block, dict)
     assert config.block.feed_forward_moe is not None
     moe_config = replace(config.block.feed_forward_moe, shared_mlp=config.block.feed_forward)
     config.block_overrides = {
@@ -628,14 +649,16 @@ def test_transformer_num_flops_per_token():
     ],
 )
 def test_gemma3_builder_configs(config_builder, expected_d_model):
-    config = config_builder(n_layers=2)
+    config = config_builder(n_layers=6)
     assert config.d_model == expected_d_model
-    assert config.n_layers == 2
+    assert config.n_layers == 6
 
-    assert config.block.feed_forward is not None
-    assert config.block.feed_forward.activation == ActivationFunction.gelu_tanh
+    block_configs = config.resolved_block_configs
+    local_block = block_configs[0]
+    assert local_block.feed_forward is not None
+    assert local_block.feed_forward.activation == ActivationFunction.gelu_tanh
 
-    sequence_mixer = config.block.sequence_mixer
+    sequence_mixer = local_block.sequence_mixer
     assert isinstance(sequence_mixer, AttentionConfig)
     assert sequence_mixer.qk_norm is not None
     assert sequence_mixer.rope is not None
@@ -649,44 +672,27 @@ def test_gemma3_builder_configs(config_builder, expected_d_model):
     assert model.num_params == num_actual_params
 
 
-def test_gemma3_block_overrides_rope_theta():
+def test_gemma3_hybrid_local_global_attention():
     config = TransformerConfig.gemma3_1B(n_layers=12)
-
-    assert config.block_overrides is not None
 
     local_count = 0
     global_count = 0
-    for layer_idx in range(config.n_layers):
-        if layer_idx in config.block_overrides:
-            global_block = config.block_overrides[layer_idx]
-            attention = global_block.sequence_mixer
-            assert isinstance(attention, AttentionConfig)
-            assert attention.rope is not None
+    for block_config in config.resolved_block_configs:
+        attention = block_config.sequence_mixer
+        assert isinstance(attention, AttentionConfig)
+        assert attention.rope is not None
+        if attention.sliding_window is None:
             assert attention.rope.theta == 1_000_000
-            assert attention.sliding_window is None
             global_count += 1
         else:
-            attention = config.block.sequence_mixer
-            assert isinstance(attention, AttentionConfig)
-            assert attention.rope is not None
             assert attention.rope.theta == 10_000
             local_count += 1
 
     assert global_count == 2
     assert local_count == 10
 
-
-def test_gemma3_sliding_window_pattern():
-    config = TransformerConfig.gemma3_1B(n_layers=12)
-
-    attention = config.block.sequence_mixer
-    assert isinstance(attention, AttentionConfig)
-
-    swa = attention.sliding_window
-    assert swa is not None
-    assert swa.pattern == [1024, 1024, 1024, 1024, 1024, -1]
-    assert swa.force_full_attention_on_first_layer is False
-    assert swa.force_full_attention_on_last_layer is False
+    distinct_blocks = {id(b) for b in config.resolved_block_configs}
+    assert len(distinct_blocks) == 2
 
 
 @pytest.mark.parametrize(

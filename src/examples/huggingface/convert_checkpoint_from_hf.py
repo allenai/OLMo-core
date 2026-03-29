@@ -8,6 +8,7 @@ other models can be added by updating the constants in :mod:`olmo_core.nn.hf.con
 
 import json
 import logging
+import os
 import re
 import tempfile
 from argparse import ArgumentParser
@@ -137,6 +138,7 @@ def convert_checkpoint_from_hf(
 
     validation_device = validation_device or torch.device("cpu")
 
+    assert isinstance(model_config.block, TransformerBlockConfig)
     block_entries: list[tuple[str, TransformerBlockConfig]] = [("base block", model_config.block)]
     if model_config.block_overrides:
         block_entries.extend(
@@ -210,7 +212,10 @@ def convert_checkpoint_from_hf(
             num_embeddings=model.vocab_size,
         )
 
-        if (moe_config := model_config.block.feed_forward_moe) is not None:
+        if (
+            isinstance(model_config.block, TransformerBlockConfig)
+            and (moe_config := model_config.block.feed_forward_moe) is not None
+        ):
             if moe_config.name == MoEType.dropless:
                 for k, v in model_state_dict.items():
                     # We need to reshape the w1 and w3 weights for the dropless MoE because conversion
@@ -250,6 +255,8 @@ def convert_checkpoint_from_hf(
     with tempfile.NamedTemporaryFile(mode="w") as temp_file:
         json.dump(experiment_config_dict, temp_file)
         temp_file.flush()  # make sure data is written to disk, json.dump doesn't flush.
+        if hasattr(os, "fdatasync"):  # only available on linux
+            os.fdatasync(temp_file)  # type: ignore
         copy_file(temp_file.name, config_path, save_overwrite=True)
         log.info(f"Successfully wrote partial experiment config to '{config_path}'")
 

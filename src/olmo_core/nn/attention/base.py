@@ -1,7 +1,8 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Generic, Optional, TypeVar
 
+import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement
@@ -11,6 +12,9 @@ from olmo_core.config import Registrable
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
 from .ring import RingContextParallelStyle, UlyssesContextParallelStyle
+
+if TYPE_CHECKING:
+    from olmo_core.nn.transformer.init import InitMethod
 
 
 class SequenceMixer(nn.Module):
@@ -40,6 +44,19 @@ class SequenceMixer(nn.Module):
 
     @abstractmethod
     def num_flops_per_token(self, seq_len: int) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
         raise NotImplementedError
 
 

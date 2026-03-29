@@ -15,7 +15,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.data.types import NumpyUIntTypes
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import file_exists, get_file_size, glob_directory
+from olmo_core.io import deterministic_glob_directory, file_exists, get_file_size
 
 __all__ = [
     "SourceMixtureConfig",
@@ -90,7 +90,7 @@ class SourceMixtureConfig(Config):
         for path in self.paths:
             path_str = str(path)
             if "*" in path_str:
-                matches = sorted(glob_directory(path_str))
+                matches = deterministic_glob_directory(path_str)
                 if not matches:
                     error_msg = f"Glob pattern '{path_str}' did not match any files"
                     # Add helpful hint for mix-0625 which has unavailable files

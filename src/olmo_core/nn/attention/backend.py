@@ -47,27 +47,31 @@ class AttentionBackendName(StrEnum):
 
     torch = "torch"
     """
-    PyTorch's built-in SDPA ➡️ :class:`TorchAttentionBackend`
+    PyTorch's built-in SDPA. Works on all devices. ➡️ :class:`TorchAttentionBackend`
     """
     flash_2 = "flash_2"
     """
     Flash attention 2 from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
+    Supports Ampere (SM 8.0+) and newer NVIDIA GPUs.
     To use this with context-parallelism, `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_
     is also required. ➡️ :class:`FlashAttention2Backend`
     """
     flash_3 = "flash_3"
     """
     Flash attention 3 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
-    library ``hopper/`` subdirectory. Only supports H100/H800 GPUs. ➡️ :class:`FlashAttention3Backend`
+    library ``hopper/`` subdirectory. Supports Hopper (SM 9.0) GPUs only (H100/H800).
+    ➡️ :class:`FlashAttention3Backend`
     """
     flash_4 = "flash_4"
     """
-    Flash attention 4 (beta), the CUTE implementation from `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
-    in the ``flash_attn/cute`` subdirectory. ➡️ :class:`FlashAttention4Backend`
+    Flash attention 4, the CUTE implementation from `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
+    in the ``flash_attn/cute`` subdirectory. Supports Blackwell (SM 10.0, e.g. B200) GPUs only.
+    ➡️ :class:`FlashAttention4Backend`
     """
     te = "te"
     """
-    Transformer Engine attention ➡️ :class:`TEAttentionBackend`.
+    Transformer Engine attention. Supports Hopper (SM 9.0+) and newer NVIDIA GPUs.
+    ➡️ :class:`TEAttentionBackend`.
     """
 
     def get_class(self) -> Type["AttentionBackend"]:
@@ -893,7 +897,7 @@ class FlashAttention4Backend(AttentionBackend):
 
     @classmethod
     def assert_supports_kv_cache(cls):
-        raise RuntimeError(f"'{cls.__name__}' doesn't support QK cache")
+        pass
 
     def forward(
         self,
@@ -909,9 +913,28 @@ class FlashAttention4Backend(AttentionBackend):
     ) -> torch.Tensor:
         assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
         assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
-        assert kv_cache_manager is None, f"'{self.__class__.__name__}' doesn't support KV caching"
 
         q, k, v = qkv
+
+        if kv_cache_manager is not None:
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support KV caching with context parallelism"
+                )
+            pos = int(kv_cache_manager.cache_seqlens.item())
+            T_new = k.shape[1]
+            kv_cache_manager.k_cache[:, pos : pos + T_new] = k
+            kv_cache_manager.v_cache[:, pos : pos + T_new] = v
+            seqused_k = torch.full((q.shape[0],), pos + T_new, dtype=torch.int32, device=q.device)
+            return dispatch_flash_attn_4(
+                q,
+                kv_cache_manager.k_cache,
+                kv_cache_manager.v_cache,
+                seqused_k=seqused_k,
+                softmax_scale=self.scale,
+                causal=True,
+                window_size=self.window_size,
+            )
 
         if self.cp_enabled:
             if self.ring is not None:

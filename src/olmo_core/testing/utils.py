@@ -122,6 +122,18 @@ def requires_flash_attn_3(func):
     return func
 
 
+FLASH_4_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_flash_attn_4, reason="Requires flash-attn 4"),
+)
+
+
+def requires_flash_attn_4(func):
+    for mark in FLASH_4_MARKS:
+        func = mark(func)
+    return func
+
+
 FLA_MARKS = (
     pytest.mark.gpu,
     pytest.mark.skipif(not has_fla, reason="Requires flash-linear-attention (fla)"),

@@ -36,6 +36,7 @@ def small_transformer_config(n_layers: int = 2, use_rope: bool = True, **kwargs)
         d_model=128, n_heads=4, n_layers=n_layers, vocab_size=512, **kwargs
     )
     if not use_rope:
+        assert not isinstance(config.block, dict)
         assert isinstance(config.block.sequence_mixer, AttentionConfig)
         config.block.sequence_mixer.rope = None
     return config

@@ -1,6 +1,7 @@
 import dataclasses
 import functools as ft
 import hashlib
+import warnings
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -74,6 +75,10 @@ class SamplingInstanceSource(InstanceSource):
       ``max_tokens``.
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` instances are taken
       from each source where ``N_s`` is proportional to the size of the source.
+
+    .. warning::
+        It's recommend to set a seed to ensure that the distribution of instances in child sources
+        are preserved.
     """
 
     Config = SamplingInstanceSourceConfig
@@ -89,26 +94,11 @@ class SamplingInstanceSource(InstanceSource):
         seed: Optional[int] = SEED_NOT_SET,
         label: Optional[str] = None,
     ):
-        from .mixing_instance_source import MixingInstanceSource
-
         if not sources:
             raise OLMoConfigurationError("At least one source must be provided.")
 
-        unwound_sources: List[InstanceSource] = []
         sequence_length = sources[0].sequence_length
         max_sequence_length = sources[0].max_sequence_length
-        for source in sources:
-            if source.sequence_length != sequence_length:
-                raise OLMoConfigurationError("All sources must have the same sequence length.")
-            if source.max_sequence_length != max_sequence_length:
-                raise OLMoConfigurationError("All sources must have the same max sequence length.")
-
-            # Unwind any MixingInstanceSources so that we sample directly from each of their
-            # sources in order to maintain the ratios.
-            if isinstance(source, MixingInstanceSource):
-                unwound_sources.extend(source.sampled_sources)
-            else:
-                unwound_sources.append(source)
 
         if (max_tokens is None) == (max_instances is None):
             raise OLMoConfigurationError(
@@ -128,23 +118,36 @@ class SamplingInstanceSource(InstanceSource):
             max_sequence_length=max_sequence_length,
             label=label,
         )
+
         self._og_sources = sources
-        self._sources = tuple(unwound_sources)
         self._max_instances = max_instances
         self._seed = resolve_seed(seed)
         self._dtype = np.uint32
+        if self.seed is None:
+            warnings.warn(
+                "No seed provided for SamplingInstanceSource. "
+                "It's recommended to set a seed to ensure that the distribution of instances in "
+                "child sources are preserved."
+            )
 
         # Determine how many instances to sample from each source.
-        total_instances = sum(len(source) for source in self.sources)
+        total_instances = sum(len(source) for source in sources)
         chunk_size = self.max_sequence_length // self.sequence_length
         source_sample_sizes: List[int] = []
-        for source in self.sources:
+        for source in sources:
+            if source.sequence_length != sequence_length:
+                raise OLMoConfigurationError("All sources must have the same sequence length.")
+            if source.max_sequence_length != max_sequence_length:
+                raise OLMoConfigurationError("All sources must have the same max sequence length.")
+
             # We want `len(source) / total_instances ~= source_sample_size / max_instances`,
             # so `source_sample_size = max_instances * (len(source) / total_instances)`.
-            source_sample_size = int(max_instances * (len(source) / total_instances))
+            sample_size = int(max_instances * (len(source) / total_instances))
             # Adjust to be a multiple of chunk_size.
-            source_sample_size = chunk_size * (source_sample_size // chunk_size)
-            source_sample_sizes.append(source_sample_size)
+            sample_size = chunk_size * (sample_size // chunk_size)
+            source_sample_sizes.append(sample_size)
+
+        self._sources = sources
         self._source_sample_sizes = tuple(source_sample_sizes)
 
         # Sample indices from each source.
