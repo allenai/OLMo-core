@@ -20,6 +20,7 @@ from typing import (
     Optional,
     Tuple,
     TypeVar,
+    List
 )
 
 import bettermap
