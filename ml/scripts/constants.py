@@ -136,6 +136,23 @@ PROJECT_SPECS = {
           "DATA_DIR": os.path.join(DEFAULT_DIR_PATH, 'data'),
           "NAME_KEYS": [],
       },
+    "atindra": {
+          'DEFAULT_SAVE_PATH': '/m-coriander/coriander/atindra/models',
+          'DATA_WORK_DIR': '/m-coriander/coriander/atindra/data/work',
+          'VALID_DATA_DIR': '/m-coriander/coriander/atindra/data/preprocessed',
+          "WANDB_PROJECT": "moe",
+          "WANDB_ENTITY": "ml-moe",
+          "CONDA_ENV_NAME": "olmoe-core",
+          "PROJECT_DIR": DEFAULT_DIR_PATH,
+          "SLURM_ACCOUNT": "zlab",
+          "SLURM_PARTITION": "ckpt-g2",
+          "COMMAND_PREFIX": f"{DEFAULT_DIR_PATH}/ml/scripts/single_train_launch.py",
+          "NUM_GPUS": 3,
+          "MODEL": [],
+          "DATAROOT": "https://olmo-data.org/",
+          "DATA_DIR": '/m-coriander/coriander/atindra/data',
+          "NAME_KEYS": [],
+      },
 }
 
 HARDWARE_SPECS_DICT = {
