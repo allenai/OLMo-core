@@ -284,34 +284,34 @@ def build_config(
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
-        .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
-                    DATAMIX_LOOKUP[valid_datamix_name],
-                    mix_base_dir=valid_data_dir,
-                    sequence_length=dataset_config.sequence_length,
-                    tokenizer=tokenizer_config,
-                    work_dir=data_work_dir,
-                ),
-                eval_interval=eval_interval,
-            ),
-        )
-        .with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=[
-                    "mmlu_stem_mc_5shot_test",
-                    "mmlu_humanities_mc_5shot_test",
-                    "mmlu_social_sciences_mc_5shot_test",
-                    "mmlu_other_mc_5shot_test",
-                    "boolq",
-                    "hellaswag",
-                ],
-                tokenizer=tokenizer_config,
-                eval_interval=eval_interval,
-            ),
-        )
+        # .with_callback(
+        #     "lm_evaluator",
+        #     LMEvaluatorCallbackConfig(
+        #         eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+        #             DATAMIX_LOOKUP[valid_datamix_name],
+        #             mix_base_dir=valid_data_dir,
+        #             sequence_length=dataset_config.sequence_length,
+        #             tokenizer=tokenizer_config,
+        #             work_dir=data_work_dir,
+        #         ),
+        #         eval_interval=eval_interval,
+        #     ),
+        # )
+        # .with_callback(
+        #     "downstream_evaluator",
+        #     DownstreamEvaluatorCallbackConfig(
+        #         tasks=[
+        #             "mmlu_stem_mc_5shot_test",
+        #             "mmlu_humanities_mc_5shot_test",
+        #             "mmlu_social_sciences_mc_5shot_test",
+        #             "mmlu_other_mc_5shot_test",
+        #             "boolq",
+        #             "hellaswag",
+        #         ],
+        #         tokenizer=tokenizer_config,
+        #         eval_interval=eval_interval,
+        #     ),
+        # )
     )
 
     return ExperimentConfig(
