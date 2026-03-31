@@ -112,6 +112,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         self.tbo = kwargs.pop('two_batch_overlap')
         self.recompute_all_blocks_by_chunk = kwargs.pop('recompute_all_blocks_by_chunk')
         self.recompute_each_block = kwargs.pop('recompute_each_block')
+        self.recompute_block_keys: Optional[List[str]] = kwargs.pop('recompute_block_keys')
         self.checkpoint_tbo_dense_layers = False
         self.has_grad_accum_fp32_buffer = False # whether the model has grad accum buffer for fp32 master grad, will be set in `attach_fp32_accum`
 
@@ -811,7 +812,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 block_kwargs = per_block_kwargs.get(block_key, {})
                 combined_kwargs = {**all_block_kwargs, **block_kwargs}
                 do_not_recompute = [] # HACK
-                if self.recompute_each_block and (block_idx not in do_not_recompute):
+                if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (self.recompute_block_keys and block_key in self.recompute_block_keys):
                     h = checkpoint(
                         self._forwrad_one_block, 
                         h, block_key, 

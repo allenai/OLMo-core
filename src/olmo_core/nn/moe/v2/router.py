@@ -27,7 +27,7 @@ from olmo_core.utils import get_default_device
 
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 from ..router import MoERouterGatingFunction, _uniform_expert_assignment
-from .output_discard_checkpoint import OutputDiscardCheckpoint
+from ...output_discard_checkpoint import OutputDiscardCheckpoint
 
 import nvtx
 if TYPE_CHECKING:

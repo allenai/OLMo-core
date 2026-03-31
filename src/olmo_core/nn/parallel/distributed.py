@@ -159,9 +159,7 @@ class MultiGroupDistributedDataParallel(Module):
         if bucket_cap_mb is None:
             # default case (bucket cap is 250 MiB)
             bucket_cap_mb = 250
-            self.bucket_bytes_cap_default = True
-        else:
-            self.bucket_bytes_cap_default = False
+
         self.bucket_bytes_cap = int(bucket_cap_mb * 1024 * 1024)
 
         # Whether to perform input tensor CPU to GPU copies on a side-stream

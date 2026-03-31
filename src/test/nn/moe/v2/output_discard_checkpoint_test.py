@@ -2,7 +2,7 @@ import copy
 
 import torch
 
-from olmo_core.nn.moe.v2 import OutputDiscardCheckpoint
+from olmo_core.nn import OutputDiscardCheckpoint
 
 
 def test_output_discard_checkpoint_discards_and_restores_storage():

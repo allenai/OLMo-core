@@ -3,9 +3,10 @@ import math
 import warnings
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, cast
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
@@ -20,6 +21,7 @@ from olmo_core.nn.attention.kv_cache import KVCacheManager
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
+from ..output_discard_checkpoint import OutputDiscardCheckpoint
 from ..rope import (
     ComplexRotaryEmbedding,
     FusedRotaryEmbedding,
@@ -176,6 +178,11 @@ class AttentionConfig(Config):
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
     d_attn: Optional[int] = None
+    use_recompute_qkv_prep: bool = False
+    """
+    Whether to use OutputDiscardCheckpoint on the QKV preparation path so backward can
+    recompute Q/K/V from the attention input, trading extra compute for lower activation memory.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -403,6 +410,7 @@ class Attention(AttentionBase):
         cache: Optional[BufferCache] = None,
         use_head_qk_norm: bool = False,
         d_attn: Optional[int] = None,
+        use_recompute_qkv_prep: bool = False,
     ):
         super().__init__()
 
@@ -423,6 +431,7 @@ class Attention(AttentionBase):
         self.w_out = nn.Linear(d_attn, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
+        self.use_recompute_qkv_prep = use_recompute_qkv_prep
 
         self.q_norm: Optional[LayerNorm] = None
         self.k_norm: Optional[LayerNorm] = None
@@ -525,35 +534,15 @@ class Attention(AttentionBase):
             self.kv_cache_manager.update_seqlen(q.shape[1])
         return att
 
-    @nvtx.annotate("Attention.forward", color='red')
-    def forward(
+    def _prepare_qkv(
         self,
         x: torch.Tensor,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
+        *,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-        cache_leftpad: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """
-        Apply attention to the input.
-
-        :param x: The input of shape ``(batch_size, seq_len, d_model)``.
-        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
-            :class:`torch.int32` tensor that should always have one more element than there
-            are documents (the first element in the tensor should always be ``0``).
-            Required together with ``max_doc_len`` when using intra-document masking.
-        :param max_doc_len: The maximum document length in the input ``x``.
-            Required together with ``cu_doc_lens`` when using intra-document masking.
-
-        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
-        """
+        start_pos: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads * head_dim),
@@ -588,14 +577,6 @@ class Attention(AttentionBase):
                 k = self.k_norm(k)
 
         if self.rope is not None:
-            # In context-parallel mode we must be given pre-sharded buffers
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
-                raise RuntimeError(
-                    "RoPE buffers must be passed through to attention after being properly "
-                    "sharded by the context parallel load balancer"
-                )
-
-            start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
             q, k = self.rope(
                 q,
                 k,
@@ -604,6 +585,71 @@ class Attention(AttentionBase):
                 pos_sin=pos_sin,
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
+            )
+
+        return q, k, v
+
+    @nvtx.annotate("Attention.forward", color='red')
+    def forward(
+        self,
+        x: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Apply attention to the input.
+
+        :param x: The input of shape ``(batch_size, seq_len, d_model)``.
+        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
+            :class:`torch.int32` tensor that should always have one more element than there
+            are documents (the first element in the tensor should always be ``0``).
+            Required together with ``max_doc_len`` when using intra-document masking.
+        :param max_doc_len: The maximum document length in the input ``x``.
+            Required together with ``cu_doc_lens`` when using intra-document masking.
+
+        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
+        """
+        B, T, _ = x.shape
+
+        if self.rope is not None:
+            # In context-parallel mode we must be given pre-sharded buffers
+            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+                raise RuntimeError(
+                    "RoPE buffers must be passed through to attention after being properly "
+                    "sharded by the context parallel load balancer"
+                )
+
+        start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
+        qkv_checkpoint: Optional[OutputDiscardCheckpoint] = None
+        if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_qkv_prep:
+            qkv_checkpoint = OutputDiscardCheckpoint()
+            q, k, v = cast(
+                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                qkv_checkpoint.checkpoint(
+                    self._prepare_qkv,
+                    x,
+                    pos_sin=pos_sin,
+                    pos_cos=pos_cos,
+                    freqs_cis=freqs_cis,
+                    start_pos=start_pos,
+                ),
+            )
+        else:
+            q, k, v = self._prepare_qkv(
+                x,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+                start_pos=start_pos,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -620,6 +666,9 @@ class Attention(AttentionBase):
             local_k_slice=local_k_slice,
             cache_leftpad=cache_leftpad,
         )
+        if qkv_checkpoint is not None:
+            # Recompute Q/K/V before attention backward consumes the discarded activations.
+            qkv_checkpoint.discard_output_and_register_recompute(att)
 
         # shape: (batch_size, seq_len, d_attn)
         att = att.view(B, T, -1)
@@ -730,6 +779,7 @@ class NormalizedAttention(Attention):
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
+        use_recompute_qkv_prep: bool = False,
     ):
         super().__init__(
             d_model=d_model,
@@ -744,6 +794,7 @@ class NormalizedAttention(Attention):
             dtype=dtype,
             init_device=init_device,
             cache=cache,
+            use_recompute_qkv_prep=use_recompute_qkv_prep,
         )
 
         self.sq_init_value = 1.0
@@ -767,26 +818,15 @@ class NormalizedAttention(Attention):
             self.sq.mul_(self.sq_init_scaling)
             self.sk.mul_(self.sk_init_scaling)
 
-    def forward(
+    def _prepare_qkv(
         self,
         x: torch.Tensor,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
+        *,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-        cache_leftpad: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        if cache_leftpad:
-            raise NotImplementedError(
-                "cache_leftpad is not supported for the normalized attention variant"
-            )
-
+        start_pos: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads * head_dim),
@@ -812,13 +852,6 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
-                raise RuntimeError(
-                    "RoPE buffers must be passed through to attention after being properly "
-                    "sharded by the context parallel load balancer"
-                )
-
-            start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
             q, k = self.rope(
                 q,
                 k,
@@ -829,11 +862,30 @@ class NormalizedAttention(Attention):
                 freqs_cis=freqs_cis,
             )
 
-        # shape: (batch_size, seq_len, n_heads, head_dim)
-        att = self.sdpa(
-            q,
-            k,
-            v,
+        return q, k, v
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if cache_leftpad:
+            raise NotImplementedError(
+                "cache_leftpad is not supported for the normalized attention variant"
+            )
+
+        return super().forward(
+            x,
             cu_doc_lens=cu_doc_lens,
             cu_doc_lens_q=cu_doc_lens_q,
             cu_doc_lens_k=cu_doc_lens_k,
@@ -841,14 +893,11 @@ class NormalizedAttention(Attention):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
             cache_leftpad=cache_leftpad,
         )
-
-        # shape: (batch_size, seq_len, d_model)
-        att = att.view(B, T, -1)
-
-        # shape: (batch_size, seq_len, d_model)
-        return self.w_out(att)
 
     def apply_tp(
         self,
@@ -914,6 +963,7 @@ class FusedAttention(AttentionBase):
         backend: Optional[AttentionBackendName] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
+        use_recompute_qkv_prep: bool = False,
     ):
         super().__init__()
 
@@ -922,6 +972,7 @@ class FusedAttention(AttentionBase):
         self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, dtype=dtype, device=init_device)
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
+        self.use_recompute_qkv_prep = use_recompute_qkv_prep
         self.rope: Optional[FusedRotaryEmbedding] = None
         if rope is not None:
             if rope.name != "fused":
@@ -945,6 +996,27 @@ class FusedAttention(AttentionBase):
     @property
     def cp_enabled(self) -> bool:
         return self.backend.cp_enabled
+
+    def _prepare_qkv(
+        self,
+        x: torch.Tensor,
+        *,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        B, T, _ = x.shape
+
+        # shape: (batch_size, seq_len, 3, n_heads, head_dim)
+        qkv = self.w_qkv(x).view(B, T, 3, self.n_heads, self.head_dim)
+
+        if self.clip_qkv is not None:
+            qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+
+        if self.rope is not None:
+            qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
+
+        return qkv
 
     def forward(
         self,
@@ -976,25 +1048,37 @@ class FusedAttention(AttentionBase):
 
         B, T, _ = x.shape
 
-        # shape: (batch_size, seq_len, 3, n_heads, head_dim)
-        qkv = self.w_qkv(x).view(B, T, 3, self.n_heads, self.head_dim)
-
-        if self.clip_qkv is not None:
-            qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
-
         if self.rope is not None:
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
-            qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
+
+        qkv_checkpoint: Optional[OutputDiscardCheckpoint] = None
+        if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_qkv_prep:
+            qkv_checkpoint = OutputDiscardCheckpoint()
+            qkv = cast(
+                torch.Tensor,
+                qkv_checkpoint.checkpoint(
+                    self._prepare_qkv,
+                    x,
+                    pos_sin=pos_sin,
+                    pos_cos=pos_cos,
+                    freqs_cis=freqs_cis,
+                ),
+            )
+        else:
+            qkv = self._prepare_qkv(x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
 
         att = self.backend(
             qkv,
             cu_doc_lens=cu_doc_lens,
             max_doc_len=max_doc_len,
         )
+        if qkv_checkpoint is not None:
+            # Recompute packed QKV before attention backward consumes the discarded activations.
+            qkv_checkpoint.discard_output_and_register_recompute(att)
 
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)  # type: ignore
@@ -1141,6 +1225,7 @@ class MultiheadLatentAttention(AttentionBase):
         qk_nope_head_dim: int = 128,
         qk_rope_head_dim: int = 64,
         v_head_dim: int = 128,
+        use_recompute_qkv_prep: bool = False,
     ):
         super().__init__()
         assert qkv_norm is not None, "qkv_norm need be provided for MLA" # TODO: support MLA without norm at latent Q and KV
@@ -1156,6 +1241,7 @@ class MultiheadLatentAttention(AttentionBase):
         self.qk_rope_head_dim = qk_rope_head_dim # rotary query/key dim
         
         self.v_head_dim = v_head_dim # value head dim
+        self.use_recompute_qkv_prep = use_recompute_qkv_prep
         
         self.softmax_scale = (qk_nope_head_dim + qk_rope_head_dim) ** -0.5
 
@@ -1200,31 +1286,14 @@ class MultiheadLatentAttention(AttentionBase):
         self._cp_enabled = False
         self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
 
-    # @nvtx.annotate("MLA.forward", color=NVTX_COLOR)
-    def forward(
+    def _prepare_qkv(
         self,
         x: torch.Tensor,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
+        *,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """
-        Apply multi-head latent attention.
-
-        :param x: Input tensor of shape (B, T, d_model).
-        :param start_pos: Starting position in the sequence.
-        :param freqs_cis: Precomputed rotary embeddings.
-        :param mask: Optional attention mask.
-        :returns: Tensor of shape (B, T, d_model).
-        """
-
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
 
         # Compute query projections
@@ -1275,8 +1344,57 @@ class MultiheadLatentAttention(AttentionBase):
         assert q_combined.shape == (B, T, self.n_heads, self.qk_nope_head_dim + self.qk_rope_head_dim)
         assert k_combined.shape == (B, T, self.n_heads, self.qk_nope_head_dim + self.qk_rope_head_dim)
         assert v.shape == (B, T, self.n_heads, self.v_head_dim)
-        
-        
+
+        return q_combined, k_combined, v
+
+    # @nvtx.annotate("MLA.forward", color=NVTX_COLOR)
+    def forward(
+        self,
+        x: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Apply multi-head latent attention.
+
+        :param x: Input tensor of shape (B, T, d_model).
+        :param start_pos: Starting position in the sequence.
+        :param freqs_cis: Precomputed rotary embeddings.
+        :param mask: Optional attention mask.
+        :returns: Tensor of shape (B, T, d_model).
+        """
+
+        B, T, _ = x.shape
+
+        qkv_checkpoint: Optional[OutputDiscardCheckpoint] = None
+        if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_qkv_prep:
+            qkv_checkpoint = OutputDiscardCheckpoint()
+            q_combined, k_combined, v = cast(
+                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                qkv_checkpoint.checkpoint(
+                    self._prepare_qkv,
+                    x,
+                    pos_sin=pos_sin,
+                    pos_cos=pos_cos,
+                    freqs_cis=freqs_cis,
+                ),
+            )
+        else:
+            q_combined, k_combined, v = self._prepare_qkv(
+                x,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+            )
+
         # Compute attention scores
         attn = self.sdpa(
             q_combined,
@@ -1291,6 +1409,9 @@ class MultiheadLatentAttention(AttentionBase):
             local_k_slice=local_k_slice,
             scale=self.softmax_scale,
         )
+        if qkv_checkpoint is not None:
+            # Recompute Q/K/V before attention backward consumes the discarded activations.
+            qkv_checkpoint.discard_output_and_register_recompute(attn)
         
         # shape: (B, T, n_heads, v_head_dim)
         attn = attn.view(B, T, -1)

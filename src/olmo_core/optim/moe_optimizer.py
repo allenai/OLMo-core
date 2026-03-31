@@ -515,7 +515,7 @@ class MoEFusedV2Optimizer:
         dp_group: Optional[ProcessGroup] = None,
         ep_dp_group: Optional[ProcessGroup] = None,
         broadcast_bucket_mb: int = 32,
-        do_not_shard_tensor_smaller_than: int = 8192,
+        do_not_shard_tensor_smaller_than: int = 4096,
         use_distributed: bool = True,
         check_nan_inf_grad: bool = False,
         reset_optimizer_moments_on_load: bool = False,

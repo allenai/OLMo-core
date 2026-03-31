@@ -84,6 +84,7 @@ from olmo_core.nn.transformer.config import (
     TransformerBlockType,
 )
 
+_DEBUG_ACTIVATION = True
 
 def _is_checkpoint_recomputing() -> bool:
     return getattr(_CHECKPOINT_RECOMPUTE_STATE, "depth", 0) > 0
@@ -1791,6 +1792,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                         get_global_arg("dry_run_done", default=False)
                         and self.block_idx == 3
                         and not get_global_arg(activation_dump_key, default=False)
+                        and _DEBUG_ACTIVATION # debug
                     ):
                         saved_activations_by_storage: Dict[Tuple[str, int, int], Dict[str, object]] = {}
                         saved_tensor_weakrefs: List[weakref.ReferenceType[torch.Tensor]] = []

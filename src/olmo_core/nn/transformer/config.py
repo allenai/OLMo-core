@@ -1271,6 +1271,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
     # Recompute each block individually. This reduces the activation memory to just one block at a time, but increases recomputation overhead. Works with or without PP. It does not work with TBO
     recompute_each_block: bool = True
 
+    recompute_block_keys: Optional[List[str]] = None
 
     def build(
         self,
@@ -1307,6 +1308,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
                 two_batch_overlap=self.two_batch_overlap,
                 recompute_all_blocks_by_chunk=self.recompute_all_blocks_by_chunk,
                 recompute_each_block=self.recompute_each_block,
+                recompute_block_keys=self.recompute_block_keys,
                 embedding_norm=self.embedding_norm,
                 embedding_init_std=self.embedding_init_std,
                 embed_scale=self.embed_scale,
