@@ -437,14 +437,15 @@ class TransformerGenerationModule(GenerationModule):
             with cached_path(config_path).open() as f:
                 config_dict = json.load(f)
             try:
-                # Avoid loading the entire experiment config b/c we don't care about validation outside
-                # of the transformer config and the tokenizer config
                 transformer_config = TransformerConfig.from_dict(config_dict["model"])
-                tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
             except KeyError as e:
                 raise OLMoConfigurationError(
                     f"Failed to load config from checkpoint at {config_path}: missing required field {e}"
                 ) from e
+            try:
+                tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
+            except KeyError:
+                pass  # tokenizer_config stays None; generation_config must be provided
 
         # Create work directory on rank 0
         work_dir = Path(
