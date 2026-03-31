@@ -250,6 +250,7 @@ class GemmaLikeTransformerConfig(TransformerConfig):
         lm_head_loss_impl = kwargs.pop("lm_head_loss_impl", LMLossImplementation.default)
         use_gdn = kwargs.pop("use_gdn", False)
         no_rope = kwargs.pop("no_rope", False)
+        expand_v = kwargs.pop("expand_v", 1.0)
 
         local_rope_theta = 10_000
         local_window_size = 1024
@@ -276,7 +277,7 @@ class GemmaLikeTransformerConfig(TransformerConfig):
                     n_heads=n_heads,
                     n_v_heads=n_heads,  # for GDN, we intentionally match the number of heads.
                     head_dim=head_dim,
-                    expand_v=1.0,
+                    expand_v=expand_v,
                     dtype=dtype,
                 ),
                 feed_forward=feed_forward,
@@ -518,6 +519,7 @@ class GemmaLikeOlmoV2(StrEnum):
         use_gdn: bool = False,
         attn_backend: Optional[AttentionBackendName] = None,
         no_rope: bool = False,
+        expand_v: float = 1.0,
     ) -> Tuple[TransformerConfig, _ModelSizeSettings]:
         """Get the model config and all settings for this model size."""
         # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
@@ -542,7 +544,7 @@ class GemmaLikeOlmoV2(StrEnum):
 
         settings = settings_map[self]
         config_method = getattr(GemmaLikeTransformerConfig, f"v2_{settings.size}")
-        kwargs: Dict[str, Any] = {"use_gdn": use_gdn, "no_rope": no_rope}
+        kwargs: Dict[str, Any] = {"use_gdn": use_gdn, "no_rope": no_rope, "expand_v": expand_v}
         if attn_backend is not None:
             kwargs["attn_backend"] = attn_backend
         model_config = config_method(vocab_size, **kwargs)
@@ -565,6 +567,7 @@ def handle_custom_args(
     parser.add_argument("--use-gdn", action="store_true", default=False)
     parser.add_argument("--embedding-norm", action="store_true", default=False)
     parser.add_argument("--no-rope", action="store_true", default=False)
+    parser.add_argument("--expand-v", type=float, default=1.0)
     parser.add_argument(
         "--attn-backend",
         type=AttentionBackendName,
@@ -724,6 +727,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     use_gdn = custom_args.use_gdn
     embedding_norm = custom_args.embedding_norm
     no_rope = custom_args.no_rope
+    expand_v = custom_args.expand_v
     attn_backend = custom_args.attn_backend
 
     sequence_length = DEFAULT_SEQUENCE_LENGTH
@@ -738,7 +742,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.dolma2()
     model_config, model_size_settings = model.get_settings(
-        tokenizer_config.padded_vocab_size(), use_gdn=use_gdn, attn_backend=attn_backend, no_rope=no_rope
+        tokenizer_config.padded_vocab_size(), use_gdn=use_gdn, attn_backend=attn_backend, no_rope=no_rope,
+        expand_v=expand_v,
     )
 
     if embedding_norm:
