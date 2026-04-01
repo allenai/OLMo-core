@@ -552,20 +552,20 @@ class MoETransformerBlock(TransformerBlockBase):
         return True
 
     @property
-    def router(self) -> MoERouter:
-        return self.feed_forward_moe.router
+    def routers_list(self) -> nn.ModuleList:
+        return self.feed_forward_moe.routers_list
 
     @property
     def shared_mlp(self) -> Optional[FeedForward]:
         return self.feed_forward_moe.shared_mlp
 
     @property
-    def experts(self) -> ParallelMLPBase:
-        return self.feed_forward_moe.experts
+    def experts_list(self) -> nn.ModuleList:
+        return self.feed_forward_moe.experts_list
 
     @property
-    def top_k(self) -> int:
-        return self.feed_forward_moe.top_k
+    def top_k_sum(self) -> int:
+        return self.feed_forward_moe.top_k_sum
 
     @property
     def ep_enabled(self) -> bool:
@@ -828,15 +828,17 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
     ):
         from torch.distributed.fsdp import MixedPrecisionPolicy
 
-        # Force router to be full-precision.
-        fsdp_router = cast(
-            FSDPModule,
-            fully_shard(
-                self.feed_forward_moe.router,
-                mesh=dp_mesh,
-                mp_policy=MixedPrecisionPolicy(param_dtype=torch.float32),
-            ),
-        )
+        # Force routers to be full-precision.
+        fsdp_routers = []
+        for router in self.feed_forward_moe.routers_list:
+            fsdp_routers.append(cast(
+                FSDPModule,
+                fully_shard(
+                    router,
+                    mesh=dp_mesh,
+                    mp_policy=MixedPrecisionPolicy(param_dtype=torch.float32),
+                ),
+            ))
 
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             if not self.use_combined_forward:
@@ -851,7 +853,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 )
                 fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
                 if prefetch_factor > 0:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_router, fsdp_moe, fsdp_att])
+                    fsdp_root.set_modules_to_forward_prefetch([*fsdp_routers, fsdp_moe, fsdp_att])
                     fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
             else:
                 fsdp_att = cast(
@@ -876,7 +878,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
 
                 if prefetch_factor > 0:
                     #  fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_router])
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, *fsdp_routers])
                     if fsdp_shared_mlp is not None:
                         fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp, fsdp_shared_mlp])
                     else:
@@ -988,8 +990,8 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         ).view(B, -1, D)
 
         if moe_shared_out is not None:
-            moe_shared_out = moe_shared_out / (self.top_k + 1)
-            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
+            moe_shared_out = moe_shared_out / (self.top_k_sum + 1)
+            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k_sum / (self.top_k_sum + 1))
 
         return h + self.dropout(x_moe)
 
@@ -1098,7 +1100,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         ).view(B, -1, D)
 
         if moe_shared_out is not None:
-            moe_shared_out = moe_shared_out / (self.top_k + 1)
-            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
+            moe_shared_out = moe_shared_out / (self.top_k_sum + 1)
+            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k_sum / (self.top_k_sum + 1))
 
         return h + self.dropout(self.feed_forward_moe_norm(x_moe))
