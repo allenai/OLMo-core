@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v2.5.0](https://github.com/allenai/OLMo-core/releases/tag/v2.5.0) - 2026-04-01
+
 ### Added
 
 - Added API reference and user guide for the `olmo_core.generate` module and interactive chat interface.
