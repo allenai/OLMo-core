@@ -11,11 +11,7 @@ from utils import dict_update
 SWEEP_NAME_DEFAULT = 'data_rep_AC'
 project = 'moe'
 MODELS = [
-    # 'olmo2_200M',
-    # 'olmo2_100M',
-    # 'olmo2_50M',
-    # 'olmo2_20M',
-    'olmo2_10M',
+    'olmo2_ml_10M',
 ]
 
 def main(
