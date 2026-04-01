@@ -95,7 +95,7 @@ class MoEConfig(ModuleConfig):
             num_experts = self.num_experts_list[i]
             hidden_size = self.hidden_sizes_list[i]
             active_params -= (3 * d_model * hidden_size * num_experts)
-            active_parms += + (3 * d_model * hidden_size * router.top_k)
+            active_params += (3 * d_model * hidden_size * router.top_k)
         return active_params
 
     def build(
@@ -212,11 +212,10 @@ class MoEBase(nn.Module):
     def compute_metrics(
         self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        all_metrics: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for i, router in enumerate(self.routers_list):
-            metrics = router.compute_metrics(reset=reset, prefix=f"router {i}")
-            return metrics
-        # return 
-        # return self.router.compute_metrics(reset=reset)
+            all_metrics.update(router.compute_metrics(reset=reset, prefix=f"router {i}"))
+        return all_metrics
 
     def reset_metrics(self):
         # self.router.reset_metrics()
