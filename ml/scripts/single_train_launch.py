@@ -56,13 +56,15 @@ from constants import (
 
 
 MODEL_CONFIG_LOOKUP = {
-    "olmo2_10M": TransformerConfig.olmo2_10M,
-    "olmo2_20M": TransformerConfig.olmo2_20M,
-    "olmo2_50M": TransformerConfig.olmo2_50M,
-    "olmo2_100M": TransformerConfig.olmo2_100M,
-    "olmo2_200M": TransformerConfig.olmo2_200M,
-    "olmo2_400M": TransformerConfig.olmo2_400M,
-    "olmo2_1B": TransformerConfig.olmo2_1B,
+    "olmo2_ml_10M": TransformerConfig.olmo2_ml_10M,
+    "olmo2_ml_20M": TransformerConfig.olmo2_ml_20M,
+    "olmo2_ml_50M": TransformerConfig.olmo2_ml_50M,
+    "olmo2_ml_80M": TransformerConfig.olmo2_ml_80M,
+    "olmo2_ml_100M": TransformerConfig.olmo2_ml_100M,
+    "olmo2_ml_110M": TransformerConfig.olmo2_ml_110M,
+    "olmo2_ml_200M": TransformerConfig.olmo2_ml_200M,
+    "olmo2_ml_300M": TransformerConfig.olmo2_ml_300M,
+    "olmo2_ml_500M": TransformerConfig.olmo2_ml_500M,
 }
 
 TOKENIZER_LOOKUP = {

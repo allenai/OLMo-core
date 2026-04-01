@@ -27,7 +27,7 @@ MODEL_HP_DEFAULTS = {
             },
         },
     },
-    "olmo2_10M": {
+    "olmo2_ml_10M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -35,11 +35,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [1000000000],
+                "value": [200_000_000],
             },
         },
     },
-    "olmo2_20M": {
+    "olmo2_ml_20M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -47,11 +47,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [2000000000],
+                "value": [400_000_000],
             },
         },
     },
-    "olmo2_50M": {
+    "olmo2_ml_50M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -59,11 +59,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [5000000000],
+                "value": [1_000_000_000],
             },
         },
     },
-    "olmo2_100M": {
+    "olmo2_ml_80M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -71,11 +71,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [10000000000],
+                "value": [1_600_000_000],
             },
         },
     },
-    "olmo2_200M": {
+    "olmo2_ml_110M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -83,11 +83,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [20000000000],
+                "value": [2_000_000_000],
             },
         },
     },
-    "olmo2_400M": {
+    "olmo2_ml_200M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -95,10 +95,34 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [40000000000],
+                "value": [4_000_000_000],
             },
         },
-    }
+    },
+    "olmo2_ml_300M": {
+        "train_module": {
+            "optim": {
+                "lr": [4e-3],
+            },
+        },
+        "trainer": {
+            "max_duration": {
+                "value": [6_000_000_000],
+            },
+        },
+    },
+    "olmo2_ml_500M": {
+        "train_module": {
+            "optim": {
+                "lr": [4e-3],
+            },
+        },
+        "trainer": {
+            "max_duration": {
+                "value": [10_000_000_000],
+            },
+        },
+    },
 }
 
 PROJECT_SPECS = {
@@ -148,20 +172,47 @@ HARDWARE_SPECS_DICT = {
     "ckpt-g2": {
         "JOBTIME": "9:00:00",
     },
-    "olmo2_10M": { 
+    "olmo2_ml_10M": {
+        "all": {
+            "per_gpu_batch_size": 32,
+        },
     },
-    "olmo2_20M": { 
+    "olmo2_ml_20M": {
+        "all": {
+            "per_gpu_batch_size": 32,
+        },
     },
-    "olmo2_50M": { 
+    "olmo2_ml_50M": {
+        "all": {
+            "per_gpu_batch_size": 32,
+        },
     },
-    "olmo2_100M": { 
+    "olmo2_ml_80M": {
+        "all": {
+            "per_gpu_batch_size": 16,
+            "MEM_GB": 180,
+        },
+    },
+    "olmo2_ml_100M": {
+        "all": {
+            "per_gpu_batch_size": 16,
+            "MEM_GB": 180,
+        },
+    },
+    "olmo2_ml_200M": {
+        "all": {
+            "per_gpu_batch_size": 16,
+            "MEM_GB": 220,
+        },
+    },
+    "olmo2_ml_300M": { 
         "gpu-h200": {
             "per_gpu_batch_size": 16,
             "NUM_CPUS": 16,
             "MEM_GB": 240,
         }, 
     },
-    "olmo2_200M": { 
+    "olmo2_ml_500M": { 
         "gpu-l40": {
             "per_gpu_batch_size": 8,
         }, 
@@ -172,14 +223,6 @@ HARDWARE_SPECS_DICT = {
             "per_gpu_batch_size": 16,
             "NUM_CPUS": 16,
             "MEM_GB": 240,
-        }, 
-    },
-    "olmo2_400M": { 
-        "gpu-l40": {
-            "per_gpu_batch_size": 8,
-        }, 
-        "gpu-a40": {
-            "per_gpu_batch_size": 8,
         }, 
     }
 }
