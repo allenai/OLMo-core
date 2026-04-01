@@ -67,7 +67,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     ladder = ModelLadder(
         name=args.name,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
-        sizes=list(TransformerSize),
+        sizes=[s for s in TransformerSize if s.approx_num_params <= 1e9],
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
         model_configurator=Olmo3ModelConfigurator(
