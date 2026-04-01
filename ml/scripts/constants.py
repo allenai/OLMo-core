@@ -75,6 +75,18 @@ MODEL_HP_DEFAULTS = {
             },
         },
     },
+    "olmo2_ml_100M": {
+        "train_module": {
+            "optim": {
+                "lr": [4e-3],
+            },
+        },
+        "trainer": {
+            "max_duration": {
+                "value": [2_000_000_000],
+            },
+        },
+    },
     "olmo2_ml_110M": {
         "train_module": {
             "optim": {
