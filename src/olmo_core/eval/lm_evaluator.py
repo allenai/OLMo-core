@@ -23,6 +23,7 @@ class LMEvaluator(Evaluator):
         with, and should be included in the ``labels`` argument to this class.
 
     :param labels: All of the task labels.
+    :param deterministic: See :class:`Evaluator` for details.
     """
 
     def __init__(
@@ -32,8 +33,9 @@ class LMEvaluator(Evaluator):
         batches: Iterable[Dict[str, Any]],
         labels: Sequence[str],
         device: Optional[torch.device] = None,
+        deterministic: bool = True,
     ):
-        super().__init__(name=name, batches=batches, device=device)
+        super().__init__(name=name, batches=batches, device=device, deterministic=deterministic)
         self.metrics = {label: MeanMetric(device=device) for label in labels}
 
     @classmethod
@@ -50,6 +52,7 @@ class LMEvaluator(Evaluator):
         num_threads: Optional[int] = None,
         num_workers: int = 0,
         prefetch_factor: Optional[int] = None,
+        deterministic: bool = True,
     ) -> "LMEvaluator":
         """
         Initialize an :class:`LMEvaluator` from a :class:`~olmo_core.data.numpy_dataset.NumpyPaddedFSLDataset`.
@@ -85,6 +88,7 @@ class LMEvaluator(Evaluator):
             batches=data_loader,
             labels=list(labels),
             device=device,
+            deterministic=deterministic,
         )
 
     def update_metrics(
