@@ -7,4 +7,5 @@
           -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_from_hf.py \
               -i Qwen/Qwen3-1.7B-Base \
               -o /weka/oe-adapt-default/jacobm/repos/cse-579/checkpoints/Qwen3-1.7B-Base-oc \
-              -c /weka/oe-adapt-default/jacobm/repos/cse-579/OLMo-core/src/scripts/train/sft/qwen3-1.7b-config.json
+              -c /weka/oe-adapt-default/jacobm/repos/cse-579/OLMo-core/src/scripts/train/sft/qwen3-1.7b-config.json \
+              --skip-validation
