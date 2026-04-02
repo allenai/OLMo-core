@@ -21,11 +21,11 @@ Model sizes:
 Usage:
   # Dry run (print config without launching):
   python src/scripts/train/OLMo_hybrid/OLMo-hybrid-small-suite.py dry_run \
-      hybrid-small-275M ai2/jupiter --model-size=275m
+      hybrid-small-275M ai2/jupiter
 
-  # Launch on Beaker:
+  # Launch on Beaker (model size is parsed from run name):
   python src/scripts/train/OLMo_hybrid/OLMo-hybrid-small-suite.py launch \
-      hybrid-small-1.4B ai2/jupiter --model-size=1.4b
+      hybrid-small-1.4B ai2/jupiter
 """
 
 import math
@@ -328,17 +328,29 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
 
 
 if __name__ == "__main__":
-    import argparse
     import sys
 
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument(
-        "--model-size", required=True, choices=list(MODEL_CONFIGS.keys()),
-        help="Model size to train.",
-    )
-    args, remaining = parser.parse_known_args()
-    model_size = args.model_size
-    sys.argv = [sys.argv[0]] + remaining
+    # Parse model size from the run name (2nd arg), which is forwarded to Beaker as-is.
+    # e.g. "hybrid-small-275M" → "275m", "hybrid-small-1.4B" → "1.4b"
+    if len(sys.argv) < 3:
+        raise SystemExit(
+            f"Usage: {sys.argv[0]} <subcmd> <run_name> <cluster> [overrides...]\n"
+            f"Run name must contain a model size: {list(MODEL_CONFIGS.keys())}"
+        )
+
+    run_name = sys.argv[2].lower()
+    model_size = None
+    # Try longest keys first so "1.4b" matches before partial overlaps.
+    for key in sorted(MODEL_CONFIGS.keys(), key=len, reverse=True):
+        if key in run_name:
+            model_size = key
+            break
+
+    if model_size is None:
+        raise SystemExit(
+            f"Error: could not parse model size from run name '{sys.argv[2]}'. "
+            f"Run name must contain one of: {list(MODEL_CONFIGS.keys())}"
+        )
 
     cfg = MODEL_CONFIGS[model_size]
 
