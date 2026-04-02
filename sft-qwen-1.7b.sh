@@ -3,7 +3,7 @@ BASE_CKPT=/weka/oe-adapt-default/jacobm/repos/cse-579/checkpoints/Qwen3-1.7B-Bas
 CLUSTER=ai2/saturn
 DATASET_PATH=/weka/oe-adapt-default/jacobm/repos/cse-579/datasets/Dolci-Think-SFT-32B-qwen3-olmo-thinker-10k
 
-python src/scripts/train/sft/Qwen3-1.7B-SFT.py launch \
+uv run python src/scripts/train/sft/Qwen3-1.7B-SFT.py launch \
     ${RUN_NAME} \
     ${BASE_CKPT} \
     ${CLUSTER} \
