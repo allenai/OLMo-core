@@ -251,7 +251,7 @@ def build_config(script: str, run_name: str, overrides: List[str], treatment: st
             root_dir=root_dir,
             cmd=[script, "train", run_name, f"--treatment={treatment}", *overrides],
             cluster=CLUSTER,
-            workspace="ai2/OLMo-core",
+            workspace="ai2/oe-t-ladder",
             budget="ai2/oe-base",
             num_nodes=NUM_NODES,
         ),
