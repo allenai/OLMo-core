@@ -91,7 +91,7 @@ SCHEDULER = CosWithWarmupAndLinearDecay(warmup_steps=400)
 
 # ── Batch size (matches cookbook: 131072 tokens = 64 sequences of 2048) ──
 GLOBAL_BATCH_SIZE = 131072
-RANK_MICROBATCH_SIZE = 16 * SEQUENCE_LENGTH  # 32768 tokens
+RANK_MICROBATCH_SIZE = 8 * SEQUENCE_LENGTH  # 16384 tokens (fits 8-GPU DP)
 
 # ── Token budgets ──
 TOKENS_1XC = 582_046_720
