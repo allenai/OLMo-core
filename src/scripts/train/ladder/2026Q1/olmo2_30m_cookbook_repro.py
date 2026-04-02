@@ -23,6 +23,7 @@ Examples:
 """
 
 import logging
+import math
 import sys
 from dataclasses import dataclass
 from typing import List, Optional, cast
@@ -97,11 +98,15 @@ TOKENIZER = TokenizerConfig.dolma2()
 MODEL_CONFIG = TransformerConfig.olmo2_30M(vocab_size=TOKENIZER.padded_vocab_size())
 
 # ── Optimizer (matches cookbook: SkipStepAdamW, wd=0.033, betas=(0.9, 0.95)) ──
+# step_increment_bugfix=False reproduces the overlap-pretrain branch behavior where
+# the Adam step counter is never incremented, giving an effective lr ~2.24× higher
+# than specified (matching the cookbook's actual training dynamics).
 LEARNING_RATE = 0.007276622186288963
 OPTIMIZER = SkipStepAdamWConfig(
     lr=LEARNING_RATE,
     weight_decay=0.033,
     betas=(0.9, 0.95),
+    step_increment_bugfix=False,
     group_overrides=[OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))],
 )
 
@@ -246,6 +251,7 @@ def build_config(
     token_budget = TOKEN_BUDGETS[budget]
     save_folder = f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}"
     steps_per_1xc = TOKENS_1XC // GLOBAL_BATCH_SIZE
+    final_step = math.ceil(token_budget / GLOBAL_BATCH_SIZE)
 
     icl_overlap_paths = ICL_OVERLAP_PATHS_3B if icl_data == "3b" else ICL_OVERLAP_PATHS_500B
 
@@ -307,14 +313,17 @@ def build_config(
                     work_dir=work_dir,
                 ),
                 eval_interval=EVAL_INTERVAL,
+                fixed_steps=[final_step],
             ),
             "downstream_evaluator": DownstreamEvaluatorCallbackConfig(
                 tokenizer=TOKENIZER,
                 tasks=sorted(task_groups.FULL_TASKS),
                 eval_interval=EVAL_INTERVAL,
+                fixed_steps=[final_step],
             ),
             "metric_saver": MetricSaverCallback(
                 save_interval=EVAL_INTERVAL,
+                fixed_steps=[final_step],
             ),
         },
     )
