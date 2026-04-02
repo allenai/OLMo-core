@@ -37,6 +37,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
+    DataMixtureMonitorCallback,
     DownstreamEvaluatorCallbackConfig,
     GPUMemoryMonitorCallback,
     LMEvaluatorCallbackConfig,
@@ -246,6 +247,10 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
                 tokenizer=tokenizer_config,
                 eval_interval=250,
             ),
+        )
+        .with_callback(
+            "data_mixture_monitor",
+            DataMixtureMonitorCallback(log_interval=10),
         )
     )
 
