@@ -113,7 +113,7 @@ DOLMA2_BASELINE_PATHS = [
 ]
 
 # ── Beaker ──
-CLUSTER = "ai2/jupiter"
+CLUSTER = "ai2/saturn"
 NUM_NODES = 1
 SEED = 1337
 EVAL_INTERVAL = 1000
