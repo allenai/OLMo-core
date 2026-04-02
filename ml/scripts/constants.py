@@ -95,7 +95,7 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [2_000_000_000],
+                "value": [2_200_000_000],
             },
         },
     },
