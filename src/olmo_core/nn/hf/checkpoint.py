@@ -14,8 +14,16 @@ from olmo_core.config import DType
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_full_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.io import clear_directory, copy_dir, file_exists, is_url
-from olmo_core.nn.hf.config import get_hf_config
-from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
+from olmo_core.nn.hf.config import (
+    get_hf_config,
+    get_hybrid_hf_config,
+    get_hybrid_layer_types,
+)
+from olmo_core.nn.hf.convert import (
+    convert_hybrid_state_to_hf,
+    convert_state_from_hf,
+    convert_state_to_hf,
+)
 from olmo_core.nn.transformer.model import Transformer
 
 try:
@@ -191,3 +199,64 @@ def save_hf_model(
                 raise FileExistsError(target)
             target.parent.mkdir(exist_ok=True, parents=True)
             hf_model.save_pretrained(target)
+
+
+@beta_feature
+def save_hf_hybrid_model(
+    save_dir: PathOrStr,
+    model_state_dict: Dict[str, Any],
+    model: Transformer,
+    *,
+    dtype: Optional[DType] = None,
+    vocab_size: Optional[int] = None,
+    max_sequence_length: int = 65536,
+) -> None:
+    """
+    Save a hybrid (GDN + attention) model as ``config.json`` + ``model.safetensors``.
+
+    Unlike :func:`save_hf_model`, this writes files directly to avoid a hard dependency
+    on a specific ``transformers`` version.
+
+    :param save_dir: Directory in which to save the model.
+    :param model_state_dict: The OLMo-core model state dict.
+    :param model: The OLMo-core hybrid transformer model.
+    :param dtype: Optional dtype to cast weights to.
+    :param vocab_size: If set, truncate embeddings/lm_head to this size.
+    :param max_sequence_length: Maximum sequence length for ``max_position_embeddings``.
+    """
+    import json
+
+    from safetensors.torch import save_file
+
+    layer_types = get_hybrid_layer_types(model)
+    hf_config = get_hybrid_hf_config(model, layer_types, max_seq_len=max_sequence_length)
+
+    model_state_dict = {key: get_full_tensor(state) for key, state in model_state_dict.items()}
+    hf_state = convert_hybrid_state_to_hf(model_state_dict, layer_types)
+
+    if dtype is not None:
+        hf_state = {
+            k: v.to(dtype.as_pt()) if torch.is_tensor(v) else v for k, v in hf_state.items()
+        }
+
+    if vocab_size is not None:
+        hf_config["vocab_size"] = vocab_size
+        if "model.embed_tokens.weight" in hf_state:
+            hf_state["model.embed_tokens.weight"] = hf_state["model.embed_tokens.weight"][
+                :vocab_size
+            ]
+        if "lm_head.weight" in hf_state:
+            hf_state["lm_head.weight"] = hf_state["lm_head.weight"][:vocab_size]
+
+    log.info(f"Converted state dict has {len(hf_state)} keys")
+
+    save_path = Path(save_dir)
+    save_path.mkdir(parents=True, exist_ok=True)
+
+    config_path = save_path / "config.json"
+    with open(config_path, "w") as f:
+        json.dump(hf_config, f, indent=2)
+    log.info(f"Saved config to {config_path}")
+
+    save_file(hf_state, save_path / "model.safetensors")
+    log.info(f"Saved weights to {save_path / 'model.safetensors'}")

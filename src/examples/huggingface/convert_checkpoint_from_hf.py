@@ -4,6 +4,12 @@ model into a format that can be loaded by OLMo-core for fine-tuning.
 
 Note that this script is architecture-dependent. Some models may work out-of-the-box. Support for
 other models can be added by updating the constants in :mod:`olmo_core.nn.hf.convert`.
+
+Warnings:
+    - Only model weights are converted; optimizer states cannot be recovered from HF-format
+      checkpoints. This means you cannot resume training from the converted checkpoint.
+    - Tokenizer configuration must be specified separately.
+    - Some architecture-specific features may not be fully supported.
 """
 
 import json

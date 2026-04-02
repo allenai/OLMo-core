@@ -52,7 +52,10 @@ def has_flash_attn_4() -> bool:
     if flash_attn_4 is not None:
         if torch.cuda.is_available():
             compute_capability = torch.cuda.get_device_capability()
-            return (9, 0) <= compute_capability <= (10, 0)  # Hopper, Blackwell
+            return compute_capability >= (10, 0) and compute_capability <= (
+                12,
+                0,
+            )  # Blackwell, Blackwell Ultra
         return True
     return False
 
@@ -457,9 +460,30 @@ def dispatch_flash_attn_4(
     softmax_scale: Optional[float] = None,
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
+    seqused_k: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     if flash_attn_4 is None:
         raise RuntimeError("flash-attn 4 (CUTE implementation) is required!")
+
+    if window_size == (-1, -1) or (window_size == (-1, 0) and causal):
+        window_size = (None, None)  # type: ignore
+
+    # KV cache path: use varlen API with seqused_k to limit the valid cache length.
+    if seqused_k is not None:
+        B = q.shape[0]
+        T = q.shape[1]
+        cu_seqlens_q_cache = torch.arange(0, (B + 1) * T, T, dtype=torch.int32, device=q.device)
+        return flash_attn_4.flash_attn_varlen_func(
+            _flatten_batch_dim(q),
+            k,
+            v,
+            cu_seqlens_q=cu_seqlens_q_cache,
+            cu_seqlens_k=None,
+            seqused_k=seqused_k,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            window_size=window_size,
+        )[0]
 
     if cu_seqlens is not None:
         cu_seqlens_q = cu_seqlens if cu_seqlens_q is None else cu_seqlens_q
@@ -469,9 +493,6 @@ def dispatch_flash_attn_4(
         max_seqlen_k = max_seqlen if max_seqlen_k is None else max_seqlen_k
 
     varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
-
-    if window_size == (-1, -1) or (window_size == (-1, 0) and causal):
-        window_size = (None, None)  # type: ignore
 
     if varlen:
         return flash_attn_4.flash_attn_varlen_func(
