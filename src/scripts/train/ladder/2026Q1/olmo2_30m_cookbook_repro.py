@@ -8,13 +8,18 @@ Two data pipeline options:
   --pipeline=new  composable pipeline (MixingInstanceSource) [default]
   --pipeline=old  NumpyFSL pipeline with SourceMixture + chunk_based_mixture (matches cookbook)
 
+ICL overlap data variants:
+  --icl-data=500b  500B-sample of ICL overlap data [default]
+  --icl-data=3b    original 3B-token ICL overlap data (matches paper runs)
+
 Usage:
-  python <script> dry_run  <run_name> --treatment=... --budget=... [--pipeline=...] [OVERRIDES...]
-  python <script> launch   <run_name> --treatment=... --budget=... [--pipeline=...] [OVERRIDES...]
+  python <script> dry_run  <run_name> --treatment=... --budget=... [--pipeline=...] [--icl-data=...] [OVERRIDES...]
+  python <script> launch   <run_name> --treatment=... --budget=... [--pipeline=...] [--icl-data=...] [OVERRIDES...]
 
 Examples:
   python <script> launch my-baseline-1xC --treatment=baseline --budget=1xC --pipeline=old
   python <script> launch my-icl-overlap-3xC --treatment=icl_overlap --budget=3xC --pipeline=old
+  python <script> launch my-icl-3b-1xC --treatment=icl_overlap --budget=1xC --pipeline=old --icl-data=3b
 """
 
 import logging
@@ -112,8 +117,12 @@ TOKENS_1XC = 582_046_720
 TOKEN_BUDGETS = {"1xC": TOKENS_1XC, "3xC": 3 * TOKENS_1XC, "5xC": 5 * TOKENS_1XC}
 
 # ── Data paths ──
-ICL_OVERLAP_PATHS = [
+ICL_OVERLAP_PATHS_500B = [
     "/weka/oe-training-default/ai2-llm/suffix-arrays/preprocessed/dolma2-0625-v01/icl-overlap-max-suffix-2048-eos-fix-500B-sample/allenai/dolma2-tokenizer/*.npy",
+]
+
+ICL_OVERLAP_PATHS_3B = [
+    "/weka/oe-training-default/ai2-llm/suffix-arrays/preprocessed/dolma2-0625-v01/icl-overlap-max-suffix-2048-eos-fix/allenai/dolma2-tokenizer/*.npy",
 ]
 
 DOLMA2_BASELINE_PATHS = [
@@ -147,7 +156,7 @@ class ExperimentConfig(Config):
     numpy_data_loader: Optional[NumpyDataLoaderConfig] = None
 
 
-def _build_composable_data(treatment: str):
+def _build_composable_data(treatment: str, icl_overlap_paths: list):
     if treatment == "baseline":
         sources = [
             ConcatAndChunkInstanceSourceConfig(
@@ -161,7 +170,7 @@ def _build_composable_data(treatment: str):
                 source_specs=[
                     MixingInstanceSourceSpecConfig(
                         source=ConcatAndChunkInstanceSourceConfig(
-                            sources=[NumpyDocumentSourceConfig(source_paths=ICL_OVERLAP_PATHS, tokenizer=TOKENIZER)],
+                            sources=[NumpyDocumentSourceConfig(source_paths=icl_overlap_paths, tokenizer=TOKENIZER)],
                             sequence_length=SEQUENCE_LENGTH,
                         ),
                         ratio=0.5,
@@ -182,7 +191,7 @@ def _build_composable_data(treatment: str):
     return sources, loader
 
 
-def _build_numpy_fsl_data(treatment: str, token_budget: int, work_dir: str):
+def _build_numpy_fsl_data(treatment: str, token_budget: int, work_dir: str, icl_overlap_paths: list):
     """Matches the cookbook's NumpyFSL pipeline with chunk_based_mixture for mixtures."""
     if treatment == "baseline":
         dataset = NumpyFSLDatasetConfig.glob(
@@ -196,7 +205,7 @@ def _build_numpy_fsl_data(treatment: str, token_budget: int, work_dir: str):
             source_list=SourceMixtureList(sources=[
                 SourceMixtureConfig(
                     source_name="icl-overlap",
-                    paths=ICL_OVERLAP_PATHS,
+                    paths=icl_overlap_paths,
                     target_ratio=0.5,
                 ),
                 SourceMixtureConfig(
@@ -227,7 +236,7 @@ def _build_numpy_fsl_data(treatment: str, token_budget: int, work_dir: str):
 
 def build_config(
     script: str, run_name: str, overrides: List[str],
-    treatment: str, pipeline: str, budget: str,
+    treatment: str, pipeline: str, budget: str, icl_data: str = "500b",
 ) -> ExperimentConfig:
     root_dir = get_root_dir(CLUSTER)
     work_dir = get_work_dir(root_dir)
@@ -238,15 +247,17 @@ def build_config(
     save_folder = f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}"
     steps_per_1xc = TOKENS_1XC // GLOBAL_BATCH_SIZE
 
+    icl_overlap_paths = ICL_OVERLAP_PATHS_3B if icl_data == "3b" else ICL_OVERLAP_PATHS_500B
+
     instance_sources = None
     composable_data_loader = None
     dataset = None
     numpy_data_loader = None
 
     if pipeline == "new":
-        instance_sources, composable_data_loader = _build_composable_data(treatment)
+        instance_sources, composable_data_loader = _build_composable_data(treatment, icl_overlap_paths)
     else:
-        dataset, numpy_data_loader = _build_numpy_fsl_data(treatment, token_budget, work_dir)
+        dataset, numpy_data_loader = _build_numpy_fsl_data(treatment, token_budget, work_dir, icl_overlap_paths)
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=RANK_MICROBATCH_SIZE,
@@ -322,6 +333,7 @@ def build_config(
             cmd=[
                 script, "train", run_name,
                 f"--treatment={treatment}", f"--pipeline={pipeline}", f"--budget={budget}",
+                f"--icl-data={icl_data}",
                 *overrides,
             ],
             cluster=CLUSTER,
@@ -375,6 +387,7 @@ Options:
   --treatment=baseline|icl_overlap  Data treatment (required)
   --pipeline=new|old                Data pipeline (default: new)
   --budget=1xC|3xC|5xC             Token budget (default: 1xC)
+  --icl-data=500b|3b                ICL overlap data variant (default: 500b)
 
 Token budgets:
   1xC = {TOKENS_1XC:,} tokens
@@ -393,6 +406,7 @@ Token budgets:
     treatment = "baseline"
     pipeline = "new"
     budget = "1xC"
+    icl_data = "500b"
     overrides = []
     for arg in sys.argv[3:]:
         if arg.startswith("--treatment="):
@@ -401,6 +415,8 @@ Token budgets:
             pipeline = arg.split("=", 1)[1]
         elif arg.startswith("--budget="):
             budget = arg.split("=", 1)[1]
+        elif arg.startswith("--icl-data="):
+            icl_data = arg.split("=", 1)[1]
         else:
             overrides.append(arg)
 
@@ -414,13 +430,16 @@ Token budgets:
     if budget not in TOKEN_BUDGETS:
         print(f"Unknown budget: {budget}. Must be one of: {list(TOKEN_BUDGETS.keys())}")
         sys.exit(1)
+    if icl_data not in ("500b", "3b"):
+        print(f"Unknown icl-data: {icl_data}. Must be '500b' or '3b'")
+        sys.exit(1)
 
     if cmd == "train":
         prepare_training_environment()
     else:
         prepare_cli_environment()
 
-    config = build_config(script, run_name, overrides, treatment, pipeline, budget)
+    config = build_config(script, run_name, overrides, treatment, pipeline, budget, icl_data)
     log.info(config)
 
     if cmd == "train":
