@@ -392,6 +392,46 @@ def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
     )
 
 
+def get_position_ids_from_doc_lens(doc_lens: torch.Tensor, seq_len: int) -> torch.Tensor:
+    """
+    Build per-token RoPE positions from document lengths.
+
+    This is intended for packed or intra-document masked training batches where every document
+    should reset its RoPE positions back to zero. Padding to ``seq_len`` is filled with zeros.
+
+    :param doc_lens: A 1D or 2D tensor of document lengths.
+    :param seq_len: The padded sequence length for each batch item.
+    """
+    squeeze_output = False
+    if doc_lens.ndim == 1:
+        doc_lens = doc_lens.unsqueeze(0)
+        squeeze_output = True
+    elif doc_lens.ndim != 2:
+        raise ValueError(f"'doc_lens' must be 1D or 2D (got {doc_lens.ndim}D)")
+
+    position_ids = torch.zeros(
+        (doc_lens.size(0), seq_len), dtype=torch.long, device=doc_lens.device
+    )
+    for row_idx, row in enumerate(doc_lens):
+        offset = 0
+        for doc_len in row.tolist():
+            if doc_len == 0:
+                continue
+            if doc_len < 0:
+                raise ValueError(f"document lengths must be non-negative (got {doc_len})")
+            next_offset = offset + doc_len
+            if next_offset > seq_len:
+                raise ValueError(
+                    f"document lengths sum to {next_offset}, which exceeds seq_len={seq_len}"
+                )
+            position_ids[row_idx, offset:next_offset] = torch.arange(
+                doc_len, device=doc_lens.device, dtype=torch.long
+            )
+            offset = next_offset
+
+    return position_ids[0] if squeeze_output else position_ids
+
+
 def iter_batched(
     iterable: Iterable[Dict[str, Any]], batch_num_tokens: int
 ) -> Iterable[Tuple[Dict[str, Any], ...]]:

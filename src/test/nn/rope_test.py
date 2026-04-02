@@ -466,3 +466,145 @@ def test_rope_tensor_start_pos(device, head_first):
 
         torch.testing.assert_close(q2, q_expected)
         torch.testing.assert_close(k2, k_expected)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+@pytest.mark.parametrize(
+    "rope_cls",
+    [
+        pytest.param(RotaryEmbedding, id="default"),
+        pytest.param(ComplexRotaryEmbedding, id="complex"),
+    ],
+)
+def test_rope_position_ids_match_default_for_contiguous_positions(device, head_first, rope_cls):
+    B, T, d_model, n_heads = 2, 8, 16, 4
+    head_size = d_model // n_heads
+    rope = rope_cls(head_size=head_size)
+    position_ids = torch.arange(T, device=device).unsqueeze(0).expand(B, -1)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q, k = q.transpose(1, 2), k.transpose(1, 2)
+
+        q_default, k_default = rope(q.clone(), k.clone(), head_first=head_first)
+        q_pos, k_pos = rope(q.clone(), k.clone(), head_first=head_first, position_ids=position_ids)
+
+        torch.testing.assert_close(q_default, q_pos)
+        torch.testing.assert_close(k_default, k_pos)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+@pytest.mark.parametrize(
+    "rope_cls",
+    [
+        pytest.param(RotaryEmbedding, id="default"),
+        pytest.param(ComplexRotaryEmbedding, id="complex"),
+    ],
+)
+def test_rope_position_ids_reset_per_document(device, head_first, rope_cls):
+    B, d_model, n_heads = 1, 16, 4
+    doc_lens = [2, 3, 4]
+    T = sum(doc_lens)
+    head_size = d_model // n_heads
+    rope = rope_cls(head_size=head_size)
+    position_ids = torch.tensor([[0, 1, 0, 1, 2, 0, 1, 2, 3]], device=device, dtype=torch.long)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q, k = q.transpose(1, 2), k.transpose(1, 2)
+
+        q_out, k_out = rope(q.clone(), k.clone(), head_first=head_first, position_ids=position_ids)
+
+        q_expected_parts = []
+        k_expected_parts = []
+        start = 0
+        for doc_len in doc_lens:
+            if head_first:
+                q_doc = q[:, :, start : start + doc_len, :]
+                k_doc = k[:, :, start : start + doc_len, :]
+            else:
+                q_doc = q[:, start : start + doc_len, :, :]
+                k_doc = k[:, start : start + doc_len, :, :]
+
+            q_doc_out, k_doc_out = rope(q_doc.clone(), k_doc.clone(), head_first=head_first)
+            q_expected_parts.append(q_doc_out)
+            k_expected_parts.append(k_doc_out)
+            start += doc_len
+
+        cat_dim = 2 if head_first else 1
+        q_expected = torch.cat(q_expected_parts, dim=cat_dim)
+        k_expected = torch.cat(k_expected_parts, dim=cat_dim)
+
+        torch.testing.assert_close(q_out, q_expected)
+        torch.testing.assert_close(k_out, k_expected)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_rope_position_ids_with_scaling_matches_default(device):
+    B, T, d_model, n_heads = 2, 8, 16, 4
+    head_size = d_model // n_heads
+    rope = RotaryEmbedding(head_size=head_size, scaling=PIRoPEScalingConfig(factor=2.0))
+    position_ids = torch.arange(T, device=device).unsqueeze(0).expand(B, -1)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+
+        q_default, k_default = rope(q.clone(), k.clone())
+        q_pos, k_pos = rope(q.clone(), k.clone(), position_ids=position_ids)
+
+        torch.testing.assert_close(q_default, q_pos)
+        torch.testing.assert_close(k_default, k_pos)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_rope_position_ids_invalid_combinations(device):
+    B, T, d_model, n_heads = 2, 8, 16, 4
+    head_size = d_model // n_heads
+    position_ids = torch.arange(T, device=device).unsqueeze(0).expand(B, -1)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+
+        rope = RotaryEmbedding(head_size=head_size)
+        with pytest.raises(RuntimeError, match="start_pos"):
+            rope(q.clone(), k.clone(), position_ids=position_ids, start_pos=0)
+
+        buffers = rope.get_buffers(T, device)
+        assert buffers.pos_sin is not None
+        assert buffers.pos_cos is not None
+        with pytest.raises(RuntimeError, match="pos_sin"):
+            rope(
+                q.clone(),
+                k.clone(),
+                position_ids=position_ids,
+                pos_sin=buffers.pos_sin,
+                pos_cos=buffers.pos_cos,
+            )
+
+        complex_rope = ComplexRotaryEmbedding(head_size=head_size)
+        with pytest.raises(RuntimeError, match="start_pos"):
+            complex_rope(q.clone(), k.clone(), position_ids=position_ids, start_pos=0)
+
+        complex_buffers = complex_rope.get_buffers(T, device)
+        assert complex_buffers.freqs_cis is not None
+        with pytest.raises(RuntimeError, match="freqs_cis"):
+            complex_rope(
+                q.clone(),
+                k.clone(),
+                position_ids=position_ids,
+                freqs_cis=complex_buffers.freqs_cis,
+            )
