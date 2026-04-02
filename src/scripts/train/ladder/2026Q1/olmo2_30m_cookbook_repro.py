@@ -283,6 +283,7 @@ def train(config: ExperimentConfig):
 
 
 def launch(config: ExperimentConfig):
+    config.launch.step_soft_timeout = None
     config.launch.launch(follow=False)
 
 
