@@ -27,7 +27,7 @@ MODEL_HP_DEFAULTS = {
             },
         },
     },
-    "olmo2_10M": {
+    "olmo2_ml_10M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -35,11 +35,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [1000000000],
+                "value": [200_000_000],
             },
         },
     },
-    "olmo2_20M": {
+    "olmo2_ml_20M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -47,11 +47,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [2000000000],
+                "value": [400_000_000],
             },
         },
     },
-    "olmo2_50M": {
+    "olmo2_ml_50M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -59,11 +59,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [5000000000],
+                "value": [1_000_000_000],
             },
         },
     },
-    "olmo2_100M": {
+    "olmo2_ml_80M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -71,11 +71,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [10000000000],
+                "value": [1_600_000_000],
             },
         },
     },
-    "olmo2_200M": {
+    "olmo2_ml_100M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -83,11 +83,11 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [20000000000],
+                "value": [2_000_000_000],
             },
         },
     },
-    "olmo2_400M": {
+    "olmo2_ml_110M": {
         "train_module": {
             "optim": {
                 "lr": [4e-3],
@@ -95,10 +95,46 @@ MODEL_HP_DEFAULTS = {
         },
         "trainer": {
             "max_duration": {
-                "value": [40000000000],
+                "value": [2_000_000_000],
             },
         },
-    }
+    },
+    "olmo2_ml_200M": {
+        "train_module": {
+            "optim": {
+                "lr": [4e-3],
+            },
+        },
+        "trainer": {
+            "max_duration": {
+                "value": [4_000_000_000],
+            },
+        },
+    },
+    "olmo2_ml_300M": {
+        "train_module": {
+            "optim": {
+                "lr": [4e-3],
+            },
+        },
+        "trainer": {
+            "max_duration": {
+                "value": [6_000_000_000],
+            },
+        },
+    },
+    "olmo2_ml_500M": {
+        "train_module": {
+            "optim": {
+                "lr": [4e-3],
+            },
+        },
+        "trainer": {
+            "max_duration": {
+                "value": [10_000_000_000],
+            },
+        },
+    },
 }
 
 PROJECT_SPECS = {
@@ -136,21 +172,38 @@ PROJECT_SPECS = {
           "DATA_DIR": os.path.join(DEFAULT_DIR_PATH, 'data'),
           "NAME_KEYS": [],
       },
+    # "atindra_coriander": {
+    #       'DEFAULT_SAVE_PATH': '/m-coriander/coriander/atindra/models',
+    #       'DATA_WORK_DIR': '/m-coriander/coriander/atindra/data/work',
+    #       'VALID_DATA_DIR': '/m-coriander/coriander/atindra/data/preprocessed',
+    #       "WANDB_PROJECT": "moe",
+    #       "WANDB_ENTITY": "ml-moe",
+    #       "CONDA_ENV_NAME": "olmoe-core",
+    #       "PROJECT_DIR": DEFAULT_DIR_PATH,
+    #       "SLURM_ACCOUNT": "zlab",
+    #       "SLURM_PARTITION": "ckpt-g2",
+    #       "COMMAND_PREFIX": f"{DEFAULT_DIR_PATH}/ml/scripts/single_train_launch.py",
+    #       "NUM_GPUS": 3,
+    #       "MODEL": [],
+    #       "DATAROOT": "https://olmo-data.org/",
+    #       "DATA_DIR": '/m-coriander/coriander/atindra/data',
+    #       "NAME_KEYS": [],
+    # },
     "atindra": {
-          'DEFAULT_SAVE_PATH': '/m-coriander/coriander/atindra/models',
-          'DATA_WORK_DIR': '/m-coriander/coriander/atindra/data/work',
-          'VALID_DATA_DIR': '/m-coriander/coriander/atindra/data/preprocessed',
-          "WANDB_PROJECT": "moe",
+          'DEFAULT_SAVE_PATH': '/gscratch/zlab/atindra/models',
+          'DATA_WORK_DIR': '/gscratch/zlab/atindra/data/work',
+          'VALID_DATA_DIR': '/gscratch/zlab/atindra/data/preprocessed',
+          "WANDB_PROJECT": "data_rep_moe",
           "WANDB_ENTITY": "ml-moe",
           "CONDA_ENV_NAME": "olmoe-core",
           "PROJECT_DIR": DEFAULT_DIR_PATH,
           "SLURM_ACCOUNT": "zlab",
-          "SLURM_PARTITION": "ckpt-g2",
+          "SLURM_PARTITION": "gpu-h200",
           "COMMAND_PREFIX": f"{DEFAULT_DIR_PATH}/ml/scripts/single_train_launch.py",
-          "NUM_GPUS": 3,
+          "NUM_GPUS": 2,
           "MODEL": [],
           "DATAROOT": "https://olmo-data.org/",
-          "DATA_DIR": '/m-coriander/coriander/atindra/data',
+          "DATA_DIR": "/gscratch/zlab/atindra/data/",
           "NAME_KEYS": [],
       },
 }
@@ -165,20 +218,47 @@ HARDWARE_SPECS_DICT = {
     "ckpt-g2": {
         "JOBTIME": "9:00:00",
     },
-    "olmo2_10M": { 
+    "olmo2_ml_10M": {
+        "all": {
+            "per_gpu_batch_size": 32,
+        },
     },
-    "olmo2_20M": { 
+    "olmo2_ml_20M": {
+        "all": {
+            "per_gpu_batch_size": 32,
+        },
     },
-    "olmo2_50M": { 
+    "olmo2_ml_50M": {
+        "all": {
+            "per_gpu_batch_size": 32,
+        },
     },
-    "olmo2_100M": { 
+    "olmo2_ml_80M": {
+        "all": {
+            "per_gpu_batch_size": 16,
+            "MEM_GB": 180,
+        },
+    },
+    "olmo2_ml_100M": {
+        "all": {
+            "per_gpu_batch_size": 16,
+            "MEM_GB": 180,
+        },
+    },
+    "olmo2_ml_200M": {
+        "all": {
+            "per_gpu_batch_size": 16,
+            "MEM_GB": 220,
+        },
+    },
+    "olmo2_ml_300M": { 
         "gpu-h200": {
             "per_gpu_batch_size": 16,
             "NUM_CPUS": 16,
             "MEM_GB": 240,
         }, 
     },
-    "olmo2_200M": { 
+    "olmo2_ml_500M": { 
         "gpu-l40": {
             "per_gpu_batch_size": 8,
         }, 
@@ -189,14 +269,6 @@ HARDWARE_SPECS_DICT = {
             "per_gpu_batch_size": 16,
             "NUM_CPUS": 16,
             "MEM_GB": 240,
-        }, 
-    },
-    "olmo2_400M": { 
-        "gpu-l40": {
-            "per_gpu_batch_size": 8,
-        }, 
-        "gpu-a40": {
-            "per_gpu_batch_size": 8,
         }, 
     }
 }
