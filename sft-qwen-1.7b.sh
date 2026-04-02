@@ -9,7 +9,7 @@ uv run python src/scripts/train/sft/Qwen3-1.7B-SFT.py launch \
     ${CLUSTER} \
     --dataset_path=${DATASET_PATH} \
     --budget=ai2/oe-adapt \
-    --workspace=ai2/flex2 \
+    --workspace=ai2/olmo-instruct \
     --num_nodes=1 \
     --launch.priority=urgent \
     --launch.preemptible=true
