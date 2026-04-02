@@ -283,7 +283,7 @@ def train(config: ExperimentConfig):
 
 
 def launch(config: ExperimentConfig):
-    config.launch.launch(follow=True)
+    config.launch.launch(follow=False)
 
 
 if __name__ == "__main__":
