@@ -264,7 +264,7 @@ def build_data_components(
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         mix=DATA_MIX,
         tokenizer=common.tokenizer,
-        mix_base_dir=common.root_dir,
+        mix_base_dir="gs://ai2-llm",
         sequence_length=common.max_sequence_length,
         max_target_sequence_length=max(8192, common.max_sequence_length),
         work_dir=common.work_dir,
@@ -307,7 +307,7 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=500,
+                ephemeral_save_interval=None,
                 save_async=True,
             ),
         )
