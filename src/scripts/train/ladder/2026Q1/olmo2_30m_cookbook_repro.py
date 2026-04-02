@@ -58,7 +58,7 @@ from olmo_core.internal.common import (
     get_root_dir,
     get_work_dir,
 )
-from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.launch.beaker import BeakerEnvSecret, BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
     CosWithWarmupAndLinearDecay,
@@ -140,7 +140,7 @@ DOLMA2_BASELINE_PATHS = [
 ]
 
 # ── Beaker ──
-CLUSTER = "ai2/saturn"
+CLUSTER = "ai2/jupiter"
 NUM_NODES = 1
 SEED = 1337
 EVAL_INTERVAL = 1000
@@ -353,6 +353,9 @@ def build_config(
     )
     config.launch.priority = "high"
     config.launch.preemptible = True
+    config.launch.env_secrets.append(
+        BeakerEnvSecret(name="HF_TOKEN", secret="HF_TOKEN", required=False)
+    )
     return config.merge(overrides)
 
 
