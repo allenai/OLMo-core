@@ -57,8 +57,8 @@ class GAPMonitorCallback(Callback):
     """How often (in steps) to dump gradients. Must be positive."""
 
     dump_gradients_save_first_n: Optional[int] = None
-    """If set, gather the full gradient to rank 0 and save only the first N elements along
-    dim 0, storing as a single safetensors file. If ``None``, saves the full distributed
+    """If set, gather the full gradient to rank 0 and save only the first N elements of each
+    dimension, storing as a single safetensors file. If ``None``, saves the full distributed
     gradient via distributed checkpoint. Must be positive if set."""
 
     _handles: Optional[list] = dataclasses.field(default=None, repr=False)
@@ -290,20 +290,21 @@ class GAPMonitorCallback(Callback):
 
                     if get_rank() == 0:
                         full_grad = full_grad.cpu()
+                        if full_grad.ndim == 0:
+                            sampled_grad = full_grad
+                        else:
+                            slices = []
+                            for dim_size in full_grad.shape:
+                                sampled_dim_size = min(self.dump_gradients_save_first_n, dim_size)
+                                slices.append(slice(0, sampled_dim_size))
+                            sampled_grad = full_grad[tuple(slices)].contiguous()
 
-                        dim_size = full_grad.shape[0]
-                        actual_n = min(self.dump_gradients_save_first_n, dim_size)
-                        if actual_n < self.dump_gradients_save_first_n:
-                            log.warning(
-                                f"Parameter '{name}': dump_gradients_save_first_n={self.dump_gradients_save_first_n} exceeds "
-                                f"dimension size {dim_size}, capping to {actual_n}"
-                            )
-
-                        sliced_grad = full_grad.narrow(0, 0, actual_n)
-                        sliced_filename = f"{name}_first{actual_n}.safetensors"
-                        sliced_filepath = sampled_gradients_dir / sliced_filename
-                        save_file({"gradient": sliced_grad}, str(sliced_filepath))
-                        log.info(f"Saved first {actual_n} of '{name}' to '{sliced_filepath}'")
+                        sampled_filepath = sampled_gradients_dir / f"{name}.safetensors"
+                        save_file({"gradient": sampled_grad}, str(sampled_filepath))
+                        log.info(
+                            f"Saved sampled gradient '{name}' with shape {tuple(sampled_grad.shape)} "
+                            f"to '{sampled_filepath}'"
+                        )
 
                     del full_grad
             if get_rank() == 0:
