@@ -26,10 +26,10 @@ set -euo pipefail
 # --- Configuration ---
 RUN_NAME=qwen3-4b-sft-100k
 BASE_CKPT=/weka/oe-adapt-default/jacobm/repos/cse-579/checkpoints/Qwen3-4B-Base-oc/model_and_optim
-CLUSTER=ai2/saturn
+CLUSTER=ai2/jupiter
 DATASET_PATH=/weka/oe-adapt-default/jacobm/repos/cse-579/datasets/Dolci-Think-SFT-32B-qwen3-olmo-thinker-100k
 
-python src/scripts/train/sft/Qwen3-4B-SFT.py launch \
+uv run python src/scripts/train/sft/Qwen3-4B-SFT.py launch \
     ${RUN_NAME} \
     ${BASE_CKPT} \
     ${CLUSTER} \
