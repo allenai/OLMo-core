@@ -122,7 +122,7 @@ MODEL_CONFIGS = {
         num_nodes=32,
         global_batch_size=8_388_608,
         rank_microbatch_size=2 * SEQUENCE_LENGTH,
-        lr=0.0028,  # TODO: update after sweep completes
+        lr=0.002
     ),
 }
 
