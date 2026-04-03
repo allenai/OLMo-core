@@ -314,6 +314,7 @@ class SFTConfig(Config):
 
         model = TransformerConfig.qwen3_1_7B(
             vocab_size=tokenizer_config.padded_vocab_size(),
+            use_flash=True,
         )
 
         config = SFTConfig(
