@@ -6,8 +6,11 @@ import sys
 import os
 import logging
 import traceback
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List, cast, Optional
+
+import numpy as np
 
 import torch
 import torch.distributed as dist
@@ -20,6 +23,8 @@ from olmo_core.data import (
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
+from olmo_core.data.source_mixture import SourceMixtureConfig, SourceMixtureList, SourceMixtureDatasetConfig
+from olmo_core.io import get_file_size
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
 from olmo_core.nn.transformer import (
@@ -201,23 +206,66 @@ def build_config(
         lb_loss_weight=moe_lb_loss_weight if moe_lb_loss_weight > 0 else None,
     )
 
-    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DATAMIX_LOOKUP[train_datamix_name],
-        tokenizer=tokenizer_config,
-        mix_base_dir=data_root,
-        sequence_length=sequence_length,
-        max_target_sequence_length=max(4096, sequence_length),
-        work_dir=data_work_dir,
-    )
-
-    # Truncate source data paths to control unique data amount for data repetition experiments.
-    # Using fewer paths with the same max_duration causes the data loader to repeat data.
     if unique_data_fraction < 1.0:
-        total_paths = len(dataset_config.paths)
-        num_paths = max(1, int(total_paths * unique_data_fraction))
-        dataset_config.paths = dataset_config.paths[:num_paths]
-        log.info(f"Data repetition: using {num_paths}/{total_paths} source paths "
+        mix = DATAMIX_LOOKUP[train_datamix_name]
+        paths, labels = mix.build(data_root, tokenizer_config.identifier)
+
+        source_paths = defaultdict(list)
+        for path, label in zip(paths, labels):
+            source_paths[label].append(path)
+
+        # Infer dtype from vocab size (same logic as NumpyDatasetConfig.get_dtype)
+        npdtype = np.uint32  # safe fallback
+        for dt in (np.uint8, np.uint16, np.uint32, np.uint64):
+            if (tokenizer_config.vocab_size - 1) <= np.iinfo(dt).max:
+                npdtype = dt
+                break
+        itemsize = npdtype(0).itemsize
+
+        source_token_counts = {}
+        for name, spaths in source_paths.items():
+            source_token_counts[name] = sum(get_file_size(p) // itemsize for p in spaths)
+        total_tokens_available = sum(source_token_counts.values())
+
+        ratios = {name: source_token_counts[name] / total_tokens_available
+                  for name in source_paths}
+
+        source_configs = [
+            SourceMixtureConfig(
+                source_name=name,
+                target_ratio=ratios[name],
+                paths=source_paths[name],
+            )
+            for name in source_paths
+        ]
+
+        src_mix_config = SourceMixtureDatasetConfig(
+            source_list=SourceMixtureList(sources=source_configs),
+            requested_tokens=int(train_tokens * unique_data_fraction),
+            global_batch_size=global_batch_size * sequence_length,
+            seed=DATA_SEED,
+        )
+
+        dataset_config = NumpyFSLDatasetConfig.from_src_mix(
+            src_mix_config,
+            tokenizer=tokenizer_config,
+            sequence_length=sequence_length,
+            max_target_sequence_length=max(4096, sequence_length),
+            work_dir=data_work_dir,
+        )
+
+        log.info(f"Data repetition: using {int(train_tokens * unique_data_fraction)} unique tokens "
+                 f"from {len(source_paths)} sources "
                  f"(fraction={unique_data_fraction}, expected ~{num_repetitions}x repetition)")
+    else:
+        dataset_config = NumpyFSLDatasetConfig.from_data_mix(
+            DATAMIX_LOOKUP[train_datamix_name],
+            tokenizer=tokenizer_config,
+            mix_base_dir=data_root,
+            sequence_length=sequence_length,
+            max_target_sequence_length=max(4096, sequence_length),
+            work_dir=data_work_dir,
+        )
 
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=global_batch_size * sequence_length,
