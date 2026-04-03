@@ -206,6 +206,23 @@ PROJECT_SPECS = {
           "DATA_DIR": "/gscratch/zlab/atindra/data/",
           "NAME_KEYS": [],
       },
+    "rohan_sanda": {
+          'DEFAULT_SAVE_PATH': '/m-coriander/coriander/rohan_sanda/models',
+          'DATA_WORK_DIR': '/m-coriander/coriander/rohan_sanda/OLMo-core/ml/data',
+          'VALID_DATA_DIR': '/m-coriander/coriander/rohan_sanda/OLMo-core/ml/data/preprocessed',
+          "WANDB_PROJECT": "moe",
+          "WANDB_ENTITY": "ml-moe",
+          "CONDA_ENV_NAME": "olmo-core",
+          "PROJECT_DIR": DEFAULT_DIR_PATH,
+          "SLURM_ACCOUNT": "zlab",
+          "SLURM_PARTITION": "ckpt-g2",
+          "COMMAND_PREFIX": f"{DEFAULT_DIR_PATH}/ml/scripts/single_train_launch.py",
+          "NUM_GPUS": 1,
+          "MODEL": [],
+          "DATAROOT": "https://olmo-data.org/",
+          "DATA_DIR": "/m-coriander/coriander/rohan_sanda/data/",
+          "NAME_KEYS": [],
+      },
 }
 
 HARDWARE_SPECS_DICT = {
