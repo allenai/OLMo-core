@@ -210,7 +210,7 @@ PROJECT_SPECS = {
           'DEFAULT_SAVE_PATH': '/m-coriander/coriander/rohan_sanda/models',
           'DATA_WORK_DIR': '/m-coriander/coriander/rohan_sanda/OLMo-core/ml/data',
           'VALID_DATA_DIR': '/m-coriander/coriander/rohan_sanda/OLMo-core/ml/data/preprocessed',
-          "WANDB_PROJECT": "moe",
+          "WANDB_PROJECT": "moe-rohan",
           "WANDB_ENTITY": "ml-moe",
           "CONDA_ENV_NAME": "olmo-core",
           "PROJECT_DIR": DEFAULT_DIR_PATH,
