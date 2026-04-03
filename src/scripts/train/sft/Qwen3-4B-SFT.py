@@ -66,7 +66,7 @@ log = logging.getLogger(__name__)
 DEFAULT_SEQUENCE_LENGTH = 32_768
 DEFAULT_NUM_NODES = 1
 GPUS_PER_NODE = 8
-MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
+MAX_RANK_MICROBATCH_SIZE_TOKENS = 32_768  # 4B fits 32k tokens per GPU on H100
 
 
 @dataclass
