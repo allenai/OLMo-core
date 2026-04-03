@@ -102,6 +102,22 @@ def main():
     # Convert weights from olmo-core to HF format
     log.info("Converting state dict to HF format")
     hf_state_dict = convert_state_to_hf(hf_config, model_state_dict)
+
+    # Fix Qwen3 layer norm naming. The default olmo-core→HF mapping produces:
+    #   attention_norm → post_attention_layernorm (OLMo convention)
+    #   feed_forward_norm → post_feedforward_layernorm (OLMo convention)
+    # But Qwen3 expects:
+    #   attention_norm → input_layernorm
+    #   feed_forward_norm → post_attention_layernorm
+    log.info("Remapping layer norm keys for Qwen3")
+    for layer in range(model_config.n_layers):
+        wrong_attn = f"model.layers.{layer}.post_attention_layernorm.weight"
+        wrong_ff = f"model.layers.{layer}.post_feedforward_layernorm.weight"
+        attn_norm_val = hf_state_dict.pop(wrong_attn)
+        ff_norm_val = hf_state_dict.pop(wrong_ff)
+        hf_state_dict[f"model.layers.{layer}.input_layernorm.weight"] = attn_norm_val
+        hf_state_dict[f"model.layers.{layer}.post_attention_layernorm.weight"] = ff_norm_val
+
     hf_state_dict = {key: state.contiguous() for key, state in hf_state_dict.items()}
 
     # Cast to target dtype
