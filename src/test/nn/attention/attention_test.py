@@ -489,6 +489,28 @@ def test_fused_attention_rejects_position_ids_with_rope():
 
 
 @requires_gpu
+def test_attention_rejects_position_ids_with_kv_cache():
+    seed_all(0)
+
+    d_model = 128
+    seq_len = 8
+    attention = Attention(
+        d_model=d_model,
+        n_heads=8,
+        rope=RoPEConfig(),
+        backend=AttentionBackendName.torch,
+        init_device="cuda",
+    )
+    attention.init_kv_cache_manager(batch_size=1, max_seq_len=16)
+    x = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+    position_ids = torch.arange(seq_len, device="cuda").unsqueeze(0)
+
+    with pytest.raises(RuntimeError, match="KV caching"):
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            attention(x, position_ids=position_ids)
+
+
+@requires_gpu
 @requires_compute_capability(min_cc=9)  # flash-attn bf16 precision is worse on A100s (cc=8)
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize(

@@ -31,6 +31,7 @@ from olmo_core.nn.attention import (
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
+    UlyssesLoadBalancer,
 )
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
@@ -267,6 +268,45 @@ def test_transformer_auto_derives_position_ids_from_doc_lens():
 
     torch.testing.assert_close(logits_auto, logits_explicit, rtol=BF16_RTOL, atol=BF16_ATOL)
     torch.testing.assert_close(logits_auto, logits_reference, rtol=BF16_RTOL, atol=BF16_ATOL)
+
+
+def test_transformer_context_parallel_shards_position_ids_from_doc_lens():
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
+    config = TransformerConfig(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        block=TransformerBlockConfig(
+            sequence_mixer=AttentionConfig(
+                n_heads=4,
+                rope=RoPEConfig(),
+                backend=AttentionBackendName.torch,
+                bias=False,
+            ),
+            layer_norm=layer_norm,
+            feed_forward=FeedForwardConfig(hidden_size=128, bias=False),
+        ),
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+    )
+
+    model = config.build(init_device="cpu")
+    model._cp_load_balancer = UlyssesLoadBalancer(cp_rank=1, cp_world_size=2)
+
+    input_ids = torch.arange(9).unsqueeze(0)
+    doc_lens = torch.tensor([[3, 4, 2]], dtype=torch.int32)
+    (
+        input_ids_local,
+        _,
+        all_block_kwargs,
+        per_block_kwargs,
+        _,
+    ) = model._prepare_inputs(input_ids=input_ids, doc_lens=doc_lens, max_doc_lens=[4])
+
+    assert input_ids_local.tolist() == [[8, 0, 0, 0, 0, 0, 0, 0]]
+    assert all_block_kwargs["position_ids"].tolist() == [[1, 0, 0, 0, 0, 0, 0, 0]]
+    assert all_block_kwargs["cu_doc_lens"].tolist() == [0, 3, 7, 9, 16]
+    assert all_block_kwargs["max_doc_len"] == 7
+    assert per_block_kwargs == {}
 
 
 def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):

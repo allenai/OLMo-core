@@ -50,6 +50,36 @@ def compute_inv_freqs(theta: int, dim: int, device: torch.device) -> "torch.Tens
     return inv_freq
 
 
+def _validate_position_ids(
+    position_ids: torch.Tensor,
+    *,
+    batch_size: int,
+    q_len: int,
+    k_len: int,
+    start_pos: Optional[int],
+    invalid_input_message: Optional[str],
+    device: torch.device,
+    class_name: str,
+) -> torch.Tensor:
+    if start_pos is not None:
+        raise RuntimeError(f"'start_pos' is invalid when using 'position_ids' with {class_name}")
+    if invalid_input_message is not None:
+        raise RuntimeError(invalid_input_message)
+    if q_len > k_len:
+        raise RuntimeError(
+            f"'position_ids' requires q_len <= k_len (got q_len={q_len}, k_len={k_len})"
+        )
+    if position_ids.ndim != 2 or position_ids.shape != (batch_size, k_len):
+        raise RuntimeError(
+            f"expected 'position_ids' to have shape {(batch_size, k_len)}, "
+            f"got {tuple(position_ids.shape)}"
+        )
+    if position_ids.numel() and int(position_ids.min().item()) < 0:
+        raise RuntimeError("'position_ids' must be non-negative")
+
+    return position_ids.to(device=device, dtype=torch.long)
+
+
 @dataclass
 class RoPEScalingConfig(Config):
     """
@@ -512,41 +542,35 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
         with torch.autocast(q.device.type, enabled=False):
             if position_ids is not None:
-                if start_pos is not None:
-                    raise RuntimeError(
-                        f"'start_pos' is invalid when using 'position_ids' with {self.__class__.__name__}"
-                    )
-                if pos_sin is not None or pos_cos is not None:
-                    raise RuntimeError(
+                position_ids = _validate_position_ids(
+                    position_ids,
+                    batch_size=q_.shape[0],
+                    q_len=q_len,
+                    k_len=k_len,
+                    start_pos=start_pos,
+                    invalid_input_message=(
                         f"'pos_sin' and 'pos_cos' are invalid when using 'position_ids' with "
                         f"{self.__class__.__name__}"
-                    )
-                if q_len > k_len:
-                    raise RuntimeError(
-                        f"'position_ids' requires q_len <= k_len (got q_len={q_len}, k_len={k_len})"
-                    )
+                        if pos_sin is not None or pos_cos is not None
+                        else None
+                    ),
+                    device=q_.device,
+                    class_name=self.__class__.__name__,
+                )
 
-                position_ids = position_ids.to(device=q_.device, dtype=torch.long)
-                if position_ids.ndim != 2 or position_ids.shape != (q_.shape[0], k_len):
-                    raise RuntimeError(
-                        f"expected 'position_ids' to have shape {(q_.shape[0], k_len)}, "
-                        f"got {tuple(position_ids.shape)}"
-                    )
-                if position_ids.numel() and int(position_ids.min().item()) < 0:
-                    raise RuntimeError("'position_ids' must be non-negative")
-
-                seq_len_needed = int(position_ids.max().item()) + 1
+                seq_len_needed = int(position_ids.max().item()) + 1 if position_ids.numel() else 1
                 pos_sin, pos_cos = self._get_rotary_embedding(seq_len_needed, q_.device)
                 pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
+                q_position_ids = position_ids[:, k_len - q_len :]
 
                 if head_first:
-                    sin_q = pos_sin[position_ids[:, k_len - q_len :]].unsqueeze(1)
-                    cos_q = pos_cos[position_ids[:, k_len - q_len :]].unsqueeze(1)
+                    sin_q = pos_sin[q_position_ids].unsqueeze(1)
+                    cos_q = pos_cos[q_position_ids].unsqueeze(1)
                     sin_k = pos_sin[position_ids].unsqueeze(1)
                     cos_k = pos_cos[position_ids].unsqueeze(1)
                 else:
-                    sin_q = pos_sin[position_ids[:, k_len - q_len :]].unsqueeze(2)
-                    cos_q = pos_cos[position_ids[:, k_len - q_len :]].unsqueeze(2)
+                    sin_q = pos_sin[q_position_ids].unsqueeze(2)
+                    cos_q = pos_cos[q_position_ids].unsqueeze(2)
                     sin_k = pos_sin[position_ids].unsqueeze(2)
                     cos_k = pos_cos[position_ids].unsqueeze(2)
 
@@ -687,6 +711,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
             ``(batch_size, seq_len, 3, n_heads, head_size)``.
         :param start_pos: The absolute position of the first query token (eg for decoding
             where the first query token is just the most recently decoded token).
+        :param position_ids: Explicit position ids. This fused implementation does not support them.
         :return: The qkv tensor after applying RoPE, of the same shape and dtype as the input.
         """
         if freqs_cis is not None:
@@ -819,41 +844,31 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
 
         with torch.autocast(q.device.type, enabled=False):
             if position_ids is not None:
-                if start_pos is not None:
-                    raise RuntimeError(
-                        f"'start_pos' is invalid when using 'position_ids' with {self.__class__.__name__}"
-                    )
-                if freqs_cis is not None:
-                    raise RuntimeError(
+                position_ids = _validate_position_ids(
+                    position_ids,
+                    batch_size=q_.shape[0],
+                    q_len=q_len,
+                    k_len=k_len,
+                    start_pos=start_pos,
+                    invalid_input_message=(
                         f"'freqs_cis' is invalid when using 'position_ids' with "
                         f"{self.__class__.__name__}"
-                    )
-                if q_len > k_len:
-                    raise RuntimeError(
-                        f"'position_ids' requires q_len <= k_len (got q_len={q_len}, k_len={k_len})"
-                    )
+                        if freqs_cis is not None
+                        else None
+                    ),
+                    device=q_.device,
+                    class_name=self.__class__.__name__,
+                )
 
-                position_ids = position_ids.to(device=q_.device, dtype=torch.long)
-                if position_ids.ndim != 2 or position_ids.shape != (q_.shape[0], k_len):
-                    raise RuntimeError(
-                        f"expected 'position_ids' to have shape {(q_.shape[0], k_len)}, "
-                        f"got {tuple(position_ids.shape)}"
-                    )
-                if position_ids.numel() and int(position_ids.min().item()) < 0:
-                    raise RuntimeError("'position_ids' must be non-negative")
-
-                seq_len_needed = int(position_ids.max().item()) + 1
+                seq_len_needed = int(position_ids.max().item()) + 1 if position_ids.numel() else 1
                 freqs_cis = self._get_rotary_embedding(seq_len_needed, q_.device)
+                q_position_ids = position_ids[:, k_len - q_len :]
 
                 if head_first:
-                    q_ = self._apply_rotary_pos_emb(
-                        freqs_cis[position_ids[:, k_len - q_len :]].unsqueeze(1), q_
-                    )
+                    q_ = self._apply_rotary_pos_emb(freqs_cis[q_position_ids].unsqueeze(1), q_)
                     k_ = self._apply_rotary_pos_emb(freqs_cis[position_ids].unsqueeze(1), k_)
                 else:
-                    q_ = self._apply_rotary_pos_emb(
-                        freqs_cis[position_ids[:, k_len - q_len :]].unsqueeze(2), q_
-                    )
+                    q_ = self._apply_rotary_pos_emb(freqs_cis[q_position_ids].unsqueeze(2), q_)
                     k_ = self._apply_rotary_pos_emb(freqs_cis[position_ids].unsqueeze(2), k_)
             else:
                 # shape: (T, hs // 2)

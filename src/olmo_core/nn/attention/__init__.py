@@ -484,6 +484,22 @@ class Attention(SequenceMixer):
     def cp_enabled(self) -> bool:
         return self.backend.cp_enabled
 
+    def _validate_rope_forward_inputs(
+        self,
+        *,
+        position_ids: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+    ) -> None:
+        if self.kv_cache_manager is not None and position_ids is not None:
+            raise RuntimeError("position_ids are not supported with KV caching")
+        if self.cp_enabled and all(x is None for x in (position_ids, pos_sin, pos_cos, freqs_cis)):
+            raise RuntimeError(
+                "RoPE buffers or position_ids must be passed through to attention after "
+                "being properly sharded by the context parallel load balancer"
+            )
+
     def sdpa(
         self,
         q: torch.Tensor,
@@ -542,6 +558,8 @@ class Attention(SequenceMixer):
             Required together with ``max_doc_len`` when using intra-document masking.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param position_ids: Optional explicit per-token RoPE positions of shape
+            ``(batch_size, seq_len)``.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -579,21 +597,12 @@ class Attention(SequenceMixer):
                 k = self.k_norm(k)
 
         if self.rope is not None:
-            if self.kv_cache_manager is not None and position_ids is not None:
-                raise RuntimeError("position_ids are not supported with KV caching")
-            # In context-parallel mode we must be given pre-sharded buffers
-            if (
-                self.cp_enabled
-                and position_ids is None
-                and pos_sin is None
-                and pos_cos is None
-                and freqs_cis is None
-            ):
-                raise RuntimeError(
-                    "RoPE buffers or position_ids must be passed through to attention after "
-                    "being properly sharded by the context parallel load balancer"
-                )
-
+            self._validate_rope_forward_inputs(
+                position_ids=position_ids,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+            )
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
             q, k = self.rope(
                 q,
@@ -899,20 +908,12 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            if self.kv_cache_manager is not None and position_ids is not None:
-                raise RuntimeError("position_ids are not supported with KV caching")
-            if (
-                self.cp_enabled
-                and position_ids is None
-                and pos_sin is None
-                and pos_cos is None
-                and freqs_cis is None
-            ):
-                raise RuntimeError(
-                    "RoPE buffers or position_ids must be passed through to attention after "
-                    "being properly sharded by the context parallel load balancer"
-                )
-
+            self._validate_rope_forward_inputs(
+                position_ids=position_ids,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+            )
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
             q, k = self.rope(
                 q,
