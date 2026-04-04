@@ -192,7 +192,7 @@ PROJECT_SPECS = {
     "atindra": {
           'DEFAULT_SAVE_PATH': '/gscratch/zlab/atindra/models',
           'DATA_WORK_DIR': '/gscratch/zlab/atindra/data/work',
-          'VALID_DATA_DIR': '/gscratch/zlab/atindra/data/preprocessed',
+          'VALID_DATA_DIR': '/gscratch/zlab/margsli/gitfiles/olmoe-core/OLMo-core/ml/data/preprocessed',
           "WANDB_PROJECT": "data_rep_moe",
           "WANDB_ENTITY": "ml-moe",
           "CONDA_ENV_NAME": "olmoe-core",
