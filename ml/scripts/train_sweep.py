@@ -12,6 +12,8 @@ SWEEP_NAME_DEFAULT = 'data_rep_AC'
 project = 'moe'
 MODELS = [
     'olmo2_ml_10M',
+    'olmo2_ml_80M',
+    'olmo2_ml_200M',
 ]
 
 def main(
