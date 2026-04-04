@@ -16,6 +16,7 @@ from olmo_core.config import DType, StrEnum
 from olmo_core.distributed.utils import (
     _HiddenTensor,
     distribute_like,
+    get_full_tensor,
     get_local_tensor,
     hide_from_torch,
     is_distributed,
@@ -412,7 +413,7 @@ class MoERouter(nn.Module):
 
         # Router weight magnitude (higher = more rigid/extreme weights).
         if hasattr(self, 'weight'):
-            weight = get_local_tensor(self.weight).view(self.num_experts, self.d_model).float()
+            weight = get_full_tensor(self.weight).view(self.num_experts, self.d_model).float()
             weight_l2_per_expert = weight.norm(dim=-1)  # (num_experts,)
             out[f"{prefix}router weight L2 mean"] = (weight_l2_per_expert.mean(), ReduceType.mean)
             out[f"{prefix}router weight L2 max"] = (weight_l2_per_expert.max(), ReduceType.max)
