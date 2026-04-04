@@ -399,7 +399,8 @@ def get_position_ids_from_doc_lens(doc_lens: torch.Tensor, seq_len: int) -> torc
     This is intended for packed or intra-document masked training batches where every document
     should reset its RoPE positions back to zero. Padding to ``seq_len`` is filled with zeros.
 
-    :param doc_lens: A 1D or 2D tensor of document lengths.
+    :param doc_lens: A 1D tensor of document lengths for a single packed instance or a 2D batch
+        of zero-padded document lengths.
     :param seq_len: The padded sequence length for each batch item.
     """
     squeeze_output = False
@@ -409,25 +410,37 @@ def get_position_ids_from_doc_lens(doc_lens: torch.Tensor, seq_len: int) -> torc
     elif doc_lens.ndim != 2:
         raise ValueError(f"'doc_lens' must be 1D or 2D (got {doc_lens.ndim}D)")
 
-    position_ids = torch.zeros(
-        (doc_lens.size(0), seq_len), dtype=torch.long, device=doc_lens.device
+    if doc_lens.numel() == 0 or doc_lens.size(1) == 0:
+        position_ids = torch.zeros(
+            (doc_lens.size(0), seq_len), dtype=torch.long, device=doc_lens.device
+        )
+        return position_ids[0] if squeeze_output else position_ids
+
+    if doc_lens.numel() and int(doc_lens.min().item()) < 0:
+        raise ValueError(
+            f"document lengths must be non-negative (got {int(doc_lens.min().item())})"
+        )
+
+    cumulative_doc_ends = torch.cumsum(doc_lens, dim=1, dtype=torch.long)
+    total_lengths = cumulative_doc_ends[:, -1]
+    max_total_length = int(total_lengths.max().item())
+    if max_total_length > seq_len:
+        raise ValueError(
+            f"document lengths sum to {max_total_length}, which exceeds seq_len={seq_len}"
+        )
+
+    # Keep this fully tensorized since it runs in the packed-training hot path.
+    token_positions = (
+        torch.arange(seq_len, device=doc_lens.device, dtype=torch.long)
+        .expand(doc_lens.size(0), -1)
+        .contiguous()
     )
-    for row_idx, row in enumerate(doc_lens):
-        offset = 0
-        for doc_len in row.tolist():
-            if doc_len == 0:
-                continue
-            if doc_len < 0:
-                raise ValueError(f"document lengths must be non-negative (got {doc_len})")
-            next_offset = offset + doc_len
-            if next_offset > seq_len:
-                raise ValueError(
-                    f"document lengths sum to {next_offset}, which exceeds seq_len={seq_len}"
-                )
-            position_ids[row_idx, offset:next_offset] = torch.arange(
-                doc_len, device=doc_lens.device, dtype=torch.long
-            )
-            offset = next_offset
+    doc_indices = torch.searchsorted(cumulative_doc_ends.contiguous(), token_positions, right=True)
+    doc_indices.clamp_(max=doc_lens.size(1) - 1)
+
+    doc_start_offsets = cumulative_doc_ends - doc_lens.to(dtype=torch.long)
+    position_ids = token_positions - doc_start_offsets.gather(1, doc_indices)
+    position_ids.masked_fill_(token_positions >= total_lengths.unsqueeze(1), 0)
 
     return position_ids[0] if squeeze_output else position_ids
 

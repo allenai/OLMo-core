@@ -185,31 +185,40 @@ def test_get_cumulative_document_lengths():
     ).tolist() == [0, 1, 6, 9, 11, 16, 19, 22]
 
 
-def test_get_position_ids_from_doc_lens():
-    assert get_position_ids_from_doc_lens(
-        torch.tensor(
+@pytest.mark.parametrize(
+    ("doc_lens", "seq_len", "expected"),
+    [
+        pytest.param(
+            torch.tensor(
+                [
+                    [2, 3, 0],
+                    [1, 2, 1],
+                ],
+                dtype=torch.int32,
+            ),
+            6,
             [
-                [2, 3, 0],
-                [1, 2, 1],
+                [0, 1, 0, 1, 2, 0],
+                [0, 0, 1, 0, 0, 0],
             ],
-            dtype=torch.int32,
+            id="batched",
         ),
-        seq_len=6,
-    ).tolist() == [
-        [0, 1, 0, 1, 2, 0],
-        [0, 0, 1, 0, 0, 0],
-    ]
-
-    assert get_position_ids_from_doc_lens(
-        torch.tensor([3, 2, 0], dtype=torch.int32), seq_len=6
-    ).tolist() == [
-        0,
-        1,
-        2,
-        0,
-        1,
-        0,
-    ]
+        pytest.param(
+            torch.tensor([3, 2, 0], dtype=torch.int32),
+            6,
+            [0, 1, 2, 0, 1, 0],
+            id="single-instance",
+        ),
+        pytest.param(
+            torch.tensor([[2, 0, 3]], dtype=torch.int32),
+            6,
+            [[0, 1, 0, 1, 2, 0]],
+            id="internal-zero-length-doc",
+        ),
+    ],
+)
+def test_get_position_ids_from_doc_lens(doc_lens: torch.Tensor, seq_len: int, expected):
+    assert get_position_ids_from_doc_lens(doc_lens, seq_len=seq_len).tolist() == expected
 
 
 def test_get_position_ids_from_doc_lens_errors():

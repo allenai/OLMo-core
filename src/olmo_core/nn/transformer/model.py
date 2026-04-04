@@ -5,6 +5,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Dict,
+    Iterable,
     List,
     Literal,
     Optional,
@@ -247,6 +248,41 @@ class Transformer(nn.Module):
                 rope_buffers[int(key)] = None
         return rope_buffers
 
+    def _iter_context_parallel_rope_inputs(
+        self, seq_len: int
+    ) -> Iterable[Tuple[str, torch.Tensor, int, float]]:
+        # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
+        for block_idx, rope_buffers in self.get_rope_buffers(seq_len, torch.device("cpu")).items():
+            if rope_buffers is None:
+                continue
+            if rope_buffers.pos_sin is not None:
+                yield f"block_{block_idx}.pos_sin", rope_buffers.pos_sin, 0, 0.0
+            if rope_buffers.pos_cos is not None:
+                yield f"block_{block_idx}.pos_cos", rope_buffers.pos_cos, 0, 0.0
+            if rope_buffers.freqs_cis is not None:
+                yield f"block_{block_idx}.freqs_cis", rope_buffers.freqs_cis, 0, 0.0
+
+    def _has_rope(self) -> bool:
+        return any(
+            isinstance(block.attention, (Attention, FusedAttention))
+            and block.attention.rope is not None
+            for block in self.blocks.values()
+        )
+
+    def _validate_position_ids(
+        self, position_ids: torch.Tensor, batch_size: int, seq_len: int
+    ) -> None:
+        if position_ids.ndim != 2 or position_ids.shape != (batch_size, seq_len):
+            raise ValueError(
+                f"'position_ids' must have shape {(batch_size, seq_len)} "
+                f"(got {tuple(position_ids.shape)})"
+            )
+
+        for block in self.blocks.values():
+            if not isinstance(block.attention, FusedAttention) or block.attention.rope is None:
+                continue
+            raise NotImplementedError("position_ids are not yet supported with fused RoPE")
+
     @torch.no_grad()
     def init_weights(
         self,
@@ -397,7 +433,7 @@ class Transformer(nn.Module):
         doc_lens = kwargs.pop("doc_lens", None)
         max_doc_lens = kwargs.pop("max_doc_lens", None)
         if doc_lens is not None:
-            if position_ids is None:
+            if position_ids is None and self._has_rope():
                 position_ids = get_position_ids_from_doc_lens(doc_lens, S)
             if max_doc_lens is not None:
                 max_doc_len = max(max_doc_lens)
@@ -406,16 +442,8 @@ class Transformer(nn.Module):
             raise ValueError("'max_doc_lens' is invalid without 'doc_lens'")
 
         if position_ids is not None:
+            self._validate_position_ids(position_ids, B, S)
             position_ids = position_ids.to(device=input_ids.device, dtype=torch.long)
-            if position_ids.ndim != 2 or position_ids.shape != (B, S):
-                raise ValueError(
-                    f"'position_ids' must have shape {(B, S)} (got {tuple(position_ids.shape)})"
-                )
-
-            for block in self.blocks.values():
-                if not isinstance(block.attention, FusedAttention) or block.attention.rope is None:
-                    continue
-                raise NotImplementedError("position_ids are not yet supported with fused RoPE")
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
@@ -430,27 +458,13 @@ class Transformer(nn.Module):
                 pad_values.append(0)
                 keys.append("position_ids")
             else:
-                # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
-                for block_idx, rope_buffers in self.get_rope_buffers(
-                    S, torch.device("cpu")
-                ).items():
-                    if rope_buffers is not None:
-                        # Also shard RoPE buffers based on the context parallelism load balancer.
-                        if rope_buffers.pos_sin is not None:
-                            inputs.append(rope_buffers.pos_sin)
-                            seq_dims.append(0)
-                            pad_values.append(0.0)
-                            keys.append(f"block_{block_idx}.pos_sin")
-                        if rope_buffers.pos_cos is not None:
-                            inputs.append(rope_buffers.pos_cos)
-                            seq_dims.append(0)
-                            pad_values.append(0.0)
-                            keys.append(f"block_{block_idx}.pos_cos")
-                        if rope_buffers.freqs_cis is not None:
-                            inputs.append(rope_buffers.freqs_cis)
-                            seq_dims.append(0)
-                            pad_values.append(0.0)
-                            keys.append(f"block_{block_idx}.freqs_cis")
+                for key, rope_input, seq_dim, pad_value in self._iter_context_parallel_rope_inputs(
+                    S
+                ):
+                    inputs.append(rope_input)
+                    seq_dims.append(seq_dim)
+                    pad_values.append(pad_value)
+                    keys.append(key)
 
             if labels is not None:
                 inputs.append(labels)
