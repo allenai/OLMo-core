@@ -990,8 +990,8 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         ).view(B, -1, D)
 
         if moe_shared_out is not None:
-            moe_shared_out = moe_shared_out / (self.top_k + 1)
-            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
+            moe_shared_out = moe_shared_out / (self.top_k_sum + 1)
+            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k_sum / (self.top_k_sum + 1))
 
         return h + self.dropout(x_moe)
 
@@ -1100,7 +1100,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         ).view(B, -1, D)
 
         if moe_shared_out is not None:
-            moe_shared_out = moe_shared_out / (self.top_k + 1)
-            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
+            moe_shared_out = moe_shared_out / (self.top_k_sum + 1)
+            x_moe = moe_shared_out.add(x_moe, alpha=self.top_k_sum / (self.top_k_sum + 1))
 
         return h + self.dropout(self.feed_forward_moe_norm(x_moe))

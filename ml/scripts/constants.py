@@ -159,7 +159,7 @@ PROJECT_SPECS = {
           'DEFAULT_SAVE_PATH': os.path.join(DEFAULT_DIR_PATH, 'models'),
           'DATA_WORK_DIR': os.path.join(DEFAULT_DIR_PATH, 'ml/data'),
           'VALID_DATA_DIR': os.path.join(DEFAULT_DIR_PATH, 'ml/data/preprocessed'),
-          "WANDB_PROJECT": "moe",
+          "WANDB_PROJECT": "data_rep_moe",
           "WANDB_ENTITY": "ml-moe",
           "CONDA_ENV_NAME": "olmoe-core",
           "PROJECT_DIR": DEFAULT_DIR_PATH,
