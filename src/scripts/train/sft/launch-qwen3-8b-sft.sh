@@ -21,10 +21,10 @@
 set -euo pipefail
 
 # --- Configuration ---
-RUN_NAME=qwen3-8b-sft-100k
+RUN_NAME=qwen3-8b-sft-full
 BASE_CKPT=/weka/oe-adapt-default/jacobm/repos/cse-579/checkpoints/Qwen3-8B-Base-oc/model_and_optim
 CLUSTER=ai2/jupiter
-DATASET_PATH=/weka/oe-adapt-default/jacobm/repos/cse-579/datasets/Dolci-Think-SFT-32B-qwen3-olmo-thinker-100k
+DATASET_PATH=/weka/oe-adapt-default/jacobm/repos/cse-579/datasets/Dolci-Think-SFT-32B-qwen3-olmo-thinker-full
 
 uv run python src/scripts/train/sft/Qwen3-8B-SFT.py launch \
     ${RUN_NAME} \
