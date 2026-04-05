@@ -21,5 +21,9 @@ uv run python src/scripts/train/sft/Qwen3-1.7B-SFT.py launch \
     --budget=ai2/oe-adapt \
     --workspace=ai2/olmo-instruct \
     --num_nodes=2 \
+    --train_module.optim.lr=5e-5 \
+    --global_batch_size=1048576 \
+    --trainer.max_duration.value=2 \
+    --trainer.callbacks.wandb.enabled=True \
     --launch.priority=urgent \
     --launch.preemptible=true
