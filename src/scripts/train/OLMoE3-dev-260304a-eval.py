@@ -1,5 +1,5 @@
 """
-from 005: 0.1xLR
+Match 7B TPS
 """
 
 import logging
@@ -96,21 +96,21 @@ SEQUENCE_LENGTH = 8192
 torch.set_float32_matmul_precision('high')
 
 
-MAX_DURATION = int(150e9)
+MAX_DURATION = int(6000e9)
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 2500
+SAVE_INTERVAL = 2000
 
-NUM_EXPERTS = 64
-TOP_K = 4
-D_MODEL=1024
-D_ATTN=1024
+NUM_EXPERTS = 48
+TOP_K = 2
+D_MODEL=2560
+D_ATTN=3072
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD=NUM_HEAD // 2 # GQA
-MOE_HIDDEN_SIZE = 1024
+NUM_KV_HEAD=8
+MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -119,15 +119,17 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=1
+EP_DIM=4
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=2
+REF_NUM_NODES=4
 
+
+# stage 1 - 2M
 MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
-# LR_REF_BSZ=9M
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) 
+# LR_REF_BSZ=4M
 
 
 GLOBAL_BATCH_SIZE = (
@@ -137,9 +139,9 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 2e-3 * 0.1
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024)) # lr is for X Million token
-NUM_LAYERS=12
+LR= 3e-4 
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024)) # lr is for X Million token
+NUM_LAYERS=24
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -152,7 +154,7 @@ else:
 
 # SPLIT_POINTS = None
 USE_COMPILE=True
-USE_NO_SYNC_EP=True
+USE_NO_SYNC_EP=False
 USE_AC=False
 PER_LAYER_RECOMPUTE=False
 USE_TBO=False
@@ -167,24 +169,7 @@ SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
 
-
-EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-# EXPERT_LR = LR
-
-# WSD
-SCHED_WARMUP_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((1000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_MID_FRACTION = 1.0
-SCHED_FINAL_FRACTION = 1.0
-
-# patch
-MONKEY_PATCH_DECAY_START_TOKENS = int((120e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-MONKEY_PATCH_DECAY_DURATION_TOKENS = int((30e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE) # 120B + 30B decay
-MONKEY_PATCH_DECAY_END_FRACTION = 0.01
-MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.linear
-
-TAG=f'c1'
+TAG=f'1M'
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
@@ -263,9 +248,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                # lb_loss_weight=0.1,
+                # lb_loss_weight=0.01,
                 lb_loss_weight=0.01,
-                # lb_loss_weight=0.0065,
+                # lb_loss_weight=0.018,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -339,6 +324,21 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return config
 
 
+EXPERT_LR = LR
+# EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
+# EXPERT_LR = LR * 0.6  # scale lr for expert params, empirical choice
+
+SCHED_WARMUP_TOKENS = int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_LONG_DECAY_TOKENS = int((5990e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_MID_FRACTION = 1.0
+SCHED_FINAL_FRACTION = 0.1
+
+# patch
+MONKEY_PATCH_DECAY_START_TOKENS = None
+MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+MONKEY_PATCH_DECAY_END_FRACTION = SCHED_FINAL_FRACTION
+MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine
 
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
@@ -352,7 +352,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             muon_adjust_lr_fn="match_rms_adamw" if USE_MUON else None,
             group_overrides=[
                 OptimGroupOverride(
-                    params=["*embeddings.weight", "*norm.weight"],
+                    params=["*embeddings.weight", "*norm.weight", "*lm_head.w_out.weight"],
                     opts=dict(weight_decay=0.0, use_muon=False),
                 ),
                 # OptimGroupOverride(
@@ -452,12 +452,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-
+            # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
             checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step50000",
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step100000",
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step140000",
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step*2"
+                "/workspace/checkpoint/OLMoE3-dev-260304a_2560d3072a_24L2560M2560S_48E2K1S_1M/step20000",
+                "/workspace/checkpoint/OLMoE3-dev-260304a_2560d3072a_24L2560M2560S_48E2K1S_1M/step30000",
+                "/workspace/checkpoint/OLMoE3-dev-260304a_2560d3072a_24L2560M2560S_48E2K1S_1M/step36000",
+
             ]
         )
         .with_callback(
@@ -466,7 +466,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=False,
-                pre_train_checkpoint=True,
+                pre_train_checkpoint=False,
             ),
         )
         .with_callback(
@@ -484,8 +484,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=61,
-                                   end=64
+                                   start=20021,
+                                   end=20027
             )
         )
         .with_callback(
@@ -534,7 +534,6 @@ def build_data_components(
         tokenizer=common.tokenizer,
         # mix_base_dir=common.root_dir,
         mix_base_dir="s3://ai2-llm",
-        # mix_base_dir="/workspace/data/ai2-llm",
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
         max_target_sequence_length=max(common.max_sequence_length, 8192),

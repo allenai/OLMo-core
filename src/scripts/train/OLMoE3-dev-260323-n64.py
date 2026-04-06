@@ -98,7 +98,7 @@ torch.set_float32_matmul_precision('high')
 
 MAX_DURATION = int(6000e9)
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 1000
+SAVE_INTERVAL = 250
 
 NUM_EXPERTS = 64
 TOP_K = 4
@@ -126,13 +126,13 @@ PP_DIM=1
 REF_NUM_NODES=8
 
 # stage 1 - 1M
-MICRO_BSZ = 1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
+# MICRO_BSZ = 1
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
 # NO LR_REF_BSZ
 
-# stage 2 - 2M
-# MICRO_BSZ = 4
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
+# stage 2 - 4M
+MICRO_BSZ = 1
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 4
 # NO LR_REF_BSZ
 
 # stage 3 - 3M
@@ -186,7 +186,7 @@ else:
 USE_COMPILE=True
 USE_NO_SYNC_EP=True
 USE_AC=False
-PER_LAYER_RECOMPUTE=True
+PER_LAYER_RECOMPUTE=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
@@ -249,7 +249,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             ep_no_sync_shared_slots=2 if USE_TBO else 1,
             ep_no_sync_use_rowwise_all_to_all=USE_ROWWISE_A2A,
             ep_no_sync_rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
-            ep_no_sync_capacity_factor=1.25,
+            ep_no_sync_capacity_factor=1.1875,
             rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.default,
@@ -410,6 +410,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             name=DataParallelType.ddp,
             reduce_grads_in_fp32=GRAD_REDUCE_IN_FP32,
             accumulate_grads_in_fp32=GRAD_ACC_IN_FP32,
+            bucket_cap_mb=512,
         ),
         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
         pp_config=TransformerPipelineParallelConfig(
@@ -505,10 +506,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=61,
-                                   end=64
+                                   start=1021,
+                                   end=1026
             )
         )
         .with_callback(

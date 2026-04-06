@@ -102,15 +102,15 @@ SAVE_INTERVAL = 1000
 
 NUM_EXPERTS = 32
 TOP_K = 4
-D_MODEL=3072
-D_ATTN=4096
+D_MODEL=1024
+D_ATTN=1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=8
-MOE_HIDDEN_SIZE = 2560
+MOE_HIDDEN_SIZE = 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -126,8 +126,8 @@ PP_DIM=1
 REF_NUM_NODES=1
 
 # stage 1 - XM
-MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 1) * (2) * 1
+MICRO_BSZ = 1
+GLOBAL_BATCH_SIZE_SEQ=(8 * 1) * (2) * 8
 # NO LR_REF_BSZ
 
 
@@ -254,7 +254,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 dtype=dtype,
                 normalize_expert_weights=1.0,
                 restore_weight_scale=True,
-                use_recompute_fp32_cast=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
+                # use_recompute_fp32_cast=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
+                use_recompute_fp32_cast=False,
             ),
             shared_experts=SharedExpertsConfig(
                 d_model=d_model,
@@ -275,7 +276,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 dtype=dtype,
                 normalize_expert_weights=1.0,
                 restore_weight_scale=True,
-                use_recompute_fp32_cast=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
+                # use_recompute_fp32_cast=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
+                use_recompute_fp32_cast=False,
             ) if NUM_SHARED_EXPERTS > 1 else None, # only need router if > 1 expert
             feed_forward_norm=layer_norm,
         ),
@@ -474,8 +476,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=1061,
-                                   end=1064
+                                   start=2061,
+                                   end=2066
             )
         )
         .with_callback(

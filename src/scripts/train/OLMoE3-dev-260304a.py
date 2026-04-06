@@ -119,15 +119,15 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=4
+EP_DIM=8
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=1
+REF_NUM_NODES=4
 
 
 # stage 1 - 2M
-MICRO_BSZ = 2
+MICRO_BSZ = 1
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) 
 # LR_REF_BSZ=4M
 
@@ -449,7 +449,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=5,
+            metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
@@ -478,8 +478,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=41,
-                                   end=45
+                                   start=20021,
+                                   end=20027
             )
         )
         .with_callback(

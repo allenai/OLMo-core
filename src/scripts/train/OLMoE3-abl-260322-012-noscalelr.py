@@ -1,7 +1,7 @@
 """
-from 005: 0.1xLR
+from 005-noscalelr: 0.2xLR
 """
-
+LR_MUL = 0.2
 import logging
 import math
 import torch
@@ -97,8 +97,8 @@ torch.set_float32_matmul_precision('high')
 
 
 MAX_DURATION = int(150e9)
-EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 2500
+EVAL_INTERVAL = 10000
+SAVE_INTERVAL = 5000
 
 NUM_EXPERTS = 64
 TOP_K = 4
@@ -137,7 +137,7 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 2e-3 * 0.1
+LR= 2e-3 * LR_MUL
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024)) # lr is for X Million token
 NUM_LAYERS=12
 
@@ -168,8 +168,8 @@ USE_MUON = False
 USE_PERI_NORM = True
 
 
-EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-# EXPERT_LR = LR
+# EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
+EXPERT_LR = LR
 
 # WSD
 SCHED_WARMUP_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
@@ -454,10 +454,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             max_duration=Duration.tokens(MAX_DURATION),
 
             checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step50000",
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step100000",
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step140000",
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step*2"
+                "/workspace/checkpoint/OLMoE3-abl-260322-011-noscalelr_1024d1024a_12L1024M1024S_64E4K1S_c1/step*2"
             ]
         )
         .with_callback(
@@ -498,9 +495,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, 
+        # )
     )
 
 

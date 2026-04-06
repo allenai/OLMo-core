@@ -119,36 +119,30 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=4
 PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
 
 # stage 1 - 1M
-MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
+# MICRO_BSZ = 2
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
 # NO LR_REF_BSZ
 
 # stage 2 - 2M
-# MICRO_BSZ = 4
+# MICRO_BSZ = 2
 # GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
 # NO LR_REF_BSZ
 
-# stage 3 - 3M
-# MICRO_BSZ = 6
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 3
+# stage 3 - 4M
+# MICRO_BSZ = 2
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 4
 # NO LR_REF_BSZ
-
 
 # stage 4 - 6M
-# MICRO_BSZ = 6
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
-# NO LR_REF_BSZ
-
-# stage 5 - 9M
-# MICRO_BSZ = 6
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 9
+MICRO_BSZ = 2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
 # NO LR_REF_BSZ
 
 # stage 6 - 12M
@@ -249,7 +243,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             ep_no_sync_shared_slots=2 if USE_TBO else 1,
             ep_no_sync_use_rowwise_all_to_all=USE_ROWWISE_A2A,
             ep_no_sync_rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
-            ep_no_sync_capacity_factor=1.25,
+            # ep_no_sync_capacity_factor=1.25,
+            ep_no_sync_capacity_factor=1.1875,
             rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.default,

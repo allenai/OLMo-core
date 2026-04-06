@@ -454,7 +454,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             max_duration=Duration.tokens(MAX_DURATION),
 
             checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-abl-260322-009_1024d1024a_12L1024M1024S_64E4K1S_c1/step*2"
+                "/workspace/checkpoint/OLMoE3-abl-260322-011_1024d1024a_12L1024M1024S_64E4K1S_c1/step50000",
+                "/workspace/checkpoint/OLMoE3-abl-260322-011_1024d1024a_12L1024M1024S_64E4K1S_c1/step100000",
+                "/workspace/checkpoint/OLMoE3-abl-260322-011_1024d1024a_12L1024M1024S_64E4K1S_c1/step120000",
+                "/workspace/checkpoint/OLMoE3-abl-260322-011_1024d1024a_12L1024M1024S_64E4K1S_c1/step140000",
+                "/workspace/checkpoint/OLMoE3-abl-260322-011_1024d1024a_12L1024M1024S_64E4K1S_c1/step*2"
             ]
         )
         .with_callback(
@@ -495,9 +499,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        # )
+        .with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
     )
 
 

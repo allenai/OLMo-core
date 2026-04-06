@@ -1,5 +1,5 @@
 """
-from 005: 0.1xLR
+from 009-noscalelr: use old data mix
 """
 
 import logging
@@ -125,7 +125,7 @@ PP_DIM=1
 # ref
 REF_NUM_NODES=2
 
-MICRO_BSZ = 4
+MICRO_BSZ = 8
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
 # LR_REF_BSZ=9M
 
@@ -137,7 +137,7 @@ NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-LR= 2e-3 * 0.1
+LR= 2e-3 * 0.5
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (1 * 1024 * 1024)) # lr is for X Million token
 NUM_LAYERS=12
 
@@ -168,8 +168,8 @@ USE_MUON = False
 USE_PERI_NORM = True
 
 
-EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
-# EXPERT_LR = LR
+# EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
+EXPERT_LR = LR
 
 # WSD
 SCHED_WARMUP_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
@@ -454,10 +454,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             max_duration=Duration.tokens(MAX_DURATION),
 
             checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step50000",
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step100000",
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step140000",
-                "/workspace/checkpoint/OLMoE3-abl-260322-010_1024d1024a_12L1024M1024S_64E4K1S_c1/step*2"
+                "/workspace/checkpoint/OLMoE3-abl-260322-009-noscalelr_1024d1024a_12L1024M1024S_64E4K1S_c1/step*2"
             ]
         )
         .with_callback(
@@ -499,7 +496,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL, 
         )
     )
 
@@ -528,12 +525,13 @@ def build_data_components(
     # DATA_WORK_DIR = "/tmp/dataset-cache"
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_mix_0925,
-        # DataMix.OLMo_mix_0625,
+        # DataMix.OLMo_mix_0925,
+        DataMix.OLMo_mix_0625,
         # DataMix.OLMoE_mix_0824_dev,
         tokenizer=common.tokenizer,
         # mix_base_dir=common.root_dir,
         mix_base_dir="s3://ai2-llm",
+        # mix_base_dir="/weka/oe-training-default/ai2-llm",
         # mix_base_dir="/workspace/data/ai2-llm",
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
