@@ -618,6 +618,27 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def qwen3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        An 8B Qwen3-like model config.
+        """
+        config = cls.llama_like(
+            d_model=4096,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 36),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            block_name=kwargs.pop("block_name", TransformerBlockType.default),
+            qk_norm=kwargs.pop("qk_norm", True),
+            layer_norm_eps=1e-6,
+            feed_forward=FeedForwardConfig(hidden_size=12288, bias=False),
+            **kwargs,
+        )
+        config.block.attention.use_head_qk_norm = True
+        return config
+
+    @classmethod
     def olmo2_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 32B OLMo model config.
