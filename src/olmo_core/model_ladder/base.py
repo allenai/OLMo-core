@@ -242,6 +242,7 @@ class ModelLadder(Config):
     def __post_init__(self):
         if self.max_devices <= 0:
             raise OLMoConfigurationError("max_devices must be a positive integer.")
+        excluded_sizes = []
         for size_spec in self.sizes:
             min_devices, _ = self.model_configurator.configure_minimal_device_mesh_spec(
                 size_spec=size_spec,
@@ -249,10 +250,13 @@ class ModelLadder(Config):
                 device_type=self.device_type,
             )
             if min_devices > self.max_devices:
-                raise OLMoConfigurationError(
-                    f"Model of size {size_spec} requires at least {min_devices} devices, "
-                    f"but max_devices is set to {self.max_devices}."
-                )
+                excluded_sizes.append(size_spec)
+        if excluded_sizes:
+            self.sizes = [s for s in self.sizes if s not in excluded_sizes]
+            log.warning(
+                f"Excluded sizes {excluded_sizes} from ladder because they require more "
+                f"devices than max_devices={self.max_devices}."
+            )
 
     @property
     def work_dir(self) -> PathOrStr:
