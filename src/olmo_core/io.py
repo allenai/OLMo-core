@@ -640,7 +640,7 @@ def _http_file_size(url: str) -> int:
     retry_condition=lambda exc: (
         isinstance(exc, requests.exceptions.HTTPError)
         and exc.response is not None
-        and exc.response.status_code == 502
+        and exc.response.status_code >= 500
     ),
 )
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
