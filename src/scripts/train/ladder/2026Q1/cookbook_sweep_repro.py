@@ -396,6 +396,9 @@ def build_config(
     config.launch.num_gpus = hp["gpus"]
     config.launch.priority = "high"
     config.launch.preemptible = True
+    # suffix-train repo has olmo-core as a subtree — gantry needs to install it from there
+    config.launch.post_setup = "pip install -e ./olmo-core"
+    config.launch.allow_dirty = True
     config.launch.env_secrets.append(
         BeakerEnvSecret(name="HF_TOKEN", secret="HF_TOKEN", required=False)
     )
