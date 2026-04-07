@@ -100,7 +100,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
 
         # TODO: configure context-parallelism if needed.
         device_type = device_type.lower()
-        assert "h100" in device_type or "b200" in device_type
+        assert "h100" in device_type or "b200" in device_type or "a100" in device_type
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
 
@@ -141,7 +141,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
     ) -> DeviceMeshSpec:
         # TODO: configure context-parallelism if needed.
         device_type = device_type.lower()
-        assert "h100" in device_type or "b200" in device_type
+        assert "h100" in device_type or "b200" in device_type or "a100" in device_type
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
 
@@ -164,7 +164,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
     ) -> TransformerTrainModule:
         # TODO: configure context-parallelism if needed.
         device_type = device_type.lower()
-        assert "h100" in device_type or "b200" in device_type
+        assert "h100" in device_type or "b200" in device_type or "a100" in device_type
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
 
@@ -217,7 +217,7 @@ class Olmo3ModelConfigurator(TransformerModelConfigurator):
     ) -> TransformerConfig:
         # TODO: configure context-parallelism if needed.
         device_type = device_type.lower()
-        assert "h100" in device_type or "b200" in device_type
+        assert "h100" in device_type or "b200" in device_type or "a100" in device_type
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
         vocab_size = tokenizer.padded_vocab_size()
