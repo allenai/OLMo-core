@@ -401,7 +401,7 @@ def build_config(
     )
     # Override num_gpus (build_launch_config hardcodes 8)
     config.launch.num_gpus = hp["gpus"]
-    config.launch.priority = "high"
+    config.launch.priority = "normal"
     config.launch.preemptible = True
     config.launch.allow_dirty = True
     # Override git to clone OLMo-core directly (not suffix-train).
