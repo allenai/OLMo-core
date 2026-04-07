@@ -345,6 +345,7 @@ def build_config(
                     work_dir=data_work_dir,
                 ),
                 eval_interval=eval_interval,
+                eval_on_finish=True,
             ),
         )
         .with_callback(
@@ -360,6 +361,7 @@ def build_config(
                 ],
                 tokenizer=tokenizer_config,
                 eval_interval=eval_interval,
+                eval_on_finish=True,
             ),
         )
     )
