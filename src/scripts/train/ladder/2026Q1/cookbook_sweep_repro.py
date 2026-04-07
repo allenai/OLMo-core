@@ -96,7 +96,7 @@ SEQ_LEN = 2048
 TOKENIZER = TokenizerConfig.dolma2()
 RANK_MICROBATCH_SIZE = 16 * SEQ_LEN  # 32768, matching cookbook
 SEED = 1337
-CLUSTER = "ai2/jupiter"
+CLUSTER = "ai2/saturn"
 NUM_NODES = 1
 # OLMo-core branch for gantry to clone. Update OLMO_CORE_REF after subtree push.
 OLMO_CORE_BRANCH = "ianm/overlap-pretrain-ladder"
