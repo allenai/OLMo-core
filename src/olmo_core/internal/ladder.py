@@ -498,6 +498,8 @@ def launch(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
     launcher = configure_launcher(args, ladder, "run")
+    if not args.follow:
+        launcher.step_soft_timeout = None
     _launch_run(
         ladder,
         launcher,
