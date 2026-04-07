@@ -96,7 +96,7 @@ SEQ_LEN = 2048
 TOKENIZER = TokenizerConfig.dolma2()
 RANK_MICROBATCH_SIZE = 16 * SEQ_LEN  # 32768, matching cookbook
 SEED = 1337
-CLUSTER = "ai2/saturn"
+CLUSTER = "ai2/jupiter"
 NUM_NODES = 1
 # OLMo-core branch for gantry to clone. Update OLMO_CORE_REF after subtree push.
 OLMO_CORE_BRANCH = "ianm/overlap-pretrain-ladder"
@@ -401,7 +401,7 @@ def build_config(
     )
     # Override num_gpus (build_launch_config hardcodes 8)
     config.launch.num_gpus = hp["gpus"]
-    config.launch.priority = "normal"
+    config.launch.priority = "high"
     config.launch.preemptible = True
     config.launch.allow_dirty = True
     # Override git to clone OLMo-core directly (not suffix-train).
