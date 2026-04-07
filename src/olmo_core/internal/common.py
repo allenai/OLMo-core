@@ -102,6 +102,11 @@ def build_launch_config(
             required=True,
         ),
         BeakerEnvSecret(
+            name="GITHUB_TOKEN",
+            secret=f"{beaker_user}_GITHUB_TOKEN",
+            required=False,
+        ),
+        BeakerEnvSecret(
             name="COMET_API_KEY",
             secret=f"{beaker_user}_COMET_API_KEY",
             required=False,
