@@ -396,7 +396,11 @@ def build_config(
     config.launch.num_gpus = hp["gpus"]
     config.launch.priority = "high"
     config.launch.preemptible = True
-    # suffix-train repo has olmo-core as a subtree — gantry needs to install it from there
+    # suffix-train repo has olmo-core as subtree. requirements.txt conflicts because it
+    # includes both -e ./olmo-core and -e ./olmo-cookbook[all] (which pulls remote olmo-core).
+    # Remove requirements.txt so gantry doesn't try to resolve conflicting deps,
+    # then install local olmo-core in post_setup (Docker image has torch, flash-attn, etc.)
+    config.launch.pre_setup = "rm -f requirements.txt"
     config.launch.post_setup = "pip install -e ./olmo-core"
     config.launch.allow_dirty = True
     config.launch.env_secrets.append(
