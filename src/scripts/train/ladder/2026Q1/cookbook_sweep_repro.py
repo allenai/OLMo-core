@@ -57,6 +57,7 @@ from olmo_core.internal.common import (
     get_work_dir,
 )
 from olmo_core.launch.beaker import BeakerEnvSecret, BeakerLaunchConfig
+from gantry.api import GitRepoState
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
     CosWithWarmupAndLinearDecay,
@@ -97,6 +98,9 @@ RANK_MICROBATCH_SIZE = 16 * SEQ_LEN  # 32768, matching cookbook
 SEED = 1337
 CLUSTER = "ai2/jupiter"
 NUM_NODES = 1
+# OLMo-core branch for gantry to clone. Update OLMO_CORE_REF after subtree push.
+OLMO_CORE_BRANCH = "ianm/overlap-pretrain-ladder"
+OLMO_CORE_REF = ""  # Set via --olmo-core-ref= flag or hardcoded after subtree push
 
 # ── Model specs (from generate_configs.py) ──
 MODEL_SPECS = {
@@ -368,6 +372,9 @@ def build_config(
         },
     )
 
+    # Script path relative to OLMo-core root (gantry clones OLMo-core, not suffix-train)
+    script_rel = "src/scripts/train/ladder/2026Q1/cookbook_sweep_repro.py"
+
     config = ExperimentConfig(
         model=hp["model_config"],
         train_module=train_module_config,
@@ -381,7 +388,7 @@ def build_config(
             name=run_name,
             root_dir=root_dir,
             cmd=[
-                script, "train", run_name,
+                script_rel, "train", run_name,
                 f"--treatment={treatment}", f"--pipeline={pipeline}", f"--budget={budget}",
                 f"--size={size}", f"--icl-data={icl_data}",
                 *overrides,
@@ -396,13 +403,17 @@ def build_config(
     config.launch.num_gpus = hp["gpus"]
     config.launch.priority = "high"
     config.launch.preemptible = True
-    # suffix-train repo has olmo-core as subtree. requirements.txt conflicts because it
-    # includes both -e ./olmo-core and -e ./olmo-cookbook[all] (which pulls remote olmo-core).
-    # Remove requirements.txt so gantry doesn't try to resolve conflicting deps,
-    # then install local olmo-core in post_setup (Docker image has torch, flash-attn, etc.)
-    config.launch.pre_setup = "rm -f requirements.txt"
-    config.launch.post_setup = "pip install -e './olmo-core[beaker]'"
     config.launch.allow_dirty = True
+    # Override git to clone OLMo-core directly (not suffix-train).
+    # The script lives in the ianm/overlap-pretrain-ladder branch of OLMo-core.
+    # Must push changes there via `git subtree push` before launching.
+    if OLMO_CORE_REF:
+        config.launch.git = GitRepoState(
+            repo="allenai/OLMo-core",
+            repo_url="https://github.com/allenai/OLMo-core.git",
+            ref=OLMO_CORE_REF,
+            branch=OLMO_CORE_BRANCH,
+        )
     config.launch.env_secrets.append(
         BeakerEnvSecret(name="HF_TOKEN", secret="HF_TOKEN", required=False)
     )
@@ -446,11 +457,12 @@ if __name__ == "__main__":
 Usage: python {sys.argv[0]} [dry_run|launch|train] RUN_NAME [OPTIONS...] [OVERRIDES...]
 
 Options:
-  --size=190M|370M|600M           Model size (required)
-  --treatment=baseline|icl_overlap Data treatment (required)
-  --budget=0.5xC|1xC|2xC          Token budget (default: 1xC)
-  --pipeline=old|new               Data pipeline (default: old)
-  --icl-data=500b|3b               ICL overlap data variant (default: 500b)
+  --size=190M|370M|600M             Model size (required)
+  --treatment=baseline|icl_overlap  Data treatment (required)
+  --budget=0.5xC|1xC|2xC           Token budget (default: 1xC)
+  --pipeline=old|new                Data pipeline (default: old)
+  --icl-data=500b|3b                ICL overlap data variant (default: 500b)
+  --olmo-core-ref=COMMIT_SHA        OLMo-core commit to clone (required for launch)
     """.strip()
 
     if len(sys.argv) < 3:
@@ -478,6 +490,8 @@ Options:
             budget = arg.split("=", 1)[1]
         elif arg.startswith("--icl-data="):
             icl_data = arg.split("=", 1)[1]
+        elif arg.startswith("--olmo-core-ref="):
+            OLMO_CORE_REF = arg.split("=", 1)[1]
         else:
             overrides.append(arg)
 
@@ -498,6 +512,10 @@ Options:
         sys.exit(1)
     if icl_data not in ("500b", "3b"):
         print(f"Unknown icl-data: {icl_data}. Must be '500b' or '3b'")
+        sys.exit(1)
+    if cmd == "launch" and not OLMO_CORE_REF:
+        print("Error: --olmo-core-ref=COMMIT_SHA is required for launch mode.")
+        print("Push changes to OLMo-core first: git subtree push --prefix=olmo-core ...")
         sys.exit(1)
 
     if cmd == "train":
