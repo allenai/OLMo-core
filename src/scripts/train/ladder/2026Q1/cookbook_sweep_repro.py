@@ -401,7 +401,7 @@ def build_config(
     # Remove requirements.txt so gantry doesn't try to resolve conflicting deps,
     # then install local olmo-core in post_setup (Docker image has torch, flash-attn, etc.)
     config.launch.pre_setup = "rm -f requirements.txt"
-    config.launch.post_setup = "pip install -e ./olmo-core"
+    config.launch.post_setup = "pip install -e './olmo-core[beaker]'"
     config.launch.allow_dirty = True
     config.launch.env_secrets.append(
         BeakerEnvSecret(name="HF_TOKEN", secret="HF_TOKEN", required=False)
