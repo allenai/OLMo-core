@@ -4,6 +4,7 @@ import pytest
 
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.optim import (
+    WSD,
     WSDS,
     ConstantWithWarmup,
     CosWithWarmup,
@@ -97,6 +98,32 @@ def test_sequential_scheduler():
     assert scheduler.get_lr(initial_lr, 7_500, max_steps) == third_scheduler.get_lr(
         second_scheduler_final_lr, 1_000, max_steps - 6_500
     )
+
+
+def test_constant_with_warmup_zero_warmup():
+    initial_lr = 10.0
+    max_steps = 10_000
+    scheduler = ConstantWithWarmup(warmup=0)
+    assert scheduler.get_lr(initial_lr, 0, max_steps) == initial_lr
+    assert scheduler.get_lr(initial_lr, 1, max_steps) == initial_lr
+    assert scheduler.get_lr(initial_lr, max_steps, max_steps) == initial_lr
+
+
+def test_constant_with_warmup_rounding_to_zero_warmup():
+    initial_lr = 10.0
+    max_steps = 1_000
+    scheduler = ConstantWithWarmup(warmup_fraction=0.0004)
+    assert scheduler.get_lr(initial_lr, 0, max_steps) == initial_lr
+    assert scheduler.get_lr(initial_lr, 1, max_steps) == initial_lr
+
+
+def test_wsd_zero_warmup_and_decay():
+    initial_lr = 10.0
+    max_steps = 10_000
+    scheduler = WSD(warmup=0, decay=0, decay_fraction=None)
+    assert scheduler.get_lr(initial_lr, 0, max_steps) == initial_lr
+    assert scheduler.get_lr(initial_lr, 1, max_steps) == initial_lr
+    assert scheduler.get_lr(initial_lr, max_steps, max_steps) == initial_lr
 
 
 class TestWSDSScheduler:
