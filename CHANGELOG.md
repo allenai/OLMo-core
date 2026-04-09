@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Fixed LM in-loop evaluator data-order drift across repeated runs by resetting loader bookkeeping before each pass and making deterministic reshuffling the default.
+
+### Changed
+
+- Added a documented `deterministic` option to `LMEvaluator` and `LMEvaluatorCallbackConfig` so callers can opt out of fixed eval ordering when desired.
+
+## [v2.5.0](https://github.com/allenai/OLMo-core/releases/tag/v2.5.0) - 2026-04-01
+
 ### Added
 
+- Added gradient dumping support to `GAPMonitorCallback`. Set `dump_gradients=True` to save raw gradient tensors during training. Supports full distributed checkpoints and preview mode (`dump_gradients_save_first_n`).
 - Added API reference and user guide for the `olmo_core.generate` module and interactive chat interface.
 - Added support for in-loop perplexity evals with context parallelism (CP) and tensor parallelism (TP).
 - Added documentation for verifying chat template settings before running evals after SFT.
