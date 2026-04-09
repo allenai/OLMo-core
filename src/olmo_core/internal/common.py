@@ -82,13 +82,14 @@ def build_launch_config(
 
     if root_dir.startswith("/weka/"):
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
+        weka_buckets.append(BeakerWekaBucket("oe-adapt-default", "/weka/oe-adapt-default"))
 
     beaker_user = get_beaker_username()
     if beaker_user is None:
         raise RuntimeError(
             "Environment not configured correctly for Beaker, you may be missing the BEAKER_TOKEN env var."
         )
-    beaker_user = beaker_user.upper()
+    beaker_user = beaker_user.lower()
 
     env_secrets = [
         BeakerEnvSecret(

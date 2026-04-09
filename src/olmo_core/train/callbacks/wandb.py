@@ -134,6 +134,7 @@ class WandBCallback(Callback):
                 tags=self.tags,
                 notes=self.notes,
                 config=self.config,
+                settings=self.wandb.Settings(init_timeout=180),
             )
             self._run_path = self.run.path  # type: ignore
 

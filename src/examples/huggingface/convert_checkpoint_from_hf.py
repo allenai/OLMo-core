@@ -42,7 +42,9 @@ log = logging.getLogger(__name__)
 
 
 def _get_transformer_config(
-    model_arch: str, vocab_size: int, max_sequence_length: int
+    model_arch: str,
+    vocab_size: int,
+    max_sequence_length: int,
 ) -> TransformerConfig:
     model_arch = model_arch.lower()
     transformer_configs = {
@@ -73,6 +75,7 @@ def _get_transformer_config(
         "llama3_8b": TransformerConfig.llama3_8B,
         "llama3_70b": TransformerConfig.llama3_70B,
         "llama3_405b": TransformerConfig.llama3_405B,
+        "qwen3_8b": TransformerConfig.qwen3_8B,
     }
 
     result = transformer_configs[model_arch](vocab_size)
@@ -96,6 +99,7 @@ def _get_tokenizer_config(tokenizer_id: str) -> TokenizerConfig:
         "dolma2": TokenizerConfig.dolma2,
         "gpt_neox_olmo_dolma_v1_5": TokenizerConfig.gpt_neox_olmo_dolma_v1_5,
         "gpt2": TokenizerConfig.gpt2,
+        "qwen3_8b": lambda: TokenizerConfig.from_hf("Qwen/Qwen3-8B"),
     }
 
     return tokenizer_configs[tokenizer_id.lower()]()

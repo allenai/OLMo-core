@@ -9,6 +9,11 @@ try:
 except ImportError:
     FlexOlmoConfig = None
 
+try:
+    from transformers import Qwen3Config  # type: ignore
+except ImportError:
+    Qwen3Config = None
+
 
 def _get_olmo2_config() -> Olmo2Config:
     return Olmo2Config(
@@ -191,6 +196,57 @@ def test_convert_state_to_hf_and_unflatten():
         torch.testing.assert_close(
             converted_state[f"model.layers.{i}.mlp.gate.weight"].flatten(),
             olmo_core_state[f"blocks.{i}.feed_forward_moe.router.weight"],
+        )
+
+
+def test_convert_layers_to_hf_qwen3():
+    if Qwen3Config is None:
+        pytest.skip("transformers version does not support Qwen3Config")
+
+    hf_config = Qwen3Config(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        head_dim=8,
+        rms_norm_eps=1e-6,
+    )
+
+    olmo_core_state = {}
+    for i in range(hf_config.num_hidden_layers):
+        olmo_core_state.update(
+            {
+                f"blocks.{i}.attention_norm.weight": torch.randn(hf_config.hidden_size),
+                f"blocks.{i}.feed_forward_norm.weight": torch.randn(hf_config.hidden_size),
+                f"blocks.{i}.attention.q_norm.weight": torch.randn(hf_config.head_dim),
+                f"blocks.{i}.attention.k_norm.weight": torch.randn(hf_config.head_dim),
+            }
+        )
+
+    converted_state = convert_state_to_hf(hf_config, olmo_core_state)
+
+    for i in range(hf_config.num_hidden_layers):
+        # attention_norm (pre-attn) should map to input_layernorm, NOT post_attention_layernorm
+        assert f"model.layers.{i}.input_layernorm.weight" in converted_state
+        assert f"model.layers.{i}.post_feedforward_layernorm.weight" not in converted_state
+        torch.testing.assert_close(
+            converted_state[f"model.layers.{i}.input_layernorm.weight"],
+            olmo_core_state[f"blocks.{i}.attention_norm.weight"],
+        )
+        # feed_forward_norm (pre-ffn) should map to post_attention_layernorm
+        torch.testing.assert_close(
+            converted_state[f"model.layers.{i}.post_attention_layernorm.weight"],
+            olmo_core_state[f"blocks.{i}.feed_forward_norm.weight"],
+        )
+        # q_norm and k_norm should map correctly
+        torch.testing.assert_close(
+            converted_state[f"model.layers.{i}.self_attn.q_norm.weight"],
+            olmo_core_state[f"blocks.{i}.attention.q_norm.weight"],
+        )
+        torch.testing.assert_close(
+            converted_state[f"model.layers.{i}.self_attn.k_norm.weight"],
+            olmo_core_state[f"blocks.{i}.attention.k_norm.weight"],
         )
 
 

@@ -274,6 +274,29 @@ OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 }
 
 
+#: Map of OLMo Core weight keys to Hugging Face weight keys. This map captures overrides of the standard
+#: one-to-one mappings in :data:`OLMO_CORE_TO_HF_WEIGHT_MAPPINGS`, in case a given OLMo Core key can refer to
+#: different HF states depending on the HF model architecture. You may configure this to change
+#: how OLMo Core state maps to HF state.
+MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] = {
+    "qwen3": {
+        f"blocks.{LAYER}.attention_norm.weight": f"model.layers.{LAYER}.input_layernorm.weight",
+        f"blocks.{LAYER}.feed_forward_norm.weight": f"model.layers.{LAYER}.post_attention_layernorm.weight",
+    },
+}
+
+#: Map of OLMo Core module keys to Hugging Face module keys. This map captures overrides of the standard
+#: one-to-one mappings in :data:`OLMO_CORE_TO_HF_MODULE_MAPPINGS`, in case a given OLMo Core key can refer to
+#: different HF states depending on the HF model architecture. You may configure this to change
+#: how OLMo Core state maps to HF state.
+MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, Dict[str, str]] = {
+    "qwen3": {
+        f"blocks.{LAYER}.attention_norm": f"model.layers.{LAYER}.input_layernorm",
+        f"blocks.{LAYER}.feed_forward_norm": f"model.layers.{LAYER}.post_attention_layernorm",
+    },
+}
+
+
 #: Map of OLMo Core keys to Hugging Face keys, that is used to determine how OLMo Core state
 #: maps to HF state. This map captures overrides of the standard mappings in
 #: :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`, in case a given OLMo Core key can refer to
@@ -442,6 +465,30 @@ def _get_converter_to_hf(model_type: str | None = None) -> StateConverter:
         }
     )
     mapping_templates.update(OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS)
+
+    if model_type in MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_MODULE_MAPPINGS:
+        mapping_templates.update(
+            {
+                olmo_core_key: StateMappingTemplate(
+                    olmo_core_key, hf_key, state_type=StateType.module
+                )
+                for olmo_core_key, hf_key in MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_MODULE_MAPPINGS[
+                    model_type
+                ].items()
+            }
+        )
+
+    if model_type in MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_WEIGHT_MAPPINGS:
+        mapping_templates.update(
+            {
+                olmo_core_key: StateMappingTemplate(
+                    olmo_core_key, hf_key, state_type=StateType.weight
+                )
+                for olmo_core_key, hf_key in MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_WEIGHT_MAPPINGS[
+                    model_type
+                ].items()
+            }
+        )
 
     if model_type:
         mapping_templates.update(

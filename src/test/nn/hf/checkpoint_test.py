@@ -1,11 +1,17 @@
 from pathlib import Path
 
+import pytest
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from transformers import AutoModelForCausalLM, Olmo2Config
 
 from olmo_core.nn.hf.checkpoint import load_hf_model, save_hf_model
 from olmo_core.nn.transformer.config import TransformerConfig
+
+try:
+    from transformers import Qwen3Config  # type: ignore
+except ImportError:
+    Qwen3Config = None
 
 
 def test_load_hf_model(tmp_path: Path):
@@ -81,4 +87,39 @@ def test_save_hf_model(tmp_path: Path):
 
     assert hf_logits.shape[-1] == vocab_size
     assert logits.shape[-1] == padded_vocab_size
+    torch.testing.assert_close(hf_logits, logits[..., :vocab_size])
+
+
+def test_save_hf_model_qwen3(tmp_path: Path):
+    if Qwen3Config is None:
+        pytest.skip("transformers version does not support Qwen3Config")
+
+    vocab_size = 256
+    model_config = TransformerConfig.qwen3_0_6B(vocab_size, n_layers=2)
+    model = model_config.build()
+
+    state_dict_options = dist_cp_sd.StateDictOptions(
+        flatten_optimizer_state_dict=True, cpu_offload=True
+    )
+    model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
+    save_hf_model(
+        tmp_path / "hf",
+        model_state_dict,
+        model,
+        vocab_size=vocab_size,
+    )
+    model.load_state_dict(model_state_dict)
+
+    hf_model = AutoModelForCausalLM.from_pretrained(tmp_path / "hf")
+
+    rand_input = torch.randint(0, vocab_size, (2, 3))
+    with torch.no_grad():
+        hf_logits, *_ = hf_model(input_ids=rand_input, return_dict=False)
+
+    model.eval()
+    with torch.no_grad():
+        logits = model(input_ids=rand_input)
+
+    assert hf_logits.shape[-1] == vocab_size
+    assert logits.shape[-1] == vocab_size
     torch.testing.assert_close(hf_logits, logits[..., :vocab_size])

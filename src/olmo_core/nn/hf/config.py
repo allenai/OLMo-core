@@ -31,6 +31,11 @@ try:
 except ImportError:
     Olmo3Config = None
 
+try:
+    from transformers import Qwen3Config  # type: ignore
+except ImportError:
+    Qwen3Config = None
+
 
 def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     blocks = list(model.blocks.values())
@@ -83,6 +88,38 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     )
 
 
+def _get_qwen3_config(model: Transformer, blocks) -> PretrainedConfig:
+    if Qwen3Config is None:
+        raise RuntimeError("The installed transformers version does not support Qwen3Config")
+
+    first_block = blocks[0]
+    assert isinstance(first_block, TransformerBlock)
+    assert isinstance(first_block.attention, Attention)
+    assert first_block.attention.rope is not None
+
+    rope_scaling = _get_and_validate_rope_scaling_config(blocks)
+
+    return Qwen3Config(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        intermediate_size=first_block.feed_forward.hidden_size,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=first_block.attention.n_heads,
+        num_key_value_heads=first_block.attention.n_kv_heads,
+        head_dim=first_block.attention.head_dim,
+        hidden_act="silu",
+        max_position_embeddings=131072,
+        rms_norm_eps=first_block.feed_forward_norm.eps,
+        rope_theta=first_block.attention.rope.theta,
+        rope_scaling=rope_scaling,
+        attention_bias=first_block.attention.w_out.bias is not None,
+        pad_token_id=None,
+        bos_token_id=None,
+        eos_token_id=None,
+        tie_word_embeddings=False,
+    )
+
+
 @beta_feature
 def get_hf_config(model: Transformer) -> PretrainedConfig:
     if isinstance(model, NormalizedTransformer):
@@ -95,89 +132,160 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
 
     blocks = list(model.blocks.values())
     first_block = blocks[0]
-    if not isinstance(first_block, ReorderedNormTransformerBlock):
-        raise NotImplementedError(
-            f"Block is not a {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
-        )
+#     if not isinstance(first_block, ReorderedNormTransformerBlock):
+#         raise NotImplementedError(
+#             f"Block is not a {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
+#         )
 
-    if not isinstance(first_block.attention, Attention):
-        raise NotImplementedError(
-            f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
-        )
-    if first_block.attention.backend is None:
-        raise ValueError("Attention backend is not set.")
+#     if not isinstance(first_block.attention, Attention):
+#         raise NotImplementedError(
+#             f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
+#         )
+#     if first_block.attention.backend is None:
+#         raise ValueError("Attention backend is not set.")
 
-    has_rope = first_block.attention.rope is not None
+#     has_rope = first_block.attention.rope is not None
 
-    if has_rope:
-        rope_scaling = _get_and_validate_rope_scaling_config(blocks)
-        rope_theta = first_block.attention.rope.theta
-    else:
-        rope_scaling = None
-        rope_theta = None
+#     if has_rope:
+#         rope_scaling = _get_and_validate_rope_scaling_config(blocks)
+#         rope_theta = first_block.attention.rope.theta
+#     else:
+#         rope_scaling = None
+#         rope_theta = None
 
-    # Extract common configuration parameters
-    common_config_args = {
-        "vocab_size": model.vocab_size,
-        "hidden_size": model.d_model,
-        "intermediate_size": first_block.feed_forward.hidden_size,
-        "num_hidden_layers": model.n_layers,
-        "num_attention_heads": first_block.attention.n_heads,
-        "num_key_value_heads": first_block.attention.n_kv_heads,
-        "hidden_act": "silu",
-        "max_position_embeddings": -1,
-        "attention_bias": first_block.attention.w_out.bias is not None,
-        "rope_theta": rope_theta,
-        "rope_scaling": rope_scaling,
-        "pad_token_id": None,
-        "bos_token_id": None,
-        "eos_token_id": None,
-        "rms_norm_eps": first_block.feed_forward_norm.eps,
-        "tie_word_embeddings": False,
-    }
+#     # Extract common configuration parameters
+#     common_config_args = {
+#         "vocab_size": model.vocab_size,
+#         "hidden_size": model.d_model,
+#         "intermediate_size": first_block.feed_forward.hidden_size,
+#         "num_hidden_layers": model.n_layers,
+#         "num_attention_heads": first_block.attention.n_heads,
+#         "num_key_value_heads": first_block.attention.n_kv_heads,
+#         "hidden_act": "silu",
+#         "max_position_embeddings": -1,
+#         "attention_bias": first_block.attention.w_out.bias is not None,
+#         "rope_theta": rope_theta,
+#         "rope_scaling": rope_scaling,
+#         "pad_token_id": None,
+#         "bos_token_id": None,
+#         "eos_token_id": None,
+#         "rms_norm_eps": first_block.feed_forward_norm.eps,
+#         "tie_word_embeddings": False,
+#     }
 
-    # The OLMo 3 model family is identical to the OLMo 2 model family, except:
-    # - Sliding window attention is used for 3 out of 4 layers.
-    # - RoPE scaling is not applied to sliding window attention layers.
-    # Therefore, if any layer uses sliding window attention, we assume the model is OLMo 3.
-    # Identify layers that use sliding window attention.
-    sliding_window_blocks = [
-        block for block in blocks if block.attention.backend.window_size != (-1, -1)
-    ]
+#     # The OLMo 3 model family is identical to the OLMo 2 model family, except:
+#     # - Sliding window attention is used for 3 out of 4 layers.
+#     # - RoPE scaling is not applied to sliding window attention layers.
+#     # Therefore, if any layer uses sliding window attention, we assume the model is OLMo 3.
+#     # Identify layers that use sliding window attention.
+#     sliding_window_blocks = [
+#         block for block in blocks if block.attention.backend.window_size != (-1, -1)
+#     ]
 
-    if sliding_window_blocks:
-        if Olmo3Config is None:
-            raise RuntimeError("The installed transformers version does not support Olmo3")
-
-        found_window_sizes = {
-            block.attention.backend.window_size[0] for block in sliding_window_blocks
-        }
-
-        if len(found_window_sizes) > 1:
-            raise ValueError(
-                "All sliding window attention layers must have the same window size for "
-                f"OLMo3Config. Found different window sizes: {found_window_sizes}."
+#     if sliding_window_blocks:
+#         if Olmo3Config is None:
+#             raise RuntimeError("The installed transformers version does not support Olmo3")
+# =======
+    if isinstance(first_block, ReorderedNormTransformerBlock):
+        if not isinstance(first_block.attention, Attention):
+            raise NotImplementedError(
+                f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
             )
+        if first_block.attention.rope is None:
+            raise NotImplementedError(
+                f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
+            )
+# >>>>>>> Stashed changes
 
-        # This sliding window sizes value is configured to be fed to flash_attention -
-        # it is one smaller than the actual window size because FA implicitly includes the
-        # current position in the window. HF expects a value one larger than this and will
-        # manually adjust the window size down by 1 for FA.
-        # See https://github.com/huggingface/transformers/pull/40163
-        common_window_size_value = found_window_sizes.pop()
+        if first_block.attention.backend is None:
+            raise ValueError("Attention backend is not set.")
 
-        olmo3_specific_args = {
-            "sliding_window": common_window_size_value + 1,
-            "layer_types": [
-                "sliding_attention"
-                if block.attention.backend.window_size != (-1, -1)
-                else "full_attention"
-                for block in blocks
-            ],
+        rope_scaling = _get_and_validate_rope_scaling_config(blocks)
+
+        # Extract common configuration parameters
+        common_config_args = {
+            "vocab_size": model.vocab_size,
+            "hidden_size": model.d_model,
+            "intermediate_size": first_block.feed_forward.hidden_size,
+            "num_hidden_layers": model.n_layers,
+            "num_attention_heads": first_block.attention.n_heads,
+            "num_key_value_heads": first_block.attention.n_kv_heads,
+            "hidden_act": "silu",
+            "max_position_embeddings": -1,
+            "attention_bias": first_block.attention.w_out.bias is not None,
+            "rope_theta": first_block.attention.rope.theta,
+            "rope_scaling": rope_scaling,
+            "pad_token_id": None,
+            "bos_token_id": None,
+            "eos_token_id": None,
+            "rms_norm_eps": first_block.feed_forward_norm.eps,
+            "tie_word_embeddings": False,
         }
-        return Olmo3Config(**common_config_args, **olmo3_specific_args)
+
+        # The OLMo 3 model family is identical to the OLMo 2 model family, except:
+        # - Sliding window attention is used for 3 out of 4 layers.
+        # - RoPE scaling is not applied to sliding window attention layers.
+        # Therefore, if any layer uses sliding window attention, we assume the model is OLMo 3.
+        # Identify layers that use sliding window attention.
+        sliding_window_blocks = [
+            block for block in blocks if block.attention.backend.window_size != (-1, -1)
+        ]
+
+        if sliding_window_blocks:
+            if Olmo3Config is None:
+                raise RuntimeError("The installed transformers version does not support Olmo3")
+
+            found_window_sizes = {
+                block.attention.backend.window_size[0] for block in sliding_window_blocks
+            }
+
+            if len(found_window_sizes) > 1:
+                raise ValueError(
+                    "All sliding window attention layers must have the same window size for "
+                    f"OLMo3Config. Found different window sizes: {found_window_sizes}."
+                )
+
+            # This sliding window sizes value is configured to be fed to flash_attention -
+            # it is one smaller than the actual window size because FA implicitly includes the
+            # current position in the window. HF expects a value one larger than this and will
+            # manually adjust the window size down by 1 for FA.
+            # See https://github.com/huggingface/transformers/pull/40163
+            common_window_size_value = found_window_sizes.pop()
+
+            olmo3_specific_args = {
+                "sliding_window": common_window_size_value + 1,
+                "layer_types": [
+                    "sliding_attention"
+                    if block.attention.backend.window_size != (-1, -1)
+                    else "full_attention"
+                    for block in blocks
+                ],
+            }
+            return Olmo3Config(**common_config_args, **olmo3_specific_args)
+        else:
+            return Olmo2Config(**common_config_args)
+    elif isinstance(first_block, TransformerBlock):
+        if not isinstance(first_block.attention, Attention):
+            raise NotImplementedError(
+                f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
+            )
+        if first_block.attention.rope is None:
+            raise NotImplementedError(
+                f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
+            )
+        if first_block.attention.backend is None:
+            raise ValueError("Attention backend is not set.")
+        if first_block.attention.q_norm is not None:
+            return _get_qwen3_config(model, blocks)
+        else:
+            raise NotImplementedError(
+                f"Building HF config for standard TransformerBlock without qk_norm is not yet implemented"
+            )
     else:
-        return Olmo2Config(**common_config_args)
+        raise NotImplementedError(
+            f"Block is not a {ReorderedNormTransformerBlock.__name__} or {TransformerBlock.__name__}, "
+            f"unable to build HF config for {model.__class__.__name__}"
+        )
 
 
 def _get_and_validate_rope_scaling_config(blocks) -> dict | None:

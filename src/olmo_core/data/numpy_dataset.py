@@ -1331,6 +1331,13 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                 # Log results.
                 for source_paths, future in zip(sources_needed, futures):
                     total_instances, total_tokens = future.result()
+                    if total_instances == 0:
+                        raise RuntimeError(
+                            f"Packing produced 0 instances from {source_paths}. "
+                            "This usually means the EOS token ID is not present in the data. "
+                            "Check that the tokenizer config matches the tokenization used to create the dataset, "
+                            "or ensure the dataset directory contains a metadata CSV file with document boundaries."
+                        )
                     total_padding = self.sequence_length * total_instances - total_tokens
                     avg_padding = total_padding / total_instances
                     log.info(

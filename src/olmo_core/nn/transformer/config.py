@@ -1398,6 +1398,7 @@ class TransformerConfig(ModelConfig):
             layer_norm_eps=1e-6,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
             feed_forward=FeedForwardConfig(
                 hidden_size=12288, bias=False, dtype=kwargs.get("dtype", DType.float32)
             ),
