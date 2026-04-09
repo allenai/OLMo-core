@@ -5,6 +5,7 @@ import math
 import typing
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+import dataclasses
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, NamedTuple, TypeVar
 
@@ -17,7 +18,13 @@ import olmo_core.io as io
 import olmo_core.train.callbacks as callbacks
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
-from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    DataMix,
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     InstanceSourceConfig,
@@ -226,10 +233,14 @@ class ModelLadder(Config):
     """The model configurator to use."""
     run_configurator: RunConfigurator
     """The run configurator to use."""
-    data_loader: ComposableDataLoaderConfig
-    """The data loader configuration to use for each run."""
-    instance_sources: list[InstanceSourceConfig]
-    """The instance sources to use for each run."""
+    data_loader: ComposableDataLoaderConfig | None = None
+    """The composable data loader configuration to use for each run."""
+    instance_sources: list[InstanceSourceConfig] | None = None
+    """The composable instance sources to use for each run."""
+    numpy_dataset: NumpyFSLDatasetConfig | None = None
+    """The NumpyFSL dataset configuration, as an alternative to the composable pipeline."""
+    numpy_data_loader: NumpyDataLoaderConfig | None = None
+    """The NumpyFSL data loader configuration, as an alternative to the composable pipeline."""
     sequence_length: int = 8192
     """The sequence length to train each run on."""
     tokenizer: TokenizerConfig
@@ -239,9 +250,23 @@ class ModelLadder(Config):
     backend: str = "cpu:gloo,cuda:nccl"
     """The distributed backend to use for each run."""
 
+    @property
+    def _uses_composable(self) -> bool:
+        return self.data_loader is not None and self.instance_sources is not None
+
+    @property
+    def _uses_numpy_fsl(self) -> bool:
+        return self.numpy_dataset is not None and self.numpy_data_loader is not None
+
     def __post_init__(self):
         if self.max_devices <= 0:
             raise OLMoConfigurationError("max_devices must be a positive integer.")
+        if self._uses_composable == self._uses_numpy_fsl:
+            raise OLMoConfigurationError(
+                "Exactly one data pipeline must be configured: "
+                "either (data_loader + instance_sources) for composable, "
+                "or (numpy_dataset + numpy_data_loader) for NumpyFSL."
+            )
         for size_spec in self.sizes:
             min_devices, _ = self.model_configurator.configure_minimal_device_mesh_spec(
                 size_spec=size_spec,
@@ -340,21 +365,45 @@ class ModelLadder(Config):
         # Configure trainer.
         trainer_config = self._configure_trainer(size_spec, for_benchmarking=for_benchmarking)
 
-        # Build instance sources and data loader.
-        instance_sources = [
-            source.build(work_dir=self.work_dir) for source in self.instance_sources
-        ]
-        data_loader = self.data_loader.build(
-            *instance_sources,
-            work_dir=self.work_dir,
-            global_batch_size=global_batch_size,
-            tokenizer=self.tokenizer,
-        )
-        if data_loader.sequence_length != self.sequence_length:
-            raise OLMoConfigurationError(
-                f"Data loader sequence of {data_loader.sequence_length} does not match "
-                f"configured sequence length of {self.sequence_length}."
+        # Build data loader.
+        if self._uses_composable:
+            assert self.instance_sources is not None and self.data_loader is not None
+            built_sources = [
+                source.build(work_dir=self.work_dir) for source in self.instance_sources
+            ]
+            data_loader = self.data_loader.build(
+                *built_sources,
+                work_dir=self.work_dir,
+                global_batch_size=global_batch_size,
+                tokenizer=self.tokenizer,
             )
+            if data_loader.sequence_length != self.sequence_length:
+                raise OLMoConfigurationError(
+                    f"Data loader sequence of {data_loader.sequence_length} does not match "
+                    f"configured sequence length of {self.sequence_length}."
+                )
+        else:
+            assert self.numpy_dataset is not None and self.numpy_data_loader is not None
+            dataset_config = self.numpy_dataset
+            # For source mixtures, update global_batch_size and requested_tokens
+            # which vary per model size.
+            if dataset_config.source_mixture_config is not None:
+                max_tokens = self.run_configurator.configure_duration(
+                    num_params, global_batch_size
+                ).value
+                src_mix = dataclasses.replace(
+                    dataset_config.source_mixture_config,
+                    global_batch_size=global_batch_size,
+                    requested_tokens=max_tokens,
+                )
+                dataset_config = dataclasses.replace(
+                    dataset_config, source_mixture_config=src_mix
+                )
+            dataset = dataset_config.build()
+            loader_config = dataclasses.replace(
+                self.numpy_data_loader, global_batch_size=global_batch_size
+            )
+            data_loader = loader_config.build(dataset)
 
         # Build train module.
         train_module = self.model_configurator.build_train_module(
@@ -377,9 +426,17 @@ class ModelLadder(Config):
             "model": model_config.as_config_dict(),
             "optim": optim_config.as_config_dict(),
             "scheduler": scheduler.as_config_dict(),
-            "data_loader": self.data_loader.as_config_dict(),
-            "instance_sources": [s.as_config_dict() for s in self.instance_sources],
         }
+        if self._uses_composable:
+            assert self.data_loader is not None and self.instance_sources is not None
+            config_dict["data_loader"] = self.data_loader.as_config_dict()
+            config_dict["instance_sources"] = [
+                s.as_config_dict() for s in self.instance_sources
+            ]
+        else:
+            assert self.numpy_dataset is not None and self.numpy_data_loader is not None
+            config_dict["numpy_dataset"] = self.numpy_dataset.as_config_dict()
+            config_dict["numpy_data_loader"] = self.numpy_data_loader.as_config_dict()
         typing.cast(
             callbacks.ConfigSaverCallback, trainer.callbacks["config_saver"]
         ).config = config_dict
