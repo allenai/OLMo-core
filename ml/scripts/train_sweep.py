@@ -12,8 +12,8 @@ SWEEP_NAME_DEFAULT = 'data_rep_AC'
 project = 'moe'
 MODELS = [
     'olmo2_ml_10M',
-    'olmo2_ml_80M',
-    'olmo2_ml_200M',
+    # 'olmo2_ml_80M',
+    # 'olmo2_ml_200M',
 ]
 
 def main(
@@ -142,7 +142,8 @@ def main(
                     'train_module': {
                         'optim': {
                             # 'lr': [4e-3, 1e-2],
-                            'lr': [4e-4],
+                            # 'lr': [4e-4],
+                            'lr': [1e-2],  # LR sanity check for 10M runs (Margaret's suggestion)
                         },
                     },
                     "trainer": {
@@ -208,24 +209,24 @@ def main(
                     ## === Data repetition experiments (A+C) ===
                     ## Dense baselines at different repetition levels
                     "dense_rep1x": {"moe_num_experts_list": ["1"], "unique_data_fraction": ["1.0"], "num_repetitions": ["1"]},
-                    "dense_rep2x": {"moe_num_experts_list": ["1"], "unique_data_fraction": ["0.5"], "num_repetitions": ["2"]},
-                    "dense_rep4x": {"moe_num_experts_list": ["1"], "unique_data_fraction": ["0.25"], "num_repetitions": ["4"]},
+                    # "dense_rep2x": {"moe_num_experts_list": ["1"], "unique_data_fraction": ["0.5"], "num_repetitions": ["2"]},
+                    # "dense_rep4x": {"moe_num_experts_list": ["1"], "unique_data_fraction": ["0.25"], "num_repetitions": ["4"]},
                     "dense_rep8x": {"moe_num_experts_list": ["1"], "unique_data_fraction": ["0.125"], "num_repetitions": ["8"]},
-                    "dense_rep16x": {"moe_num_experts_list": ["1"], "unique_data_fraction": ["0.0625"], "num_repetitions": ["16"]},
+                    # "dense_rep16x": {"moe_num_experts_list": ["1"], "unique_data_fraction": ["0.0625"], "num_repetitions": ["16"]},
                     "dense_rep32x": {"moe_num_experts_list": ["1"], "unique_data_fraction": ["0.03125"], "num_repetitions": ["32"]},
                     ## MoE 32 experts at different repetition levels
                     "moe32_rep1x": {"moe_num_experts_list": ["32"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["1.0"], "num_repetitions": ["1"]},
-                    "moe32_rep2x": {"moe_num_experts_list": ["32"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.5"], "num_repetitions": ["2"]},
-                    "moe32_rep4x": {"moe_num_experts_list": ["32"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.25"], "num_repetitions": ["4"]},
+                    # "moe32_rep2x": {"moe_num_experts_list": ["32"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.5"], "num_repetitions": ["2"]},
+                    # "moe32_rep4x": {"moe_num_experts_list": ["32"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.25"], "num_repetitions": ["4"]},
                     "moe32_rep8x": {"moe_num_experts_list": ["32"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.125"], "num_repetitions": ["8"]},
-                    "moe32_rep16x": {"moe_num_experts_list": ["32"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.0625"], "num_repetitions": ["16"]},
+                    # "moe32_rep16x": {"moe_num_experts_list": ["32"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.0625"], "num_repetitions": ["16"]},
                     "moe32_rep32x": {"moe_num_experts_list": ["32"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.03125"], "num_repetitions": ["32"]},
                     ## MoE 64 experts at different repetition levels
                     "moe64_rep1x": {"moe_num_experts_list": ["64"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["1.0"], "num_repetitions": ["1"]},
-                    "moe64_rep2x": {"moe_num_experts_list": ["64"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.5"], "num_repetitions": ["2"]},
-                    "moe64_rep4x": {"moe_num_experts_list": ["64"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.25"], "num_repetitions": ["4"]},
+                    # "moe64_rep2x": {"moe_num_experts_list": ["64"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.5"], "num_repetitions": ["2"]},
+                    # "moe64_rep4x": {"moe_num_experts_list": ["64"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.25"], "num_repetitions": ["4"]},
                     "moe64_rep8x": {"moe_num_experts_list": ["64"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.125"], "num_repetitions": ["8"]},
-                    "moe64_rep16x": {"moe_num_experts_list": ["64"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.0625"], "num_repetitions": ["16"]},
+                    # "moe64_rep16x": {"moe_num_experts_list": ["64"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.0625"], "num_repetitions": ["16"]},
                     "moe64_rep32x": {"moe_num_experts_list": ["64"], "moe_hidden_multipliers_list": ["0.25"], "moe_router_top_ks_list": ["4"], "moe_generalist_hidden_multiplier": ["0"], "unique_data_fraction": ["0.03125"], "num_repetitions": ["32"]},
                 },
             }
