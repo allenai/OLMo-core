@@ -417,6 +417,7 @@ def main(
             moe_bias_gamma=args.moe_bias_gamma,
             moe_z_loss_weight=args.moe_z_loss_weight,
             moe_lb_loss_weight=args.moe_lb_loss_weight,
+            eval_interval=args.eval_interval,
             unique_data_fraction=args.unique_data_fraction,
             num_repetitions=args.num_repetitions,
             overrides=overrides)
@@ -480,6 +481,7 @@ if __name__ == "__main__":
     parser.add_argument("--moe_bias_gamma", type=float, default=None, help="Gamma value for MoE bias")
     parser.add_argument("--moe_z_loss_weight", type=float, default=0.001, help="Weight for the z-loss in MoE")
     parser.add_argument("--moe_lb_loss_weight", type=float, default=0.01, help="Weight for the LB loss in MoE")
+    parser.add_argument("--eval_interval", type=int, default=100, help="Evaluation interval in steps")
     parser.add_argument("--unique_data_fraction", type=float, default=1.0,
         help="Fraction of source data paths to use (1.0=full, 0.5=half, 0.25=quarter, 0.125=eighth). "
              "Lower fraction + same max_duration = more data repetition.")
