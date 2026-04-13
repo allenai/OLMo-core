@@ -101,7 +101,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(145e9)) # stop at 145B tokens for this run 
+            hard_stop=Duration.tokens(int(145e9)), # stop at 145B tokens for this run 
+            keys_to_ignore=[r'q_norm', r'k_norm'], # indicates that we're re-init-ing these keys-- tho actually they weren't in the prior init at all 
+
         )
         .with_callback(
             "checkpointer",
