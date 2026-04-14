@@ -137,10 +137,15 @@ COPY_COLORS = [
     "copycolors_10way_fast",
 ]
 
+DEBUG_TASKS = [
+    "arc_challenge_test_mc_5shot_fast",
+]
+
 TASK_GROUPS: Dict[str, List[str]] = {
     "full__small_compute": FULL_TASKS_SMALL_COMPUTE,
     "full__large_compute": FULL_TASKS_LARGE_COMPUTE,
     "full": FULL_TASKS,
     "fast": FAST_TASKS,
     "copycolors": COPY_COLORS,
+    "debug": DEBUG_TASKS
 }

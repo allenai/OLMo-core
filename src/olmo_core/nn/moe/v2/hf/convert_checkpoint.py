@@ -316,6 +316,10 @@ if __name__ == "__main__":
         vocab_size=olmo_model_cfg['vocab_size'],
         hidden_size=olmo_model_cfg['d_model'],
         attention_hidden_size=olmo_model_cfg['block']['attention']['d_attn'],
+        head_dim=(
+            olmo_model_cfg['block']['attention']['d_attn']
+            // olmo_model_cfg['block']['attention']['n_heads']
+        ),
         dense_mlp_intermediate_size=dense_mlp_intermediate_size,
         moe_intermediate_size=olmo_model_cfg['block']['routed_experts']['hidden_size'],
         shared_expert_intermediate_size=olmo_model_cfg['block']['shared_experts']['hidden_size'],
@@ -342,7 +346,7 @@ if __name__ == "__main__":
         rms_norm_eps=olmo_model_cfg['block']['attention_norm']['eps'], # WARNING: assume all norm layers (attention Q,K, feedforward and lmhead) use the same eps
         sliding_window=max(olmo_model_cfg['block']['attention']['sliding_window']['pattern']),
         use_head_qk_norm=olmo_model_cfg['block']['attention']['use_head_qk_norm'],
-        layer_types = None,
+        layer_types = None, # TODO: should read from olmo checkpoint config
         dense_layers_indices=dense_layers_indices,
         original_num_experts_per_tok=olmo_model_cfg['block']['routed_experts_router']['original_top_k'] if 'original_top_k' in olmo_model_cfg['block']['routed_experts_router'] else None,
         # old checkpoints may not have these fields; default to 1.0 and False
@@ -386,5 +390,4 @@ if __name__ == "__main__":
     tok.save_pretrained(output_path)
 
     print(f"Saved HF model to {output_path}.")
-
 

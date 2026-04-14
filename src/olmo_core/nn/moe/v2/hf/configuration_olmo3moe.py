@@ -27,6 +27,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         vocab_size=50304,
         hidden_size=4096,
         attention_hidden_size=4096,
+        head_dim=None,
         dense_mlp_intermediate_size=11008,
         moe_intermediate_size=2048,
         shared_expert_intermediate_size=2048,
@@ -72,6 +73,11 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.max_position_embeddings = max_position_embeddings
         self.hidden_size = hidden_size
         self.attention_hidden_size = attention_hidden_size if attention_hidden_size is not None else hidden_size
+        self.head_dim = (
+            head_dim
+            if head_dim is not None
+            else self.attention_hidden_size // num_attention_heads
+        )
 
         # for dense MLP layers
         self.dense_mlp_intermediate_size = dense_mlp_intermediate_size 
@@ -115,7 +121,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.sliding_window = sliding_window
         if layer_types is None:
             self.layer_types: List[str] = [
-                "sliding_attention" if (i + 1) % 4 != 0 else "full_attention" for i in range(self.num_hidden_layers)
+                "sliding_attention" if (i + 1) % 2 != 0 else "full_attention" for i in range(self.num_hidden_layers)
             ]
         else:
             self.layer_types: List[str] = layer_types

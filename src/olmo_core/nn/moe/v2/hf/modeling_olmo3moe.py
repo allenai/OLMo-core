@@ -511,11 +511,10 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-
-        assert inputs_embeds is not None
-        inputs_embeds = inputs_embeds * self.embed_scale
-        if self.embed_norm is not None:
-            inputs_embeds = self.embed_norm(inputs_embeds)
+            assert inputs_embeds is not None
+            inputs_embeds = inputs_embeds * self.embed_scale
+            if self.embed_norm is not None:
+                inputs_embeds = self.embed_norm(inputs_embeds)
 
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache(config=self.config)

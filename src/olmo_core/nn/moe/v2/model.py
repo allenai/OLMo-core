@@ -440,6 +440,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         """
         device = device or self.device
         params = list(self.parameters())
+        self.to(torch.bfloat16) # TODO: better way to do this?
         self.to_empty(device=device)
         new_params = list(self.parameters())
         for name, module in self.named_modules():

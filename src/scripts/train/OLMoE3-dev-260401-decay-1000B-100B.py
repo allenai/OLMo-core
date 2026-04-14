@@ -94,10 +94,10 @@ SEQUENCE_LENGTH = 8192
 torch.set_float32_matmul_precision('high')
 
 
-MAX_DURATION = int(3000e9)
+MAX_DURATION = int(1101e9)
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 500
+SAVE_INTERVAL = 250
 
 NUM_EXPERTS = 48
 TOP_K = 4
@@ -150,15 +150,9 @@ REF_NUM_NODES=8
 # NO LR_REF_BSZ=4M
 
 # stage 6 - 15M - 
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 15
-# NO LR_REF_BSZ=4M
-
-# stage 7 - 24M - 
 MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 24
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 15
 # NO LR_REF_BSZ=4M
-
 
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
@@ -187,7 +181,7 @@ EXPERT_LR = LR
 NUM_LAYERS=24
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=1
+    MINUS_LAST_STAGE=0
     NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
@@ -384,10 +378,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 # patch
-MONKEY_PATCH_DECAY_START_TOKENS = None # None for disabled, or int((1000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE) for starting at 1T tokens
-MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-MONKEY_PATCH_DECAY_END_FRACTION = SCHED_FINAL_FRACTION
-MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine
+MONKEY_PATCH_DECAY_START_TOKENS = int((1000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE) # None for disabled, or int((1000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE) for starting at 1T tokens
+MONKEY_PATCH_DECAY_DURATION_TOKENS = int((100e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+MONKEY_PATCH_DECAY_END_FRACTION = 0.01
+MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.linear
 
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
@@ -490,6 +484,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
+            load_path='/workspace/checkpoint/OLMoE3-dev-260401_2560d3072a_24L2560M1280S_48E4K1S_p1-pin/step147000',
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
