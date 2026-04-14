@@ -410,8 +410,24 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT.py launch \
 
 #### 7B baselines:
 RETRAIN_MID_SFT=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo2_math-olmo3_code_tool_use_safety-1.0
-RETRAIN_MID_TOO=
-
+RETRAIN_MID_TOO=/weka/oe-training-default/jacobm/flexolmo/checkpoints/flex-7b-full-mix-150b/step286103
+uv run python src/scripts/train/sft/OLMo-sft.py launch \
+    olmo2-7b-retrain-post-train-sft \
+        $RETRAIN_MID_TOO \
+        ai2/jupiter \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=1e-4 \
+    --train_module.state_dict_load_opts.flatten_optimizer_state_dict=True \
+    --train_module.state_dict_load_opts.strict=False \
+    --launch.priority=urgent \
+    --seq_len=4096 \
+    --launch.num_gpus=8 \
+    --num_nodes=8 \
+    --budget ai2/oceo \
+    --workspace ai2/flex2 \
+    --model_name olmo2-7b \
+    --dataset_path $RETRAIN_MID_SFT
 
 RETRAIN_POST_ONLY_SFT=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo2_math-olmo3_code_tool_use_safety-1.0
 RETRAIN_POST_ONLY=/weka/oe-training-default/ai2-llm/checkpoints/weijias/OLMo2-7B-anneal-from-stage1-no-math/step11921/model_and_optim
