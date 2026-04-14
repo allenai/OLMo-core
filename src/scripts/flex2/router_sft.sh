@@ -163,9 +163,9 @@ BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/BTX-
 # ACTIVE=2
 # BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-math_rl-code_rl-tool_use-safety_sft
 
-BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/BTX-5x7B-final-retrain
 # BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/FlexOlmo-5x7B-retrain-final
-AMOUNT=0.01
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/flex2-7B-sft/BTX-5x7B-final-retrain
+AMOUNT=0.05
 LR=1e-4
 SFT_DATASET=/weka/oe-training-default/ai2-llm/jacobm/data/flexolmo/router-training-ablations/general-olmo3_math_code_tool_use_safety-$AMOUNT
 uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
@@ -182,7 +182,7 @@ uv run python src/scripts/train/sft/FlexOlmo-SFT-5x7B.py launch \
     --launch.num_gpus=8 \
     --num_nodes=5 \
     --budget ai2/oceo \
-    --workspace ai2/olmo-instruct \
+    --workspace ai2/flex2 \
     --model_name olmoe-5x7b \
     --dataset_path $SFT_DATASET
 
