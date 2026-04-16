@@ -2,7 +2,7 @@ import argparse
 import logging
 
 import olmo_core.io as io
-from olmo_core.data import TokenizerConfig
+from olmo_core.data import NumpyDatasetDType, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
@@ -30,6 +30,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             pos_ids_paths=[f"{IDEALIZED_OVERLAP_BASE}/*-pos_ids.npy"],
             vis_limit_paths=[f"{IDEALIZED_OVERLAP_BASE}/*-vis_limit.npy"],
             sequence_length=args.sequence_length,
+            # dolma2 tokens are stored as uint32 (vocab ~100K exceeds uint16 range).
+            token_dtype=NumpyDatasetDType.uint32,
         ),
     ]
 

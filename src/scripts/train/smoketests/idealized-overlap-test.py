@@ -27,7 +27,7 @@ from datetime import datetime
 from typing import Optional
 
 from olmo_core.config import DType
-from olmo_core.data import TokenizerConfig
+from olmo_core.data import NumpyDatasetDType, TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     InstanceSourceConfig,
@@ -124,6 +124,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             pos_ids_paths=[f"{IDEALIZED_OVERLAP_S3_BASE}/*-pos_ids.npy"],
             vis_limit_paths=[f"{IDEALIZED_OVERLAP_S3_BASE}/*-vis_limit.npy"],
             sequence_length=SEQ_LENGTH,
+            # dolma2 tokens are stored as uint32 (vocab ~100K exceeds uint16 range).
+            token_dtype=NumpyDatasetDType.uint32,
         ),
     ]
 
