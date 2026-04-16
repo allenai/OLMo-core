@@ -236,7 +236,9 @@ class Olmo3ModelConfigurator(TransformerModelConfigurator):
             except RuntimeError:
                 pass
 
-        kwargs = dict(attn_backend=attn_backend, **self.model_construction_kwargs)
+        # Let `model_construction_kwargs` override the auto-selected backend (e.g. to
+        # force the torch backend when using custom attention masks that flash doesn't support).
+        kwargs = {"attn_backend": attn_backend, **self.model_construction_kwargs}
 
         model: TransformerConfig
         if size_spec == TransformerSize.size_60M:
