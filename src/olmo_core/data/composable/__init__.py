@@ -492,6 +492,10 @@ from .numpy_document_source import (
     NumpyDocumentSourceConfigBase,
     NumpyDocumentSourceMixConfig,
 )
+from .pre_chunked_instance_source import (
+    PreChunkedInstanceSource,
+    PreChunkedInstanceSourceConfig,
+)
 from .packing_instance_source import (
     LongDocStrategy,
     PackingInstanceSource,
@@ -575,6 +579,8 @@ __all__ = [
     "MixingInstanceSourceConfig",
     "RandomInstanceSource",
     "RandomInstanceSourceConfig",
+    "PreChunkedInstanceSource",
+    "PreChunkedInstanceSourceConfig",
     # Other types.
     "InstanceFilterConfig",
     "LongDocStrategy",

@@ -48,7 +48,12 @@ from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..moe import MoEBase
-from ..rope import RoPEBuffers, RotaryEmbeddingBase
+from ..rope import (
+    RoPEBuffers,
+    RotaryEmbeddingBase,
+    compute_inv_freqs,
+    compute_rope_from_positions,
+)
 from ..utils import selective_checkpointing_context_fn
 from .block import (
     MoETransformerBlock,
@@ -398,6 +403,42 @@ class Transformer(nn.Module):
         ) is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
+        # Construct tree-structured attention mask from vis_limit if provided.
+        vis_limit: Optional[torch.Tensor] = kwargs.pop("vis_limit", None)
+        if vis_limit is not None:
+            vis_limit = move_to_device(vis_limit, self.device)
+            B_vl, S_vl = vis_limit.shape
+            # mask(q, k) = (k <= q) AND (q < vis_limit[k])
+            q_idx = torch.arange(S_vl, device=vis_limit.device)
+            # causal: (S, S) bool — q_idx >= k_idx
+            causal = q_idx.unsqueeze(1) >= q_idx.unsqueeze(0)  # (S, S)
+            # vis: (B, S_q, S_k) bool — q_idx < vis_limit[:, k_idx]
+            vis = q_idx.unsqueeze(0).unsqueeze(2) < vis_limit.unsqueeze(1)  # (B, S, S)
+            attn_mask = causal.unsqueeze(0) & vis  # (B, S, S)
+            all_block_kwargs["attn_mask"] = attn_mask
+
+        # Prepare custom RoPE positions from pos_ids if provided.
+        pos_ids: Optional[torch.Tensor] = kwargs.pop("pos_ids", None)
+        if pos_ids is not None:
+            pos_ids = move_to_device(pos_ids, self.device)
+            for key, block in self.blocks.items():
+                block_idx = int(key)
+                if isinstance(block.attention, (Attention, FusedAttention)):
+                    rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)
+                    if rope is not None:
+                        if rope.scaling is None:
+                            inv_freq = compute_inv_freqs(rope.theta, rope.dim, pos_ids.device)
+                            rescale = 1.0
+                        else:
+                            inv_freq, rescale = rope.scaling.compute_scaled_inv_freq(
+                                theta=rope.theta, dim=rope.dim, device=pos_ids.device
+                            )
+                        custom_sin, custom_cos = compute_rope_from_positions(
+                            pos_ids, inv_freq, rescale
+                        )
+                        per_block_kwargs[block_idx]["pos_sin"] = custom_sin
+                        per_block_kwargs[block_idx]["pos_cos"] = custom_cos
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:

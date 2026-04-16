@@ -25,13 +25,17 @@ if TYPE_CHECKING:
 class Instance(TypedDict):
     """
     An instance is just a dictionary that should include ``input_ids`` and optionally a
-    corresponding ``label_mask``.
+    corresponding ``label_mask``, ``pos_ids``, and/or ``vis_limit``.
     """
 
     input_ids: Sequence[int]
     """The token IDs for this instance."""
     label_mask: NotRequired[Sequence[bool]]
     """An optional mask indicating which tokens should contribute to the loss."""
+    pos_ids: NotRequired[Sequence[int]]
+    """Optional per-token position IDs for custom RoPE positions."""
+    vis_limit: NotRequired[Sequence[int]]
+    """Optional per-key exclusive upper bound on visible query positions for tree-structured attention."""
 
 
 class InstanceSource(SourceABC):

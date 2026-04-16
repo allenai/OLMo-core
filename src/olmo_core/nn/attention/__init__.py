@@ -497,6 +497,7 @@ class Attention(SequenceMixer):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
@@ -511,6 +512,7 @@ class Attention(SequenceMixer):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             kv_cache_manager=self.kv_cache_manager,
+            attn_mask=attn_mask,
         )
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.update_seqlen(q.shape[1])
@@ -530,6 +532,7 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -541,6 +544,8 @@ class Attention(SequenceMixer):
             Required together with ``max_doc_len`` when using intra-document masking.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param attn_mask: An optional boolean attention mask of shape ``(batch_size, seq_len, seq_len)``.
+            Only supported with the ``torch`` attention backend.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -609,6 +614,7 @@ class Attention(SequenceMixer):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             cache_leftpad=cache_leftpad,
+            attn_mask=attn_mask,
         )
 
         if self.gate is not None:

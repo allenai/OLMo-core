@@ -231,9 +231,13 @@ class AttentionBackend(nn.Module):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the attention operation.
+
+        :param attn_mask: An optional boolean attention mask of shape
+            ``(batch_size, seq_len, seq_len)``. Only supported by the torch backend.
         """
         raise NotImplementedError
 
@@ -307,6 +311,7 @@ class TorchAttentionBackend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 
@@ -318,14 +323,21 @@ class TorchAttentionBackend(AttentionBackend):
         if kv_cache_manager is not None:
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
 
-        attn_mask: Optional[torch.Tensor] = None
+        # Build the attention mask from SWA and/or custom attn_mask.
+        swa_mask: Optional[torch.Tensor] = None
         if self.window_size != (-1, -1):
-            attn_mask = self._get_sliding_window_mask(
+            swa_mask = self._get_sliding_window_mask(
                 seq_len_q=q.shape[1],
                 seq_len_kv=k.shape[1],
                 device=q.device,
                 window_size=self.window_size,
             )
+
+        if attn_mask is not None and swa_mask is not None:
+            # Combine custom mask with SWA mask.
+            attn_mask = attn_mask & swa_mask
+        elif swa_mask is not None:
+            attn_mask = swa_mask
 
         if any(
             opt is not None
@@ -360,6 +372,11 @@ class TorchAttentionBackend(AttentionBackend):
         #        (batch_size, n_kv_heads, seq_len, head_dim),
         #        (batch_size, n_kv_heads, seq_len, head_dim)
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+        # Expand attn_mask for head dimension if needed.
+        # SDPA expects (B, H, S, S) or (B, 1, S, S) for bool masks.
+        if attn_mask is not None and attn_mask.ndim == 3:
+            attn_mask = attn_mask.unsqueeze(1)  # (B, 1, S, S)
 
         # shape: (batch_size, n_heads, seq_len, head_dim)
         att = F.scaled_dot_product_attention(
@@ -447,7 +464,15 @@ class TorchAttentionBackend(AttentionBackend):
 class FlashAttention2Backend(AttentionBackend):
     """
     SDPA from the flash-attn package. Additionally, ring-flash-attn is required for context parallelism.
+
+    .. note::
+        Custom attention masks (``attn_mask``) are not supported. Use :class:`TorchAttentionBackend` instead.
     """
+
+    _ATTN_MASK_ERROR = (
+        "FlashAttention backends don't support custom attention masks. "
+        "Use the 'torch' backend instead."
+    )
 
     @classmethod
     def assert_supported(cls):
@@ -490,7 +515,10 @@ class FlashAttention2Backend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if attn_mask is not None:
+            raise RuntimeError(self._ATTN_MASK_ERROR)
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
                 raise RuntimeError(
@@ -651,7 +679,12 @@ class FlashAttention2Backend(AttentionBackend):
 class FlashAttention3Backend(AttentionBackend):
     """
     SDPA from the flash-attn 3 package. Does not currently support context parallelism.
+
+    .. note::
+        Custom attention masks (``attn_mask``) are not supported. Use :class:`TorchAttentionBackend` instead.
     """
+
+    _ATTN_MASK_ERROR = FlashAttention2Backend._ATTN_MASK_ERROR
 
     def __init__(
         self,
@@ -714,7 +747,10 @@ class FlashAttention3Backend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if attn_mask is not None:
+            raise RuntimeError(self._ATTN_MASK_ERROR)
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
                 raise RuntimeError(
@@ -849,6 +885,8 @@ class FlashAttention4Backend(AttentionBackend):
     SDPA from flash-attn 4 (CUTE implementation).
     """
 
+    _ATTN_MASK_ERROR = FlashAttention2Backend._ATTN_MASK_ERROR
+
     def __init__(
         self,
         *,
@@ -910,7 +948,10 @@ class FlashAttention4Backend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if attn_mask is not None:
+            raise RuntimeError(self._ATTN_MASK_ERROR)
         assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
         assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
 
@@ -993,6 +1034,8 @@ class FlashAttention4Backend(AttentionBackend):
 
 
 class TEAttentionBackend(AttentionBackend):
+    _ATTN_MASK_ERROR = FlashAttention2Backend._ATTN_MASK_ERROR
+
     def __init__(
         self,
         *,
@@ -1094,9 +1137,12 @@ class TEAttentionBackend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 
+        if attn_mask is not None:
+            raise RuntimeError(self._ATTN_MASK_ERROR)
         if kv_cache_manager is not None:
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
 

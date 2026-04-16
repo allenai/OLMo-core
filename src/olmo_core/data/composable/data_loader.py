@@ -486,6 +486,12 @@ class ComposableDataLoader(TextDataLoaderBase):
                 if (label_mask := instance.get("label_mask")) is not None:
                     out["label_mask"] = as_tensor(label_mask)
 
+                if (pos_ids := instance.get("pos_ids")) is not None:
+                    out["pos_ids"] = as_tensor(pos_ids)
+
+                if (vis_limit := instance.get("vis_limit")) is not None:
+                    out["vis_limit"] = as_tensor(vis_limit)
+
                 if self.generate_doc_lengths:
                     out["doc_lens"] = get_document_lengths(
                         input_ids,

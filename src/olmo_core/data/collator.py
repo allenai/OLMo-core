@@ -51,6 +51,8 @@ class DataCollator:
         all_attention_mask = []
         all_attention_bias = []
         all_label_mask = []
+        all_pos_ids = []
+        all_vis_limit = []
         all_indices = []
         all_metadata = []
         all_instance_mask = []
@@ -123,6 +125,32 @@ class DataCollator:
                     )
                 )
 
+            # Pad pos_ids.
+            pos_ids = x.get("pos_ids") if isinstance(x, dict) else None
+            if pos_ids is not None:
+                if not isinstance(pos_ids, torch.Tensor):
+                    pos_ids = torch.tensor(pos_ids)
+                all_pos_ids.append(
+                    F.pad(
+                        pos_ids.to(dtype=torch.long),
+                        pad_shape,
+                        value=0,
+                    )
+                )
+
+            # Pad vis_limit.
+            vis_limit = x.get("vis_limit") if isinstance(x, dict) else None
+            if vis_limit is not None:
+                if not isinstance(vis_limit, torch.Tensor):
+                    vis_limit = torch.tensor(vis_limit)
+                all_vis_limit.append(
+                    F.pad(
+                        vis_limit.to(dtype=torch.long),
+                        pad_shape,
+                        value=0,
+                    )
+                )
+
             # Indices.
             index = x.get("index") if isinstance(x, dict) else None
             if index is not None:
@@ -164,6 +192,10 @@ class DataCollator:
             out["attention_bias"] = torch.stack(all_attention_bias)
         if all_label_mask:
             out["label_mask"] = torch.stack(all_label_mask)
+        if all_pos_ids:
+            out["pos_ids"] = torch.stack(all_pos_ids)
+        if all_vis_limit:
+            out["vis_limit"] = torch.stack(all_vis_limit)
         if all_indices:
             out["index"] = torch.stack(all_indices)
         if all_instance_mask:

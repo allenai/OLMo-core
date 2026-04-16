@@ -23,6 +23,7 @@ __all__ = [
     "RotaryEmbedding",
     "FusedRotaryEmbedding",
     "ComplexRotaryEmbedding",
+    "compute_rope_from_positions",
 ]
 
 
@@ -48,6 +49,29 @@ class RoPEType(StrEnum):
 def compute_inv_freqs(theta: int, dim: int, device: torch.device) -> "torch.Tensor":
     inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim))
     return inv_freq
+
+
+def compute_rope_from_positions(
+    pos_ids: torch.Tensor,
+    inv_freq: torch.Tensor,
+    attention_rescale_factor: float = 1.0,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute per-position RoPE sin/cos from arbitrary position IDs.
+
+    :param pos_ids: Position IDs of shape ``(batch, seq_len)``.
+    :param inv_freq: Inverse frequency tensor of shape ``(head_dim // 2,)``.
+    :param attention_rescale_factor: Optional rescaling factor for the embeddings.
+
+    :returns: ``(pos_sin, pos_cos)`` each of shape ``(batch, seq_len, head_dim)``.
+    """
+    # pos_ids: (B, S) -> (B, S, 1), inv_freq: (D//2,) -> (1, 1, D//2)
+    freqs = pos_ids.unsqueeze(-1).float() * inv_freq.unsqueeze(0).unsqueeze(0)
+    # freqs: (B, S, D//2)
+    positions = torch.cat((freqs, freqs), dim=-1)  # (B, S, D)
+    pos_sin = positions.sin() * attention_rescale_factor
+    pos_cos = positions.cos() * attention_rescale_factor
+    return pos_sin, pos_cos
 
 
 @dataclass
@@ -517,28 +541,48 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
 
-            if pos_sin.size(-2) < seq_len_needed or pos_cos.size(-2) < seq_len_needed:
-                raise RuntimeError(
-                    f"RoPE buffers shorter than required: need {seq_len_needed}, "
-                    f"have {pos_sin.size(-2)}."
-                )
-
-            if head_first:
-                sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
-                cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
-                sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
-                cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
+            if pos_sin.ndim == 3:
+                # Batched positions: (B, S, D) — per-instance custom positions.
+                # head_first: q is (B, H, S, D), not head_first: q is (B, S, H, D)
+                if head_first:
+                    # (B, S, D) -> (B, 1, S, D) for broadcast with (B, H, S, D)
+                    sin_q = pos_sin[:, q_abs_start : q_abs_start + q_len, :].unsqueeze(1)
+                    cos_q = pos_cos[:, q_abs_start : q_abs_start + q_len, :].unsqueeze(1)
+                    sin_k = pos_sin[:, k_abs_start : k_abs_start + k_len, :].unsqueeze(1)
+                    cos_k = pos_cos[:, k_abs_start : k_abs_start + k_len, :].unsqueeze(1)
+                else:
+                    # (B, S, D) -> (B, S, 1, D) for broadcast with (B, S, H, D)
+                    sin_q = pos_sin[:, q_abs_start : q_abs_start + q_len, :].unsqueeze(2)
+                    cos_q = pos_cos[:, q_abs_start : q_abs_start + q_len, :].unsqueeze(2)
+                    sin_k = pos_sin[:, k_abs_start : k_abs_start + k_len, :].unsqueeze(2)
+                    cos_k = pos_cos[:, k_abs_start : k_abs_start + k_len, :].unsqueeze(2)
 
                 q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
                 k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
             else:
-                sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
-                cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
-                sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
-                cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
+                # Standard 2D positions: (S, D) — shared across batch.
+                if pos_sin.size(-2) < seq_len_needed or pos_cos.size(-2) < seq_len_needed:
+                    raise RuntimeError(
+                        f"RoPE buffers shorter than required: need {seq_len_needed}, "
+                        f"have {pos_sin.size(-2)}."
+                    )
 
-                q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
-                k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
+                if head_first:
+                    sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
+                    cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
+                    sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
+                    cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
+
+                    q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
+                    k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
+                else:
+                    sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
+                    cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
+                    sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
+                    cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
+
+                    q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
+                    k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
 
         return q_.type_as(q), k_.type_as(k)
 
