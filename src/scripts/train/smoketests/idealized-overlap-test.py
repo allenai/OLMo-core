@@ -135,6 +135,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         num_workers=4,
         instance_filter_config=None,
         work_dir=work_dir,
+        tokenizer=tokenizer_config,
     )
 
     trainer_config = (
