@@ -1,23 +1,24 @@
 """
-OLMo hybrid small suite — 275M, 810M, and 1.4B midtraining runs.
+OLMo hybrid small suite — 275M, 810M, and 1.4B long-context extension runs.
 
-Architecture: see arch.py (identical to pretraining — checkpoints load cleanly).
-
-Scheduler: LinearWithWarmup — linear decay to 0 over MAX_TOKENS.
+Extends each midtraining checkpoint to 65k sequence length.  The architecture
+in arch.py already uses NoPE (rope=None) on attention layers, so no explicit
+DroPE step is needed.  Fused-linear loss is enabled to reduce memory at long
+sequence lengths, and context parallelism (Ulysses degree=2) is used to shard
+the long sequences across GPU pairs.
 
 Before launching:
-  - Update ``load_path`` in MIDTRAINING_CONFIGS for each model size.
-  - Update SOURCE_MIXTURE_YAML to the desired midtraining data mix.
-  - Verify MAX_TOKENS per model size.
+  - Update ``load_path`` in LONG_CONTEXT_CONFIGS for each model size with the
+    final midtraining checkpoint path.
 
 Usage:
   # Dry run (print config without launching):
-  python src/scripts/train/hybrid-small-suite/midtraining.py dry_run \\
-      hybrid-small-midtraining-275M ai2/jupiter
+  python src/scripts/train/hybrid-small-suite/long_context.py dry_run \\
+      hybrid-small-lc-275M ai2/jupiter
 
   # Launch on Beaker (model size is parsed from run name):
-  python src/scripts/train/hybrid-small-suite/midtraining.py launch \\
-      hybrid-small-midtraining-1.4B ai2/jupiter
+  python src/scripts/train/hybrid-small-suite/long_context.py launch \\
+      hybrid-small-lc-1.4B ai2/jupiter
 """
 
 import os
@@ -28,15 +29,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datetime import datetime
 from functools import partial
 
-from arch import MODEL_CONFIGS, SEQUENCE_LENGTH, build_model_config, parse_model_size
+from arch import MODEL_CONFIGS, build_model_config as arch_build_model_config
+from arch import parse_model_size
 
 from olmo_core.config import DType
 from olmo_core.data import (
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
-    NumpyFSLDatasetConfig,
+    NumpyPackedFSLDatasetConfig,
 )
-from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import (
@@ -45,7 +46,11 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode
+from olmo_core.nn.lm_head import LMLossImplementation
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import (
     LinearWithWarmup,
     OptimGroupOverride,
@@ -60,71 +65,83 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 
+LC_SEQUENCE_LENGTH = 65536
 MAX_TOKENS = 100_000_000_000  # 100B
-SEED = 1337
-INSTANCE_FILTER = True
 
-# Update to the desired midtraining data mix before launching.
-SOURCE_MIXTURE_YAML = (
-    "src/olmo_core/data/source_mixtures/OLMo3-32B-midtraining-modelnamefilter.yaml"
-)
+# Long-context data (same source as the 7B long-context run).
+LC_DATA_GLOB = "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy"
 
-MIDTRAINING_CONFIGS = {
+# Per-size long-context settings.
+# load_path must be updated to the final midtraining checkpoint path before launching.
+# num_nodes doubles the midtraining node count to handle 8x longer sequences.
+LONG_CONTEXT_CONFIGS = {
     "275m": dict(
-        # Starting LR: ~10% of peak pretraining LR (0.008).
         lr=8e-4,
-        global_batch_size=2_621_440,
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-275M-Cx100/step161186/",
+        num_nodes=8,
+        global_batch_size=1 * 1024 * 1024,  # ~1M tokens (same as 7B LC)
+        load_path="",  # TODO: set to midtraining checkpoint
     ),
     "810m": dict(
-        # Starting LR: ~10% of peak pretraining LR (0.002).
         lr=2e-4,
-        global_batch_size=5_242_880,
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-810M-Cx100/step269926/",
+        num_nodes=8,
+        global_batch_size=1 * 1024 * 1024,
+        load_path="",  # TODO: set to midtraining checkpoint
     ),
     "1.4b": dict(
-        # Starting LR: ~10% of peak pretraining LR (0.002).
         lr=2e-4,
-        global_batch_size=8_388_608,
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-1.4B-Cx100/step308433/",
+        num_nodes=16,
+        global_batch_size=1 * 1024 * 1024,
+        load_path="",  # TODO: set to midtraining checkpoint
     ),
 }
+
+
+def build_model_config(common: CommonComponents, model_size: str) -> TransformerConfig:
+    model_config = arch_build_model_config(common, model_size)
+    # Enable fused-linear loss to reduce memory pressure at long sequence lengths.
+    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
+    return model_config
 
 
 def build_train_module_config(
     common: CommonComponents, model_size: str
 ) -> TransformerTrainModuleConfig:
-    cfg = MODEL_CONFIGS[model_size]
-    mt_cfg = MIDTRAINING_CONFIGS[model_size]
+    lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=cfg["rank_microbatch_size"],
-        max_sequence_length=SEQUENCE_LENGTH,
+        # One sequence per rank — memory budget is tight at 65k tokens.
+        rank_microbatch_size=LC_SEQUENCE_LENGTH,
+        max_sequence_length=LC_SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
-            lr=mt_cfg["lr"],
+            lr=lc_cfg["lr"],
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        # Linear decay from starting LR to 0 over the full midtraining run.
-        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=100, alpha_f=0.0),
+        # Linear decay from starting LR to 0 over the full LC run.
+        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=200, alpha_f=0.0),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
+            name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
+        # Shard each long sequence across 2 GPUs via Ulysses context parallelism.
+        # (Same setting as the 7B LC run.)
+        cp_config=TransformerContextParallelConfig.ulysses(degree=2),
+        # Low activation budget — long sequences have large activation memory.
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=1.0,
+            activation_memory_budget=0.1,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
@@ -137,27 +154,17 @@ def build_data_components(
     model_size: str,
     intra_document_masking: bool = False,
     include_instance_filter: bool = False,
-    global_batch_size: int = 0,
 ) -> DataComponents:
-    mt_cfg = MIDTRAINING_CONFIGS[model_size]
-    if global_batch_size <= 0:
-        global_batch_size = mt_cfg["global_batch_size"]
+    lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
-    source_list = SourceMixtureList.from_yaml(SOURCE_MIXTURE_YAML)
-    source_list.validate()
-
-    dataset_config = NumpyFSLDatasetConfig.from_src_mix(
-        src_mix=SourceMixtureDatasetConfig(
-            source_list=source_list,
-            requested_tokens=MAX_TOKENS,
-            global_batch_size=global_batch_size,
-            processes=16,
-            seed=SEED,
-        ),
+    dataset_config = NumpyPackedFSLDatasetConfig.glob(
+        LC_DATA_GLOB,
         tokenizer=common.tokenizer,
         work_dir=common.work_dir,
-        sequence_length=common.max_sequence_length,
+        sequence_length=LC_SEQUENCE_LENGTH,
         generate_doc_lengths=intra_document_masking,
+        source_group_size=8,
+        source_permutation_seed=123,
         instance_filter_config=None
         if not include_instance_filter
         else InstanceFilterConfig(
@@ -166,7 +173,10 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=global_batch_size, seed=SEED, num_workers=8
+        global_batch_size=lc_cfg["global_batch_size"],
+        seed=34521,
+        num_workers=16,
+        prefetch_factor=8,
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
@@ -174,7 +184,7 @@ def build_data_components(
 
 def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerConfig:
     cancel_check_interval = 10
-    mt_cfg = MIDTRAINING_CONFIGS[model_size]
+    lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
     assert common.launch is not None
     assert len(common.launch.clusters) == 1
@@ -182,12 +192,19 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
 
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
+    load_path = lc_cfg["load_path"]
+    if not load_path:
+        raise ValueError(
+            f"load_path for size '{model_size}' is not set in LONG_CONTEXT_CONFIGS. "
+            "Update it to the final midtraining checkpoint path before launching."
+        )
+
     return (
         TrainerConfig(
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
-            load_path=mt_cfg["load_path"],
+            load_path=load_path,
             save_folder=common.save_folder,
             work_dir=common.work_dir,
             save_overwrite=True,
@@ -215,7 +232,7 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
                 enabled=True,
             ),
         )
-        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
+        .with_recommended_evals(common.tokenizer, LC_SEQUENCE_LENGTH, cluster, task_set="fast")
     )
 
 
@@ -227,20 +244,19 @@ if __name__ == "__main__":
         )
 
     model_size = parse_model_size(sys.argv[2])
-    cfg = MODEL_CONFIGS[model_size]
-    mt_cfg = MIDTRAINING_CONFIGS[model_size]
+    lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
     config_builder = partial(
         build_config,
-        global_batch_size=mt_cfg["global_batch_size"],
-        max_sequence_length=SEQUENCE_LENGTH,
-        num_nodes=cfg["num_nodes"],
+        global_batch_size=lc_cfg["global_batch_size"],
+        max_sequence_length=LC_SEQUENCE_LENGTH,
+        num_nodes=lc_cfg["num_nodes"],
         data_config_builder=partial(build_data_components, model_size=model_size),
         model_config_builder=partial(build_model_config, model_size=model_size),
         train_module_config_builder=partial(build_train_module_config, model_size=model_size),
         trainer_config_builder=partial(build_trainer_config, model_size=model_size),
         include_default_evals=False,
-        include_instance_filter=INSTANCE_FILTER,
+        include_instance_filter=True,
         beaker_workspace="ai2/linear-rnns",
         num_execution_units=1,
     )
