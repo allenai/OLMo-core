@@ -82,10 +82,10 @@ LC_DATA_GLOB = "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/a
 # num_nodes doubles the midtraining node count to handle 8x longer sequences.
 LONG_CONTEXT_CONFIGS = {
     "275m": dict(
-        lr=8e-4,
-        num_nodes=8,
-        global_batch_size=1 * 1024 * 1024,  # ~1M tokens (same as 7B LC)
-        load_path="",  # TODO: set to midtraining checkpoint
+        lr=2e-4,
+        num_nodes=2,
+        global_batch_size=2 * 1024 * 1024,  # ~1M tokens (same as 7B LC)
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-275M-lr2.83e-4/step38147/",
     ),
     "810m": dict(
         lr=2e-4,
@@ -230,6 +230,7 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
                 entity="ai2-llm",
                 cancel_check_interval=cancel_check_interval,
                 enabled=True,
+                tags=["long-context", model_size],
             ),
         )
         .with_recommended_evals(common.tokenizer, LC_SEQUENCE_LENGTH, cluster, task_set="fast")

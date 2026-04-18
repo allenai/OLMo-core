@@ -213,6 +213,7 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
                 entity="ai2-llm",
                 cancel_check_interval=cancel_check_interval,
                 enabled=True,
+                tags=["midtraining", model_size],
             ),
         )
         .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
