@@ -136,8 +136,8 @@ def build_train_module_config(
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
         # Shard each long sequence across 2 GPUs via Ulysses context parallelism.
-        # (Same setting as the 7B LC run.)
-        cp_config=TransformerContextParallelConfig.ulysses(degree=2),
+        # (Same setting as the 7B LC run.) Disabled for 275M.
+        cp_config=None if model_size == "275m" else TransformerContextParallelConfig.ulysses(degree=2),
         # Low activation budget — long sequences have large activation memory.
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
@@ -199,7 +199,7 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
             "Update it to the final midtraining checkpoint path before launching."
         )
 
-    return (
+    trainer_cfg = (
         TrainerConfig(
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
@@ -233,8 +233,15 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
                 tags=["long-context", model_size],
             ),
         )
-        .with_recommended_evals(common.tokenizer, LC_SEQUENCE_LENGTH, cluster, task_set="fast")
     )
+
+    # Downstream evals require full logits which are unavailable with CP or TP.
+    if model_size == "275m":
+        trainer_cfg = trainer_cfg.with_recommended_evals(
+            common.tokenizer, LC_SEQUENCE_LENGTH, cluster, task_set="fast"
+        )
+
+    return trainer_cfg
 
 
 if __name__ == "__main__":
