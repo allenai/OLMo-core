@@ -108,7 +108,9 @@ def build_model_config(
 ) -> TransformerConfig:
     model_config = arch_build_model_config(common, model_size, attn_backend=attn_backend)
     # Enable fused-linear loss to reduce memory pressure at long sequence lengths.
-    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
+    # Disabled for 275M because downstream evals require full logits.
+    if model_size != "275m":
+        model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     return model_config
 
 
