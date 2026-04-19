@@ -63,7 +63,6 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -133,9 +132,7 @@ def build_train_module_config(
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        # Shard each long sequence across 2 GPUs via Ulysses context parallelism.
-        # (Same setting as the 7B LC run.) Disabled for 275M.
-        cp_config=None if model_size == "275m" else TransformerContextParallelConfig.ulysses(degree=2),
+        cp_config=None,
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
