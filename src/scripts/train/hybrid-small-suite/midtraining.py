@@ -174,7 +174,7 @@ def build_data_components(
 
 
 def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerConfig:
-    cancel_check_interval = 10
+    cancel_check_interval = 1000
     mt_cfg = MIDTRAINING_CONFIGS[model_size]
 
     assert common.launch is not None

@@ -139,7 +139,7 @@ def build_data_components(common: CommonComponents) -> DataComponents:
 
 
 def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerConfig:
-    cancel_check_interval = 25
+    cancel_check_interval = 1000
 
     assert common.launch is not None
     assert len(common.launch.clusters) == 1
