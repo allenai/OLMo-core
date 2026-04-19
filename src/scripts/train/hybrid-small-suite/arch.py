@@ -67,7 +67,11 @@ MODEL_CONFIGS: Dict[str, dict] = {
 }
 
 
-def build_model_config(common: CommonComponents, model_size: str) -> TransformerConfig:
+def build_model_config(
+    common: CommonComponents,
+    model_size: str,
+    attn_backend: AttentionBackendName = AttentionBackendName.flash_3,
+) -> TransformerConfig:
     """
     Build the TransformerConfig for the given model size.
 
@@ -135,7 +139,7 @@ def build_model_config(common: CommonComponents, model_size: str) -> Transformer
                     ),
                     qk_norm=layer_norm,
                     use_head_qk_norm=True,
-                    backend=AttentionBackendName.flash_3,
+                    backend=attn_backend,
                     dtype=dtype,
                 ),
                 feed_forward=feed_forward,

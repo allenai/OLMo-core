@@ -46,6 +46,7 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
@@ -102,8 +103,10 @@ LONG_CONTEXT_CONFIGS = {
 }
 
 
-def build_model_config(common: CommonComponents, model_size: str) -> TransformerConfig:
-    model_config = arch_build_model_config(common, model_size)
+def build_model_config(
+    common: CommonComponents, model_size: str, attn_backend: AttentionBackendName = AttentionBackendName.flash_3
+) -> TransformerConfig:
+    model_config = arch_build_model_config(common, model_size, attn_backend=attn_backend)
     # Enable fused-linear loss to reduce memory pressure at long sequence lengths.
     model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     return model_config
@@ -254,13 +257,17 @@ if __name__ == "__main__":
     model_size = parse_model_size(sys.argv[2])
     lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
+    attn_backend_str = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--attn_backend=")), None)
+    attn_backend = AttentionBackendName[attn_backend_str] if attn_backend_str else AttentionBackendName.flash_3
+    sys.argv = [a for a in sys.argv if not a.startswith("--attn_backend=")]
+
     config_builder = partial(
         build_config,
         global_batch_size=lc_cfg["global_batch_size"],
         max_sequence_length=LC_SEQUENCE_LENGTH,
         num_nodes=lc_cfg["num_nodes"],
         data_config_builder=partial(build_data_components, model_size=model_size),
-        model_config_builder=partial(build_model_config, model_size=model_size),
+        model_config_builder=partial(build_model_config, model_size=model_size, attn_backend=attn_backend),
         train_module_config_builder=partial(build_train_module_config, model_size=model_size),
         trainer_config_builder=partial(build_trainer_config, model_size=model_size),
         include_default_evals=False,

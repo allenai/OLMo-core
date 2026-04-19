@@ -45,6 +45,7 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode
 from olmo_core.optim import (
     LinearWithWarmup,
@@ -231,13 +232,17 @@ if __name__ == "__main__":
     cfg = MODEL_CONFIGS[model_size]
     mt_cfg = MIDTRAINING_CONFIGS[model_size]
 
+    attn_backend_str = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--attn_backend=")), None)
+    attn_backend = AttentionBackendName[attn_backend_str] if attn_backend_str else AttentionBackendName.flash_3
+    sys.argv = [a for a in sys.argv if not a.startswith("--attn_backend=")]
+
     config_builder = partial(
         build_config,
         global_batch_size=mt_cfg["global_batch_size"],
         max_sequence_length=SEQUENCE_LENGTH,
         num_nodes=cfg["num_nodes"],
         data_config_builder=partial(build_data_components, model_size=model_size),
-        model_config_builder=partial(build_model_config, model_size=model_size),
+        model_config_builder=partial(build_model_config, model_size=model_size, attn_backend=attn_backend),
         train_module_config_builder=partial(build_train_module_config, model_size=model_size),
         trainer_config_builder=partial(build_trainer_config, model_size=model_size),
         include_default_evals=False,
