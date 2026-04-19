@@ -196,12 +196,11 @@ if __name__ == "__main__":
     model_size = parse_model_size(sys.argv[2])
     cfg = MODEL_CONFIGS[model_size]
 
-    attn_backend_str = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--attn_backend=")), None)
-    attn_backend = AttentionBackendName[attn_backend_str] if attn_backend_str else AttentionBackendName.flash_3
-    # Only strip when running locally as 'train' — for 'launch', keep it in sys.argv
-    # so Beaker embeds it in the remote command.
-    if len(sys.argv) > 1 and sys.argv[1] in ("train", "train_single", "dry_run"):
-        sys.argv = [a for a in sys.argv if not a.startswith("--attn_backend=")]
+    attn_backend = (
+        AttentionBackendName.flash_2 if "saturn" in sys.argv[2].lower() or (len(sys.argv) > 3 and "saturn" in sys.argv[3].lower())
+        else AttentionBackendName.flash_3
+    )
+    sys.argv = [a for a in sys.argv if not a.startswith("--attn_backend=")]
 
     config_builder = partial(
         build_config,
