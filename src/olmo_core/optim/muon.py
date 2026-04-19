@@ -81,6 +81,9 @@ class MuonConfig(MatrixAwareOptimConfig):
     adjust_lr: MuonAdjustLRStrategy | None = MuonAdjustLRStrategy.rms_norm
     """How to adjust the learning rate for Muon updates."""
 
+    flatten: bool = False
+    """Whether to flatten 3D+ tensors to 2D for Muon updates. Use this for convolutional layers."""
+
     use_triton: bool = False
     """
     Whether to use optimized Triton kernels for Newton-Schulz iteration. Becauser the result of X@X.t

@@ -68,6 +68,11 @@ class EvaluatorCallback(Callback):
     Whether to run an evaluation when the trainer starts up.
     """
 
+    eval_on_finish: bool = False
+    """
+    Whether to run an evaluation when training finishes.
+    """
+
     cancel_after_first_eval: bool = False
     """
     If ``True``, cancel the run after running evals for the first time.
@@ -93,7 +98,11 @@ class EvaluatorCallback(Callback):
 
     def pre_train(self):
         if self.eval_on_startup:
-            self._perform_eval()
+            self.perform_eval()
+
+    def post_train(self):
+        if self.eval_on_finish:
+            self.perform_eval()
 
     def post_step(self):
         if self.step <= 1:
@@ -102,9 +111,15 @@ class EvaluatorCallback(Callback):
         if (self.eval_interval is not None and self.step % self.eval_interval == 0) or (
             self.fixed_steps is not None and self.step in self.fixed_steps
         ):
-            self._perform_eval()
+            self.perform_eval()
 
-    def _perform_eval(self):
+    def perform_eval(self, prefix: str = "eval"):
+        """
+        Run evaluation on all evaluators and record metrics.
+
+        :param prefix: Prefix for metric names (e.g., "eval" or "eval/merged").
+            Metrics will be recorded as "{prefix}/{evaluator.name}/{metric_name}".
+        """
         # Put model in eval train mode.
         # TODO: make sure grads will be zeroed at this point
         #  self.trainer.optim.zero_grad(set_to_none=True)
@@ -153,7 +168,7 @@ class EvaluatorCallback(Callback):
                 for name, value in metrics.items():
                     evaluation_names.append(name)
                     metrics_str.append(f"    {name}={format_float(value.item())}")
-                    self.trainer.record_metric(f"eval/{evaluator.name}/{name}", value)
+                    self.trainer.record_metric(f"{prefix}/{evaluator.name}/{name}", value)
 
             evaluator_times.append(time.monotonic() - start_time)
             evaluator_names.append(evaluation_names)
@@ -208,9 +223,11 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_interval: Optional[int] = 1000
     fixed_steps: Optional[List[int]] = None
     eval_on_startup: bool = False
+    eval_on_finish: bool = False
     cancel_after_first_eval: bool = False
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     log_interval: int = 5
+    deterministic: bool = True
     enabled: bool = True
 
     def build(self, trainer: "Trainer") -> Optional[Callback]:
@@ -266,6 +283,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             collator=trainer.data_loader.collator,
             device=trainer.device,
             dp_process_group=trainer.dp_process_group,
+            deterministic=self.deterministic,
         )
         return EvaluatorCallback(
             evaluators=[evaluator],
@@ -275,6 +293,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             eval_on_startup=self.eval_on_startup,
             cancel_after_first_eval=self.cancel_after_first_eval,
             eval_duration=self.eval_duration,
+            eval_on_finish=self.eval_on_finish,
         )
 
 
@@ -324,6 +343,7 @@ class DownstreamEvaluator(Evaluator):
         self.label = task
         self.batch_spec = batch_spec
         self.tokenizer = tokenizer
+        self.device = device  # set here for _build_data_loader() to use
         self.dp_process_group = dp_process_group
         self.metric: Optional[ICLMetric] = None
         if lazy:
@@ -424,6 +444,12 @@ class DownstreamEvaluator(Evaluator):
     ) -> None:
         del ce_loss
         assert self.metric is not None
+        if logits is None:
+            raise RuntimeError(
+                "Downstream evaluators require full logits, but logits are None. "
+                "This happens when context parallelism (CP) or tensor parallelism (TP) is enabled. "
+                "Please disable downstream evals when using CP or TP."
+            )
         self.metric.update(batch, logits)
 
     def compute_metrics(self) -> Dict[str, torch.Tensor]:
@@ -448,6 +474,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     fixed_steps: Optional[List[int]] = None
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     eval_on_startup: bool = False
+    eval_on_finish: bool = False
     cancel_after_first_eval: bool = False
     log_interval: int = 5
     lazy: bool = False
@@ -493,4 +520,5 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             cancel_after_first_eval=self.cancel_after_first_eval,
             log_interval=self.log_interval,
             eval_duration=self.eval_duration,
+            eval_on_finish=self.eval_on_finish,
         )

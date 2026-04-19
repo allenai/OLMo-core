@@ -82,19 +82,6 @@ RUN cd /opt/conda/lib/python${PYTHON_VERSION}/site-packages/ && \
     touch flash_attn_3/__init__.py && \
     rm -rf flash_attn_3-*
 
-# Install flash-attn 4 if requested.
-ARG FLASH_ATTN_4_SHA=""
-RUN if [ -n "${FLASH_ATTN_4_SHA}" ] ; then \
-    git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
-    cd flash-attention && \
-    git fetch --depth 1 origin ${FLASH_ATTN_4_SHA} && \
-    git checkout ${FLASH_ATTN_4_SHA} && \
-    git submodule update --init --depth 1 && \
-    cd flash_attn/cute && \
-    pip install --no-build-isolation --no-cache-dir . && \
-    cd /app/build && \
-    rm -rf flash-attention; fi
-
 # Install transformer-engine.
 ARG TE_VERSION=2.9
 RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}

@@ -76,6 +76,11 @@ jobs:
               pytest -v --color=yes --durations=3 \
                 src/test/scripts/
 
+          - name: Integration tests
+            run: |
+              pytest -v --color=yes --durations=3 -m "not gpu" \
+                src/integration_tests/
+
           - name: Test olmo3 ladder
             run: |
               for size in 190M 370M 600M 760M 1B 3B 7B 13B; do
@@ -193,6 +198,13 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/optim*
+
+          - name: Integration tests (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes -m gpu \
+                src/integration_tests/
     steps:
       - uses: actions/checkout@v5
         with:
@@ -205,7 +217,7 @@ jobs:
       - name: Install Gantry
         run:
           # uv tool install git+https://github.com/allenai/beaker-gantry
-          uv tool install 'beaker-gantry>=3.1,<4.0'
+          uv tool install 'beaker-gantry>=3.4.5,<4.0'
 
       - name: Determine Beaker workspace
         if: env.BEAKER_TOKEN != ''
@@ -227,7 +239,7 @@ jobs:
       - name: GPU Tests
         if: env.BEAKER_TOKEN != ''
         run: |
-          gantry run \
+          exec gantry run \
             --show-logs \
             --yes \
             --workspace ${{ env.BEAKER_WORKSPACE }} \

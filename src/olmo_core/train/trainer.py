@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import math
 import signal
@@ -17,6 +18,7 @@ from typing import (
     Iterable,
     List,
     Optional,
+    Set,
     Tuple,
     Type,
     TypedDict,
@@ -43,7 +45,15 @@ from ..distributed.utils import (
     is_distributed,
 )
 from ..exceptions import OLMoConfigurationError
-from ..io import copy_file, file_exists, is_url, join_path, normalize_path
+from ..io import (
+    copy_dir,
+    copy_file,
+    dir_is_empty,
+    file_exists,
+    is_url,
+    join_path,
+    normalize_path,
+)
 from ..utils import cuda_sync_debug_mode, gc_cuda, get_default_thread_count
 from .callbacks import (
     Callback,
@@ -295,6 +305,8 @@ class Trainer:
         default_factory=lambda: defaultdict(OrderedDict)
     )
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
+    _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, default_factory=set)
+    """Callbacks that are blocking ephemeral checkpoints."""
     _checkpoint_loaded: bool = False
     _metrics_consistent: Optional[bool] = None
 
@@ -383,6 +395,10 @@ class Trainer:
             callback.post_attach()
 
         self.train_module._attach_trainer(self)
+
+    @property
+    def block_ephemeral_checkpoints(self) -> bool:
+        return len(self._blocking_ephemeral_checkpoints) > 0
 
     @property
     def global_batch_size(self) -> int:
@@ -585,9 +601,13 @@ class Trainer:
 
         # Get current speed in batches per second.
         bps: Optional[float] = None
+        tps: Optional[float] = None
+        mfu: Optional[float] = None
         for callback in self._iter_callbacks():
             if isinstance(callback, SpeedMonitorCallback):
                 bps = callback.bps_avg
+                tps = callback.tps_avg
+                mfu = callback.mfu_avg
                 break
 
         # Estimate the remaining time.
@@ -604,9 +624,19 @@ class Trainer:
 
         return TrainingProgress(
             current_step=self.global_step,
+            current_tokens=self.global_train_tokens_seen,
             total_steps=total_steps,
             time_remaining=time_remaining,
+            bps=bps,
+            tps=tps,
+            mfu=mfu,
         )
+
+    def get_callback_name(self, callback: Callback) -> str:
+        for name, cb in self.callbacks.items():
+            if cb is callback:
+                return name
+        raise ValueError("callback not registered with trainer!")
 
     def cancel_run(self, reason: str, no_sync: bool = False):
         """
@@ -736,6 +766,7 @@ class Trainer:
     def _shutdown(self, gracefully: bool = True):
         if gracefully:
             self._log_metrics()
+            self._join_bookkeeping_ops()
             if self._multi_thread_pool is not None:
                 self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
                 self._multi_thread_pool = None
@@ -916,25 +947,43 @@ class Trainer:
         else:
             return False
 
-    def save_checkpoint(self) -> PathOrStr:
+    def save_checkpoint(self, ephemeral: bool = False) -> PathOrStr:
         """
         Save a checkpoint for the current step to the :data:`save_folder`.
 
+        :param ephemeral: Whether to mark the checkpoint as ephemeral in its metadata.
+          Note that the trainer itself won't remove ephemeral checkpoints.
+          That's up to the :class:`CheckpointerCallback`.
 
         :returns: The path/URL to the checkpoint.
         """
         dirname = self.checkpointer.checkpoint_dirname(self.global_step)
         path = join_path(self.save_folder, dirname)
+
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
-        self.checkpointer.save(path, self.train_module, cast(Dict[str, Any], self.state_dict()))
+        # Some state (e.g. in a callback) might be tied to metrics, or depend on another bookkeeping
+        # operation to be finished first.
+        self._log_metrics()
+        self._join_bookkeeping_ops()
+
+        self.checkpointer.save(
+            path,
+            self.train_module,
+            cast(Dict[str, Any], self.state_dict()),
+            ephemeral=ephemeral,
+        )
         for callback in self._iter_callbacks():
             callback.post_checkpoint_saved(path)
         log.info("Checkpoint saved")
         return path
 
-    def save_checkpoint_async(self) -> Tuple[PathOrStr, Future]:
+    def save_checkpoint_async(self, ephemeral: bool = False) -> Tuple[PathOrStr, Future]:
         """
         Save a checkpoint for the current step to the :data:`save_folder` asynchronously.
+
+        :param ephemeral: Whether to mark the checkpoint as ephemeral in its metadata.
+          Note that the trainer itself won't remove ephemeral checkpoints.
+          That's up to the :class:`CheckpointerCallback`.
 
         :returns: The path/URL to the checkpoint and a future which will complete when the
             checkpoint is successfully saved.
@@ -944,8 +993,16 @@ class Trainer:
         path = join_path(self.save_folder, dirname)
 
         log.info(f"Saving checkpoint for step {step} to '{path}' asynchronously...")
+        # Some state (e.g. in a callback) might be tied to metrics, or depend on another bookkeeping
+        # operation to be finished first.
+        self._log_metrics()
+        self._join_bookkeeping_ops()
+
         fut = self.checkpointer.save_async(
-            path, self.train_module, cast(Dict[str, Any], self.state_dict())
+            path,
+            self.train_module,
+            cast(Dict[str, Any], self.state_dict()),
+            ephemeral=ephemeral,
         )
 
         def callback(future: Future):
@@ -1084,6 +1141,32 @@ class Trainer:
             raise FileNotFoundError(source)
         return target
 
+    def persist_working_subdir(self, name: PathOrStr) -> PathOrStr:
+        """
+        Persist a directory in the :data:`work_dir` by saving/uploading it to the :data:`save_folder`.
+
+        :param name: The name/path of the directory relative to the :data:`work_dir`.
+
+        :returns: The full path/URL to the saved directory.
+
+        :raises FileNotFoundError: If the directory can't be found.
+        :raises FileExistsError: If any files in the directory already exist in the save folder and :data:`save_overwrite`
+            is ``False``.
+        """
+        if Path(name).is_relative_to(self.work_dir):
+            name = Path(name).relative_to(self.work_dir)
+        source = join_path(self.work_dir, name)
+        target = join_path(self.save_folder, name)
+        if source != target:
+            copy_dir(source, target, save_overwrite=self.save_overwrite)
+        elif not Path(source).exists():
+            raise FileNotFoundError(f"Source '{source}' does not exist")
+        elif not Path(source).is_dir():
+            raise FileNotFoundError(f"Source '{source}' exists but is not a directory")
+        elif dir_is_empty(source):
+            raise FileNotFoundError(f"Source directory '{source}' is empty")
+        return target
+
     def add_callback(self, name: str, callback: Callback):
         """
         Add a callback to the trainer.
@@ -1193,7 +1276,14 @@ class Trainer:
             start_time = time.perf_counter()
             assert soft_timeout is not None  # for mypy
             try:
-                return op(*args, **kwargs)
+                result = op(*args, **kwargs)
+                # NOTE: invoke cb inside wrapped_op (before the future is marked as FINISHED)
+                # so that _join_bookkeeping_ops() waits for it to complete. Previously cb was
+                # invoked via future.add_done_callback() which runs *after* the future is
+                # FINISHED, causing a race where state_dict() could capture stale callback state.
+                if cb is not None:
+                    cb(result)
+                return result
             finally:
                 if (runtime := int(time.perf_counter() - start_time)) > soft_timeout:
                     log.warning(
@@ -1230,8 +1320,7 @@ class Trainer:
 
             def callback(fut: Future[T]):
                 try:
-                    if cb is not None:
-                        cb(fut.result())  # type: ignore[misc]
+                    fut.result()  # re-raise any exception from the op or cb
                 except BaseException as e:
                     log.exception(e)
                     self._error = e
@@ -1242,9 +1331,21 @@ class Trainer:
 
             future.add_done_callback(callback)
         else:
-            result = wrapped_op(*args, **kwargs)
-            if cb is not None:
-                cb(result)
+            wrapped_op(*args, **kwargs)
+
+    def _join_bookkeeping_ops(self, timeout: Optional[float] = None):
+        """
+        Block until all queued bookkeeping operations are done.
+        """
+        futures: List[Future] = []
+        for op_name, futures_dict in self._bookkeeping_queue.items():
+            if futures_dict:
+                log.info(
+                    f"Waiting for bookkeeping ops to finish: '{op_name}' ({len(futures_dict)} ops)..."
+                )
+                futures.extend(futures_dict.values())
+        concurrent.futures.wait(futures, timeout=timeout)
+        log.info("All bookkeeping ops complete")
 
     def _check_if_canceled(self):
         if self._canceled:

@@ -1,8 +1,17 @@
 """
-Example script to convert a OLMo Core model checkpoint to a HuggingFace model checkpoint.
+Example script to convert an OLMo Core model checkpoint to a HuggingFace model checkpoint.
 
-Note that this script is architecture-dependent, meaning it may only work for OLMo Core model
-architectures that have support in the `transformers` library.
+Supports both standard architectures (olmo2, olmo3) and hybrid (GDN + attention) architectures.
+Hybrid models are saved as raw ``config.json`` + ``model.safetensors`` rather than using
+``save_pretrained()``.
+
+Usage::
+
+    # Standard model
+    python convert_checkpoint_to_hf.py -i /path/to/checkpoint -o /path/to/output
+
+    # Hybrid model (auto-detected)
+    python convert_checkpoint_to_hf.py -i /path/to/hybrid-checkpoint -o /path/to/output
 """
 
 import json
@@ -28,7 +37,8 @@ from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
-from olmo_core.nn.hf.checkpoint import save_hf_model
+from olmo_core.nn.hf.checkpoint import save_hf_hybrid_model, save_hf_model
+from olmo_core.nn.hf.config import is_olmo_hybrid_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
 from olmo_core.nn.moe.moe import MoEType
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
@@ -82,7 +92,14 @@ def convert_checkpoint_to_hf(
 
     validation_device = validation_device or torch.device("cpu")
 
-    block_entries: list[tuple[str, TransformerBlockConfig]] = [("base block", model_config.block)]
+    if isinstance(model_config.block, dict):
+        block_entries: list[tuple[str, TransformerBlockConfig]] = [
+            (f"block type '{name}'", block_config)
+            for name, block_config in model_config.block.items()
+        ]
+    else:
+        assert isinstance(model_config.block, TransformerBlockConfig)
+        block_entries = [("base block", model_config.block)]
     if model_config.block_overrides:
         block_entries.extend(
             (f"block override {idx}", block_config)
@@ -95,9 +112,11 @@ def convert_checkpoint_to_hf(
         nonlocal device, validation_device
         attention_config = block_config.sequence_mixer
         if not isinstance(attention_config, AttentionConfig):
-            raise NotImplementedError(
-                f"Block {block_label} has an unsupported sequence mixing config: {attention_config}"
+            log.info(
+                f"Block {block_label} uses non-attention sequence mixer ({type(attention_config).__name__}), "
+                f"skipping attention backend override"
             )
+            return
         if attention_config.name == AttentionType.fused:
             backend = attention_config.backend
             if backend is None:
@@ -189,40 +208,57 @@ def convert_checkpoint_to_hf(
         )
         model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
 
-        if (moe_config := model_config.block.feed_forward_moe) is not None:
-            if moe_config.name == MoEType.dropless:
-                for k, v in model_state_dict.items():
-                    # We need to reshape the w1 and w3 weights for the dropless MoE because conversion
-                    # can't distinguish between dropless and regular MoE, and dropless MoE
-                    # weights are shaped differently to regular MoE.
-                    if k.endswith(".feed_forward_moe.experts.mlp.w1") or k.endswith(
-                        ".feed_forward_moe.experts.mlp.w3"
-                    ):
-                        assert isinstance(v, torch.Tensor), (k, v)
-                        model_state_dict[k] = (
-                            v.reshape(moe_config.num_experts, moe_config.hidden_size, -1)
-                            .permute(0, 2, 1)
-                            .reshape(-1, moe_config.hidden_size)
-                        )
-                        log.info(f"Reshaped {k} because MoE is dropless")
-            elif moe_config.name == MoEType.default:
-                log.warning(
-                    f"MoE is {moe_config.name}, which may drop activations and cause validation to fail. You can try mitigating this by setting '--moe-capacity-factor' to a higher value."
-                )
+        hybrid = is_olmo_hybrid_model(model)
 
-        save_hf_model(
-            output_path,
-            model_state_dict,
-            model,
-            huggingface_tokenizer=huggingface_tokenizer,
-            dtype=dtype,
-            vocab_size=vocab_size,
-            work_dir=work_dir,
-            save_overwrite=True,
-        )
-        # checkpointer.save(output_path, train_module, train_state={}, format=output_format)
+        if hybrid:
+            log.info("Detected hybrid model (GDN + attention layers)")
+            save_hf_hybrid_model(
+                output_path,
+                model_state_dict,
+                model,
+                dtype=dtype,
+                vocab_size=vocab_size,
+                max_sequence_length=max_sequence_length or 65536,
+            )
+        else:
+            if (
+                isinstance(model_config.block, TransformerBlockConfig)
+                and (moe_config := model_config.block.feed_forward_moe) is not None
+            ):
+                if moe_config.name == MoEType.dropless:
+                    for k, v in model_state_dict.items():
+                        # We need to reshape the w1 and w3 weights for the dropless MoE because conversion
+                        # can't distinguish between dropless and regular MoE, and dropless MoE
+                        # weights are shaped differently to regular MoE.
+                        if k.endswith(".feed_forward_moe.experts.mlp.w1") or k.endswith(
+                            ".feed_forward_moe.experts.mlp.w3"
+                        ):
+                            assert isinstance(v, torch.Tensor), (k, v)
+                            model_state_dict[k] = (
+                                v.reshape(moe_config.num_experts, moe_config.hidden_size, -1)
+                                .permute(0, 2, 1)
+                                .reshape(-1, moe_config.hidden_size)
+                            )
+                            log.info(f"Reshaped {k} because MoE is dropless")
+                elif moe_config.name == MoEType.default:
+                    log.warning(
+                        f"MoE is {moe_config.name}, which may drop activations and cause validation to fail. You can try mitigating this by setting '--moe-capacity-factor' to a higher value."
+                    )
+
+            save_hf_model(
+                output_path,
+                model_state_dict,
+                model,
+                huggingface_tokenizer=huggingface_tokenizer,
+                dtype=dtype,
+                vocab_size=vocab_size,
+                work_dir=work_dir,
+                save_overwrite=True,
+            )
+
         log.info(f"Successfully saved converted model to '{output_path}'")
 
+    # Fix up config.json with tokenizer info and max_position_embeddings.
     log.info(
         "Fixing HF config using updated config from tokenizer config data and script arguments"
     )

@@ -21,10 +21,6 @@ from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
 
-GOOGLE_CLUSTERS = [
-    "ai2/augusta",
-]
-
 
 @lru_cache()
 def get_beaker_username() -> Optional[str]:
@@ -71,6 +67,8 @@ def build_launch_config(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     num_execution_units: Optional[int] = None,
+    step_timeout: Optional[int] = None,
+    step_soft_timeout: Optional[int] = 10 * 60,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
 
@@ -159,6 +157,8 @@ def build_launch_config(
         google_credentials_secret="GOOGLE_CREDENTIALS",
         aws_config_secret=f"{beaker_user}_AWS_CONFIG",
         aws_credentials_secret=f"{beaker_user}_AWS_CREDENTIALS",
+        step_timeout=step_timeout,
+        step_soft_timeout=step_soft_timeout,
     )
 
     return launch_config
@@ -166,7 +166,6 @@ def build_launch_config(
 
 CLUSTER_TO_GPU_TYPE = {
     "ai2/jupiter": "NVIDIA H100 80GB HBM3",
-    "ai2/augusta": "NVIDIA H100 80GB HBM3",
     "ai2/ceres": "NVIDIA H100 80GB HBM3",
     "ai2/titan": "NVIDIA B200",
 }

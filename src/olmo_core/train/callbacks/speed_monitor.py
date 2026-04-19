@@ -44,6 +44,8 @@ class SpeedMonitorCallback(Callback):
     _step_flops: int = 0
     _parallel_degree: int = 1
     _bps_avg: Optional[float] = None
+    _tps_avg: Optional[float] = None
+    _mfu_avg: Optional[float] = None
 
     def reset(self):
         self._first_step = True
@@ -52,6 +54,14 @@ class SpeedMonitorCallback(Callback):
     @property
     def bps_avg(self) -> Optional[float]:
         return self._bps_avg
+
+    @property
+    def tps_avg(self) -> Optional[float]:
+        return self._tps_avg
+
+    @property
+    def mfu_avg(self) -> Optional[float]:
+        return self._mfu_avg
 
     def _get_num_flops_per_token(self, seq_len: int) -> Optional[int]:
         if self.num_flops_per_token is not None:
@@ -100,7 +110,7 @@ class SpeedMonitorCallback(Callback):
                     self.device_peak_flops_per_second = int(4.5e15 * dense_correction)
                 else:  # for other GPU types, assume A100
                     # data from https://www.nvidia.com/en-us/data-center/a100/
-                    self.device_peak_flops_per_second = int(312e12 * dense_correction)
+                    self.device_peak_flops_per_second = int(624e12 * dense_correction)
             log.info(
                 f"Device: {device_name}, Device peak Flops/s: {self.device_peak_flops_per_second}"
             )
@@ -153,6 +163,7 @@ class SpeedMonitorCallback(Callback):
         if self._step_tokens and self._total_tokens:
             tps = self._step_tokens / step_time
             tps_avg = self._total_tokens / total_time
+            self._tps_avg = tps_avg
             self.trainer.record_metric("throughput/device/TPS", tps)
             self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
 
@@ -199,5 +210,6 @@ class SpeedMonitorCallback(Callback):
             # MFU is computed from FLOPs/sec. This stays correct even if sequence length changes.
             mfu = 100 * flops_ps / self.device_peak_flops_per_second
             mfu_avg = 100 * flops_ps_avg / self.device_peak_flops_per_second
+            self._mfu_avg = mfu_avg
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
