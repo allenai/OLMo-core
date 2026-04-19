@@ -111,9 +111,14 @@ def build_train_module_config(
 ) -> TransformerTrainModuleConfig:
     lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
+    # 275M has ample headroom (42% GPU mem), so use 2 seqs/microbatch to halve grad accum steps.
+    # 810M and 1.4B keep 1 seq/microbatch until memory is profiled.
+    rank_microbatch_size = {
+        "275m": 2 * LC_SEQUENCE_LENGTH,
+    }.get(model_size, LC_SEQUENCE_LENGTH)
+
     return TransformerTrainModuleConfig(
-        # One sequence per rank — memory budget is tight at 65k tokens.
-        rank_microbatch_size=LC_SEQUENCE_LENGTH,
+        rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=LC_SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=lc_cfg["lr"],
@@ -205,8 +210,8 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=1000,
-                ephemeral_save_interval=500,
+                save_interval=5000,
+                ephemeral_save_interval=1000,
                 save_async=True,
             ),
         )
