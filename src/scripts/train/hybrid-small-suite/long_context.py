@@ -133,7 +133,7 @@ def build_train_module_config(
         scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=200, alpha_f=0.0),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
@@ -144,7 +144,7 @@ def build_train_module_config(
         # Low activation budget — long sequences have large activation memory.
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.1,
+            activation_memory_budget=1.0,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
