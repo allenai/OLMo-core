@@ -91,7 +91,7 @@ LONG_CONTEXT_CONFIGS = {
     "810m": dict(
         lr=2e-4,
         num_nodes=8,
-        global_batch_size=1 * 1024 * 1024,
+        global_batch_size=4 * 1024 * 1024,  # same as pretraining
         load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-810M-lr2e4/step19074",
     ),
     "1.4b": dict(
