@@ -47,9 +47,7 @@ from olmo_core.internal.experiment import (
     main,
 )
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
-    TransformerActivationCheckpointingMode,
     TransformerConfig,
 )
 from olmo_core.optim import (
@@ -65,7 +63,6 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -107,10 +104,6 @@ def build_model_config(
     common: CommonComponents, model_size: str, attn_backend: AttentionBackendName = AttentionBackendName.flash_3
 ) -> TransformerConfig:
     model_config = arch_build_model_config(common, model_size, attn_backend=attn_backend)
-    # Enable fused-linear loss to reduce memory pressure at long sequence lengths.
-    # Disabled for 275M because downstream evals require full logits.
-    if model_size != "275m":
-        model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     return model_config
 
 
@@ -143,11 +136,6 @@ def build_train_module_config(
         # Shard each long sequence across 2 GPUs via Ulysses context parallelism.
         # (Same setting as the 7B LC run.) Disabled for 275M.
         cp_config=None if model_size == "275m" else TransformerContextParallelConfig.ulysses(degree=2),
-        # Low activation budget — long sequences have large activation memory.
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=1.0,
-        ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
