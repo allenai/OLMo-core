@@ -72,7 +72,7 @@ LC_SEQUENCE_LENGTH = 65536
 MAX_TOKENS = 100_000_000_000  # 100B
 
 # Long-context data (same source as the 7B long-context run).
-LC_DATA_GLOB = "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy"
+LC_DATA_GLOB = "/weka/oe-training-default/ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy"
 
 # Per-size long-context settings.
 # load_path must be updated to the final midtraining checkpoint path before launching.
