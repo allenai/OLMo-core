@@ -5,6 +5,7 @@ Distributed helpers, most of which work in a non-distributed context as well for
 import logging
 import math
 import os
+import socket
 from datetime import timedelta
 from typing import Callable, List, Optional, TypeVar, Union, cast
 
@@ -22,9 +23,49 @@ OLMO_LOCAL_RANK_ENV_VAR = "LOCAL_RANK"
 OLMO_NUM_NODES_ENV_VAR = "NUM_NODES"
 OLMO_LOCAL_WORLD_SIZE_ENV_VAR = "LOCAL_WORLD_SIZE"
 BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
+TORCH_RANK_ENV_VAR = "RANK"
+TORCH_WORLD_SIZE_ENV_VAR = "WORLD_SIZE"
+TORCH_MASTER_ADDR_ENV_VAR = "MASTER_ADDR"
+TORCH_MASTER_PORT_ENV_VAR = "MASTER_PORT"
 
 
 log = logging.getLogger(__name__)
+
+
+def _find_free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _bootstrap_single_process_distributed_env() -> None:
+    """
+    Fill in the minimal torchrun-style environment for direct single-process runs.
+    """
+    missing_rank_env = (
+        TORCH_RANK_ENV_VAR not in os.environ and TORCH_WORLD_SIZE_ENV_VAR not in os.environ
+    )
+    explicit_singleton = os.environ.get(TORCH_WORLD_SIZE_ENV_VAR) == "1" and os.environ.get(
+        TORCH_RANK_ENV_VAR, "0"
+    ) == "0"
+
+    if not missing_rank_env and not explicit_singleton:
+        return
+
+    if missing_rank_env:
+        log_or_print(
+            log,
+            "Distributed launch env vars not found; bootstrapping a single-process distributed setup.",
+        )
+
+    set_env_var(TORCH_RANK_ENV_VAR, "0")
+    set_env_var(TORCH_WORLD_SIZE_ENV_VAR, "1")
+    set_env_var(OLMO_LOCAL_RANK_ENV_VAR, "0")
+    set_env_var(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, "1")
+    set_env_var(OLMO_NUM_NODES_ENV_VAR, "1")
+    set_env_var(TORCH_MASTER_ADDR_ENV_VAR, "127.0.0.1")
+    if TORCH_MASTER_PORT_ENV_VAR not in os.environ:
+        set_env_var(TORCH_MASTER_PORT_ENV_VAR, str(_find_free_local_port()))
 
 
 def init_distributed(
@@ -45,6 +86,8 @@ def init_distributed(
     # Force processes to synchronize at init process group.
     set_env_var("TORCH_DIST_INIT_BARRIER", "1")
     print(f"get_node_hostname(): {get_node_hostname()}", )
+
+    _bootstrap_single_process_distributed_env()
 
     if shared_filesytem:
         set_env_var(OLMO_SHARED_FS_ENV_VAR, "1")

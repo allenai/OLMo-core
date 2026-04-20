@@ -138,7 +138,11 @@ COPY_COLORS = [
 ]
 
 DEBUG_TASKS = [
+    "arc_challenge_test_bpb_5shot",
     "arc_challenge_test_mc_5shot_fast",
+    "arc_easy_test_bpb_5shot",
+    "arc_easy_test_mc_5shot_fast",
+    "copycolors_10way_fast",
 ]
 
 TASK_GROUPS: Dict[str, List[str]] = {
