@@ -679,8 +679,14 @@ def _http_file_exists(url: str) -> bool:
 @cache
 def _get_gcs_client():
     from google.cloud import storage as gcs
+    import google.auth
+    import google.auth.exceptions
 
-    return gcs.Client()
+    try:
+        google.auth.default()
+        return gcs.Client()
+    except google.auth.exceptions.DefaultCredentialsError:
+        return gcs.Client.create_anonymous_client()
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:
