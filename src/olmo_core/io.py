@@ -678,9 +678,9 @@ def _http_file_exists(url: str) -> bool:
 
 @cache
 def _get_gcs_client():
-    from google.cloud import storage as gcs
     import google.auth
     import google.auth.exceptions
+    from google.cloud import storage as gcs
 
     try:
         google.auth.default()
