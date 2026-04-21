@@ -70,7 +70,6 @@ MAX_TOKENS = 100_000_000_000  # 100B
 SEED = 1337
 INSTANCE_FILTER = True
 
-# Update to the desired midtraining data mix before launching.
 SOURCE_MIXTURE_YAML = (
     "src/olmo_core/data/source_mixtures/OLMo3-32B-midtraining-modelnamefilter.yaml"
 )
@@ -114,8 +113,7 @@ def build_train_module_config(
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        # Linear decay from starting LR to 0 over the full midtraining run.
-        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=100, alpha_f=0.0),
+        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=1000, alpha_f=0.0),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
@@ -187,7 +185,7 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
         TrainerConfig(
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
-            load_optim_state=True,
+            load_optim_state=False,
             load_path=mt_cfg["load_path"],
             save_folder=common.save_folder,
             work_dir=common.work_dir,
@@ -232,11 +230,17 @@ if __name__ == "__main__":
     cfg = MODEL_CONFIGS[model_size]
     mt_cfg = MIDTRAINING_CONFIGS[model_size]
 
-    attn_backend = (
-        AttentionBackendName.flash_2 if "saturn" in sys.argv[2].lower() or (len(sys.argv) > 3 and "saturn" in sys.argv[3].lower())
-        else AttentionBackendName.flash_3
-    )
-    sys.argv = [a for a in sys.argv if not a.startswith("--attn_backend=")]
+    CLUSTER_ATTN_BACKENDS = {
+        "saturn": AttentionBackendName.flash_2,
+        "jupiter": AttentionBackendName.flash_3,
+        "titan": AttentionBackendName.flash_4,
+    }
+    cluster_arg = " ".join(sys.argv[2:4]).lower()
+    attn_backend = AttentionBackendName.flash_3
+    for cluster, backend in CLUSTER_ATTN_BACKENDS.items():
+        if cluster in cluster_arg:
+            attn_backend = backend
+            break
 
     config_builder = partial(
         build_config,

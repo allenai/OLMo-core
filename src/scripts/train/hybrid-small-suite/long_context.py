@@ -249,13 +249,18 @@ if __name__ == "__main__":
     model_size = parse_model_size(sys.argv[2])
     lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
-    _cluster_arg = " ".join(sys.argv[2:4]).lower()
-    if "saturn" in _cluster_arg:
-        attn_backend = AttentionBackendName.flash_2 
-    elif "titan" in _cluster_arg:
-        attn_backend = AttentionBackendName.flash_4   # B200, Blackwell
-    else:
-        attn_backend = AttentionBackendName.flash_3   # jupiter / H100 default
+    # Map cluster name substrings to the appropriate attention backend.
+    CLUSTER_ATTN_BACKENDS = {
+        "saturn": AttentionBackendName.flash_2,   # A100s — no flash_3 support
+        "jupiter": AttentionBackendName.flash_3,
+        "titan": AttentionBackendName.flash_4,    # B200, Blackwell
+    }
+    cluster_arg = " ".join(sys.argv[2:4]).lower()
+    attn_backend = AttentionBackendName.flash_3  # default
+    for cluster, backend in CLUSTER_ATTN_BACKENDS.items():
+        if cluster in cluster_arg:
+            attn_backend = backend
+            break
     sys.argv = [a for a in sys.argv if not a.startswith("--attn_backend=")]
 
     config_builder = partial(
