@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime
 from functools import partial
+from typing import Optional
 
 from arch import MODEL_CONFIGS, build_model_config as arch_build_model_config
 from arch import parse_model_size
@@ -62,6 +63,7 @@ from olmo_core.train.callbacks import (
     SpeedMonitorCallback,
     WandBCallback,
 )
+from memory_snapshot_callback import MemorySnapshotCallback
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
@@ -180,7 +182,11 @@ def build_data_components(
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
 
 
-def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerConfig:
+def build_trainer_config(
+    common: CommonComponents,
+    model_size: str,
+    mem_snapshot_step: Optional[int] = None,
+) -> TrainerConfig:
     cancel_check_interval = 1000
     lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
@@ -233,6 +239,12 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
         )
     )
 
+    if mem_snapshot_step is not None:
+        trainer_cfg = trainer_cfg.with_callback(
+            "memory_snapshot",
+            MemorySnapshotCallback(capture_step=mem_snapshot_step),
+        )
+
     # Downstream evals require full logits which are unavailable with CP or TP.
     if model_size == "275m":
         trainer_cfg = trainer_cfg.with_recommended_evals(
@@ -266,6 +278,18 @@ if __name__ == "__main__":
             break
     sys.argv = [a for a in sys.argv if not a.startswith("--attn_backend=")]
 
+    # Parse --mem_snapshot_step=N from argv (default 10 when flag present, else disabled).
+    mem_snapshot_step: Optional[int] = None
+    new_argv = []
+    for arg in sys.argv:
+        if arg == "--mem_snapshot":
+            mem_snapshot_step = 10
+        elif arg.startswith("--mem_snapshot_step="):
+            mem_snapshot_step = int(arg.split("=", 1)[1])
+        else:
+            new_argv.append(arg)
+    sys.argv = new_argv
+
     config_builder = partial(
         build_config,
         global_batch_size=lc_cfg["global_batch_size"],
@@ -274,7 +298,7 @@ if __name__ == "__main__":
         data_config_builder=partial(build_data_components, model_size=model_size),
         model_config_builder=partial(build_model_config, model_size=model_size, attn_backend=attn_backend),
         train_module_config_builder=partial(build_train_module_config, model_size=model_size),
-        trainer_config_builder=partial(build_trainer_config, model_size=model_size),
+        trainer_config_builder=partial(build_trainer_config, model_size=model_size, mem_snapshot_step=mem_snapshot_step),
         include_default_evals=False,
         include_instance_filter=True,
         beaker_workspace="ai2/linear-rnns",
