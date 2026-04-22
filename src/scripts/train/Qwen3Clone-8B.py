@@ -26,6 +26,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         vocab_size=common.tokenizer.padded_vocab_size(),
     )
     config.block.attention.use_flash = True
+    config.block.attention.use_head_qk_norm = True
     return config
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
