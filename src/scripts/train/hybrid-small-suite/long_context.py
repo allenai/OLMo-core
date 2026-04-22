@@ -83,14 +83,14 @@ LONG_CONTEXT_CONFIGS = {
     "275m": dict(
         lr=2e-4,
         num_nodes=2,
-        global_batch_size=2 * 1024 * 1024,  # ~1M tokens (same as 7B LC)
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-275M-lr2.83e-4/step38147/",
+        global_batch_size=2 * 1024 * 1024,
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-275M-v2-lr1.6e-3/step38147",
     ),
     "810m": dict(
         lr=2e-4,
         num_nodes=8,
-        global_batch_size=4 * 1024 * 1024,  # same as pretraining
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-810M-lr2e4/step19074",
+        global_batch_size=4 * 1024 * 1024,
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-810M-v2-lr4e-4/step19074",
     ),
     "1.4b": dict(
         lr=2e-4,
