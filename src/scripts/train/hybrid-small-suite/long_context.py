@@ -113,8 +113,6 @@ def build_train_module_config(
 ) -> TransformerTrainModuleConfig:
     lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
-    # 275M has ample headroom (42% GPU mem), so use 2 seqs/microbatch to halve grad accum steps.
-    # 810M and 1.4B keep 1 seq/microbatch until memory is profiled.
     rank_microbatch_size = {
         "275m": 2 * LC_SEQUENCE_LENGTH,
     }.get(model_size, LC_SEQUENCE_LENGTH)
@@ -144,8 +142,7 @@ def build_train_module_config(
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.feed_forward"],
+            mode=TransformerActivationCheckpointingMode.full,
         )
     )
 
