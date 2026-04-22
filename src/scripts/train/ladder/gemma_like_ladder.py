@@ -863,6 +863,21 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             ),
         )
         .with_callback(
+            "code_fresh_lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+                    DataMix.code_fresh_ppl_validation,
+                    mix_base_dir=mix_base_dir,
+                    sequence_length=sequence_length,
+                    tokenizer=tokenizer_config,
+                    work_dir=work_dir,
+                ),
+                eval_on_finish=True,
+                log_interval=10,
+                eval_interval=2_500,
+            ),
+        )
+        .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
                 tasks=sorted(TASK_GROUPS["fast"]),

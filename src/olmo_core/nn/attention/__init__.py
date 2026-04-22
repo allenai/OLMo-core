@@ -452,7 +452,7 @@ class Attention(SequenceMixer):
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
 
             if backend is None and flash_attn_api.has_flash_attn_2():
-                # note: flash_3 and te backends are faster than flash_2 and also support SWA
+                # note: flash_3, flash_4, and te backends are faster than flash_2 and also support SWA
                 backend = AttentionBackendName.flash_2
 
             # Window size is [i - window_size[0], i + window_size[1]] inclusive
@@ -757,6 +757,7 @@ class Attention(SequenceMixer):
         :param max_seq_len: The maximum sequence length for the cache.
         """
         self.backend.assert_supports_kv_cache()
+
         self.kv_cache_manager = KVCacheManager(
             batch_size=batch_size,
             max_seq_len=max_seq_len,

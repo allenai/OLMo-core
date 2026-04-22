@@ -51,3 +51,15 @@ def test_v3_small_ppl_validation_mix():
         assert file_exists(paths[-1])
     except NoCredentialsError:
         pytest.skip("Requires AWS credentials")
+
+
+def test_code_fresh_ppl_validation_mix():
+    paths, labels = DataMix.code_fresh_ppl_validation.build(
+        "s3://ai2-llm-public", TokenizerName.dolma2
+    )
+    assert len(paths) == len(labels)
+    assert (
+        paths[0]
+        == "s3://ai2-llm-public/eval-data/perplexity/code_fresh_0825_1225_dolma2-tokenizer/blade/val/part-0-00000.npy"
+    )
+    assert labels[0] == "code_fresh_blade-validation"
