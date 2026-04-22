@@ -1,6 +1,7 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from transformers import PretrainedConfig
+from transformers import LlamaConfig, Olmo2Config, PretrainedConfig
+from transformers.models.olmpool.configuration_olmpool import Olmo3PreorderConfig
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.conversion.state_converter import StateConverter
@@ -174,8 +175,16 @@ OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 }
 
 
+_PRE_NORM_HF_TO_OLMO_CORE_OVERRIDES: Dict[str, str] = {
+    # For pre-norm (default block) HF models: post_attention_layernorm is the pre-FFN norm,
+    # which maps to feed_forward_norm in olmo-core (not attention_norm).
+    f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight",
+}
+
+
 def _get_hf_model_to_olmo_core_one_to_one_templates(
     model_id: str | None = None,
+    config: Optional[PretrainedConfig] = None,
 ) -> List[StateMappingTemplate]:
     mapping_templates = {
         hf_key: StateMappingTemplate(hf_key, olmo_core_key)
@@ -187,19 +196,32 @@ def _get_hf_model_to_olmo_core_one_to_one_templates(
             for hf_key, olmo_core_key in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS[model_id].items()
         }
         mapping_templates.update(model_specific_mapping_templates)
+    if config is not None and isinstance(config, (Olmo3PreorderConfig, LlamaConfig)):
+        mapping_templates.update({
+            hf_key: StateMappingTemplate(hf_key, olmo_core_key)
+            for hf_key, olmo_core_key in _PRE_NORM_HF_TO_OLMO_CORE_OVERRIDES.items()
+        })
 
     return list(mapping_templates.values())
 
 
-def _get_converter_from_hf(model_id: str | None = None) -> StateConverter:
-    mapping_templates = _get_hf_model_to_olmo_core_one_to_one_templates(model_id)
+def _get_converter_from_hf(
+    model_id: str | None = None,
+    config: Optional[PretrainedConfig] = None,
+) -> StateConverter:
+    mapping_templates = _get_hf_model_to_olmo_core_one_to_one_templates(
+        model_id=model_id, config=config
+    )
     mapping_templates += list(HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS.values())
     return StateConverter(mapping_templates)
 
 
 @beta_feature
-def get_converter_from_hf(model_id: str | None = None) -> StateConverter:
-    return _get_converter_from_hf(model_id=model_id)
+def get_converter_from_hf(
+    model_id: str | None = None,
+    config: Optional[PretrainedConfig] = None,
+) -> StateConverter:
+    return _get_converter_from_hf(model_id=model_id, config=config)
 
 
 @beta_feature
@@ -218,7 +240,7 @@ def convert_state_from_hf(
     :param model_id: The model id of the HF model in HF Hub.
     """
 
-    converter = _get_converter_from_hf(model_id=model_id)
+    converter = _get_converter_from_hf(model_id=model_id, config=config)
 
     if not hasattr(config, "num_hidden_layers"):
         raise ValueError(f"Number of hidden layers missing in HF config: {config}")
@@ -234,18 +256,29 @@ def convert_state_from_hf(
     return converter.convert(hf_state, placeholder_bounds)
 
 
-def _get_converter_to_hf() -> StateConverter:
+_PRE_NORM_OLMO_CORE_TO_HF_OVERRIDES: Dict[str, str] = {
+    # For pre-norm (default block) models: attention_norm is pre-attention (input_layernorm),
+    # and feed_forward_norm is pre-FFN (post_attention_layernorm in Llama naming).
+    f"blocks.{LAYER}.attention_norm.weight": f"model.layers.{LAYER}.input_layernorm.weight",
+    f"blocks.{LAYER}.feed_forward_norm.weight": f"model.layers.{LAYER}.post_attention_layernorm.weight",
+}
+
+
+def _get_converter_to_hf(config: Optional[PretrainedConfig] = None) -> StateConverter:
+    mappings = dict(OLMO_CORE_TO_HF_MAPPINGS)
+    if config is not None and isinstance(config, (Olmo3PreorderConfig, LlamaConfig)):
+        mappings.update(_PRE_NORM_OLMO_CORE_TO_HF_OVERRIDES)
     mapping_templates = [
         StateMappingTemplate(olmo_core_key, hf_key)
-        for olmo_core_key, hf_key in OLMO_CORE_TO_HF_MAPPINGS.items()
+        for olmo_core_key, hf_key in mappings.items()
     ]
     mapping_templates += list(OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS.values())
     return StateConverter(mapping_templates)
 
 
 @beta_feature
-def get_converter_to_hf() -> StateConverter:
-    return _get_converter_to_hf()
+def get_converter_to_hf(config: Optional[PretrainedConfig] = None) -> StateConverter:
+    return _get_converter_to_hf(config=config)
 
 
 @beta_feature
@@ -260,7 +293,7 @@ def convert_state_to_hf(
         :class:`DTensor` or :class:`ShardedTensor`
     """
 
-    converter = _get_converter_to_hf()
+    converter = _get_converter_to_hf(config=config)
 
     if not hasattr(config, "num_hidden_layers"):
         raise ValueError(f"Number of hidden layers missing in HF config: {config}")
