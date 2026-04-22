@@ -7,7 +7,6 @@ import pytest
 import torch
 from safetensors.torch import load_file
 
-from examples.huggingface.convert_checkpoint_to_hf import convert_checkpoint_to_hf
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
@@ -16,6 +15,7 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
 from olmo_core.nn.attention.flash_linear_attn_api import has_fla
 from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedDeltaNetConfig
+from olmo_core.nn.hf import convert_checkpoint_to_hf
 from olmo_core.nn.hf.config import get_hybrid_hf_config, get_hybrid_layer_types
 from olmo_core.nn.hf.convert import (
     HYBRID_ATTN_LAYER_KEY_MAP,

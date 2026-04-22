@@ -4,22 +4,24 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, Olmo2Config, PreTrainedModel
+import torch.distributed.checkpoint.state_dict as dist_cp_sd
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    Olmo2Config,
+    Olmo3Config,
+    PreTrainedModel,
+)
 
-from examples.huggingface.convert_checkpoint_to_hf import convert_checkpoint_to_hf
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
+from olmo_core.nn.hf import convert_checkpoint_to_hf
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
-
-try:
-    from transformers import Olmo3Config
-except ImportError:
-    Olmo3Config = None  # type: ignore
 
 
 @pytest.fixture
@@ -91,9 +93,6 @@ def _get_expected_hf_config(
             **common_config,
         )
     elif model_family == "olmo3":
-        if Olmo3Config is None:
-            pytest.skip("The installed transformers version does not support Olmo3")
-
         # Compute expected layer_types and sliding_window from the transformer config
         assert isinstance(transformer_config.block, TransformerBlockConfig)
         attention_config = transformer_config.block.sequence_mixer
@@ -189,9 +188,6 @@ def test_convert_checkpoint_to_hf_correct_model(
     model_family, model_path = olmo_core_model_path
     _, transformer_config = model_config
 
-    if model_family == "olmo3" and Olmo3Config is None:
-        pytest.skip("The installed transformers version does not support Olmo3")
-
     output_dir = tmp_path / f"hf-output-{model_family}"
     convert_checkpoint_to_hf(
         original_checkpoint_path=model_path,
@@ -207,5 +203,39 @@ def test_convert_checkpoint_to_hf_correct_model(
 
     hf_model = AutoModelForCausalLM.from_pretrained(output_dir)
 
+    _validate_models_match(hf_model, olmo_core_model)
+    shutil.rmtree(output_dir)
+
+
+def test_convert_checkpoint_to_hf_from_state_dict(
+    tmp_path: Path,
+    olmo_core_model_path: tuple[str, Path],
+    model_config: tuple[str, TransformerConfig],
+    tokenizer_config: TokenizerConfig,
+):
+    """When ``model_state_dict`` is passed, conversion uses those weights instead of loading
+    from disk. This is the path the ``HFConverterCallback`` exercises."""
+    model_family, model_path = olmo_core_model_path
+    _, transformer_config = model_config
+
+    olmo_core_model = transformer_config.build()
+    load_model_and_optim_state(model_path / "model_and_optim", model=olmo_core_model)
+    model_state_dict = dist_cp_sd.get_model_state_dict(
+        olmo_core_model,
+        options=dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True),
+    )
+
+    output_dir = tmp_path / f"hf-output-{model_family}-sd"
+    convert_checkpoint_to_hf(
+        original_checkpoint_path=model_path,
+        output_path=output_dir,
+        transformer_config_dict=transformer_config.as_config_dict(),
+        tokenizer_config_dict=tokenizer_config.as_config_dict(),
+        model_state_dict=model_state_dict,
+        max_sequence_length=256,
+        validate=False,
+    )
+
+    hf_model = AutoModelForCausalLM.from_pretrained(output_dir)
     _validate_models_match(hf_model, olmo_core_model)
     shutil.rmtree(output_dir)
