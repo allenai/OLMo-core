@@ -14,7 +14,7 @@ from olmo_core.train.callbacks import Callback
 class MemorySnapshotCallback(Callback):
     """Captures a CUDA memory snapshot at a given training step."""
 
-    def __init__(self, out_path: str = "/tmp/memory_snapshot.pickle", capture_step: int = 10):
+    def __init__(self, out_path: str = "/weka/oe-training-default/yashasbls/OLMo-core/memory_snapshot_fused_linear_1.4b.pickle", capture_step: int = 3):
         self.out_path = out_path
         self.capture_step = capture_step
         self._done = False
@@ -26,7 +26,10 @@ class MemorySnapshotCallback(Callback):
 
     def post_train_batch(self):
         if not self._done and self.trainer.global_step == self.capture_step:
-            torch.cuda.memory._dump_snapshot(self.out_path)
+            import os
+            rank = int(os.environ.get("RANK", 0))
+            if rank == 0:
+                torch.cuda.memory._dump_snapshot(self.out_path)
+                print(f"[MemorySnapshotCallback] Snapshot saved to {self.out_path}")
             torch.cuda.memory._record_memory_history(enabled=None)
             self._done = True
-            print(f"[MemorySnapshotCallback] Snapshot saved to {self.out_path}")

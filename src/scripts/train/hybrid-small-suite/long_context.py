@@ -28,7 +28,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime
 from functools import partial
-from typing import Optional
 
 from arch import MODEL_CONFIGS, build_model_config as arch_build_model_config
 from arch import parse_model_size
@@ -48,6 +47,7 @@ from olmo_core.internal.experiment import (
     main,
 )
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerConfig,
 )
@@ -65,8 +65,7 @@ from olmo_core.train.callbacks import (
 )
 from memory_snapshot_callback import MemorySnapshotCallback
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -78,27 +77,33 @@ MAX_TOKENS = 100_000_000_000  # 100B
 # Long-context data (same source as the 7B long-context run).
 LC_DATA_GLOB = "/weka/oe-training-default/ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy"
 
-# Per-size long-context settings.
-# load_path must be updated to the final midtraining checkpoint path before launching.
-# num_nodes doubles the midtraining node count to handle 8x longer sequences.
 LONG_CONTEXT_CONFIGS = {
     "275m": dict(
         lr=2e-4,
         num_nodes=2,
         global_batch_size=2 * 1024 * 1024,
+        rank_microbatch_size=2 * LC_SEQUENCE_LENGTH,
+        cp_degree=1,
+        fused_linear_loss=False,
         load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-275M-v2-lr1.6e-3/step38147",
     ),
     "810m": dict(
         lr=2e-4,
         num_nodes=8,
         global_batch_size=4 * 1024 * 1024,
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-810M-v2-lr4e-4/step19074",
+        rank_microbatch_size=LC_SEQUENCE_LENGTH,
+        cp_degree=1,
+        fused_linear_loss=False,
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-810M-lr1e4-bsz1048576/step95368",
     ),
     "1.4b": dict(
         lr=2e-4,
         num_nodes=16,
-        global_batch_size=1 * 1024 * 1024,
-        load_path="",  # TODO: set to midtraining checkpoint
+        global_batch_size=4 * 1024 * 1024,
+        rank_microbatch_size=LC_SEQUENCE_LENGTH,
+        cp_degree=2,
+        fused_linear_loss=True,
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-1.4B-lr2e4/step11921",
     ),
 }
 
@@ -107,6 +112,8 @@ def build_model_config(
     common: CommonComponents, model_size: str, attn_backend: AttentionBackendName = AttentionBackendName.flash_3
 ) -> TransformerConfig:
     model_config = arch_build_model_config(common, model_size, attn_backend=attn_backend)
+    if LONG_CONTEXT_CONFIGS[model_size]["fused_linear_loss"]:
+        model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     return model_config
 
 
@@ -115,9 +122,10 @@ def build_train_module_config(
 ) -> TransformerTrainModuleConfig:
     lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
 
-    rank_microbatch_size = {
-        "275m": 2 * LC_SEQUENCE_LENGTH,
-    }.get(model_size, LC_SEQUENCE_LENGTH)
+    rank_microbatch_size = lc_cfg["rank_microbatch_size"]
+
+    cp_degree = lc_cfg["cp_degree"]
+    cp_config = TransformerContextParallelConfig.ulysses(degree=cp_degree) if cp_degree > 1 else None
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
@@ -139,13 +147,10 @@ def build_train_module_config(
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        cp_config=None,
+        cp_config=cp_config,
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.full,
-        )
     )
 
 
@@ -185,7 +190,6 @@ def build_data_components(
 def build_trainer_config(
     common: CommonComponents,
     model_size: str,
-    mem_snapshot_step: Optional[int] = None,
 ) -> TrainerConfig:
     cancel_check_interval = 1000
     lc_cfg = LONG_CONTEXT_CONFIGS[model_size]
@@ -207,7 +211,7 @@ def build_trainer_config(
         TrainerConfig(
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
-            load_optim_state=True,
+            load_optim_state=False,
             load_path=load_path,
             save_folder=common.save_folder,
             work_dir=common.work_dir,
@@ -239,14 +243,9 @@ def build_trainer_config(
         )
     )
 
-    if mem_snapshot_step is not None:
-        trainer_cfg = trainer_cfg.with_callback(
-            "memory_snapshot",
-            MemorySnapshotCallback(capture_step=mem_snapshot_step),
-        )
 
     # Downstream evals require full logits which are unavailable with CP or TP.
-    if model_size == "275m":
+    if LONG_CONTEXT_CONFIGS[model_size]["cp_degree"] == 1:
         trainer_cfg = trainer_cfg.with_recommended_evals(
             common.tokenizer, LC_SEQUENCE_LENGTH, cluster, task_set="fast"
         )
@@ -278,18 +277,6 @@ if __name__ == "__main__":
             break
     sys.argv = [a for a in sys.argv if not a.startswith("--attn_backend=")]
 
-    # Parse --mem_snapshot_step=N from argv (default 10 when flag present, else disabled).
-    mem_snapshot_step: Optional[int] = None
-    new_argv = []
-    for arg in sys.argv:
-        if arg == "--mem_snapshot":
-            mem_snapshot_step = 10
-        elif arg.startswith("--mem_snapshot_step="):
-            mem_snapshot_step = int(arg.split("=", 1)[1])
-        else:
-            new_argv.append(arg)
-    sys.argv = new_argv
-
     config_builder = partial(
         build_config,
         global_batch_size=lc_cfg["global_batch_size"],
@@ -298,7 +285,7 @@ if __name__ == "__main__":
         data_config_builder=partial(build_data_components, model_size=model_size),
         model_config_builder=partial(build_model_config, model_size=model_size, attn_backend=attn_backend),
         train_module_config_builder=partial(build_train_module_config, model_size=model_size),
-        trainer_config_builder=partial(build_trainer_config, model_size=model_size, mem_snapshot_step=mem_snapshot_step),
+        trainer_config_builder=partial(build_trainer_config, model_size=model_size),
         include_default_evals=False,
         include_instance_filter=True,
         beaker_workspace="ai2/linear-rnns",
