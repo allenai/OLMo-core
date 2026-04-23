@@ -48,13 +48,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         MixingInstanceSourceConfig(
             source_specs=[
                 MixingInstanceSourceSpecConfig(
-                    source=ConcatAndChunkInstanceSourceConfig(
-                        sources=[
-                            NumpyDocumentSourceConfig(
-                                source_paths=ICL_OVERLAP_PATHS,
-                                tokenizer=tokenizer,
-                            ),
-                        ],
+                    # See icl_overlap_v02_full_attn_ladder.py for the alignment
+                    # reasoning; PerFileChunked prevents cross-file phase drift.
+                    source=PerFileChunkedInstanceSourceConfig(
+                        source_paths=ICL_OVERLAP_PATHS,
                         sequence_length=args.sequence_length,
                     ),
                     ratio=0.5,

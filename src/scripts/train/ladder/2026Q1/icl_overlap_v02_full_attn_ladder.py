@@ -51,13 +51,14 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         MixingInstanceSourceConfig(
             source_specs=[
                 MixingInstanceSourceSpecConfig(
-                    source=ConcatAndChunkInstanceSourceConfig(
-                        sources=[
-                            NumpyDocumentSourceConfig(
-                                source_paths=ICL_OVERLAP_PATHS,
-                                tokenizer=tokenizer,
-                            ),
-                        ],
+                    # PerFileChunked, not ConcatAndChunk: the ICL build script
+                    # emits a short tail at each worker's budget exhaustion
+                    # (~125/192 v02 shards are non-seq_len-aligned). Cross-file
+                    # flat-concat reads would bisect <o>...</o> pairs in
+                    # ~99% of chunks after the first tail. See
+                    # tex/instance_filter_analysis/ §sec:update-alignment.
+                    source=PerFileChunkedInstanceSourceConfig(
+                        source_paths=ICL_OVERLAP_PATHS,
                         sequence_length=args.sequence_length,
                     ),
                     ratio=0.5,

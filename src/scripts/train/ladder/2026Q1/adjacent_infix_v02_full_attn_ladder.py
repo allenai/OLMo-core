@@ -48,13 +48,14 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         MixingInstanceSourceConfig(
             source_specs=[
                 MixingInstanceSourceSpecConfig(
-                    source=ConcatAndChunkInstanceSourceConfig(
-                        sources=[
-                            NumpyDocumentSourceConfig(
-                                source_paths=ADJACENT_INFIX_PATHS,
-                                tokenizer=tokenizer,
-                            ),
-                        ],
+                    # PerFileChunked, not ConcatAndChunk: the adjacent-infix
+                    # build script uses the same per-worker tail-emit pattern
+                    # as the ICL-overlap builder, so a subset of shards are
+                    # non-seq_len-aligned. Cross-file flat-concat reads would
+                    # bisect adjacent-pair structure. See
+                    # tex/instance_filter_analysis/ §sec:update-alignment.
+                    source=PerFileChunkedInstanceSourceConfig(
+                        source_paths=ADJACENT_INFIX_PATHS,
                         sequence_length=args.sequence_length,
                     ),
                     ratio=0.5,

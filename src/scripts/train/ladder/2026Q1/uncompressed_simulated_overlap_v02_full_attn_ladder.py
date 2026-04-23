@@ -38,6 +38,13 @@ UNCOMPRESSED_SIM_OVERLAP_PATHS = [
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
     instance_sources: list[InstanceSourceConfig] = [
+        # ConcatAndChunk is fine here (not PerFileChunked): uncompressed-simulated
+        # data is concatenated independent suffix samples with a separator
+        # token between them — there is no context-boundary invariant between
+        # adjacent emitted chunks, so frankenstein chunks at file boundaries
+        # don't bisect any structural relationship. Effectively
+        # suffix-sampled baseline data, analogous to how doc-sampled baseline
+        # doesn't need per-file alignment either.
         ConcatAndChunkInstanceSourceConfig(
             sources=[
                 NumpyDocumentSourceConfig(

@@ -492,6 +492,10 @@ from .numpy_document_source import (
     NumpyDocumentSourceConfigBase,
     NumpyDocumentSourceMixConfig,
 )
+from .per_file_chunked_instance_source import (
+    PerFileChunkedInstanceSource,
+    PerFileChunkedInstanceSourceConfig,
+)
 from .pre_chunked_instance_source import (
     PreChunkedInstanceSource,
     PreChunkedInstanceSourceConfig,
@@ -581,6 +585,8 @@ __all__ = [
     "RandomInstanceSourceConfig",
     "PreChunkedInstanceSource",
     "PreChunkedInstanceSourceConfig",
+    "PerFileChunkedInstanceSource",
+    "PerFileChunkedInstanceSourceConfig",
     # Other types.
     "InstanceFilterConfig",
     "LongDocStrategy",
