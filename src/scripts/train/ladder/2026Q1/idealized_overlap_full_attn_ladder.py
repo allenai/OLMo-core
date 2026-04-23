@@ -45,6 +45,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             model_construction_kwargs={
                 "sliding_window": None,
                 "attn_backend": "torch",
+                "vis_limit_eos_token_id": tokenizer.eos_token_id,
             },
             rank_microbatch_size=None
             if args.rank_mbz is None

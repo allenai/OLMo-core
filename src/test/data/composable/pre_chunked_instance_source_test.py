@@ -213,45 +213,101 @@ class TestComputeRopeFromPositions:
         assert not torch.allclose(sin_seq, sin_nonseq)
 
 
+def _build_mask(vis_limit: torch.Tensor) -> torch.Tensor:
+    """Reference implementation mirroring model.py's mask construction."""
+    B, S = vis_limit.shape
+    q_idx = torch.arange(S)
+    causal = q_idx.unsqueeze(1) >= q_idx.unsqueeze(0)  # (S, S)
+    vis = (q_idx + 1).unsqueeze(0).unsqueeze(2) < vis_limit.unsqueeze(1)  # (B, S, S)
+    mask = causal.unsqueeze(0) & vis
+    empty_rows = ~mask.any(dim=-1, keepdim=True)  # (B, S, 1)
+    eye = torch.eye(S, dtype=torch.bool).unsqueeze(0)  # (1, S, S)
+    return mask | (empty_rows & eye)
+
+
 class TestVisLimitToMask:
     def test_simple_tree_mask(self):
-        """Test that vis_limit correctly produces tree-structured attention mask."""
-        # Simple example: 4 tokens
-        # vis_limit = [4, 3, 3, 4] means:
-        #   - token 0 visible to q 0,1,2,3 (vis_limit=4)
-        #   - token 1 visible to q 1,2 (vis_limit=3, plus causal k<=q)
-        #   - token 2 visible to q 2 (vis_limit=3, plus causal k<=q)
-        #   - token 3 visible to q 3 (vis_limit=4, plus causal k<=q)
-        vis_limit = torch.tensor([[4, 3, 3, 4]])  # (1, 4)
-        S = 4
-        q_idx = torch.arange(S)
-
-        # mask(q, k) = (k <= q) AND (q < vis_limit[k])
-        causal = q_idx.unsqueeze(1) >= q_idx.unsqueeze(0)  # (S, S)
-        vis = q_idx.unsqueeze(0).unsqueeze(2) < vis_limit.unsqueeze(1)  # (1, S, S)
-        mask = causal.unsqueeze(0) & vis  # (1, S, S)
+        # Tree with shared prefix {0}, two siblings {1,2} and {3}:
+        #   - vis_limit[0] = 4: key 0 (prefix) stays open through the window.
+        #   - vis_limit[1] = vis_limit[2] = 3: the first sibling closes at
+        #     emit_pos=3 when the second sibling arrives.
+        #   - vis_limit[3] = 4: the second sibling stays open through the end.
+        vis_limit = torch.tensor([[4, 3, 3, 4]])
 
         expected = torch.tensor(
             [
                 [
-                    [True, False, False, False],  # q=0 sees k=0
-                    [True, True, False, False],  # q=1 sees k=0,1
-                    [True, True, True, False],  # q=2 sees k=0,1,2
-                    [True, False, False, True],  # q=3 sees k=0,3 (not k=1,2 because vis_limit=3)
+                    # q=0 predicts input_ids[1]. key 0 is the shared prefix,
+                    # which stays open (vis_limit[0]=4 > q+1=1). Row non-empty.
+                    [True, False, False, False],
+                    # q=1 predicts input_ids[2]. Still inside the first sibling
+                    # — key 0 visible (1+1 < 4), key 1 visible (1+1 < 3).
+                    [True, True, False, False],
+                    # q=2 is the boundary query whose target input_ids[3] lives
+                    # in the second sibling. Keys 1 and 2 close at emit_pos=3
+                    # so q+1=3 is NOT less than vis_limit=3 for them. Key 0
+                    # (prefix) stays open and remains visible — that's the
+                    # whole point of the label-shifted rule.
+                    [True, False, False, False],
+                    # q=3 is the last position of the window. Under the strict
+                    # rule every key has vis_limit <= q+1=4, so the row would
+                    # be empty. The fallback turns on self-attention at k=3,
+                    # which is fine because labels[S-1] is ignore_index.
+                    [False, False, False, True],
                 ]
             ]
         )
-        assert torch.equal(mask, expected)
+        assert torch.equal(_build_mask(vis_limit), expected)
 
     def test_full_causal_vis_limit(self):
-        """When vis_limit is all seq_len, mask should equal standard causal mask."""
+        # When every vis_limit value is the max S, everyone stays open
+        # through the end. The shifted rule gives a standard causal mask
+        # for q in 0..S-2; at q=S-1 the row is empty under the strict rule
+        # and the fallback lights up the diagonal.
         S = 8
         vis_limit = torch.full((1, S), S)
-        q_idx = torch.arange(S)
 
-        causal = q_idx.unsqueeze(1) >= q_idx.unsqueeze(0)
-        vis = q_idx.unsqueeze(0).unsqueeze(2) < vis_limit.unsqueeze(1)
-        mask = causal.unsqueeze(0) & vis
+        expected = torch.tril(torch.ones(S, S, dtype=torch.bool)).clone()
+        # Shifted rule excludes the self key at q=S-1 (q+1=S is not < S).
+        # Fallback adds (S-1, S-1) back — matches the causal mask anyway.
+        for q in range(S):
+            for k in range(S):
+                if k == q == S - 1:
+                    # Covered by fallback.
+                    continue
+                if q + 1 >= S:
+                    expected[q, k] = False
+        # Self fallback at q=S-1.
+        expected[S - 1, S - 1] = True
+        assert torch.equal(_build_mask(vis_limit)[0], expected)
 
-        expected_causal = torch.tril(torch.ones(S, S, dtype=torch.bool)).unsqueeze(0)
-        assert torch.equal(mask, expected_causal)
+    def test_lcp_zero_boundary_empty_row_guard(self):
+        # Two fully divergent branches of length 2 each with no shared prefix
+        # (LCP=0): B1 at positions {0,1} closes at emit_pos=2 when B2 arrives,
+        # B2 at positions {2,3} stays open through the end.
+        vis_limit = torch.tensor([[2, 2, 4, 4]])
+
+        expected = torch.tensor(
+            [
+                [
+                    # q=0 predicts input_ids[1] (inside B1). vis_limit[0]=2,
+                    # q+1=1<2 → key 0 visible. Row non-empty.
+                    [True, False, False, False],
+                    # q=1 is the boundary query predicting input_ids[2]=B2[0].
+                    # No shared prefix, so the strict rule gives an empty row.
+                    # Self-fallback turns on k=1; under the data-gen invariant
+                    # (max_suffix_len == seq_len) that self token is the EOS
+                    # terminating the previous branch.
+                    [False, True, False, False],
+                    # q=2 predicts input_ids[3] (inside B2). Only key 2 (self)
+                    # passes the shifted rule: vis_limit[2]=4, q+1=3<4. Keys
+                    # 0 and 1 are closed and B2 doesn't share anything with
+                    # them. Row non-empty, no fallback needed.
+                    [False, False, True, False],
+                    # q=3 is the window end: row empty under strict rule,
+                    # fallback on self.
+                    [False, False, False, True],
+                ]
+            ]
+        )
+        assert torch.equal(_build_mask(vis_limit), expected)

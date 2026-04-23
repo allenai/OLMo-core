@@ -122,6 +122,7 @@ class Transformer(nn.Module):
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
         block_pattern: Optional[List[str]] = None,
         embed_scale: Optional[float] = None,
+        vis_limit_eos_token_id: Optional[int] = None,
     ):
         super().__init__()
 
@@ -132,6 +133,7 @@ class Transformer(nn.Module):
         self.n_layers = n_layers
         self.dtype = dtype
         self.embed_scale = embed_scale
+        self.vis_limit_eos_token_id = vis_limit_eos_token_id
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -409,13 +411,51 @@ class Transformer(nn.Module):
         if vis_limit is not None:
             vis_limit = move_to_device(vis_limit, self.device)
             B_vl, S_vl = vis_limit.shape
-            # mask(q, k) = (k <= q) AND (q < vis_limit[k])
+            # mask(q, k) = (k <= q) AND (q + 1 < vis_limit[k])
+            # The +1 accounts for the label shift (labels[q] = input_ids[q+1]):
+            # at a branch boundary, the query at the closing branch's terminal
+            # predicts an across-branch target, so its context must not include
+            # keys whose visibility ends at that boundary.
             q_idx = torch.arange(S_vl, device=vis_limit.device)
-            # causal: (S, S) bool — q_idx >= k_idx
             causal = q_idx.unsqueeze(1) >= q_idx.unsqueeze(0)  # (S, S)
-            # vis: (B, S_q, S_k) bool — q_idx < vis_limit[:, k_idx]
-            vis = q_idx.unsqueeze(0).unsqueeze(2) < vis_limit.unsqueeze(1)  # (B, S, S)
+            vis = (q_idx + 1).unsqueeze(0).unsqueeze(2) < vis_limit.unsqueeze(1)  # (B, S, S)
             attn_mask = causal.unsqueeze(0) & vis  # (B, S, S)
+            # Under the shifted rule two query positions have entirely-masked
+            # rows and would NaN the softmax:
+            #   - q = S-1: labels[S-1] is ignore_index (shift-and-pad), so the
+            #     logits there don't contribute to the loss; we only need the
+            #     attention to be finite.
+            #   - q at an interior LCP=0 branch boundary: with max_suffix_len
+            #     == seq_len, the closing branch ended at a document boundary
+            #     and its terminal token is EOS.
+            # Fall back to self-attention in those rows. Input-space self (not
+            # label-space): the query mixes in the value-projection of the
+            # token at its own position (EOS at interior boundaries).
+            empty_rows = ~attn_mask.any(dim=-1, keepdim=True)  # (B, S, 1)
+            eye = torch.eye(
+                S_vl, dtype=torch.bool, device=vis_limit.device
+            ).unsqueeze(0)  # (1, S, S)
+            attn_mask = attn_mask | (empty_rows & eye)  # (B, S, S)
+            if self.vis_limit_eos_token_id is not None:
+                # Verify the "self at an interior boundary is EOS" invariant
+                # that the fallback relies on (excluding q=S-1, whose label is
+                # ignore_index regardless of token identity).
+                fallback_rows = empty_rows.squeeze(-1).clone()  # (B, S)
+                fallback_rows[:, -1] = False
+                if fallback_rows.any():
+                    bad = fallback_rows & (input_ids != self.vis_limit_eos_token_id)
+                    if bad.any():
+                        bad_positions = bad.nonzero()
+                        raise AssertionError(
+                            "vis_limit self-attention fallback fired at an interior "
+                            "position whose input token is not EOS "
+                            f"(eos_token_id={self.vis_limit_eos_token_id}). This "
+                            "violates the max_suffix_len == seq_len invariant that "
+                            "guarantees every non-exhausting suffix ends in EOS. "
+                            f"First offender at (batch, pos) = "
+                            f"{tuple(bad_positions[0].tolist())}, "
+                            f"input_id = {input_ids[tuple(bad_positions[0].tolist())].item()}."
+                        )
             all_block_kwargs["attn_mask"] = attn_mask
 
         # Prepare custom RoPE positions from pos_ids if provided.

@@ -328,6 +328,7 @@ class TransformerConfig(ModelConfig):
     block_pattern: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
+    vis_limit_eos_token_id: Optional[int] = None
 
     def __post_init__(self):
         validate_block_resolution_config(
@@ -380,6 +381,7 @@ class TransformerConfig(ModelConfig):
                 block_overrides=self.block_overrides,
                 block_pattern=self.block_pattern,
                 embed_scale=self.embed_scale,
+                vis_limit_eos_token_id=self.vis_limit_eos_token_id,
             )
         elif self.name == TransformerType.normalized:
             assert self.embedding_norm is None
