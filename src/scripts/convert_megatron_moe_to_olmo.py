@@ -583,7 +583,7 @@ def copy_template_checkpoint(template_dir: Path, output_dir: Path, save_overwrit
             shutil.copy2(src, dst)
 
 
-def patch_template_config(output_dir: Path) -> None:
+def patch_template_config(output_dir: Path, *, restore_weight_scale: bool) -> None:
     config_path = output_dir / "config.json"
     if not config_path.is_file():
         raise FileNotFoundError(f"Template checkpoint is missing config.json: {config_path}")
@@ -598,9 +598,7 @@ def patch_template_config(output_dir: Path) -> None:
             f"Template checkpoint config is missing model.block.routed_experts_router: {config_path}"
         ) from exc
 
-    # Megatron already produces top-k-normalized router weights, so OLMo should not
-    # re-expand them by multiplying by top_k when evaluating converted checkpoints.
-    routed_router_config["restore_weight_scale"] = False
+    routed_router_config["restore_weight_scale"] = restore_weight_scale
 
     with config_path.open("w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
@@ -667,13 +665,14 @@ def save_wrapped_checkpoint(
     model_state_dict: Dict[str, torch.Tensor],
     global_step: int,
     global_train_tokens_seen: int,
+    restore_weight_scale: bool,
     save_overwrite: bool,
     save_thread_count: int,
 ) -> None:
     template_dir = Path(template_checkpoint)
     out_dir = Path(output_dir)
     copy_template_checkpoint(template_dir, out_dir, save_overwrite=save_overwrite)
-    patch_template_config(out_dir)
+    patch_template_config(out_dir, restore_weight_scale=restore_weight_scale)
     patch_template_train_states(
         out_dir,
         global_step=global_step,
@@ -739,6 +738,9 @@ def main() -> None:
             model_state_dict=output_state,
             global_step=megatron_iteration,
             global_train_tokens_seen=consumed_tokens,
+            restore_weight_scale=bool(
+                getattr(common_args, "moe_router_restore_weight_scale", False)
+            ),
             save_overwrite=args.save_overwrite,
             save_thread_count=args.save_thread_count,
         )
