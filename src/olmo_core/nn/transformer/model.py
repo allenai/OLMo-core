@@ -426,20 +426,21 @@ class Transformer(nn.Module):
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
-        doc_lens: Optional[torch.Tensor] = None
         position_ids: Optional[torch.Tensor] = kwargs.pop("position_ids", None)
         cache_leftpad: Optional[torch.Tensor] = kwargs.pop("cache_leftpad", None)
 
-        doc_lens = kwargs.pop("doc_lens", None)
+        doc_lens: Optional[torch.Tensor] = kwargs.pop("doc_lens", None)
         max_doc_lens = kwargs.pop("max_doc_lens", None)
-        if doc_lens is not None:
-            if position_ids is None and self._has_rope():
-                position_ids = get_position_ids_from_doc_lens(doc_lens, S)
-            if max_doc_lens is not None:
-                max_doc_len = max(max_doc_lens)
-                cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-        elif max_doc_lens is not None:
+
+        if max_doc_lens is not None and doc_lens is None:
             raise ValueError("'max_doc_lens' is invalid without 'doc_lens'")
+
+        if doc_lens is not None and position_ids is None and self._has_rope():
+            position_ids = get_position_ids_from_doc_lens(doc_lens, S)
+
+        if max_doc_lens is not None:
+            max_doc_len = max(max_doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(cast(torch.Tensor, doc_lens))
 
         if position_ids is not None:
             self._validate_position_ids(position_ids, B, S)
