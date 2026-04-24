@@ -163,6 +163,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
+        reset_optimizer_states_on_load: bool = False,
         label_ignore_index: int = -100,
         reduce_scatter_grads: bool = False,
         eval_only: bool = False,
@@ -281,6 +282,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             flatten_optimizer_state_dict=True, strict=True
         )
         self.load_key_mapping = load_key_mapping
+        self.reset_optimizer_states_on_load = reset_optimizer_states_on_load
 
         self.optim = None
         if not self.eval_only:
@@ -689,23 +691,32 @@ class MoEV2TransformerTrainModule(TrainModule):
             optim = self._require_optimizer()
             sd_to_load = optim.state_dict()
             checkpoint_keys = set(metadata.state_dict_metadata.keys())
+            reset_optimizer_states_on_load = self.reset_optimizer_states_on_load
             reset_optimizer_moments_on_load = getattr(
                 optim, "reset_optimizer_moments_on_load", False
             )
 
-            # Backward compatibility: old checkpoints won't have rolling skip-step stats.
-            for optional_key in (
-                optim.LOSSES_STATE_DICT_KEY,
-                optim.GRAD_NORMS_STATE_DICT_KEY,
-            ):
-                if optional_key not in checkpoint_keys:
-                    sd_to_load.pop(optional_key, None)
+            if reset_optimizer_states_on_load:
+                log.info(
+                    "Resetting optimizer states during checkpoint load; loading only optimizer main params"
+                )
+                sd_to_load = {
+                    key: value for key, value in sd_to_load.items() if key.endswith(".main")
+                }
+            else:
+                # Backward compatibility: old checkpoints won't have rolling skip-step stats.
+                for optional_key in (
+                    optim.LOSSES_STATE_DICT_KEY,
+                    optim.GRAD_NORMS_STATE_DICT_KEY,
+                ):
+                    if optional_key not in checkpoint_keys:
+                        sd_to_load.pop(optional_key, None)
 
-            if reset_optimizer_moments_on_load:
-                log.info("Resetting optimizer exp_avg and exp_avg_sq buffers during checkpoint load")
-                for key in list(sd_to_load.keys()):
-                    if key.endswith(".exp_avg") or key.endswith(".exp_avg_sq"):
-                        sd_to_load.pop(key)
+                if reset_optimizer_moments_on_load:
+                    log.info("Resetting optimizer exp_avg and exp_avg_sq buffers during checkpoint load")
+                    for key in list(sd_to_load.keys()):
+                        if key.endswith(".exp_avg") or key.endswith(".exp_avg_sq"):
+                            sd_to_load.pop(key)
 
             dist_cp.state_dict_loader.load(
                 sd_to_load,

@@ -419,6 +419,7 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
     state_dict_save_opts: Optional[Dict[str, Any]] = None
     state_dict_load_opts: Optional[Dict[str, Any]] = None
     load_key_mapping: Optional[Dict[str, str]] = None
+    reset_optimizer_states_on_load: bool = False
 
     # Other train settings.
 
