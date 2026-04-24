@@ -501,6 +501,10 @@ from .packing_instance_source import (
     PackingInstanceSource,
     PackingInstanceSourceConfig,
 )
+from .ngram_soft_target_instance_source import (
+    NgramSoftTargetInstanceSource,
+    NgramSoftTargetInstanceSourceConfig,
+)
 from .random_instance_source import RandomInstanceSource, RandomInstanceSourceConfig
 from .sampling_document_source import (
     SamplingDocumentSource,
@@ -581,6 +585,8 @@ __all__ = [
     "RandomInstanceSourceConfig",
     "PreChunkedInstanceSource",
     "PreChunkedInstanceSourceConfig",
+    "NgramSoftTargetInstanceSource",
+    "NgramSoftTargetInstanceSourceConfig",
     # Other types.
     "InstanceFilterConfig",
     "LongDocStrategy",

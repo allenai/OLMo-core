@@ -36,6 +36,10 @@ class Instance(TypedDict):
     """Optional per-token position IDs for custom RoPE positions."""
     vis_limit: NotRequired[Sequence[int]]
     """Optional per-key exclusive upper bound on visible query positions for tree-structured attention."""
+    soft_target_token_ids: NotRequired[Sequence[Sequence[int]]]
+    """Optional per-position top-K soft-target token IDs of shape ``(S, K)``."""
+    soft_target_probs: NotRequired[Sequence[Sequence[float]]]
+    """Optional per-position top-K soft-target probabilities of shape ``(S, K)``, summing to 1 along the K axis."""
 
 
 class InstanceSource(SourceABC):
