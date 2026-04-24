@@ -312,6 +312,22 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
 
     z_loss_multiplier: Optional[float] = None
 
+    # Ngram soft-target auxiliary loss. When ``soft_ce_alpha_start`` is set and the
+    # batch carries ``soft_target_token_ids`` + ``soft_target_probs`` (emitted by
+    # :class:`~olmo_core.data.composable.NgramSoftTargetInstanceSource`), the total
+    # training loss becomes
+    #
+    #     total = (1 - alpha(t)) * hard_CE + alpha(t) * soft_CE + z_loss
+    #
+    # where alpha(t) decays linearly from ``soft_ce_alpha_start`` at step 0 to 0
+    # at step ``soft_ce_alpha_ramp_fraction * max_steps``, then holds at 0 for
+    # the remainder of training (i.e. late training is pure hard CE).
+    # Requires the LM head's loss_implementation = default (the fused-linear
+    # kernel doesn't materialize logits, which soft CE needs). TP / CP are
+    # currently not supported together with soft CE.
+    soft_ce_alpha_start: Optional[float] = None
+    soft_ce_alpha_ramp_fraction: float = 0.5
+
     # Checkpoint settings.
 
     state_dict_save_opts: Optional[Dict[str, Any]] = None

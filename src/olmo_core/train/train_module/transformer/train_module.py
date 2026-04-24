@@ -8,6 +8,7 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.fsdp import FSDPModule
@@ -113,6 +114,8 @@ class TransformerTrainModule(TrainModule):
         ep_config: Optional[TransformerExpertParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         z_loss_multiplier: Optional[float] = None,
+        soft_ce_alpha_start: Optional[float] = None,
+        soft_ce_alpha_ramp_fraction: float = 0.5,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -181,6 +184,21 @@ class TransformerTrainModule(TrainModule):
         self._ep_config = ep_config
         self.label_ignore_index = label_ignore_index
         self.z_loss_multiplier = z_loss_multiplier
+        self.soft_ce_alpha_start = soft_ce_alpha_start
+        self.soft_ce_alpha_ramp_fraction = soft_ce_alpha_ramp_fraction
+        if self.soft_ce_alpha_start is not None:
+            if not (0.0 <= self.soft_ce_alpha_start <= 1.0):
+                raise OLMoConfigurationError(
+                    f"soft_ce_alpha_start must be in [0, 1], got {self.soft_ce_alpha_start}"
+                )
+            if not (0.0 < self.soft_ce_alpha_ramp_fraction <= 1.0):
+                raise OLMoConfigurationError(
+                    f"soft_ce_alpha_ramp_fraction must be in (0, 1], got {self.soft_ce_alpha_ramp_fraction}"
+                )
+            if tp_config is not None or cp_config is not None:
+                raise OLMoConfigurationError(
+                    "soft-CE auxiliary loss is not yet supported with TP or CP"
+                )
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
         self.autocast_precision = autocast_precision
@@ -385,6 +403,19 @@ class TransformerTrainModule(TrainModule):
         if self.z_loss_multiplier is not None:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
 
+        # Soft-CE auxiliary loss (ngram soft targets). Active only when the
+        # train module is configured for it AND the batch actually carries
+        # soft-target tensors (emitted by NgramSoftTargetInstanceSource).
+        soft_ce_active = (
+            self.soft_ce_alpha_start is not None
+            and "soft_target_probs" in batch
+            and "soft_target_token_ids" in batch
+        )
+        alpha: float = self._current_soft_ce_alpha() if soft_ce_active else 0.0
+        soft_ce_batch_loss: Optional[torch.Tensor] = None
+        if soft_ce_active:
+            soft_ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
+
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
             raise RuntimeError(
@@ -396,30 +427,82 @@ class TransformerTrainModule(TrainModule):
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
+                # Pop soft-target fields out of the micro-batch BEFORE
+                # _prepare_batch, so they don't leak into model.forward(**kwargs).
+                soft_target_token_ids = micro_batch.pop("soft_target_token_ids", None)
+                soft_target_probs = micro_batch.pop("soft_target_probs", None)
+
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
-                # Run forward pass, get losses.
-                _, loss, ce_loss, z_loss = self.model_forward(
-                    input_ids,
-                    labels=labels,
-                    ignore_index=self.label_ignore_index,
-                    loss_reduction="sum",
-                    z_loss_multiplier=self.z_loss_multiplier,
-                    loss_div_factor=batch_num_tokens_for_loss,
-                    return_logits=False,
-                    **model_kwargs,
-                )
+                if soft_ce_active and soft_target_probs is not None:
+                    # Soft-CE path: materialize logits so we can compute soft CE.
+                    assert soft_target_token_ids is not None
+                    output = self.model_forward(
+                        input_ids,
+                        labels=labels,
+                        ignore_index=self.label_ignore_index,
+                        loss_reduction="sum",
+                        z_loss_multiplier=self.z_loss_multiplier,
+                        loss_div_factor=batch_num_tokens_for_loss,
+                        return_logits=True,
+                        **model_kwargs,
+                    )
+                    logits = output.logits
+                    hard_ce_loss = output.ce_loss  # already finalized (sum / div_factor)
+                    z_loss = output.z_loss
+                    assert logits is not None, (
+                        "soft-CE path requires LMHead loss_implementation='default' "
+                        "so full logits are returned"
+                    )
 
-                # Update total batch CE and Z loss.
-                ce_batch_loss += get_local_tensor(ce_loss.detach())
-                del ce_loss
-                if z_batch_loss is not None:
-                    assert z_loss is not None
-                    z_batch_loss += get_local_tensor(z_loss.detach())
-                    del z_loss
+                    soft_ce_loss = self._compute_soft_ce_loss(
+                        logits=logits,
+                        soft_target_token_ids=soft_target_token_ids,
+                        soft_target_probs=soft_target_probs,
+                        labels=labels,
+                        loss_div_factor=batch_num_tokens_for_loss,
+                    )
+                    del logits
 
-                # Run backward pass.
-                loss.backward()
+                    # Combine: (1 - alpha) * hard_CE + alpha * soft_CE + z_loss.
+                    # hard_ce_loss from LMHead is already ce_loss + z_loss combined
+                    # in `output.loss`; we ignore output.loss and recombine ourselves.
+                    combined_loss = (1.0 - alpha) * hard_ce_loss + alpha * soft_ce_loss
+                    if z_loss is not None:
+                        combined_loss = combined_loss + z_loss
+
+                    ce_batch_loss += get_local_tensor(hard_ce_loss.detach())
+                    assert soft_ce_batch_loss is not None
+                    soft_ce_batch_loss += get_local_tensor(soft_ce_loss.detach())
+                    if z_batch_loss is not None:
+                        assert z_loss is not None
+                        z_batch_loss += get_local_tensor(z_loss.detach())
+
+                    combined_loss.backward()
+                    del combined_loss, hard_ce_loss, soft_ce_loss
+                    if z_loss is not None:
+                        del z_loss
+                else:
+                    # Hard-CE-only path — baseline, byte-identical to pre-soft-CE behavior.
+                    _, loss, ce_loss, z_loss = self.model_forward(
+                        input_ids,
+                        labels=labels,
+                        ignore_index=self.label_ignore_index,
+                        loss_reduction="sum",
+                        z_loss_multiplier=self.z_loss_multiplier,
+                        loss_div_factor=batch_num_tokens_for_loss,
+                        return_logits=False,
+                        **model_kwargs,
+                    )
+
+                    ce_batch_loss += get_local_tensor(ce_loss.detach())
+                    del ce_loss
+                    if z_batch_loss is not None:
+                        assert z_loss is not None
+                        z_batch_loss += get_local_tensor(z_loss.detach())
+                        del z_loss
+
+                    loss.backward()
 
         del batch  # In case this helps with memory utilization.
 
@@ -453,6 +536,18 @@ class TransformerTrainModule(TrainModule):
                 "Z loss unscaled",
                 z_batch_loss / self.z_loss_multiplier,
                 ReduceType.mean,
+                namespace="train",
+            )
+        if soft_ce_batch_loss is not None:
+            self.record_metric(
+                "soft CE loss",
+                soft_ce_batch_loss,
+                ReduceType.mean,
+                namespace="train",
+            )
+            self.record_metric(
+                "soft CE alpha",
+                alpha,
                 namespace="train",
             )
 
@@ -645,6 +740,63 @@ class TransformerTrainModule(TrainModule):
         if "doc_lens" in batch and "max_doc_lens" in batch:
             log_once(log, "intra-document masking enabled")
         return input_ids, labels, batch
+
+    def _current_soft_ce_alpha(self) -> float:
+        """The ngram soft-CE mixing weight alpha(t) for the current step.
+
+        Linear decay from ``soft_ce_alpha_start`` at step 0 to 0 at step
+        ``soft_ce_alpha_ramp_fraction * max_steps``, then 0 thereafter.
+        Returns 0 when soft-CE is disabled or ramp is complete.
+        """
+        if self.soft_ce_alpha_start is None:
+            return 0.0
+        max_steps = self.trainer.max_steps
+        if max_steps is None or max_steps <= 0:
+            # Token-based duration with no derivable step total, or single-step run.
+            # Fall back to a constant alpha_start so the user at least sees the
+            # intended behaviour; log once so they notice.
+            log_once(
+                log,
+                "soft-CE alpha ramp needs a step-resolvable max_duration; "
+                "falling back to constant alpha=soft_ce_alpha_start",
+            )
+            return float(self.soft_ce_alpha_start)
+        ramp_steps = int(self.soft_ce_alpha_ramp_fraction * max_steps)
+        step = self.trainer.global_step
+        if ramp_steps <= 0 or step >= ramp_steps:
+            return 0.0
+        return float(self.soft_ce_alpha_start) * (1.0 - step / ramp_steps)
+
+    def _compute_soft_ce_loss(
+        self,
+        *,
+        logits: torch.Tensor,
+        soft_target_token_ids: torch.Tensor,
+        soft_target_probs: torch.Tensor,
+        labels: torch.Tensor,
+        loss_div_factor: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute sum-reduction soft CE divided by ``loss_div_factor``.
+
+        Soft CE at position i:  - sum_k p_k * log_softmax(logits_i)[w_k]
+
+        where (w_k, p_k) is the top-K distribution carried on the batch. Positions
+        where ``labels == ignore_index`` are zeroed out so they match hard-CE's
+        ignore semantics (and because their ``loss_div_factor`` denominator
+        already excluded them).
+        """
+        # (B, S, V) — upcast for numerical stability
+        log_probs = F.log_softmax(get_local_tensor(logits).float(), dim=-1)
+        # (B, S, K)
+        gathered = log_probs.gather(-1, soft_target_token_ids)
+        # (B, S)
+        soft_ce_per_pos = -(soft_target_probs.float() * gathered).sum(dim=-1)
+        # Mask out ignored label positions.
+        mask = (labels != self.label_ignore_index).to(soft_ce_per_pos.dtype)
+        soft_ce_per_pos = soft_ce_per_pos * mask
+        # Sum → scalar; divide by the same denominator hard CE used so the two
+        # terms are on a comparable per-valid-token scale.
+        return soft_ce_per_pos.sum() / loss_div_factor
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:
