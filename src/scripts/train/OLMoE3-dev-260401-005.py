@@ -93,13 +93,16 @@ SEQUENCE_LENGTH = 8192
 
 torch.set_float32_matmul_precision('high')
 
+IN_EVAL_MODE = False
+import sys
+if sys.argv[1] == "eval_checkpoints":
+    IN_EVAL_MODE = True
 
-MAX_DURATION = int(3000e9)
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 500
+SAVE_INTERVAL = 1000
 
-NUM_EXPERTS = 24
+NUM_EXPERTS = 48
 TOP_K = 4
 D_MODEL=2560
 D_ATTN=3072
@@ -118,28 +121,32 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=4
+EP_DIM=8
 PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
 
 # stage 1 - 1M - 
-MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
+# MAX_DURATION = int(25.5e9)
+# MICRO_BSZ = 2
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
-# MICRO_BSZ = 4
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
+MAX_DURATION = int(50.5e9)
+MICRO_BSZ = 2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
 # NO LR_REF_BSZ=4M
 
 # stage 3 - 3M - 
+# MAX_DURATION = int(57e9)
 # MICRO_BSZ = 3
 # GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 3
 # NO LR_REF_BSZ=4M
 
 # stage 4 - 6M - 
+# MAX_DURATION = int(409e9)
 # MICRO_BSZ = 3
 # GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
 # NO LR_REF_BSZ=4M
@@ -159,6 +166,10 @@ GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
 # GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 24
 # NO LR_REF_BSZ=4M
 
+
+if IN_EVAL_MODE:
+    MICRO_BSZ = 4
+    EP_DIM=1
 
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
@@ -184,7 +195,7 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=10
+NUM_LAYERS=24
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -303,7 +314,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 lb_loss_weight=0.01,
-                z_loss_weight=None,
+                z_loss_weight=1e-5,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
                 normalize_expert_weights=1.0,
@@ -394,7 +405,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
     return MoEV2TransformerTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.max_sequence_length,
-        reset_optimizer_states_on_load=True,
+        # reset_optimizer_states_on_load=True, # TODO: only on first load step0,
         optim=MoEFusedV2OptimizerConfig(
             lr=LR,
             weight_decay=0.1,
@@ -411,10 +422,11 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
                         # "*norm.weight", 
                         # "*lm_head.w_out.weight",
                         "*lm_head.norm.weight",
+                        "*attention_norm.weight", 
+                        "*feed_forward_norm.weight", 
                     ],
                     opts=dict(weight_decay=0.0, use_muon=False),
                 ),
-                # output norm has a small weight decay to conter amplification from the output projection in the MoE block
                 # OptimGroupOverride(
                 #     params=[
                 #         "*.w_q.weight", 
@@ -498,10 +510,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     from olmo_core.train.common import StepSkipRange
     from olmo_core.train.checkpoint import CheckpointerConfig
 
-    return (
+    config = (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            load_path="/workspace/checkpoint/meg_10L_24N1S4K_2560H-11520F-1280S_24H_8192L-dev2-cap1.25/iter_0000000-olmo",
+            load_path="/workspace/checkpoint/OLMoE3-dev-260401-005_2560d3072a_24L2560M1280S_48E4K1S_p1/step0-meg-init",
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
@@ -510,9 +522,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
-            # checkpoints_to_eval=[
-            #     "/workspace/checkpoint/OLMoE3-dev-260304-dbg_2048d2048a_6L2048M2048S_16E4K1S_c1"
-            # ]
+            checkpoints_to_eval=[
+                "/workspace/checkpoint/OLMoE3-dev-260401-005_2560d3072a_24L2560M1280S_48E4K1S_p1/step*"
+            ]
         )
         .with_callback(
             "checkpointer",
@@ -551,11 +563,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                                    output_dir='/workspace/tmp'
             )
         )
-        # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        # )
     )
+    if IN_EVAL_MODE:
+        config = config.with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
+    
+    return config
 
 
 def finalize_config(config: ExperimentConfig):

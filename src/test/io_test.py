@@ -1,8 +1,11 @@
 from glob import glob
+from types import SimpleNamespace
 
 import pytest
+import urllib3.exceptions
 
 from olmo_core.io import (
+    _s3_get_bytes_range,
     copy_dir,
     copy_file,
     deserialize_from_tensor,
@@ -159,3 +162,31 @@ def test_glob_directory():
     assert set(glob("src/examples/**/*.py", recursive=True)) == set(
         glob_directory("src/examples/**/*.py")
     )
+
+
+def test_s3_get_bytes_range_retries_on_ssl_read_failure(monkeypatch):
+    attempts = 0
+
+    class FakeBody:
+        def read(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise urllib3.exceptions.SSLError("record layer failure")
+            return b"abc"
+
+    class FakeClient:
+        def get_object(self, **kwargs):
+            assert kwargs["Bucket"] == "bucket"
+            assert kwargs["Key"] == "key"
+            assert kwargs["Range"] == "bytes=10-12"
+            return {"Body": FakeBody()}
+
+    monkeypatch.setattr(
+        "olmo_core.io._get_s3_client",
+        lambda scheme: SimpleNamespace(get_object=FakeClient().get_object),
+    )
+    monkeypatch.setattr("olmo_core.io._wait_before_retry", lambda attempt: None)
+
+    assert _s3_get_bytes_range("s3", "bucket", "key", 10, 3) == b"abc"
+    assert attempts == 3
