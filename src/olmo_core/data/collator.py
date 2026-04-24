@@ -53,6 +53,8 @@ class DataCollator:
         all_label_mask = []
         all_pos_ids = []
         all_vis_limit = []
+        all_soft_target_token_ids = []
+        all_soft_target_probs = []
         all_indices = []
         all_metadata = []
         all_instance_mask = []
@@ -151,6 +153,37 @@ class DataCollator:
                     )
                 )
 
+            # Pad soft-target token IDs and probs. Each has shape (S, K);
+            # we pad only the S dim (K is fixed across the source). Padded
+            # positions get token_id=0 (arbitrary; never referenced because
+            # their prob is 0) and prob=0 (so 0 * log_softmax = 0 at the
+            # loss, same convention as label_mask=False for hard CE).
+            soft_target_token_ids = (
+                x.get("soft_target_token_ids") if isinstance(x, dict) else None
+            )
+            if soft_target_token_ids is not None:
+                if not isinstance(soft_target_token_ids, torch.Tensor):
+                    soft_target_token_ids = torch.as_tensor(soft_target_token_ids)
+                all_soft_target_token_ids.append(
+                    F.pad(
+                        soft_target_token_ids.to(dtype=torch.long),
+                        (0, 0) + pad_shape,
+                        value=0,
+                    )
+                )
+
+            soft_target_probs = x.get("soft_target_probs") if isinstance(x, dict) else None
+            if soft_target_probs is not None:
+                if not isinstance(soft_target_probs, torch.Tensor):
+                    soft_target_probs = torch.as_tensor(soft_target_probs)
+                all_soft_target_probs.append(
+                    F.pad(
+                        soft_target_probs.to(dtype=torch.float32),
+                        (0, 0) + pad_shape,
+                        value=0.0,
+                    )
+                )
+
             # Indices.
             index = x.get("index") if isinstance(x, dict) else None
             if index is not None:
@@ -196,6 +229,10 @@ class DataCollator:
             out["pos_ids"] = torch.stack(all_pos_ids)
         if all_vis_limit:
             out["vis_limit"] = torch.stack(all_vis_limit)
+        if all_soft_target_token_ids:
+            out["soft_target_token_ids"] = torch.stack(all_soft_target_token_ids)
+        if all_soft_target_probs:
+            out["soft_target_probs"] = torch.stack(all_soft_target_probs)
         if all_indices:
             out["index"] = torch.stack(all_indices)
         if all_instance_mask:
