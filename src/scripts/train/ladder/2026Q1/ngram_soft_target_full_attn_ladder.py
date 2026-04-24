@@ -178,5 +178,41 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     return ladder
 
 
+def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
+    """Hook called by ``internal.ladder.main`` to register custom CLI args.
+
+    Lets us point the soft-target ladder at a different table directory
+    (e.g. for smoke testing against synthetic tables) without editing the
+    default constant.
+    """
+    parser.add_argument(
+        "--ngram-table-dir",
+        type=str,
+        default=DEFAULT_NGRAM_TABLE_DIR,
+        help=(
+            "Path to the ngram_table_n<N>.bin files. Defaults to the "
+            "pilot-v4 1e-3 n=5 tables on Weka."
+        ),
+    )
+    parser.add_argument(
+        "--soft-ce-alpha-start",
+        type=float,
+        default=DEFAULT_SOFT_CE_ALPHA_START,
+        help="Soft-CE mixing weight at step 0 (ramps linearly to 0).",
+    )
+    parser.add_argument(
+        "--soft-ce-alpha-ramp-fraction",
+        type=float,
+        default=DEFAULT_SOFT_CE_ALPHA_RAMP_FRACTION,
+        help="Fraction of max_steps over which alpha ramps from start to 0.",
+    )
+    parser.add_argument(
+        "--soft-target-k",
+        type=int,
+        default=DEFAULT_SOFT_TARGET_K,
+        help="Top-K size for the soft-target distributions.",
+    )
+
+
 if __name__ == "__main__":
-    main(configure_ladder)
+    main(configure_ladder, add_additional_args=add_additional_args)
