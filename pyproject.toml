@@ -26,7 +26,7 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
-    "liger-kernel",
+    "liger-kernel ; sys_platform == 'linux'",
 ]
 
 [project.urls]
