@@ -92,7 +92,7 @@ SEED = 1337
 INSTANCE_FILTER = True
 
 SOURCE_MIXTURE_YAML = (
-    "src/olmo_core/data/source_mixtures/OLMo3-32B-midtraining-modelnamefilter.yaml"
+    "src/olmo_core/data/source_mixtures/OLMo3-32B-midtraining-modelnamefilter-weka.yaml"
 )
 
 MIDTRAINING_CONFIGS = {
@@ -104,14 +104,14 @@ MIDTRAINING_CONFIGS = {
     ),
     "810m": dict(
         # Starting LR: ~10% of peak pretraining LR (0.002).
-        lr=2e-4,
-        global_batch_size=5_242_880,
+        lr=4e-4,
+        global_batch_size=4 * 1024 * 1024,
         load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-810M-Cx100/step269926/",
     ),
     "1.4b": dict(
         # Starting LR: ~10% of peak pretraining LR (0.002).
-        lr=2e-4,
-        global_batch_size=8_388_608,
+        lr=4e-4,
+        global_batch_size=8 * 1024 * 1024,
         load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-1.4B-Cx100/step308433/",
     ),
 }
