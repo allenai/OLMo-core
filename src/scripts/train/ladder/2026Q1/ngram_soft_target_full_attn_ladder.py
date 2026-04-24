@@ -41,11 +41,15 @@ from olmo_core.train.train_module import (
 
 log = logging.getLogger(__name__)
 
+# Matches ``baseline_v02_full_attn_ladder.py`` exactly so the soft-target
+# arm is an apples-to-apples comparison against the v02 baseline isoparam.
+# Only the s2pdf subsource moves v0.1→v0.2 (redacted → document-denylisted);
+# the other five stay at v0.1 because they're unchanged between versions.
 DOLMA2_BASELINE_PATHS = [
     "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2-fixed/**/*.npy",
     "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/arxiv/**/*.npy",
     "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/finemath-3plus/**/*.npy",
-    "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/s2pdf_redacted/**/*.npy",
+    "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.2/allenai/dolma2-tokenizer/s2pdf/**/*.npy",
     "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/stack-edu/**/*.npy",
     "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/wikipedia/**/*.npy",
 ]
