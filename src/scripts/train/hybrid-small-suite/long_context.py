@@ -11,14 +11,35 @@ Before launching:
   - Update ``load_path`` in LONG_CONTEXT_CONFIGS for each model size with the
     final midtraining checkpoint path.
 
-Usage:
-  # Dry run (print config without launching):
+Usage::
+
+  # Dry run — print resolved config without launching:
   python src/scripts/train/hybrid-small-suite/long_context.py dry_run \\
       hybrid-small-lc-275M ai2/jupiter
 
   # Launch on Beaker (model size is parsed from run name):
   python src/scripts/train/hybrid-small-suite/long_context.py launch \\
-      hybrid-small-lc-1.4B ai2/jupiter
+      hybrid-small-lc-275M ai2/titan-cirrascale \\
+      --launch.num_nodes=1 \\
+      --launch.priority=urgent \\
+      --launch.budget=ai2/oe-other \\
+      --train_module.optim.lr=1.6e-3
+
+  # Train on a single local node (e.g. inside a Beaker session):
+  python src/scripts/train/hybrid-small-suite/long_context.py train \\
+      hybrid-small-lc-275M ai2/titan-cirrascale
+
+  # Train on a single GPU without torchrun (quick local iteration):
+  python src/scripts/train/hybrid-small-suite/long_context.py train_single \\
+      hybrid-small-lc-275M ai2/titan-cirrascale
+
+  # Dev / smoke-test — disable checkpointing, W&B, and downstream evals:
+  python src/scripts/train/hybrid-small-suite/long_context.py train_single \\
+      hybrid-small-lc-275M ai2/titan-cirrascale \\
+      --trainer.callbacks.checkpointer=null \\
+      --trainer.callbacks.wandb=null \\
+      --trainer.max_duration.value=10 \\
+      --trainer.max_duration.unit=steps
 """
 
 import os

@@ -14,14 +14,34 @@ Model sizes:
   810M:  810,354,816 total /  707,594,368 non-embedding params, D=1.4T tokens  (8 nodes)
   1.4B: 1,422,110,720 total / 1,293,660,160 non-embedding params, D=2.6T tokens (32 nodes)
 
-Usage:
-  # Dry run (print config without launching):
-  python src/scripts/train/hybrid-small-suite/pretraining.py dry_run \\
+Usage::
+
+  # Dry run — print resolved config without launching:
+  uv run src/scripts/train/hybrid-small-suite/pretraining.py dry_run \\
       hybrid-small-275M ai2/jupiter
 
   # Launch on Beaker (model size is parsed from run name):
-  python src/scripts/train/hybrid-small-suite/pretraining.py launch \\
-      hybrid-small-1.4B ai2/jupiter
+  uv run src/scripts/train/hybrid-small-suite/pretraining.py launch \\
+      hybrid-small-275M ai2/titan \\
+      --launch.num_nodes=4 \\
+      --launch.priority=urgent \\
+      --launch.budget=ai2/oe-other
+
+  # Train on a single local node (e.g. inside a Beaker session):
+  uv run torchrun --nproc-per-node=1 src/scripts/train/hybrid-small-suite/pretraining.py train \\
+      hybrid-small-275M ai2/titan
+
+  # Train on a single GPU without torchrun (quick local iteration):
+  uv run src/scripts/train/hybrid-small-suite/pretraining.py train_single \\
+      hybrid-small-275M ai2/titan
+
+  # Dev / smoke-test — disable checkpointing, W&B, and downstream evals:
+  uv run src/scripts/train/hybrid-small-suite/pretraining.py train_single \\
+      hybrid-small-275M ai2/titan \\
+      --trainer.callbacks.checkpointer=null \\
+      --trainer.callbacks.wandb=null \\
+      --trainer.max_duration.value=10 \\
+      --trainer.max_duration.unit=steps
 """
 
 import os
