@@ -60,6 +60,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                     source=PerFileChunkedInstanceSourceConfig(
                         source_paths=ICL_OVERLAP_PATHS,
                         sequence_length=args.sequence_length,
+                        tokenizer=tokenizer,
                     ),
                     ratio=0.5,
                     label="icl-overlap",

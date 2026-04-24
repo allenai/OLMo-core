@@ -18,8 +18,10 @@ from olmo_core.data.composable.concat_and_chunk_instance_source import (
 from olmo_core.data.composable.numpy_document_source import NumpyDocumentSource
 from olmo_core.data.composable.per_file_chunked_instance_source import (
     PerFileChunkedInstanceSource,
+    PerFileChunkedInstanceSourceConfig,
 )
 from olmo_core.data.tokenizer import TokenizerConfig
+from olmo_core.data.types import NumpyDatasetDType
 
 
 SEQ_LEN = 8
@@ -169,3 +171,59 @@ def test_visualize_single_file(tmp_path: Path, capsys):
     src.visualize(icons=False)
     captured = capsys.readouterr()
     assert "PerFileChunkedInstanceSource" in captured.out
+
+
+def test_config_requires_dtype_or_tokenizer(tmp_path: Path):
+    """
+    Neither ``token_dtype`` nor ``tokenizer`` set -> the config must raise
+    at build time rather than silently default to a wrong dtype.
+
+    Regression: the initial version of this source silently defaulted to
+    uint16. Dolma2-tokenized shards are uint32 (vocab 100278), so the wrong
+    default caused the model to train on low/high-byte fragments of real
+    tokens — observed in the 2026-04-24 align-fix reruns, where the
+    treatment effect got 3-4x WORSE than broken-alignment until this was
+    fixed.
+    """
+    shard = tmp_path / "shard-00.npy"
+    _write_shard(shard, 0, 2 * SEQ_LEN)
+    cfg = PerFileChunkedInstanceSourceConfig(
+        source_paths=[str(shard)], sequence_length=SEQ_LEN,
+    )
+    with pytest.raises(ValueError, match="token_dtype.*tokenizer"):
+        cfg.build(tmp_path)
+
+
+def test_config_infers_dtype_from_tokenizer(tmp_path: Path):
+    """Passing a tokenizer should auto-detect dtype from vocab_size."""
+    shard = tmp_path / "shard-00.npy"
+    # uint32 data (vocab > 2^16)
+    np.arange(2 * SEQ_LEN, dtype=np.uint32).tofile(shard)
+
+    # Dolma2 vocab (100278) requires uint32. Build from config with tokenizer
+    # only (no explicit token_dtype).
+    cfg = PerFileChunkedInstanceSourceConfig(
+        source_paths=[str(shard)],
+        sequence_length=SEQ_LEN,
+        tokenizer=TokenizerConfig.dolma2(),
+    )
+    src = cfg.build(tmp_path)
+    assert src._token_dtype == np.uint32
+    # And reading recovers the original uint32 values.
+    assert list(src[0]["input_ids"]) == list(range(SEQ_LEN))
+    assert list(src[1]["input_ids"]) == list(range(SEQ_LEN, 2 * SEQ_LEN))
+
+
+def test_config_explicit_dtype_wins_over_tokenizer(tmp_path: Path):
+    """If both are given, explicit ``token_dtype`` takes priority."""
+    shard = tmp_path / "shard-00.npy"
+    np.arange(2 * SEQ_LEN, dtype=np.uint16).tofile(shard)
+
+    cfg = PerFileChunkedInstanceSourceConfig(
+        source_paths=[str(shard)],
+        sequence_length=SEQ_LEN,
+        token_dtype=NumpyDatasetDType.uint16,
+        tokenizer=TokenizerConfig.dolma2(),  # would imply uint32; we override.
+    )
+    src = cfg.build(tmp_path)
+    assert src._token_dtype == np.uint16

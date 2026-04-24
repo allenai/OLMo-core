@@ -11,6 +11,7 @@ import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
 
+from ..tokenizer import TokenizerConfig
 from ..types import NumpyDatasetDType, NumpyUIntTypes
 from ..utils import load_array_slice
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
@@ -38,15 +39,51 @@ class PerFileChunkedInstanceSourceConfig(InstanceSourceConfig):
     """The number of tokens per instance."""
 
     token_dtype: Optional[NumpyDatasetDType] = None
-    """The numpy dtype for token arrays. Defaults to uint16."""
+    """
+    The numpy dtype for token arrays. If not specified, it will be inferred
+    from ``tokenizer.vocab_size`` (matching
+    :class:`~olmo_core.data.composable.numpy_document_source.NumpyDocumentSourceConfig`).
+    At least one of ``token_dtype`` or ``tokenizer`` must be provided — no
+    silent default — because a dtype mismatch silently produces garbage
+    token IDs from the on-disk bytes.
+    """
+
+    tokenizer: Optional[TokenizerConfig] = None
+    """
+    Tokenizer config used to infer ``token_dtype`` from ``vocab_size`` when
+    ``token_dtype`` is not set. Mirrors :class:`NumpyDocumentSourceConfig`.
+    """
 
     label: Optional[str] = None
     """An optional label for this source."""
 
-    def build(self, work_dir: PathOrStr) -> "PerFileChunkedInstanceSource":
-        token_dtype = (
-            self.token_dtype.as_np_dtype() if self.token_dtype is not None else np.uint16
+    def _resolve_dtype(self) -> NumpyUIntTypes:
+        if self.token_dtype is not None:
+            return NumpyDatasetDType(self.token_dtype).as_np_dtype()
+        if self.tokenizer is not None:
+            for dtype in (
+                NumpyDatasetDType.uint8,
+                NumpyDatasetDType.uint16,
+                NumpyDatasetDType.uint32,
+                NumpyDatasetDType.uint64,
+            ):
+                if (self.tokenizer.vocab_size - 1) <= np.iinfo(dtype.as_np_dtype()).max:
+                    log.info(
+                        f"PerFileChunkedInstanceSource: assuming dtype "
+                        f"'{dtype}' based on tokenizer vocab_size="
+                        f"{self.tokenizer.vocab_size}"
+                    )
+                    return dtype.as_np_dtype()
+        raise ValueError(
+            "PerFileChunkedInstanceSourceConfig: either 'token_dtype' or "
+            "'tokenizer' must be set. Defaulting dtype silently is unsafe "
+            "because reading the wrong width against uint32 data yields "
+            "garbage token IDs (observed in the v02 align-fix crash "
+            "investigation, 2026-04-24)."
         )
+
+    def build(self, work_dir: PathOrStr) -> "PerFileChunkedInstanceSource":
+        token_dtype = self._resolve_dtype()
         source_paths = self._expand_all_globs(self.source_paths)
         return PerFileChunkedInstanceSource(
             source_paths=source_paths,
