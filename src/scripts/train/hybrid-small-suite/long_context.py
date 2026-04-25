@@ -110,12 +110,12 @@ LONG_CONTEXT_CONFIGS = {
     ),
     "810m": dict(
         lr=2e-4,
-        num_nodes=8,
+        num_nodes=1,
         global_batch_size=4 * 1024 * 1024,
         rank_microbatch_size=LC_SEQUENCE_LENGTH,
         cp_degree=1,
         fused_linear_loss=False,
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-810M-lr1e4-bsz1048576/step95368",
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-v2-810M-lr4e-4/step23842",
     ),
     "1.4b": dict(
         lr=2e-4,
@@ -160,7 +160,7 @@ def build_train_module_config(
             ],
         ),
         # Linear decay from starting LR to 0 over the full LC run.
-        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=200, alpha_f=0.0),
+        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=1000, alpha_f=0.0),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
