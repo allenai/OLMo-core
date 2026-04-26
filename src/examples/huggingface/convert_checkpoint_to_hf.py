@@ -93,6 +93,7 @@ def convert_checkpoint_to_hf(
             )
             validate = False
         elif attention["use_flash"]:
+            log.warning(f"flash_attn: {flash_attn} and cuda: {torch.device('cuda')} ")
             log.info(
                 "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
             )
