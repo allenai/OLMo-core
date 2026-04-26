@@ -100,8 +100,8 @@ LC_DATA_GLOB = "/weka/oe-training-default/ai2-llm/preprocessed/tylerr/lc-reshard
 
 LONG_CONTEXT_CONFIGS = {
     "275m": dict(
-        lr=2e-4,
-        num_nodes=2,
+        lr=8e-4,
+        num_nodes=1,
         global_batch_size=2 * 1024 * 1024,
         rank_microbatch_size=2 * LC_SEQUENCE_LENGTH,
         cp_degree=1,
