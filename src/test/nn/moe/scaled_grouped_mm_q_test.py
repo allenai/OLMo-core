@@ -18,8 +18,8 @@ def _build_inputs() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     torch.manual_seed(123)
     group_sizes = torch.tensor([3, 2, 4], dtype=torch.int32)
     offs = torch.cumsum(group_sizes, dim=0, dtype=torch.int32)
-    a = torch.randn(int(offs[-1].item()), 64, dtype=torch.float32)
-    b = torch.randn(group_sizes.numel(), 64, 96, dtype=torch.float32)
+    a = torch.randn(int(offs[-1].item()), 512, dtype=torch.float32)
+    b = torch.randn(group_sizes.numel(), 512, 512, dtype=torch.float32)
     return a, b, offs
 
 
@@ -37,7 +37,7 @@ def _stub_forward(
 
 
 def test_mxfp8_row_quant_dequant_roundtrip():
-    x = torch.randn(16, 128, dtype=torch.float32)
+    x = torch.randn(16, 512, dtype=torch.float32)
     qdata, scales = quantize_rows_to_mxfp8(x, block_size=32)
     assert qdata.dtype == torch.float8_e4m3fn
     assert scales.dtype == torch.float8_e8m0fnu
@@ -56,14 +56,14 @@ def test_mxfp8_row_quant_dequant_roundtrip():
 def test_mxfp8_row_quant_no_nan_on_cuda():
     if not torch.cuda.is_available():
         return
-    x = torch.randn(256, 128, device="cuda", dtype=torch.bfloat16)
+    x = torch.randn(256, 512, device="cuda", dtype=torch.bfloat16)
     qdata, scales = quantize_rows_to_mxfp8(x, block_size=32)
     assert bool(torch.isfinite(qdata.float()).all())
     assert bool(torch.isfinite(scales.float()).all())
 
 
 def test_quantize_rows_to_mxfp8_supports_output_buffers():
-    x = torch.randn(16, 128, dtype=torch.float32)
+    x = torch.randn(16, 512, dtype=torch.float32)
     out_q = torch.empty_like(x, dtype=torch.float8_e4m3fn)
     out_scales = torch.empty((x.shape[0], x.shape[1] // 32), dtype=torch.float8_e8m0fnu)
 
@@ -133,8 +133,42 @@ def test_scaled_grouped_mm_q_input_grad_out_alias(monkeypatch):
     assert grad_a.untyped_storage().data_ptr() == input_grad_out.untyped_storage().data_ptr()
 
 
+def test_scaled_grouped_mm_q_empty_input_backward_returns_zero_grads():
+    mat_a = torch.empty((0, 512), dtype=torch.float32, requires_grad=True)
+    mat_b = torch.randn(3, 512, 512, dtype=torch.float32, requires_grad=True)
+    offs = torch.zeros((3,), dtype=torch.int32)
+
+    out = scaled_grouped_mm_q(mat_a, mat_b, offs=offs)
+    assert out.shape == (0, 512)
+    assert out.dtype == torch.bfloat16
+
+    out.sum().backward()
+
+    assert mat_a.grad is not None
+    assert mat_a.grad.shape == mat_a.shape
+    assert mat_b.grad is not None
+    torch.testing.assert_close(mat_b.grad, torch.zeros_like(mat_b))
+
+
+def test_scaled_grouped_mm_q_empty_input_backward_uses_input_grad_out():
+    mat_a = torch.empty((0, 512), dtype=torch.float32, requires_grad=True)
+    mat_b = torch.randn(3, 512, 512, dtype=torch.float32, requires_grad=True)
+    offs = torch.zeros((3,), dtype=torch.int32)
+    input_grad_out = torch.empty_like(mat_a)
+
+    out = scaled_grouped_mm_q(
+        mat_a,
+        mat_b,
+        offs=offs,
+        input_grad_out=input_grad_out,
+    )
+    (grad_a, _grad_b) = torch.autograd.grad(out.sum(), (mat_a, mat_b))
+
+    assert grad_a.untyped_storage().data_ptr() == input_grad_out.untyped_storage().data_ptr()
+
+
 def test_quantize_grouped_2d_to_mxfp8_blocked_keeps_capacity_shape():
-    x = torch.randn(16, 128, dtype=torch.float32)
+    x = torch.randn(16, 512, dtype=torch.float32)
     # Active rows are 9, but input has capacity 16.
     offs = torch.tensor([4, 7, 9], dtype=torch.int32)
 
@@ -148,7 +182,7 @@ def test_quantize_grouped_2d_to_mxfp8_blocked_keeps_capacity_shape():
 
 
 def test_quantize_grouped_weight_3d_to_mxfp8_blocked_returns_col_major_layout():
-    b = torch.randn(3, 64, 96, dtype=torch.float32)
+    b = torch.randn(3, 512, 512, dtype=torch.float32)
     qdata, scales_blocked = quantize_grouped_weight_3d_to_mxfp8_blocked(b)
 
     assert qdata.shape == b.shape
@@ -241,8 +275,8 @@ def test_scaled_grouped_mm_q_uses_prequantized_rhs(monkeypatch):
         return
     torch.manual_seed(123)
     offs = torch.tensor([3, 5, 9], dtype=torch.int32, device="cuda")
-    a = torch.randn(int(offs[-1].item()), 128, dtype=torch.float32, device="cuda")
-    b = torch.randn(offs.numel(), 128, 96, dtype=torch.float32, device="cuda")
+    a = torch.randn(int(offs[-1].item()), 512, dtype=torch.float32, device="cuda")
+    b = torch.randn(offs.numel(), 512, 512, dtype=torch.float32, device="cuda")
     preq = prequantize_scaled_grouped_mm_rhs(b)
     assert isinstance(preq, ScaledGroupedMMPrequantizedRHS)
 
@@ -291,9 +325,9 @@ def test_scaled_grouped_mm_q_uses_prequantized_rhs(monkeypatch):
 def test_scaled_grouped_mm_q_backward_uses_prequantized_lhs_when_mat_a_not_saved(monkeypatch):
     torch.manual_seed(123)
     offs = torch.tensor([3, 5, 9], dtype=torch.int32)
-    mat_a_real = torch.randn(int(offs[-1].item()), 128, dtype=torch.float32)
+    mat_a_real = torch.randn(int(offs[-1].item()), 512, dtype=torch.float32)
     mat_a_bad = torch.zeros_like(mat_a_real)
-    mat_b = torch.randn(offs.numel(), 128, 96, dtype=torch.float32, requires_grad=True)
+    mat_b = torch.randn(offs.numel(), 512, 512, dtype=torch.float32, requires_grad=True)
     mat_a_q, mat_a_s = quantize_rows_to_mxfp8(mat_a_real, block_size=32)
     preq_lhs = scaled_grouped_mm_module.ScaledGroupedMMPrequantizedLHS(
         mat_a_q=mat_a_q,

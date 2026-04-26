@@ -27,10 +27,13 @@ from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from .block import (
     MoEFusedV2TransformerBlock,
     MoEFusedV2TransformerBlockConfig,
+)
+from .ep_no_sync_state import (
     _NoSyncSymmSharedPool,
     _NoSyncTboPendingContext,
-    _checkpoint_recompute_context_fn,
 )
+from .tbo_state import SyncedTboPendingContext
+from .checkpointing import checkpoint_recompute_context_fn
 from olmo_core.ops import moe as ops
 from ...lm_head import LMHeadConfig, LMOutputWithLoss
 import nvtx
@@ -80,7 +83,7 @@ def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):
         return CheckpointPolicy.PREFER_RECOMPUTE
 
 # recompute_context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
-recompute_context_fn = _checkpoint_recompute_context_fn
+recompute_context_fn = checkpoint_recompute_context_fn
 
 # from olmo_core.nn.utils import selective_checkpointing_context_fn
 # recompute_context_fn = selective_checkpointing_context_fn
@@ -684,18 +687,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         h0, h1 = self._tbo_last_step(x0, x1_ctx, lm_head_kwargs, labels0, labels1)
         self._log_debug_mem(f'last_step')
 
-        # merge h0 h1
-        if self.lm_head is None:
-            h = torch.cat([h0, h1], dim=0)
-            return h
-        else:
-            merged = LMOutputWithLoss(
-                None,
-                h0[1] + h1[1],
-                h0[2] + h1[2],
-                h0[3] + h1[3],
-            )
-            return merged
+        return self._merge_tbo_outputs(h0, h1, loss_reduction=loss_reduction)
 
     # @torch.compile
     def _tbo_last_step(self, x0, x1_ctx: object, lm_head_kwargs: Dict[str, Any], labels0: Optional[torch.Tensor], labels1: Optional[torch.Tensor]):
@@ -711,14 +703,16 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
             return h0, h1
 
-        x1_ctx = cast(Dict[str, Any], x1_ctx)
+        if not isinstance(x1_ctx, SyncedTboPendingContext):
+            raise RuntimeError(
+                "Expected synced TBO context for the final TBO step, "
+                f"got type={type(x1_ctx)}"
+            )
         with nvtx.annotate("TBO-1", color='orange'):
-            global_x1 = x1_ctx['global_x1']
-            send_counts1 = cast(List, x1_ctx['send_counts1'])
-            recv_counts1 = cast(List, x1_ctx['recv_counts1'])
-
-
-            last_block = cast(MoEFusedV2TransformerBlock, x1_ctx['last_block'])
+            global_x1 = x1_ctx.global_x
+            send_counts1 = x1_ctx.send_counts
+            recv_counts1 = x1_ctx.recv_counts
+            last_block = x1_ctx.last_block
 
             assert last_block.routed_experts_router is not None
             # finish reverse all2all and other ops for x1
@@ -733,12 +727,12 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                     # async_op=True,
                 )
             
-            reversed_local_x_permutation_mapping1 = x1_ctx['reversed_local_x_permutation_mapping1']
-            local_x_global_routed_expert_weights1 = x1_ctx['local_x_global_routed_expert_weights1']
-            hidden_shape_before_permute1 = x1_ctx['hidden_shape_before_permute1']
-            in_shape1 = cast(torch.Size, x1_ctx['in_shape1'])
-            mixed_shared_out1 = x1_ctx['mixed_shared_out1']
-            attn_res_out1 = x1_ctx['attn_res_out1']
+            reversed_local_x_permutation_mapping1 = x1_ctx.reversed_local_x_permutation_mapping
+            local_x_global_routed_expert_weights1 = x1_ctx.local_x_global_routed_expert_weights
+            hidden_shape_before_permute1 = x1_ctx.hidden_shape_before_permute
+            in_shape1 = x1_ctx.in_shape
+            mixed_shared_out1 = x1_ctx.mixed_shared_out
+            attn_res_out1 = x1_ctx.attn_res_out
             
             assert last_block is not None
             assert local_x_handle1 is not None
@@ -780,6 +774,59 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
 
         return h0, h1
+
+    def _merge_tbo_outputs(
+        self,
+        h0: Union[torch.Tensor, LMOutputWithLoss],
+        h1: Union[torch.Tensor, LMOutputWithLoss],
+        *,
+        loss_reduction: Literal["mean", "sum", "none"],
+    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        if isinstance(h0, torch.Tensor):
+            if not isinstance(h1, torch.Tensor):
+                raise RuntimeError(f"TBO output type mismatch: {type(h0)} vs {type(h1)}")
+            return torch.cat([h0, h1], dim=0)
+
+        if not isinstance(h1, LMOutputWithLoss):
+            raise RuntimeError(f"TBO output type mismatch: {type(h0)} vs {type(h1)}")
+
+        logits: Optional[torch.Tensor]
+        if h0.logits is None:
+            logits = None
+        else:
+            if h1.logits is None:
+                raise RuntimeError("TBO output type mismatch: first half has logits, second half does not")
+            logits = torch.cat([h0.logits, h1.logits], dim=0)
+
+        def merge_loss(
+            lhs: Optional[torch.Tensor],
+            rhs: Optional[torch.Tensor],
+        ) -> Optional[torch.Tensor]:
+            if lhs is None:
+                if rhs is not None:
+                    raise RuntimeError("TBO output type mismatch: first half loss is None, second half is not")
+                return None
+            if rhs is None:
+                raise RuntimeError("TBO output type mismatch: first half loss is set, second half is None")
+            if loss_reduction == "none":
+                return torch.cat([lhs, rhs], dim=0)
+            if loss_reduction == "mean":
+                return (lhs + rhs) * 0.5
+            if loss_reduction == "sum":
+                return lhs + rhs
+            raise NotImplementedError(loss_reduction)
+
+        loss = merge_loss(h0.loss, h1.loss)
+        ce_loss = merge_loss(h0.ce_loss, h1.ce_loss)
+        z_loss = merge_loss(h0.z_loss, h1.z_loss)
+        assert loss is not None
+        assert ce_loss is not None
+        return LMOutputWithLoss(
+            logits=logits,
+            loss=loss,
+            ce_loss=ce_loss,
+            z_loss=z_loss,
+        )
 
     def maybe_forward_lm_head(
         self,

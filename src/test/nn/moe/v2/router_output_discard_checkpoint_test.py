@@ -11,15 +11,16 @@ def test_router_uses_bf16_saved_input_and_matches_reference_grads():
     torch.manual_seed(123)
 
     router = MoERouterV2(
-        d_model=16,
+        d_model=512,
         num_experts=8,
         top_k=2,
         init_device="cpu",
         dtype=torch.float32,
+        use_recompute_fp32_cast=True,
     )
     router_ref = copy.deepcopy(router)
 
-    x = torch.randn(3, 5, 16, dtype=torch.bfloat16, requires_grad=True)
+    x = torch.randn(1, 8, 512, dtype=torch.bfloat16, requires_grad=True)
     x_ref = x.detach().clone().requires_grad_(True)
 
     saved_meta: list[tuple[tuple[int, ...], torch.dtype]] = []

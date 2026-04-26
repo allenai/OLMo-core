@@ -156,7 +156,7 @@ def _chunk_unpermute_torch(
         return output
 
     row_id_map_int64 = row_id_map.to(dtype=torch.int64)
-    valid = row_id_map_int64 >= 0
+    valid = (row_id_map_int64 >= 0) & (row_id_map_int64 < inp.shape[0])
     safe_row_id = torch.where(valid, row_id_map_int64, torch.zeros_like(row_id_map_int64))
     gathered = inp.index_select(0, safe_row_id)
     gathered = torch.where(valid.unsqueeze(-1), gathered, torch.zeros_like(gathered))
@@ -172,9 +172,13 @@ def _chunk_permute_by_row_id_map_torch(
     row_id_map: torch.Tensor,
     *,
     num_out_tokens: int,
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     output = inp.new_zeros((num_out_tokens, inp.shape[1]))
     if row_id_map.numel() == 0 or num_out_tokens == 0:
+        if out is not None:
+            out.copy_(output)
+            return out
         return output
 
     row_id_map_int64 = row_id_map.to(dtype=torch.int64)
@@ -182,6 +186,9 @@ def _chunk_permute_by_row_id_map_torch(
     safe_dst_idx = torch.where(valid, row_id_map_int64, torch.zeros_like(row_id_map_int64))
     src_rows = inp * valid.unsqueeze(-1).to(dtype=inp.dtype)
     output.index_add_(0, safe_dst_idx, src_rows)
+    if out is not None:
+        out.copy_(output)
+        return out
     return output
 
 @torch.compiler.disable
@@ -260,7 +267,12 @@ def _dispatch_permute_by_row_id_map(
     if backend == "cuda":
         return _chunk_permute_by_row_id_map_cuda(inp, row_id_map, num_out_tokens=num_out_tokens, out=out)
     if backend == "triton":
-        return _chunk_permute_by_row_id_map_torch(inp, row_id_map, num_out_tokens=num_out_tokens) # TODO: add support for `out`
+        return _chunk_permute_by_row_id_map_torch(
+            inp,
+            row_id_map,
+            num_out_tokens=num_out_tokens,
+            out=out,
+        )
     raise ValueError(f"Invalid backend: {backend}")
 
 

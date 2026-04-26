@@ -593,7 +593,7 @@ class MoERouterV2(nn.Module):
         loss_div_factor,
         *,
         accumulate_metrics: bool = True,
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
         if self.training and torch.is_grad_enabled():

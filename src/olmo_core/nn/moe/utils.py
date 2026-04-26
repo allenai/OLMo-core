@@ -430,12 +430,30 @@ class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
                 row_id_map=row_id_map,
                 probs=probs,
                 keep_mask=packed_keep_mask,
-                out=ctx.backward_grad_input_buffer,
+                out=(
+                    None
+                    if (
+                        ctx.needs_input_grad[2]
+                        and ctx.backward_grad_input_buffer is not None
+                        and ctx.backward_grad_input_buffer.untyped_storage().data_ptr()
+                        == inp.untyped_storage().data_ptr()
+                    )
+                    else ctx.backward_grad_input_buffer
+                ),
             )
             if ctx.backward_grad_input_buffer is not None:
-                assert grad_inp is ctx.backward_grad_input_buffer, (
-                    "Expected moe_unpermute_bwd to write to backward_grad_input_buffer"
+                grad_inp_uses_buffer = (
+                    grad_inp.untyped_storage().data_ptr()
+                    == ctx.backward_grad_input_buffer.untyped_storage().data_ptr()
                 )
+                input_aliases_buffer = (
+                    ctx.backward_grad_input_buffer.untyped_storage().data_ptr()
+                    == inp.untyped_storage().data_ptr()
+                )
+                if not (ctx.needs_input_grad[2] and input_aliases_buffer):
+                    assert grad_inp_uses_buffer, (
+                        "Expected moe_unpermute_bwd to write to backward_grad_input_buffer"
+                    )
 
         if not ctx.needs_input_grad[2]:
             grad_probs = None

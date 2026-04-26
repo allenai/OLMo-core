@@ -52,7 +52,7 @@ def test_permute_drop_1d_fused_matches_legacy(
     torch.manual_seed(13)
     device = torch.device("cuda")
     num_tokens = 128
-    d_model = 256
+    d_model = 512
     num_experts = 16
     num_out_tokens = num_tokens * top_k
 
@@ -109,7 +109,7 @@ def test_permute_drop_1d_fused_out_buffer():
     device = torch.device("cuda")
     num_tokens = 64
     top_k = 2
-    d_model = 128
+    d_model = 512
     num_experts = 8
     num_out_tokens = num_tokens * top_k
 
@@ -157,7 +157,7 @@ def test_permute_drop_1d_one_shot_custom_cuda_matches_legacy_kept_rows():
     device = torch.device("cuda")
     num_tokens = 96
     top_k = 2
-    d_model = 128
+    d_model = 512
     num_experts = 8
     num_out_tokens = num_tokens * top_k
 

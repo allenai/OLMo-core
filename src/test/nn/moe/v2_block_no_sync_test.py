@@ -1,16 +1,50 @@
 import types
 
+import pytest
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import DType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
-from olmo_core.testing import requires_multi_gpu, run_distributed_test
+from olmo_core.testing import requires_gpu, requires_grouped_gemm, requires_multi_gpu, run_distributed_test
+
+
+def test_v2_extracted_forward_module_names_importable():
+    from olmo_core.nn.moe.v2 import (
+        activation_debug,
+        checkpointing,
+        ep_no_sync_buffers,
+        ep_no_sync_legacy,
+        ep_no_sync_rowwise,
+        ep_no_sync_routing,
+        ep_no_sync_state,
+        ep_no_sync_tbo_legacy,
+        ep_sync,
+        ep_sync_tbo,
+        metrics,
+        no_ep,
+        tbo_state,
+    )
+
+    assert hasattr(activation_debug, "maybe_dump_ep_no_sync_saved_activations")
+    assert hasattr(ep_sync, "combined_forward_ep")
+    assert hasattr(ep_sync_tbo, "combined_forward_ep_tbo")
+    assert hasattr(metrics, "accumulate_ep_no_sync_rowwise_metrics")
+    assert hasattr(no_ep, "combined_forward_no_ep")
+    assert hasattr(checkpointing, "checkpoint_recompute_context_fn")
+    assert hasattr(ep_no_sync_buffers, "get_ep_no_sync_buffers")
+    assert hasattr(ep_no_sync_legacy, "combined_forward_ep_no_sync_legacy")
+    assert hasattr(ep_no_sync_rowwise, "combined_forward_ep_no_sync_rowwise")
+    assert hasattr(ep_no_sync_routing, "restore_drop_unpermute_1d")
+    assert hasattr(ep_no_sync_tbo_legacy, "combined_forward_ep_no_sync_tbo")
+    assert hasattr(ep_no_sync_state, "_NoSyncSymmBuffers")
+    assert hasattr(tbo_state, "SyncedTboPendingContext")
 
 
 def _build_ep_mesh() -> DeviceMesh:
@@ -27,11 +61,13 @@ def _build_block(
     *,
     ep_no_sync: bool,
     ep_no_sync_capacity_factor: float = 2.0,
-    d_model: int = 16,
-    hidden_size: int = 32,
+    d_model: int = 512,
+    hidden_size: int = 1024,
     num_experts: int = 4,
     top_k: int = 1,
     uniform_expert_assignment: bool = True,
+    init_device: str = "cuda",
+    ep_no_sync_use_2d_all_to_all: bool = False,
 ) -> MoEFusedV2TransformerBlock:
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
@@ -75,9 +111,10 @@ def _build_block(
         ),
         feed_forward_norm=layer_norm,
         ep_no_sync=ep_no_sync,
+        ep_no_sync_use_2d_all_to_all=ep_no_sync_use_2d_all_to_all,
         ep_no_sync_capacity_factor=ep_no_sync_capacity_factor,
         ep_no_sync_major_align=1,
-        init_device="cuda",
+        init_device=init_device,
     )
 
 
@@ -159,6 +196,29 @@ def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
     block.router_forward = types.MethodType(_deterministic_router_forward, block)
 
 
+@requires_gpu
+@requires_grouped_gemm
+def test_v2_no_ep_forward_backward_smoke():
+    block = _build_block(ep_no_sync=False, init_device="cuda")
+    _init_block_params(block)
+    _install_forced_router(block)
+    block.train()
+
+    x = torch.randn(1, 8, block.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    y = block(x)
+
+    assert y.shape == x.shape
+    assert torch.isfinite(y).all()
+
+    y.square().mean().backward()
+
+    assert x.grad is not None
+    assert torch.isfinite(x.grad).all()
+    for p in block.parameters():
+        if p.grad is not None:
+            assert torch.isfinite(p.grad).all()
+
+
 def _run_ep_no_sync_matches_synced():
     ep_mesh = _build_ep_mesh()
 
@@ -172,7 +232,7 @@ def _run_ep_no_sync_matches_synced():
     block_ep.train()
     block_no_sync.train()
 
-    x = torch.randn(2, 4, block_ep.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x = torch.randn(1, 8, block_ep.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
     x_ref = x.detach().clone().requires_grad_(True)
 
     y_ep = block_ep(x)
@@ -205,7 +265,7 @@ def _run_ep_no_sync_drop_behavior():
     _install_forced_router(block_no_sync)
     block_no_sync.train()
 
-    x = torch.randn(2, 4, block_no_sync.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x = torch.randn(1, 8, block_no_sync.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
     y = block_no_sync(x)
     assert torch.isfinite(y).all()
     y.sum().backward()
@@ -232,7 +292,7 @@ def _run_ep_no_sync_quota_invariants():
     _install_forced_router(block_no_sync)
     block_no_sync.train()
 
-    x = torch.randn(2, 4, block_no_sync.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x = torch.randn(1, 8, block_no_sync.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
     y = block_no_sync(x)
     y.sum().backward()
 
@@ -265,16 +325,16 @@ def _run_ep_no_sync_rowwise_matches_synced():
 
     block_ep = _build_block(
         ep_no_sync=False,
-        d_model=64,
-        hidden_size=128,
+        d_model=512,
+        hidden_size=1024,
         num_experts=8,
         top_k=2,
         uniform_expert_assignment=False,
     )
     block_rowwise = _build_block(
         ep_no_sync=True,
-        d_model=64,
-        hidden_size=128,
+        d_model=512,
+        hidden_size=1024,
         num_experts=8,
         top_k=2,
         uniform_expert_assignment=False,
@@ -293,7 +353,7 @@ def _run_ep_no_sync_rowwise_matches_synced():
     block_ep.train()
     block_rowwise.train()
 
-    x = torch.randn(2, 8, block_ep.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x = torch.randn(1, 8, block_ep.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
     x_rowwise = x.detach().clone().requires_grad_(True)
 
     y_ep = block_ep(x)
@@ -316,14 +376,14 @@ def _run_ep_no_sync_rowwise_matches_synced():
         torch.testing.assert_close(p_rowwise.grad, p_ep.grad, atol=1e-3, rtol=1e-3)
 
 
-def _run_ep_no_sync_rowwise_2d_offset_matches_rowwise_get_with_drop():
+def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
     ep_mesh = _build_ep_mesh()
 
     block_a = _build_block(
         ep_no_sync=True,
         ep_no_sync_capacity_factor=0.5,
-        d_model=128,
-        hidden_size=256,
+        d_model=512,
+        hidden_size=1024,
         num_experts=8,
         top_k=4,
         uniform_expert_assignment=False,
@@ -331,8 +391,8 @@ def _run_ep_no_sync_rowwise_2d_offset_matches_rowwise_get_with_drop():
     block_b = _build_block(
         ep_no_sync=True,
         ep_no_sync_capacity_factor=0.5,
-        d_model=128,
-        hidden_size=256,
+        d_model=512,
+        hidden_size=1024,
         num_experts=8,
         top_k=4,
         uniform_expert_assignment=False,
@@ -408,10 +468,19 @@ def test_v2_ep_no_sync_rowwise_matches_synced():
     run_distributed_test(_run_ep_no_sync_rowwise_matches_synced, backend="nccl", start_method="spawn")
 
 
+def test_v2_ep_no_sync_2d_all_to_all_rejected():
+    with pytest.raises(OLMoConfigurationError, match="2D all_to_all path was removed"):
+        _build_block(
+            ep_no_sync=True,
+            init_device="cpu",
+            ep_no_sync_use_2d_all_to_all=True,
+        )
+
+
 @requires_multi_gpu
-def test_v2_ep_no_sync_rowwise_2d_offset_matches_rowwise_get_with_drop():
+def test_v2_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
     run_distributed_test(
-        _run_ep_no_sync_rowwise_2d_offset_matches_rowwise_get_with_drop,
+        _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block,
         backend="nccl",
         start_method="spawn",
     )

@@ -9,8 +9,8 @@ def test_output_discard_checkpoint_discards_and_restores_storage():
     torch.manual_seed(11)
     ckpt = OutputDiscardCheckpoint()
 
-    submodule = torch.nn.Linear(8, 8)
-    x = torch.randn(2, 8, requires_grad=True)
+    submodule = torch.nn.Linear(512, 512)
+    x = torch.randn(8, 512, requires_grad=True)
 
     y = ckpt.checkpoint(submodule, x)
     assert isinstance(y, torch.Tensor)
@@ -38,16 +38,16 @@ def test_output_discard_checkpoint_allows_backward_through_linear_chain():
     torch.manual_seed(7)
 
     submodule_ref = torch.nn.Sequential(
-        torch.nn.Linear(8, 16),
+        torch.nn.Linear(512, 1024),
         torch.nn.GELU(),
-        torch.nn.Linear(16, 8),
+        torch.nn.Linear(1024, 512),
     )
-    next_layer_ref = torch.nn.Linear(8, 4)
+    next_layer_ref = torch.nn.Linear(512, 256)
 
     submodule_ckpt = copy.deepcopy(submodule_ref)
     next_layer_ckpt = copy.deepcopy(next_layer_ref)
 
-    x_ref = torch.randn(3, 8, requires_grad=True)
+    x_ref = torch.randn(8, 512, requires_grad=True)
     x_ckpt = x_ref.detach().clone().requires_grad_(True)
 
     # Baseline.

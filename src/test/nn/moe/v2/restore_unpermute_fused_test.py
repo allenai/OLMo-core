@@ -83,7 +83,7 @@ def _build_block(backend: str = "te_fused"):
         dtype=DType.float32,
     )
     return MoEFusedV2TransformerBlock(
-        d_model=16,
+        d_model=512,
         block_idx=0,
         n_layers=1,
         attention=AttentionConfig(
@@ -96,7 +96,7 @@ def _build_block(backend: str = "te_fused"):
         ),
         attention_norm=layer_norm,
         routed_experts_router=MoERouterConfigV2(
-            d_model=16,
+            d_model=512,
             num_experts=4,
             top_k=2,
             gating_function=MoERouterGatingFunction.softmax,
@@ -108,8 +108,8 @@ def _build_block(backend: str = "te_fused"):
         shared_experts_router=None,
         shared_experts=None,
         routed_experts=RoutedExpertsConfig(
-            d_model=16,
-            hidden_size=32,
+            d_model=512,
+            hidden_size=1024,
             num_experts=4,
             bias=False,
             dtype=DType.float32,
@@ -134,7 +134,7 @@ def test_restore_unpermute_1d_te_fused_matches_legacy(
     torch.manual_seed(7)
     device = torch.device("cuda")
     num_tokens = 128
-    d_model = 256
+    d_model = 512
     num_experts = 16
 
     x = torch.randn(num_tokens, d_model, device=device, dtype=dtype)
@@ -200,6 +200,60 @@ def test_restore_unpermute_1d_te_fused_matches_legacy(
 
 @requires_gpu
 @requires_te
+def test_restore_unpermute_1d_packed_backward_buffer_does_not_corrupt_prob_grads():
+    torch.manual_seed(31)
+    device = torch.device("cuda")
+    num_tokens = 8
+    top_k = 2
+    d_model = 512
+    num_rows = num_tokens * top_k
+
+    row_id_map = torch.arange(num_rows, device=device, dtype=torch.int32)
+    local_inverse_reorder_indices = torch.arange(num_rows, device=device, dtype=torch.long)
+    packed_keep_mask = torch.ones(num_rows, device=device, dtype=torch.bool)
+    probs = torch.rand(num_tokens, top_k, device=device, dtype=torch.float32)
+    grad_out = torch.randn(num_tokens, d_model, device=device, dtype=torch.float32)
+
+    inp_ref = torch.randn(num_rows, d_model, device=device, dtype=torch.float16, requires_grad=True)
+    probs_ref = probs.detach().clone().requires_grad_(True)
+    out_ref = moe_unpermute_1d_fused_drop_no_compile(
+        inp=inp_ref,
+        row_id_map=row_id_map,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        merging_probs=probs_ref,
+        num_kept=torch.tensor(num_rows, device=device),
+        row_id_map_is_packed=True,
+        backward_grad_input_buffer=None,
+        map_type="index",
+    )
+    (out_ref * grad_out.to(out_ref.dtype)).sum().backward()
+
+    inp_alias = inp_ref.detach().clone().requires_grad_(True)
+    probs_alias = probs.detach().clone().requires_grad_(True)
+    out_alias = moe_unpermute_1d_fused_drop_no_compile(
+        inp=inp_alias,
+        row_id_map=row_id_map,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        merging_probs=probs_alias,
+        num_kept=torch.tensor(num_rows, device=device),
+        row_id_map_is_packed=True,
+        backward_grad_input_buffer=inp_alias.detach(),
+        map_type="index",
+    )
+    (out_alias * grad_out.to(out_alias.dtype)).sum().backward()
+
+    assert inp_ref.grad is not None
+    assert inp_alias.grad is not None
+    assert probs_ref.grad is not None
+    assert probs_alias.grad is not None
+    torch.testing.assert_close(inp_alias.grad, inp_ref.grad, atol=5e-3, rtol=5e-3)
+    torch.testing.assert_close(probs_alias.grad, probs_ref.grad, atol=5e-3, rtol=5e-3)
+
+
+@requires_gpu
+@requires_te
 def test_restore_unpermute_backend_selector_behavior():
     try:
         block = _build_block()
@@ -211,7 +265,7 @@ def test_restore_unpermute_backend_selector_behavior():
     device = torch.device("cuda")
     num_tokens = 64
     top_k = 2
-    d_model = 256
+    d_model = 512
     num_experts = 8
 
     x = torch.randn(num_tokens, d_model, device=device, dtype=torch.float16)

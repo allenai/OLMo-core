@@ -45,8 +45,8 @@ def test_rowwise_fp8_normalize_from_dict():
 
 def test_routed_experts_accepts_rowwise_fp8_dict():
     module = RoutedExperts(
-        d_model=64,
-        hidden_size=128,
+        d_model=512,
+        hidden_size=1024,
         num_experts=4,
         bias=False,
         dtype=DType.float32,
@@ -59,8 +59,8 @@ def test_routed_experts_accepts_rowwise_fp8_dict():
 
 def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeypatch):
     module = RoutedExperts(
-        d_model=64,
-        hidden_size=32,
+        d_model=512,
+        hidden_size=256,
         num_experts=2,
         bias=False,
         dtype=DType.float32,
@@ -109,7 +109,7 @@ def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeyp
         _stub_scaled_grouped_mm_q,
     )
 
-    x = torch.randn(8, 64, dtype=torch.float32)
+    x = torch.randn(8, 512, dtype=torch.float32)
     batch = torch.tensor([4, 4], dtype=torch.int32)
     _ = module._forward_rowwise_fp8(
         x,

@@ -24,14 +24,14 @@ def _stub_scaled_grouped_mm_q(
 
 def test_shared_experts_rowwise_fp8_helpers_match_bf16_reference(monkeypatch):
     monkeypatch.setattr(
-        "olmo_core.nn.moe.v2.block.scaled_grouped_mm_q",
+        "olmo_core.nn.moe.v2.fp8.scaled_grouped_mm_q",
         _stub_scaled_grouped_mm_q,
     )
 
     torch.manual_seed(123)
     shared = SharedExperts(
-        d_model=64,
-        hidden_size=128,
+        d_model=512,
+        hidden_size=1024,
         num_experts=3,
         bias=False,
         dtype=DType.float32,
@@ -47,10 +47,9 @@ def test_shared_experts_rowwise_fp8_helpers_match_bf16_reference(monkeypatch):
         _shared_rowwise_fp8_down_prequant=None,
         _shared_rowwise_fp8_weight_versions=None,
         rowwise_fp8=None,
-        _maybe_refresh_shared_rowwise_fp8_cache=lambda: None,
     )
 
-    x = torch.randn(2, 5, 64, dtype=torch.float32)
+    x = torch.randn(1, 8, 512, dtype=torch.float32)
     up, gate = MoEFusedV2TransformerBlock._shared_experts_forward1_rowwise_fp8(
         fake_self,
         x,

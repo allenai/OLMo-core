@@ -147,7 +147,7 @@ REF_NUM_NODES=8
 
 # stage 4 - 6M - 
 MAX_DURATION = int(409e9)
-MICRO_BSZ = 3
+MICRO_BSZ = 2
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
 # NO LR_REF_BSZ=4M
 
@@ -222,7 +222,7 @@ ROWWISE_A2A_NBLOCKS=256
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = True
+PRODUCTION_RUN = False
 
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
@@ -513,12 +513,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            # load_path="/workspace/checkpoint/OLMoE3-dev-260401-005_2560d3072a_24L2560M1280S_48E4K1S_p1/step0-meg-init",
+            load_path="/workspace/checkpoint/OLMoE3-dev-260401-005_2560d3072a_24L2560M1280S_48E4K1S_p1/step75000", # use a trained checkpoint so that the CE loss is in a reasonable range for evaluation (around 2.0)
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=2,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]

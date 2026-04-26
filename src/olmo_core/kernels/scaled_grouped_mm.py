@@ -197,21 +197,6 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
     ) -> Tensor:
         if offs is None:
             raise ValueError("offs is required for scaled_grouped_mm_q")
-        if mat_a.numel() == 0:
-            return torch.empty(
-                (mat_a.shape[0], mat_b.shape[-1]),
-                device=mat_a.device,
-                dtype=torch.bfloat16,
-            )
-
-        result = _forward_scaled_grouped_mm_mxfp8(
-            mat_a,
-            mat_b,
-            offs,
-            use_fast_accum=use_fast_accum,
-            prequantized_lhs=prequantized_lhs,
-            prequantized_rhs=prequantized_rhs,
-        )
 
         if input_grad_out is not None:
             if input_grad_out.shape != mat_a.shape:
@@ -235,6 +220,28 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
                     f"expected {mat_b.device}, got {prequantized_rhs_for_dgrad.mat_b_q.device}"
                 )
 
+        if mat_a.numel() == 0:
+            result = torch.empty(
+                (mat_a.shape[0], mat_b.shape[-1]),
+                device=mat_a.device,
+                dtype=torch.bfloat16,
+            )
+            ctx.save_for_backward(mat_a, mat_b, offs)
+            ctx._saved_mat_a_from_prequantized_lhs = False
+            ctx._mat_a_empty = True
+            ctx.input_grad_out = input_grad_out
+            ctx.prequantized_rhs_for_dgrad = prequantized_rhs_for_dgrad
+            return result
+
+        result = _forward_scaled_grouped_mm_mxfp8(
+            mat_a,
+            mat_b,
+            offs,
+            use_fast_accum=use_fast_accum,
+            prequantized_lhs=prequantized_lhs,
+            prequantized_rhs=prequantized_rhs,
+        )
+
         # In rowwise FP8 paths we can skip saving bf16 mat_a and reconstruct it
         # from saved prequantized (q, scale) during backward to avoid dispatch DQ.
         use_saved_prequantized_lhs = (
@@ -249,6 +256,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
             ctx._saved_mat_a_from_prequantized_lhs = False
         ctx.input_grad_out = input_grad_out
         ctx.prequantized_rhs_for_dgrad = prequantized_rhs_for_dgrad
+        ctx._mat_a_empty = False
         return result
 
     @staticmethod
@@ -281,6 +289,17 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
 
         grad_a = None
         grad_b = None
+
+        if bool(getattr(ctx, "_mat_a_empty", False)):
+            if ctx.needs_input_grad[0]:
+                assert mat_a is not None
+                grad_a = torch.empty_like(mat_a)
+                if ctx.input_grad_out is not None:
+                    ctx.input_grad_out.copy_(grad_a)
+                    grad_a = ctx.input_grad_out
+            if ctx.needs_input_grad[1]:
+                grad_b = torch.zeros_like(mat_b)
+            return grad_a, grad_b, None, None, None, None, None, None
 
         if ctx.needs_input_grad[0]:
             if grad_out_compute.is_cuda and mat_b.is_cuda:
