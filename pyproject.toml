@@ -14,7 +14,7 @@ requires-python = ">=3.9"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy<2.0",
-    "torch>=2.6.0",
+    "torch==2.7.0",
     "cached-path>=1.7.2",
     "requests",
     "packaging",
@@ -23,6 +23,7 @@ dependencies = [
     "safetensors",
     "importlib_resources",
     "ai2-olmo-eval==0.8.4",
+    "flash_attn"
 ]
 
 [project.urls]
