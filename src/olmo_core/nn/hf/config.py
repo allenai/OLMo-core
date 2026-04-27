@@ -1,5 +1,10 @@
 from transformers import LlamaConfig, Olmo2Config, PretrainedConfig
-from transformers.models.olmpool.configuration_olmpool import Llama3ReorderedConfig, Olmo3PreorderConfig
+from transformers.models.olmpool.configuration_olmpool import (
+    Llama3ReorderedConfig,
+    Olmo2HeadwiseQKNormConfig,
+    Olmo3PreorderConfig,
+    Olmo3PreorderHeadwiseQKNormConfig,
+)
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
@@ -35,6 +40,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         )
 
     has_qk_norm = block.attention.q_norm is not None
+    has_headwise_qk_norm = has_qk_norm and getattr(block.attention, "use_head_qk_norm", False)
 
     common = dict(
         vocab_size=model.vocab_size,
@@ -57,11 +63,15 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
     # ReorderedNormTransformerBlock is a subclass of TransformerBlock — check it first.
     if isinstance(block, ReorderedNormTransformerBlock):
         if has_qk_norm:
+            if has_headwise_qk_norm:
+                return Olmo2HeadwiseQKNormConfig(**common)
             return Olmo2Config(**common)
         else:
             return Llama3ReorderedConfig(**common)
     else:  # TransformerBlock (default pre-norm)
         if has_qk_norm:
+            if has_headwise_qk_norm:
+                return Olmo3PreorderHeadwiseQKNormConfig(**common)
             return Olmo3PreorderConfig(**common)
         else:
             return LlamaConfig(**common)
