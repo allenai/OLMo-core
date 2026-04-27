@@ -26,6 +26,7 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
+    "huggingface-hub>=0.34,<1.0",
 ]
 
 [project.urls]

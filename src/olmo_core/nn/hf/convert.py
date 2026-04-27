@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List, Mapping, Tuple
 
 import torch
 from transformers import PretrainedConfig
@@ -358,56 +358,61 @@ def get_converter_from_hf(model_type: str | None = None) -> StateConverter:
     return _get_converter_from_hf(model_type=model_type)
 
 
-def _apply_gemma3_norm_transform(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Transform Gemma 3 norm weights from HF format to OLMo format.
+_GEMMA3_NORM_PATTERNS = (
+    "attention_norm.weight",
+    "post_attention_norm.weight",
+    "feed_forward_norm.weight",
+    "post_feed_forward_norm.weight",
+    "lm_head.norm.weight",
+    "q_norm.weight",
+    "k_norm.weight",
+)
 
+
+def _gemma3_norm_transform(key: str, tensor: torch.Tensor) -> torch.Tensor:
+    """
     HF Gemma 3 uses zero-initialized RMSNorm weights with `hidden_states * (1 + weight)`,
-    while OLMo uses ones-initialized weights with `hidden_states * weight`.
-
-    This function adds 1 to all norm weights to convert between the two conventions.
+    while OLMo uses ones-initialized weights with `hidden_states * weight`. Add 1 to norm
+    weights to convert between the two conventions.
     """
-    norm_patterns = [
-        "attention_norm.weight",
-        "post_attention_norm.weight",
-        "feed_forward_norm.weight",
-        "post_feed_forward_norm.weight",
-        "lm_head.norm.weight",
-        "q_norm.weight",
-        "k_norm.weight",
-    ]
-
-    for key, value in state.items():
-        if any(pattern in key for pattern in norm_patterns):
-            if isinstance(value, torch.Tensor):
-                state[key] = value + 1.0
-
-    return state
+    if any(pattern in key for pattern in _GEMMA3_NORM_PATTERNS):
+        return tensor + 1.0
+    return tensor
 
 
-def _convert_state(
-    config: PretrainedConfig,
-    state: Dict[str, Any],
-    converter: StateConverter,
-) -> Dict[str, Any]:
+def _placeholder_bounds(config: PretrainedConfig) -> Dict[TemplatePlaceholder, int]:
     if not hasattr(config, "num_hidden_layers"):
         raise ValueError(f"Number of hidden layers missing in HF config: {config}")
-    n_layers: int = config.num_hidden_layers
+    bounds = {TemplatePlaceholder.LAYER: config.num_hidden_layers}
     n_experts: int | None = getattr(config, "num_experts", None)
-
-    placeholder_bounds = {
-        TemplatePlaceholder.LAYER: n_layers,
-    }
     if n_experts:
-        placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
+        bounds[TemplatePlaceholder.EXPERT] = n_experts
+    return bounds
 
-    return converter.convert(state, placeholder_bounds)
+
+@beta_feature
+def iter_convert_state_from_hf(
+    config: PretrainedConfig,
+    hf_state: Mapping[str, Any],
+    *,
+    model_type: str | None = None,
+) -> Iterator[Tuple[str, torch.Tensor]]:
+    """
+    Streaming version of :func:`convert_state_from_hf`. Yields ``(olmo_key, tensor)`` pairs
+    one at a time so the caller can release source tensors as conversion progresses.
+    """
+    converter = _get_converter_from_hf(model_type=model_type)
+    bounds = _placeholder_bounds(config)
+    for key, tensor in converter.iter_convert(hf_state, bounds):
+        if model_type == "gemma3_text":
+            tensor = _gemma3_norm_transform(key, tensor)
+        yield key, tensor
 
 
 @beta_feature
 def convert_state_from_hf(
     config: PretrainedConfig,
-    hf_state: Dict[str, Any],
+    hf_state: Mapping[str, Any],
     *,
     model_type: str | None = None,
 ) -> Dict[str, Any]:
@@ -419,15 +424,7 @@ def convert_state_from_hf(
     :param hf_state: A model state dict in HF format.
     :param model_type: The model type of the HF model.
     """
-
-    converter = _get_converter_from_hf(model_type=model_type)
-
-    converted_state = _convert_state(config, hf_state, converter)
-
-    if model_type == "gemma3_text":
-        converted_state = _apply_gemma3_norm_transform(converted_state)
-
-    return converted_state
+    return dict(iter_convert_state_from_hf(config, hf_state, model_type=model_type))
 
 
 def _get_converter_to_hf(model_type: str | None = None) -> StateConverter:
@@ -470,7 +467,7 @@ def convert_state_to_hf(
 
     converter = _get_converter_to_hf(getattr(config, "model_type", None))
 
-    return _convert_state(config, olmo_core_state, converter)
+    return converter.convert(olmo_core_state, _placeholder_bounds(config))
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,17 @@
+import json
 import logging
+from collections.abc import Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict, Generator, Iterator, Optional
 
+import huggingface_hub
+import safetensors
 import torch
 import torch.distributed as dist
 from huggingface_hub import repo_exists
 from torch.distributed.tensor import DTensor, distribute_tensor
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
@@ -21,8 +25,8 @@ from olmo_core.nn.hf.config import (
 )
 from olmo_core.nn.hf.convert import (
     convert_hybrid_state_to_hf,
-    convert_state_from_hf,
     convert_state_to_hf,
+    iter_convert_state_from_hf,
 )
 from olmo_core.nn.transformer.model import Transformer
 
@@ -38,6 +42,124 @@ except ImportError:
 
 
 log = logging.getLogger(__name__)
+
+
+_EMBED_KEY = "model.embed_tokens.weight"
+_LM_HEAD_KEY = "lm_head.weight"
+
+
+def _resize_first_dim(tensor: torch.Tensor, new_size: int) -> torch.Tensor:
+    old_size = tensor.shape[0]
+    if new_size == old_size:
+        return tensor
+    if new_size < old_size:
+        return tensor[:new_size].contiguous()
+    pad_shape = (new_size - old_size, *tensor.shape[1:])
+    pad = torch.zeros(pad_shape, dtype=tensor.dtype, device=tensor.device)
+    return torch.cat([tensor, pad], dim=0).contiguous()
+
+
+class _LazyHFStateDict(Mapping):
+    """
+    Mapping view over HF safetensors weights on disk that materializes one tensor
+    at a time via ``safetensors.safe_open``. Supports sharded safetensors
+    (``model.safetensors.index.json`` + multiple ``model-*.safetensors``) and
+    single-file safetensors (``model.safetensors``).
+    """
+
+    def __init__(self, model_dir: Path, num_embeddings: Optional[int] = None):
+        self._num_embeddings = num_embeddings
+        index_path = model_dir / "model.safetensors.index.json"
+        single_st = model_dir / "model.safetensors"
+
+        if index_path.is_file():
+            with open(index_path) as f:
+                index = json.load(f)
+            self._weight_map: Dict[str, str] = {
+                k: str(model_dir / v) for k, v in index["weight_map"].items()
+            }
+        elif single_st.is_file():
+            with safetensors.safe_open(str(single_st), framework="pt") as f:
+                self._weight_map = {k: str(single_st) for k in f.keys()}
+        else:
+            raise FileNotFoundError(f"No safetensors files found under {model_dir}")
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._weight_map)
+
+    def __len__(self) -> int:
+        return len(self._weight_map)
+
+    def __getitem__(self, key: str) -> torch.Tensor:
+        with safetensors.safe_open(self._weight_map[key], framework="pt") as f:
+            tensor = f.get_tensor(key)
+        if self._num_embeddings is not None and key in (_EMBED_KEY, _LM_HEAD_KEY):
+            tensor = _resize_first_dim(tensor, self._num_embeddings)
+        return tensor
+
+
+def _assert_safetensors_present(prefix: PathOrStr) -> None:
+    assert file_exists(f"{prefix}/model.safetensors.index.json") or file_exists(
+        f"{prefix}/model.safetensors"
+    )
+
+
+def _resolve_local_dir(
+    model_name_or_path: PathOrStr,
+    *,
+    revision: str,
+    work_dir: Optional[str],
+    process_group: Optional[dist.ProcessGroup],
+) -> Path:
+    if is_url(model_name_or_path):
+        log.warning(
+            "Model id or path provided is a remote Hugging Face directory. "
+            "This may not be suitable for unshared file systems."
+        )
+        assert work_dir is not None
+        _assert_safetensors_present(model_name_or_path)
+
+        if get_fs_local_rank() == 0:
+            copy_dir(model_name_or_path, work_dir)
+        barrier(group=process_group)
+        return Path(work_dir)
+
+    if Path(model_name_or_path).is_dir():
+        _assert_safetensors_present(model_name_or_path)
+        return Path(model_name_or_path)
+
+    if repo_exists(str(model_name_or_path)):
+        log.warning(
+            "Model id or path provided is a Hugging Face model id. "
+            "This may not be suitable for unshared file systems."
+        )
+        # The HF cache is shared across ranks on a node, so only local-rank 0
+        # needs to fetch.
+        local_path: Optional[str] = None
+        if get_fs_local_rank() == 0:
+            local_path = huggingface_hub.snapshot_download(
+                repo_id=str(model_name_or_path),
+                revision=revision,
+                allow_patterns=[
+                    "*.safetensors",
+                    "*.safetensors.index.json",
+                    "*.json",
+                    "*.txt",
+                    "*.model",
+                ],
+            )
+        barrier(group=process_group)
+        if local_path is None:
+            local_path = huggingface_hub.snapshot_download(
+                repo_id=str(model_name_or_path),
+                revision=revision,
+                local_files_only=True,
+            )
+        return Path(local_path)
+
+    raise ValueError(
+        f"Could not resolve {model_name_or_path!r} as a URL, local directory, or HF Hub repo id"
+    )
 
 
 @beta_feature
@@ -70,61 +192,26 @@ def load_hf_model(
 
     work_dir = f"{work_dir}/hf-tmp" if work_dir is not None else None
 
-    if is_url(model_name_or_path):
-        log.warning(
-            "Model id or path provided is a remote Hugging Face directory. This may not be suitable for unshared file systems."
-        )
-        assert work_dir is not None
-        assert (
-            file_exists(f"{model_name_or_path}/generation_config.json")
-            or file_exists(f"{model_name_or_path}/model.safetensors.index.json")
-            or file_exists(f"{model_name_or_path}/pytorch_model.bin")
-        )
-
-        # Download model to local FS
-        if get_fs_local_rank() == 0:
-            copy_dir(model_name_or_path, work_dir)
-        barrier(group=process_group)
-    elif Path(model_name_or_path).is_dir():
-        assert (
-            file_exists(f"{model_name_or_path}/generation_config.json")
-            or file_exists(f"{model_name_or_path}/model.safetensors.index.json")
-            or file_exists(f"{model_name_or_path}/pytorch_model.bin")
-        )
-    elif repo_exists(str(model_name_or_path)):
-        log.warning(
-            "Model id or path provided is a Hugging Face model id. This may not be suitable for unshared file systems."
-        )
-    else:
-        raise NotImplementedError
-
-    # Warm up the HF local cache by downloading the model on just local rank 0
-    if get_fs_local_rank() == 0:
-        hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path, revision=revision)
-        del hf_model
-    barrier(group=process_group)
-
-    hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path, revision=revision)
-    log.info(f"Loaded hf model: {hf_model}")
-    hf_model.resize_token_embeddings(num_embeddings)
-
-    converted_state_dict: Dict[str, torch.Tensor] = convert_state_from_hf(
-        hf_model.config,
-        hf_model.state_dict(),
-        model_type=getattr(hf_model.config, "model_type", None),
+    local_dir = _resolve_local_dir(
+        model_name_or_path,
+        revision=revision,
+        work_dir=work_dir,
+        process_group=process_group,
     )
 
-    for key in sorted(converted_state_dict.keys()):
-        state = converted_state_dict[key]
-        olmo_core_state = model_state_dict[key]
-        if isinstance(olmo_core_state, DTensor):
-            olmo_core_state = distribute_tensor(
-                state, olmo_core_state.device_mesh, olmo_core_state.placements
-            )
-        else:
-            olmo_core_state = state
+    hf_config = AutoConfig.from_pretrained(local_dir, revision=revision)
+    log.info(f"Loaded hf config: {hf_config}")
 
-        model_state_dict[key] = olmo_core_state
+    lazy_state = _LazyHFStateDict(local_dir, num_embeddings=num_embeddings)
+
+    for key, tensor in iter_convert_state_from_hf(
+        hf_config, lazy_state, model_type=getattr(hf_config, "model_type", None)
+    ):
+        target = model_state_dict[key]
+        if isinstance(target, DTensor):
+            model_state_dict[key] = distribute_tensor(tensor, target.device_mesh, target.placements)
+        else:
+            model_state_dict[key] = tensor
 
     if work_dir:
         clear_directory(work_dir)
