@@ -2,7 +2,11 @@ import pytest
 import torch
 from transformers import Olmo2Config
 
-from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
+from olmo_core.nn.hf.convert import (
+    convert_state_from_hf,
+    convert_state_to_hf,
+    iter_convert_state_from_hf,
+)
 
 try:
     from transformers import FlexOlmoConfig  # type: ignore
@@ -96,6 +100,57 @@ def test_convert_model_type_specific_from_hf():
             converted_state[f"blocks.{i}.feed_forward_norm.weight"],
             hf_state[f"model.layers.{i}.post_attention_layernorm.weight"],
         )
+
+
+def test_iter_convert_state_from_hf_matches_convert_state_from_hf():
+    hf_config = _get_olmo2_config()
+
+    hf_state = {
+        "model.embed_tokens.weight": torch.randn(hf_config.vocab_size, hf_config.hidden_size),
+        "lm_head.weight": torch.randn(hf_config.vocab_size, hf_config.hidden_size),
+        "model.norm.weight": torch.randn(hf_config.hidden_size),
+    }
+    for i in range(hf_config.num_hidden_layers):
+        hf_state.update(
+            {
+                f"model.layers.{i}.self_attn.q_proj.weight": torch.randn(
+                    hf_config.hidden_size, hf_config.hidden_size
+                ),
+                f"model.layers.{i}.self_attn.k_proj.weight": torch.randn(
+                    hf_config.hidden_size, hf_config.hidden_size
+                ),
+                f"model.layers.{i}.self_attn.v_proj.weight": torch.randn(
+                    hf_config.hidden_size, hf_config.hidden_size
+                ),
+                f"model.layers.{i}.self_attn.o_proj.weight": torch.randn(
+                    hf_config.hidden_size, hf_config.hidden_size
+                ),
+                f"model.layers.{i}.mlp.gate_proj.weight": torch.randn(
+                    hf_config.intermediate_size, hf_config.hidden_size
+                ),
+                f"model.layers.{i}.mlp.up_proj.weight": torch.randn(
+                    hf_config.intermediate_size, hf_config.hidden_size
+                ),
+                f"model.layers.{i}.mlp.down_proj.weight": torch.randn(
+                    hf_config.hidden_size, hf_config.intermediate_size
+                ),
+                f"model.layers.{i}.post_attention_layernorm.weight": torch.randn(
+                    hf_config.hidden_size
+                ),
+                f"model.layers.{i}.post_feedforward_layernorm.weight": torch.randn(
+                    hf_config.hidden_size
+                ),
+                f"model.layers.{i}.self_attn.q_norm.weight": torch.randn(hf_config.hidden_size),
+                f"model.layers.{i}.self_attn.k_norm.weight": torch.randn(hf_config.hidden_size),
+            }
+        )
+
+    eager = convert_state_from_hf(hf_config, hf_state)
+    streamed = dict(iter_convert_state_from_hf(hf_config, hf_state))
+
+    assert set(eager.keys()) == set(streamed.keys())
+    for key in eager:
+        torch.testing.assert_close(eager[key], streamed[key])
 
 
 def test_convert_state_from_hf_and_flatten():

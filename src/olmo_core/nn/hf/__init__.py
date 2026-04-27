@@ -17,6 +17,7 @@ from .convert import (
     convert_state_to_hf,
     get_converter_from_hf,
     get_converter_to_hf,
+    iter_convert_state_from_hf,
 )
 from .convert_checkpoint import (
     convert_checkpoint_to_hf,
@@ -35,6 +36,7 @@ __all__ = [
     "get_hybrid_hf_config",
     "get_hybrid_layer_types",
     "is_olmo_hybrid_model",
+    "iter_convert_state_from_hf",
     "load_config",
     "load_hf_model",
     "save_hf_hybrid_model",

@@ -1,6 +1,6 @@
 import itertools
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List, Mapping, Tuple
 
 import torch
 
@@ -32,7 +32,7 @@ class StateConverter:
 
     def _get_mappings(
         self,
-        state_dict: Dict[str, Any],
+        state_dict: Mapping[str, Any],
         placeholder_bounds: Dict[TemplatePlaceholder, int],
         state_type: StateType = StateType.weight,
     ) -> List[StateMapping]:
@@ -75,7 +75,7 @@ class StateConverter:
 
     def get_mappings(
         self,
-        state_dict: Dict[str, Any],
+        state_dict: Mapping[str, Any],
         placeholder_bounds: Dict[TemplatePlaceholder, int],
         state_type: StateType = StateType.weight,
     ) -> List[StateMapping]:
@@ -91,9 +91,56 @@ class StateConverter:
 
         return self._get_mappings(state_dict, placeholder_bounds, state_type=state_type)
 
+    def iter_convert(
+        self,
+        state_dict: Mapping[str, Any],
+        placeholder_bounds: Dict[TemplatePlaceholder, int],
+        state_type: StateType = StateType.weight,
+    ) -> Iterator[Tuple[str, torch.Tensor]]:
+        """
+        Streaming version of :meth:`convert`. Yields ``(dest_key, tensor)`` pairs one at a time
+        so the caller can release source tensors as conversion progresses, keeping peak memory low.
+        """
+        state_mappings = self._get_mappings(state_dict, placeholder_bounds, state_type=state_type)
+
+        unused_original_keys = set(state_dict.keys())
+        for mapping in state_mappings:
+            original_keys = mapping.source_keys
+            converted_keys = mapping.dest_keys
+            if not isinstance(state_dict[original_keys[0]], torch.Tensor):
+                raise RuntimeError(
+                    f"Attempting to map {len(original_keys)} non-tensor states to {len(converted_keys)} keys"
+                )
+
+            original_state = torch.cat(
+                [state_dict[key] for key in original_keys],
+                dim=mapping.source_concat_dim,
+            )
+
+            if mapping.unflatten_dim is not None:
+                original_state = original_state.unflatten(*mapping.unflatten_dim)
+            if mapping.dims_permutation is not None:
+                original_state = original_state.permute(*mapping.dims_permutation)
+            if mapping.flatten_dims is not None:
+                original_state = original_state.flatten(*mapping.flatten_dims)
+
+            state_chunks = torch.chunk(
+                original_state, chunks=len(converted_keys), dim=mapping.dest_chunk_dim
+            )
+            for hf_key, state_chunk in zip(converted_keys, state_chunks):
+                yield hf_key, state_chunk.contiguous()
+            del original_state, state_chunks
+
+            unused_original_keys -= set(original_keys)
+
+        if len(unused_original_keys) > 0:
+            raise RuntimeError(
+                f"Some state keys were not converted: {sorted(unused_original_keys)}"
+            )
+
     def convert(
         self,
-        state_dict: Dict[str, Any],
+        state_dict: Mapping[str, Any],
         placeholder_bounds: Dict[TemplatePlaceholder, int],
         state_type: StateType = StateType.weight,
     ) -> Dict[str, Any]:
@@ -105,42 +152,4 @@ class StateConverter:
             (e.g. for ``TemplatePlaceholder.EXPERT``, the number of experts).
         :param state_type: The type of state this state dict corresponds to. Defaults to ``StateType.weight``.
         """
-
-        state_mappings = self._get_mappings(state_dict, placeholder_bounds, state_type=state_type)
-
-        unused_original_keys = set(state_dict.keys())
-        converted_state_dict = {}
-        for mapping in state_mappings:
-            original_keys = mapping.source_keys
-            converted_keys = mapping.dest_keys
-            if isinstance(state_dict[original_keys[0]], torch.Tensor):
-                original_state = torch.cat(
-                    [state_dict[key] for key in original_keys],
-                    dim=mapping.source_concat_dim,
-                )
-
-                if mapping.unflatten_dim is not None:
-                    original_state = original_state.unflatten(*mapping.unflatten_dim)
-                if mapping.dims_permutation is not None:
-                    original_state = original_state.permute(*mapping.dims_permutation)
-                if mapping.flatten_dims is not None:
-                    original_state = original_state.flatten(*mapping.flatten_dims)
-
-                state_chunks = torch.chunk(
-                    original_state, chunks=len(converted_keys), dim=mapping.dest_chunk_dim
-                )
-                for hf_key, state_chunk in zip(converted_keys, state_chunks):
-                    converted_state_dict[hf_key] = state_chunk.contiguous()
-            else:
-                raise RuntimeError(
-                    f"Attempting to map {len(original_keys)} non-tensor states to {len(converted_keys)} keys"
-                )
-
-            unused_original_keys -= set(original_keys)
-
-        if len(unused_original_keys) > 0:
-            raise RuntimeError(
-                f"Some state keys were not converted: {sorted(unused_original_keys)}"
-            )
-
-        return converted_state_dict
+        return dict(self.iter_convert(state_dict, placeholder_bounds, state_type=state_type))
