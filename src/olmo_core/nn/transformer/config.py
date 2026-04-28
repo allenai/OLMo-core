@@ -1294,6 +1294,7 @@ class TransformerConfig(ModelConfig):
             head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
             feed_forward=FeedForwardConfig(
@@ -1328,6 +1329,7 @@ class TransformerConfig(ModelConfig):
             head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
             feed_forward=FeedForwardConfig(
@@ -1362,6 +1364,7 @@ class TransformerConfig(ModelConfig):
             head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
             feed_forward=FeedForwardConfig(
@@ -1396,6 +1399,7 @@ class TransformerConfig(ModelConfig):
             head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
             feed_forward=FeedForwardConfig(
@@ -1415,6 +1419,7 @@ class TransformerConfig(ModelConfig):
             head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
             feed_forward=FeedForwardConfig(
@@ -1434,6 +1439,7 @@ class TransformerConfig(ModelConfig):
             head_dim=kwargs.pop("head_dim", 128),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
             qk_norm=kwargs.pop("qk_norm", True),
             use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
             feed_forward=FeedForwardConfig(
@@ -1456,6 +1462,7 @@ class TransformerConfig(ModelConfig):
         qk_norm: bool = False,
         use_head_qk_norm: bool = False,
         layer_norm_eps: float = 1e-5,
+        layer_norm_name: Optional[LayerNormType] = None,
         rope_theta: int = 500_000,
         rope_type: Optional[RoPEType] = None,
         no_global_rope: bool = False,
@@ -1481,6 +1488,9 @@ class TransformerConfig(ModelConfig):
         :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
         :param fused_ops: Use fused operations where possible.
+        :param layer_norm_name: Override the layer norm implementation. Defaults to
+            :data:`LayerNormType.fused_rms` when ``fused_ops=True``, otherwise
+            :data:`LayerNormType.rms`.
         :param block_mods: A dictionary of block indices to functions that take the base block config and return a modified block config.
         :param dtype: The default data type to use for all parameters.
         """
@@ -1491,8 +1501,10 @@ class TransformerConfig(ModelConfig):
         hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
 
         # Configure global layer norm.
+        if layer_norm_name is None:
+            layer_norm_name = LayerNormType.fused_rms if fused_ops else LayerNormType.rms
         layer_norm = LayerNormConfig(
-            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
+            name=layer_norm_name,
             eps=layer_norm_eps,
             bias=False,
             dtype=dtype,
