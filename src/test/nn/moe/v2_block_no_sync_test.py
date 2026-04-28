@@ -1,5 +1,3 @@
-import types
-
 import pytest
 import torch
 import torch.distributed as dist
@@ -19,31 +17,26 @@ def test_v2_extracted_forward_module_names_importable():
     from olmo_core.nn.moe.v2 import (
         activation_debug,
         checkpointing,
+        ep_no_sync_1d,
         ep_no_sync_buffers,
-        ep_no_sync_legacy,
         ep_no_sync_rowwise,
-        ep_no_sync_routing,
-        ep_no_sync_state,
-        ep_no_sync_tbo_legacy,
-        ep_sync,
+        ep_no_sync_tbo_1d,
+        ep_sync_1d,
         ep_sync_tbo,
-        metrics,
         no_ep,
         tbo_state,
     )
 
     assert hasattr(activation_debug, "maybe_dump_ep_no_sync_saved_activations")
-    assert hasattr(ep_sync, "combined_forward_ep")
+    assert hasattr(ep_sync_1d, "combined_forward_ep_1d")
     assert hasattr(ep_sync_tbo, "combined_forward_ep_tbo")
-    assert hasattr(metrics, "accumulate_ep_no_sync_rowwise_metrics")
     assert hasattr(no_ep, "combined_forward_no_ep")
     assert hasattr(checkpointing, "checkpoint_recompute_context_fn")
     assert hasattr(ep_no_sync_buffers, "get_ep_no_sync_buffers")
-    assert hasattr(ep_no_sync_legacy, "combined_forward_ep_no_sync_legacy")
+    assert hasattr(ep_no_sync_buffers, "_NoSyncSymmBuffers")
+    assert hasattr(ep_no_sync_1d, "combined_forward_ep_no_sync_1d")
     assert hasattr(ep_no_sync_rowwise, "combined_forward_ep_no_sync_rowwise")
-    assert hasattr(ep_no_sync_routing, "restore_drop_unpermute_1d")
-    assert hasattr(ep_no_sync_tbo_legacy, "combined_forward_ep_no_sync_tbo")
-    assert hasattr(ep_no_sync_state, "_NoSyncSymmBuffers")
+    assert hasattr(ep_no_sync_tbo_1d, "combined_forward_ep_no_sync_tbo")
     assert hasattr(tbo_state, "SyncedTboPendingContext")
 
 
@@ -127,73 +120,85 @@ def _init_block_params(block: MoEFusedV2TransformerBlock):
 
 
 def _install_forced_router(block: MoEFusedV2TransformerBlock):
-    def _forced_router_forward(self, router, local_x, scores_only, loss_div_factor):
-        del loss_div_factor
-        B, S, _ = local_x.shape
-        if scores_only:
-            return torch.ones(
+    def _make_forced_forward(router):
+        def _forced_forward(local_x, scores_only, loss_div_factor=None):
+            del loss_div_factor
+            B, S, _ = local_x.shape
+            if scores_only:
+                return torch.ones(
+                    B,
+                    S,
+                    router.num_experts,
+                    device=local_x.device,
+                    dtype=local_x.dtype,
+                ), None, None, None
+
+            expert_weights = torch.ones(
                 B,
                 S,
-                router.num_experts,
+                router.top_k,
                 device=local_x.device,
                 dtype=local_x.dtype,
-            ), None, None, None
+            )
+            expert_indices = torch.zeros(
+                B,
+                S,
+                router.top_k,
+                device=local_x.device,
+                dtype=torch.long,
+            )
+            batch_size_per_expert = torch.zeros(
+                router.num_experts,
+                device=local_x.device,
+                dtype=torch.long,
+            )
+            batch_size_per_expert[0] = B * S * router.top_k
+            return expert_weights, expert_indices, batch_size_per_expert, None
 
-        expert_weights = torch.ones(
-            B,
-            S,
-            router.top_k,
-            device=local_x.device,
-            dtype=local_x.dtype,
-        )
-        expert_indices = torch.zeros(
-            B,
-            S,
-            router.top_k,
-            device=local_x.device,
-            dtype=torch.long,
-        )
-        batch_size_per_expert = torch.zeros(
-            router.num_experts,
-            device=local_x.device,
-            dtype=torch.long,
-        )
-        batch_size_per_expert[0] = B * S * router.top_k
-        return expert_weights, expert_indices, batch_size_per_expert, None
+        return _forced_forward
 
-    block.router_forward = types.MethodType(_forced_router_forward, block)
+    assert block.routed_experts_router is not None
+    block.routed_experts_router.forward = _make_forced_forward(block.routed_experts_router)
+    if block.shared_experts_router is not None:
+        block.shared_experts_router.forward = _make_forced_forward(block.shared_experts_router)
 
 
 def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
-    def _deterministic_router_forward(self, router, local_x, scores_only, loss_div_factor):
-        del loss_div_factor
-        B, S, _ = local_x.shape
-        if scores_only:
-            return torch.ones(
-                B,
-                S,
-                router.num_experts,
-                device=local_x.device,
-                dtype=local_x.dtype,
-            ), None, None, None
+    def _make_deterministic_forward(router):
+        def _deterministic_forward(local_x, scores_only, loss_div_factor=None):
+            del loss_div_factor
+            B, S, _ = local_x.shape
+            if scores_only:
+                return torch.ones(
+                    B,
+                    S,
+                    router.num_experts,
+                    device=local_x.device,
+                    dtype=local_x.dtype,
+                ), None, None, None
 
-        top_k = router.top_k
-        num_experts = router.num_experts
-        token_ids = torch.arange(B * S, device=local_x.device, dtype=torch.long).unsqueeze(1)
-        route_offsets = torch.arange(top_k, device=local_x.device, dtype=torch.long).unsqueeze(0)
-        expert_indices = (token_ids + route_offsets + dist.get_rank() * 3) % num_experts
-        expert_indices = expert_indices.view(B, S, top_k)
+            top_k = router.top_k
+            num_experts = router.num_experts
+            token_ids = torch.arange(B * S, device=local_x.device, dtype=torch.long).unsqueeze(1)
+            route_offsets = torch.arange(top_k, device=local_x.device, dtype=torch.long).unsqueeze(0)
+            expert_indices = (token_ids + route_offsets + dist.get_rank() * 3) % num_experts
+            expert_indices = expert_indices.view(B, S, top_k)
 
-        weights = torch.arange(1, top_k + 1, device=local_x.device, dtype=local_x.dtype)
-        weights = weights / weights.sum().clamp_min(1e-6)
-        expert_weights = weights.view(1, 1, top_k).expand(B, S, top_k).contiguous()
+            weights = torch.arange(1, top_k + 1, device=local_x.device, dtype=local_x.dtype)
+            weights = weights / weights.sum().clamp_min(1e-6)
+            expert_weights = weights.view(1, 1, top_k).expand(B, S, top_k).contiguous()
 
-        batch_size_per_expert = torch.bincount(
-            expert_indices.reshape(-1), minlength=num_experts
-        ).to(dtype=torch.long)
-        return expert_weights, expert_indices, batch_size_per_expert, None
+            batch_size_per_expert = torch.bincount(
+                expert_indices.reshape(-1), minlength=num_experts
+            ).to(dtype=torch.long)
+            return expert_weights, expert_indices, batch_size_per_expert, None
 
-    block.router_forward = types.MethodType(_deterministic_router_forward, block)
+        return _deterministic_forward
+
+    assert block.routed_experts_router is not None
+    block.routed_experts_router.forward = _make_deterministic_forward(block.routed_experts_router)
+    if block.shared_experts_router is not None:
+        block.shared_experts_router.forward = _make_deterministic_forward(block.shared_experts_router)
 
 
 @requires_gpu
@@ -217,6 +222,30 @@ def test_v2_no_ep_forward_backward_smoke():
     for p in block.parameters():
         if p.grad is not None:
             assert torch.isfinite(p.grad).all()
+
+
+@requires_gpu
+@requires_grouped_gemm
+def test_v2_no_ep_apply_compile_forward_smoke():
+    block = _build_block(
+        ep_no_sync=False,
+        d_model=128,
+        hidden_size=256,
+        num_experts=4,
+        top_k=1,
+        init_device="cuda",
+    )
+    _init_block_params(block)
+    block.to(dtype=torch.bfloat16)
+    _install_forced_router(block)
+    block.train()
+    block.apply_compile()
+
+    x = torch.randn(1, 4, block.d_model, device="cuda", dtype=torch.bfloat16)
+    y = block(x)
+
+    assert y.shape == x.shape
+    assert torch.isfinite(y).all()
 
 
 def _run_ep_no_sync_matches_synced():

@@ -40,10 +40,9 @@ def combined_forward_no_ep(
         local_x_global_routed_expert_indices,
         local_batch_size_per_global_routed_expert,
         routed_expert_router_aux_loss_info,
-    ) = self.router_forward(
-        router=self.routed_experts_router,
-        local_x=moe_inp,
-        scores_only=False,
+    ) = self.routed_experts_router(
+        moe_inp,
+        False,
         loss_div_factor=loss_div_factor,
     )
 
@@ -62,10 +61,9 @@ def combined_forward_no_ep(
             _,
             _,
             _,
-        ) = self.router_forward(
-            router=self.shared_experts_router,
-            local_x=moe_inp,
-            scores_only=True,
+        ) = self.shared_experts_router(
+            moe_inp,
+            True,
             loss_div_factor=loss_div_factor,
         )
     else:
@@ -129,11 +127,7 @@ def combined_forward_no_ep(
 
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 
-    if self.shared_experts is not None:
-        assert mixed_shared_out is not None
-        mlp_out = x_moe + mixed_shared_out
-    else:
-        mlp_out = x_moe
+    mlp_out = self._merge_routed_and_shared(x_moe, mixed_shared_out)
 
     final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 

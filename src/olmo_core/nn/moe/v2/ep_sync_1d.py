@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
-def routed_experts_unpermute(
+def routed_experts_unpermute_1d(
     block: MoEFusedV2TransformerBlock,
     global_x: torch.Tensor,
     global_x_local_expert_indices: torch.Tensor,
@@ -44,7 +44,7 @@ def routed_experts_unpermute(
         )
 
 
-def checkpointed_permute_routed_experts_unpermute(
+def checkpointed_permute_routed_experts_unpermute_1d(
     block: MoEFusedV2TransformerBlock,
     global_x: torch.Tensor,
     global_x_local_expert_indices: torch.Tensor,
@@ -71,7 +71,8 @@ def checkpointed_permute_routed_experts_unpermute(
 
     if self.checkpoint_permute_moe_unpermute:
         out = checkpoint(
-            self._routed_experts_unpermute,
+            routed_experts_unpermute_1d,
+            self,
             global_x,
             global_x_local_expert_indices,
             parallel_batch_size_per_local_expert_cpu,
@@ -80,7 +81,8 @@ def checkpointed_permute_routed_experts_unpermute(
             use_reentrant=False,
         )
         return cast(torch.Tensor, out)
-    return self._routed_experts_unpermute(
+    return routed_experts_unpermute_1d(
+        self,
         global_x,
         global_x_local_expert_indices,
         parallel_batch_size_per_local_expert_cpu,
@@ -89,7 +91,7 @@ def checkpointed_permute_routed_experts_unpermute(
     )
 
 
-def combined_forward_ep(
+def combined_forward_ep_1d(
     block: MoEFusedV2TransformerBlock,
     x: torch.Tensor,
     *,
@@ -118,10 +120,9 @@ def combined_forward_ep(
         local_x_global_routed_expert_indices,
         local_batch_size_per_global_routed_expert,
         routed_expert_router_aux_loss_info,
-    ) = self.router_forward(
-        router=self.routed_experts_router,
-        local_x=moe_inp,
-        scores_only=False,
+    ) = self.routed_experts_router(
+        moe_inp,
+        False,
         loss_div_factor=loss_div_factor,
     )
 
@@ -150,10 +151,9 @@ def combined_forward_ep(
                 _,
                 _,
                 _,
-            ) = self.router_forward(
-                router=self.shared_experts_router,
-                local_x=moe_inp,
-                scores_only=True,
+            ) = self.shared_experts_router(
+                moe_inp,
+                True,
                 loss_div_factor=loss_div_factor,
             )
         else:
@@ -252,10 +252,11 @@ def combined_forward_ep(
 
     global_x = ops.all_to_all_wait(permutated_local_x, global_x, global_x_handle)
 
-    global_x = self._checkpointed_permute_routed_experts_unpermute(
-        global_x=global_x,
-        global_x_local_expert_indices=global_x_local_expert_indices,
-        parallel_batch_size_per_local_expert_cpu=(
+    global_x = checkpointed_permute_routed_experts_unpermute_1d(
+        self,
+        global_x,
+        global_x_local_expert_indices,
+        (
             parallel_batch_size_per_local_expert_cpu
             if requires_host_side_split_sizes()
             else parallel_batch_size_per_local_expert
@@ -323,11 +324,7 @@ def combined_forward_ep(
 
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 
-    if self.shared_experts is not None:
-        assert mixed_shared_out is not None
-        mlp_out = local_x + mixed_shared_out
-    else:
-        mlp_out = local_x
+    mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
     final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 

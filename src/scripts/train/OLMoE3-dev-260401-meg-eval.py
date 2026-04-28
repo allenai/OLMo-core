@@ -483,7 +483,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
             checkpoints_to_eval=[
-                "/workspace/checkpoint/meg_24L_48N1S4K_2560H-11520F-1280S_24H_8192L-dev2-cap1.25/olmo_cvt/iter_*000",
+                "/workspace/checkpoint/meg_24L_48N1S4K_2560H-11520F-1280S_24H_8192L-005-cap2.0/iter_*-olmo",
             ]
         )
         .with_callback(

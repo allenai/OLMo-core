@@ -12,13 +12,23 @@ from ..utils import (
     moe_permute_1d_fused_drop_no_compile,
 )
 from .comm import _CombineVDevAutograd, _DispatchVDevAutograd
+from .ep_no_sync_common import (
+    build_keep_reorder,
+    restore_drop_unpermute_1d,
+    sync_tail_drop_allowed_splits_single_a2a,
+)
+from .ep_no_sync_buffers import (
+    compute_ep_no_sync_rank_capacity,
+    get_ep_no_sync_buffers,
+    get_ep_no_sync_group_name,
+)
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
-def combined_forward_ep_no_sync_legacy(
+def combined_forward_ep_no_sync_1d(
     block: MoEFusedV2TransformerBlock,
     x: torch.Tensor,
     *,
@@ -43,14 +53,7 @@ def combined_forward_ep_no_sync_legacy(
             "the 2D all_to_all path was removed due to correctness/performance issues."
         )
 
-    if self.ep_no_sync_use_rowwise_all_to_all:
-        return self.combined_forward_ep_no_sync_rowwise(
-            x,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    group_name = self._get_ep_no_sync_group_name()
+    group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
 
     block_inp = x
@@ -67,10 +70,9 @@ def combined_forward_ep_no_sync_legacy(
         local_x_global_routed_expert_indices,
         local_batch_size_per_global_routed_expert,
         routed_expert_router_aux_loss_info,
-    ) = self.router_forward(
-        router=self.routed_experts_router,
-        local_x=moe_inp,
-        scores_only=False,
+    ) = self.routed_experts_router(
+        moe_inp,
+        False,
         loss_div_factor=loss_div_factor,
     )
 
@@ -86,10 +88,9 @@ def combined_forward_ep_no_sync_legacy(
                 _,
                 _,
                 _,
-            ) = self.router_forward(
-                router=self.shared_experts_router,
-                local_x=moe_inp,
-                scores_only=True,
+            ) = self.shared_experts_router(
+                moe_inp,
+                True,
                 loss_div_factor=loss_div_factor,
             )
         else:
@@ -103,15 +104,16 @@ def combined_forward_ep_no_sync_legacy(
     with torch.no_grad():
         with nvtx.annotate("ConfigCapacity", color="green"):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
-            rank_capacity = self._compute_ep_no_sync_rank_capacity(num_out_tokens)
+            rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
             allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
                 Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-                self._sync_tail_drop_allowed_splits_single_a2a(
+                sync_tail_drop_allowed_splits_single_a2a(
+                    self,
                     requested_splits,
                     rank_capacity=rank_capacity,
                 ),
             )
-            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = self._build_keep_reorder(
+            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
                 requested_splits=requested_splits,
                 keep_splits=allowed_splits,
                 num_out_tokens=num_out_tokens,
@@ -142,7 +144,8 @@ def combined_forward_ep_no_sync_legacy(
                 ).detach(),
             }
 
-    buffers = self._get_ep_no_sync_buffers(
+    buffers = get_ep_no_sync_buffers(
+        self,
         dispatch_in_cap=dispatch_in_cap,
         dispatch_out_cap=dispatch_out_cap,
         combine_in_cap=combine_in_cap,
@@ -262,7 +265,8 @@ def combined_forward_ep_no_sync_legacy(
 
     with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
         combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
-        local_x = self._restore_drop_unpermute_1d(
+        local_x = restore_drop_unpermute_1d(
+            self,
             combine_out=combine_out_for_unpermute,
             local_inverse_reorder_indices=local_inverse_reorder_indices,
             packed_keep_mask=packed_keep_mask,
@@ -295,11 +299,7 @@ def combined_forward_ep_no_sync_legacy(
     local_x = local_x.view(in_shape)
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 
-    if self.shared_experts is not None:
-        assert mixed_shared_out is not None
-        mlp_out = local_x + mixed_shared_out
-    else:
-        mlp_out = local_x
+    mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
     final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 

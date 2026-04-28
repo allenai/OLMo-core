@@ -28,9 +28,13 @@ from .block import (
     MoEFusedV2TransformerBlock,
     MoEFusedV2TransformerBlockConfig,
 )
-from .ep_no_sync_state import (
+from .ep_no_sync_buffers import (
     _NoSyncSymmSharedPool,
     _NoSyncTboPendingContext,
+)
+from .ep_no_sync_tbo_1d import (
+    ep_no_sync_stage_c_launch,
+    ep_no_sync_stage_tail,
 )
 from .tbo_state import SyncedTboPendingContext
 from .checkpointing import checkpoint_recompute_context_fn
@@ -542,7 +546,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
                 # MoE weights.
                 if hasattr(block, "feed_forward_moe"):
-                    raise OLMoConfigurationError("Do not use legacy MoE block")
+                    raise OLMoConfigurationError("Do not use the old MoE block")
 
             # Warm up RoPE cache.
             if max_seq_len is not None and att.rope is not None:
@@ -693,12 +697,12 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     def _tbo_last_step(self, x0, x1_ctx: object, lm_head_kwargs: Dict[str, Any], labels0: Optional[torch.Tensor], labels1: Optional[torch.Tensor]):
         if isinstance(x1_ctx, _NoSyncTboPendingContext):
             with nvtx.annotate("TBO-1", color='orange'):
-                pending_ctx = x1_ctx.block._ep_no_sync_stage_c_launch(x1_ctx)
+                pending_ctx = ep_no_sync_stage_c_launch(x1_ctx.block, x1_ctx)
 
             h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
 
             with nvtx.annotate("TBO-1", color='orange'):
-                x1 = x1_ctx.block._ep_no_sync_stage_tail(pending_ctx)
+                x1 = ep_no_sync_stage_tail(x1_ctx.block, pending_ctx)
 
             h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
             return h0, h1
@@ -761,12 +765,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             
             local_x1 = local_x1.view(in_shape1)
 
-            # weighted sum of the shared experts and routed experts
-            if last_block.shared_experts is not None:
-                assert mixed_shared_out1 is not None
-                mlp_out1 = mixed_shared_out1 + local_x1
-            else:
-                mlp_out1 = local_x1
+            mlp_out1 = last_block._merge_routed_and_shared(local_x1, mixed_shared_out1)
 
             x1 = attn_res_out1 + last_block.feed_forward_norm(mlp_out1)
 

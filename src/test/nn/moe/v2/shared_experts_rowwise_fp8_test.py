@@ -4,7 +4,10 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.config import DType
-from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
+from olmo_core.nn.moe.v2.fp8 import (
+    shared_experts_forward1_rowwise_fp8,
+    shared_experts_forward2_rowwise_fp8,
+)
 from olmo_core.nn.moe.v2.shared_experts import SharedExperts
 
 
@@ -50,12 +53,12 @@ def test_shared_experts_rowwise_fp8_helpers_match_bf16_reference(monkeypatch):
     )
 
     x = torch.randn(1, 8, 512, dtype=torch.float32)
-    up, gate = MoEFusedV2TransformerBlock._shared_experts_forward1_rowwise_fp8(
+    up, gate = shared_experts_forward1_rowwise_fp8(
         fake_self,
         x,
         use_fast_accum=True,
     )
-    out_fp8 = MoEFusedV2TransformerBlock._shared_experts_forward2_rowwise_fp8(
+    out_fp8 = shared_experts_forward2_rowwise_fp8(
         fake_self,
         up,
         gate,

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import torch
 
-from olmo_core.nn.moe.v2 import metrics
+from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
 from olmo_core.train.common import ReduceType
 
 
@@ -17,14 +17,14 @@ def _new_metric_state():
 def test_ep_no_sync_rowwise_metrics_accumulate_add_and_reset():
     block = _new_metric_state()
 
-    metrics.accumulate_ep_no_sync_rowwise_metrics(
+    MoEFusedV2TransformerBlock._accumulate_ep_no_sync_rowwise_metrics(
         block,
         drop_token_cnt=torch.tensor(2),
         num_out_tokens=8,
         recv_splits_by_src_local=torch.tensor([2, 1, 1]),
         rank_capacity=4,
     )
-    metrics.accumulate_ep_no_sync_rowwise_metrics(
+    MoEFusedV2TransformerBlock._accumulate_ep_no_sync_rowwise_metrics(
         block,
         drop_token_cnt=torch.tensor(1),
         num_out_tokens=2,
@@ -33,7 +33,7 @@ def test_ep_no_sync_rowwise_metrics_accumulate_add_and_reset():
     )
 
     out = {}
-    metrics.add_ep_no_sync_rowwise_metrics(block, out, ReduceType)
+    MoEFusedV2TransformerBlock._add_ep_no_sync_rowwise_metrics(block, out, ReduceType)
 
     assert set(out) == {"token drop rate", "symm buffer util"}
     torch.testing.assert_close(out["token drop rate"][0], torch.tensor(0.3))
@@ -41,7 +41,7 @@ def test_ep_no_sync_rowwise_metrics_accumulate_add_and_reset():
     torch.testing.assert_close(out["symm buffer util"][0], torch.tensor(1.0))
     assert out["symm buffer util"][1] == ReduceType.max
 
-    metrics.reset_ep_no_sync_rowwise_metrics(block)
+    MoEFusedV2TransformerBlock._reset_ep_no_sync_rowwise_metrics(block)
     assert block._ep_no_sync_rowwise_drop_tokens_sum is None
     assert block._ep_no_sync_rowwise_total_tokens_sum is None
     assert block._ep_no_sync_rowwise_symm_util_max is None
@@ -50,7 +50,7 @@ def test_ep_no_sync_rowwise_metrics_accumulate_add_and_reset():
 def test_ep_no_sync_rowwise_metrics_ignore_zero_capacity():
     block = _new_metric_state()
 
-    metrics.accumulate_ep_no_sync_rowwise_metrics(
+    MoEFusedV2TransformerBlock._accumulate_ep_no_sync_rowwise_metrics(
         block,
         drop_token_cnt=torch.tensor(3),
         num_out_tokens=4,
@@ -59,5 +59,5 @@ def test_ep_no_sync_rowwise_metrics_ignore_zero_capacity():
     )
 
     out = {}
-    metrics.add_ep_no_sync_rowwise_metrics(block, out, ReduceType)
+    MoEFusedV2TransformerBlock._add_ep_no_sync_rowwise_metrics(block, out, ReduceType)
     assert out == {}

@@ -102,7 +102,7 @@ if sys.argv[1] == "eval_checkpoints":
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 1000
 
-NUM_EXPERTS = 48
+NUM_EXPERTS = 24
 TOP_K = 4
 D_MODEL=2560
 D_ATTN=3072
@@ -121,16 +121,16 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=1
 PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
 
 # stage 1 - 1M - 
-# MAX_DURATION = int(25.5e9)
-# MICRO_BSZ = 2
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
+MAX_DURATION = int(25.5e9)
+MICRO_BSZ = 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 1
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
@@ -146,9 +146,9 @@ REF_NUM_NODES=8
 # NO LR_REF_BSZ=4M
 
 # stage 4 - 6M - 
-MAX_DURATION = int(509e9)
-MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
+# MAX_DURATION = int(509e9)
+# MICRO_BSZ = 2
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
 # NO LR_REF_BSZ=4M
 
 # stage 5 - 9M - 
@@ -195,7 +195,7 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=24
+NUM_LAYERS=8
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -513,7 +513,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            load_path="/workspace/checkpoint/OLMoE3-dev-260401-005_2560d3072a_24L2560M1280S_48E4K1S_p1/step94000", # use a trained checkpoint so that the CE loss is in a reasonable range for evaluation (around 2.0)
+            # load_path="/workspace/checkpoint/OLMoE3-dev-260401-005_2560d3072a_24L2560M1280S_48E4K1S_p1/step94000", # use a trained checkpoint so that the CE loss is in a reasonable range for evaluation (around 2.0)
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
@@ -597,9 +597,9 @@ def build_data_components(
     # DATA_WORK_DIR = "/tmp/dataset-cache"
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_mix_0925,
+        # DataMix.OLMo_mix_0925,
         # DataMix.OLMo_mix_0625,
-        # DataMix.OLMoE_mix_0824_dev,
+        DataMix.OLMoE_mix_0824_dev,
         tokenizer=common.tokenizer,
         # mix_base_dir=common.root_dir,
         mix_base_dir="s3://ai2-llm",

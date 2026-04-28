@@ -39,9 +39,6 @@ from ...layer_norm import LayerNormConfig
 from ...moe import MoERouterGatingFunction
 from ...moe import MoERouterConfig as MoERouterConfigV1
 from ...moe.loss import MoELoadBalancingLossGranularity
-from ...moe.utils import (
-    wait_stream_no_compile,
-)
 from .routed_experts import RoutedExperts, RoutedExpertsConfig, requires_host_side_split_sizes, use_torch_grouped_mm
 from .router import MoERouterConfigV2, MoERouterV2
 from .shared_experts import SharedExperts
@@ -49,67 +46,35 @@ from .shared_experts import SharedExpertsConfig
 from .fp8 import (
     MoERowwiseFP8Config,
     invalidate_rowwise_fp8_cache as _invalidate_rowwise_fp8_cache,
-    maybe_refresh_shared_rowwise_fp8_cache as _maybe_refresh_shared_rowwise_fp8_cache,
     normalize_rowwise_fp8_config,
-    refresh_rowwise_fp8_cache as _refresh_rowwise_fp8_cache,
-    shared_experts_forward1_rowwise_fp8 as _shared_experts_forward1_rowwise_fp8,
-    shared_experts_forward2_rowwise_fp8 as _shared_experts_forward2_rowwise_fp8,
 )
-from .ep_no_sync_state import (
-    _NoSyncStageAState,
-    _NoSyncStageDState,
-    _NoSyncSymmBuffers,
+from .ep_no_sync_buffers import (
     _NoSyncSymmSharedPool,
     _NoSyncTboPendingContext,
 )
-from .ep_no_sync_buffers import (
-    compute_ep_no_sync_rank_capacity as _compute_ep_no_sync_rank_capacity,
-    ep_no_sync_slot_for_lane as _ep_no_sync_slot_for_lane,
-    get_ep_no_sync_buffers as _get_ep_no_sync_buffers,
-    get_ep_no_sync_group_name as _get_ep_no_sync_group_name,
-    get_or_init_ep_no_sync_symm_tensor as _get_or_init_ep_no_sync_symm_tensor,
-    iter_ep_no_sync_symm_tensors as _iter_ep_no_sync_symm_tensors,
-    resolve_ep_no_sync_chunk_reorder_backend as _resolve_ep_no_sync_chunk_reorder_backend,
-)
-from .ep_sync import (
-    checkpointed_permute_routed_experts_unpermute as _checkpointed_permute_routed_experts_unpermute,
-    combined_forward_ep as _combined_forward_ep,
-    routed_experts_unpermute as _routed_experts_unpermute,
+from .ep_sync_1d import (
+    combined_forward_ep_1d as _combined_forward_ep_1d,
 )
 from .ep_sync_tbo import combined_forward_ep_tbo as _combined_forward_ep_tbo
 from .no_ep import combined_forward_no_ep as _combined_forward_no_ep
-from .ep_no_sync_legacy import combined_forward_ep_no_sync_legacy as _combined_forward_ep_no_sync_legacy
+from .ep_no_sync_1d import combined_forward_ep_no_sync_1d as _combined_forward_ep_no_sync_1d
 from .ep_no_sync_rowwise import (
-    build_rowwise_combine_2d_route_to_packed as _build_rowwise_combine_2d_route_to_packed,
-    build_rowwise_route_maps as _build_rowwise_route_maps,
     combined_forward_ep_no_sync_rowwise as _combined_forward_ep_no_sync_rowwise,
 )
-from .ep_no_sync_routing import (
-    build_keep_reorder as _build_keep_reorder,
-    build_padded_local_expert_batch_sizes_from_layout as _build_padded_local_expert_batch_sizes_from_layout,
-    build_tail_keep_quota as _build_tail_keep_quota,
-    restore_drop_unpermute_1d as _restore_drop_unpermute_1d,
-    sync_tail_drop_allowed_splits_single_a2a as _sync_tail_drop_allowed_splits_single_a2a,
+from .ep_no_sync_rowwise_helpers import (
+    add_ep_no_sync_rowwise_metrics,
+    reset_ep_no_sync_rowwise_metrics,
 )
-from .ep_no_sync_tbo_legacy import (
+from .ep_no_sync_tbo_1d import (
     combined_forward_ep_no_sync_tbo as _combined_forward_ep_no_sync_tbo,
-    ep_no_sync_stage_a as _ep_no_sync_stage_a,
-    ep_no_sync_stage_c_launch as _ep_no_sync_stage_c_launch,
-    ep_no_sync_stage_d_launch as _ep_no_sync_stage_d_launch,
-    ep_no_sync_stage_e as _ep_no_sync_stage_e,
-    ep_no_sync_stage_tail as _ep_no_sync_stage_tail,
 )
 from .checkpointing import is_checkpoint_recomputing
 from .activation_debug import maybe_dump_ep_no_sync_saved_activations
-from .metrics import (
-    accumulate_ep_no_sync_rowwise_metrics as _accumulate_ep_no_sync_rowwise_metrics,
-    add_ep_no_sync_rowwise_metrics as _add_ep_no_sync_rowwise_metrics,
-    reset_ep_no_sync_rowwise_metrics as _reset_ep_no_sync_rowwise_metrics,
-)
 from olmo_core.nn.transformer.config import (
     TransformerBlockConfig,
     TransformerBlockType,
 )
+
 
 @dataclass
 class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
@@ -132,7 +97,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     ep_no_sync_use_rowwise_all_to_all: bool = False
     ep_no_sync_rowwise_nblocks: int = 256
     ep_no_sync_share_dispatch_out: bool = False
-    ep_no_sync_capacity_factor: float = 1.125
+    ep_no_sync_capacity_factor: float = 1.25
     ep_no_sync_shared_slots: int = 1
     ep_no_sync_share_combine_out: bool = False
     ep_no_sync_major_align: int = 1
@@ -280,10 +245,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ep_no_sync: bool = False,
         ep_no_sync_use_2d_all_to_all: bool = False,
         ep_no_sync_use_rowwise_all_to_all: bool = False,
-        ep_no_sync_rowwise_nblocks: int = 0,
-        ep_no_sync_share_dispatch_out: bool = True,
-        ep_no_sync_capacity_factor: float = 2.0,
-        ep_no_sync_shared_slots: int = 2,
+        ep_no_sync_rowwise_nblocks: int = 256,
+        ep_no_sync_share_dispatch_out: bool = False,
+        ep_no_sync_capacity_factor: float = 1.25,
+        ep_no_sync_shared_slots: int = 1,
         ep_no_sync_share_combine_out: bool = False,
         ep_no_sync_major_align: int = 1,
         ep_no_sync_restore_unpermute_backend: str = "te_fused",
@@ -449,10 +414,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             raise OLMoConfigurationError(
                 f"ep_no_sync_rowwise_nblocks must be >= 0 (got {self.ep_no_sync_rowwise_nblocks})"
             )
-        if self.ep_no_sync_restore_unpermute_backend not in ("te_fused", "te_legacy", "cuda"):
+        if self.ep_no_sync_restore_unpermute_backend not in ("te_fused", "te_unfused", "cuda"):
             raise OLMoConfigurationError(
                 "ep_no_sync_restore_unpermute_backend must be one of "
-                "'te_fused'|'te_legacy'|'cuda' "
+                "'te_fused'|'te_unfused'|'cuda' "
                 f"(got {self.ep_no_sync_restore_unpermute_backend!r})"
             )
 
@@ -494,10 +459,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             metrics_routed = {}
         out = dict(metrics_routed)
 
-        _add_ep_no_sync_rowwise_metrics(self, out, ReduceType)
+        add_ep_no_sync_rowwise_metrics(self, out, ReduceType)
 
         if reset:
-            self._reset_ep_no_sync_rowwise_metrics()
+            reset_ep_no_sync_rowwise_metrics(self)
 
         # metrics = {
         #     "shared": metrics_shared,
@@ -510,27 +475,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         #     self.shared_experts_router.reset_metrics()
         if self.routed_experts_router:
             self.routed_experts_router.reset_metrics()
-        self._reset_ep_no_sync_rowwise_metrics()
-
-    def _reset_ep_no_sync_rowwise_metrics(self):
-        _reset_ep_no_sync_rowwise_metrics(self)
-
-    def _accumulate_ep_no_sync_rowwise_metrics(
-        self,
-        *,
-        drop_token_cnt: torch.Tensor,
-        num_out_tokens: int,
-        recv_splits_by_src_local: torch.Tensor,
-        rank_capacity: int,
-    ) -> None:
-        _accumulate_ep_no_sync_rowwise_metrics(
-            self,
-            drop_token_cnt=drop_token_cnt,
-            num_out_tokens=num_out_tokens,
-            recv_splits_by_src_local=recv_splits_by_src_local,
-            rank_capacity=rank_capacity,
-        )
-
+        reset_ep_no_sync_rowwise_metrics(self)
 
     @property
     def is_moe(self) -> bool:
@@ -550,9 +495,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             return get_or_init_stream(id='dense', priority=20)
 
-    def get_ep_no_sync_comm_stream(self) -> torch.cuda.Stream:
-        return get_or_init_stream(id=f"ep_no_sync_comm_block_{self.block_idx}", priority=0)
-
     def forward(
         self,
         x: torch.Tensor,
@@ -563,18 +505,24 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if self.routed_experts:
             if self.ep_enabled:
                 if self.ep_no_sync and self.training: # in eval mode, different ranks might get different input token counts, and no-sync can freeze
+                    no_sync_forward = (
+                        self.combined_forward_ep_no_sync_rowwise
+                        if self.ep_no_sync_use_rowwise_all_to_all
+                        else self.combined_forward_ep_no_sync_1d
+                    )
                     debug_out = maybe_dump_ep_no_sync_saved_activations(
                         self,
                         x,
                         loss_div_factor=loss_div_factor,
                         forward_kwargs=kwargs,
+                        no_sync_forward=no_sync_forward,
                     )
                     if debug_out is not None:
                         return debug_out
-                    return self.combined_forward_ep_no_sync(
+                    return no_sync_forward(
                         x, loss_div_factor=loss_div_factor, **kwargs
                     )
-                return self.combined_forward_ep(x, loss_div_factor=loss_div_factor, **kwargs)
+                return self.combined_forward_ep_1d(x, loss_div_factor=loss_div_factor, **kwargs)
             else:
                 return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
         else:
@@ -686,7 +634,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         owner_ref = weakref.ref(self)
         self.routed_experts.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
         self.routed_experts.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
-        self.invalidate_rowwise_fp8_cache()
+        _invalidate_rowwise_fp8_cache(self)
         self.num_local_routed_experts = self.routed_experts.num_local_experts
         self._ep_enabled = True
         self.ep_pg = ep_pg if ep_pg is not None else ep_mp_mesh.get_group()
@@ -756,7 +704,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
         self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo)
         self._res_norm_attn = torch.compile(self._res_norm_attn)
-        self._routed_experts_unpermute = torch.compile(self._routed_experts_unpermute)
 
 
     @property
@@ -765,19 +712,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             return get_world_size(self.ep_pg)
         else:
             return 1
-
-    def router_forward(
-        self,
-        router: MoERouterV2,
-        local_x: torch.Tensor,
-        scores_only: bool,
-        loss_div_factor: Optional[Union[torch.Tensor, float]],
-    ):
-        return router(
-            local_x,
-            scores_only,
-            loss_div_factor=loss_div_factor # scalar
-        )
 
     def _attach_routed_aux_loss(
         self,
@@ -795,229 +729,15 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             return x
         return attach_auxiliary_loss(x, routed_expert_router_aux_loss)
 
-    def invalidate_rowwise_fp8_cache(self) -> None:
-        _invalidate_rowwise_fp8_cache(self)
+    @torch.compiler.disable
+    def sync_dtoh_event(self):
+        assert self._dtoh_event is not None
+        dtoh_event = cast(torch.cuda.Event, self._dtoh_event)
+        dtoh_event.synchronize()
 
-    @torch.no_grad()
-    def refresh_rowwise_fp8_cache(self) -> None:
-        _refresh_rowwise_fp8_cache(self)
-
-    def _maybe_refresh_shared_rowwise_fp8_cache(self) -> None:
-        _maybe_refresh_shared_rowwise_fp8_cache(self)
-
-    def _shared_experts_forward1_rowwise_fp8(
-        self,
-        x: torch.Tensor,
-        *,
-        use_fast_accum: bool,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return _shared_experts_forward1_rowwise_fp8(
-            self,
-            x,
-            use_fast_accum=use_fast_accum,
-        )
-
-    def _shared_experts_forward2_rowwise_fp8(
-        self,
-        up: torch.Tensor,
-        gate: torch.Tensor,
-        xshape: torch.Size,
-        *,
-        use_fast_accum: bool,
-    ) -> torch.Tensor:
-        return _shared_experts_forward2_rowwise_fp8(
-            self,
-            up,
-            gate,
-            xshape,
-            use_fast_accum=use_fast_accum,
-        )
-
-    def _get_ep_no_sync_group_name(self) -> str:
-        return _get_ep_no_sync_group_name(self)
-
-    def _ep_no_sync_slot_for_lane(self, lane_id: int) -> int:
-        return _ep_no_sync_slot_for_lane(self, lane_id)
-
-    def _resolve_ep_no_sync_chunk_reorder_backend(self) -> str:
-        return _resolve_ep_no_sync_chunk_reorder_backend()
-
-    def _get_or_init_ep_no_sync_symm_tensor(
-        self,
-        *,
-        name: str,
-        shape: Tuple[int, ...],
-        dtype: torch.dtype,
-        device: torch.device,
-    ) -> torch.Tensor:
-        return _get_or_init_ep_no_sync_symm_tensor(
-            self,
-            name=name,
-            shape=shape,
-            dtype=dtype,
-            device=device,
-        )
-
-    @torch.compiler.disable # to reduce Dynamo/AOT overhead
-    def _get_ep_no_sync_buffers(
-        self,
-        *,
-        dispatch_in_cap: int,
-        dispatch_out_cap: int,
-        combine_in_cap: int,
-        combine_out_cap: int,
-        d_model: int,
-        dtype: torch.dtype,
-        device: torch.device,
-        slot_idx: Optional[int] = None,
-        need_dispatch_in: bool = True,
-        need_dispatch_meta: bool = True,
-        need_dispatch_out: bool = True,
-        need_combine_in: bool = True,
-        need_combine_meta: bool = True,
-        need_combine_out: bool = True,
-    ) -> _NoSyncSymmBuffers:
-        return _get_ep_no_sync_buffers(
-            self,
-            dispatch_in_cap=dispatch_in_cap,
-            dispatch_out_cap=dispatch_out_cap,
-            combine_in_cap=combine_in_cap,
-            combine_out_cap=combine_out_cap,
-            d_model=d_model,
-            dtype=dtype,
-            device=device,
-            slot_idx=slot_idx,
-            need_dispatch_in=need_dispatch_in,
-            need_dispatch_meta=need_dispatch_meta,
-            need_dispatch_out=need_dispatch_out,
-            need_combine_in=need_combine_in,
-            need_combine_meta=need_combine_meta,
-            need_combine_out=need_combine_out,
-        )
-
-    def iter_ep_no_sync_symm_tensors(self):
-        yield from _iter_ep_no_sync_symm_tensors(self)
-
-    def _compute_ep_no_sync_rank_capacity(self, num_out_tokens: int) -> int:
-        return _compute_ep_no_sync_rank_capacity(self, num_out_tokens)
-
-    def _build_padded_local_expert_batch_sizes_from_layout(
-        self,
-        *,
-        splits: torch.Tensor,
-        offsets: torch.Tensor,
-        total_rows: int,
-    ) -> torch.Tensor:
-        return _build_padded_local_expert_batch_sizes_from_layout(
-            self,
-            splits=splits,
-            offsets=offsets,
-            total_rows=total_rows,
-        )
-
-    def _build_tail_keep_quota(
-        self,
-        recv_counts_per_src_local_expert: torch.Tensor,
-        rank_capacity: int,
-    ) -> torch.Tensor:
-        return _build_tail_keep_quota(
-            self,
-            recv_counts_per_src_local_expert,
-            rank_capacity,
-        )
-
-    @nvtx.annotate("SyncTokenCount", color="green")
-    def _sync_tail_drop_allowed_splits_single_a2a(
-        self,
-        requested_splits: torch.Tensor,
-        *,
-        rank_capacity: int,
-        return_keep_matrix: bool = False,
-    ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    ]:
-        return _sync_tail_drop_allowed_splits_single_a2a(
-            self,
-            requested_splits,
-            rank_capacity=rank_capacity,
-            return_keep_matrix=return_keep_matrix,
-        )
-
-
-    @nvtx.annotate('_build_keep_reorder')
-    def _build_keep_reorder(
-        self,
-        requested_splits: torch.Tensor,
-        keep_splits: torch.Tensor,
-        num_out_tokens: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        del self
-        return _build_keep_reorder(
-            requested_splits,
-            keep_splits,
-            num_out_tokens,
-        )
-
-    @nvtx.annotate("_build_rowwise_route_maps")
-    def _build_rowwise_route_maps(
-        self,
-        *,
-        routing_map: torch.Tensor,
-        allowed_splits: torch.Tensor,
-        keep_from_src_dest_local: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return _build_rowwise_route_maps(
-            self,
-            routing_map=routing_map,
-            allowed_splits=allowed_splits,
-            keep_from_src_dest_local=keep_from_src_dest_local,
-        )
-
-    @nvtx.annotate("_build_rowwise_combine_2d_route_to_packed")
-    def _build_rowwise_combine_2d_route_to_packed(
-        self,
-        *,
-        route_to_packed: torch.Tensor,
-        dst_ranks: torch.Tensor,
-        dst_rows: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        return _build_rowwise_combine_2d_route_to_packed(
-            self,
-            route_to_packed=route_to_packed,
-            dst_ranks=dst_ranks,
-            dst_rows=dst_rows,
-        )
-
-    @nvtx.annotate("_restore_drop_unpermute_1d")
-    def _restore_drop_unpermute_1d(
-        self,
-        *,
-        combine_out: torch.Tensor,
-        local_inverse_reorder_indices: torch.Tensor,
-        packed_keep_mask: torch.Tensor,
-        num_kept: torch.Tensor,
-        reversed_local_x_permutation_mapping: torch.Tensor,
-        local_x_global_routed_expert_weights: torch.Tensor,
-        hidden_shape_before_permute: torch.Size,
-        row_id_map_is_packed: bool = False,
-        backward_grad_input_buffer: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        return _restore_drop_unpermute_1d(
-            self,
-            combine_out=combine_out,
-            local_inverse_reorder_indices=local_inverse_reorder_indices,
-            packed_keep_mask=packed_keep_mask,
-            num_kept=num_kept,
-            reversed_local_x_permutation_mapping=reversed_local_x_permutation_mapping,
-            local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
-            hidden_shape_before_permute=hidden_shape_before_permute,
-            row_id_map_is_packed=row_id_map_is_packed,
-            backward_grad_input_buffer=backward_grad_input_buffer,
-        )
-
-
-
+    # -------------------------------------------------------------------------
+    # Forward path entry points
+    # -------------------------------------------------------------------------
     def combined_forward_shared_only(
         self,
         x: torch.Tensor,
@@ -1030,13 +750,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert self.routed_experts_router is None
         assert self.shared_experts is not None
         raise NotImplementedError("combined_forward_shared_only is not implemented")
-
-
-    @torch.compiler.disable
-    def sync_dtoh_event(self):
-        assert self._dtoh_event is not None
-        dtoh_event = cast(torch.cuda.Event, self._dtoh_event)
-        dtoh_event.synchronize()
 
     def combined_forward_no_ep(
         self,
@@ -1052,24 +765,14 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             **kwargs,
         )
 
-    def merge_shared_and_routed_out(
-        self,
-        shared_out: torch.Tensor,
-        shared_factor: float,
-        routed_out: torch.Tensor,
-        routed_factor: float,
-    ) -> torch.Tensor:
-        # Combine shared and routed outputs
-        return shared_out * shared_factor + routed_out * routed_factor
-
-    def combined_forward_ep_no_sync(
+    def combined_forward_ep_no_sync_1d(
         self,
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        return _combined_forward_ep_no_sync_legacy(
+        return _combined_forward_ep_no_sync_1d(
             self,
             x,
             loss_div_factor=loss_div_factor,
@@ -1090,36 +793,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             **kwargs,
         )
 
-    def _ep_no_sync_stage_a(
-        self,
-        x: torch.Tensor,
-        *,
-        lane_id: int,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> _NoSyncStageAState:
-        return _ep_no_sync_stage_a(
-            self,
-            x,
-            lane_id=lane_id,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    def _ep_no_sync_stage_d_launch(self, a_state: _NoSyncStageAState) -> _NoSyncStageDState:
-        return _ep_no_sync_stage_d_launch(self, a_state)
-
-    def _ep_no_sync_stage_e(self, d_state: _NoSyncStageDState) -> _NoSyncTboPendingContext:
-        return _ep_no_sync_stage_e(self, d_state)
-
-    def _ep_no_sync_stage_c_launch(
-        self, pending_ctx: _NoSyncTboPendingContext
-    ) -> _NoSyncTboPendingContext:
-        return _ep_no_sync_stage_c_launch(self, pending_ctx)
-
-    def _ep_no_sync_stage_tail(self, pending_ctx: _NoSyncTboPendingContext) -> torch.Tensor:
-        return _ep_no_sync_stage_tail(self, pending_ctx)
-
     def combined_forward_ep_no_sync_tbo(
         self,
         x0: torch.Tensor,
@@ -1138,106 +811,19 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             **kwargs,
         )
 
-    def combined_forward_ep(
+    def combined_forward_ep_1d(
         self,
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        return _combined_forward_ep(
+        return _combined_forward_ep_1d(
             self,
             x,
             loss_div_factor=loss_div_factor,
             **kwargs,
         )
-
-
-
-    def _routed_experts_unpermute(
-        self,
-        global_x,
-        global_x_local_expert_indices,
-        parallel_batch_size_per_local_expert_cpu,
-        hidden_shape_before_permute2,
-        reversed_global_x_permutation_mapping,
-    ):
-        return _routed_experts_unpermute(
-            self,
-            global_x,
-            global_x_local_expert_indices,
-            parallel_batch_size_per_local_expert_cpu,
-            hidden_shape_before_permute2,
-            reversed_global_x_permutation_mapping,
-        )
-
-    def _attention_norm_only(self, x: torch.Tensor) -> torch.Tensor:
-        return self.attention_norm(x)
-
-    def _feed_forward_norm_only(self, x: torch.Tensor) -> torch.Tensor:
-        return self.feed_forward_norm(x)
-
-    def _prepare_moe_input(self, x: torch.Tensor) -> torch.Tensor:
-        if self.use_peri_norm:
-            assert self.feed_forward_input_norm is not None
-            return self.feed_forward_input_norm(x)
-        return x
-
-    def _res_norm_mlp(self, residual: torch.Tensor, mlp_out: torch.Tensor) -> torch.Tensor:
-        return residual + self.feed_forward_norm(mlp_out)
-
-
-    def _checkpointed_permute_routed_experts_unpermute(
-        self,
-        global_x,
-        global_x_local_expert_indices,
-        parallel_batch_size_per_local_expert_cpu
-    ) -> torch.Tensor:
-        return _checkpointed_permute_routed_experts_unpermute(
-            self,
-            global_x,
-            global_x_local_expert_indices,
-            parallel_batch_size_per_local_expert_cpu,
-        )
-
-
-    def _res_norm_attn(
-        self,
-        block_inp,
-        **kwargs
-    ) -> torch.Tensor:
-        attn_in = block_inp
-        if self.use_peri_norm:
-            assert self.attention_input_norm is not None
-            attn_in = self.attention_input_norm(block_inp)
-        attn_res_out = block_inp + self.attention_norm(self.attention(attn_in, **kwargs))
-        return attn_res_out
-
-    def _checkpointed_res_norm_attn(
-        self,
-        block_inp,
-        **kwargs
-    ) -> torch.Tensor:
-        if self.checkpoint_attn:
-            out = checkpoint(
-                self._res_norm_attn,
-                block_inp,
-                use_reentrant=False,
-                **kwargs,
-            )
-            return cast(torch.Tensor, out)
-        else:
-            return self._res_norm_attn(block_inp, **kwargs)
-
-
-    def post_batch(self, dry_run: bool = False):
-        """
-        Should be called right after the final backward of a complete batch but before the optimizer step.
-        """
-        if self.shared_experts_router:
-            self.shared_experts_router.post_batch(dry_run=dry_run)
-        if self.routed_experts_router:
-            self.routed_experts_router.post_batch(dry_run=dry_run)
 
     def combined_forward_ep_tbo(
         self,
@@ -1285,3 +871,64 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 loss_div_factor=loss_div_factor,
                 **kwargs,
             )
+
+    # -------------------------------------------------------------------------
+    # Shared forward helpers
+    # -------------------------------------------------------------------------
+    def _prepare_moe_input(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_peri_norm:
+            assert self.feed_forward_input_norm is not None
+            return self.feed_forward_input_norm(x)
+        return x
+
+    def _merge_routed_and_shared(
+        self,
+        routed_out: torch.Tensor,
+        mixed_shared_out: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if self.shared_experts is None:
+            return routed_out
+        if mixed_shared_out is None:
+            raise RuntimeError("shared_experts is enabled but mixed_shared_out is missing")
+        return routed_out + mixed_shared_out
+
+    def _res_norm_mlp(self, residual: torch.Tensor, mlp_out: torch.Tensor) -> torch.Tensor:
+        return residual + self.feed_forward_norm(mlp_out)
+
+    def _res_norm_attn(
+        self,
+        block_inp,
+        **kwargs
+    ) -> torch.Tensor:
+        attn_in = block_inp
+        if self.use_peri_norm:
+            assert self.attention_input_norm is not None
+            attn_in = self.attention_input_norm(block_inp)
+        attn_res_out = block_inp + self.attention_norm(self.attention(attn_in, **kwargs))
+        return attn_res_out
+
+    def _checkpointed_res_norm_attn(
+        self,
+        block_inp,
+        **kwargs
+    ) -> torch.Tensor:
+        if self.checkpoint_attn:
+            out = checkpoint(
+                self._res_norm_attn,
+                block_inp,
+                use_reentrant=False,
+                **kwargs,
+            )
+            return cast(torch.Tensor, out)
+        else:
+            return self._res_norm_attn(block_inp, **kwargs)
+
+
+    def post_batch(self, dry_run: bool = False):
+        """
+        Should be called right after the final backward of a complete batch but before the optimizer step.
+        """
+        if self.shared_experts_router:
+            self.shared_experts_router.post_batch(dry_run=dry_run)
+        if self.routed_experts_router:
+            self.routed_experts_router.post_batch(dry_run=dry_run)

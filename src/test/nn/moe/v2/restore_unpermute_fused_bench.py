@@ -4,6 +4,7 @@ from typing import Callable
 
 import torch
 
+from olmo_core.nn.moe.v2.ep_no_sync_common import build_keep_reorder
 from olmo_core.nn.moe.utils import (
     moe_permute_no_compile,
     moe_unpermute_1d_fused_drop_no_compile,
@@ -30,40 +31,25 @@ def _dtype_from_name(name: str) -> torch.dtype:
     raise ValueError(f"Unsupported dtype: {name}")
 
 
-def _build_keep_reorder(
+def _build_random_keep_splits(
     *,
     num_rows: int,
     keep_fraction: float,
     seed: int,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     keep_count = int(round(keep_fraction * num_rows))
     keep_count = max(0, min(keep_count, num_rows))
-    keep_mask = torch.zeros(num_rows, device=device, dtype=torch.bool)
+    keep_splits = torch.zeros(num_rows, device=device, dtype=torch.long)
     if keep_count > 0:
         g = torch.Generator(device=device)
         g.manual_seed(seed)
         keep_rows = torch.randperm(num_rows, generator=g, device=device)[:keep_count]
-        keep_mask[keep_rows] = True
-
-    token_ids = torch.arange(num_rows, device=device, dtype=torch.long)
-    keep_i64 = keep_mask.to(dtype=torch.long)
-    drop_i64 = (~keep_mask).to(dtype=torch.long)
-    keep_rank = torch.cumsum(keep_i64, dim=0) - 1
-    drop_rank = torch.cumsum(drop_i64, dim=0) - 1
-    num_kept = keep_i64.sum(dtype=torch.long)
-    packed_pos = torch.where(keep_mask, keep_rank, num_kept + drop_rank)
-
-    reorder_indices = torch.empty_like(token_ids)
-    reorder_indices.scatter_(0, packed_pos, token_ids)
-
-    inverse_reorder_indices = torch.empty_like(reorder_indices)
-    inverse_reorder_indices.scatter_(0, reorder_indices, token_ids)
-    packed_keep_mask = keep_mask.index_select(0, reorder_indices)
-    return reorder_indices, inverse_reorder_indices, packed_keep_mask
+        keep_splits[keep_rows] = 1
+    return keep_splits
 
 
-def _legacy_restore_drop_unpermute(
+def _reference_restore_drop_unpermute(
     *,
     combine_out: torch.Tensor,
     row_id_map: torch.Tensor,
@@ -131,11 +117,17 @@ def _build_case(
         num_out_tokens=num_tokens * top_k,
         map_type="index",
     )
-    reorder_indices, local_inverse_reorder_indices, packed_keep_mask = _build_keep_reorder(
+    requested_splits = torch.ones(permuted.shape[0], device=device, dtype=torch.long)
+    keep_splits = _build_random_keep_splits(
         num_rows=permuted.shape[0],
         keep_fraction=keep_fraction,
         seed=seed + 1,
         device=device,
+    )
+    reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
+        requested_splits,
+        keep_splits,
+        permuted.shape[0],
     )
     combine_out = permuted.index_select(0, reorder_indices)
     merging_probs = torch.rand(num_tokens, top_k, device=device, dtype=torch.float32)
@@ -205,7 +197,7 @@ def main() -> None:
                 )
 
                 # correctness parity
-                out_legacy = _legacy_restore_drop_unpermute(
+                out_reference = _reference_restore_drop_unpermute(
                     combine_out=combine_out,
                     row_id_map=row_id_map,
                     local_inverse_reorder_indices=local_inverse_reorder_indices,
@@ -222,10 +214,10 @@ def main() -> None:
                     num_kept=num_kept,
                     map_type="index",
                 )
-                torch.testing.assert_close(out_fused, out_legacy, atol=5e-3, rtol=5e-3)
+                torch.testing.assert_close(out_fused, out_reference, atol=5e-3, rtol=5e-3)
 
-                def _run_fwd_legacy() -> None:
-                    _legacy_restore_drop_unpermute(
+                def _run_fwd_reference() -> None:
+                    _reference_restore_drop_unpermute(
                         combine_out=combine_out,
                         row_id_map=row_id_map,
                         local_inverse_reorder_indices=local_inverse_reorder_indices,
@@ -245,17 +237,17 @@ def main() -> None:
                         map_type="index",
                     )
 
-                combine_bwd_legacy = combine_out.detach().clone().requires_grad_(True)
-                probs_bwd_legacy = merging_probs.detach().clone().requires_grad_(True)
-                out_bwd_legacy = _legacy_restore_drop_unpermute(
-                    combine_out=combine_bwd_legacy,
+                combine_bwd_reference = combine_out.detach().clone().requires_grad_(True)
+                probs_bwd_reference = merging_probs.detach().clone().requires_grad_(True)
+                out_bwd_reference = _reference_restore_drop_unpermute(
+                    combine_out=combine_bwd_reference,
                     row_id_map=row_id_map,
                     local_inverse_reorder_indices=local_inverse_reorder_indices,
                     packed_keep_mask=packed_keep_mask,
-                    merging_probs=probs_bwd_legacy,
+                    merging_probs=probs_bwd_reference,
                     restore_shape=restore_shape,
                 )
-                grad_out = torch.randn_like(out_bwd_legacy)
+                grad_out = torch.randn_like(out_bwd_reference)
 
                 combine_bwd_fused = combine_out.detach().clone().requires_grad_(True)
                 probs_bwd_fused = merging_probs.detach().clone().requires_grad_(True)
@@ -269,12 +261,12 @@ def main() -> None:
                     map_type="index",
                 )
 
-                def _run_bwd_legacy() -> None:
-                    if combine_bwd_legacy.grad is not None:
-                        combine_bwd_legacy.grad.zero_()
-                    if probs_bwd_legacy.grad is not None:
-                        probs_bwd_legacy.grad.zero_()
-                    out_bwd_legacy.backward(grad_out, retain_graph=True)
+                def _run_bwd_reference() -> None:
+                    if combine_bwd_reference.grad is not None:
+                        combine_bwd_reference.grad.zero_()
+                    if probs_bwd_reference.grad is not None:
+                        probs_bwd_reference.grad.zero_()
+                    out_bwd_reference.backward(grad_out, retain_graph=True)
 
                 def _run_bwd_fused() -> None:
                     if combine_bwd_fused.grad is not None:
@@ -283,10 +275,10 @@ def main() -> None:
                         probs_bwd_fused.grad.zero_()
                     out_bwd_fused.backward(grad_out, retain_graph=True)
 
-                def _run_fwd_bwd_legacy() -> None:
+                def _run_fwd_bwd_reference() -> None:
                     c = combine_out.detach().clone().requires_grad_(True)
                     p = merging_probs.detach().clone().requires_grad_(True)
-                    out = _legacy_restore_drop_unpermute(
+                    out = _reference_restore_drop_unpermute(
                         combine_out=c,
                         row_id_map=row_id_map,
                         local_inverse_reorder_indices=local_inverse_reorder_indices,
@@ -310,34 +302,34 @@ def main() -> None:
                     )
                     (out * out).sum().backward()
 
-                fwd_legacy = _event_timed_ms(_run_fwd_legacy, args.warmup_iters, args.iters)
+                fwd_reference = _event_timed_ms(_run_fwd_reference, args.warmup_iters, args.iters)
                 fwd_fused = _event_timed_ms(_run_fwd_fused, args.warmup_iters, args.iters)
-                bwd_legacy = _event_timed_ms(_run_bwd_legacy, args.warmup_iters, args.iters)
+                bwd_reference = _event_timed_ms(_run_bwd_reference, args.warmup_iters, args.iters)
                 bwd_fused = _event_timed_ms(_run_bwd_fused, args.warmup_iters, args.iters)
-                fwd_bwd_legacy = _event_timed_ms(_run_fwd_bwd_legacy, args.warmup_iters // 2, max(1, args.iters // 2))
+                fwd_bwd_reference = _event_timed_ms(_run_fwd_bwd_reference, args.warmup_iters // 2, max(1, args.iters // 2))
                 fwd_bwd_fused = _event_timed_ms(_run_fwd_bwd_fused, args.warmup_iters // 2, max(1, args.iters // 2))
 
                 print(
                     f"d_model={d_model:4d} top_k={top_k} keep={keep_fraction:0.1f} | "
-                    f"fwd {fwd_legacy:.4f}->{fwd_fused:.4f} ms | "
-                    f"bwd {bwd_legacy:.4f}->{bwd_fused:.4f} ms | "
-                    f"fwd+bwd {fwd_bwd_legacy:.4f}->{fwd_bwd_fused:.4f} ms"
+                    f"fwd {fwd_reference:.4f}->{fwd_fused:.4f} ms | "
+                    f"bwd {bwd_reference:.4f}->{bwd_fused:.4f} ms | "
+                    f"fwd+bwd {fwd_bwd_reference:.4f}->{fwd_bwd_fused:.4f} ms"
                 )
 
-                if fwd_fused > fwd_legacy:
+                if fwd_fused > fwd_reference:
                     failures.append(
                         f"fwd regression at d_model={d_model}, top_k={top_k}, keep_fraction={keep_fraction}: "
-                        f"{fwd_fused:.4f} > {fwd_legacy:.4f} ms"
+                        f"{fwd_fused:.4f} > {fwd_reference:.4f} ms"
                     )
-                if bwd_fused > bwd_legacy:
+                if bwd_fused > bwd_reference:
                     failures.append(
                         f"bwd regression at d_model={d_model}, top_k={top_k}, keep_fraction={keep_fraction}: "
-                        f"{bwd_fused:.4f} > {bwd_legacy:.4f} ms"
+                        f"{bwd_fused:.4f} > {bwd_reference:.4f} ms"
                     )
-                if fwd_bwd_fused > fwd_bwd_legacy:
+                if fwd_bwd_fused > fwd_bwd_reference:
                     failures.append(
                         f"fwd+bwd regression at d_model={d_model}, top_k={top_k}, keep_fraction={keep_fraction}: "
-                        f"{fwd_bwd_fused:.4f} > {fwd_bwd_legacy:.4f} ms"
+                        f"{fwd_bwd_fused:.4f} > {fwd_bwd_reference:.4f} ms"
                     )
 
     if failures:

@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union, cast
 import nvtx
 import torch
 
+from olmo_core.utils import get_or_init_stream
+
 from ...moe.utils import (
     record_stream_event_no_compile,
     wait_event_no_compile,
@@ -16,10 +18,19 @@ from ..utils import (
     moe_permute_1d_fused_drop_no_compile,
 )
 from .comm import _CombineVDevAutograd, _DispatchVDevAutograd
-from .ep_no_sync_state import (
+from .ep_no_sync_common import (
+    build_keep_reorder,
+    restore_drop_unpermute_1d,
+    sync_tail_drop_allowed_splits_single_a2a,
+)
+from .ep_no_sync_buffers import (
     _NoSyncStageAState,
     _NoSyncStageDState,
     _NoSyncTboPendingContext,
+    compute_ep_no_sync_rank_capacity,
+    ep_no_sync_slot_for_lane,
+    get_ep_no_sync_buffers,
+    get_ep_no_sync_group_name,
 )
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
@@ -50,11 +61,11 @@ def ep_no_sync_stage_a(
     if self.ep_no_sync_use_rowwise_all_to_all:
         raise RuntimeError(
             "ep_no_sync_use_rowwise_all_to_all=True is only implemented for "
-            "combined_forward_ep_no_sync() (non-TBO path) right now."
+            "combined_forward_ep_no_sync_rowwise() (non-TBO path) right now."
         )
 
-    group_name = self._get_ep_no_sync_group_name()
-    slot_idx = self._ep_no_sync_slot_for_lane(lane_id)
+    group_name = get_ep_no_sync_group_name(self)
+    slot_idx = ep_no_sync_slot_for_lane(self, lane_id)
     B, S, D = x.shape
     block_inp = x
     del x
@@ -68,10 +79,9 @@ def ep_no_sync_stage_a(
             local_x_global_routed_expert_indices,
             local_batch_size_per_global_routed_expert,
             routed_expert_router_aux_loss_info,
-        ) = self.router_forward(
-            router=self.routed_experts_router,
-            local_x=moe_inp,
-            scores_only=False,
+        ) = self.routed_experts_router(
+            moe_inp,
+            False,
             loss_div_factor=loss_div_factor,
         )
 
@@ -89,10 +99,9 @@ def ep_no_sync_stage_a(
                 _,
                 _,
                 _,
-            ) = self.router_forward(
-                router=self.shared_experts_router,
-                local_x=moe_inp,
-                scores_only=True,
+            ) = self.shared_experts_router(
+                moe_inp,
+                True,
                 loss_div_factor=loss_div_factor,
             )
         else:
@@ -121,15 +130,16 @@ def ep_no_sync_stage_a(
     with torch.no_grad():
         with nvtx.annotate("A-ConfigCapacity", color="green"):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
-            rank_capacity = self._compute_ep_no_sync_rank_capacity(num_out_tokens)
+            rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
             allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
                 Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-                self._sync_tail_drop_allowed_splits_single_a2a(
+                sync_tail_drop_allowed_splits_single_a2a(
+                    self,
                     requested_splits,
                     rank_capacity=rank_capacity,
                 ),
             )
-            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = self._build_keep_reorder(
+            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
                 requested_splits=requested_splits,
                 keep_splits=allowed_splits,
                 num_out_tokens=num_out_tokens,
@@ -141,7 +151,8 @@ def ep_no_sync_stage_a(
             combine_in_cap = rank_capacity
             combine_out_cap = num_out_tokens
 
-    buffers = self._get_ep_no_sync_buffers(
+    buffers = get_ep_no_sync_buffers(
+        self,
         dispatch_in_cap=dispatch_in_cap,
         dispatch_out_cap=dispatch_out_cap,
         combine_in_cap=combine_in_cap,
@@ -203,7 +214,7 @@ def ep_no_sync_stage_a(
 
 def ep_no_sync_stage_d_launch(block: MoEFusedV2TransformerBlock, a_state: _NoSyncStageAState) -> _NoSyncStageDState:
     self = block
-    comm_stream = self.get_ep_no_sync_comm_stream()
+    comm_stream = get_or_init_stream(id=f"ep_no_sync_comm_block_{self.block_idx}", priority=0)
     wait_stream_no_compile(this_stream=comm_stream, other_stream=torch.cuda.current_stream())
 
     with torch.cuda.stream(comm_stream):
@@ -295,7 +306,7 @@ def ep_no_sync_stage_c_launch(
     block = pending_ctx.block
     a_state = pending_ctx.a_state
     buffers = a_state.buffers
-    comm_stream = block.get_ep_no_sync_comm_stream()
+    comm_stream = get_or_init_stream(id=f"ep_no_sync_comm_block_{block.block_idx}", priority=0)
     wait_stream_no_compile(this_stream=comm_stream, other_stream=torch.cuda.current_stream())
 
     with torch.cuda.stream(comm_stream):
@@ -330,7 +341,8 @@ def ep_no_sync_stage_tail(block: MoEFusedV2TransformerBlock, pending_ctx: _NoSyn
     combine_out = pending_ctx.combine_out if pending_ctx.combine_out is not None else buffers.combine_out
     with nvtx.annotate("Tail-UnpermuteMerge", color="green"):
         combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
-        local_x = self._restore_drop_unpermute_1d(
+        local_x = restore_drop_unpermute_1d(
+            self,
             combine_out=combine_out_for_unpermute,
             local_inverse_reorder_indices=a_state.local_inverse_reorder_indices,
             packed_keep_mask=a_state.packed_keep_mask,
@@ -345,11 +357,7 @@ def ep_no_sync_stage_tail(block: MoEFusedV2TransformerBlock, pending_ctx: _NoSyn
     local_x = local_x.view(a_state.in_shape)
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 
-    if self.shared_experts is not None:
-        assert a_state.mixed_shared_out is not None
-        mlp_out = local_x + a_state.mixed_shared_out
-    else:
-        mlp_out = local_x
+    mlp_out = self._merge_routed_and_shared(local_x, a_state.mixed_shared_out)
 
     final_out = self._res_norm_mlp(a_state.attn_res_out, mlp_out)
     return self._attach_routed_aux_loss(
@@ -380,9 +388,10 @@ def combined_forward_ep_no_sync_tbo(
 
     with nvtx.annotate("TBO-1", color="orange"):
         if pending_prev is not None:
-            pending_prev = pending_prev.block._ep_no_sync_stage_c_launch(pending_prev)
+            pending_prev = ep_no_sync_stage_c_launch(pending_prev.block, pending_prev)
     with nvtx.annotate("TBO-0", color="purple"):
-        a0 = self._ep_no_sync_stage_a(
+        a0 = ep_no_sync_stage_a(
+            self,
             x0,
             lane_id=0,
             loss_div_factor=loss_div_factor,
@@ -395,12 +404,13 @@ def combined_forward_ep_no_sync_tbo(
             block_inp1 = fresh_ctx["x1"]
         else:
             assert pending_prev is not None
-            block_inp1 = pending_prev.block._ep_no_sync_stage_tail(pending_prev)
+            block_inp1 = ep_no_sync_stage_tail(pending_prev.block, pending_prev)
 
     with nvtx.annotate("TBO-0", color="purple"):
-        d0 = self._ep_no_sync_stage_d_launch(a0)
+        d0 = ep_no_sync_stage_d_launch(self, a0)
     with nvtx.annotate("TBO-1", color="orange"):
-        a1 = self._ep_no_sync_stage_a(
+        a1 = ep_no_sync_stage_a(
+            self,
             block_inp1,
             lane_id=1,
             loss_div_factor=loss_div_factor,
@@ -408,16 +418,16 @@ def combined_forward_ep_no_sync_tbo(
         )
 
     with nvtx.annotate("TBO-1", color="orange"):
-        d1 = self._ep_no_sync_stage_d_launch(a1)
+        d1 = ep_no_sync_stage_d_launch(self, a1)
     with nvtx.annotate("TBO-0", color="purple"):
-        pending0_pre_c = self._ep_no_sync_stage_e(d0)
+        pending0_pre_c = ep_no_sync_stage_e(self, d0)
 
     with nvtx.annotate("TBO-0", color="purple"):
-        pending0_post_c = self._ep_no_sync_stage_c_launch(pending0_pre_c)
+        pending0_post_c = ep_no_sync_stage_c_launch(self, pending0_pre_c)
     with nvtx.annotate("TBO-1", color="orange"):
-        pending1_pre_c = self._ep_no_sync_stage_e(d1)
+        pending1_pre_c = ep_no_sync_stage_e(self, d1)
 
     with nvtx.annotate("TBO-0", color="purple"):
-        final_out = self._ep_no_sync_stage_tail(pending0_post_c)
+        final_out = ep_no_sync_stage_tail(self, pending0_post_c)
 
     return final_out, pending1_pre_c

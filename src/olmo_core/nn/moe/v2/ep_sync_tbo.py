@@ -11,6 +11,7 @@ from olmo_core.ops import moe as ops
 from ...moe.utils import async_copy_to_cpu
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
 from .routed_experts import requires_host_side_split_sizes
+from .ep_sync_1d import checkpointed_permute_routed_experts_unpermute_1d
 from .tbo_state import SyncedTboPendingContext
 
 if TYPE_CHECKING:
@@ -105,10 +106,9 @@ def combined_forward_ep_tbo(
             local_x_global_routed_expert_indices, # (B, S, top_k)
             local_batch_size_per_global_routed_expert, # (num_experts, )
             routed_expert_router_aux_loss_info,
-        ) = self.router_forward(
-            router=self.routed_experts_router,
-            local_x=moe_inp,
-            scores_only=False,
+        ) = self.routed_experts_router(
+            moe_inp,
+            False,
             loss_div_factor=loss_div_factor # scalar
         )
 
@@ -144,10 +144,9 @@ def combined_forward_ep_tbo(
                 _,
                 _,
                 _
-            ) = self.router_forward(
-                router=self.shared_experts_router,
-                local_x=moe_inp,
-                scores_only=True,  # only need scores for shared experts
+            ) = self.shared_experts_router(
+                moe_inp,
+                True,  # only need scores for shared experts
                 loss_div_factor=loss_div_factor # scalar
             )
         else:
@@ -290,13 +289,7 @@ def combined_forward_ep_tbo(
 
             local_x1 = local_x1.view(in_shape1)
 
-            # weighted sum of the shared experts and routed experts
-            if last_block.shared_experts is not None:
-                assert mixed_shared_out1 is not None
-                assert last_block.routed_experts is not None
-                mlp_out1 = local_x1 + mixed_shared_out1
-            else:
-                mlp_out1 = local_x1
+            mlp_out1 = last_block._merge_routed_and_shared(local_x1, mixed_shared_out1)
 
             block_inp1 = last_block._res_norm_mlp(attn_res_out1, mlp_out1)
 
@@ -315,10 +308,9 @@ def combined_forward_ep_tbo(
             local_x_global_routed_expert_indices1, # (B, S, top_k)
             local_batch_size_per_global_routed_expert1, # (num_experts, )
             routed_expert_router_aux_loss_info1,
-        ) = self.router_forward(
-            router=self.routed_experts_router,
-            local_x=moe_inp1,
-            scores_only=False,
+        ) = self.routed_experts_router(
+            moe_inp1,
+            False,
             loss_div_factor=loss_div_factor # scalar
         )
 
@@ -354,10 +346,9 @@ def combined_forward_ep_tbo(
                 _,
                 _,
                 _
-            ) = self.router_forward(
-                router=self.shared_experts_router,
-                local_x=moe_inp1,
-                scores_only=True,  # only need scores for shared experts
+            ) = self.shared_experts_router(
+                moe_inp1,
+                True,  # only need scores for shared experts
                 loss_div_factor=loss_div_factor # scalar
             )
         else:
@@ -476,10 +467,11 @@ def combined_forward_ep_tbo(
 
 
     with nvtx.annotate("TBO-0", color='purple'):
-        global_x = self._checkpointed_permute_routed_experts_unpermute(
-            global_x=global_x,
-            global_x_local_expert_indices=global_x_local_expert_indices,
-            parallel_batch_size_per_local_expert_cpu=(
+        global_x = checkpointed_permute_routed_experts_unpermute_1d(
+            self,
+            global_x,
+            global_x_local_expert_indices,
+            (
                 parallel_batch_size_per_local_expert_cpu
                 if requires_host_side_split_sizes()
                 else parallel_batch_size_per_local_expert
@@ -512,10 +504,11 @@ def combined_forward_ep_tbo(
 
     ############################ TBO 1 ############################
     with nvtx.annotate("TBO-1", color='orange'):
-        global_x1 = self._checkpointed_permute_routed_experts_unpermute(
-            global_x=global_x1,
-            global_x_local_expert_indices=global_x_local_expert_indices1,
-            parallel_batch_size_per_local_expert_cpu=(
+        global_x1 = checkpointed_permute_routed_experts_unpermute_1d(
+            self,
+            global_x1,
+            global_x_local_expert_indices1,
+            (
                 parallel_batch_size_per_local_expert_cpu1
                 if requires_host_side_split_sizes()
                 else parallel_batch_size_per_local_expert1
@@ -546,13 +539,7 @@ def combined_forward_ep_tbo(
         local_x = local_x.view(in_shape)
 
 
-        # weighted sum of the shared experts and routed experts
-        if self.shared_experts is not None:
-            assert mixed_shared_out is not None
-
-            mlp_out = local_x + mixed_shared_out
-        else:
-            mlp_out = local_x
+        mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
         final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 

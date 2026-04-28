@@ -1,6 +1,10 @@
 import pytest
 import torch
 
+from olmo_core.nn.moe.v2.ep_no_sync_common import (
+    build_keep_reorder,
+    restore_drop_unpermute_1d,
+)
 from olmo_core.nn.moe.utils import (
     moe_permute_no_compile,
     moe_unpermute_1d_fused_drop_no_compile,
@@ -9,40 +13,25 @@ from olmo_core.nn.moe.utils import (
 from olmo_core.testing import requires_gpu, requires_te
 
 
-def _build_keep_reorder(
+def _build_random_keep_splits(
     *,
     num_rows: int,
     keep_fraction: float,
     seed: int,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     keep_count = int(round(keep_fraction * num_rows))
     keep_count = max(0, min(keep_count, num_rows))
-    keep_mask = torch.zeros(num_rows, device=device, dtype=torch.bool)
+    keep_splits = torch.zeros(num_rows, device=device, dtype=torch.long)
     if keep_count > 0:
         g = torch.Generator(device=device)
         g.manual_seed(seed)
         keep_rows = torch.randperm(num_rows, generator=g, device=device)[:keep_count]
-        keep_mask[keep_rows] = True
-
-    token_ids = torch.arange(num_rows, device=device, dtype=torch.long)
-    keep_i64 = keep_mask.to(dtype=torch.long)
-    drop_i64 = (~keep_mask).to(dtype=torch.long)
-    keep_rank = torch.cumsum(keep_i64, dim=0) - 1
-    drop_rank = torch.cumsum(drop_i64, dim=0) - 1
-    num_kept = keep_i64.sum(dtype=torch.long)
-    packed_pos = torch.where(keep_mask, keep_rank, num_kept + drop_rank)
-
-    reorder_indices = torch.empty_like(token_ids)
-    reorder_indices.scatter_(0, packed_pos, token_ids)
-
-    inverse_reorder_indices = torch.empty_like(reorder_indices)
-    inverse_reorder_indices.scatter_(0, reorder_indices, token_ids)
-    packed_keep_mask = keep_mask.index_select(0, reorder_indices)
-    return reorder_indices, inverse_reorder_indices, packed_keep_mask
+        keep_splits[keep_rows] = 1
+    return keep_splits
 
 
-def _legacy_restore_drop_unpermute(
+def _reference_restore_drop_unpermute(
     *,
     combine_out: torch.Tensor,
     row_id_map: torch.Tensor,
@@ -126,7 +115,7 @@ def _build_block(backend: str = "te_fused"):
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize("top_k", [1, 2, 4])
 @pytest.mark.parametrize("keep_fraction", [1.0, 0.7, 0.3])
-def test_restore_unpermute_1d_te_fused_matches_legacy(
+def test_restore_unpermute_1d_te_fused_matches_reference(
     dtype: torch.dtype,
     top_k: int,
     keep_fraction: float,
@@ -153,26 +142,32 @@ def test_restore_unpermute_1d_te_fused_matches_legacy(
     )
     restore_shape = x.shape
 
-    reorder_indices, local_inverse_reorder_indices, packed_keep_mask = _build_keep_reorder(
+    requested_splits = torch.ones(permuted.shape[0], device=device, dtype=torch.long)
+    keep_splits = _build_random_keep_splits(
         num_rows=permuted.shape[0],
         keep_fraction=keep_fraction,
         seed=11,
         device=device,
     )
+    reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
+        requested_splits,
+        keep_splits,
+        permuted.shape[0],
+    )
     combine_out = permuted.index_select(0, reorder_indices)
     merging_probs = torch.rand(num_tokens, top_k, device=device, dtype=torch.float32)
 
-    combine_out_legacy = combine_out.detach().clone().requires_grad_(True)
+    combine_out_reference = combine_out.detach().clone().requires_grad_(True)
     combine_out_fused = combine_out.detach().clone().requires_grad_(True)
-    probs_legacy = merging_probs.detach().clone().requires_grad_(True)
+    probs_reference = merging_probs.detach().clone().requires_grad_(True)
     probs_fused = merging_probs.detach().clone().requires_grad_(True)
 
-    out_legacy = _legacy_restore_drop_unpermute(
-        combine_out=combine_out_legacy,
+    out_reference = _reference_restore_drop_unpermute(
+        combine_out=combine_out_reference,
         row_id_map=row_id_map,
         local_inverse_reorder_indices=local_inverse_reorder_indices,
         packed_keep_mask=packed_keep_mask,
-        merging_probs=probs_legacy,
+        merging_probs=probs_reference,
         restore_shape=restore_shape,
     )
     out_fused = moe_unpermute_1d_fused_drop_no_compile(
@@ -184,18 +179,18 @@ def test_restore_unpermute_1d_te_fused_matches_legacy(
         map_type="index",
     )
 
-    torch.testing.assert_close(out_fused, out_legacy, atol=5e-3, rtol=5e-3)
+    torch.testing.assert_close(out_fused, out_reference, atol=5e-3, rtol=5e-3)
 
-    grad_out = torch.randn_like(out_legacy)
-    (out_legacy * grad_out).sum().backward()
+    grad_out = torch.randn_like(out_reference)
+    (out_reference * grad_out).sum().backward()
     (out_fused * grad_out).sum().backward()
 
-    assert combine_out_legacy.grad is not None
+    assert combine_out_reference.grad is not None
     assert combine_out_fused.grad is not None
-    assert probs_legacy.grad is not None
+    assert probs_reference.grad is not None
     assert probs_fused.grad is not None
-    torch.testing.assert_close(combine_out_fused.grad, combine_out_legacy.grad, atol=5e-3, rtol=5e-3)
-    torch.testing.assert_close(probs_fused.grad, probs_legacy.grad, atol=5e-3, rtol=5e-3)
+    torch.testing.assert_close(combine_out_fused.grad, combine_out_reference.grad, atol=5e-3, rtol=5e-3)
+    torch.testing.assert_close(probs_fused.grad, probs_reference.grad, atol=5e-3, rtol=5e-3)
 
 
 @requires_gpu
@@ -282,18 +277,25 @@ def test_restore_unpermute_backend_selector_behavior():
         num_out_tokens=num_tokens * top_k,
         map_type="index",
     )
-    reorder_indices, local_inverse_reorder_indices, packed_keep_mask = _build_keep_reorder(
+    requested_splits = torch.ones(permuted.shape[0], device=device, dtype=torch.long)
+    keep_splits = _build_random_keep_splits(
         num_rows=permuted.shape[0],
         keep_fraction=0.7,
         seed=5,
         device=device,
     )
+    reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
+        requested_splits,
+        keep_splits,
+        permuted.shape[0],
+    )
     combine_out = permuted.index_select(0, reorder_indices)
     probs = torch.rand(num_tokens, top_k, device=device, dtype=torch.float32)
     num_kept = packed_keep_mask.to(dtype=torch.long).sum(dtype=torch.long)
 
-    block.ep_no_sync_restore_unpermute_backend = "te_legacy"
-    out_legacy = block._restore_drop_unpermute_1d(
+    block.ep_no_sync_restore_unpermute_backend = "te_unfused"
+    out_reference = restore_drop_unpermute_1d(
+        block,
         combine_out=combine_out,
         local_inverse_reorder_indices=local_inverse_reorder_indices,
         packed_keep_mask=packed_keep_mask,
@@ -303,7 +305,8 @@ def test_restore_unpermute_backend_selector_behavior():
         hidden_shape_before_permute=torch.Size([num_tokens, d_model]),
     )
     block.ep_no_sync_restore_unpermute_backend = "te_fused"
-    out_fused = block._restore_drop_unpermute_1d(
+    out_fused = restore_drop_unpermute_1d(
+        block,
         combine_out=combine_out,
         local_inverse_reorder_indices=local_inverse_reorder_indices,
         packed_keep_mask=packed_keep_mask,
@@ -312,11 +315,12 @@ def test_restore_unpermute_backend_selector_behavior():
         local_x_global_routed_expert_weights=probs,
         hidden_shape_before_permute=torch.Size([num_tokens, d_model]),
     )
-    torch.testing.assert_close(out_fused, out_legacy, atol=5e-3, rtol=5e-3)
+    torch.testing.assert_close(out_fused, out_reference, atol=5e-3, rtol=5e-3)
 
     block.ep_no_sync_restore_unpermute_backend = "cuda"
     with pytest.raises(RuntimeError, match="not implemented yet"):
-        _ = block._restore_drop_unpermute_1d(
+        _ = restore_drop_unpermute_1d(
+            block,
             combine_out=combine_out,
             local_inverse_reorder_indices=local_inverse_reorder_indices,
             packed_keep_mask=packed_keep_mask,

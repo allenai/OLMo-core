@@ -11,7 +11,7 @@ class _DebugBlock(nn.Module):
         self.weight = nn.Parameter(torch.tensor(2.0))
         self.calls = 0
 
-    def combined_forward_ep_no_sync(self, x, *, loss_div_factor=None, **kwargs):
+    def combined_forward_ep_no_sync_1d(self, x, *, loss_div_factor=None, **kwargs):
         del loss_div_factor, kwargs
         self.calls += 1
         return x * self.weight
@@ -32,6 +32,7 @@ def test_ep_no_sync_activation_debug_returns_none_when_gate_is_closed(monkeypatc
         x,
         loss_div_factor=None,
         forward_kwargs={},
+        no_sync_forward=block.combined_forward_ep_no_sync_1d,
     )
 
     assert out is None
@@ -64,6 +65,7 @@ def test_ep_no_sync_activation_debug_runs_once_and_sets_global_flag(monkeypatch)
         x,
         loss_div_factor=None,
         forward_kwargs={"unused_kwarg": object()},
+        no_sync_forward=block.combined_forward_ep_no_sync_1d,
     )
 
     torch.testing.assert_close(out, x * 2)

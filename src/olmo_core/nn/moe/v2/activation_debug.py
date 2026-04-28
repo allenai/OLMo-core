@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import weakref
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
 
 import torch
 
@@ -32,6 +32,7 @@ def maybe_dump_ep_no_sync_saved_activations(
     *,
     loss_div_factor: Optional[Union[torch.Tensor, float]],
     forward_kwargs: Dict[str, object],
+    no_sync_forward: Callable[..., torch.Tensor],
 ) -> Optional[torch.Tensor]:
     activation_dump_key = f"ep_no_sync_saved_activations_dumped_block_{block.block_idx}"
     if not (
@@ -69,7 +70,7 @@ def maybe_dump_ep_no_sync_saved_activations(
         return tensor
 
     with torch.autograd.graph.saved_tensors_hooks(_record_saved_tensor, lambda tensor: tensor):
-        out = block.combined_forward_ep_no_sync(
+        out = no_sync_forward(
             x, loss_div_factor=loss_div_factor, **forward_kwargs
         )
 
