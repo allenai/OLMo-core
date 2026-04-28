@@ -40,7 +40,9 @@ def main() -> None:
     hf_model.to(device).eval()
     hf_config = hf_model.config
 
-    log.info("Building OLMo-core qwen3_4B with flash_2 backend (vocab_size=%d)", hf_config.vocab_size)
+    log.info(
+        "Building OLMo-core qwen3_4B with flash_2 backend (vocab_size=%d)", hf_config.vocab_size
+    )
     olmo_config = TransformerConfig.qwen3_4B(
         vocab_size=hf_config.vocab_size,
         attn_backend=AttentionBackendName.flash_2,
