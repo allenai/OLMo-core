@@ -34,7 +34,7 @@ def test_dropless_mlp():
         d_model=128, hidden_size=256, num_experts=2, init_device="cuda", dtype=torch.bfloat16
     )
     x = torch.randn(5, 128, device="cuda", dtype=torch.bfloat16)
-    tokens_per_expert = torch.tensor([3, 2], device="cuda")
+    tokens_per_expert = [3, 2]
     out = mlp(x, tokens_per_expert)
     assert out.shape == (5, 128)
 
@@ -81,7 +81,7 @@ def run_dropless_mlp_with_expert_parallelism():
     assert get_local_tensor(mlp.w1).shape == (2 * 256, 128)
 
     x = torch.randn(5, 128, device="cuda", dtype=torch.bfloat16)
-    tokens_per_expert = torch.tensor([2, 3], device="cuda")
+    tokens_per_expert = [2, 3]
     out = mlp(x, tokens_per_expert)
 
     assert out.shape == (5, 128)
