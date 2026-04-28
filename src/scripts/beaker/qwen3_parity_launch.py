@@ -22,13 +22,15 @@ def build_config(overrides: list[str]) -> BeakerLaunchConfig:
         budget="ai2/oe-base",
         cmd=["python", "src/scripts/beaker/qwen3_parity.py"],
         task_name="qwen3-parity",
-        workspace="ai2/OLMo-core",
+        workspace="ai2/open-instruct-dev",
         beaker_image=OLMoCoreBeakerImage.stable,
         clusters=["ai2/jupiter", "ai2/ceres"],
         num_nodes=1,
         num_gpus=1,
         shared_filesystem=True,
         torchrun=False,
+        priority="urgent",
+        preemptible=False,
         env_secrets=[BeakerEnvSecret(name="HF_TOKEN", secret="HF_TOKEN")],
     ).merge(overrides)
 
