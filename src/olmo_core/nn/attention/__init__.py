@@ -586,6 +586,14 @@ class Attention(SequenceMixer):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
+            rope_kwargs = {}
+            if cu_doc_lens is not None:
+                if not isinstance(self.rope, RotaryEmbedding):
+                    raise NotImplementedError(
+                        "Intra-document RoPE (cu_doc_lens) is only supported by RotaryEmbedding; "
+                        f"got {type(self.rope).__name__}"
+                    )
+                rope_kwargs["cu_doc_lens"] = cu_doc_lens
             q, k = self.rope(
                 q,
                 k,
@@ -594,6 +602,7 @@ class Attention(SequenceMixer):
                 pos_sin=pos_sin,
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
+                **rope_kwargs,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -895,6 +904,14 @@ class NormalizedAttention(Attention):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
+            rope_kwargs = {}
+            if cu_doc_lens is not None:
+                if not isinstance(self.rope, RotaryEmbedding):
+                    raise NotImplementedError(
+                        "Intra-document RoPE (cu_doc_lens) is only supported by RotaryEmbedding; "
+                        f"got {type(self.rope).__name__}"
+                    )
+                rope_kwargs["cu_doc_lens"] = cu_doc_lens
             q, k = self.rope(
                 q,
                 k,
@@ -903,6 +920,7 @@ class NormalizedAttention(Attention):
                 pos_sin=pos_sin,
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
+                **rope_kwargs,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -1048,6 +1066,10 @@ class FusedAttention(SequenceMixer):
         if cache_leftpad:
             raise NotImplementedError(
                 "cache_leftpad is not supported for the fused attention variant"
+            )
+        if cu_doc_lens is not None and self.rope is not None:
+            raise NotImplementedError(
+                "Intra-document RoPE (cu_doc_lens) is not yet supported by FusedAttention"
             )
 
         B, T, _ = x.shape
