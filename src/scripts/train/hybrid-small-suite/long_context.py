@@ -124,10 +124,9 @@ LONG_CONTEXT_CONFIGS = {
         rank_microbatch_size=LC_SEQUENCE_LENGTH,
         cp_degree=2,
         fused_linear_loss=True,
-        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-1.4B-lr2e4/step11921",
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-v2-1.4b-lr4e-4/step11921",
     ),
 }
-
 
 def build_model_config(
     common: CommonComponents, model_size: str, attn_backend: AttentionBackendName = AttentionBackendName.flash_3
