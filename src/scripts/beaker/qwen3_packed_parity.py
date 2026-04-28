@@ -104,14 +104,30 @@ def report_per_block(packed_store, solo_a_store, solo_b_store, n_layers, la, lb)
     log.info("%-22s %12.3e %12.3e %12.3e %12.3e", name, mx_a, mn_a, mx_b, mn_b)
 
 
-def drill_block0(model, doc_a, doc_b, packed, doc_lens, max_doc_lens, la):
+def drill_block(
+    model,
+    block_idx: int,
+    solo_doc,
+    packed,
+    doc_lens,
+    max_doc_lens,
+    pkd_slice: slice,
+    label: str,
+):
     log.info("=" * 88)
-    log.info("Report 2: block_0 attention submodule drill (packed[:, :la] vs solo_a)")
+    log.info(
+        "Report 2 (%s): block_%02d attention submodule drill (packed[:, %d:%d] vs solo)",
+        label,
+        block_idx,
+        pkd_slice.start or 0,
+        pkd_slice.stop,
+    )
     log.info("%-22s %12s %12s", "name", "max", "mean")
     log.info("-" * 88)
 
-    block0 = model.blocks[sorted(model.blocks.keys(), key=int)[0]]
-    attn = block0.attention
+    block_keys = sorted(model.blocks.keys(), key=int)
+    block = model.blocks[block_keys[block_idx]]
+    attn = block.attention
 
     targets = []
     for child_name in ("w_q", "w_k", "w_v", "q_norm", "k_norm", "rope", "w_out"):
@@ -120,7 +136,7 @@ def drill_block0(model, doc_a, doc_b, packed, doc_lens, max_doc_lens, la):
             continue
         targets.append((child_name, sub))
     targets.append(("attn", attn))
-    targets.append(("block", block0))
+    targets.append(("block", block))
 
     solo_in: dict = {}
     solo_out: dict = {}
@@ -136,7 +152,7 @@ def drill_block0(model, doc_a, doc_b, packed, doc_lens, max_doc_lens, la):
 
     h = attach(solo_in, solo_out)
     with torch.no_grad():
-        model(doc_a)
+        model(solo_doc)
     remove_handles(h)
 
     h = attach(pkd_in, pkd_out)
@@ -147,10 +163,12 @@ def drill_block0(model, doc_a, doc_b, packed, doc_lens, max_doc_lens, la):
     for name, _ in targets:
         if name not in solo_in or name not in pkd_in:
             continue
-        if pkd_in[name].dim() < 2 or solo_in[name].dim() < 2:
+        s_in, p_in = solo_in[name], pkd_in[name]
+        s_out, p_out = solo_out[name], pkd_out[name]
+        if p_in.dim() < 2 or s_in.dim() < 2:
             continue
-        mx_in, mn_in = diff_summary(pkd_in[name][:, :la], solo_in[name])
-        mx_out, mn_out = diff_summary(pkd_out[name][:, :la], solo_out[name])
+        mx_in, mn_in = diff_summary(p_in[:, pkd_slice], s_in)
+        mx_out, mn_out = diff_summary(p_out[:, pkd_slice], s_out)
         log.info("%-22s %12.3e %12.3e", f"{name}.in", mx_in, mn_in)
         log.info("%-22s %12.3e %12.3e", f"{name}.out", mx_out, mn_out)
 
@@ -213,7 +231,20 @@ def main() -> None:
 
     report_per_block(packed_store, solo_a_store, solo_b_store, n_layers, LA, LB)
 
-    drill_block0(olmo_model, doc_a, doc_b, packed, doc_lens, max_doc_lens, LA)
+    drill_block(
+        olmo_model, 0, doc_a, packed, doc_lens, max_doc_lens, slice(0, LA), "doc_a@block0"
+    )
+    for bi in (0, 1, 5):
+        drill_block(
+            olmo_model,
+            bi,
+            doc_b,
+            packed,
+            doc_lens,
+            max_doc_lens,
+            slice(LA, LA + LB),
+            f"doc_b@block{bi}",
+        )
 
     log.info("=" * 88)
     log.info("Report 3: sanity — packed without doc_lens vs solo")
