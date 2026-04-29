@@ -81,7 +81,9 @@ def main() -> None:
     hf_model.to(device).eval()
     hf_config = hf_model.config
 
-    log.info("Building OLMo qwen3_4B (TorchAttentionBackend / sdpa, vocab_size=%d)", hf_config.vocab_size)
+    log.info(
+        "Building OLMo qwen3_4B (TorchAttentionBackend / sdpa, vocab_size=%d)", hf_config.vocab_size
+    )
     olmo_config = TransformerConfig.qwen3_4B(
         vocab_size=hf_config.vocab_size,
         attn_backend=AttentionBackendName.torch,
@@ -148,6 +150,7 @@ def main() -> None:
         oc_attn.q_norm.register_forward_hook(make_hook(oc_acts, "q_norm"))
     if oc_attn.k_norm is not None:
         oc_attn.k_norm.register_forward_hook(make_hook(oc_acts, "k_norm"))
+
     def oc_sdpa_pre_hook(_module, inputs):
         qkv = inputs[0]
         q, k, v = qkv[0], qkv[1], qkv[2]
