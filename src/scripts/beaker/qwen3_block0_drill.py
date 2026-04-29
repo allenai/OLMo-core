@@ -15,6 +15,7 @@ from typing import Callable, Dict, Optional
 import torch
 import torch.nn.functional as F
 import transformers
+from transformers.models.qwen3 import modeling_qwen3
 
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.hf.convert import convert_state_from_hf
@@ -95,6 +96,23 @@ def main() -> None:
     hf_acts: Dict[str, torch.Tensor] = {}
     oc_acts: Dict[str, torch.Tensor] = {}
 
+    # Monkey-patch HF's apply_rotary_pos_emb to capture post-RoPE q,k for layer 0 only.
+    _rope_seen = {"count": 0}
+    _orig_apply_rope = modeling_qwen3.apply_rotary_pos_emb
+
+    def _patched_apply_rope(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
+        q_out, k_out = _orig_apply_rope(q, k, cos, sin, position_ids, unsqueeze_dim)
+        if _rope_seen["count"] == 0:
+            # HF shape: (B, n_heads, T, hd). Transpose to (B, T, n_heads, hd) to match OLMo.
+            hf_acts["q_post_rope"] = q_out.detach().transpose(1, 2).contiguous()
+            hf_acts["k_post_rope"] = k_out.detach().transpose(1, 2).contiguous()
+            hf_acts["rope_cos"] = cos.detach()
+            hf_acts["rope_sin"] = sin.detach()
+        _rope_seen["count"] += 1
+        return q_out, k_out
+
+    modeling_qwen3.apply_rotary_pos_emb = _patched_apply_rope
+
     hf_layer = hf_model.model.layers[0]
     hf_attn = hf_layer.self_attn
     hf_mlp = hf_layer.mlp
@@ -130,6 +148,14 @@ def main() -> None:
         oc_attn.q_norm.register_forward_hook(make_hook(oc_acts, "q_norm"))
     if oc_attn.k_norm is not None:
         oc_attn.k_norm.register_forward_hook(make_hook(oc_acts, "k_norm"))
+    def oc_sdpa_pre_hook(_module, inputs):
+        q, k, v = inputs[0], inputs[1], inputs[2]
+        oc_acts["q_post_rope"] = q.detach()
+        oc_acts["k_post_rope"] = k.detach()
+        oc_acts["v_pre_sdpa"] = v.detach()
+
+    oc_attn.backend.register_forward_pre_hook(oc_sdpa_pre_hook)
+    oc_attn.backend.register_forward_hook(make_hook(oc_acts, "sdpa_out"))
     oc_attn.w_out.register_forward_pre_hook(make_pre_hook(oc_acts, "attn_out_pre_o"))
     oc_attn.w_out.register_forward_hook(make_hook(oc_acts, "o_proj"))
     oc_attn.register_forward_hook(make_hook(oc_acts, "self_attn"))
@@ -163,6 +189,9 @@ def main() -> None:
         "v_proj",
         "q_norm",
         "k_norm",
+        "q_post_rope",
+        "k_post_rope",
+        "sdpa_out",
         "attn_out_pre_o",
         "o_proj",
         "self_attn",
