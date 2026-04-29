@@ -239,10 +239,8 @@ class RMSNorm(LayerNorm):
 class QwenRMSNorm(RMSNorm):
     """
     RMSNorm variant matching HuggingFace's ``Qwen3RMSNorm`` rounding order: the input is
-    cast back to its original dtype *before* multiplication by the affine weight, so the
-    weight multiply happens in the input dtype rather than fp32. Qwen3's trained weights
-    expect this ordering, and computing the multiply in fp32 (as in :class:`RMSNorm`)
-    diverges on outlier-feature channels in mid-stack.
+    cast back to its original dtype before being multiplied by the affine weight, so the
+    weight multiply happens in the input dtype rather than fp32.
     """
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -254,12 +252,11 @@ class QwenRMSNorm(RMSNorm):
 
             variance = x.pow(2).mean(-1, keepdim=True)
             x = x * torch.rsqrt(variance + self.eps)
-
             x = x.to(og_dtype)
-            if self.weight is not None:
-                x = self.weight.to(og_dtype) * x
-                if self.bias is not None:
-                    x = x + self.bias.to(og_dtype)
+
+            x = x * self.weight.type_as(x)
+            if self.bias is not None:
+                x = x + self.bias.type_as(x)
 
             return x
 

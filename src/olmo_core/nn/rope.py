@@ -527,6 +527,9 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                     f"have {pos_sin.size(-2)}."
                 )
 
+            def _broadcast(t: torch.Tensor) -> torch.Tensor:
+                return t[None, None, :, :] if head_first else t[None, :, None, :]
+
             if cu_doc_lens is not None:
                 if q_len != k_len:
                     raise RuntimeError(
@@ -535,30 +538,18 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                 arange_seq = torch.arange(k_len, device=q_.device, dtype=cu_doc_lens.dtype)
                 doc_id = torch.bucketize(arange_seq, cu_doc_lens[1:], right=True)
                 pos_idx = arange_seq - cu_doc_lens[doc_id]
-                sin_qk = pos_sin.index_select(0, pos_idx)
-                cos_qk = pos_cos.index_select(0, pos_idx)
-                if head_first:
-                    sin_qk = sin_qk[None, None, :, :]
-                    cos_qk = cos_qk[None, None, :, :]
-                else:
-                    sin_qk = sin_qk[None, :, None, :]
-                    cos_qk = cos_qk[None, :, None, :]
+                sin_qk = _broadcast(pos_sin.index_select(0, pos_idx))
+                cos_qk = _broadcast(pos_cos.index_select(0, pos_idx))
                 q_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, q_)
                 k_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, k_)
             else:
                 q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
                 k_abs_start = start_pos if start_pos is not None else 0
 
-                if head_first:
-                    sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
-                    cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
-                    sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
-                    cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
-                else:
-                    sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
-                    cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
-                    sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
-                    cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
+                sin_q = _broadcast(pos_sin[q_abs_start : q_abs_start + q_len, :])
+                cos_q = _broadcast(pos_cos[q_abs_start : q_abs_start + q_len, :])
+                sin_k = _broadcast(pos_sin[k_abs_start : k_abs_start + k_len, :])
+                cos_k = _broadcast(pos_cos[k_abs_start : k_abs_start + k_len, :])
 
                 q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
                 k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
