@@ -15,6 +15,7 @@ __all__ = [
     "LayerNormConfig",
     "LayerNorm",
     "RMSNorm",
+    "QwenRMSNorm",
     "CuTeRMSNorm",
     "FusedRMSNorm",
     "L2Norm",
@@ -33,6 +34,10 @@ class LayerNormType(StrEnum):
     rms = "rms"
     """
     ➡️ :class:`RMSNorm`
+    """
+    qwen_rms = "qwen_rms"
+    """
+    ➡️ :class:`QwenRMSNorm`
     """
     cute_rms = "cute_rms"
     """
@@ -102,6 +107,8 @@ class LayerNormConfig(ModuleConfig):
                 return LayerNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.rms:
                 return RMSNorm(size=size, init_device=init_device, **kwargs)
+            elif self.name == LayerNormType.qwen_rms:
+                return QwenRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.cute_rms:
                 return CuTeRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.fused_rms:
@@ -227,6 +234,31 @@ class RMSNorm(LayerNorm):
                     x = self.weight.type_as(x) * x
 
             return x.to(og_dtype)
+
+
+class QwenRMSNorm(RMSNorm):
+    """
+    RMSNorm variant matching HuggingFace's ``Qwen3RMSNorm`` rounding order: the input is
+    cast back to its original dtype before being multiplied by the affine weight, so the
+    weight multiply happens in the input dtype rather than fp32.
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        with torch.autocast(enabled=False, device_type=x.device.type):
+            og_dtype = x.dtype
+
+            if self.full_precision:
+                x = x.float()
+
+            variance = x.pow(2).mean(-1, keepdim=True)
+            x = x * torch.rsqrt(variance + self.eps)
+            x = x.to(og_dtype)
+
+            x = x * self.weight.type_as(x)
+            if self.bias is not None:
+                x = x + self.bias.type_as(x)
+
+            return x
 
 
 class CuTeRMSNorm(RMSNorm):
