@@ -482,7 +482,6 @@ def convert_state_to_hf(
 # ---------------------------------------------------------------------------
 
 #: GDN layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.linear_attn.*``.
-#: These layers use pre-norm in HF (input_layernorm before the sequence mixer).
 HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
     "attention.w_q.weight": "linear_attn.q_proj.weight",
     "attention.w_k.weight": "linear_attn.k_proj.weight",
@@ -497,20 +496,31 @@ HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
     "attention.o_norm.weight": "linear_attn.o_norm.weight",
     "attention.A_log": "linear_attn.A_log",
     "attention.dt_bias": "linear_attn.dt_bias",
-    "attention_norm.weight": "input_layernorm.weight",
-    "feed_forward_norm.weight": "post_attention_layernorm.weight",
+    "attention_norm.weight": "post_attention_layernorm.weight",
+    "feed_forward_norm.weight": "post_feedforward_layernorm.weight",
     "feed_forward.w1.weight": "mlp.gate_proj.weight",
     "feed_forward.w2.weight": "mlp.down_proj.weight",
     "feed_forward.w3.weight": "mlp.up_proj.weight",
 }
 
+#: Peri-norm GDN layers: 4 norms (pre + post for attention and FF).
+HYBRID_GDN_PERI_NORM_LAYER_KEY_MAP: Dict[str, str] = {
+    **HYBRID_GDN_LAYER_KEY_MAP,
+    # Override: attention_norm is now the pre-norm, not post-norm
+    "attention_norm.weight": "pre_attention_norm.weight",
+    "feed_forward_norm.weight": "pre_feedforward_norm.weight",
+    # New: post-norms
+    "post_attention_norm.weight": "post_attention_layernorm.weight",
+    "post_feed_forward_norm.weight": "post_feedforward_layernorm.weight",
+}
+
 #: Attention layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.self_attn.*``.
-#: These layers use post-norm in HF (layernorm after the sequence mixer and after the MLP).
 HYBRID_ATTN_LAYER_KEY_MAP: Dict[str, str] = {
     "attention.w_q.weight": "self_attn.q_proj.weight",
     "attention.w_k.weight": "self_attn.k_proj.weight",
     "attention.w_v.weight": "self_attn.v_proj.weight",
     "attention.w_out.weight": "self_attn.o_proj.weight",
+    "attention.w_g.weight": "self_attn.g_proj.weight",
     "attention.q_norm.weight": "self_attn.q_norm.weight",
     "attention.k_norm.weight": "self_attn.k_norm.weight",
     "attention_norm.weight": "post_attention_layernorm.weight",
@@ -520,9 +530,21 @@ HYBRID_ATTN_LAYER_KEY_MAP: Dict[str, str] = {
     "feed_forward.w3.weight": "mlp.up_proj.weight",
 }
 
+#: Peri-norm attention layers: 4 norms (pre + post for attention and FF).
+HYBRID_ATTN_PERI_NORM_LAYER_KEY_MAP: Dict[str, str] = {
+    **HYBRID_ATTN_LAYER_KEY_MAP,
+    # Override: attention_norm is now the pre-norm, not post-norm
+    "attention_norm.weight": "pre_attention_norm.weight",
+    "feed_forward_norm.weight": "pre_feedforward_norm.weight",
+    # New: post-norms
+    "post_attention_norm.weight": "post_attention_layernorm.weight",
+    "post_feed_forward_norm.weight": "post_feedforward_layernorm.weight",
+}
+
 #: Non-block keys shared across all hybrid models.
 HYBRID_SHARED_KEY_MAP: Dict[str, str] = {
     "embeddings.weight": "model.embed_tokens.weight",
+    "embedding_norm.weight": "model.embedding_norm.weight",
     "lm_head.norm.weight": "model.norm.weight",
     "lm_head.w_out.weight": "lm_head.weight",
 }
@@ -534,6 +556,7 @@ _HYBRID_BLOCK_KEY_RE = re.compile(r"^blocks\.(\d+)\.(.+)$")
 def convert_hybrid_state_to_hf(
     state_dict: Dict[str, Any],
     layer_types: List[str],
+    peri_norm: bool = False,
 ) -> Dict[str, Any]:
     """
     Convert an OLMo-core hybrid state dict to HF ``olmo_hybrid`` format.
@@ -544,8 +567,16 @@ def convert_hybrid_state_to_hf(
 
     :param state_dict: An unsharded OLMo-core model state dict.
     :param layer_types: Per-layer type list (``"linear_attention"`` or ``"full_attention"``).
+    :param peri_norm: Whether the model uses peri-norm (pre + post norms per block).
     """
     hf_state: Dict[str, Any] = {}
+
+    if peri_norm:
+        gdn_map = HYBRID_GDN_PERI_NORM_LAYER_KEY_MAP
+        attn_map = HYBRID_ATTN_PERI_NORM_LAYER_KEY_MAP
+    else:
+        gdn_map = HYBRID_GDN_LAYER_KEY_MAP
+        attn_map = HYBRID_ATTN_LAYER_KEY_MAP
 
     for olmo_key, value in state_dict.items():
         # Try shared (non-block) keys first.
@@ -561,9 +592,9 @@ def convert_hybrid_state_to_hf(
         suffix = m.group(2)
 
         key_map = (
-            HYBRID_GDN_LAYER_KEY_MAP
+            gdn_map
             if layer_types[layer_idx] == "linear_attention"
-            else HYBRID_ATTN_LAYER_KEY_MAP
+            else attn_map
         )
         if suffix not in key_map:
             raise KeyError(

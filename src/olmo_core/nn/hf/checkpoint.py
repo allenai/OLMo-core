@@ -232,7 +232,9 @@ def save_hf_hybrid_model(
     hf_config = get_hybrid_hf_config(model, layer_types, max_seq_len=max_sequence_length)
 
     model_state_dict = {key: get_full_tensor(state) for key, state in model_state_dict.items()}
-    hf_state = convert_hybrid_state_to_hf(model_state_dict, layer_types)
+    hf_state = convert_hybrid_state_to_hf(
+        model_state_dict, layer_types, peri_norm=hf_config.get("use_peri_norm", False)
+    )
 
     if dtype is not None:
         hf_state = {

@@ -10,6 +10,7 @@ from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
 from olmo_core.nn.rope import RoPEScalingConfig
 from olmo_core.nn.transformer.block import (
     MoEReorderedNormTransformerBlock,
+    PeriNormTransformerBlock,
     ReorderedNormTransformerBlock,
     TransformerBlock,
 )
@@ -371,8 +372,8 @@ def get_hybrid_hf_config(
         )
 
     config: Dict[str, Any] = {
-        "model_type": "olmo_hybrid",
-        "architectures": ["OlmoHybridForCausalLM"],
+        "model_type": "olmo3_5_hybrid",
+        "architectures": ["Olmo3_5HybridForCausalLM"],
         # Standard transformer fields
         "vocab_size": model.vocab_size,
         "hidden_size": model.d_model,
@@ -380,6 +381,7 @@ def get_hybrid_hf_config(
         "num_hidden_layers": len(blocks),
         "num_attention_heads": attn.n_heads,
         "num_key_value_heads": attn.n_kv_heads,
+        "head_dim": attn.head_dim,
         "hidden_act": "silu",
         "max_position_embeddings": max_seq_len,
         "initializer_range": 0.02,
@@ -397,6 +399,14 @@ def get_hybrid_hf_config(
         "linear_value_head_dim": gdn.head_v_dim,
         "linear_conv_kernel_dim": gdn.conv_size,
         "linear_allow_neg_eigval": gdn.allow_neg_eigval,
+        # Architecture extras
+        "embed_scale": model.embed_scale,
+        "use_embedding_norm": model.embedding_norm is not None,
+        "use_attention_gate": attn.gate is not None,
+        "use_head_qk_norm": attn.use_head_qk_norm,
+        "use_peri_norm": any(
+            isinstance(b, PeriNormTransformerBlock) for b in blocks
+        ),
         # Token IDs (updated later after tokenizer is saved)
         "pad_token_id": None,
         "bos_token_id": None,
