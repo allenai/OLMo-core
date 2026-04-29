@@ -149,7 +149,8 @@ def main() -> None:
     if oc_attn.k_norm is not None:
         oc_attn.k_norm.register_forward_hook(make_hook(oc_acts, "k_norm"))
     def oc_sdpa_pre_hook(_module, inputs):
-        q, k, v = inputs[0], inputs[1], inputs[2]
+        qkv = inputs[0]
+        q, k, v = qkv[0], qkv[1], qkv[2]
         oc_acts["q_post_rope"] = q.detach()
         oc_acts["k_post_rope"] = k.detach()
         oc_acts["v_pre_sdpa"] = v.detach()
