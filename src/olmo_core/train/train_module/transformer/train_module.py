@@ -429,8 +429,19 @@ class TransformerTrainModule(TrainModule):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                 # Pop soft-target fields out of the micro-batch BEFORE
                 # _prepare_batch, so they don't leak into model.forward(**kwargs).
+                # _prepare_batch only moves standard fields to device; we move
+                # the soft-target tensors here so the loss path's gather doesn't
+                # mix CPU indices with CUDA logits.
                 soft_target_token_ids = micro_batch.pop("soft_target_token_ids", None)
                 soft_target_probs = micro_batch.pop("soft_target_probs", None)
+                if soft_target_token_ids is not None:
+                    soft_target_token_ids = soft_target_token_ids.to(
+                        self.device, non_blocking=True
+                    )
+                if soft_target_probs is not None:
+                    soft_target_probs = soft_target_probs.to(
+                        self.device, non_blocking=True
+                    )
 
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
