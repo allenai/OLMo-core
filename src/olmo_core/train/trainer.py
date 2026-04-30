@@ -911,7 +911,7 @@ class Trainer:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
 
         self.record_metric(
-            "checkpoint/load_duration (s)",
+            "checkpoint/load_duration_s",
             time.perf_counter() - load_start,
             reduce_type=ReduceType.max,
         )
@@ -981,7 +981,7 @@ class Trainer:
             ephemeral=ephemeral,
         )
         self.record_metric(
-            "checkpoint/save_duration (s)",
+            "checkpoint/save_duration_s",
             time.perf_counter() - save_start,
             reduce_type=ReduceType.max,
         )
@@ -1022,7 +1022,7 @@ class Trainer:
         def callback(future: Future):
             future.result()  # ensure it finished successfully
             self.record_metric(
-                "checkpoint/save_async_duration (s)",
+                "checkpoint/save_async_duration_s",
                 time.perf_counter() - save_start,
                 reduce_type=ReduceType.max,
             )
