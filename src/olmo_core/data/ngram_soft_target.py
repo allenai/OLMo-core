@@ -228,7 +228,7 @@ class NgramTableSoftTargetSource:
         K: int = 16,
         N_max: int = 5,
         unigram_shortlist: int = 100,
-        max_continuations_per_prefix: int = 64,
+        max_continuations_per_prefix: int = 256,
     ):
         self.K = int(K)
         self.N_max = int(N_max)
