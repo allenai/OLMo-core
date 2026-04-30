@@ -19,7 +19,8 @@ from typing import Any, Generator
 import requests
 import rich
 from beaker import Beaker
-from beaker.exceptions import BeakerImageNotFound, BeakerSecretNotFound
+from beaker import beaker_pb2 as pb2
+from beaker.exceptions import BeakerError, BeakerImageNotFound, BeakerSecretNotFound
 from beaker.types import BeakerDataset, BeakerJob, BeakerWorkload
 from gantry.api import GitRepoState
 from gantry.api import Recipe as GantryRecipe
@@ -453,12 +454,19 @@ class BeakerLaunchConfig(Config):
         return env_secrets
 
     def _secret_exists(self, secret: BeakerEnvSecret) -> bool:
+        # Use the HTTP read endpoint, which is case-insensitive on the server
+        # (unlike the gRPC GetSecret call, which is case-sensitive). We discard
+        # the secret value; we only need to know whether it exists.
         try:
             with get_beaker_client(workspace=self.workspace, check_for_upgrades=False) as beaker:
-                beaker.secret.get(secret.secret)
+                beaker.secret.read(pb2.Secret(name=secret.secret))
             return True
         except BeakerSecretNotFound:
             return False
+        except BeakerError as e:
+            if "[code=404]" in str(e):
+                return False
+            raise
 
     def _resolve_beaker_image(self) -> str:
         image = self.beaker_image
