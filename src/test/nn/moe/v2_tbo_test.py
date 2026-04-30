@@ -101,13 +101,18 @@ def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
         del loss_div_factor
         B, S, _ = local_x.shape
         if scores_only:
-            return torch.ones(
-                B,
-                S,
-                router.num_experts,
-                device=local_x.device,
-                dtype=local_x.dtype,
-            ), None, None, None
+            return (
+                torch.ones(
+                    B,
+                    S,
+                    router.num_experts,
+                    device=local_x.device,
+                    dtype=local_x.dtype,
+                ),
+                None,
+                None,
+                None,
+            )
 
         top_k = router.top_k
         num_experts = router.num_experts

@@ -123,7 +123,7 @@ class TrainerConfig(Config):
                 tasks=tasks, tokenizer=tokenizer, eval_interval=eval_interval
             ),
         )
-        
+
         if with_lm_eval:
             callbacks = callbacks.with_callback(
                 "lm_evaluator",
@@ -133,7 +133,9 @@ class TrainerConfig(Config):
                         mix_base_dir=get_root_dir(cluster) if root_dir is None else root_dir,
                         sequence_length=sequence_length,
                         tokenizer=tokenizer,
-                        work_dir=get_work_dir(get_root_dir(cluster) if root_dir is None else root_dir),
+                        work_dir=get_work_dir(
+                            get_root_dir(cluster) if root_dir is None else root_dir
+                        ),
                     ),
                     eval_interval=eval_interval,
                 ),

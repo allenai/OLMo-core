@@ -8,7 +8,6 @@ from typing import Optional, Sequence, Union
 
 import torch
 
-
 PathLikeStr = Union[str, os.PathLike[str]]
 
 

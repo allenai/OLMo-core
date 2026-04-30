@@ -18,7 +18,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden", type=int, default=4096, help="Input hidden size.")
     parser.add_argument("--ep-world-size", type=int, default=8, help="Number of EP source ranks.")
     parser.add_argument("--num-local-experts", type=int, default=4, help="Local experts per rank.")
-    parser.add_argument("--tail-fraction", type=float, default=0.1, help="Tail (unused) row fraction.")
+    parser.add_argument(
+        "--tail-fraction", type=float, default=0.1, help="Tail (unused) row fraction."
+    )
     parser.add_argument("--dtype", choices=["fp16", "bf16", "fp32"], default="bf16")
     parser.add_argument("--warmup-iters", type=int, default=10)
     parser.add_argument("--iters", type=int, default=50)
@@ -130,7 +132,9 @@ def _check_parity(
 
     x_test = x.detach().clone().requires_grad_(True)
     out_test_buf = torch.empty_like(x_test)
-    _, restored_test = _chunk_reorder_roundtrip(x_test, recv_splits_by_src_local, backend, out_test_buf)
+    _, restored_test = _chunk_reorder_roundtrip(
+        x_test, recv_splits_by_src_local, backend, out_test_buf
+    )
     loss_test = (restored_test * grad_w).sum()
     loss_test.backward()
     grad_test = x_test.grad.detach().clone()

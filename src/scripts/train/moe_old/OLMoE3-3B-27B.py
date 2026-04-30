@@ -29,7 +29,6 @@ from olmo_core.optim import (
     AdamWConfig,
     OptimGroupOverride,
     SchedulerUnits,
-    SkipStepAdamWConfig,
 )
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (

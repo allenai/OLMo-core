@@ -45,9 +45,10 @@ def _bootstrap_single_process_distributed_env() -> None:
     missing_rank_env = (
         TORCH_RANK_ENV_VAR not in os.environ and TORCH_WORLD_SIZE_ENV_VAR not in os.environ
     )
-    explicit_singleton = os.environ.get(TORCH_WORLD_SIZE_ENV_VAR) == "1" and os.environ.get(
-        TORCH_RANK_ENV_VAR, "0"
-    ) == "0"
+    explicit_singleton = (
+        os.environ.get(TORCH_WORLD_SIZE_ENV_VAR) == "1"
+        and os.environ.get(TORCH_RANK_ENV_VAR, "0") == "0"
+    )
 
     if not missing_rank_env and not explicit_singleton:
         return
@@ -85,7 +86,9 @@ def init_distributed(
 
     # Force processes to synchronize at init process group.
     set_env_var("TORCH_DIST_INIT_BARRIER", "1")
-    print(f"get_node_hostname(): {get_node_hostname()}", )
+    print(
+        f"get_node_hostname(): {get_node_hostname()}",
+    )
 
     _bootstrap_single_process_distributed_env()
 

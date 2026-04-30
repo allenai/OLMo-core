@@ -32,7 +32,9 @@ def _copy_no_ep_weights_to_ep_shard(no_ep_block, ep_block):
                 buffer.copy_(no_ep_buffers[name])
 
 
-def _assert_expert_grad_matches_no_ep_global_sum(no_ep_block, ep_block, *, atol: float, rtol: float):
+def _assert_expert_grad_matches_no_ep_global_sum(
+    no_ep_block, ep_block, *, atol: float, rtol: float
+):
     local_experts = ep_block.routed_experts.num_local_experts
     start = ep_block.routed_experts.ep_rank * local_experts
     end = start + local_experts

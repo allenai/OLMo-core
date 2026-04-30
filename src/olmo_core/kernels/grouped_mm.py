@@ -8,7 +8,6 @@ import torch.nn.functional as F
 
 from .cuda_extension_utils import load_cuda_extension
 
-
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ATTEMPTED = False
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None

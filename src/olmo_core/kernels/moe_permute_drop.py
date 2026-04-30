@@ -8,7 +8,6 @@ import torch
 
 from .cuda_extension_utils import load_cuda_extension
 
-
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ATTEMPTED = False
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
@@ -33,7 +32,9 @@ def _load_cuda_extension():
     if _CUDA_EXTENSION is not None:
         return _CUDA_EXTENSION
     if _CUDA_EXTENSION_ATTEMPTED and _CUDA_EXTENSION is None:
-        raise RuntimeError("CUDA moe_permute_drop extension is unavailable") from _CUDA_EXTENSION_ERROR
+        raise RuntimeError(
+            "CUDA moe_permute_drop extension is unavailable"
+        ) from _CUDA_EXTENSION_ERROR
 
     _CUDA_EXTENSION_ATTEMPTED = True
     try:
@@ -111,12 +112,17 @@ def moe_permute_drop_fwd(
             f"routing_map/input rows mismatch: routing_map={routing_map.shape[0]} input={inp.shape[0]}"
         )
     if requested_offsets.ndim != 1:
-        raise ValueError(f"Expected rank-1 requested_offsets, got shape={tuple(requested_offsets.shape)}")
+        raise ValueError(
+            f"Expected rank-1 requested_offsets, got shape={tuple(requested_offsets.shape)}"
+        )
     if keep_offsets.ndim != 1:
         raise ValueError(f"Expected rank-1 keep_offsets, got shape={tuple(keep_offsets.shape)}")
     if keep_splits.ndim != 1:
         raise ValueError(f"Expected rank-1 keep_splits, got shape={tuple(keep_splits.shape)}")
-    if requested_offsets.numel() != keep_offsets.numel() or requested_offsets.numel() != keep_splits.numel():
+    if (
+        requested_offsets.numel() != keep_offsets.numel()
+        or requested_offsets.numel() != keep_splits.numel()
+    ):
         raise ValueError(
             "requested_offsets/keep_offsets/keep_splits size mismatch: "
             f"{requested_offsets.numel()} vs {keep_offsets.numel()} vs {keep_splits.numel()}"
@@ -130,7 +136,9 @@ def moe_permute_drop_fwd(
     return ext.moe_permute_drop_fwd_cuda(
         inp,
         routing_map if routing_map.dtype == torch.int32 else routing_map.to(dtype=torch.int32),
-        requested_offsets if requested_offsets.dtype == torch.long else requested_offsets.to(dtype=torch.long),
+        requested_offsets
+        if requested_offsets.dtype == torch.long
+        else requested_offsets.to(dtype=torch.long),
         keep_offsets if keep_offsets.dtype == torch.long else keep_offsets.to(dtype=torch.long),
         keep_splits if keep_splits.dtype == torch.long else keep_splits.to(dtype=torch.long),
         int(num_out_tokens),

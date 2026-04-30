@@ -12,20 +12,20 @@ from .comm import (
     _RowwiseCombineWeightedAutograd,
     _RowwiseCombineWeightedFP8Autograd,
 )
-from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
     get_ep_no_sync_buffers,
     get_ep_no_sync_group_name,
     get_or_init_ep_no_sync_symm_tensor,
 )
-from .fp8 import (
-    shared_experts_forward1_rowwise_fp8,
-    shared_experts_forward2_rowwise_fp8,
-)
+from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
 from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
+)
+from .fp8 import (
+    shared_experts_forward1_rowwise_fp8,
+    shared_experts_forward2_rowwise_fp8,
 )
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
@@ -46,8 +46,12 @@ def combined_forward_ep_no_sync_rowwise(
     assert self.routed_experts_router is not None
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
-    assert use_torch_grouped_mm() == True, "EP no-sync implementation requires torch.grouped_mm support"
-    assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
+    assert (
+        use_torch_grouped_mm() == True
+    ), "EP no-sync implementation requires torch.grouped_mm support"
+    assert (
+        not requires_host_side_split_sizes()
+    ), "EP no-sync implementation does not support host-side split size communication"
     if self.ep_no_sync_use_2d_all_to_all:
         raise RuntimeError(
             "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
@@ -327,14 +331,22 @@ def combined_forward_ep_no_sync_rowwise(
                     use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
                 )
             else:
-                shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
+                shared_out = self.shared_experts.forward2(
+                    shared_out_up, shared_out_gate, attn_res_out.shape
+                )
             if self.shared_experts_router:
                 assert local_x_global_shared_expert_weights is not None
                 _, _, E_s = local_x_global_shared_expert_weights.shape
-                mixed_shared_out = torch.bmm(
-                    local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
-                    shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                ).squeeze(1).view(B, S, D)
+                mixed_shared_out = (
+                    torch.bmm(
+                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(
+                            B * S, 1, E_s
+                        ),
+                        shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
+                    )
+                    .squeeze(1)
+                    .view(B, S, D)
+                )
             else:
                 mixed_shared_out = shared_out.squeeze(0)
     else:

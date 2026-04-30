@@ -13,14 +13,20 @@ except Exception:  # pragma: no cover - import guard
     tl = None  # type: ignore[assignment]
     _HAS_TRITON = False
 
-from olmo_core.kernels.moe_chunk_reorder import moe_chunk_permute, moe_chunk_unpermute
-from olmo_core.kernels.moe_permute_drop import moe_permute_drop_fwd
-from olmo_core.kernels.moe_unpermute_bwd import moe_unpermute_bwd as moe_unpermute_bwd_cuda
-from olmo_core.utils import get_or_init_stream
-
 import transformer_engine_torch as tex
 from transformer_engine.pytorch.constants import TE_DType
-from transformer_engine.pytorch.permutation import moe_permute, moe_sort_chunks_by_index, moe_unpermute
+from transformer_engine.pytorch.permutation import (
+    moe_permute,
+    moe_sort_chunks_by_index,
+    moe_unpermute,
+)
+
+from olmo_core.kernels.moe_chunk_reorder import moe_chunk_permute, moe_chunk_unpermute
+from olmo_core.kernels.moe_permute_drop import moe_permute_drop_fwd
+from olmo_core.kernels.moe_unpermute_bwd import (
+    moe_unpermute_bwd as moe_unpermute_bwd_cuda,
+)
+from olmo_core.utils import get_or_init_stream
 
 
 # LAST_STREAM_ID = None
@@ -173,7 +179,6 @@ class _MoePermuteDropIndexMapAutograd(torch.autograd.Function):
         return grad_inp, None, None, None, None, None
 
 
-
 def moe_reorder_rows_permutation(
     *,
     inp: torch.Tensor,
@@ -184,7 +189,9 @@ def moe_reorder_rows_permutation(
     if inp.ndim != 2:
         raise ValueError(f"Expected rank-2 input, got shape={tuple(inp.shape)}")
     if reorder_indices.ndim != 1:
-        raise ValueError(f"Expected rank-1 reorder_indices, got shape={tuple(reorder_indices.shape)}")
+        raise ValueError(
+            f"Expected rank-1 reorder_indices, got shape={tuple(reorder_indices.shape)}"
+        )
     if inverse_reorder_indices.ndim != 1:
         raise ValueError(
             "Expected rank-1 inverse_reorder_indices, "
@@ -216,7 +223,9 @@ def moe_reorder_rows_permutation(
             raise ValueError(f"out device mismatch: out={out.device} inp={inp.device}")
 
     reorder_i64 = (
-        reorder_indices if reorder_indices.dtype == torch.long else reorder_indices.to(dtype=torch.long)
+        reorder_indices
+        if reorder_indices.dtype == torch.long
+        else reorder_indices.to(dtype=torch.long)
     )
     inverse_i64 = (
         inverse_reorder_indices
@@ -226,7 +235,6 @@ def moe_reorder_rows_permutation(
     reorder_i64 = reorder_i64.contiguous()
     inverse_i64 = inverse_i64.contiguous()
     return _RowPermutationReorderAutograd.apply(inp, reorder_i64, inverse_i64, out)
-
 
 
 def moe_permute_1d_fused_drop_no_compile(
@@ -243,14 +251,20 @@ def moe_permute_1d_fused_drop_no_compile(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """TE permute + drop-token reorder with optional one-shot custom CUDA backend."""
     if map_type != "index":
-        raise ValueError(f"moe_permute_1d_fused_drop_no_compile only supports map_type='index' (got {map_type})")
+        raise ValueError(
+            f"moe_permute_1d_fused_drop_no_compile only supports map_type='index' (got {map_type})"
+        )
 
     if (requested_splits is None) != (keep_splits is None):
-        raise ValueError("requested_splits and keep_splits must both be provided for one-shot permute+drop")
+        raise ValueError(
+            "requested_splits and keep_splits must both be provided for one-shot permute+drop"
+        )
 
     if requested_splits is not None and keep_splits is not None:
         if requested_splits.ndim != 1:
-            raise ValueError(f"Expected rank-1 requested_splits, got shape={tuple(requested_splits.shape)}")
+            raise ValueError(
+                f"Expected rank-1 requested_splits, got shape={tuple(requested_splits.shape)}"
+            )
         if keep_splits.ndim != 1:
             raise ValueError(f"Expected rank-1 keep_splits, got shape={tuple(keep_splits.shape)}")
         if requested_splits.numel() != keep_splits.numel():
@@ -278,7 +292,9 @@ def moe_permute_1d_fused_drop_no_compile(
         return dropped, row_id_map
 
     reorder_i64 = (
-        reorder_indices if reorder_indices.dtype == torch.long else reorder_indices.to(dtype=torch.long)
+        reorder_indices
+        if reorder_indices.dtype == torch.long
+        else reorder_indices.to(dtype=torch.long)
     )
     inverse_i64 = (
         inverse_reorder_indices
@@ -288,14 +304,14 @@ def moe_permute_1d_fused_drop_no_compile(
 
     permuted, row_id_map = moe_permute_no_compile(
         inp=inp,
-        routing_map=routing_map, # indices of experts. shape: [token_cnt, topK]
+        routing_map=routing_map,  # indices of experts. shape: [token_cnt, topK]
         num_out_tokens=num_out_tokens,
         map_type="index",
     )
     dropped = moe_reorder_rows_permutation(
         inp=permuted,
-        reorder_indices=reorder_i64, # shape: [token_cnt * topK]
-        inverse_reorder_indices=inverse_i64, # shape: [token_cnt * topK]
+        reorder_indices=reorder_i64,  # shape: [token_cnt * topK]
+        inverse_reorder_indices=inverse_i64,  # shape: [token_cnt * topK]
         out=out,
     )
     return dropped, row_id_map
@@ -337,7 +353,9 @@ def _normalize_num_kept_tensor(
     if num_kept is None:
         return packed_keep_mask.to(dtype=torch.long).sum(dtype=torch.long).view(1)
     if num_kept.numel() != 1:
-        raise ValueError(f"num_kept must contain a single element, got shape={tuple(num_kept.shape)}")
+        raise ValueError(
+            f"num_kept must contain a single element, got shape={tuple(num_kept.shape)}"
+        )
     if num_kept.device != packed_keep_mask.device:
         raise ValueError(
             f"num_kept/passed_keep_mask device mismatch: num_kept={num_kept.device} "
@@ -376,7 +394,11 @@ def _build_fused_unpermute_row_id_map(
         return out
 
     valid = row_id_map_i32 >= 0
-    safe_src = torch.where(valid, row_id_map_i32.to(dtype=torch.long), torch.zeros_like(row_id_map_i32, dtype=torch.long))
+    safe_src = torch.where(
+        valid,
+        row_id_map_i32.to(dtype=torch.long),
+        torch.zeros_like(row_id_map_i32, dtype=torch.long),
+    )
     packed_idx = inverse_reorder_i64.index_select(0, safe_src)
     fused_valid = valid & (packed_idx < num_kept.view(()))
     return torch.where(
@@ -451,9 +473,9 @@ class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
                     == inp.untyped_storage().data_ptr()
                 )
                 if not (ctx.needs_input_grad[2] and input_aliases_buffer):
-                    assert grad_inp_uses_buffer, (
-                        "Expected moe_unpermute_bwd to write to backward_grad_input_buffer"
-                    )
+                    assert (
+                        grad_inp_uses_buffer
+                    ), "Expected moe_unpermute_bwd to write to backward_grad_input_buffer"
 
         if not ctx.needs_input_grad[2]:
             grad_probs = None
@@ -478,7 +500,9 @@ def moe_unpermute_1d_fused_drop_no_compile(
     Backward uses a custom CUDA kernel equivalent to TE moe_unpermute_bwd with dropped-row zeroing.
     """
     if map_type != "index":
-        raise ValueError(f"moe_unpermute_1d_fused_drop_no_compile only supports map_type='index' (got {map_type})")
+        raise ValueError(
+            f"moe_unpermute_1d_fused_drop_no_compile only supports map_type='index' (got {map_type})"
+        )
     if inp.ndim != 2:
         raise ValueError(f"Expected rank-2 input, got shape={tuple(inp.shape)}")
     if row_id_map.ndim != 1:
@@ -489,7 +513,9 @@ def moe_unpermute_1d_fused_drop_no_compile(
             f"got shape={tuple(local_inverse_reorder_indices.shape)}"
         )
     if packed_keep_mask.ndim != 1:
-        raise ValueError(f"Expected rank-1 packed_keep_mask, got shape={tuple(packed_keep_mask.shape)}")
+        raise ValueError(
+            f"Expected rank-1 packed_keep_mask, got shape={tuple(packed_keep_mask.shape)}"
+        )
     if row_id_map.numel() != local_inverse_reorder_indices.numel():
         raise ValueError(
             "row_id_map/local_inverse_reorder_indices size mismatch: "
@@ -523,13 +549,19 @@ def moe_unpermute_1d_fused_drop_no_compile(
     if num_kept is not None and not torch.is_tensor(num_kept):
         raise ValueError(f"num_kept must be a scalar tensor when provided, got {type(num_kept)}")
 
-    row_map_i32 = row_id_map if row_id_map.dtype == torch.int32 else row_id_map.to(dtype=torch.int32)
+    row_map_i32 = (
+        row_id_map if row_id_map.dtype == torch.int32 else row_id_map.to(dtype=torch.int32)
+    )
     inverse_i64 = (
         local_inverse_reorder_indices
         if local_inverse_reorder_indices.dtype == torch.long
         else local_inverse_reorder_indices.to(dtype=torch.long)
     )
-    keep_mask = packed_keep_mask if packed_keep_mask.dtype == torch.bool else packed_keep_mask.to(dtype=torch.bool)
+    keep_mask = (
+        packed_keep_mask
+        if packed_keep_mask.dtype == torch.bool
+        else packed_keep_mask.to(dtype=torch.bool)
+    )
     num_kept_t = _normalize_num_kept_tensor(num_kept=num_kept, packed_keep_mask=keep_mask)
 
     if row_id_map_is_packed:
@@ -539,8 +571,8 @@ def moe_unpermute_1d_fused_drop_no_compile(
         # keep only entries with packed_idx < num_kept
         # else set to -1
         remapped_row_id_map = _build_fused_unpermute_row_id_map(
-            row_id_map_i32=row_map_i32, # TE unpermute map in pre-drop row order)
-            inverse_reorder_i64=inverse_i64, # Applies inverse_reorder_i64 to convert each referenced row into packed order (kept rows first, dropped rows after).
+            row_id_map_i32=row_map_i32,  # TE unpermute map in pre-drop row order)
+            inverse_reorder_i64=inverse_i64,  # Applies inverse_reorder_i64 to convert each referenced row into packed order (kept rows first, dropped rows after).
             num_kept=num_kept_t,
         )
 
@@ -556,6 +588,7 @@ def moe_unpermute_1d_fused_drop_no_compile(
 @torch.compiler.disable
 def moe_sort_chunks_by_index_no_compile(*args, **kwargs):
     return moe_sort_chunks_by_index(*args, **kwargs)
+
 
 # build_chunk_te_routing_map(torch.tensor([[3,2,1], [1,2,1]]), rows=12)
 # out = [[0, 0, 0, 1, 1, 2, 0, 1, 1, 2, 2, 2]].T
@@ -575,7 +608,6 @@ def build_chunk_te_routing_map(
 
     num_local_experts = recv_splits_by_src_local.shape[1]
 
-
     # Keep routing-map construction tensorized on CUDA to avoid host sync.
     rows_t = flat_splits_raw.new_full((1,), rows, dtype=torch.long)
     # flat_splits_nonneg = torch.clamp_min(flat_splits_raw, 0)
@@ -585,7 +617,6 @@ def build_chunk_te_routing_map(
     flat_splits = torch.minimum(flat_splits_raw, split_remaining)
 
     pos = torch.arange(rows, device=recv_splits_by_src_local.device, dtype=torch.long)
-
 
     chunk_ends = torch.cumsum(flat_splits, dim=0)
     total_rows = chunk_ends[-1].view(1)
@@ -601,7 +632,6 @@ def build_chunk_te_routing_map(
         torch.full_like(local_expert_indices, num_local_experts - 1),
     )
     return local_expert_indices.view(-1, 1)
-
 
 
 def _moe_chunk_permute_te(
@@ -689,9 +719,7 @@ def moe_chunk_reorder_no_compile(
         if num_out_tokens is None:
             num_out_tokens = inp.shape[0]
         routing_map_i32 = (
-            routing_map
-            if routing_map.dtype == torch.int32
-            else routing_map.to(dtype=torch.int32)
+            routing_map if routing_map.dtype == torch.int32 else routing_map.to(dtype=torch.int32)
         )
 
         if resolved_backend == "te":
@@ -719,9 +747,7 @@ def moe_chunk_reorder_no_compile(
         raise ValueError("num_out_tokens is only valid for permute (routing_map) calls")
 
     row_id_map_i32 = (
-        row_id_map
-        if row_id_map.dtype == torch.int32
-        else row_id_map.to(dtype=torch.int32)
+        row_id_map if row_id_map.dtype == torch.int32 else row_id_map.to(dtype=torch.int32)
     )
 
     if resolved_backend == "te":

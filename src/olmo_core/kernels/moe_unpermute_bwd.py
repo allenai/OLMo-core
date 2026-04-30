@@ -7,7 +7,6 @@ import torch
 
 from .cuda_extension_utils import load_cuda_extension
 
-
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ATTEMPTED = False
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
@@ -20,7 +19,9 @@ def _load_cuda_extension():
     if _CUDA_EXTENSION is not None:
         return _CUDA_EXTENSION
     if _CUDA_EXTENSION_ATTEMPTED and _CUDA_EXTENSION is None:
-        raise RuntimeError("CUDA moe_unpermute_bwd extension is unavailable") from _CUDA_EXTENSION_ERROR
+        raise RuntimeError(
+            "CUDA moe_unpermute_bwd extension is unavailable"
+        ) from _CUDA_EXTENSION_ERROR
 
     _CUDA_EXTENSION_ATTEMPTED = True
     try:
@@ -115,7 +116,9 @@ def _check_inputs(
     if out is not None:
         expected_shape = input_fwd.shape
         if tuple(out.shape) != tuple(expected_shape):
-            raise ValueError(f"out shape mismatch: expected={tuple(expected_shape)} got={tuple(out.shape)}")
+            raise ValueError(
+                f"out shape mismatch: expected={tuple(expected_shape)} got={tuple(out.shape)}"
+            )
         if out.dtype != input_fwd.dtype:
             raise ValueError(f"out dtype mismatch: out={out.dtype} input_fwd={input_fwd.dtype}")
         if out.device != input_fwd.device:
@@ -138,12 +141,18 @@ def moe_unpermute_bwd(
 
     grad_output_in = grad_output if grad_output.is_contiguous() else grad_output.contiguous()
     input_fwd_in = input_fwd if input_fwd.is_contiguous() else input_fwd.contiguous()
-    row_id_map_i32 = row_id_map if row_id_map.dtype == torch.int32 else row_id_map.to(dtype=torch.int32)
+    row_id_map_i32 = (
+        row_id_map if row_id_map.dtype == torch.int32 else row_id_map.to(dtype=torch.int32)
+    )
     probs_f32 = probs if probs.dtype == torch.float32 else probs.to(dtype=torch.float32)
     keep_mask_bool = None
     if keep_mask is not None:
-        keep_mask_bool = keep_mask if keep_mask.dtype == torch.bool else keep_mask.to(dtype=torch.bool)
-    row_id_map_i32 = row_id_map_i32 if row_id_map_i32.is_contiguous() else row_id_map_i32.contiguous()
+        keep_mask_bool = (
+            keep_mask if keep_mask.dtype == torch.bool else keep_mask.to(dtype=torch.bool)
+        )
+    row_id_map_i32 = (
+        row_id_map_i32 if row_id_map_i32.is_contiguous() else row_id_map_i32.contiguous()
+    )
     probs_f32 = probs_f32 if probs_f32.is_contiguous() else probs_f32.contiguous()
     if keep_mask_bool is not None and not keep_mask_bool.is_contiguous():
         keep_mask_bool = keep_mask_bool.contiguous()

@@ -1,16 +1,18 @@
 import torch
 import triton
-
 from liger_kernel.ops.cross_entropy import liger_cross_entropy_kernel
-from liger_kernel.ops.utils import amp_custom_bwd
-from liger_kernel.ops.utils import amp_custom_fwd
-from liger_kernel.ops.utils import element_mul_kernel
-from liger_kernel.ops.utils import is_hip
+from liger_kernel.ops.utils import (
+    amp_custom_bwd,
+    amp_custom_fwd,
+    element_mul_kernel,
+    is_hip,
+)
 
 # The hard limit of TRITON_MAX_TENSOR_NUMEL is 1048576 https://github.com/triton-lang/triton/blob/ba42a5c68fd0505f8c42f4202d53be0f8d9a5fe0/python/triton/language/core.py#L19
 # However, setting limit as 65536 as in LayerNorm tutorial is faster because of less register spilling
 # The optimal maximum block size depends on your hardware, your kernel, and your dtype
 MAX_FUSED_SIZE = 65536 // 2
+
 
 # @torch.compile
 def fused_linear_cross_entropy_forward(
@@ -27,7 +29,9 @@ def fused_linear_cross_entropy_forward(
     return_z_loss=False,
     accum_dtype=None,
 ):
-    assert isinstance(return_z_loss, bool), f"return_z_loss must be True or False. Got: {return_z_loss}"
+    assert isinstance(
+        return_z_loss, bool
+    ), f"return_z_loss must be True or False. Got: {return_z_loss}"
     device = _input.device
 
     # inputs have shape: BT x H
@@ -42,7 +46,9 @@ def fused_linear_cross_entropy_forward(
     BLOCK_SIZE = min(MAX_FUSED_SIZE, triton.next_power_of_2(V))
 
     inc_factor = triton.cdiv(V, H)  # (V + H - 1) // H
-    chunk_size = triton.next_power_of_2(triton.cdiv(BT, inc_factor))  # (BT + inc_factor - 1) // inc_factor
+    chunk_size = triton.next_power_of_2(
+        triton.cdiv(BT, inc_factor)
+    )  # (BT + inc_factor - 1) // inc_factor
     num_chunks = triton.cdiv(BT, chunk_size)  # (BT + chunk_size - 1) // chunk_size
 
     grad_input = torch.zeros_like(_input, device=device)
@@ -52,8 +58,14 @@ def fused_linear_cross_entropy_forward(
         grad_weight = torch.zeros_like(weight.t(), device=device) if weight.requires_grad else None
         grad_bias = torch.zeros_like(bias, device=device) if bias is not None else None
     else:
-        grad_weight = torch.zeros_like(weight.t(), dtype=accum_dtype, device=device) if weight.requires_grad else None
-        grad_bias = torch.zeros_like(bias, dtype=accum_dtype, device=device) if bias is not None else None
+        grad_weight = (
+            torch.zeros_like(weight.t(), dtype=accum_dtype, device=device)
+            if weight.requires_grad
+            else None
+        )
+        grad_bias = (
+            torch.zeros_like(bias, dtype=accum_dtype, device=device) if bias is not None else None
+        )
 
     loss_1d = torch.zeros(BT, dtype=torch.float32, device=device)
     z_loss_1d = torch.zeros(BT, dtype=_input.dtype, device=_input.device) if return_z_loss else None
@@ -64,10 +76,12 @@ def fused_linear_cross_entropy_forward(
     total_sum_non_ignore_ce_weight = total_n_non_ignore
     ce_weight_sum = 0.0
     if ce_weight is not None:
-        assert ce_weight.shape[0] == V, f"If given, weight has to be a Tensor of size V. Got: {ce_weight.shape}"
-        assert torch.is_floating_point(ce_weight), (
-            f"If given, weight has to be a Tensor of floating point dtype. Got: {ce_weight.dtype}"
-        )
+        assert (
+            ce_weight.shape[0] == V
+        ), f"If given, weight has to be a Tensor of size V. Got: {ce_weight.shape}"
+        assert torch.is_floating_point(
+            ce_weight
+        ), f"If given, weight has to be a Tensor of floating point dtype. Got: {ce_weight.dtype}"
         total_sum_non_ignore_ce_weight = (
             torch.gather(ce_weight, dim=0, index=target.masked_select(target_mask)).sum().item()
         )
@@ -145,8 +159,8 @@ def fused_linear_cross_entropy_forward(
 
             # or transposed layout:
             grad_weight.addmm_(
-                _input_chunk.t().to(grad_weight.dtype).contiguous(), # (D, BT)
-                grad_logits_chunk.to(grad_weight.dtype).contiguous(), # (BT, V)
+                _input_chunk.t().to(grad_weight.dtype).contiguous(),  # (D, BT)
+                grad_logits_chunk.to(grad_weight.dtype).contiguous(),  # (BT, V)
                 beta=1.0,
                 alpha=1.0,
             )

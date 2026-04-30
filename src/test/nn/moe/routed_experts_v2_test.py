@@ -6,7 +6,10 @@ import torch.nn.functional as F
 
 from olmo_core.config import DType
 from olmo_core.nn.moe.utils import moe_permute_no_compile, moe_unpermute_no_compile
-from olmo_core.nn.moe.v2.routed_experts import RoutedExperts, requires_host_side_split_sizes
+from olmo_core.nn.moe.v2.routed_experts import (
+    RoutedExperts,
+    requires_host_side_split_sizes,
+)
 from olmo_core.testing import requires_gpu, requires_grouped_gemm
 
 
@@ -17,7 +20,9 @@ def _batch_sizes_for_runtime(
     return sizes if requires_host_side_split_sizes() else sizes.to(device=device)
 
 
-def _layout_positions(num_rows: int, num_active: int, mode: str, device: torch.device) -> torch.Tensor:
+def _layout_positions(
+    num_rows: int, num_active: int, mode: str, device: torch.device
+) -> torch.Tensor:
     if mode == "tail":
         return torch.arange(0, num_active, device=device, dtype=torch.long)
     if mode == "head":
@@ -25,7 +30,9 @@ def _layout_positions(num_rows: int, num_active: int, mode: str, device: torch.d
     if mode == "interleave":
         pos = torch.arange(0, num_rows, 2, device=device, dtype=torch.long)
         if pos.numel() < num_active:
-            pos = torch.cat([pos, torch.arange(1, num_rows, 2, device=device, dtype=torch.long)], dim=0)
+            pos = torch.cat(
+                [pos, torch.arange(1, num_rows, 2, device=device, dtype=torch.long)], dim=0
+            )
         return pos[:num_active].sort().values
     raise ValueError(f"Unknown mode '{mode}'")
 
@@ -41,7 +48,9 @@ def _build_x_with_pad_layout(
         active_count = expert_active.shape[0]
         seg_rows = active_count + pad_count
 
-        seg = torch.zeros(seg_rows, expert_active.shape[1], device=expert_active.device, dtype=expert_active.dtype)
+        seg = torch.zeros(
+            seg_rows, expert_active.shape[1], device=expert_active.device, dtype=expert_active.dtype
+        )
         seg_active_pos = _layout_positions(seg_rows, active_count, mode, expert_active.device)
         seg.index_copy_(0, seg_active_pos, expert_active)
 
@@ -134,9 +143,7 @@ def test_no_ep_routed_core_matches_naive_reference():
     )
 
     num_out_tokens = expert_indices.numel()
-    batch_size_per_expert = torch.bincount(
-        expert_indices.reshape(-1), minlength=module.num_experts
-    )
+    batch_size_per_expert = torch.bincount(expert_indices.reshape(-1), minlength=module.num_experts)
     permuted, reverse = moe_permute_no_compile(
         inp=x,
         routing_map=expert_indices.int(),
@@ -211,7 +218,9 @@ def test_routed_experts_forward_matches_baseline_with_different_pad_positions():
 @requires_grouped_gemm
 def test_routed_experts_speed_vs_pad_positions():
     if os.getenv("OLMO_RUN_ROUTED_EXPERTS_PERF_TEST", "0") != "1":
-        pytest.skip("Set OLMO_RUN_ROUTED_EXPERTS_PERF_TEST=1 to run RoutedExperts pad-position perf test")
+        pytest.skip(
+            "Set OLMO_RUN_ROUTED_EXPERTS_PERF_TEST=1 to run RoutedExperts pad-position perf test"
+        )
 
     torch.manual_seed(42)
     device = torch.device("cuda")
@@ -241,7 +250,8 @@ def test_routed_experts_speed_vs_pad_positions():
 
     layouts = ("tail", "head", "interleave")
     x_by_layout = {
-        layout: _build_x_with_pad_layout(active_by_expert, pad_per_expert, layout)[0] for layout in layouts
+        layout: _build_x_with_pad_layout(active_by_expert, pad_per_expert, layout)[0]
+        for layout in layouts
     }
 
     warmup_iters = 8
@@ -279,6 +289,7 @@ def test_routed_experts_speed_vs_pad_positions():
             f"Unexpected RoutedExperts slowdown for pad layout '{layout}': "
             f"baseline={baseline:.3f} ms, observed={t_ms:.3f} ms"
         )
+
 
 if __name__ == "__main__":
     test_routed_experts_speed_vs_pad_positions()

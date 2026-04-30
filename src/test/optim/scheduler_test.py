@@ -162,7 +162,9 @@ def test_composable_scheduler_monkey_patch_decay_cosine():
 
 
 def test_composable_scheduler_monkey_patch_decay_validation():
-    with pytest.raises(OLMoConfigurationError, match="exactly one of 'end_lr' or 'end_lr_fraction'"):
+    with pytest.raises(
+        OLMoConfigurationError, match="exactly one of 'end_lr' or 'end_lr_fraction'"
+    ):
         ComposableSchedulerMonkeyPatchDecay(start=100, duration=100)
 
 

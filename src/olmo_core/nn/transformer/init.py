@@ -1,5 +1,6 @@
-from typing import Optional, Union, cast
 import math
+from typing import Optional, Union, cast
+
 import torch
 import torch.nn as nn
 from torch.distributed.tensor import DTensor
@@ -7,9 +8,14 @@ from torch.distributed.tensor import DTensor
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import distribute_like, get_local_tensor
 
-from ..attention import Attention, AttentionBase, FusedAttention, MultiheadLatentAttention
+from ..attention import (
+    Attention,
+    AttentionBase,
+    FusedAttention,
+    MultiheadLatentAttention,
+)
 from ..feed_forward import FeedForward
-from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP, MoEOrthogonalRouter
+from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
 
 
 def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
@@ -24,6 +30,7 @@ def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
 
     # Now copy over the corresponding shard of `full_x` into `x`.
     get_local_tensor(x).copy_(get_local_tensor(full_x))
+
 
 def kaiming_fan_in_uniform_(
     tensor: torch.Tensor,
@@ -88,7 +95,7 @@ class InitMethod(StrEnum):
     This provides forward-pass variance-preserving initialization adapted to each layer's
     specific dimensions, with no depth scaling.
     """
-    
+
     def _init_linear(
         self, m: nn.Linear, *, std: float = 0.02, generator: Optional[torch.Generator] = None
     ):
@@ -172,7 +179,7 @@ class InitMethod(StrEnum):
             else:
                 self._init_linear(m.wq_a, std=std, generator=generator)
                 self._init_linear(m.wq_b, std=std, generator=generator)
-                
+
             self._init_linear(m.wkv_a, std=std, generator=generator)
             self._init_linear(m.wkv_b, std=std, generator=generator)
         else:
@@ -267,6 +274,7 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
     def init_moe_v2(
         self,
         b,
@@ -279,6 +287,7 @@ class InitMethod(StrEnum):
         ep_generator: Optional[torch.Generator] = None,
     ):
         from ..moe.v2.block import MoEFusedV2TransformerBlock
+
         b = cast(MoEFusedV2TransformerBlock, b)
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
@@ -321,7 +330,7 @@ class InitMethod(StrEnum):
                 std=std,
                 a=-3 * std,
                 b=3 * std,
-                generator=ep_generator, # might be sharded, use ep_generator
+                generator=ep_generator,  # might be sharded, use ep_generator
             )
             # _apply_init(
             #     kaiming_fan_in_uniform_,
@@ -336,7 +345,7 @@ class InitMethod(StrEnum):
                 std=std,
                 a=-3 * std,
                 b=3 * std,
-                generator=ep_generator, # might be sharded, use ep_generator
+                generator=ep_generator,  # might be sharded, use ep_generator
             )
             # assert b.routed_experts_router is not None
             # _apply_init(
@@ -360,7 +369,7 @@ class InitMethod(StrEnum):
             # _apply_init(
             #     kaiming_fan_in_uniform_,
             #     b.shared_experts.w_up_gate,
-            #     in_features=b.shared_experts.d_model, 
+            #     in_features=b.shared_experts.d_model,
             #     generator=generator,
             # )
             _apply_init(
@@ -375,6 +384,6 @@ class InitMethod(StrEnum):
             # _apply_init(
             #     kaiming_fan_in_uniform_,
             #     b.shared_experts.w_down,
-            #     in_features=b.shared_experts.hidden_size, 
+            #     in_features=b.shared_experts.hidden_size,
             #     generator=generator,
             # )

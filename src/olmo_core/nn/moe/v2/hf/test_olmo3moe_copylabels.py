@@ -9,7 +9,11 @@ from transformers import AutoModelForCausalLM
 try:
     from generate_copylabels_dataset import generate_dataset, load_dataset, save_dataset
 except ModuleNotFoundError:
-    from .generate_copylabels_dataset import generate_dataset, load_dataset, save_dataset
+    from .generate_copylabels_dataset import (
+        generate_dataset,
+        load_dataset,
+        save_dataset,
+    )
 
 
 @dataclass
@@ -166,8 +170,7 @@ def build_few_shot_prompt(
     query_example: dict,
 ) -> str:
     blocks = [
-        render_completed_example(ex[prompt_key], get_answer_label(ex))
-        for ex in shot_examples
+        render_completed_example(ex[prompt_key], get_answer_label(ex)) for ex in shot_examples
     ]
     blocks.append(query_example[prompt_key])
     return "\n\n".join(blocks)
@@ -259,14 +262,17 @@ def print_results(
     print(f"Shots: {results['num_shots']}")
     print(f"Chance accuracy: {1 / len(allowed_labels):.4f}")
     print(f"Accuracy: {results['accuracy']:.4f}")
-    print("Prediction distribution:", {label: results["pred_dist"].get(label, 0) for label in allowed_labels})
-    print("Ground-truth distribution:", {label: results["gold_dist"].get(label, 0) for label in allowed_labels})
+    print(
+        "Prediction distribution:",
+        {label: results["pred_dist"].get(label, 0) for label in allowed_labels},
+    )
+    print(
+        "Ground-truth distribution:",
+        {label: results["gold_dist"].get(label, 0) for label in allowed_labels},
+    )
     print(
         "Accuracy by gold label:",
-        {
-            label: round(results["accuracy_by_label"].get(label, 0.0), 4)
-            for label in allowed_labels
-        },
+        {label: round(results["accuracy_by_label"].get(label, 0.0), 4) for label in allowed_labels},
     )
     print()
     print("Representative failures:")
@@ -284,8 +290,12 @@ def print_results(
 
 
 def main() -> None:
-    default_device_map = "auto" if torch.cuda.is_available() and torch.cuda.device_count() > 1 else "none"
-    parser = argparse.ArgumentParser(description="Probe label-binding on synthetic copylabels datasets.")
+    default_device_map = (
+        "auto" if torch.cuda.is_available() and torch.cuda.device_count() > 1 else "none"
+    )
+    parser = argparse.ArgumentParser(
+        description="Probe label-binding on synthetic copylabels datasets."
+    )
     parser.add_argument("--load-path", type=str, default="/workspace/tmp/step96085-hf")
     parser.add_argument(
         "--dataset",
@@ -296,9 +306,13 @@ def main() -> None:
     parser.add_argument("--num-examples", type=int, default=100)
     parser.add_argument("--num-options", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--label-style", type=str, default="letters", choices=("letters", "numbers"))
+    parser.add_argument(
+        "--label-style", type=str, default="letters", choices=("letters", "numbers")
+    )
     parser.add_argument("--num-shots", type=int, default=3)
-    parser.add_argument("--device-map", type=str, default=default_device_map, choices=("none", "auto"))
+    parser.add_argument(
+        "--device-map", type=str, default=default_device_map, choices=("none", "auto")
+    )
     parser.add_argument(
         "--save-generated-dataset",
         type=str,
@@ -399,8 +413,12 @@ def main() -> None:
     label_style = meta.get("label_style", "letters")
     prefix_example = "A. green" if label_style == "letters" else "1. green"
     suffix_example = "green (A)" if label_style == "letters" else "green (1)"
-    print_results(title=f"Prefix format: '{prefix_example}' then 'green is option:'", results=prefix_results)
-    print_results(title=f"Suffix format: '{suffix_example}' then 'green is option:'", results=suffix_results)
+    print_results(
+        title=f"Prefix format: '{prefix_example}' then 'green is option:'", results=prefix_results
+    )
+    print_results(
+        title=f"Suffix format: '{suffix_example}' then 'green is option:'", results=suffix_results
+    )
 
 
 if __name__ == "__main__":

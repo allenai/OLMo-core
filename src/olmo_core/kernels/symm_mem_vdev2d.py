@@ -3,8 +3,8 @@ from __future__ import annotations
 import importlib
 import os
 from typing import Optional
-import nvtx
 
+import nvtx
 import torch
 
 from .mxfp8_utils import quantize_rows_to_mxfp8, reduce_gathered_rows_from_mxfp8
@@ -181,6 +181,7 @@ def rowwise_combine_get(
         nblocks,
         gathered_out,
     )
+
 
 @nvtx.annotate("rowwise_combine_get_scaled")
 def rowwise_combine_get_scaled(

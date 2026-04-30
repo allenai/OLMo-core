@@ -1,14 +1,14 @@
 import pytest
 import torch
 
-from olmo_core.nn.moe.v2.ep_no_sync_common import (
-    build_keep_reorder,
-    restore_drop_unpermute_1d,
-)
 from olmo_core.nn.moe.utils import (
     moe_permute_no_compile,
     moe_unpermute_1d_fused_drop_no_compile,
     moe_unpermute_no_compile,
+)
+from olmo_core.nn.moe.v2.ep_no_sync_common import (
+    build_keep_reorder,
+    restore_drop_unpermute_1d,
 )
 from olmo_core.testing import requires_gpu, requires_te
 
@@ -189,7 +189,9 @@ def test_restore_unpermute_1d_te_fused_matches_reference(
     assert combine_out_fused.grad is not None
     assert probs_reference.grad is not None
     assert probs_fused.grad is not None
-    torch.testing.assert_close(combine_out_fused.grad, combine_out_reference.grad, atol=5e-3, rtol=5e-3)
+    torch.testing.assert_close(
+        combine_out_fused.grad, combine_out_reference.grad, atol=5e-3, rtol=5e-3
+    )
     torch.testing.assert_close(probs_fused.grad, probs_reference.grad, atol=5e-3, rtol=5e-3)
 
 

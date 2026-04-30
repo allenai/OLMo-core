@@ -1,12 +1,10 @@
 import argparse
 from typing import Sequence
 
+import grouped_gemm.ops as grouped_gemm_ops
 import torch
 import torch.nn.functional as F
-
-import grouped_gemm.ops as grouped_gemm_ops
 from transformer_engine.pytorch import GroupedLinear
-
 
 DEFAULT_EXPERTS = (2, 4, 8, 16, 32, 64, 128)
 

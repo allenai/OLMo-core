@@ -2,15 +2,16 @@ import torch
 import torch.nn.functional as F
 
 import olmo_core.kernels.scaled_grouped_mm as scaled_grouped_mm_module
-from olmo_core.kernels.mxfp8_utils import dequantize_rows_from_mxfp8, quantize_rows_to_mxfp8
 from olmo_core.kernels.mxfp8_utils import (
+    dequantize_rows_from_mxfp8,
     quantize_grouped_2d_to_mxfp8_blocked,
     quantize_grouped_weight_3d_to_mxfp8_blocked,
+    quantize_rows_to_mxfp8,
 )
-from olmo_core.kernels.scaled_grouped_mm import scaled_grouped_mm_q
 from olmo_core.kernels.scaled_grouped_mm import (
     ScaledGroupedMMPrequantizedRHS,
     prequantize_scaled_grouped_mm_rhs,
+    scaled_grouped_mm_q,
 )
 
 
@@ -285,7 +286,9 @@ def test_scaled_grouped_mm_q_uses_prequantized_rhs(monkeypatch):
     def _forbidden_rhs_quant(_mat_b, *, block_size: int = 32):
         del block_size
         called["rhs_quant"] += 1
-        raise AssertionError("RHS quantization should be bypassed when prequantized_rhs is provided")
+        raise AssertionError(
+            "RHS quantization should be bypassed when prequantized_rhs is provided"
+        )
 
     monkeypatch.setattr(
         scaled_grouped_mm_module,
@@ -372,5 +375,7 @@ def test_scaled_grouped_mm_q_backward_uses_prequantized_lhs_when_mat_a_not_saved
     assert grad_b is not None
 
     assert "lhs_for_grad_b" in captured
-    mat_a_expected = dequantize_rows_from_mxfp8(mat_a_q, mat_a_s, block_size=32, out_dtype=out.dtype)
+    mat_a_expected = dequantize_rows_from_mxfp8(
+        mat_a_q, mat_a_s, block_size=32, out_dtype=out.dtype
+    )
     torch.testing.assert_close(captured["lhs_for_grad_b"], mat_a_expected)

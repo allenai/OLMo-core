@@ -17,6 +17,7 @@ import torch.distributed._symmetric_memory as symm_mem
 # B200
 # rank=0 nccl=0.860 ms (624.19 GB/s) symm_vdev=0.688 ms (779.97 GB/s) speedup_vdev=1.250x equal_vdev=True max_abs_diff_vdev=0.000000 symm_vdev2d=32.748 ms (16.39 GB/s) speedup_vdev2d=0.026x equal_vdev2d=True max_abs_diff_vdev2d=0.000000
 
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -24,7 +25,9 @@ def _parse_args() -> argparse.Namespace:
             "all_to_all_vdev, all_to_all_vdev_2d and all_to_all_vdev_2d_offset."
         )
     )
-    parser.add_argument("--rows", type=int, default=2 * 8192 * 4, help="Rows per rank.") # B * S * TopK
+    parser.add_argument(
+        "--rows", type=int, default=2 * 8192 * 4, help="Rows per rank."
+    )  # B * S * TopK
     parser.add_argument("--cols", type=int, default=4096, help="Columns per row.")
     parser.add_argument("--dtype", choices=["fp16", "bf16", "fp32"], default="bf16")
     parser.add_argument("--warmup-iters", type=int, default=10)
@@ -176,13 +179,19 @@ def main() -> None:
     symm_in = _alloc_rendezvous_symm_tensor(x.shape, x.dtype, device, group)
     symm_in_splits = _alloc_rendezvous_symm_tensor((world_size,), torch.int64, device, group)
     symm_out_vdev = _alloc_rendezvous_symm_tensor((out_cap, args.cols), x.dtype, device, group)
-    symm_out_vdev_splits_offsets = _alloc_rendezvous_symm_tensor((2, world_size), torch.int64, device, group)
+    symm_out_vdev_splits_offsets = _alloc_rendezvous_symm_tensor(
+        (2, world_size), torch.int64, device, group
+    )
     symm_out_vdev2d = _alloc_rendezvous_symm_tensor((out_cap, args.cols), x.dtype, device, group)
-    symm_out_vdev2d_splits_offsets = _alloc_rendezvous_symm_tensor((2, world_size), torch.int64, device, group)
+    symm_out_vdev2d_splits_offsets = _alloc_rendezvous_symm_tensor(
+        (2, world_size), torch.int64, device, group
+    )
     symm_in_vdev2d_offset_splits_offsets = _alloc_rendezvous_symm_tensor(
         (2, world_size), torch.int64, device, group
     )
-    symm_out_vdev2d_offset = _alloc_rendezvous_symm_tensor((out_cap, args.cols), x.dtype, device, group)
+    symm_out_vdev2d_offset = _alloc_rendezvous_symm_tensor(
+        (out_cap, args.cols), x.dtype, device, group
+    )
     symm_out_vdev2d_offset_splits_offsets = _alloc_rendezvous_symm_tensor(
         (2, world_size), torch.int64, device, group
     )

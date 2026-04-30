@@ -38,7 +38,9 @@ def test_router_uses_bf16_saved_input_and_matches_reference_grads():
     loss.backward()
 
     # Reference old behavior: explicit fp32 cast before router linear.
-    w_ref = get_local_tensor(router_ref.weight).view(router_ref.num_experts, router_ref.d_model).float()
+    w_ref = (
+        get_local_tensor(router_ref.weight).view(router_ref.num_experts, router_ref.d_model).float()
+    )
     logits_ref = F.linear(x_ref.float(), w_ref).float()
     scores_ref = logits_ref.softmax(dim=-1)
     loss_ref = scores_ref.square().mean()

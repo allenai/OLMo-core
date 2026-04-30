@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import cos, pi, sqrt
-from pathlib import Path
 from typing import Optional
 
 import matplotlib.pyplot as plt
@@ -41,7 +40,9 @@ class MonkeyPatchDecay:
         if self.duration_tokens <= 0:
             raise ValueError("MonkeyPatchDecay duration_tokens must be > 0.")
         if (self.end_lr is None) == (self.end_lr_fraction is None):
-            raise ValueError("Specify exactly one of end_lr or end_lr_fraction for MonkeyPatchDecay.")
+            raise ValueError(
+                "Specify exactly one of end_lr or end_lr_fraction for MonkeyPatchDecay."
+            )
         if self.end_lr is not None and self.end_lr < 0:
             raise ValueError("MonkeyPatchDecay end_lr must be >= 0.")
         if self.end_lr_fraction is not None and self.end_lr_fraction < 0:
@@ -63,6 +64,7 @@ BASE_LR = BASE_LR * sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
 # TOP_K = 3
 # EXPERT_LR = BASE_LR * sqrt(TOP_K / NUM_EXPERTS)
 EXPERT_LR = BASE_LR * 0.6
+
 
 def as_aligned_tokens(num_tokens: float) -> int:
     return int((num_tokens // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
@@ -111,7 +113,9 @@ OUTPUT_PATH = "./plot_lr.png"
 SHOW_PLOT = True
 
 
-def _resolve_from_initial(initial_lr: float, value: Optional[float], fraction: Optional[float]) -> float:
+def _resolve_from_initial(
+    initial_lr: float, value: Optional[float], fraction: Optional[float]
+) -> float:
     if value is not None:
         return value
     if fraction is None:
@@ -147,7 +151,9 @@ def staged_lr(initial_lr: float, current: int, stages: list[Stage]) -> float:
 
         stage_end = stage_start + stage.duration_tokens
         if current < stage_end:
-            return _interpolate(stage.shape, start_lr, end_lr, current - stage_start, stage.duration_tokens)
+            return _interpolate(
+                stage.shape, start_lr, end_lr, current - stage_start, stage.duration_tokens
+            )
 
         previous_end_lr = end_lr
         stage_start = stage_end
@@ -208,7 +214,9 @@ def main() -> None:
         expert_curve = [
             composable_lr(EXPERT_LR, int(x), STAGES, MONKEY_PATCH_DECAY) for x in xs_tokens
         ]
-        plt.plot(xs, expert_curve, label=f"expert LR (init={EXPERT_LR:.3e})", linewidth=2, alpha=0.9)
+        plt.plot(
+            xs, expert_curve, label=f"expert LR (init={EXPERT_LR:.3e})", linewidth=2, alpha=0.9
+        )
 
     for i, mark in enumerate(stage_marks, start=1):
         plt.axvline(mark, linestyle="--", alpha=0.5, label=f"stage {i} end")
@@ -216,7 +224,9 @@ def main() -> None:
     if MONKEY_PATCH_DECAY is not None:
         if PLOT_IN_STEPS:
             mp_start = MONKEY_PATCH_DECAY.start_tokens / GLOBAL_BATCH_SIZE
-            mp_end = (MONKEY_PATCH_DECAY.start_tokens + MONKEY_PATCH_DECAY.duration_tokens) / GLOBAL_BATCH_SIZE
+            mp_end = (
+                MONKEY_PATCH_DECAY.start_tokens + MONKEY_PATCH_DECAY.duration_tokens
+            ) / GLOBAL_BATCH_SIZE
         else:
             mp_start = MONKEY_PATCH_DECAY.start_tokens / 1e9
             mp_end = (MONKEY_PATCH_DECAY.start_tokens + MONKEY_PATCH_DECAY.duration_tokens) / 1e9

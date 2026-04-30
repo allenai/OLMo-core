@@ -385,10 +385,14 @@ def convert_moe_layer(
 
     shared_fc1 = source[f"{prefix_in}.mlp.shared_experts.linear_fc1.weight"]
     shared_fc1 = swap_gate_up_halves_2d(shared_fc1, SHARED_EXPERT_HIDDEN_SIZE)
-    output[f"{prefix_out}.shared_experts.w_up_gate.main"] = flatten_contiguous(shared_fc1.transpose(0, 1))
+    output[f"{prefix_out}.shared_experts.w_up_gate.main"] = flatten_contiguous(
+        shared_fc1.transpose(0, 1)
+    )
 
     shared_fc2 = source[f"{prefix_in}.mlp.shared_experts.linear_fc2.weight"]
-    output[f"{prefix_out}.shared_experts.w_down.main"] = flatten_contiguous(shared_fc2.transpose(0, 1))
+    output[f"{prefix_out}.shared_experts.w_down.main"] = flatten_contiguous(
+        shared_fc2.transpose(0, 1)
+    )
 
 
 def get_model_layer_indices(metadata: Metadata) -> List[int]:
@@ -433,18 +437,30 @@ def validate_checkpoint_structure(metadata: Metadata) -> None:
             f"{prefix}.self_attention.linear_proj.weight",
             (HIDDEN_SIZE, D_ATTN),
         )
-        validate_metadata_shape(metadata, f"{prefix}.self_attention.q_layernorm.weight", (HEAD_DIM,))
-        validate_metadata_shape(metadata, f"{prefix}.self_attention.k_layernorm.weight", (HEAD_DIM,))
+        validate_metadata_shape(
+            metadata, f"{prefix}.self_attention.q_layernorm.weight", (HEAD_DIM,)
+        )
+        validate_metadata_shape(
+            metadata, f"{prefix}.self_attention.k_layernorm.weight", (HEAD_DIM,)
+        )
         validate_metadata_shape(metadata, f"{prefix}.input_layernorm.weight", (HIDDEN_SIZE,))
-        validate_metadata_shape(metadata, f"{prefix}.post_self_attn_layernorm.weight", (HIDDEN_SIZE,))
+        validate_metadata_shape(
+            metadata, f"{prefix}.post_self_attn_layernorm.weight", (HIDDEN_SIZE,)
+        )
         validate_metadata_shape(metadata, f"{prefix}.pre_mlp_layernorm.weight", (HIDDEN_SIZE,))
         validate_metadata_shape(metadata, f"{prefix}.post_mlp_layernorm.weight", (HIDDEN_SIZE,))
 
         if layer_idx in DENSE_LAYER_INDICES:
-            validate_metadata_shape(metadata, f"{prefix}.mlp.linear_fc1.weight", (23040, HIDDEN_SIZE))
-            validate_metadata_shape(metadata, f"{prefix}.mlp.linear_fc2.weight", (HIDDEN_SIZE, 11520))
+            validate_metadata_shape(
+                metadata, f"{prefix}.mlp.linear_fc1.weight", (23040, HIDDEN_SIZE)
+            )
+            validate_metadata_shape(
+                metadata, f"{prefix}.mlp.linear_fc2.weight", (HIDDEN_SIZE, 11520)
+            )
         else:
-            validate_metadata_shape(metadata, f"{prefix}.mlp.router.weight", (NUM_EXPERTS, HIDDEN_SIZE))
+            validate_metadata_shape(
+                metadata, f"{prefix}.mlp.router.weight", (NUM_EXPERTS, HIDDEN_SIZE)
+            )
             validate_metadata_shape(
                 metadata,
                 f"{prefix}.mlp.experts.experts.linear_fc1.weight",
@@ -481,9 +497,13 @@ def build_output_state(
         "output_layer.weight",
     ]
     root = load_tensors(reader, checkpoint_dir, metadata, root_keys)
-    output["module.embeddings.weight.main"] = flatten_contiguous(root["embedding.word_embeddings.weight"])
+    output["module.embeddings.weight.main"] = flatten_contiguous(
+        root["embedding.word_embeddings.weight"]
+    )
     output["module.embedding_norm.weight.main"] = flatten_contiguous(root["embedding_norm.weight"])
-    output["module.lm_head.norm.weight.main"] = flatten_contiguous(root["decoder.final_layernorm.weight"])
+    output["module.lm_head.norm.weight.main"] = flatten_contiguous(
+        root["decoder.final_layernorm.weight"]
+    )
     output["module.lm_head.w_out.weight.main"] = flatten_contiguous(root["output_layer.weight"])
     del root
 
@@ -605,7 +625,9 @@ def patch_template_config(output_dir: Path, *, restore_weight_scale: bool) -> No
         f.write("\n")
 
 
-def infer_batches_processed_for_new_tokens(state_dict: Dict[str, Any], new_tokens: int, step: int) -> int:
+def infer_batches_processed_for_new_tokens(
+    state_dict: Dict[str, Any], new_tokens: int, step: int
+) -> int:
     data_loader_state = state_dict.get("data_loader", {})
     old_tokens = int(data_loader_state.get("tokens_processed", 0) or 0)
     old_batches = int(data_loader_state.get("batches_processed", 0) or 0)
@@ -642,11 +664,15 @@ def patch_template_train_states(
 ) -> None:
     train_dir = output_dir / "train"
     if not train_dir.is_dir():
-        raise FileNotFoundError(f"Template checkpoint is missing train state directory: {train_dir}")
+        raise FileNotFoundError(
+            f"Template checkpoint is missing train state directory: {train_dir}"
+        )
 
     trainer_state_paths = sorted(train_dir.glob("rank*.pt"))
     if not trainer_state_paths:
-        raise FileNotFoundError(f"Template checkpoint is missing trainer state files in: {train_dir}")
+        raise FileNotFoundError(
+            f"Template checkpoint is missing trainer state files in: {train_dir}"
+        )
 
     for path in trainer_state_paths:
         state_dict = torch.load(path, map_location="cpu", weights_only=False)

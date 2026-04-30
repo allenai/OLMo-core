@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import nvtx
 import torch
@@ -18,11 +18,6 @@ from ..utils import (
     moe_permute_1d_fused_drop_no_compile,
 )
 from .comm import _CombineVDevAutograd, _DispatchVDevAutograd
-from .ep_no_sync_common import (
-    build_keep_reorder,
-    restore_drop_unpermute_1d,
-    sync_tail_drop_allowed_splits_single_a2a,
-)
 from .ep_no_sync_buffers import (
     _NoSyncStageAState,
     _NoSyncStageDState,
@@ -31,6 +26,11 @@ from .ep_no_sync_buffers import (
     ep_no_sync_slot_for_lane,
     get_ep_no_sync_buffers,
     get_ep_no_sync_group_name,
+)
+from .ep_no_sync_common import (
+    build_keep_reorder,
+    restore_drop_unpermute_1d,
+    sync_tail_drop_allowed_splits_single_a2a,
 )
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
@@ -51,8 +51,12 @@ def ep_no_sync_stage_a(
     assert self.routed_experts_router is not None
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
-    assert use_torch_grouped_mm() == True, "EP no-sync implementation requires torch.grouped_mm support"
-    assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
+    assert (
+        use_torch_grouped_mm() == True
+    ), "EP no-sync implementation requires torch.grouped_mm support"
+    assert (
+        not requires_host_side_split_sizes()
+    ), "EP no-sync implementation does not support host-side split size communication"
     if self.ep_no_sync_use_2d_all_to_all:
         raise RuntimeError(
             "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
@@ -112,10 +116,16 @@ def ep_no_sync_stage_a(
             if self.shared_experts_router:
                 assert local_x_global_shared_expert_weights is not None
                 _, _, E_s = local_x_global_shared_expert_weights.shape
-                mixed_shared_out = torch.bmm(
-                    local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
-                    shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                ).squeeze(1).view(B, S, D)
+                mixed_shared_out = (
+                    torch.bmm(
+                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(
+                            B * S, 1, E_s
+                        ),
+                        shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
+                    )
+                    .squeeze(1)
+                    .view(B, S, D)
+                )
             else:
                 mixed_shared_out = shared_out.squeeze(0)
             shared_done_event = record_stream_event_no_compile(dense_stream)
@@ -139,7 +149,11 @@ def ep_no_sync_stage_a(
                     rank_capacity=rank_capacity,
                 ),
             )
-            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
+            (
+                local_reorder_indices,
+                local_inverse_reorder_indices,
+                packed_keep_mask,
+            ) = build_keep_reorder(
                 requested_splits=requested_splits,
                 keep_splits=allowed_splits,
                 num_out_tokens=num_out_tokens,
@@ -167,7 +181,10 @@ def ep_no_sync_stage_a(
         routing_map = local_x_global_routed_expert_indices.view(
             -1, self.routed_experts_router.top_k
         ).int()
-        permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_1d_fused_drop_no_compile(
+        (
+            permutated_local_x,
+            reversed_local_x_permutation_mapping,
+        ) = moe_permute_1d_fused_drop_no_compile(
             inp=moe_inp,
             routing_map=routing_map,
             num_out_tokens=num_out_tokens,
@@ -212,7 +229,9 @@ def ep_no_sync_stage_a(
     )
 
 
-def ep_no_sync_stage_d_launch(block: MoEFusedV2TransformerBlock, a_state: _NoSyncStageAState) -> _NoSyncStageDState:
+def ep_no_sync_stage_d_launch(
+    block: MoEFusedV2TransformerBlock, a_state: _NoSyncStageAState
+) -> _NoSyncStageDState:
     self = block
     comm_stream = get_or_init_stream(id=f"ep_no_sync_comm_block_{self.block_idx}", priority=0)
     wait_stream_no_compile(this_stream=comm_stream, other_stream=torch.cuda.current_stream())
@@ -240,7 +259,9 @@ def ep_no_sync_stage_d_launch(block: MoEFusedV2TransformerBlock, a_state: _NoSyn
     )
 
 
-def ep_no_sync_stage_e(block: MoEFusedV2TransformerBlock, d_state: _NoSyncStageDState) -> _NoSyncTboPendingContext:
+def ep_no_sync_stage_e(
+    block: MoEFusedV2TransformerBlock, d_state: _NoSyncStageDState
+) -> _NoSyncTboPendingContext:
     self = block
     assert self.routed_experts is not None
     wait_event_no_compile(torch.cuda.current_stream(), d_state.dispatch_done_event)
@@ -328,7 +349,9 @@ def ep_no_sync_stage_c_launch(
     return pending_ctx
 
 
-def ep_no_sync_stage_tail(block: MoEFusedV2TransformerBlock, pending_ctx: _NoSyncTboPendingContext) -> torch.Tensor:
+def ep_no_sync_stage_tail(
+    block: MoEFusedV2TransformerBlock, pending_ctx: _NoSyncTboPendingContext
+) -> torch.Tensor:
     self = block
     if pending_ctx.combine_done_event is not None:
         wait_event_no_compile(torch.cuda.current_stream(), pending_ctx.combine_done_event)
@@ -338,9 +361,13 @@ def ep_no_sync_stage_tail(block: MoEFusedV2TransformerBlock, pending_ctx: _NoSyn
     if a_state.shared_done_event is not None:
         wait_event_no_compile(torch.cuda.current_stream(), a_state.shared_done_event)
 
-    combine_out = pending_ctx.combine_out if pending_ctx.combine_out is not None else buffers.combine_out
+    combine_out = (
+        pending_ctx.combine_out if pending_ctx.combine_out is not None else buffers.combine_out
+    )
     with nvtx.annotate("Tail-UnpermuteMerge", color="green"):
-        combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
+        combine_out_for_unpermute = (
+            combine_out.clone() if buffers.combine_out_is_shared else combine_out
+        )
         local_x = restore_drop_unpermute_1d(
             self,
             combine_out=combine_out_for_unpermute,
@@ -381,8 +408,7 @@ def combined_forward_ep_no_sync_tbo(
     else:
         if not isinstance(x1_ctx, _NoSyncTboPendingContext):
             raise RuntimeError(
-                "Expected no-sync TBO context from previous block, "
-                f"got type={type(x1_ctx)}"
+                "Expected no-sync TBO context from previous block, " f"got type={type(x1_ctx)}"
             )
         pending_prev = x1_ctx
 

@@ -52,9 +52,8 @@ def accumulate_ep_no_sync_rowwise_metrics(
 
     drop_sum = drop_token_cnt.to(dtype=torch.float32)
     total_sum = torch.tensor(float(num_out_tokens), device=drop_sum.device)
-    util = (
-        recv_splits_by_src_local.sum(dtype=torch.float32)
-        / torch.tensor(float(rank_capacity), device=drop_sum.device)
+    util = recv_splits_by_src_local.sum(dtype=torch.float32) / torch.tensor(
+        float(rank_capacity), device=drop_sum.device
     )
 
     if block._ep_no_sync_rowwise_drop_tokens_sum is None:

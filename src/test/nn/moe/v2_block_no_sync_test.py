@@ -10,7 +10,12 @@ from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
-from olmo_core.testing import requires_gpu, requires_grouped_gemm, requires_multi_gpu, run_distributed_test
+from olmo_core.testing import (
+    requires_gpu,
+    requires_grouped_gemm,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 
 
 def test_v2_extracted_forward_module_names_importable():
@@ -125,13 +130,18 @@ def _install_forced_router(block: MoEFusedV2TransformerBlock):
             del loss_div_factor
             B, S, _ = local_x.shape
             if scores_only:
-                return torch.ones(
-                    B,
-                    S,
-                    router.num_experts,
-                    device=local_x.device,
-                    dtype=local_x.dtype,
-                ), None, None, None
+                return (
+                    torch.ones(
+                        B,
+                        S,
+                        router.num_experts,
+                        device=local_x.device,
+                        dtype=local_x.dtype,
+                    ),
+                    None,
+                    None,
+                    None,
+                )
 
             expert_weights = torch.ones(
                 B,
@@ -169,18 +179,25 @@ def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
             del loss_div_factor
             B, S, _ = local_x.shape
             if scores_only:
-                return torch.ones(
-                    B,
-                    S,
-                    router.num_experts,
-                    device=local_x.device,
-                    dtype=local_x.dtype,
-                ), None, None, None
+                return (
+                    torch.ones(
+                        B,
+                        S,
+                        router.num_experts,
+                        device=local_x.device,
+                        dtype=local_x.dtype,
+                    ),
+                    None,
+                    None,
+                    None,
+                )
 
             top_k = router.top_k
             num_experts = router.num_experts
             token_ids = torch.arange(B * S, device=local_x.device, dtype=torch.long).unsqueeze(1)
-            route_offsets = torch.arange(top_k, device=local_x.device, dtype=torch.long).unsqueeze(0)
+            route_offsets = torch.arange(top_k, device=local_x.device, dtype=torch.long).unsqueeze(
+                0
+            )
             expert_indices = (token_ids + route_offsets + dist.get_rank() * 3) % num_experts
             expert_indices = expert_indices.view(B, S, top_k)
 
@@ -198,7 +215,9 @@ def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
     assert block.routed_experts_router is not None
     block.routed_experts_router.forward = _make_deterministic_forward(block.routed_experts_router)
     if block.shared_experts_router is not None:
-        block.shared_experts_router.forward = _make_deterministic_forward(block.shared_experts_router)
+        block.shared_experts_router.forward = _make_deterministic_forward(
+            block.shared_experts_router
+        )
 
 
 @requires_gpu
@@ -294,7 +313,9 @@ def _run_ep_no_sync_drop_behavior():
     _install_forced_router(block_no_sync)
     block_no_sync.train()
 
-    x = torch.randn(1, 8, block_no_sync.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x = torch.randn(
+        1, 8, block_no_sync.d_model, device="cuda", dtype=torch.float32, requires_grad=True
+    )
     y = block_no_sync(x)
     assert torch.isfinite(y).all()
     y.sum().backward()
@@ -321,7 +342,9 @@ def _run_ep_no_sync_quota_invariants():
     _install_forced_router(block_no_sync)
     block_no_sync.train()
 
-    x = torch.randn(1, 8, block_no_sync.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x = torch.randn(
+        1, 8, block_no_sync.d_model, device="cuda", dtype=torch.float32, requires_grad=True
+    )
     y = block_no_sync(x)
     y.sum().backward()
 
@@ -494,7 +517,9 @@ def test_v2_ep_no_sync_hard_fail_setup():
 
 @requires_multi_gpu
 def test_v2_ep_no_sync_rowwise_matches_synced():
-    run_distributed_test(_run_ep_no_sync_rowwise_matches_synced, backend="nccl", start_method="spawn")
+    run_distributed_test(
+        _run_ep_no_sync_rowwise_matches_synced, backend="nccl", start_method="spawn"
+    )
 
 
 def test_v2_ep_no_sync_2d_all_to_all_rejected():

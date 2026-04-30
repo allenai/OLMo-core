@@ -75,9 +75,7 @@ def _build_global_row_maps(
                 if expert < 0:
                     continue
                 if expert >= total_experts:
-                    raise RuntimeError(
-                        f"Found expert id {expert} >= total_experts={total_experts}"
-                    )
+                    raise RuntimeError(f"Found expert id {expert} >= total_experts={total_experts}")
                 dst_rank = expert // experts_per_rank
                 row = per_rank_counts[dst_rank]
                 per_rank_counts[dst_rank] += 1
@@ -137,8 +135,12 @@ def main() -> None:
 
     group_name = _setup_nvshmem_backend(group, device)
 
-    dispatch_out_bf16 = _alloc_rendezvous_symm_tensor((capacity, args.cols), torch.bfloat16, device, group)
-    dispatch_out_fp8_q = _alloc_rendezvous_symm_tensor((capacity, args.cols), torch.float8_e4m3fn, device, group)
+    dispatch_out_bf16 = _alloc_rendezvous_symm_tensor(
+        (capacity, args.cols), torch.bfloat16, device, group
+    )
+    dispatch_out_fp8_q = _alloc_rendezvous_symm_tensor(
+        (capacity, args.cols), torch.float8_e4m3fn, device, group
+    )
     dispatch_out_fp8_scales = _alloc_rendezvous_symm_tensor(
         (capacity, args.cols // 32),
         torch.float8_e8m0fnu,

@@ -57,7 +57,9 @@ def main() -> None:
     for p in model.parameters():
         p.grad_dtype = torch.float32  # type: ignore[attr-defined]
 
-    x = torch.randn(args.batch_size, args.d_in, device=device, dtype=torch.bfloat16, requires_grad=True)
+    x = torch.randn(
+        args.batch_size, args.d_in, device=device, dtype=torch.bfloat16, requires_grad=True
+    )
     target = torch.randn(args.batch_size, args.d_out, device=device, dtype=torch.bfloat16)
 
     output = model(x)
@@ -68,7 +70,9 @@ def main() -> None:
     loss.backward()
 
     if x.grad is None or x.grad.dtype != torch.bfloat16:
-        raise RuntimeError(f"Expected bf16 backward grad for input, got {None if x.grad is None else x.grad.dtype}")
+        raise RuntimeError(
+            f"Expected bf16 backward grad for input, got {None if x.grad is None else x.grad.dtype}"
+        )
 
     bad_final = []
     total_abs = 0.0

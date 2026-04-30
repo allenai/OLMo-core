@@ -36,7 +36,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-iters", type=int, default=10)
     parser.add_argument("--iters", type=int, default=50)
     parser.add_argument("--major-align", type=int, default=1)
-    parser.add_argument("--num-teams", type=int, default=2, help="Number of disjoint all-to-all teams.")
+    parser.add_argument(
+        "--num-teams", type=int, default=2, help="Number of disjoint all-to-all teams."
+    )
     parser.add_argument(
         "--team-size",
         type=int,
@@ -271,7 +273,9 @@ def main() -> None:
     symm_out_vdev_splits_offsets = _alloc_rendezvous_symm_tensor(
         (2, team_world_size), torch.int64, device, team_group
     )
-    symm_out_vdev2d = _alloc_rendezvous_symm_tensor((out_cap, args.cols), x.dtype, device, team_group)
+    symm_out_vdev2d = _alloc_rendezvous_symm_tensor(
+        (out_cap, args.cols), x.dtype, device, team_group
+    )
     symm_out_vdev2d_splits_offsets = _alloc_rendezvous_symm_tensor(
         (2, team_world_size), torch.int64, device, team_group
     )
@@ -356,7 +360,10 @@ def main() -> None:
 
     if rank == 0:
         payload_gb = (args.rows * args.cols * torch.tensor([], dtype=dtype).element_size()) / 1e9
-        print("=== Team-Scoped AllToAll: NCCL vs NVSHMEM Symmetric Memory (vdev + vdev_2d) ===", flush=True)
+        print(
+            "=== Team-Scoped AllToAll: NCCL vs NVSHMEM Symmetric Memory (vdev + vdev_2d) ===",
+            flush=True,
+        )
         print(
             f"world_size={world_size} num_teams={args.num_teams} team_size={team_size} "
             f"rows={args.rows} cols={args.cols} dtype={dtype} "

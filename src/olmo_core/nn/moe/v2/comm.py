@@ -26,7 +26,10 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
     ) -> torch.Tensor:
         if expert_out.ndim != 2 or symm_expert_out.ndim != 2:
             raise RuntimeError("expert_out/symm_expert_out must be rank-2 [R, D]")
-        if expert_out.shape[0] != symm_expert_out.shape[0] or expert_out.shape[1] != symm_expert_out.shape[1]:
+        if (
+            expert_out.shape[0] != symm_expert_out.shape[0]
+            or expert_out.shape[1] != symm_expert_out.shape[1]
+        ):
             raise RuntimeError(
                 "expert_out/symm_expert_out shape mismatch: "
                 f"{tuple(expert_out.shape)} vs {tuple(symm_expert_out.shape)}"
@@ -46,7 +49,9 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         if nblocks < 0:
             raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
 
-        src_ranks_i64 = src_ranks if src_ranks.dtype == torch.long else src_ranks.to(dtype=torch.long)
+        src_ranks_i64 = (
+            src_ranks if src_ranks.dtype == torch.long else src_ranks.to(dtype=torch.long)
+        )
         src_rows_i64 = src_rows if src_rows.dtype == torch.long else src_rows.to(dtype=torch.long)
         if not src_ranks_i64.is_contiguous():
             src_ranks_i64 = src_ranks_i64.contiguous()
@@ -174,13 +179,9 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         if dst_ranks.shape != dst_rows.shape:
             raise RuntimeError("dst_ranks/dst_rows must have identical shapes")
         if dst_ranks.ndim != 2 or dst_ranks.shape[0] != source_input.shape[0]:
-            raise RuntimeError(
-                "dst_ranks/dst_rows must be [N, K] and match source_input first dim"
-            )
+            raise RuntimeError("dst_ranks/dst_rows must be [N, K] and match source_input first dim")
         if symm_out.ndim != 2 or symm_out.shape[1] != source_input.shape[1]:
-            raise RuntimeError(
-                "symm_out must be [C, D] with matching hidden dim to source_input"
-            )
+            raise RuntimeError("symm_out must be [C, D] with matching hidden dim to source_input")
         if nblocks < 0:
             raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
 
@@ -188,7 +189,9 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         if not source_input_contig.is_contiguous():
             source_input_contig = source_input_contig.contiguous()
 
-        dst_ranks_i64 = dst_ranks if dst_ranks.dtype == torch.long else dst_ranks.to(dtype=torch.long)
+        dst_ranks_i64 = (
+            dst_ranks if dst_ranks.dtype == torch.long else dst_ranks.to(dtype=torch.long)
+        )
         dst_rows_i64 = dst_rows if dst_rows.dtype == torch.long else dst_rows.to(dtype=torch.long)
         if not dst_ranks_i64.is_contiguous():
             dst_ranks_i64 = dst_ranks_i64.contiguous()
@@ -263,9 +266,7 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         if dst_ranks.shape != dst_rows.shape:
             raise RuntimeError("dst_ranks/dst_rows must have identical shapes")
         if dst_ranks.ndim != 2 or dst_ranks.shape[0] != source_input.shape[0]:
-            raise RuntimeError(
-                "dst_ranks/dst_rows must be [N, K] and match source_input first dim"
-            )
+            raise RuntimeError("dst_ranks/dst_rows must be [N, K] and match source_input first dim")
         if symm_out_hp.ndim != 2 or symm_out_hp.shape[1] != source_input.shape[1]:
             raise RuntimeError("symm_out_hp must be [C, D] with D matching source_input")
         if symm_out_q.shape != symm_out_hp.shape:
@@ -273,9 +274,7 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
                 f"symm_out_q shape mismatch: expected {tuple(symm_out_hp.shape)}, got {tuple(symm_out_q.shape)}"
             )
         if symm_out_q.dtype != torch.float8_e4m3fn:
-            raise RuntimeError(
-                f"symm_out_q must be float8_e4m3fn, got {symm_out_q.dtype}"
-            )
+            raise RuntimeError(f"symm_out_q must be float8_e4m3fn, got {symm_out_q.dtype}")
         if block_size <= 0 or symm_out_hp.shape[1] % block_size != 0:
             raise RuntimeError(
                 f"Invalid block_size={block_size} for hidden dim {symm_out_hp.shape[1]}"
@@ -293,8 +292,12 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         if nblocks < 0:
             raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
 
-        source_input_contig = source_input if source_input.is_contiguous() else source_input.contiguous()
-        dst_ranks_i64 = dst_ranks if dst_ranks.dtype == torch.long else dst_ranks.to(dtype=torch.long)
+        source_input_contig = (
+            source_input if source_input.is_contiguous() else source_input.contiguous()
+        )
+        dst_ranks_i64 = (
+            dst_ranks if dst_ranks.dtype == torch.long else dst_ranks.to(dtype=torch.long)
+        )
         dst_rows_i64 = dst_rows if dst_rows.dtype == torch.long else dst_rows.to(dtype=torch.long)
         if not dst_ranks_i64.is_contiguous():
             dst_ranks_i64 = dst_ranks_i64.contiguous()
@@ -421,7 +424,9 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
         if nblocks < 0:
             raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
 
-        src_ranks_i64 = src_ranks if src_ranks.dtype == torch.long else src_ranks.to(dtype=torch.long)
+        src_ranks_i64 = (
+            src_ranks if src_ranks.dtype == torch.long else src_ranks.to(dtype=torch.long)
+        )
         src_rows_i64 = src_rows if src_rows.dtype == torch.long else src_rows.to(dtype=torch.long)
         if not src_ranks_i64.is_contiguous():
             src_ranks_i64 = src_ranks_i64.contiguous()
@@ -496,7 +501,9 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
         ctx.symm_expert_out_hp = symm_expert_out_hp
         ctx.symm_expert_out_q = symm_expert_out_q
         ctx.symm_expert_out_scales = symm_expert_out_scales
-        ctx.save_for_backward(src_ranks_i64, src_rows_i64, probs_f32, gathered_q_saved, gathered_scales_saved)
+        ctx.save_for_backward(
+            src_ranks_i64, src_rows_i64, probs_f32, gathered_q_saved, gathered_scales_saved
+        )
         return combine_out
 
     @staticmethod
@@ -515,7 +522,9 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
         grad_out_contig = grad_out if grad_out.is_contiguous() else grad_out.contiguous()
 
         grad_probs = None
-        valid_mask = (src_ranks >= 0) & (src_rows >= 0) & (src_rows < ctx.symm_expert_out_hp.shape[0])
+        valid_mask = (
+            (src_ranks >= 0) & (src_rows >= 0) & (src_rows < ctx.symm_expert_out_hp.shape[0])
+        )
         if ctx.needs_input_grad[4]:
             grad_probs = dot_gathered_rows_mxfp8_with_grad(
                 gathered_q_saved,
@@ -531,8 +540,7 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
             num_rows, top_k = src_ranks.shape
             hidden = grad_out_contig.shape[1]
             weighted_flat = (
-                grad_out_contig.unsqueeze(1)
-                * probs.to(dtype=grad_out_contig.dtype).unsqueeze(-1)
+                grad_out_contig.unsqueeze(1) * probs.to(dtype=grad_out_contig.dtype).unsqueeze(-1)
             ).reshape(num_rows * top_k, hidden)
             if not weighted_flat.is_contiguous():
                 weighted_flat = weighted_flat.contiguous()
@@ -563,7 +571,7 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
 
 class _DispatchVDevAutograd(torch.autograd.Function):
     @staticmethod
-    @torch.compiler.disable # this is required if dispatch_out is shared across layers, no idea why.
+    @torch.compiler.disable  # this is required if dispatch_out is shared across layers, no idea why.
     def forward(  # type: ignore[override]
         ctx,
         source_input: torch.Tensor,
@@ -589,7 +597,9 @@ class _DispatchVDevAutograd(torch.autograd.Function):
             and tuple(source_input.stride()) == tuple(symm_input.stride())
         )
         if not input_aliases_symm_input:
-            raise RuntimeError("Not Expected: dispatch source_input should alias symm_input buffer to avoid extra copy")
+            raise RuntimeError(
+                "Not Expected: dispatch source_input should alias symm_input buffer to avoid extra copy"
+            )
             symm_input.copy_(source_input)
         if in_rank_splits.dtype != torch.int64:
             symm_in_rank_splits.copy_(in_rank_splits.to(dtype=torch.int64))
@@ -636,7 +646,7 @@ class _DispatchVDevAutograd(torch.autograd.Function):
             raise RuntimeError(
                 f"dispatch backward grad rows ({grad_out.shape[0]}) must equal symmetric dispatch grad input capacity ({symm_grad_out.shape[0]})"
             )
-        
+
         symm_grad_out_aliases_grad_out = (
             grad_out.untyped_storage().data_ptr() == symm_grad_out.untyped_storage().data_ptr()
             and grad_out.storage_offset() == symm_grad_out.storage_offset()
@@ -644,8 +654,9 @@ class _DispatchVDevAutograd(torch.autograd.Function):
             and tuple(grad_out.stride()) == tuple(symm_grad_out.stride())
         )
         if not symm_grad_out_aliases_grad_out:
-            raise RuntimeError("Not Expected: dispatch backward grad_out should alias symm_grad_out buffer to avoid extra copy")
-
+            raise RuntimeError(
+                "Not Expected: dispatch backward grad_out should alias symm_grad_out buffer to avoid extra copy"
+            )
 
         grad_symm_input = ctx.symm_input
         # Ensure any rows not written by vdev (e.g. dropped-token tail capacity)
@@ -750,7 +761,7 @@ class _CombineVDevAutograd(torch.autograd.Function):
         # (1) return a new tensor if the combine_out buffer is shared
         # out = torch.empty_like(symm_out)
         # out.copy_(symm_out)
-        # or 
+        # or
         # (2) return the symm_out buffer directly if it's not shared
         out = symm_out
         return out, out_rank_splits_offsets

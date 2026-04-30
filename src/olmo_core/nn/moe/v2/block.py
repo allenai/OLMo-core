@@ -1,16 +1,16 @@
 import threading
 import weakref
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
-import nvtx
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import Placement, Shard
-from torch.utils.checkpoint import checkpoint, CheckpointFunction
+from torch.distributed.tensor import Placement
+from torch.utils.checkpoint import checkpoint
 
 import olmo_core.nn.transformer.block
+
 try:
     import torch.distributed._symmetric_memory as _symm_mem
 except ImportError:
@@ -22,42 +22,25 @@ except ImportError:
 _EP_SYMM_GROUP0_ALIAS_LOCK = threading.Lock()
 _EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
 
-from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
-from olmo_core.ops import attach_auxiliary_loss
-from olmo_core.kernels import (
-    ScaledGroupedMMPrequantizedRHS,
+from olmo_core.distributed.utils import (
+    get_rank,
+    get_world_size,
 )
-from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.kernels import ScaledGroupedMMPrequantizedRHS
+from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType
+from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.utils import get_or_init_stream
 
 from ...attention import AttentionConfig, RingAttentionLoadBalancerType
 from ...buffer_cache import BufferCache
-from ...functional import l2_normalize
 from ...layer_norm import LayerNormConfig
-from ...moe import MoERouterGatingFunction
-from ...moe import MoERouterConfig as MoERouterConfigV1
-from ...moe.loss import MoELoadBalancingLossGranularity
-from .routed_experts import RoutedExperts, RoutedExpertsConfig, requires_host_side_split_sizes, use_torch_grouped_mm
-from .router import MoERouterConfigV2, MoERouterV2
-from .shared_experts import SharedExperts
-from .shared_experts import SharedExpertsConfig
-from .fp8 import (
-    MoERowwiseFP8Config,
-    invalidate_rowwise_fp8_cache as _invalidate_rowwise_fp8_cache,
-    normalize_rowwise_fp8_config,
+from .activation_debug import maybe_dump_ep_no_sync_saved_activations
+from .checkpointing import is_checkpoint_recomputing
+from .ep_no_sync_1d import (
+    combined_forward_ep_no_sync_1d as _combined_forward_ep_no_sync_1d,
 )
-from .ep_no_sync_buffers import (
-    _NoSyncSymmSharedPool,
-    _NoSyncTboPendingContext,
-)
-from .ep_sync_1d import (
-    combined_forward_ep_1d as _combined_forward_ep_1d,
-)
-from .ep_sync_tbo import combined_forward_ep_tbo as _combined_forward_ep_tbo
-from .no_ep import combined_forward_no_ep as _combined_forward_no_ep
-from .ep_no_sync_1d import combined_forward_ep_no_sync_1d as _combined_forward_ep_no_sync_1d
+from .ep_no_sync_buffers import _NoSyncSymmSharedPool, _NoSyncTboPendingContext
 from .ep_no_sync_rowwise import (
     combined_forward_ep_no_sync_rowwise as _combined_forward_ep_no_sync_rowwise,
 )
@@ -68,17 +51,22 @@ from .ep_no_sync_rowwise_helpers import (
 from .ep_no_sync_tbo_1d import (
     combined_forward_ep_no_sync_tbo as _combined_forward_ep_no_sync_tbo,
 )
-from .checkpointing import is_checkpoint_recomputing
-from .activation_debug import maybe_dump_ep_no_sync_saved_activations
-from olmo_core.nn.transformer.config import (
-    TransformerBlockConfig,
-    TransformerBlockType,
+from .ep_sync_1d import combined_forward_ep_1d as _combined_forward_ep_1d
+from .ep_sync_tbo import combined_forward_ep_tbo as _combined_forward_ep_tbo
+from .fp8 import MoERowwiseFP8Config
+from .fp8 import invalidate_rowwise_fp8_cache as _invalidate_rowwise_fp8_cache
+from .fp8 import normalize_rowwise_fp8_config
+from .no_ep import combined_forward_no_ep as _combined_forward_no_ep
+from .routed_experts import (
+    RoutedExperts,
+    RoutedExpertsConfig,
 )
+from .router import MoERouterConfigV2, MoERouterV2
+from .shared_experts import SharedExperts, SharedExpertsConfig
 
 
 @dataclass
 class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
-
     shared_experts: Optional[SharedExpertsConfig] = None
 
     routed_experts: Optional[RoutedExpertsConfig] = None
@@ -113,12 +101,14 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> olmo_core.nn.transformer.block.TransformerBlockBase:
-        assert self.feed_forward is None and self.feed_forward_moe is None, "MoEFusedV2TransformerBlock does not support `feed_forward` or `feed_forward_moe` (use TransformerBlockConfig instead). Set `shared_experts` and `routed_experts` instead."
+        assert (
+            self.feed_forward is None and self.feed_forward_moe is None
+        ), "MoEFusedV2TransformerBlock does not support `feed_forward` or `feed_forward_moe` (use TransformerBlockConfig instead). Set `shared_experts` and `routed_experts` instead."
 
         kwargs = self.as_dict(exclude_none=False, recurse=False)
         kwargs.pop("name")
-        kwargs.pop("feed_forward") # from parent config
-        kwargs.pop("feed_forward_moe") # from parent config
+        kwargs.pop("feed_forward")  # from parent config
+        kwargs.pop("feed_forward_moe")  # from parent config
         kwargs.update(
             d_model=d_model,
             block_idx=block_idx,
@@ -127,12 +117,10 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
             cache=cache,
         )
 
-
         if self.name == TransformerBlockType.moe_fused_v2:
             return MoEFusedV2TransformerBlock(**kwargs)
         else:
             raise NotImplementedError(self.name)
-
 
     def num_params(self, d_model: int) -> int:
         block_params = 0
@@ -184,7 +172,6 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
         return block_params
 
     def flops_per_seq(self, d_model: int, seqlen: int) -> int:
-
         flops = 0
 
         # attention
@@ -192,9 +179,22 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
 
         # router
         # (seq_len * d_model) * (d_model * num_total_experts)
-        flops += 6 * seqlen * d_model * (
-            (self.routed_experts_router.num_experts if self.routed_experts_router is not None else 0)
-            + (self.shared_experts_router.num_experts if self.shared_experts_router is not None else 0)
+        flops += (
+            6
+            * seqlen
+            * d_model
+            * (
+                (
+                    self.routed_experts_router.num_experts
+                    if self.routed_experts_router is not None
+                    else 0
+                )
+                + (
+                    self.shared_experts_router.num_experts
+                    if self.shared_experts_router is not None
+                    else 0
+                )
+            )
         )
 
         # routed experts
@@ -203,7 +203,13 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
         # x3 for fwd+bwd
         # x2 for GEMM
         if self.routed_experts is not None:
-            flops += (3 * 3 * 2) * seqlen * d_model * self.routed_experts.hidden_size *  self.routed_experts_router.top_k
+            flops += (
+                (3 * 3 * 2)
+                * seqlen
+                * d_model
+                * self.routed_experts.hidden_size
+                * self.routed_experts_router.top_k
+            )
 
         # shared experts
         # (seq_len, d_model) * (d_model, expert_hidden_size) * num_experts
@@ -211,7 +217,13 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
         # x3 for fwd+bwd
         # x2 for GEMM
         if self.shared_experts is not None:
-            flops += (3 * 3 * 2) * seqlen * d_model * self.shared_experts.hidden_size * self.shared_experts.num_experts
+            flops += (
+                (3 * 3 * 2)
+                * seqlen
+                * d_model
+                * self.shared_experts.hidden_size
+                * self.shared_experts.num_experts
+            )
 
         return flops
 
@@ -219,8 +231,8 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
-class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBase):
 
+class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBase):
     def __init__(
         self,
         *,
@@ -238,9 +250,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         dropout: float = 0.0,
         attention_residual_alpha: Optional[float] = None,
         feed_forward_residual_alpha: Optional[float] = None,
-        checkpoint_attn = False,
-        checkpoint_permute_moe_unpermute = False,
-        checkpoint_combined_ep_tbo = False,
+        checkpoint_attn=False,
+        checkpoint_permute_moe_unpermute=False,
+        checkpoint_combined_ep_tbo=False,
         checkpoint_second_unpermute=False,
         ep_no_sync: bool = False,
         ep_no_sync_use_2d_all_to_all: bool = False,
@@ -258,14 +270,20 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     ):
         super().__init__(n_layers=n_layers)
 
-        assert dropout == 0.0 or dropout is None, "MoEFusedV2TransformerBlock does not support dropout"
+        assert (
+            dropout == 0.0 or dropout is None
+        ), "MoEFusedV2TransformerBlock does not support dropout"
         self.d_model = d_model
         self.block_idx = block_idx
 
         if attention_residual_alpha is not None:
-            raise OLMoConfigurationError("MoEFusedV2TransformerBlock does not support attention_residual_alpha")
+            raise OLMoConfigurationError(
+                "MoEFusedV2TransformerBlock does not support attention_residual_alpha"
+            )
         if feed_forward_residual_alpha is not None:
-            raise OLMoConfigurationError("MoEFusedV2TransformerBlock does not support feed_forward_residual_alpha")
+            raise OLMoConfigurationError(
+                "MoEFusedV2TransformerBlock does not support feed_forward_residual_alpha"
+            )
 
         self.routed_experts: Optional[RoutedExperts]
         self.routed_experts_router: Optional[MoERouterV2]
@@ -291,14 +309,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         ######## END: Attention ########
 
-
         ######## START: MLP ########
-        assert (routed_experts is not None) or (shared_experts is not None), "At least one of routed_experts or shared_experts must be provided"
+        assert (routed_experts is not None) or (
+            shared_experts is not None
+        ), "At least one of routed_experts or shared_experts must be provided"
 
         #### Optional: routed experts ####
         if routed_experts:
             # Routed Experts enabled
-            assert routed_experts_router is not None, "Need routed_experts_router when using routed experts"
+            assert (
+                routed_experts_router is not None
+            ), "Need routed_experts_router when using routed experts"
             routed_experts.rowwise_fp8 = normalize_rowwise_fp8_config(routed_experts.rowwise_fp8)
             if self.rowwise_fp8 is not None and routed_experts.rowwise_fp8 is None:
                 routed_experts.rowwise_fp8 = self.rowwise_fp8
@@ -309,12 +330,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             self.routed_experts_router = routed_experts_router.build(init_device=init_device)
         else:
             # Routed Experts not enabled
-            assert routed_experts_router is None, "Should not set routed_experts_router when not using routed experts"
+            assert (
+                routed_experts_router is None
+            ), "Should not set routed_experts_router when not using routed experts"
             self.routed_experts = None
             self.routed_experts_router = None
         #### END: Optional: routed experts ####
-
-
 
         #### Optional: shared experts ####
         if shared_experts:
@@ -326,19 +347,24 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # Shared Experts Router
             if shared_experts.num_experts > 1:
                 # Need router if more than one experts
-                assert shared_experts_router is not None, "Need shared_experts_router when using shared experts with more than one expert"
+                assert (
+                    shared_experts_router is not None
+                ), "Need shared_experts_router when using shared experts with more than one expert"
                 self.shared_experts_router = shared_experts_router.build(init_device=init_device)
             else:
-                assert shared_experts_router is None, "Should not set shared_experts_router when using only one shared expert"
+                assert (
+                    shared_experts_router is None
+                ), "Should not set shared_experts_router when using only one shared expert"
                 # No router if just one
                 self.shared_experts_router = None
         else:
             # Shared Experts not enabled
-            assert shared_experts_router is None, "Should not set shared_experts_router when not using shared experts"
+            assert (
+                shared_experts_router is None
+            ), "Should not set shared_experts_router when not using shared experts"
             self.shared_experts = None
             self.shared_experts_router = None
         #### END: Optional: shared experts ####
-
 
         self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
         self.feed_forward_input_norm = None
@@ -351,21 +377,27 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.tp_pg = None
         self._tp_enabled = False
 
-
         # reuse the same event so that torch.compile can see the same object id and will not break the guard.
-        self._dtoh_event: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event()) # cast to make pylance happy
+        self._dtoh_event: torch.cuda.Event = cast(
+            torch.cuda.Event, torch.cuda.Event()
+        )  # cast to make pylance happy
         self._dtoh_event_send: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
         self._dtoh_event_recv: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
-        self._before_rev_all2all_event: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
+        self._before_rev_all2all_event: torch.cuda.Event = cast(
+            torch.cuda.Event, torch.cuda.Event()
+        )
 
         # same for tbo1
         self._dtoh_event1: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
         self._dtoh_event_send1: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
         self._dtoh_event_recv1: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
-        self._before_rev_all2all_event1: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
+        self._before_rev_all2all_event1: torch.cuda.Event = cast(
+            torch.cuda.Event, torch.cuda.Event()
+        )
 
-        self.num_local_routed_experts: Optional[int] = self.routed_experts.num_experts if self.routed_experts else None
-
+        self.num_local_routed_experts: Optional[int] = (
+            self.routed_experts.num_experts if self.routed_experts else None
+        )
 
         self.checkpoint_attn = checkpoint_attn
         self.checkpoint_permute_moe_unpermute = checkpoint_permute_moe_unpermute
@@ -421,19 +453,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 f"(got {self.ep_no_sync_restore_unpermute_backend!r})"
             )
 
-
-
     def purge_cuda_events(self):
         # set all events to None (so that the model can be deepcopied)
-        self._dtoh_event = None # type: ignore[assignment]
-        self._dtoh_event_send = None # type: ignore[assignment]
-        self._dtoh_event_recv = None # type: ignore[assignment]
-        self._before_rev_all2all_event = None # type: ignore[assignment]
+        self._dtoh_event = None  # type: ignore[assignment]
+        self._dtoh_event_send = None  # type: ignore[assignment]
+        self._dtoh_event_recv = None  # type: ignore[assignment]
+        self._before_rev_all2all_event = None  # type: ignore[assignment]
 
-        self._dtoh_event1 = None # type: ignore[assignment]
-        self._dtoh_event_send1 = None # type: ignore[assignment]
-        self._dtoh_event_recv1 = None # type: ignore[assignment]
-        self._before_rev_all2all_event1 = None # type: ignore[assignment]
+        self._dtoh_event1 = None  # type: ignore[assignment]
+        self._dtoh_event_send1 = None  # type: ignore[assignment]
+        self._dtoh_event_recv1 = None  # type: ignore[assignment]
+        self._before_rev_all2all_event1 = None  # type: ignore[assignment]
 
     def install_cuda_events(self):
         self._dtoh_event = cast(torch.cuda.Event, torch.cuda.Event())
@@ -490,10 +520,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         return self._tp_enabled
 
     def get_dense_stream(self, for_x1=False) -> torch.cuda.Stream:
-        if for_x1: # not used for now
-            return get_or_init_stream(id='dense_x1', priority=20)
+        if for_x1:  # not used for now
+            return get_or_init_stream(id="dense_x1", priority=20)
         else:
-            return get_or_init_stream(id='dense', priority=20)
+            return get_or_init_stream(id="dense", priority=20)
 
     def forward(
         self,
@@ -504,7 +534,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     ) -> torch.Tensor:
         if self.routed_experts:
             if self.ep_enabled:
-                if self.ep_no_sync and self.training: # in eval mode, different ranks might get different input token counts, and no-sync can freeze
+                if (
+                    self.ep_no_sync and self.training
+                ):  # in eval mode, different ranks might get different input token counts, and no-sync can freeze
                     no_sync_forward = (
                         self.combined_forward_ep_no_sync_rowwise
                         if self.ep_no_sync_use_rowwise_all_to_all
@@ -519,9 +551,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     )
                     if debug_out is not None:
                         return debug_out
-                    return no_sync_forward(
-                        x, loss_div_factor=loss_div_factor, **kwargs
-                    )
+                    return no_sync_forward(x, loss_div_factor=loss_div_factor, **kwargs)
                 return self.combined_forward_ep_1d(x, loss_div_factor=loss_div_factor, **kwargs)
             else:
                 return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
@@ -530,7 +560,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             return self.combined_forward_shared_only(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_pp(self, pp_mesh: DeviceMesh):
-        pass # nothing to do
+        pass  # nothing to do
 
     def _ensure_ep_no_sync_symm_backend(self):
         if _symm_mem is None:
@@ -623,14 +653,14 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             return False
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
-        assert self.routed_experts is not None, "ep can only be applied when routed_experts is enabled"
-        ep_dp_mesh = ep_mesh['ep_dp']
-        ep_mp_mesh = ep_mesh['ep_mp']
+        assert (
+            self.routed_experts is not None
+        ), "ep can only be applied when routed_experts is enabled"
+        ep_dp_mesh = ep_mesh["ep_dp"]
+        ep_mp_mesh = ep_mesh["ep_mp"]
         ep_pg = kwargs.get("ep_pg")
         self.ep_mesh = ep_mesh
-        self.routed_experts.apply_ep(
-            ep_mesh
-        )
+        self.routed_experts.apply_ep(ep_mesh)
         owner_ref = weakref.ref(self)
         self.routed_experts.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
         self.routed_experts.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
@@ -647,7 +677,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             self._ensure_ep_no_sync_symm_backend()
             assert self.ep_pg is not None
             group_name = self.ep_pg.group_name
-            assert dist.group.WORLD is not None, "torch.distributed.group.WORLD must be initialized for EP no-sync to work"
+            assert (
+                dist.group.WORLD is not None
+            ), "torch.distributed.group.WORLD must be initialized for EP no-sync to work"
             world_group_name = dist.group.WORLD.group_name
             alias_group0_active = False
             try:
@@ -704,7 +736,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
         self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo)
         self._res_norm_attn = torch.compile(self._res_norm_attn)
-
 
     @property
     def ep_world_size(self) -> int:
@@ -895,11 +926,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     def _res_norm_mlp(self, residual: torch.Tensor, mlp_out: torch.Tensor) -> torch.Tensor:
         return residual + self.feed_forward_norm(mlp_out)
 
-    def _res_norm_attn(
-        self,
-        block_inp,
-        **kwargs
-    ) -> torch.Tensor:
+    def _res_norm_attn(self, block_inp, **kwargs) -> torch.Tensor:
         attn_in = block_inp
         if self.use_peri_norm:
             assert self.attention_input_norm is not None
@@ -907,11 +934,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         attn_res_out = block_inp + self.attention_norm(self.attention(attn_in, **kwargs))
         return attn_res_out
 
-    def _checkpointed_res_norm_attn(
-        self,
-        block_inp,
-        **kwargs
-    ) -> torch.Tensor:
+    def _checkpointed_res_norm_attn(self, block_inp, **kwargs) -> torch.Tensor:
         if self.checkpoint_attn:
             out = checkpoint(
                 self._res_norm_attn,
@@ -922,7 +945,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             return cast(torch.Tensor, out)
         else:
             return self._res_norm_attn(block_inp, **kwargs)
-
 
     def post_batch(self, dry_run: bool = False):
         """

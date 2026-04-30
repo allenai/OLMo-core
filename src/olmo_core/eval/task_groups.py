@@ -151,5 +151,5 @@ TASK_GROUPS: Dict[str, List[str]] = {
     "full": FULL_TASKS,
     "fast": FAST_TASKS,
     "copycolors": COPY_COLORS,
-    "debug": DEBUG_TASKS
+    "debug": DEBUG_TASKS,
 }

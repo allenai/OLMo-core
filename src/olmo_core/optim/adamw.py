@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Type, Union
 
@@ -7,14 +8,9 @@ from ..config import DType
 from ..distributed.utils import get_local_tensor
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
-import logging
-from torch.distributed.optim import ZeroRedundancyOptimizer
-from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
-    hook_with_zero_step,
-    hook_with_zero_step_interleaved,
-)
 
 log = logging.getLogger(__name__)
+
 
 def adamw_step(
     p: torch.Tensor,
@@ -240,6 +236,7 @@ class SkipStepAdamW(SkipStepOptimizer):
                 step_increment_bugfix=self.stepfix,
             )
 
+
 @dataclass
 class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[torch.optim.AdamW]"
     """
@@ -322,4 +319,3 @@ class SkipStepAdamWConfig(OptimConfig):
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:
         return SkipStepAdamW
-

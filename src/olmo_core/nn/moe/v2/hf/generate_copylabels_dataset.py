@@ -3,7 +3,6 @@ import json
 import random
 from pathlib import Path
 
-
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 LABEL_STYLES = ("letters", "numbers")
 
@@ -72,9 +71,7 @@ def generate_dataset(
     if num_options < 2:
         raise ValueError(f"num_options must be >= 2 (got {num_options})")
     if num_options > len(WORD_POOL):
-        raise ValueError(
-            f"num_options={num_options} exceeds WORD_POOL size={len(WORD_POOL)}"
-        )
+        raise ValueError(f"num_options={num_options} exceeds WORD_POOL size={len(WORD_POOL)}")
     if num_examples < 1:
         raise ValueError(f"num_examples must be >= 1 (got {num_examples})")
 

@@ -1,7 +1,6 @@
 import threading
 from contextlib import contextmanager, nullcontext
 
-
 _CHECKPOINT_RECOMPUTE_STATE = threading.local()
 
 

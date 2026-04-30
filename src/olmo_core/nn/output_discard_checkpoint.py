@@ -82,7 +82,9 @@ def _fallback_share_storage(dst: torch.Tensor, src: torch.Tensor):
         )
 
     # Keep version counter stable to mirror Megatron's low-level behavior.
-    if hasattr(torch._C, "_autograd") and hasattr(torch._C._autograd, "_unsafe_set_version_counter"):
+    if hasattr(torch._C, "_autograd") and hasattr(
+        torch._C._autograd, "_unsafe_set_version_counter"
+    ):
         torch._C._autograd._unsafe_set_version_counter([dst], [old_version])
     elif not _share_storage_fallback_warned:  # pragma: no cover - very old torch only
         warnings.warn(
@@ -143,7 +145,9 @@ class _OutputDiscardCheckpointFunction(torch.autograd.Function):
             outputs = run_function(*args)
 
         arg_is_tensor = tuple(isinstance(arg, torch.Tensor) for arg in args)
-        tensor_args = tuple(cast(torch.Tensor, arg) for arg in args if isinstance(arg, torch.Tensor))
+        tensor_args = tuple(
+            cast(torch.Tensor, arg) for arg in args if isinstance(arg, torch.Tensor)
+        )
         non_tensor_args = tuple(arg for arg in args if not isinstance(arg, torch.Tensor))
         ctx.save_for_backward(*detach_variable(tensor_args))
         ctx.arg_is_tensor = arg_is_tensor
@@ -208,8 +212,10 @@ class OutputDiscardCheckpoint:
             self._hook_handle = None
 
         if kwargs:
+
             def run_function(*inner_args: Any) -> Any:
                 return fn(*inner_args, **kwargs)
+
         else:
             run_function = fn
 

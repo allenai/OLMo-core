@@ -43,7 +43,14 @@ from ..distributed.utils import (
     is_distributed,
 )
 from ..exceptions import OLMoConfigurationError
-from ..io import copy_file, file_exists, glob_directory, is_url, join_path, normalize_path
+from ..io import (
+    copy_file,
+    file_exists,
+    glob_directory,
+    is_url,
+    join_path,
+    normalize_path,
+)
 from ..utils import cuda_sync_debug_mode, gc_cuda, get_default_thread_count
 from .callbacks import (
     Callback,
@@ -274,11 +281,10 @@ class Trainer:
     Ranges of steps to completely skip training on.
     """
 
-    checkpoints_to_eval: Optional[List[str]] = None 
+    checkpoints_to_eval: Optional[List[str]] = None
     """
     List of checkpoint paths to evaluate in eval_only mode. No effect in training mode.
     """
-    
 
     # Internal bookkeeping
 
@@ -732,7 +738,9 @@ class Trainer:
         log.info("Training complete")
 
     def eval_checkpoints(self):
-        from .train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
+        from .train_module.transformer.moe_train_module import (
+            MoEV2TransformerTrainModule,
+        )
 
         if not isinstance(self.train_module, MoEV2TransformerTrainModule):
             raise NotImplementedError(
@@ -901,7 +909,7 @@ class Trainer:
             checkpoint_paths = sorted(checkpoint_paths, key=lambda path: int(Path(path).name[4:]))
 
         return checkpoint_paths
-    
+
     def _shutdown(self):
         self._log_metrics()
         for callback in self._iter_callbacks():
@@ -1476,7 +1484,7 @@ class Trainer:
             # Check for nan/inf loss and add perplexity.
             if (ce_loss := metrics[step].get(TRAIN_CE_LOSS_METRIC)) is not None:
                 if not math.isfinite(ce_loss):
-                    print(f"[Warning] {ce_loss} loss encountered at step {step}") # Allow nan loss
+                    print(f"[Warning] {ce_loss} loss encountered at step {step}")  # Allow nan loss
                     # raise RuntimeError(f"{ce_loss} loss encountered at step {step}")
                 if ce_loss < 10:
                     metrics[step][TRAIN_PPL_METRIC] = math.exp(ce_loss)
@@ -1504,9 +1512,13 @@ class Trainer:
 
         log.info("Starting forward/backward dry-run batch...")
 
-        dbg_mem_before_dry_run = torch.cuda.memory_allocated()/1024**3 # model param + main param
+        dbg_mem_before_dry_run = (
+            torch.cuda.memory_allocated() / 1024**3
+        )  # model param + main param
         self.train_module.train_batch(batch, dry_run=True)
-        dbg_mem_after_dry_run = torch.cuda.memory_allocated()/1024**3 # model param 2x + main param 4x + model grad 2x
+        dbg_mem_after_dry_run = (
+            torch.cuda.memory_allocated() / 1024**3
+        )  # model param 2x + main param 4x + model grad 2x
 
         log.info("Dry-run complete")
 

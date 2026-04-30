@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 from typing import Optional, Tuple
-import nvtx
 
+import nvtx
 import torch
 
 try:
@@ -99,7 +99,6 @@ if triton is not None:
         dest_indices = r_mod_32 * 16 + r_div_32 * 4 + col_offs
         return tl.reshape(dest_indices, (BLOCK_ROWS * BLOCK_COLS))
 
-
     @triton.jit
     def _triton_scale_swizzle_m_groups(
         scales_ptr,
@@ -120,7 +119,9 @@ if triton is not None:
         block_col_pid = tl.program_id(1)
 
         input_group_start_row = tl.load(orig_offsets + group_pid - 1, mask=group_pid > 0, other=0)
-        input_group_end_row = tl.load(orig_offsets + group_pid, mask=group_pid < num_groups, other=0)
+        input_group_end_row = tl.load(
+            orig_offsets + group_pid, mask=group_pid < num_groups, other=0
+        )
         output_group_start_row = tl.load(
             output_group_start_rows + group_pid, mask=group_pid < num_groups, other=0
         )
@@ -153,7 +154,6 @@ if triton is not None:
 
             block_row_id += 1
             current_start_row += BLOCK_ROWS
-
 
     @triton.jit
     def _triton_scale_swizzle_per_group_3d(
@@ -267,7 +267,6 @@ if triton is not None:
         scale_mask = (row_idx < n_rows) & (scale_col_idx < n_scale_cols)
         scale_tile = tl.reshape(scale_biased_u8, (BLOCK_M, SCALE_BLOCKS_PER_TILE))
         tl.store(scale_ptr + scale_offsets, scale_tile, mask=scale_mask)
-
 
     # NOTE: Deliberately no @triton.autotune here.
     @triton.jit
@@ -438,7 +437,6 @@ if triton is not None:
         scale_tile = tl.reshape(scale_biased_u8, (BLOCK_M, SCALE_BLOCKS_PER_TILE))
         tl.store(scale_ptr + scale_offsets, scale_tile, mask=scale_mask)
 
-
     # NOTE: Deliberately no @triton.autotune here.
     @triton.jit
     def _triton_mxfp8_reduce_gathered_dim1(
@@ -503,7 +501,9 @@ if triton is not None:
             q = tl.load(gathered_q_ptr + q_offsets, mask=route_mask, other=0.0).to(tl.float32)
 
             s_offsets = row_idx * gs_stride_0 + k * gs_stride_1 + scale_col_idx * gs_stride_2
-            s_u8 = tl.load(gathered_scales_u8_ptr + s_offsets, mask=scale_route_mask, other=0).to(tl.int32)
+            s_u8 = tl.load(gathered_scales_u8_ptr + s_offsets, mask=scale_route_mask, other=0).to(
+                tl.int32
+            )
             scales = tl.exp2(s_u8.to(tl.float32) - E8M0_EXP_BIAS)
 
             route = q * scales
@@ -522,7 +522,6 @@ if triton is not None:
 
         out_offsets = row_idx * o_stride_0 + col_idx * o_stride_1
         tl.store(out_acc_ptr + out_offsets, acc, mask=out_mask)
-
 
     # NOTE: Deliberately no @triton.autotune here.
     @triton.jit
@@ -563,7 +562,6 @@ if triton is not None:
         out_val = q * scales
         out_offsets = row_idx * o_stride_0 + col_idx * o_stride_1
         tl.store(out_ptr + out_offsets, out_val, mask=out_mask)
-
 
     # NOTE: Deliberately no @triton.autotune here.
     @triton.jit
@@ -871,9 +869,7 @@ def _swiglu_quantize_rows_to_mxfp8_triton(
     if not up_gate.is_cuda:
         raise RuntimeError("Triton SwiGLU MXFP8 quantization requires CUDA")
     if up_gate.dtype not in (torch.float16, torch.bfloat16, torch.float32):
-        raise ValueError(
-            f"Unsupported dtype for Triton SwiGLU MXFP8 quantization: {up_gate.dtype}"
-        )
+        raise ValueError(f"Unsupported dtype for Triton SwiGLU MXFP8 quantization: {up_gate.dtype}")
     if up_gate.shape[1] % 2 != 0:
         raise ValueError(
             f"up_gate last dim must be even for SwiGLU split, got {tuple(up_gate.shape)}"
@@ -884,7 +880,9 @@ def _swiglu_quantize_rows_to_mxfp8_triton(
     hidden = up_gate_contig.shape[1] // 2
     h = torch.empty((rows, hidden), device=up_gate_contig.device, dtype=up_gate_contig.dtype)
     qdata = torch.empty((rows, hidden), device=up_gate_contig.device, dtype=torch.float8_e4m3fn)
-    scales_u8 = torch.empty((rows, hidden // block_size), device=up_gate_contig.device, dtype=torch.uint8)
+    scales_u8 = torch.empty(
+        (rows, hidden // block_size), device=up_gate_contig.device, dtype=torch.uint8
+    )
 
     grid = (
         triton.cdiv(rows, _MXFP8_SWIGLU_BLOCK_M),
@@ -973,13 +971,9 @@ def _swiglu_quantize_rows_from_mxfp8_triton(
     if not up_gate_q.is_cuda or not up_gate_scales.is_cuda:
         raise RuntimeError("Triton FP8 SwiGLU requires CUDA tensors")
     if up_gate_q.dtype != torch.float8_e4m3fn:
-        raise ValueError(
-            f"up_gate_q must be float8_e4m3fn, got {up_gate_q.dtype}"
-        )
+        raise ValueError(f"up_gate_q must be float8_e4m3fn, got {up_gate_q.dtype}")
     if up_gate_scales.dtype != torch.float8_e8m0fnu:
-        raise ValueError(
-            f"up_gate_scales must be float8_e8m0fnu, got {up_gate_scales.dtype}"
-        )
+        raise ValueError(f"up_gate_scales must be float8_e8m0fnu, got {up_gate_scales.dtype}")
     if up_gate_q.ndim != 2 or up_gate_scales.ndim != 2:
         raise ValueError(
             "Expected rank-2 up_gate_q/up_gate_scales, "
@@ -1013,7 +1007,9 @@ def _swiglu_quantize_rows_from_mxfp8_triton(
     hidden = up_gate_q_contig.shape[1] // 2
     h = torch.empty((rows, hidden), device=up_gate_q_contig.device, dtype=torch.bfloat16)
     qdata = torch.empty((rows, hidden), device=up_gate_q_contig.device, dtype=torch.float8_e4m3fn)
-    scales_u8 = torch.empty((rows, hidden // block_size), device=up_gate_q_contig.device, dtype=torch.uint8)
+    scales_u8 = torch.empty(
+        (rows, hidden // block_size), device=up_gate_q_contig.device, dtype=torch.uint8
+    )
 
     grid = (
         triton.cdiv(rows, _MXFP8_SWIGLU_BLOCK_M),
@@ -1117,13 +1113,9 @@ def quantize_to_mxfp8(
                 f"out shape mismatch: expected {tuple(x.shape)}, got {tuple(out.shape)}"
             )
         if out.dtype != torch.float8_e4m3fn:
-            raise ValueError(
-                f"out dtype mismatch: expected {torch.float8_e4m3fn}, got {out.dtype}"
-            )
+            raise ValueError(f"out dtype mismatch: expected {torch.float8_e4m3fn}, got {out.dtype}")
         if out.device != x.device:
-            raise ValueError(
-                f"out device mismatch: expected {x.device}, got {out.device}"
-            )
+            raise ValueError(f"out device mismatch: expected {x.device}, got {out.device}")
     if scales_out is not None:
         if tuple(scales_out.shape) != expected_scales_shape:
             raise ValueError(
@@ -1200,26 +1192,16 @@ def dequantize_from_mxfp8(
 
     if out is not None:
         if tuple(out.shape) != (m, k):
-            raise ValueError(
-                f"out shape mismatch: expected {(m, k)}, got {tuple(out.shape)}"
-            )
+            raise ValueError(f"out shape mismatch: expected {(m, k)}, got {tuple(out.shape)}")
         if out.dtype != out_dtype:
-            raise ValueError(
-                f"out dtype mismatch: expected {out_dtype}, got {out.dtype}"
-            )
+            raise ValueError(f"out dtype mismatch: expected {out_dtype}, got {out.dtype}")
         if out.device != qdata.device:
-            raise ValueError(
-                f"out device mismatch: expected {qdata.device}, got {out.device}"
-            )
+            raise ValueError(f"out device mismatch: expected {qdata.device}, got {out.device}")
         out_tensor = out
     else:
         out_tensor = torch.empty((m, k), device=qdata.device, dtype=out_dtype)
 
-    use_triton = (
-        qdata.is_cuda
-        and scales.is_cuda
-        and triton is not None
-    )
+    use_triton = qdata.is_cuda and scales.is_cuda and triton is not None
     if qdata.is_cuda and scales.is_cuda and triton is None:
         raise RuntimeError("Triton is required for CUDA MXFP8 dequantization")
     if use_triton:
@@ -1287,7 +1269,9 @@ def _reduce_gathered_rows_from_mxfp8_triton(
         )
 
     q_contig = gathered_q if gathered_q.is_contiguous() else gathered_q.contiguous()
-    scales_contig = gathered_scales if gathered_scales.is_contiguous() else gathered_scales.contiguous()
+    scales_contig = (
+        gathered_scales if gathered_scales.is_contiguous() else gathered_scales.contiguous()
+    )
     scales_u8 = scales_contig.view(torch.uint8)
     probs_tensor = probs
     if probs_tensor is None:
@@ -1346,6 +1330,7 @@ def _reduce_gathered_rows_from_mxfp8_triton(
     )
     return out_tensor
 
+
 @nvtx.annotate("reduce_gathered_rows_from_mxfp8")
 def reduce_gathered_rows_from_mxfp8(
     gathered_q: torch.Tensor,
@@ -1379,9 +1364,7 @@ def reduce_gathered_rows_from_mxfp8(
             f"q={tuple(gathered_q.shape)} scales={tuple(gathered_scales.shape)}"
         )
     if probs is not None and probs.shape != (n, top_k):
-        raise ValueError(
-            f"probs shape mismatch: expected {(n, top_k)}, got {tuple(probs.shape)}"
-        )
+        raise ValueError(f"probs shape mismatch: expected {(n, top_k)}, got {tuple(probs.shape)}")
     if valid_mask is not None and valid_mask.shape != (n, top_k):
         raise ValueError(
             f"valid_mask shape mismatch: expected {(n, top_k)}, got {tuple(valid_mask.shape)}"
@@ -1479,11 +1462,19 @@ def dot_gathered_rows_mxfp8_with_grad(
         and valid_mask.is_cuda
         and triton is not None
     )
-    if gathered_q.is_cuda and gathered_scales.is_cuda and grad_out.is_cuda and valid_mask.is_cuda and triton is None:
+    if (
+        gathered_q.is_cuda
+        and gathered_scales.is_cuda
+        and grad_out.is_cuda
+        and valid_mask.is_cuda
+        and triton is None
+    ):
         raise RuntimeError("Triton is required for CUDA MXFP8 gathered-dot")
     if use_triton:
         q_contig = gathered_q if gathered_q.is_contiguous() else gathered_q.contiguous()
-        scales_contig = gathered_scales if gathered_scales.is_contiguous() else gathered_scales.contiguous()
+        scales_contig = (
+            gathered_scales if gathered_scales.is_contiguous() else gathered_scales.contiguous()
+        )
         grad_contig = grad_out if grad_out.is_contiguous() else grad_out.contiguous()
         valid_contig = valid_mask if valid_mask.is_contiguous() else valid_mask.contiguous()
         scales_u8 = scales_contig.view(torch.uint8)
@@ -1551,9 +1542,7 @@ def quantize_grouped_2d_to_mxfp8_blocked(
     if offs.ndim != 1:
         raise ValueError(f"Expected offs to be rank-1, got {tuple(offs.shape)}")
     if x.shape[1] % block_size != 0:
-        raise ValueError(
-            f"x last dim must be divisible by {block_size}, got {tuple(x.shape)}"
-        )
+        raise ValueError(f"x last dim must be divisible by {block_size}, got {tuple(x.shape)}")
 
     k_blocks = x.shape[1] // block_size
     if k_blocks % 4 != 0:

@@ -70,9 +70,7 @@ def maybe_dump_ep_no_sync_saved_activations(
         return tensor
 
     with torch.autograd.graph.saved_tensors_hooks(_record_saved_tensor, lambda tensor: tensor):
-        out = no_sync_forward(
-            x, loss_div_factor=loss_div_factor, **forward_kwargs
-        )
+        out = no_sync_forward(x, loss_div_factor=loss_div_factor, **forward_kwargs)
 
     mem_after_gib = torch.cuda.memory_allocated() / (1024**3)
     total_unique_storage_nbytes_pack = sum(
@@ -118,8 +116,7 @@ def maybe_dump_ep_no_sync_saved_activations(
             record["live_ref_count"] = cast(int, record["live_ref_count"]) + 1
 
     total_unique_storage_nbytes_live = sum(
-        cast(int, record["storage_nbytes"])
-        for record in live_saved_activations_by_storage.values()
+        cast(int, record["storage_nbytes"]) for record in live_saved_activations_by_storage.values()
     )
     total_param_storage_nbytes_live = sum(
         cast(int, record["storage_nbytes"])

@@ -129,9 +129,7 @@ def _build_global_row_maps(
                 if expert < 0:
                     continue
                 if expert >= total_experts:
-                    raise RuntimeError(
-                        f"Found expert id {expert} >= total_experts={total_experts}"
-                    )
+                    raise RuntimeError(f"Found expert id {expert} >= total_experts={total_experts}")
                 dst_rank = expert // experts_per_rank
                 row = per_rank_counts[dst_rank]
                 per_rank_counts[dst_rank] += 1
@@ -266,9 +264,9 @@ def main() -> None:
             dispatch_send_token_ids = dispatch_send_token_ids.index_select(0, dispatch_order)
             dispatch_send_dst_ranks = dispatch_send_dst_ranks.index_select(0, dispatch_order)
             dispatch_send_dst_rows = dispatch_send_dst_rows.index_select(0, dispatch_order)
-            dispatch_send_splits = torch.bincount(
-                dispatch_send_dst_ranks, minlength=world_size
-            ).to(dtype=torch.int64)
+            dispatch_send_splits = torch.bincount(dispatch_send_dst_ranks, minlength=world_size).to(
+                dtype=torch.int64
+            )
         else:
             dispatch_send_splits = torch.zeros((world_size,), device=device, dtype=torch.int64)
         dispatch_send_count = int(dispatch_send_token_ids.numel())
@@ -288,17 +286,15 @@ def main() -> None:
         local_combine_dst_routes = combine_dst_routes_all[rank, :local_recv_rows].to(
             device=device, dtype=torch.int64
         )
-        local_combine_src_rows = torch.arange(
-            local_recv_rows, device=device, dtype=torch.int64
-        )
+        local_combine_src_rows = torch.arange(local_recv_rows, device=device, dtype=torch.int64)
         if local_recv_rows > 0:
             combine_order = torch.argsort(local_combine_dst_ranks, stable=True)
             local_combine_dst_ranks = local_combine_dst_ranks.index_select(0, combine_order)
             local_combine_dst_routes = local_combine_dst_routes.index_select(0, combine_order)
             local_combine_src_rows = local_combine_src_rows.index_select(0, combine_order)
-            combine_send_splits = torch.bincount(
-                local_combine_dst_ranks, minlength=world_size
-            ).to(dtype=torch.int64)
+            combine_send_splits = torch.bincount(local_combine_dst_ranks, minlength=world_size).to(
+                dtype=torch.int64
+            )
         else:
             combine_send_splits = torch.zeros((world_size,), device=device, dtype=torch.int64)
         combine_send_count = int(local_recv_rows)
@@ -556,7 +552,9 @@ def main() -> None:
     max_abs_diff_combine = (
         float((combine_out - expected_combine).abs().max().item()) if not equal_combine else 0.0
     )
-    close_combine_weighted = torch.allclose(combine_out_weighted, expected_weighted, atol=2e-2, rtol=2e-2)
+    close_combine_weighted = torch.allclose(
+        combine_out_weighted, expected_weighted, atol=2e-2, rtol=2e-2
+    )
     max_abs_diff_combine_weighted = (
         float((combine_out_weighted - expected_weighted).abs().max().item())
         if not close_combine_weighted
@@ -596,9 +594,7 @@ def main() -> None:
         for item in sorted(gathered, key=lambda z: z["rank"]):
             dispatch_logical_bw = payload_gb / (item["dispatch_avg_ms"] / 1e3)
             combine_logical_bw = payload_gb / (item["combine_avg_ms"] / 1e3)
-            combine_weighted_logical_bw = payload_gb / (
-                item["combine_weighted_avg_ms"] / 1e3
-            )
+            combine_weighted_logical_bw = payload_gb / (item["combine_weighted_avg_ms"] / 1e3)
             dispatch_traffic_gb = row_gb * item["dispatch_routes"]
             combine_traffic_gb = row_gb * item["combine_routes"]
             dispatch_traffic_bw = dispatch_traffic_gb / (item["dispatch_avg_ms"] / 1e3)
@@ -606,12 +602,8 @@ def main() -> None:
             combine_weighted_traffic_bw = combine_traffic_gb / (
                 item["combine_weighted_avg_ms"] / 1e3
             )
-            dispatch_factor = (
-                dispatch_traffic_gb / payload_gb if payload_gb > 0 else float("nan")
-            )
-            combine_factor = (
-                combine_traffic_gb / payload_gb if payload_gb > 0 else float("nan")
-            )
+            dispatch_factor = dispatch_traffic_gb / payload_gb if payload_gb > 0 else float("nan")
+            combine_factor = combine_traffic_gb / payload_gb if payload_gb > 0 else float("nan")
             pass_or_fail = (
                 "PASS"
                 if item["equal_dispatch"]

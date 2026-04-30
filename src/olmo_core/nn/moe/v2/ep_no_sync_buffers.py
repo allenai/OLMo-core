@@ -150,9 +150,7 @@ class _NoSyncSymmSharedPool:
         ep_world_size: int,
     ) -> _NoSyncSymmTransientSlot:
         if slot_idx < 0 or slot_idx >= self.num_slots:
-            raise ValueError(
-                f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})"
-            )
+            raise ValueError(f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})")
         if need_dispatch_in:
             dispatch_in = self._get_or_init_slot_tensor(
                 slot_idx=slot_idx,
@@ -422,8 +420,13 @@ def get_ep_no_sync_buffers(
                 dtype=torch.int64,
                 device=device,
             )
-        if transient_slot is not None and transient_slot.dispatch_tmp_rank_splits_offsets is not None:
-            dispatch_tmp_rank_splits_offsets = transient_slot.dispatch_tmp_rank_splits_offsets.detach()
+        if (
+            transient_slot is not None
+            and transient_slot.dispatch_tmp_rank_splits_offsets is not None
+        ):
+            dispatch_tmp_rank_splits_offsets = (
+                transient_slot.dispatch_tmp_rank_splits_offsets.detach()
+            )
         else:
             dispatch_tmp_rank_splits_offsets = get_or_init_ep_no_sync_symm_tensor(
                 block,
@@ -472,8 +475,13 @@ def get_ep_no_sync_buffers(
                 dtype=torch.int64,
                 device=device,
             )
-        if transient_slot is not None and transient_slot.combine_tmp_rank_splits_offsets is not None:
-            combine_tmp_rank_splits_offsets = transient_slot.combine_tmp_rank_splits_offsets.detach()
+        if (
+            transient_slot is not None
+            and transient_slot.combine_tmp_rank_splits_offsets is not None
+        ):
+            combine_tmp_rank_splits_offsets = (
+                transient_slot.combine_tmp_rank_splits_offsets.detach()
+            )
         else:
             combine_tmp_rank_splits_offsets = get_or_init_ep_no_sync_symm_tensor(
                 block,
@@ -547,7 +555,9 @@ def iter_ep_no_sync_symm_tensors(block: "MoEFusedV2TransformerBlock") -> Iterato
         yield from block._ep_no_sync_shared_pool.iter_tensors()
 
 
-def compute_ep_no_sync_rank_capacity(block: "MoEFusedV2TransformerBlock", num_out_tokens: int) -> int:
+def compute_ep_no_sync_rank_capacity(
+    block: "MoEFusedV2TransformerBlock", num_out_tokens: int
+) -> int:
     # `num_out_tokens` is the local routed-token count before EP dispatch.
     # Under balanced routing, the average received tokens per EP rank is this
     # same value (not divided by ep_world_size).

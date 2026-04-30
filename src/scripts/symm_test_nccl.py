@@ -1,6 +1,7 @@
 # hello_symm_mem_moe.py
 import os
 import sys
+
 import torch
 import torch.distributed as dist
 
@@ -89,7 +90,14 @@ def main():
     print(f"[rank {rank}] symmetric tensors allocated", flush=True)
 
     # Rendezvous for every symmetric tensor (collective). Must be called in identical order on all ranks.
-    for t in (inp, in_splits, dispatch_out, dispatch_splits_offsets, combine_out, combine_splits_offsets):
+    for t in (
+        inp,
+        in_splits,
+        dispatch_out,
+        dispatch_splits_offsets,
+        combine_out,
+        combine_splits_offsets,
+    ):
         symm_mem.rendezvous(t, group=group)
 
     dist.barrier()
@@ -99,14 +107,18 @@ def main():
     # Create 16 tokens and route to 8 experts
     # -------------------------------------
     # token_id is globally unique
-    token_id = torch.arange(TOKENS_PER_RANK, device=device, dtype=torch.int32) + rank * TOKENS_PER_RANK
+    token_id = (
+        torch.arange(TOKENS_PER_RANK, device=device, dtype=torch.int32) + rank * TOKENS_PER_RANK
+    )
 
     # Deterministic, slightly imbalanced routing with NO empty experts (per-rank):
     #   first 8 tokens -> expert 0
     #   remaining 8 tokens -> experts 1..7 round-robin (expert 1 gets 2)
     expert_id = torch.empty((TOKENS_PER_RANK,), device=device, dtype=torch.int64)
     expert_id[:8] = 0
-    expert_id[8:] = 1 + (torch.arange(TOKENS_PER_RANK - 8, device=device, dtype=torch.int64) % (E - 1))
+    expert_id[8:] = 1 + (
+        torch.arange(TOKENS_PER_RANK - 8, device=device, dtype=torch.int64) % (E - 1)
+    )
 
     # Pack input as 8 concatenated expert bins in global expert-id order [0..7]
     # (this is what all_to_all_vdev_2d expects as "rank-major order")
@@ -179,8 +191,8 @@ def main():
     torch.ops.symm_mem.all_to_all_vdev_2d_offset(
         dispatch_out,
         combine_out,
-        dispatch_splits_offsets,   # (splits, offsets) for input
-        combine_splits_offsets,    # (splits, offsets) for output
+        dispatch_splits_offsets,  # (splits, offsets) for input
+        combine_splits_offsets,  # (splits, offsets) for output
         group_arg,
     )
 
@@ -213,7 +225,9 @@ def main():
 
     if rank == 0:
         print("=== SymmMem MoE hello world ===")
-        print(f"world_size={world}, NE={NE}, total_experts={E}, tokens_per_rank={TOKENS_PER_RANK}, major_align={MAJOR_ALIGN}")
+        print(
+            f"world_size={world}, NE={NE}, total_experts={E}, tokens_per_rank={TOKENS_PER_RANK}, major_align={MAJOR_ALIGN}"
+        )
         print("All ranks correctness:", ok_list, flush=True)
 
     # A small per-rank print (ordered)

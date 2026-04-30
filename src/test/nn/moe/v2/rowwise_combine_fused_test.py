@@ -97,7 +97,10 @@ def _load_combine_callables():
     if src_root_str not in sys.path:
         sys.path.insert(0, src_root_str)
 
-    from olmo_core.kernels.symm_mem_vdev2d import rowwise_combine_get, rowwise_combine_get_fused
+    from olmo_core.kernels.symm_mem_vdev2d import (
+        rowwise_combine_get,
+        rowwise_combine_get_fused,
+    )
 
     return rowwise_combine_get, rowwise_combine_get_fused
 
@@ -275,9 +278,7 @@ def main() -> None:
         baseline_unweighted, ref_unweighted, atol=atol, rtol=rtol
     )
     close_fused_unweighted = torch.allclose(fused_unweighted, ref_unweighted, atol=atol, rtol=rtol)
-    close_baseline_weighted = torch.allclose(
-        baseline_weighted, ref_weighted, atol=atol, rtol=rtol
-    )
+    close_baseline_weighted = torch.allclose(baseline_weighted, ref_weighted, atol=atol, rtol=rtol)
     close_fused_weighted = torch.allclose(fused_weighted, ref_weighted, atol=atol, rtol=rtol)
     close_baseline_vs_fused_unweighted = torch.allclose(
         baseline_unweighted, fused_unweighted, atol=atol, rtol=rtol

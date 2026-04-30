@@ -1,5 +1,4 @@
 import argparse
-import time
 
 import torch
 import torch.nn.functional as F
@@ -8,7 +7,9 @@ from olmo_core.kernels import scaled_grouped_mm_q
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Benchmark BF16 grouped_mm vs MXFP8 scaled_grouped_mm_q")
+    p = argparse.ArgumentParser(
+        description="Benchmark BF16 grouped_mm vs MXFP8 scaled_grouped_mm_q"
+    )
     p.add_argument("--num-groups", type=int, default=16)
     p.add_argument("--tokens-per-group", type=int, default=256)
     p.add_argument("--k", type=int, default=1024)

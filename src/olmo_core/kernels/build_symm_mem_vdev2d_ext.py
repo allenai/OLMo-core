@@ -35,7 +35,7 @@ def _find_nvshmem_paths() -> tuple[Path, Path, Path, Path]:
         include_candidates.append(home / "include")
         lib_candidates.append(home / "lib")
 
-    for base in (site.getsitepackages() + [site.getusersitepackages()] + sys.path):
+    for base in site.getsitepackages() + [site.getusersitepackages()] + sys.path:
         if not base:
             continue
         root = Path(base) / "nvidia" / "nvshmem"
@@ -199,9 +199,7 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
         shutil.copy2(max(candidates, key=lambda p: p.stat().st_mtime), target_path)
 
 
-def build_extension(
-    *, inplace: bool, verbose: bool, force: bool, backend: str = "cmake"
-) -> None:
+def build_extension(*, inplace: bool, verbose: bool, force: bool, backend: str = "cmake") -> None:
     backend_norm = backend.strip().lower()
     if backend_norm == "cmake":
         _build_extension_cmake(inplace=inplace, verbose=verbose, force=force)
@@ -209,9 +207,7 @@ def build_extension(
     if backend_norm == "setuptools":
         _build_extension_setuptools(inplace=inplace, verbose=verbose, force=force)
         return
-    raise ValueError(
-        f"Unsupported backend={backend!r}. Expected one of: cmake, setuptools."
-    )
+    raise ValueError(f"Unsupported backend={backend!r}. Expected one of: cmake, setuptools.")
 
 
 def main() -> None:

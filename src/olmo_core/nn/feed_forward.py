@@ -2,13 +2,13 @@ import math
 from dataclasses import dataclass
 from typing import Optional
 
+import nvtx
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement, Replicate
-import nvtx
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
@@ -33,7 +33,7 @@ class FeedForwardType(StrEnum):
     """
     ➡️ :class:`NormalizedFeedForward`
     """
-    
+
     dense_moe = "dense_moe"
 
 
@@ -99,12 +99,12 @@ class FeedForwardConfig(Config):
             raise OLMoConfigurationError(
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
-            
+
+
 @dataclass
 class DenseMoEFeedForwardConfig(FeedForwardConfig):
-    
     name: FeedForwardType = FeedForwardType.dense_moe
-    
+
     def num_params(self, d_model: int) -> int:
         """
         The number of params that the module will have once built.
@@ -115,7 +115,7 @@ class DenseMoEFeedForwardConfig(FeedForwardConfig):
 
         params = 0
 
-        params += 4 * d_model * self.hidden_size # w1, w2, w3, w_r
+        params += 4 * d_model * self.hidden_size  # w1, w2, w3, w_r
         if bias:
             params += 2 * self.hidden_size + d_model
 
@@ -147,8 +147,8 @@ class DenseMoEFeedForwardConfig(FeedForwardConfig):
             raise OLMoConfigurationError(
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
-    
-    
+
+
 class FeedForward(nn.Module):
     """
     Basic feed-forward module with SwiGLU activation.
@@ -170,7 +170,7 @@ class FeedForward(nn.Module):
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
 
-    @nvtx.annotate("FeedForward.forward", color='blue')
+    @nvtx.annotate("FeedForward.forward", color="blue")
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Run the feed-forward on the input ``x``.
@@ -236,14 +236,14 @@ class DenseMoEFeedForward(FeedForward):
         )
         self.w_r = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
 
-    @nvtx.annotate("FeedForward.forward", color='blue')
+    @nvtx.annotate("FeedForward.forward", color="blue")
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Run the feed-forward on the input ``x``.
 
         :param x: The input of shape ``(*, d_model)``.
         """
-        router_logits = self.w_r(x) # [B, seqlen, inter_dim]
+        router_logits = self.w_r(x)  # [B, seqlen, inter_dim]
         r = torch.softmax(router_logits, dim=-1) * self.hidden_size
         return self.w2(F.silu(self.w1(x)) * self.w3(x) * r)
 
@@ -280,6 +280,7 @@ class DenseMoEFeedForward(FeedForward):
                 "w_r": colwise_parallel(),
             },
         )
+
 
 @beta_feature
 class NormalizedFeedForward(FeedForward):

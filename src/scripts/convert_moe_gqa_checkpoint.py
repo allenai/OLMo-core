@@ -14,12 +14,15 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 
-from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_keys, save_state_dict
-
+from olmo_core.distributed.checkpoint import (
+    get_checkpoint_metadata,
+    load_keys,
+    save_state_dict,
+)
 
 MODEL_AND_OPTIM_DIRNAME = "model_and_optim"
 ATTN_BLOCK_PREFIX = re.compile(r"^module\.blocks\.\d+\.attention\.")
@@ -27,7 +30,9 @@ ATTN_BLOCK_PREFIX = re.compile(r"^module\.blocks\.\d+\.attention\.")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input_checkpoint", type=Path, help="Path to the input step checkpoint directory")
+    parser.add_argument(
+        "input_checkpoint", type=Path, help="Path to the input step checkpoint directory"
+    )
     parser.add_argument("target_kv_heads", type=int, help="Target KV head count")
     parser.add_argument(
         "--output-checkpoint",
@@ -124,7 +129,9 @@ def load_flat_state_dict(checkpoint_dir: Path) -> Dict[str, Any]:
     return dict(zip(keys, values, strict=True))
 
 
-def expand_head_axis(flat_tensor: torch.Tensor, old_heads: int, head_dim: int, trailing_size: int, repeat_factor: int) -> torch.Tensor:
+def expand_head_axis(
+    flat_tensor: torch.Tensor, old_heads: int, head_dim: int, trailing_size: int, repeat_factor: int
+) -> torch.Tensor:
     expected_numel = old_heads * head_dim * trailing_size
     if flat_tensor.numel() != expected_numel:
         raise ValueError(f"Expected {expected_numel} elements, found {flat_tensor.numel()}")
@@ -135,11 +142,15 @@ def expand_head_axis(flat_tensor: torch.Tensor, old_heads: int, head_dim: int, t
     )
 
 
-def expand_head_vector(flat_tensor: torch.Tensor, old_heads: int, head_dim: int, repeat_factor: int) -> torch.Tensor:
+def expand_head_vector(
+    flat_tensor: torch.Tensor, old_heads: int, head_dim: int, repeat_factor: int
+) -> torch.Tensor:
     expected_numel = old_heads * head_dim
     if flat_tensor.numel() != expected_numel:
         raise ValueError(f"Expected {expected_numel} elements, found {flat_tensor.numel()}")
-    return flat_tensor.reshape(old_heads, head_dim).repeat_interleave(repeat_factor, dim=0).reshape(-1)
+    return (
+        flat_tensor.reshape(old_heads, head_dim).repeat_interleave(repeat_factor, dim=0).reshape(-1)
+    )
 
 
 def should_expand_attn_key(key: str) -> bool:
@@ -212,7 +223,11 @@ def convert_state_dict(
                 repeat_factor=repeat_factor,
             )
             counts["w_k" if ".w_k." in key else "w_v"] += 1
-        elif ".k_norm.weight." in key and not use_head_qk_norm and value.numel() == old_kv_heads * head_dim:
+        elif (
+            ".k_norm.weight." in key
+            and not use_head_qk_norm
+            and value.numel() == old_kv_heads * head_dim
+        ):
             converted[key] = expand_head_vector(
                 value,
                 old_heads=old_kv_heads,
@@ -236,7 +251,9 @@ def main() -> None:
     if not model_and_optim_dir.is_dir():
         raise FileNotFoundError(f"Missing '{MODEL_AND_OPTIM_DIRNAME}' in {input_checkpoint}")
 
-    n_heads, old_kv_heads, d_model, d_attn, use_head_qk_norm = infer_attention_params(input_checkpoint)
+    n_heads, old_kv_heads, d_model, d_attn, use_head_qk_norm = infer_attention_params(
+        input_checkpoint
+    )
     target_kv_heads = int(args.target_kv_heads)
 
     if target_kv_heads < old_kv_heads:
@@ -289,8 +306,7 @@ def main() -> None:
     print(f"Output checkpoint: {output_checkpoint}")
     print(f"Updated config fields: {updated_fields}")
     print(
-        "Expanded tensors: "
-        f"w_k={counts['w_k']}, w_v={counts['w_v']}, k_norm={counts['k_norm']}"
+        "Expanded tensors: " f"w_k={counts['w_k']}, w_v={counts['w_v']}, k_norm={counts['k_norm']}"
     )
 
 

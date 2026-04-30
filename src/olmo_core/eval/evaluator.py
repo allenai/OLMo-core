@@ -51,7 +51,7 @@ class Evaluator(metaclass=ABCMeta):
             return len(self.batches)  # type: ignore
         except TypeError:
             return None
-        
+
     def maybe_add_debug_info(self, batch):
         # implement in subclass if needed
         pass

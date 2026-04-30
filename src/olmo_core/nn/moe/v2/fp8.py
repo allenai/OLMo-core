@@ -25,7 +25,9 @@ class MoERowwiseFP8Config(Config):
 
     def validate(self) -> None:
         if self.block_size != 32:
-            raise ValueError(f"Only block_size=32 is supported for MoE rowwise FP8 (got {self.block_size})")
+            raise ValueError(
+                f"Only block_size=32 is supported for MoE rowwise FP8 (got {self.block_size})"
+            )
 
     def assert_runtime_supported(self) -> None:
         self.validate()
@@ -40,7 +42,9 @@ class MoERowwiseFP8Config(Config):
             )
 
         if not hasattr(torch.nn.functional, "scaled_grouped_mm"):
-            raise RuntimeError("torch.nn.functional.scaled_grouped_mm is required for MoE rowwise FP8")
+            raise RuntimeError(
+                "torch.nn.functional.scaled_grouped_mm is required for MoE rowwise FP8"
+            )
 
 
 def normalize_rowwise_fp8_config(
@@ -53,8 +57,7 @@ def normalize_rowwise_fp8_config(
     if isinstance(value, Mapping):
         return MoERowwiseFP8Config.from_dict(dict(value))
     raise TypeError(
-        "rowwise_fp8 must be MoERowwiseFP8Config, mapping/dict, or None "
-        f"(got {type(value)!r})"
+        "rowwise_fp8 must be MoERowwiseFP8Config, mapping/dict, or None " f"(got {type(value)!r})"
     )
 
 

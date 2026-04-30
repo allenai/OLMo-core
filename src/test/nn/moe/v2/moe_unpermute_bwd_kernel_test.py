@@ -16,9 +16,9 @@ def _reference_unpermute(
         for topk_idx in range(top_k):
             row_idx = int(row_id_map[topk_idx * num_tokens + token_idx].item())
             if row_idx >= 0:
-                out[token_idx] = out[token_idx] + input_fwd[row_idx] * probs[token_idx, topk_idx].to(
-                    dtype=input_fwd.dtype
-                )
+                out[token_idx] = out[token_idx] + input_fwd[row_idx] * probs[
+                    token_idx, topk_idx
+                ].to(dtype=input_fwd.dtype)
     return out
 
 
@@ -31,7 +31,9 @@ def test_moe_unpermute_bwd_matches_autograd_reference_with_out_buffer():
     d_model = 512
     num_rows = num_tokens * top_k
 
-    route_rows = torch.arange(num_rows, device=device, dtype=torch.int32).reshape(top_k, num_tokens).T
+    route_rows = (
+        torch.arange(num_rows, device=device, dtype=torch.int32).reshape(top_k, num_tokens).T
+    )
     route_rows[3, 1] = -1
     dropped_row = 11
     row_id_map = route_rows.T.contiguous().reshape(-1)
@@ -49,7 +51,9 @@ def test_moe_unpermute_bwd_matches_autograd_reference_with_out_buffer():
         row_id_map=row_id_map,
         probs=probs_ref,
     )
-    grad_input_ref, grad_probs_ref = torch.autograd.grad(out_ref, (input_ref, probs_ref), grad_outputs=grad_output)
+    grad_input_ref, grad_probs_ref = torch.autograd.grad(
+        out_ref, (input_ref, probs_ref), grad_outputs=grad_output
+    )
 
     out_buffer = torch.empty_like(input_fwd)
     grad_input, grad_probs = moe_unpermute_bwd(

@@ -1,5 +1,5 @@
-
 from typing import List, Optional
+
 from transformers.configuration_utils import PretrainedConfig, layer_type_validation
 from transformers.modeling_rope_utils import rope_config_validation
 
@@ -31,7 +31,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         dense_mlp_intermediate_size=11008,
         moe_intermediate_size=2048,
         shared_expert_intermediate_size=2048,
-        n_routed_experts =64,
+        n_routed_experts=64,
         num_experts_per_tok=4,
         original_num_experts_per_tok=None,
         num_hidden_layers=32,
@@ -72,27 +72,31 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.hidden_size = hidden_size
-        self.attention_hidden_size = attention_hidden_size if attention_hidden_size is not None else hidden_size
+        self.attention_hidden_size = (
+            attention_hidden_size if attention_hidden_size is not None else hidden_size
+        )
         self.head_dim = (
-            head_dim
-            if head_dim is not None
-            else self.attention_hidden_size // num_attention_heads
+            head_dim if head_dim is not None else self.attention_hidden_size // num_attention_heads
         )
 
         # for dense MLP layers
-        self.dense_mlp_intermediate_size = dense_mlp_intermediate_size 
+        self.dense_mlp_intermediate_size = dense_mlp_intermediate_size
 
         # for sparse MLP layers
         self.moe_intermediate_size = moe_intermediate_size
-        self.shared_expert_intermediate_size = shared_expert_intermediate_size # if None, no shared experts
-        self.n_routed_experts  = n_routed_experts 
+        self.shared_expert_intermediate_size = (
+            shared_expert_intermediate_size  # if None, no shared experts
+        )
+        self.n_routed_experts = n_routed_experts
         self.num_experts_per_tok = num_experts_per_tok
         self.original_num_experts_per_tok = original_num_experts_per_tok
-        assert gating_function in ["softmax", "sigmoid"], "supported gating function: 'softmax' or 'sigmoid'"
-        self.gating_function = gating_function 
+        assert gating_function in [
+            "softmax",
+            "sigmoid",
+        ], "supported gating function: 'softmax' or 'sigmoid'"
+        self.gating_function = gating_function
         self.normalize_expert_weights = normalize_expert_weights
         self.restore_weight_scale = restore_weight_scale
-
 
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
@@ -121,14 +125,21 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.sliding_window = sliding_window
         if layer_types is None:
             self.layer_types: List[str] = [
-                "sliding_attention" if (i + 1) % 2 != 0 else "full_attention" for i in range(self.num_hidden_layers)
+                "sliding_attention" if (i + 1) % 2 != 0 else "full_attention"
+                for i in range(self.num_hidden_layers)
             ]
         else:
             self.layer_types: List[str] = layer_types
 
         layer_type_validation(self.layer_types)
 
-        self.dense_layers_indices = dense_layers_indices if dense_layers_indices is not None else [0,]
+        self.dense_layers_indices = (
+            dense_layers_indices
+            if dense_layers_indices is not None
+            else [
+                0,
+            ]
+        )
 
     def _rope_scaling_validation(self):
         """

@@ -4,12 +4,12 @@ from typing import Callable
 
 import torch
 
-from olmo_core.nn.moe.v2.ep_no_sync_common import build_keep_reorder
 from olmo_core.nn.moe.utils import (
     moe_permute_no_compile,
     moe_unpermute_1d_fused_drop_no_compile,
     moe_unpermute_no_compile,
 )
+from olmo_core.nn.moe.v2.ep_no_sync_common import build_keep_reorder
 
 
 def _parse_csv_int(arg: str) -> list[int]:
@@ -100,7 +100,9 @@ def _build_case(
     dtype: torch.dtype,
     device: torch.device,
     seed: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Size]:
+) -> tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Size
+]:
     torch.manual_seed(seed)
     num_experts = 32
     x = torch.randn(num_tokens, d_model, device=device, dtype=dtype)
@@ -306,8 +308,12 @@ def main() -> None:
                 fwd_fused = _event_timed_ms(_run_fwd_fused, args.warmup_iters, args.iters)
                 bwd_reference = _event_timed_ms(_run_bwd_reference, args.warmup_iters, args.iters)
                 bwd_fused = _event_timed_ms(_run_bwd_fused, args.warmup_iters, args.iters)
-                fwd_bwd_reference = _event_timed_ms(_run_fwd_bwd_reference, args.warmup_iters // 2, max(1, args.iters // 2))
-                fwd_bwd_fused = _event_timed_ms(_run_fwd_bwd_fused, args.warmup_iters // 2, max(1, args.iters // 2))
+                fwd_bwd_reference = _event_timed_ms(
+                    _run_fwd_bwd_reference, args.warmup_iters // 2, max(1, args.iters // 2)
+                )
+                fwd_bwd_fused = _event_timed_ms(
+                    _run_fwd_bwd_fused, args.warmup_iters // 2, max(1, args.iters // 2)
+                )
 
                 print(
                     f"d_model={d_model:4d} top_k={top_k} keep={keep_fraction:0.1f} | "

@@ -1,11 +1,11 @@
 import pytest
 import torch
 
-from olmo_core.nn.moe.v2.ep_no_sync_common import build_keep_reorder
 from olmo_core.nn.moe.utils import (
     moe_permute_1d_fused_drop_no_compile,
     moe_permute_no_compile,
 )
+from olmo_core.nn.moe.v2.ep_no_sync_common import build_keep_reorder
 from olmo_core.testing import requires_gpu, requires_te
 
 
@@ -175,13 +175,17 @@ def test_permute_drop_1d_one_shot_custom_cuda_matches_reference_kept_rows():
         minlength=num_experts,
     ).to(dtype=torch.long)
     keep_fraction = 0.55
-    keep_splits = torch.floor(requested_splits.to(dtype=torch.float32) * keep_fraction).to(dtype=torch.long)
+    keep_splits = torch.floor(requested_splits.to(dtype=torch.float32) * keep_fraction).to(
+        dtype=torch.long
+    )
     keep_splits = torch.minimum(keep_splits, requested_splits)
     num_kept = int(keep_splits.sum().item())
 
     requested_ends = torch.cumsum(requested_splits, dim=0)
     token_ids = torch.arange(num_out_tokens, device=device, dtype=torch.long)
-    expert_ids = torch.searchsorted(requested_ends, token_ids, right=True).clamp_max(requested_splits.numel() - 1)
+    expert_ids = torch.searchsorted(requested_ends, token_ids, right=True).clamp_max(
+        requested_splits.numel() - 1
+    )
     starts = requested_ends - requested_splits
     pos_in_chunk = token_ids - starts.index_select(0, expert_ids)
     keep_mask = pos_in_chunk < keep_splits.index_select(0, expert_ids)

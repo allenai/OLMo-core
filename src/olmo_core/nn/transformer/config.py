@@ -16,14 +16,15 @@ from ..attention import (
     SlidingWindowAttentionConfig,
 )
 from ..buffer_cache import BufferCache
-from ..feed_forward import FeedForwardConfig, FeedForwardType, DenseMoEFeedForwardConfig
+from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from .flops import (
+    num_floating_point_operations_for_logits,
+)
 from .init import InitMethod
-from .flops import num_floating_point_operations_for_single_layer, num_floating_point_operations_for_logits
-
 
 if TYPE_CHECKING:
     from .block import TransformerBlockBase
@@ -94,7 +95,6 @@ class TransformerType(StrEnum):
     moe_fused_v2 = "moe_fused_v2"
 
 
-
 class TransformerBlockType(StrEnum):
     """
     An enumeration of the different transformer block implementations.
@@ -144,11 +144,10 @@ class TransformerBlockType(StrEnum):
     """
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
-    
+
     moe_fused_v2 = "moe_fused_v2"
 
 
-    
 @dataclass
 class TransformerBlockConfig(Config):
     """
@@ -244,6 +243,7 @@ class TransformerBlockConfig(Config):
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_fused_v2:
                 from ..moe.v2.block import MoEFusedV2TransformerBlock
+
                 return MoEFusedV2TransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
@@ -279,7 +279,6 @@ class TransformerBlockConfig(Config):
             assert self.feed_forward_norm is not None
             block_params += 2 * self.feed_forward_norm.num_params(d_model)
 
-
         return block_params
 
     def num_active_params(self, d_model: int) -> int:
@@ -291,15 +290,14 @@ class TransformerBlockConfig(Config):
             d_model
         ) - self.feed_forward_moe.num_active_params(d_model)
         return num_params - num_inactive_params
-    
+
     def flops_per_seq(self, d_model: int, seqlen: int) -> int:
-        
         flops = 0
 
         # attention
         flops += self.attention.flops_per_seq(d_model, seqlen)
 
-        # feed forward  
+        # feed forward
         if self.feed_forward is not None:
             # (seq_len, d_model) * (d_model, ffn_hidden_size))
             # x3 for swiglu (up, down, gate)
@@ -308,7 +306,7 @@ class TransformerBlockConfig(Config):
             flops += (3 * 3 * 2) * seqlen * d_model * self.feed_forward.hidden_size
 
         return flops
-        
+
     def flops_per_token(self, d_model, seq_len: int) -> int:
         return self.flops_per_seq(d_model, seq_len) // seq_len
 
@@ -338,7 +336,6 @@ class TransformerConfig(Config):
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
-
 
     def build(
         self,
@@ -497,9 +494,8 @@ class TransformerConfig(Config):
         The number of active parameters excluding embedding parameters.
         """
         return self.num_active_params - self.d_model * self.vocab_size
-    
-    def num_flops_per_token(self, seq_len: int) -> int:
 
+    def num_flops_per_token(self, seq_len: int) -> int:
         flops = []
 
         # calculate flops for each block (each block might have different config)
@@ -1261,7 +1257,6 @@ class TransformerConfig(Config):
 
 @dataclass
 class MoEFusedV2TransformerConfig(TransformerConfig):
-
     # Two-batch-overlap to overlap the compute and all2all communication when EP is enabled. Micro batch size needs to be a multiple of 2.
     two_batch_overlap: bool = False
 
@@ -1284,7 +1279,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
-        from .model import MoETransformer, NormalizedTransformer, Transformer
+        from .model import Transformer
 
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "
@@ -1293,6 +1288,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         model: Transformer
         if self.name == TransformerType.moe_fused_v2:
             from ..moe.v2.model import MoEFusedV2Transformer
+
             model = MoEFusedV2Transformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
@@ -1337,5 +1333,6 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         return model
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        raise RuntimeError("num_flops_per_token disabled in config. Use num_flops_per_token from model instead.")
-    
+        raise RuntimeError(
+            "num_flops_per_token disabled in config. Use num_flops_per_token from model instead."
+        )

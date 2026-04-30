@@ -2,29 +2,21 @@
 
 import logging
 import os
-from collections import defaultdict, deque
+from collections import OrderedDict
 from contextlib import contextmanager
-from dataclasses import dataclass, fields, is_dataclass
-from enum import auto, Enum
-from typing import Any, Callable, List, Optional, TYPE_CHECKING, Dict
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+
 import torch
 import torch.distributed as dist
-import torch.nn as nn
-from torch._utils import _get_device_index
-from torch.autograd import Function, Variable
 from torch.nn.modules import Module
-
-from collections import OrderedDict
 
 if dist.is_available():
     from torch.distributed.distributed_c10d import (
-        _get_default_group,
-        _rank_not_in_group,
         ReduceOp,
+        _get_default_group,
     )
-    from torch.distributed.utils import (
-        _verify_param_shape_across_processes,
-    )
+    from torch.distributed.utils import _verify_param_shape_across_processes
 else:
     _get_default_group = None
 
@@ -35,7 +27,6 @@ if TYPE_CHECKING:
 __all__ = ["MultiGroupDistributedDataParallel"]
 
 logger = logging.getLogger(__name__)
-
 
 
 @dataclass
@@ -51,7 +42,6 @@ class _GradBucket:
 
 
 class MultiGroupDistributedDataParallel(Module):
-    
     def __init__(
         self,
         module,
@@ -65,11 +55,11 @@ class MultiGroupDistributedDataParallel(Module):
     ):
         super().__init__()
 
-        _use_python_reducer = (
-            torch._dynamo.utils.get_optimize_ddp_mode() == "python_reducer"
-        )
+        _use_python_reducer = torch._dynamo.utils.get_optimize_ddp_mode() == "python_reducer"
         if not _use_python_reducer:
-             assert False, "Only python_reducer is supported. Please set torch._dynamo.config.optimize_ddp = \"python_reducer\""
+            assert (
+                False
+            ), 'Only python_reducer is supported. Please set torch._dynamo.config.optimize_ddp = "python_reducer"'
 
         if process_group is None:
             if _get_default_group is None:
@@ -85,9 +75,7 @@ class MultiGroupDistributedDataParallel(Module):
             self.parameters_to_ignore = set()
 
         self._module_parameters = [
-            p
-            for n, p in module.named_parameters()
-            if n not in self.parameters_to_ignore
+            p for n, p in module.named_parameters() if n not in self.parameters_to_ignore
         ]
 
         self._param_to_name = {p: n for n, p in module.named_parameters()}
@@ -100,9 +88,7 @@ class MultiGroupDistributedDataParallel(Module):
                 "DistributedDataParallel is not needed when a module doesn't have any parameter that requires a gradient.",
             )
 
-        is_multi_device_module = (
-            len({p.device for p in self._module_parameters}) > 1
-        )
+        is_multi_device_module = len({p.device for p in self._module_parameters}) > 1
         if is_multi_device_module:
             raise NotImplementedError(
                 "DistributedDataParallel with parameters on multiple devices is not supported yet."
@@ -129,15 +115,11 @@ class MultiGroupDistributedDataParallel(Module):
             )  # default to single process group
         self._param_process_group_fn = param_process_group_fn
 
-
         self._accumulate_grads_in_fp32 = accumulate_grads_in_fp32
         self._reduce_grads_in_fp32 = reduce_grads_in_fp32
 
         if self._accumulate_grads_in_fp32 and not self._reduce_grads_in_fp32:
-            raise ValueError(
-                "accumulate_grads_in_fp32 requires reduce_grads_in_fp32 to be True"
-            )
-
+            raise ValueError("accumulate_grads_in_fp32 requires reduce_grads_in_fp32 to be True")
 
         # Check that a module does not have Uninitialized parameters
         for param in self._module_parameters:
@@ -190,10 +172,8 @@ class MultiGroupDistributedDataParallel(Module):
                 self.process_group_to_params[pg] = []
             self.process_group_to_params[pg].append(param)
 
-
         if init_sync:
             self.init_sync()
-                
 
         self._comm_hooks: list[tuple[object, object]] = []
 
@@ -229,8 +209,6 @@ class MultiGroupDistributedDataParallel(Module):
         # the hook that controls gradient allreduce
         self._register_accum_grad_hook()
 
-
-
     def __getattr__(self, name: str) -> Any:
         """Forward missing attributes to the wrapped module."""
         try:
@@ -241,7 +219,6 @@ class MultiGroupDistributedDataParallel(Module):
     def __getitem__(self, key: int) -> Any:
         return self.module.__getitem__(key)  # type: ignore[operator]
 
-    
     def _get_storage_dtype_for_param(self, param: torch.nn.Parameter) -> torch.dtype:
         if self._accumulate_grads_in_fp32:
             return torch.float32
@@ -257,7 +234,9 @@ class MultiGroupDistributedDataParallel(Module):
             return getattr(param, "_main_grad_fp32", None)
         return param.grad
 
-    def _set_param_grad_buffer(self, param: torch.nn.Parameter, buffer: Optional[torch.Tensor]) -> None:
+    def _set_param_grad_buffer(
+        self, param: torch.nn.Parameter, buffer: Optional[torch.Tensor]
+    ) -> None:
         if self._accumulate_grads_in_fp32:
             param._main_grad_fp32 = buffer  # type: ignore[attr-defined]
         else:
@@ -338,14 +317,11 @@ class MultiGroupDistributedDataParallel(Module):
             comm_dtype = self._get_comm_dtype_for_storage(storage_dtype)
             param_bytes = param.numel() * torch.empty((), dtype=comm_dtype).element_size()
 
-            should_flush = (
-                current_params
-                and (
-                    process_group is not current_process_group
-                    or storage_dtype != current_storage_dtype
-                    or comm_dtype != current_comm_dtype
-                    or (current_bucket_bytes + param_bytes > self.bucket_bytes_cap)
-                )
+            should_flush = current_params and (
+                process_group is not current_process_group
+                or storage_dtype != current_storage_dtype
+                or comm_dtype != current_comm_dtype
+                or (current_bucket_bytes + param_bytes > self.bucket_bytes_cap)
             )
             if should_flush:
                 flush_current_bucket()
@@ -484,7 +460,6 @@ class MultiGroupDistributedDataParallel(Module):
             self._launch_bucket_all_reduce(self._next_reduce_bucket_idx)
             self._next_reduce_bucket_idx += 1
 
-
     def _register_accum_grad_hook(self):
         def notify_grad_ready(
             param,
@@ -504,7 +479,6 @@ class MultiGroupDistributedDataParallel(Module):
                 self._maybe_kick_start_all_reduce()
 
             # otherwise, leave the all-reduce to finalize_grad_reduce
-            
 
         for index, param in enumerate(self._module_parameters):
             if not param.requires_grad:
@@ -519,11 +493,8 @@ class MultiGroupDistributedDataParallel(Module):
             # and the actual all-reduce is kicked off in _maybe_kick_start_all_reduce
             # based on what grads are ready
             self._accum_grad_hooks.append(
-                param.register_post_accumulate_grad_hook(
-                    notify_grad_ready
-                )
+                param.register_post_accumulate_grad_hook(notify_grad_ready)
             )
-
 
     def finalize_grad_reduce(self):
         # Grad buffers should already be bound before backward starts. If they are detached here,
@@ -550,7 +521,6 @@ class MultiGroupDistributedDataParallel(Module):
             f"{self._next_reduce_bucket_idx} vs {len(self._grad_buckets)}"
         )
 
-
         for idx, (handle, bucket_idx) in enumerate(self._grad_reduce_hooks):
             handle.wait()
             bucket = self._grad_buckets[bucket_idx]
@@ -559,14 +529,13 @@ class MultiGroupDistributedDataParallel(Module):
         self._grad_reduce_hooks = []
 
         self._next_reduce_bucket_idx = 0
-        
+
         # mark all grads as not ready
         for key in self._param_grad_ready.keys():
             self._param_grad_ready[key] = False
         for bucket_idx in range(len(self._bucket_ready_count)):
             self._bucket_ready_count[bucket_idx] = 0
         self._forwards_since_finalize = 0
-
 
     def init_sync(self):
         for process_group, parameters in self.process_group_to_params.items():
@@ -575,20 +544,20 @@ class MultiGroupDistributedDataParallel(Module):
 
             for param in parameters:
                 dist.broadcast(
-                    param.data, src=dist.get_global_rank(process_group, 0), group=process_group, async_op=False
+                    param.data,
+                    src=dist.get_global_rank(process_group, 0),
+                    group=process_group,
+                    async_op=False,
                 )
-
 
     def __getstate__(self):
         # TODO: review if this works with multi-process-group DDP
         raise NotImplementedError("DDP serialization is not implemented.")
 
-
     def __setstate__(self, state):
         # TODO: review if this works with multi-process-group DDP
         raise NotImplementedError("DDP serialization is not implemented.")
         # If serializable, then the process group should be the default one
-
 
     @contextmanager
     def no_sync(self):
@@ -619,25 +588,20 @@ class MultiGroupDistributedDataParallel(Module):
         finally:
             self.require_backward_grad_sync = old_require_backward_grad_sync
 
-
-
-    def _pre_forward(self, *inputs, **kwargs):        
+    def _pre_forward(self, *inputs, **kwargs):
         self._ensure_grad_views_bound(allow_none_rebind=True, where="forward")
         self._forwards_since_finalize += 1
         return inputs, kwargs
 
-
     def _post_forward(self, output):
         return output
-
 
     def forward(self, *inputs, **kwargs):
         with torch.autograd.profiler.record_function("MultiGroupDistributedDataParallel.forward"):
             inputs, kwargs = self._pre_forward(*inputs, **kwargs)
             output = self.module(*inputs, **kwargs)
-            
-            return self._post_forward(output)
 
+            return self._post_forward(output)
 
     def train(self, mode=True):
         super().train(mode)
@@ -680,7 +644,6 @@ class MultiGroupDistributedDataParallel(Module):
                     param._main_grad_fp32 = None  # type: ignore[attr-defined]
         self._grad_views_need_rebind = True
         self._forwards_since_finalize = 0
-
 
     def register_comm_hook(self, state: object, hook: Callable):
         raise NotImplementedError

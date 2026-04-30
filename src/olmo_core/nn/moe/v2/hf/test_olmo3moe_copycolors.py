@@ -5,7 +5,6 @@ import torch
 import transformers
 from transformers import AutoModelForCausalLM
 
-
 COLOR_VOCAB = [
     "yellow",
     "pink",
@@ -130,7 +129,9 @@ if __name__ == "__main__":
     examples = torch.load("/workspace/OLMo-core/cc_dbg.pt")
 
     load_path = "/workspace/tmp/step96085-hf"
-    device_map_mode = "auto" if torch.cuda.is_available() and torch.cuda.device_count() > 1 else "none"
+    device_map_mode = (
+        "auto" if torch.cuda.is_available() and torch.cuda.device_count() > 1 else "none"
+    )
     model_dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
     tokenizer = transformers.AutoTokenizer.from_pretrained(load_path, trust_remote_code=True)
     model, input_device = load_model_for_inference(
@@ -171,18 +172,25 @@ if __name__ == "__main__":
         gold_letter = decode_letter(tokenizer, ex["choices"][ex["label_id"]])
         gold_color = option_map[gold_letter]
 
-        mc_letter_scores = score_next_token_logprobs(model, ex["ctx"], letter_token_ids, input_device)
+        mc_letter_scores = score_next_token_logprobs(
+            model, ex["ctx"], letter_token_ids, input_device
+        )
         pred_letter = sort_scores(mc_letter_scores)[0][0]
 
         mc_color_token_ids = {
-            color: tokenizer.encode(" " + color, add_special_tokens=False)[0] for color in option_map.values()
+            color: tokenizer.encode(" " + color, add_special_tokens=False)[0]
+            for color in option_map.values()
         }
-        mc_color_scores = score_next_token_logprobs(model, ex["ctx"], mc_color_token_ids, input_device)
+        mc_color_scores = score_next_token_logprobs(
+            model, ex["ctx"], mc_color_token_ids, input_device
+        )
         pred_mc_color = sort_scores(mc_color_scores)[0][0]
 
         qonly_prompt = question + "\nAnswer:"
         qonly_input_ids = tokenizer(qonly_prompt, return_tensors="pt").input_ids[0].tolist()
-        qonly_color_scores = score_next_token_logprobs(model, qonly_input_ids, qonly_color_token_ids, input_device)
+        qonly_color_scores = score_next_token_logprobs(
+            model, qonly_input_ids, qonly_color_token_ids, input_device
+        )
         pred_qonly_color = sort_scores(qonly_color_scores)[0][0]
 
         option_lines = [f" {letter}. {color}" for letter, color in option_map.items()]
@@ -200,11 +208,15 @@ if __name__ == "__main__":
         explicit_color_options_only_prompt += f"\nThe correct color is {gold_color}.\nAnswer:"
         explicit_color_options_only_letter_scores = score_next_token_logprobs(
             model,
-            tokenizer(explicit_color_options_only_prompt, return_tensors="pt").input_ids[0].tolist(),
+            tokenizer(explicit_color_options_only_prompt, return_tensors="pt")
+            .input_ids[0]
+            .tolist(),
             letter_token_ids,
             input_device,
         )
-        pred_explicit_color_options_only_letter = sort_scores(explicit_color_options_only_letter_scores)[0][0]
+        pred_explicit_color_options_only_letter = sort_scores(
+            explicit_color_options_only_letter_scores
+        )[0][0]
 
         letter_correct += int(pred_letter == gold_letter)
         mc_color_correct += int(pred_mc_color == gold_color)
@@ -213,8 +225,12 @@ if __name__ == "__main__":
         explicit_color_options_only_letter_correct += int(
             pred_explicit_color_options_only_letter == gold_letter
         )
-        mc_color_correct_letter_wrong += int(pred_mc_color == gold_color and pred_letter != gold_letter)
-        qonly_color_correct_letter_wrong += int(pred_qonly_color == gold_color and pred_letter != gold_letter)
+        mc_color_correct_letter_wrong += int(
+            pred_mc_color == gold_color and pred_letter != gold_letter
+        )
+        qonly_color_correct_letter_wrong += int(
+            pred_qonly_color == gold_color and pred_letter != gold_letter
+        )
 
         pred_letter_dist[pred_letter] += 1
         gold_letter_dist[gold_letter] += 1
@@ -242,7 +258,9 @@ if __name__ == "__main__":
     print(f"Examples: {n}")
     print(f"MC letter accuracy (direct logits over A-J): {letter_correct / n:.4f}")
     print(f"MC color accuracy (direct logits over option color words): {mc_color_correct / n:.4f}")
-    print(f"Question-only color accuracy (direct logits over color words): {qonly_color_correct / n:.4f}")
+    print(
+        f"Question-only color accuracy (direct logits over color words): {qonly_color_correct / n:.4f}"
+    )
     print(
         "Explicit-color letter accuracy (question + options + "
         f"'The correct color is X'): {explicit_color_letter_correct / n:.4f}"
@@ -263,8 +281,14 @@ if __name__ == "__main__":
     )
     print()
 
-    print("Prediction distribution over letters:", {label: pred_letter_dist.get(label, 0) for label in labels})
-    print("Ground-truth distribution over letters:", {label: gold_letter_dist.get(label, 0) for label in labels})
+    print(
+        "Prediction distribution over letters:",
+        {label: pred_letter_dist.get(label, 0) for label in labels},
+    )
+    print(
+        "Ground-truth distribution over letters:",
+        {label: gold_letter_dist.get(label, 0) for label in labels},
+    )
     print()
     print("Predicted MC colors:", dict(pred_mc_color_dist))
     print("Predicted question-only colors:", dict(pred_qonly_color_dist))

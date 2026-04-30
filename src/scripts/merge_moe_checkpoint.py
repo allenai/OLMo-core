@@ -17,7 +17,7 @@ import pickle
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 import torch
 import torch.distributed.checkpoint as dist_cp
@@ -167,7 +167,9 @@ def validate_inputs(checkpoint_dirs: Sequence[str], metadatas: Sequence[Metadata
     return reference_keys
 
 
-def copy_checkpoint_wrapper(src_checkpoint_dir: str, output_dir: Path, save_overwrite: bool) -> None:
+def copy_checkpoint_wrapper(
+    src_checkpoint_dir: str, output_dir: Path, save_overwrite: bool
+) -> None:
     src_dir = Path(src_checkpoint_dir)
     if not src_dir.is_dir():
         raise FileNotFoundError(f"Checkpoint does not exist: {src_dir}")
@@ -260,9 +262,7 @@ def zero_tensor_from_meta(meta: TensorStorageMetadata) -> torch.Tensor:
 
 
 def should_reset_optimizer_moment(key: str, reset_optimizer_moments: bool) -> bool:
-    return reset_optimizer_moments and (
-        key.endswith(".exp_avg") or key.endswith(".exp_avg_sq")
-    )
+    return reset_optimizer_moments and (key.endswith(".exp_avg") or key.endswith(".exp_avg_sq"))
 
 
 def serialize_tensor(tensor: torch.Tensor) -> bytes:
@@ -362,9 +362,9 @@ def write_reconstructed_model_and_optim(
             ] = _StorageInfo(relative_path=relative_path, offset=0, length=len(entry_bytes))
         else:
             output_state_metadata[key] = BytesStorageMetadata()
-            output_storage_data[
-                MetadataIndex(fqn=key, offset=None, index=None)
-            ] = _StorageInfo(relative_path=relative_path, offset=0, length=len(entry_bytes))
+            output_storage_data[MetadataIndex(fqn=key, offset=None, index=None)] = _StorageInfo(
+                relative_path=relative_path, offset=0, length=len(entry_bytes)
+            )
 
     output_metadata = Metadata(
         state_dict_metadata=output_state_metadata,

@@ -85,7 +85,10 @@ def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeyp
         mat_b_shape=tuple(module.w_down.shape),
         mat_b_version=int(module.w_down._version),
     )
-    module._rowwise_fp8_weight_versions = (int(module.w_up_gate._version), int(module.w_down._version))
+    module._rowwise_fp8_weight_versions = (
+        int(module.w_up_gate._version),
+        int(module.w_down._version),
+    )
 
     seen = {"calls": 0}
 
@@ -102,7 +105,9 @@ def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeyp
         del offs, input_grad_out, use_fast_accum, prequantized_lhs
         seen["calls"] += 1
         assert prequantized_rhs is not None
-        return torch.zeros((mat_a.shape[0], mat_b.shape[-1]), dtype=mat_a.dtype, device=mat_a.device)
+        return torch.zeros(
+            (mat_a.shape[0], mat_b.shape[-1]), dtype=mat_a.dtype, device=mat_a.device
+        )
 
     monkeypatch.setattr(
         "olmo_core.nn.moe.v2.routed_experts.scaled_grouped_mm_q",

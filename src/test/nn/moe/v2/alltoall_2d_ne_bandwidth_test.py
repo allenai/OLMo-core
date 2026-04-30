@@ -40,7 +40,9 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cols", type=int, default=4096, help="Hidden dim D.")
     parser.add_argument("--dtype", choices=["fp16", "bf16", "fp32"], default="bf16")
-    parser.add_argument("--major-align", type=int, default=1, help="major_align for plain 2D variant.")
+    parser.add_argument(
+        "--major-align", type=int, default=1, help="major_align for plain 2D variant."
+    )
     parser.add_argument("--nblocks", type=int, default=256, help="nblocks for custom kernels.")
     parser.add_argument("--warmup-iters", type=int, default=10)
     parser.add_argument("--iters", type=int, default=50)
@@ -184,7 +186,9 @@ def main() -> None:
 
         symm_in = _alloc_rendezvous_symm_tensor(x.shape, x.dtype, device, group)
         symm_out = _alloc_rendezvous_symm_tensor((out_cap, args.cols), x.dtype, device, group)
-        symm_out_splits_offsets = _alloc_rendezvous_symm_tensor((2, nsplits), torch.int64, device, group)
+        symm_out_splits_offsets = _alloc_rendezvous_symm_tensor(
+            (2, nsplits), torch.int64, device, group
+        )
         symm_in.copy_(x)
 
         if args.variant == "plain":
@@ -211,8 +215,11 @@ def main() -> None:
                         major_align=args.major_align,
                         nblocks=args.nblocks,
                     )
+
         else:
-            symm_in_splits_offsets = _alloc_rendezvous_symm_tensor((2, nsplits), torch.int64, device, group)
+            symm_in_splits_offsets = _alloc_rendezvous_symm_tensor(
+                (2, nsplits), torch.int64, device, group
+            )
             symm_in_splits_offsets[0].fill_(args.rows_per_split)
             symm_in_splits_offsets[1].copy_(
                 torch.arange(nsplits, device=device, dtype=torch.int64) * args.rows_per_split

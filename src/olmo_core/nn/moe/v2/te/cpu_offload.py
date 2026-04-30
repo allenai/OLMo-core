@@ -4,8 +4,9 @@
 
 """Functionality for CPU offloading of tensors saved for backward pass."""
 from __future__ import annotations
+
 from contextlib import nullcontext
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
@@ -31,7 +32,6 @@ def is_cpu_offload_enabled() -> bool:
 
 
 class CpuOffloadHook:
-
     def __init__(
         self,
         offload_handler: "CpuOffloadHandler",
@@ -62,6 +62,7 @@ class CpuOffloadHook:
 
         self.inside_context = False
         torch._C._autograd._pop_saved_tensors_default_hooks()  # type: ignore
+
 
 class GroupCommitFunction(torch.autograd.Function):
     """Dummy op whose output equals input.
@@ -146,12 +147,11 @@ class CpuOffloadHandler:
         self.tensor_tag_to_state.clear()
 
     def tensor_push(self, tensor: torch.Tensor, **kwargs) -> Any:
-
         stray = isinstance(
             tensor,
             (
-                torch._subclasses.fake_tensor.FakeTensor, # type: ignore
-                torch._subclasses.functional_tensor.FunctionalTensor, # type: ignore
+                torch._subclasses.fake_tensor.FakeTensor,  # type: ignore
+                torch._subclasses.functional_tensor.FunctionalTensor,  # type: ignore
             ),
         )
 
@@ -161,13 +161,14 @@ class CpuOffloadHandler:
             self.tensor_tag_to_state[tensor_tag] = tensor
             return tensor_tag
 
-
         tensor_tag = (self.current_group, self.tensor_count_current_group)
         self.tensor_count_current_group += 1
         assert tensor_tag not in self.tensor_tag_to_state
 
         self.tensor_tag_to_state[tensor_tag] = tensor
-        if self.current_group < self.num_offload_group and self.tensor_need_offloading_checker(tensor):
+        if self.current_group < self.num_offload_group and self.tensor_need_offloading_checker(
+            tensor
+        ):
             self.tensor_tag_to_buf[tensor_tag] = tensor
         return tensor_tag
 
@@ -195,13 +196,17 @@ class CpuOffloadHandler:
                 if tensor_on_device.device.type == "cpu":
                     continue  # already on CPU
                 if self.tensor_need_offloading_checker(tensor_on_device):
-                    self.tensor_tag_to_state[(group_id, _) ] = CpuOffloadHandler.offload(tensor_on_device)
+                    self.tensor_tag_to_state[(group_id, _)] = CpuOffloadHandler.offload(
+                        tensor_on_device
+                    )
 
     def _collect_group_entries(self, group_id: int) -> List[Tuple[Tuple[int, int], Any]]:
         """Collect (tag, state) for a specific group, preserving insertion order."""
         return [(tag, st) for tag, st in self.tensor_tag_to_state.items() if tag[0] == group_id]
 
-    def _ensure_bank_for_group(self, bank_idx: int, group_entries: List[Tuple[Tuple[int, int], Any]]):
+    def _ensure_bank_for_group(
+        self, bank_idx: int, group_entries: List[Tuple[Tuple[int, int], Any]]
+    ):
         """Ensure the chosen bank has buffers sized to this group's tensors."""
         bank = self.reload_double_buffer[bank_idx]
 
@@ -221,12 +226,12 @@ class CpuOffloadHandler:
             dev, cpu_backup = state
             # Allocate fresh if missing or shape/dtype/device mismatched
             need_new = (
-                (i >= len(bank)) or
-                (bank[i] is None) or
-                (bank[i].device != dev) or
-                (bank[i].dtype != cpu_backup.dtype) or
-                (bank[i].layout != cpu_backup.layout) or
-                (tuple(bank[i].size()) != tuple(cpu_backup.size()))
+                (i >= len(bank))
+                or (bank[i] is None)
+                or (bank[i].device != dev)
+                or (bank[i].dtype != cpu_backup.dtype)
+                or (bank[i].layout != cpu_backup.layout)
+                or (tuple(bank[i].size()) != tuple(cpu_backup.size()))
             )
             if need_new:
                 bank[i] = torch.empty(
@@ -256,7 +261,7 @@ class CpuOffloadHandler:
         with torch.cuda.stream(self.h2d_stream):  # type: ignore
             bank = self.reload_double_buffer[double_bank_idx]
             buf_i = 0
-            for (tensor_tag, state) in entries:
+            for tensor_tag, state in entries:
                 if isinstance(state, tuple):
                     # Reload into the pre-sized buffer
                     reload_buf = bank[buf_i]
@@ -269,7 +274,6 @@ class CpuOffloadHandler:
                 else:
                     # Already on GPU/CPU (not offloaded); nothing to do
                     buf_i += 1
-
 
     def on_group_commit_forward(self):
         """Called at each group boundary in forward pass."""
@@ -321,7 +325,6 @@ class CpuOffloadHandler:
             torch.cuda.current_stream().wait_stream(self.h2d_stream)
             self.offloaded_group_count = 0
 
-
     @staticmethod
     def offload(src_tensor: torch.Tensor):
         """Async device->host (pinned) copy; return offload state."""
@@ -349,6 +352,7 @@ class CpuOffloadHandler:
 
         copy_buffer.copy_(cpu_backup, non_blocking=True)
         return copy_buffer
+
 
 def get_cpu_offload_context(
     enabled: bool = False,

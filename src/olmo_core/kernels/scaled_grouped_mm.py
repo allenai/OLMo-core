@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+
 from .mxfp8_utils import (
     dequantize_rows_from_mxfp8,
     grouped_scales_to_mxfp8_blocked,
@@ -101,8 +102,6 @@ def _scaled_grouped_mm_v2_cuda(
     )
 
 
-
-
 def _forward_scaled_grouped_mm_mxfp8(
     mat_a: Tensor,
     mat_b: Tensor,
@@ -180,8 +179,6 @@ def _forward_scaled_grouped_mm_mxfp8(
     )
 
 
-
-
 class _ScaledGroupedMMQFunction(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
@@ -245,8 +242,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
         # In rowwise FP8 paths we can skip saving bf16 mat_a and reconstruct it
         # from saved prequantized (q, scale) during backward to avoid dispatch DQ.
         use_saved_prequantized_lhs = (
-            prequantized_lhs is not None
-            and not prequantized_lhs.scales_are_blocked
+            prequantized_lhs is not None and not prequantized_lhs.scales_are_blocked
         )
         if use_saved_prequantized_lhs:
             ctx.save_for_backward(mat_b, offs, prequantized_lhs.mat_a_q, prequantized_lhs.scale_a)
@@ -276,7 +272,9 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
                     )
                 mat_a_q_use = mat_a_q if active_rows == mat_a_q.shape[0] else mat_a_q[:active_rows]
                 mat_a_scale_use = (
-                    mat_a_scale if active_rows == mat_a_scale.shape[0] else mat_a_scale[:active_rows]
+                    mat_a_scale
+                    if active_rows == mat_a_scale.shape[0]
+                    else mat_a_scale[:active_rows]
                 )
                 mat_a = dequantize_rows_from_mxfp8(
                     mat_a_q_use,
@@ -322,7 +320,9 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
 
         if ctx.needs_input_grad[1]:
             if mat_a is None:
-                raise RuntimeError("scaled_grouped_mm_q backward expected mat_a when grad_b is required")
+                raise RuntimeError(
+                    "scaled_grouped_mm_q backward expected mat_a when grad_b is required"
+                )
             grad_b = F.grouped_mm(
                 grad_out_compute.transpose(-2, -1),
                 mat_a,

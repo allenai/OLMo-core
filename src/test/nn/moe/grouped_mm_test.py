@@ -60,7 +60,7 @@ def test_grouped_mm_speed_vs_tail_padding():
     pad_cases = [1, 64, 256, 1024, 4096, 8192]
     max_pad = max(pad_cases)
 
-    print(f'active_tokens={active_tokens}, k={k}, n={n}, pad_cases={pad_cases}')
+    print(f"active_tokens={active_tokens}, k={k}, n={n}, pad_cases={pad_cases}")
 
     a_max = torch.randn(active_tokens + max_pad, k, device=device, dtype=dtype)
     b = torch.randn(num_groups, k, n, device=device, dtype=dtype)
@@ -94,7 +94,9 @@ def test_grouped_mm_speed_vs_tail_padding():
     print("\ngrouped_mm latency vs tail pad rows (rows beyond offs[-1]):")
     for pad_tokens in pad_cases:
         t_ms = timings_ms[pad_tokens]
-        print(f"active={active_tokens}  pad={pad_tokens:5d}  time={t_ms:7.3f} ms  ratio={t_ms / baseline:5.2f}x")
+        print(
+            f"active={active_tokens}  pad={pad_tokens:5d}  time={t_ms:7.3f} ms  ratio={t_ms / baseline:5.2f}x"
+        )
 
     for pad_tokens in pad_cases[1:]:
         t_ms = timings_ms[pad_tokens]

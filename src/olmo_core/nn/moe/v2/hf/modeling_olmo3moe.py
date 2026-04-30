@@ -1,29 +1,28 @@
-
 from collections.abc import Callable
+from typing import Optional, Union, cast
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional, Union, cast
-from transformers.utils.generic import TransformersKwargs
-
-from transformers.cache_utils import Cache, DynamicCache
-from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
-from transformers.modeling_outputs import BaseModelOutputWithPast
-from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
-from transformers.processing_utils import Unpack
-from transformers.modeling_layers import GradientCheckpointingLayer
-from transformers.utils.deprecation import deprecate_kwarg
 from transformers.activations import ACT2FN
-from transformers.utils.auto_docstring import auto_docstring
-from transformers.utils.generic import can_return_tuple
+from transformers.cache_utils import Cache, DynamicCache
 from transformers.generation.utils import GenerationMixin
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
-
-from transformers.models.olmo3.modeling_olmo3 import (
-    eager_attention_forward,
+from transformers.masking_utils import (
+    create_causal_mask,
+    create_sliding_window_causal_mask,
 )
+from transformers.modeling_layers import GradientCheckpointingLayer
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
+from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
+from transformers.models.olmo3.modeling_olmo3 import eager_attention_forward
+from transformers.processing_utils import Unpack
+from transformers.utils.auto_docstring import auto_docstring
+from transformers.utils.deprecation import deprecate_kwarg
+from transformers.utils.generic import TransformersKwargs, can_return_tuple
+
 from .configuration_olmo3moe import Olmo3MoeConfig
 
 
@@ -66,22 +65,34 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
             post-processing scaling factor applied to the computed cos/sin (unused in this type of RoPE).
         """
         base = config.rope_parameters["rope_theta"]
-        dim = getattr(config, "head_dim", None) or config.attention_hidden_size // config.num_attention_heads
+        dim = (
+            getattr(config, "head_dim", None)
+            or config.attention_hidden_size // config.num_attention_heads
+        )
 
         attention_factor = 1.0  # Unused in this type of RoPE
 
         # Compute the inverse frequencies
         inv_freq = 1.0 / (
-            base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float) / dim)
+            base
+            ** (
+                torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float)
+                / dim
+            )
         )
         return inv_freq, attention_factor
+
     @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
     def forward(self, x, position_ids):
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
+        inv_freq_expanded = (
+            self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
+        )
         position_ids_expanded = position_ids[:, None, :].float()
 
-        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
+        device_type = (
+            x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
+        )
         with torch.autocast(device_type=device_type, enabled=False):  # Force float32
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
             emb = torch.cat((freqs, freqs), dim=-1)
@@ -105,6 +116,7 @@ class Olmo3MoeDenseMLP(nn.Module):
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
 
+
 class Olmo3MoeExpert(nn.Module):
     def __init__(self, hidden_size, moe_intermediate_size, hidden_act):
         super().__init__()
@@ -118,7 +130,6 @@ class Olmo3MoeExpert(nn.Module):
     def forward(self, x):
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
-
 
 
 class Olmo3MoeExperts(nn.ModuleList):
@@ -157,13 +168,15 @@ class Olmo3MoeExperts(nn.ModuleList):
         N, H = hidden_states.shape
         out = hidden_states.new_zeros((N, H))
         for expert_id, expert in enumerate(self):
-            mask = (topk_ids == expert_id)  # (N, K) bool
+            mask = topk_ids == expert_id  # (N, K) bool
             if not mask.any():
                 continue
             token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
             x_sel = hidden_states.index_select(0, token_ids)  # (M, H)
             y_sel = expert(x_sel)  # (M, H)
-            w_sel = topk_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)  # (M, 1)
+            w_sel = (
+                topk_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)
+            )  # (M, 1)
             out.index_add_(0, token_ids, y_sel * w_sel)
         return out
 
@@ -232,13 +245,13 @@ class Olmo3MoeRouter(nn.Module):
     def forward(self, x):
         logits = self.gate(x)
 
-        if self.gating_function == 'softmax':
+        if self.gating_function == "softmax":
             scores = logits.softmax(dim=-1)
-        elif self.gating_function == 'sigmoid':
+        elif self.gating_function == "sigmoid":
             scores = torch.sigmoid(logits)
             # to avoid NaNs in the load balancing loss
             # if all logits of a token are very negative for all experts, sigmoid gives 0 for all experts, causing NaNs when we div by the sum.
-            scores = scores + 1e-7  
+            scores = scores + 1e-7
         else:
             raise NotImplementedError(self.gating_function)
 
@@ -257,12 +270,17 @@ class Olmo3MoeRouter(nn.Module):
         if self.restore_weight_scale:
             expert_weights = expert_weights * self.num_experts_per_tok
 
-        if self.original_num_experts_per_tok is not None and self.num_experts_per_tok != self.original_num_experts_per_tok:
-            expert_weights = expert_weights * (
-                self.original_num_experts_per_tok / self.num_experts_per_tok
-            ) ** 0.5
+        if (
+            self.original_num_experts_per_tok is not None
+            and self.num_experts_per_tok != self.original_num_experts_per_tok
+        ):
+            expert_weights = (
+                expert_weights
+                * (self.original_num_experts_per_tok / self.num_experts_per_tok) ** 0.5
+            )
 
         return expert_weights, expert_indices
+
 
 class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
     def __init__(self, config: Olmo3MoeConfig, layer_idx: int):
@@ -276,11 +294,17 @@ class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
             self.mlp = Olmo3MoeSparseMLP(config)
 
         self.post_attention_layernorm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_feedforward_layernorm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_feedforward_layernorm = Olmo3MoeRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
 
         if config.use_peri_ln:
-            self.pre_attention_layernorm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-            self.pre_feedforward_layernorm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            self.pre_attention_layernorm = Olmo3MoeRMSNorm(
+                config.hidden_size, eps=config.rms_norm_eps
+            )
+            self.pre_feedforward_layernorm = Olmo3MoeRMSNorm(
+                config.hidden_size, eps=config.rms_norm_eps
+            )
         else:
             self.pre_attention_layernorm = None
             self.pre_feedforward_layernorm = None
@@ -294,7 +318,9 @@ class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
         past_key_values: Optional[Cache] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        position_embeddings: Optional[
+            tuple[torch.Tensor, torch.Tensor]
+        ] = None,  # necessary, but kept here for BC
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
         residual = hidden_states
@@ -323,8 +349,6 @@ class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
         return hidden_states
 
 
-
-
 def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     q_type, k_type = q.dtype, k.dtype
     cos = cos.unsqueeze(unsqueeze_dim)
@@ -340,6 +364,7 @@ def rotate_half(x):
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
 
+
 class Olmo3MoeAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -347,7 +372,9 @@ class Olmo3MoeAttention(nn.Module):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
-        self.head_dim = getattr(config, "head_dim", config.attention_hidden_size // config.num_attention_heads)
+        self.head_dim = getattr(
+            config, "head_dim", config.attention_hidden_size // config.num_attention_heads
+        )
         self.num_key_value_groups = config.num_attention_heads // config.num_key_value_heads
         self.scaling = self.head_dim**-0.5
         self.attention_dropout = config.attention_dropout
@@ -355,26 +382,40 @@ class Olmo3MoeAttention(nn.Module):
         self.use_head_qk_norm = config.use_head_qk_norm
 
         self.q_proj = nn.Linear(
-            config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
+            config.hidden_size,
+            config.num_attention_heads * self.head_dim,
+            bias=config.attention_bias,
         )
         self.k_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
+            config.hidden_size,
+            config.num_key_value_heads * self.head_dim,
+            bias=config.attention_bias,
         )
         self.v_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
+            config.hidden_size,
+            config.num_key_value_heads * self.head_dim,
+            bias=config.attention_bias,
         )
         self.o_proj = nn.Linear(
-            config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
+            config.num_attention_heads * self.head_dim,
+            config.hidden_size,
+            bias=config.attention_bias,
         )
         if config.use_head_qk_norm:
             self.q_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
             self.k_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
         else:
-            self.q_norm = Olmo3MoeRMSNorm(config.num_attention_heads * self.head_dim, config.rms_norm_eps)
-            self.k_norm = Olmo3MoeRMSNorm(config.num_key_value_heads * self.head_dim, config.rms_norm_eps)
+            self.q_norm = Olmo3MoeRMSNorm(
+                config.num_attention_heads * self.head_dim, config.rms_norm_eps
+            )
+            self.k_norm = Olmo3MoeRMSNorm(
+                config.num_key_value_heads * self.head_dim, config.rms_norm_eps
+            )
         assert config.layer_types is not None
         self.attention_type = config.layer_types[layer_idx]
-        self.sliding_window = config.sliding_window if self.attention_type == "sliding_attention" else None
+        self.sliding_window = (
+            config.sliding_window if self.attention_type == "sliding_attention" else None
+        )
 
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
@@ -393,16 +434,18 @@ class Olmo3MoeAttention(nn.Module):
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
-         # QK norm behavior:
-         # - use_head_qk_norm=False: normalize over the flattened projection dim (matches File 1 "full-dim" norm path)
-         # - use_head_qk_norm=True: reshape into heads first, then normalize per head over head_dim (matches File 1 head-wise path)
+        # QK norm behavior:
+        # - use_head_qk_norm=False: normalize over the flattened projection dim (matches File 1 "full-dim" norm path)
+        # - use_head_qk_norm=True: reshape into heads first, then normalize per head over head_dim (matches File 1 head-wise path)
         if not self.use_head_qk_norm:
             query_states = self.q_norm(query_states)
             key_states = self.k_norm(key_states)
 
-        query_states = query_states.view(hidden_shape).transpose(1, 2)   # (B, n_heads, T, head_dim)
-        key_states   = key_states.view(hidden_shape).transpose(1, 2)     # (B, n_kv_heads, T, head_dim)
-        value_states = value_states.view(hidden_shape).transpose(1, 2)   # (B, n_kv_heads, T, head_dim)
+        query_states = query_states.view(hidden_shape).transpose(1, 2)  # (B, n_heads, T, head_dim)
+        key_states = key_states.view(hidden_shape).transpose(1, 2)  # (B, n_kv_heads, T, head_dim)
+        value_states = value_states.view(hidden_shape).transpose(
+            1, 2
+        )  # (B, n_kv_heads, T, head_dim)
 
         if self.use_head_qk_norm:
             query_states = self.q_norm(query_states.contiguous())
@@ -414,7 +457,9 @@ class Olmo3MoeAttention(nn.Module):
         if past_key_values is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.update(
+                key_states, value_states, self.layer_idx, cache_kwargs
+            )
 
         attention_interface: Callable = eager_attention_forward
         if self.config._attn_implementation != "eager":
@@ -437,7 +482,6 @@ class Olmo3MoeAttention(nn.Module):
         return attn_output, attn_weights
 
 
-
 @auto_docstring
 class Olmo3MoePreTrainedModel(PreTrainedModel):
     config: Olmo3MoeConfig
@@ -455,7 +499,8 @@ class Olmo3MoePreTrainedModel(PreTrainedModel):
         "hidden_states": Olmo3MoeDecoderLayer,
         "attentions": Olmo3MoeAttention,
     }
-    
+
+
 class Olmo3MoeRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         super().__init__()
@@ -471,7 +516,8 @@ class Olmo3MoeRMSNorm(nn.Module):
 
     def extra_repr(self):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
- 
+
+
 @auto_docstring
 class Olmo3MoeModel(Olmo3MoePreTrainedModel):
     def __init__(self, config: Olmo3MoeConfig):
@@ -482,10 +528,17 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
 
         self.embed_scale = config.embed_scale
-        self.embed_norm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps) if config.embed_norm else None
+        self.embed_norm = (
+            Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            if config.embed_norm
+            else None
+        )
 
         self.layers = nn.ModuleList(
-            [Olmo3MoeDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+            [
+                Olmo3MoeDecoderLayer(config, layer_idx)
+                for layer_idx in range(config.num_hidden_layers)
+            ]
         )
         self.norm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False
@@ -520,10 +573,14 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
             past_key_values = DynamicCache(config=self.config)
 
         if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+            past_seen_tokens = (
+                past_key_values.get_seq_length() if past_key_values is not None else 0
+            )
             assert inputs_embeds is not None
             cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+                past_seen_tokens,
+                past_seen_tokens + inputs_embeds.shape[1],
+                device=inputs_embeds.device,
             )
 
         if position_ids is None:
@@ -573,6 +630,7 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
             past_key_values=past_key_values,
         )
 
+
 @auto_docstring
 class Olmo3MoeForCausalLM(Olmo3MoePreTrainedModel, GenerationMixin):
     _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
@@ -603,7 +661,6 @@ class Olmo3MoeForCausalLM(Olmo3MoePreTrainedModel, GenerationMixin):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
-
         outputs: BaseModelOutputWithPast = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -617,12 +674,16 @@ class Olmo3MoeForCausalLM(Olmo3MoePreTrainedModel, GenerationMixin):
 
         hidden_states = outputs.last_hidden_state
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        slice_indices = (
+            slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        )
         logits = self.lm_head(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
-            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+            loss = self.loss_function(
+                logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs
+            )
 
         return CausalLMOutputWithPast(
             loss=loss,
@@ -631,7 +692,6 @@ class Olmo3MoeForCausalLM(Olmo3MoePreTrainedModel, GenerationMixin):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
 
 
 __all__ = [

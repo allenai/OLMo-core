@@ -7,7 +7,6 @@ import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
-from abc import ABCMeta, abstractmethod
 
 from olmo_core.config import Config, DType
 from olmo_core.distributed.parallel import (
@@ -28,12 +27,13 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
+
 from .pipeline.pipeline_schedule import CustomPipelineStage
 
 if TYPE_CHECKING:
+    from .moe_train_module import MoEV2TransformerTrainModule
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
-    from .moe_train_module import MoEV2TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +94,12 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         return splits
 
     def split_model(
-        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device, use_ddp: bool = False
+        self,
+        model: Transformer,
+        *,
+        pp_mesh: DeviceMesh,
+        device: torch.device,
+        use_ddp: bool = False,
     ) -> Tuple[List[PipelineStage], List[Transformer]]:
         split_points = self.get_split_points(model.n_layers)
         pp_rank = pp_mesh.get_local_rank()
@@ -125,7 +130,6 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
                 model_chunk.lm_head = None  # type: ignore
 
             if self.use_custom_stage_implementation:
-
                 # Use custom stage implementation that re-uses receive buffers across micro-batches
                 stage = CustomPipelineStage(
                     model_chunk,
@@ -184,7 +188,7 @@ class TransformerDataParallelConfig(DataParallelConfig):
     """
 
     prefetch_factor: int = 0
-    
+
     only_allreduce_last_microbatch: bool = True
     reduce_grads_in_fp32: bool = True
     accumulate_grads_in_fp32: bool = True
@@ -287,6 +291,7 @@ class TransformerActivationCheckpointingConfig(Config):
                 "'modules' is required for 'selected_modules' activation checkpointing"
             )
 
+
 from .. import TrainModuleConfig
 
 
@@ -383,11 +388,12 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
         if self.pp_config is None:
             raise OLMoConfigurationError("'pp_config' is required")
 
+
 from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
+
 
 @dataclass
 class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
-    
     rank_microbatch_size: int
     max_sequence_length: int
 
@@ -396,7 +402,6 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
     optim: MoEFusedV2OptimizerConfig
     max_grad_norm: Optional[float] = None
     scheduler: Optional[Scheduler] = None
-
 
     # Model settings.
 
@@ -430,7 +435,9 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
         model: Transformer,
         device: Optional[torch.device] = None,
         eval_only: bool = False,
-    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "MoEV2TransformerTrainModule"]:
+    ) -> Union[
+        "TransformerTrainModule", "TransformerPipelineTrainModule", "MoEV2TransformerTrainModule"
+    ]:
         """
         Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.
 
