@@ -15,11 +15,7 @@ from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,
 )
-from olmo_core.optim import (
-    AdamWConfig,
-    CosWithWarmupAndLinearDecay,
-    OptimGroupOverride,
-)
+from olmo_core.optim import AdamWConfig, CosWithWarmupAndLinearDecay, OptimGroupOverride
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,

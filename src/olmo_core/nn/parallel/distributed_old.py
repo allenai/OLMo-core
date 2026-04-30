@@ -11,10 +11,7 @@ import torch.distributed as dist
 from torch.nn.modules import Module
 
 if dist.is_available():
-    from torch.distributed.distributed_c10d import (
-        ReduceOp,
-        _get_default_group,
-    )
+    from torch.distributed.distributed_c10d import ReduceOp, _get_default_group
     from torch.distributed.utils import _verify_param_shape_across_processes
 
 if TYPE_CHECKING:
@@ -93,9 +90,10 @@ class MultiGroupDistributedDataParallel(Module):
 
         # Multi-process-group support.
         if param_process_group_fn is None:
-            param_process_group_fn = (
-                lambda param: self.process_group
-            )  # default to single process group
+            # default to single process group
+            def param_process_group_fn(param):
+                return self.process_group
+
         self._param_process_group_fn = param_process_group_fn
 
         self._accumulate_grads_in_fp32 = accumulate_grads_in_fp32
@@ -279,7 +277,6 @@ class MultiGroupDistributedDataParallel(Module):
                     break
 
     def _register_accum_grad_hook(self):
-
         def notify_grad_ready(
             param,
         ):

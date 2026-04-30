@@ -12,9 +12,7 @@ from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
 
 # from torch.distributed.pipelining._backward import stage_backward, stage_backward_input
-from .helpers import (
-    stage_backward,
-)
+from .helpers import stage_backward
 
 
 def _make_tensor_from_meta(

@@ -431,11 +431,11 @@ class CustomScheduleInterleaved1F1B:
                 and next_action.need_reload
                 and self.use_gpu_activation_offload
             ):
-                debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
+                # debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
                 _ = self.gpu_activation_offloader.async_reload(
                     f"{next_action.stage_index}F{next_action.microbatch_index}"
                 )  # in saving, using "F" group for both F and B
-                debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
+                # debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
 
             ops: list[dist.P2POp] = []
             if action is not None:
@@ -465,9 +465,9 @@ class CustomScheduleInterleaved1F1B:
                             )
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
-                            debug_mem_before_offload = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_before_offload = torch.cuda.memory_allocated() / (1024**3)
                             _ = self.gpu_activation_offloader.async_offload(offload_group)
-                            debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
                     # self._maybe_compute_loss(stage, output, target_mbs, mb_index)
                     ops.extend(stage.get_fwd_send_ops(mb_index))
                 elif computation_type == PipelineActionType.FULL_BACKWARD:
@@ -501,11 +501,11 @@ class CustomScheduleInterleaved1F1B:
                         #     stage.scale_grads(grad_scale_factor)
 
                         if action.need_reload and self.use_gpu_activation_offload:
-                            debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
                             self.gpu_activation_offloader.manual_release_group(
                                 f"{action.stage_index}F{action.microbatch_index}"
                             )
-                            debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
                         ops.extend(stage.get_bwd_send_ops(mb_index))
                         past_first_backward = True
                 elif computation_type == PipelineActionType.FULL_BACKWARD_CONT:

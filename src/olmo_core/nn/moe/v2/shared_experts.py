@@ -82,7 +82,7 @@ class SharedExperts(nn.Module):
         self.hidden_size = hidden_size
         self.num_experts = num_experts
 
-        assert bias == False, "Shared experts do not support bias for now."
+        assert not bias, "Shared experts do not support bias for now."
 
         E, D, H = num_experts, d_model, hidden_size
 

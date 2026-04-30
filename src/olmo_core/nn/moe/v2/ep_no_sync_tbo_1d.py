@@ -51,9 +51,7 @@ def ep_no_sync_stage_a(
     assert self.routed_experts_router is not None
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
-    assert (
-        use_torch_grouped_mm() == True
-    ), "EP no-sync implementation requires torch.grouped_mm support"
+    assert use_torch_grouped_mm(), "EP no-sync implementation requires torch.grouped_mm support"
     assert (
         not requires_host_side_split_sizes()
     ), "EP no-sync implementation does not support host-side split size communication"

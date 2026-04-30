@@ -10,18 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from transformers import AutoModelForCausalLM
+
 from olmo_core.config import Config, DType
-from olmo_core.internal.experiment import (
-    CommonComponents,
-)
+from olmo_core.internal.experiment import CommonComponents
 from olmo_core.nn.transformer import (
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
 )
-from olmo_core.train.checkpoint import (
-    UpcycleCheckpointer,
-)
+from olmo_core.train.checkpoint import UpcycleCheckpointer
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
@@ -164,10 +162,6 @@ class UpcycleConfig(Config):
     init_seed: int = 2025
 
 
-from transformers import AutoModelForCausalLM
-
-
-
 def upcycle_copy_mlp(source_model, target_model):
     NUM_EXPERTS = global_args["NUM_EXPERTS"]
 
@@ -259,7 +253,9 @@ def upcycle_copy_mlp(source_model, target_model):
             tgt_key, map_func = tgt_key
         else:
             print(f"{src_key} -> {tgt_key}")
-            map_func = lambda x: x  # identity function
+
+            def map_func(x):  # identity function
+                return x
 
         # check if the key is in source model
         if src_key not in source_model.state_dict():
@@ -610,7 +606,9 @@ def upcycle_copy_mlp_as_shared_expert(source_model, target_model, norm_type):
             tgt_key, map_func = tgt_key
         else:
             print(f"{src_key} -> {tgt_key}")
-            map_func = lambda x: x  # identity function
+
+            def map_func(x):  # identity function
+                return x
 
         # check if the key is in source model
         if src_key not in source_model.state_dict():

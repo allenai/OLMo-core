@@ -518,7 +518,7 @@ class MoEFusedV2Optimizer(Optimizer):
     def offload_optimizer_states(self):
         raise NotImplementedError()
         # Offload optimizer states to CPU to save GPU memory
-        dbg_mem1 = torch.cuda.memory_allocated() / (1024**3)
+        # dbg_mem1 = torch.cuda.memory_allocated() / (1024**3)
         for tag in ("dp", "ep_dp"):
             pg, order = self._pg_and_order_for_tag(tag)
             if pg is None or not order:
@@ -530,7 +530,7 @@ class MoEFusedV2Optimizer(Optimizer):
             flat_exp_avg.data = flat_exp_avg.data.to("cpu")
             flat_exp_avg_sq.data = flat_exp_avg_sq.data.to("cpu")
 
-        dbg_mem2 = torch.cuda.memory_allocated() / (1024**3)
+        # dbg_mem2 = torch.cuda.memory_allocated() / (1024**3)
         pass
 
     def reload_optimizer_states_to_device(
@@ -722,17 +722,17 @@ class MoEFusedV2Optimizer(Optimizer):
 
     @torch.no_grad()
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
-        dbg_mem_before_cp1 = torch.cuda.memory_allocated() / 1024**3
+        # dbg_mem_before_cp1 = torch.cuda.memory_allocated() / 1024**3
         if getattr(self, "_use_reduce_scatter_grads", True):
             # Precondition: DDP model did not all-reduce grads, grads on dp ranks different now
             # the optimizer has sharded main param + states in fp32
             # now call reduce scatter to collect averaged grads from dp ranks
             # directly into the owned main param views
-            dbg_mem_before_rs = torch.cuda.memory_allocated() / 1024**3
-            dbg_mem_peak_before_rs = torch.cuda.max_memory_allocated() / 1024**3
+            # dbg_mem_before_rs = torch.cuda.memory_allocated() / 1024**3
+            # dbg_mem_peak_before_rs = torch.cuda.max_memory_allocated() / 1024**3
             self._reduce_scatter_model_grads_chunked()
-            dbg_mem_after_rs = torch.cuda.memory_allocated() / 1024**3
-            dbg_mem_peak_after_rs = torch.cuda.max_memory_allocated() / 1024**3
+            # dbg_mem_after_rs = torch.cuda.memory_allocated() / 1024**3
+            # dbg_mem_peak_after_rs = torch.cuda.max_memory_allocated() / 1024**3
 
         else:
             # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
@@ -741,11 +741,11 @@ class MoEFusedV2Optimizer(Optimizer):
 
         total_grad_norm = self._clip_grad()
         self.latest_grad_norm = total_grad_norm
-        dbg_mem_before_step = torch.cuda.memory_allocated() / 1024**3
+        # dbg_mem_before_step = torch.cuda.memory_allocated() / 1024**3
         self._step_foreach(closure)
-        dbg_mem_after_step = torch.cuda.memory_allocated() / 1024**3
+        # dbg_mem_after_step = torch.cuda.memory_allocated() / 1024**3
         self._dealloc_main_grad()
-        dbg_mem_before_cp2 = torch.cuda.memory_allocated() / 1024**3
+        # dbg_mem_before_cp2 = torch.cuda.memory_allocated() / 1024**3
 
         # 1) owners write back to local model params
         self._copy_owned_main_to_model_bf16()

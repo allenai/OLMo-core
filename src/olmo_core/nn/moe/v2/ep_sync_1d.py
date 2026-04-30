@@ -101,7 +101,7 @@ def combined_forward_ep_1d(
     """Forward function with synced expert parallelism."""
     self = block
     assert self.routed_experts_router is not None
-    assert self.ep_enabled == True
+    assert self.ep_enabled
     assert self.num_local_routed_experts is not None
 
     B, S, D = x.shape

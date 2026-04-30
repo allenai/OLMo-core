@@ -22,18 +22,12 @@ import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed import ProcessGroup
-from torch.distributed.checkpoint.default_planner import (
-    DefaultSavePlanner,
-)
-from torch.distributed.checkpoint.metadata import Metadata
+from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
+from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadata
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import FSDPModule
 from torch.distributed.pipelining import PipelineStage
-from torch.distributed.tensor import (
-    DTensor,
-    Replicate,
-    Shard,
-)
+from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from olmo_core.aliases import PathOrStr
@@ -49,10 +43,7 @@ from olmo_core.distributed.parallel import (
     get_device_mesh_info,
 )
 from olmo_core.distributed.parallel.context_parallel import ContextParallelConfig
-from olmo_core.distributed.parallel.data_parallel import (
-    DataParallelConfig,
-    DataParallelType,
-)
+from olmo_core.distributed.parallel.data_parallel import DataParallelConfig
 from olmo_core.distributed.parallel.expert_parallel import ExpertParallelConfig
 from olmo_core.distributed.parallel.pipeline_parallel import (
     PipelineParallelConfig,
@@ -104,11 +95,6 @@ def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
 
 class FlatSavePlanner(DefaultSavePlanner):
     pass
-
-
-from torch.distributed.checkpoint.metadata import (
-    TensorStorageMetadata,
-)
 
 
 def debug_check_grad(name, tag, tensor, input_ids, micro_batch_idx):
@@ -286,9 +272,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             # Build optimizer(s).
             log.info("Building optimizer...")
 
-            from olmo_core.optim.moe_optimizer import (
-                MoEFusedV2OptimizerConfig,
-            )
+            from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
 
             assert isinstance(optim, MoEFusedV2OptimizerConfig)
             optim = cast(MoEFusedV2OptimizerConfig, optim)
@@ -889,7 +873,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
             num_micro_batches = len(micro_batches)
 
-            dbg_mem_before_fwd0 = torch.cuda.memory_allocated() / 1024**3
+            # dbg_mem_before_fwd0 = torch.cuda.memory_allocated() / 1024**3
 
             dbg_mem_activation_usage_all = []
             dbg_mem_activation_freed_all = []

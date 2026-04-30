@@ -2,6 +2,7 @@ import logging
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import ClassVar, List, Optional, Tuple
 
 import torch.distributed as dist
@@ -271,9 +272,6 @@ class CheckpointerCallback(Callback):
             self._checkpoints.append(self._save_checkpoint(save_async=False))
 
         self._await_last_checkpoint()
-
-
-from pathlib import Path
 
 
 @dataclass

@@ -14,17 +14,13 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.config import Config, DType
-from olmo_core.internal.experiment import (
-    CommonComponents,
-)
+from olmo_core.internal.experiment import CommonComponents
 from olmo_core.nn.transformer import (
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
 )
-from olmo_core.train.checkpoint import (
-    UpcycleCheckpointer,
-)
+from olmo_core.train.checkpoint import UpcycleCheckpointer
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
@@ -154,7 +150,6 @@ class UpcycleConfig(Config):
 
 
 from transformers import AutoModelForCausalLM
-
 
 ''' [Routed Expert MLP]
 class MoEMLP(MoEMLPBase):

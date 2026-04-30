@@ -5,7 +5,6 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 import logging
 from typing import cast
 
-
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
@@ -13,24 +12,15 @@ from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, ma
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMLossImplementation
-from olmo_core.nn.moe import (
-    MoELoadBalancingLossGranularity,
-    MoERouterGatingFunction,
-)
-from olmo_core.nn.moe.v2.block import (
-    MoERouterConfigV2,
-)
+from olmo_core.nn.moe import MoELoadBalancingLossGranularity, MoERouterGatingFunction
+from olmo_core.nn.moe.v2.block import MoERouterConfigV2
 from olmo_core.nn.transformer import (
     MoEFusedV2TransformerConfig,
     TransformerBlockType,
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    OptimGroupOverride,
-    SchedulerUnits,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -413,11 +403,7 @@ def finalize_config(config: ExperimentConfig):
     DATA_WORK_DIR = "/tmp/dataset-cache"
     # SAVE_ROOT = "/tmp/olmo-core/runs"  # NOTE: change this to what you want
 
-    from olmo_core.data import (
-        DataMix,
-        NumpyDatasetConfig,
-        TokenizerConfig,
-    )
+    from olmo_core.data import DataMix, NumpyDatasetConfig, TokenizerConfig
 
     dataset_config = NumpyDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,

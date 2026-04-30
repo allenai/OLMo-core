@@ -39,7 +39,7 @@ def combined_forward_ep_tbo(
 
     assert self.routed_experts is not None
     assert self.routed_experts_router is not None
-    assert self.ep_enabled == True
+    assert self.ep_enabled
     assert self.num_local_routed_experts is not None
 
     B, S, D = x0.shape

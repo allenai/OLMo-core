@@ -147,7 +147,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     # assert common.launch is not None
     # assert len(common.launch.clusters) == 1
     # cluster = common.launch.clusters[0]
-    cluster = "ai2/jupiter-cirrascale-2"
+    # cluster = "ai2/jupiter-cirrascale-2"
     return (
         TrainerConfig(
             save_folder=f"/workspace/tmp/{common.run_name}",

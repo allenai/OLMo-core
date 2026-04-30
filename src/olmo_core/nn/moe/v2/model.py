@@ -1,22 +1,17 @@
 import logging
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import nvtx
 import torch
 import torch.distributed as dist
 from torch.distributed._composable.replicate import replicate
 from torch.distributed.device_mesh import DeviceMesh
-from torch.utils.checkpoint import checkpoint
+from torch.utils.checkpoint import (
+    CheckpointPolicy,
+    SelectiveCheckpointContext,
+    checkpoint,
+    noop_context_fn,
+)
 
 import olmo_core.nn.transformer
 from olmo_core.distributed.parallel import get_pp_mesh
@@ -26,9 +21,7 @@ from olmo_core.ops import moe as ops
 from olmo_core.utils import mark_dynamic
 
 from ...lm_head import LMOutputWithLoss
-from ..utils import (
-    moe_unpermute_no_compile,
-)
+from ..utils import moe_unpermute_no_compile
 from .block import MoEFusedV2TransformerBlock
 from .checkpointing import checkpoint_recompute_context_fn
 from .ep_no_sync_buffers import _NoSyncSymmSharedPool, _NoSyncTboPendingContext
@@ -39,11 +32,6 @@ if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 log = logging.getLogger(__name__)
 
-
-from torch.utils.checkpoint import (
-    CheckpointPolicy,
-    noop_context_fn,
-)
 
 # aten = torch.ops.aten
 # c10d = torch.ops.c10d
@@ -57,7 +45,6 @@ should_save_ops = [
     torch.ops.flash_attn._flash_attn_forward.default,
     # torch.ops.flash_attn_3.fwd.default,
 ]
-from torch.utils.checkpoint import SelectiveCheckpointContext
 
 
 def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):
@@ -426,10 +413,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         world_mesh: Dict[str, Optional[DeviceMesh]],
         model_part_idx: int = 0,
     ) -> torch.Generator:
-        from olmo_core.nn.attention import (
-            Attention,
-            FusedAttention,
-        )
+        from olmo_core.nn.attention import Attention, FusedAttention
 
         from .block import MoEFusedV2TransformerBlock
 

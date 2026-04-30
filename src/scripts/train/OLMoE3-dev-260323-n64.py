@@ -28,23 +28,15 @@ from olmo_core.internal.experiment import (
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMLossImplementation
-from olmo_core.nn.moe import (
-    MoELoadBalancingLossGranularity,
-    MoERouterGatingFunction,
-)
-from olmo_core.nn.moe.v2.block import (
-    MoERouterConfigV2,
-)
+from olmo_core.nn.moe import MoELoadBalancingLossGranularity, MoERouterGatingFunction
+from olmo_core.nn.moe.v2.block import MoERouterConfigV2
 from olmo_core.nn.transformer import (
     MoEFusedV2TransformerConfig,
     TransformerBlockType,
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    OptimGroupOverride,
-    SchedulerUnits,
-)
+from olmo_core.optim import OptimGroupOverride, SchedulerUnits
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
     ComposableSchedulerMonkeyPatchDecay,
@@ -476,7 +468,7 @@ WORK_DIR = "/workspace"
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
 
-    cluster = "ai2/jupiter"
+    # cluster = "ai2/jupiter"
     # cluster = 'cirrascale'
     from olmo_core.train.checkpoint import CheckpointerConfig
 

@@ -15,11 +15,7 @@ from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,
 )
-from olmo_core.optim import (
-    AdamWConfig,
-    CosWithWarmupAndLinearDecay,
-    OptimGroupOverride,
-)
+from olmo_core.optim import AdamWConfig, CosWithWarmupAndLinearDecay, OptimGroupOverride
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -61,7 +57,7 @@ def build_model_config(
     NUM_EXPERTS = global_args["NUM_EXPERTS"]
     TOP_K = global_args["TOP_K"]
     MOE_EXPANSION_FACTOR = global_args["MOE_EXPANSION_FACTOR"]
-    SHARED_EXPERT_EXPANSION_FACTOR = global_args["SHARED_EXPERT_EXPANSION_FACTOR"]
+    # SHARED_EXPERT_EXPANSION_FACTOR = global_args["SHARED_EXPERT_EXPANSION_FACTOR"]
 
     from olmo_core.data import TokenizerConfig
     from olmo_core.nn.attention import (

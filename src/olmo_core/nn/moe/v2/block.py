@@ -16,16 +16,7 @@ try:
 except ImportError:
     _symm_mem = None  # type: ignore[assignment]
 
-# Process-local cache for the EP->group "0" symmetric-memory alias.
-# This makes repeated calls from multiple MoE blocks idempotent when they use
-# the same EP group.
-_EP_SYMM_GROUP0_ALIAS_LOCK = threading.Lock()
-_EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
-
-from olmo_core.distributed.utils import (
-    get_rank,
-    get_world_size,
-)
+from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.kernels import ScaledGroupedMMPrequantizedRHS
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType
@@ -57,12 +48,15 @@ from .fp8 import MoERowwiseFP8Config
 from .fp8 import invalidate_rowwise_fp8_cache as _invalidate_rowwise_fp8_cache
 from .fp8 import normalize_rowwise_fp8_config
 from .no_ep import combined_forward_no_ep as _combined_forward_no_ep
-from .routed_experts import (
-    RoutedExperts,
-    RoutedExpertsConfig,
-)
+from .routed_experts import RoutedExperts, RoutedExpertsConfig
 from .router import MoERouterConfigV2, MoERouterV2
 from .shared_experts import SharedExperts, SharedExpertsConfig
+
+# Process-local cache for the EP->group "0" symmetric-memory alias.
+# This makes repeated calls from multiple MoE blocks idempotent when they use
+# the same EP group.
+_EP_SYMM_GROUP0_ALIAS_LOCK = threading.Lock()
+_EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
 
 
 @dataclass

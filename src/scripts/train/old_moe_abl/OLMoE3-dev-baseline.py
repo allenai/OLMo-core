@@ -25,12 +25,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    OptimGroupOverride,
-    SchedulerUnits,
-    SkipStepAdamWConfig,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -200,7 +195,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
 
-    cluster = "ai2/augusta-google-1"
+    # cluster = "ai2/augusta-google-1"
 
     return (
         TrainerConfig(
@@ -277,11 +272,7 @@ def finalize_config(config: ExperimentConfig):
     DATA_WORK_DIR = "/tmp/dataset-cache"
     # SAVE_ROOT = "/tmp/olmo-core/runs"  # NOTE: change this to what you want
 
-    from olmo_core.data import (
-        DataMix,
-        NumpyDatasetConfig,
-        TokenizerConfig,
-    )
+    from olmo_core.data import DataMix, NumpyDatasetConfig, TokenizerConfig
 
     dataset_config = NumpyDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,

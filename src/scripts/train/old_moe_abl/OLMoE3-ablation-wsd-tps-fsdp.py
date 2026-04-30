@@ -25,12 +25,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    OptimGroupOverride,
-    SchedulerUnits,
-    SkipStepAdamWConfig,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -193,7 +188,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     # assert common.launch is not None
     # assert len(common.launch.clusters) == 1
     # cluster = common.launch.clusters[0]
-    cluster = "ai2/jupiter-cirrascale-2"
+    # cluster = "ai2/jupiter-cirrascale-2"
     return (
         TrainerConfig(
             save_folder=f"/workspace/tmp/{common.run_name}",

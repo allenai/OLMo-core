@@ -5,9 +5,7 @@ import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.distributed.checkpoint import (
-    RemoteFileSystemReader,
-)
+from olmo_core.distributed.checkpoint import RemoteFileSystemReader
 
 
 def load_state_dict_direct(

@@ -25,12 +25,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    OptimGroupOverride,
-    SchedulerUnits,
-    SkipStepAdamWConfig,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -279,7 +274,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
 
     # cluster = 'ai2/jupiter-cirrascale-2'
-    cluster = "ai2/augusta-google-1"
+    # cluster = "ai2/augusta-google-1"
 
     return (
         TrainerConfig(

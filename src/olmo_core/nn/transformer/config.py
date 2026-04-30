@@ -21,9 +21,7 @@ from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
-from .flops import (
-    num_floating_point_operations_for_logits,
-)
+from .flops import num_floating_point_operations_for_logits
 from .init import InitMethod
 
 if TYPE_CHECKING:

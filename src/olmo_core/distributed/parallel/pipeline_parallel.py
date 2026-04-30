@@ -1,7 +1,9 @@
 import logging
+import os
+import re
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -136,14 +138,6 @@ class PipelineParallelConfig(Config):
             raise NotImplementedError(style)
 
 
-import os
-import re
-from typing import Dict, Optional
-
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-
-
 def _parse_cell(op: Any):
     """Return (kind, mb) where kind in {'F','B','idle'} and mb is Optional[int]."""
     if op is None:
@@ -168,6 +162,9 @@ def draw_pipeline_timeline(
     figsize_per_cell: float = 0.35,
     outpath: Optional[str] = None,
 ):
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
     ranks = sorted(pp_order.keys())
     assert ranks == list(range(len(ranks))), "pp_order keys should be 0..N-1"
     num_ranks = len(ranks)

@@ -190,8 +190,8 @@ def main():
                 print(f"rank {rank} before backward for micro-batch {micro_batch_idx}")
                 loss.backward()
                 print(f"rank {rank} backward done for micro-batch {micro_batch_idx}")
-                debug_grad_1 = ddp_model.module.fc1.weight.grad
-                debug_grad_2 = ddp_model.module.fc2.weight.grad
+                # debug_grad_1 = ddp_model.module.fc1.weight.grad
+                # debug_grad_2 = ddp_model.module.fc2.weight.grad
         optimizer.step()
 
         if rank == 0:
