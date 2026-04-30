@@ -254,33 +254,51 @@ class NgramTableSoftTargetSource:
         self.trie_path = trie_path
         self.forward_index_path = fwd_path
 
-        # If either file lives on weka, mirror it into /dev/shm (tmpfs)
-        # once per node — the kenlm trie binary + forward index are
-        # accessed at random offsets by dozens of dataloader workers,
-        # which thrashes the OS page cache when the backing store is a
-        # network filesystem.
-        trie_local = _mirror_to_shm(str(trie_path))
-        fwd_local = _mirror_to_shm(str(fwd_path))
+        # Lazy: don't open the dylib or kenlm in __init__. The wrapper has
+        # to be picklable so torch DataLoader can spawn worker processes
+        # with it — and ctypes.CDLL's internal _FuncPtr type can't pickle.
+        # First call to lookup_batch triggers the actual open, which
+        # mirrors weka files to /dev/shm (one per node) and constructs
+        # the C++ ModelWrapper. Each worker process pays this once.
+        self._lib = None
+        self._handle = None
 
-        self._lib = _get_lib()
-        self._handle = self._lib.ngram_lookup_open(
+    def __getstate__(self):
+        # Drop the unpicklable lib + handle; everything else is plain data.
+        state = self.__dict__.copy()
+        state["_lib"] = None
+        state["_handle"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+    def _ensure_open(self):
+        """Mirror tables to /dev/shm and open the C++ ModelWrapper. Idempotent."""
+        if self._handle is not None:
+            return
+        trie_local = _mirror_to_shm(str(self.trie_path))
+        fwd_local = _mirror_to_shm(str(self.forward_index_path))
+        lib = _get_lib()
+        handle = lib.ngram_lookup_open(
             trie_local.encode("utf-8"),
             fwd_local.encode("utf-8"),
             self.unigram_shortlist_size,
         )
-        if not self._handle:
+        if not handle:
             raise RuntimeError(
-                f"ngram_lookup_open failed; check stderr. trie={trie_path}, "
-                f"forward_index={fwd_path}"
+                f"ngram_lookup_open failed; check stderr. trie={self.trie_path}, "
+                f"forward_index={self.forward_index_path}"
             )
-
-        actual_order = int(self._lib.ngram_lookup_order(self._handle))
+        actual_order = int(lib.ngram_lookup_order(handle))
         if actual_order != self.N_max:
-            self._lib.ngram_lookup_close(self._handle)
-            self._handle = None
+            lib.ngram_lookup_close(handle)
             raise ValueError(
                 f"trie binary has order={actual_order} but caller passed N_max={self.N_max}"
             )
+        # Bind only after both checks pass.
+        self._lib = lib
+        self._handle = handle
 
     def __del__(self):
         h = getattr(self, "_handle", None)
@@ -299,6 +317,7 @@ class NgramTableSoftTargetSource:
         :returns: ``(ids[N, K] int32, probs[N, K] float32)``. Each row of
             ``probs`` sums to 1.
         """
+        self._ensure_open()
         N = len(contexts)
         K = self.K
         all_ids = np.zeros((N, K), dtype=np.int32)
