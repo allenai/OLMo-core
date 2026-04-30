@@ -545,6 +545,23 @@ class TransformerTrainModule(TrainModule):
                 ReduceType.mean,
                 namespace="train",
             )
+            # Combined optimization objective:
+            #   (1-α) · hard_CE + α · soft_CE + z_loss
+            # This is the actual loss being backpropped each step; useful as
+            # a single number to track training progress when α is changing.
+            total_batch_loss = (1.0 - alpha) * ce_batch_loss + alpha * soft_ce_batch_loss
+            if z_batch_loss is not None:
+                total_batch_loss = total_batch_loss + z_batch_loss
+            self.record_metric(
+                "total loss",
+                total_batch_loss,
+                ReduceType.mean,
+                namespace="train",
+            )
+        # Always log the soft-CE α schedule so the wandb panel shows the
+        # full ramp — including the post-ramp tail at α=0 — instead of
+        # going blank once soft-CE deactivates.
+        if self.soft_ce_alpha_start is not None:
             self.record_metric(
                 "soft CE alpha",
                 alpha,
