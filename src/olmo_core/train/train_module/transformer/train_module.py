@@ -801,6 +801,16 @@ class TransformerTrainModule(TrainModule):
         where ``labels == ignore_index`` are zeroed out so they match hard-CE's
         ignore semantics (and because their ``loss_div_factor`` denominator
         already excluded them).
+
+        Note on naming: this IS forward KL up to a constant. The ngram-side
+        target distribution p is fixed (not a function of model parameters),
+        so KL(p || q_θ) = soft_CE(p, q_θ) - H(p) and the H(p) term has zero
+        gradient w.r.t. θ. We compute and log soft_CE because it's the
+        actual quantity we're summing, but the optimization is equivalent
+        to forward KL minimization. If we ever switch to *reverse* KL
+        (KL(q_θ || p) — mode-seeking), the entropy term H(q_θ) does depend
+        on θ, the cross-entropy/KL equivalence breaks, and this function
+        needs to be rewritten.
         """
         # (B, S, V) — upcast for numerical stability
         log_probs = F.log_softmax(get_local_tensor(logits).float(), dim=-1)
