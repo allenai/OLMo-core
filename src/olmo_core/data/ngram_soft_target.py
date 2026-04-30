@@ -175,7 +175,12 @@ def _get_lib() -> ctypes.CDLL:
         return _LIB
     lib = ctypes.CDLL(str(_resolve_dylib_path()))
 
-    lib.ngram_lookup_open.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    lib.ngram_lookup_open.argtypes = [
+        ctypes.c_char_p,  # trie_path
+        ctypes.c_char_p,  # forward_index_path
+        ctypes.c_uint,    # unigram_shortlist_size
+        ctypes.c_uint,    # max_continuations_per_prefix
+    ]
     lib.ngram_lookup_open.restype = ctypes.c_void_p
 
     lib.ngram_lookup_close.argtypes = [ctypes.c_void_p]
@@ -223,13 +228,21 @@ class NgramTableSoftTargetSource:
         K: int = 16,
         N_max: int = 5,
         unigram_shortlist: int = 100,
+        max_continuations_per_prefix: int = 64,
     ):
         self.K = int(K)
         self.N_max = int(N_max)
         self.unigram_shortlist_size = int(unigram_shortlist)
+        self.max_continuations_per_prefix = int(max_continuations_per_prefix)
         if self.unigram_shortlist_size < self.K:
             raise ValueError(
                 f"unigram_shortlist ({self.unigram_shortlist_size}) must be >= K ({self.K})"
+            )
+        if self.max_continuations_per_prefix < self.K:
+            raise ValueError(
+                f"max_continuations_per_prefix ({self.max_continuations_per_prefix}) "
+                f"must be >= K ({self.K}) — otherwise we can't fill K candidates "
+                f"from a single observed prefix"
             )
 
         p = Path(table_dir)
@@ -298,6 +311,7 @@ class NgramTableSoftTargetSource:
             trie_local.encode("utf-8"),
             fwd_local.encode("utf-8"),
             self.unigram_shortlist_size,
+            self.max_continuations_per_prefix,
         )
         print(
             f"{tag} ngram_lookup_open returned in {_t.time() - t2:.2f}s "

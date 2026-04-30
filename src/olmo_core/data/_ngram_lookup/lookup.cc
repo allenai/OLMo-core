@@ -52,8 +52,11 @@ using lm::WordIndex;
 constexpr uint32_t kInvalidTokenId = UINT32_MAX;
 
 // Forward-index file format constants — must match build_forward_index.py.
+// Version 2: continuations within each prefix are sorted by descending KN
+// log10 probability so the data loader can take the first K' as a top-K'
+// candidate set without scoring all of them.
 constexpr char kForwardIndexMagic[4] = {'F', 'I', 'X', '1'};
-constexpr uint32_t kForwardIndexVersion = 1;
+constexpr uint32_t kForwardIndexVersion = 2;
 constexpr size_t kForwardIndexHeaderSize = 64;
 constexpr size_t kForwardIndexSectionHeaderSize = 48;
 
@@ -98,6 +101,12 @@ struct ModelWrapper {
     void* forward_index_base = MAP_FAILED;
     size_t forward_index_size = 0;
     std::vector<ForwardSection> sections;  // sorted by order ascending
+
+    // Cap on continuations enumerated per prefix per order at lookup time.
+    // The continuations are sorted by descending KN prob at build time, so
+    // the first N' are the top-N' candidates by prob. Bounds candidate set
+    // size and BaseScore work per position.
+    unsigned int max_continuations_per_prefix = 64;
 
     // Top-N unigrams by log10-prob, descending (kenlm word index + log10p).
     std::vector<std::pair<WordIndex, float>> unigram_shortlist;
@@ -189,7 +198,9 @@ bool load_forward_index(const char* path, ModelWrapper* w) {
     std::memcpy(&n_orders, p + 8, 4);
     std::memcpy(&vocab_size, p + 12, 4);
     if (version != kForwardIndexVersion) {
-        fprintf(stderr, "ngram_lookup: forward index version %u != expected %u\n",
+        fprintf(stderr,
+                "ngram_lookup: forward_index.bin version %u != expected %u — "
+                "rebuild with current code (data_gen/build_forward_index.py)\n",
                 version, kForwardIndexVersion);
         return false;
     }
@@ -243,12 +254,15 @@ extern "C" {
 //
 //   trie_path           path to pilot.binary
 //   forward_index_path  path to forward_index.bin
-//   unigram_shortlist_size  size of the order-1 fallback set
+//   unigram_shortlist_size       size of the order-1 fallback set
+//   max_continuations_per_prefix top-N' to enumerate per prefix per order
 void* ngram_lookup_open(const char* trie_path,
                         const char* forward_index_path,
-                        unsigned int unigram_shortlist_size) {
+                        unsigned int unigram_shortlist_size,
+                        unsigned int max_continuations_per_prefix) {
     if (trie_path == nullptr || forward_index_path == nullptr) return nullptr;
     auto* w = new ModelWrapper();
+    w->max_continuations_per_prefix = max_continuations_per_prefix;
     try {
         // Load the trie model with vocabulary-string capture.
         CaptureVocab cap;
@@ -389,7 +403,13 @@ int ngram_lookup_enumerate_top_k(void* handle,
         uint64_t n_cont = 0;
         const uint32_t* conts = lookup_forward_index(sect, h, &n_cont);
         if (conts == nullptr) continue;
-        for (uint64_t i = 0; i < n_cont; ++i) {
+        // Continuations are sorted by descending KN prob at build time.
+        // Take the first max_continuations_per_prefix as the top-N' by
+        // prob; this bounds the candidate set when a prefix has thousands
+        // of observed continuations (common for short prefixes like a
+        // single high-frequency unigram).
+        uint64_t take = std::min<uint64_t>(n_cont, w->max_continuations_per_prefix);
+        for (uint64_t i = 0; i < take; ++i) {
             candidate_token_ids.insert(conts[i]);
         }
     }
