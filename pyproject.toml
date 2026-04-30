@@ -79,7 +79,15 @@ environments = [
 include-package-data = true
 
 [tool.setuptools.package-data]
-olmo_core = ["py.typed", "*.txt"]
+olmo_core = [
+    "py.typed",
+    "*.txt",
+    # ngram-train soft-target lookup adapter (built at training-job startup
+    # by data/_ngram_lookup/build.sh).
+    "data/_ngram_lookup/*.sh",
+    "data/_ngram_lookup/*.cc",
+    "data/_ngram_lookup/*.patch",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "olmo_core.version.VERSION" }
