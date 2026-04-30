@@ -54,21 +54,19 @@ DOLMA2_BASELINE_PATHS = [
     "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/wikipedia/**/*.npy",
 ]
 
-# Built from the pilot-v4 ARPA (1e-3 fraction, n=5, prune 0 1 1 1 1).
-# Must contain ``pilot.binary`` (KenLM trie binary, source of KN-smoothed
-# probabilities) and ``forward_index.bin`` (forward continuation index, for
-# enumerating candidates per left-context). Weka for AI2 clusters; override
-# via CLI for smoke tests on a different pilot.
+# Built from the pilot-v4 ARPA (1e-3 fraction, n=5, prune 0 1 1 1 1). Must
+# contain ``forward_index_topk.bin`` — the precomputed top-K forward index
+# (FXTK v=1) produced by ``data_gen/build_topk_forward_index.py``. Runtime
+# is pure-Python over this single mmap'd file; no kenlm at training time.
+# Override via ``--ngram-table-dir`` for smoke tests on a different pilot.
 DEFAULT_NGRAM_TABLE_DIR = (
     "/weka/oe-training-default/ai2-llm/ngram-tables/pilots/"
     "pilot-2026-04-22-fraction1e-3-n5"
 )
 
-# Soft-target hyperparameters. K=16 and unigram_shortlist=100 align with our
-# pilot-phase sizing decisions; N_max=5 matches the built tables.
+# Soft-target hyperparameters. K=16, N_max=5 must match the built index.
 DEFAULT_SOFT_TARGET_K = 16
 DEFAULT_SOFT_TARGET_N_MAX = 5
-DEFAULT_SOFT_TARGET_UNIGRAM_SHORTLIST = 100
 
 # Soft-CE schedule defaults: start fully soft and linearly ramp down to 0
 # (pure hard CE) over the first half of training.
@@ -146,9 +144,6 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         table_dir=getattr(args, "ngram_table_dir", DEFAULT_NGRAM_TABLE_DIR),
         K=getattr(args, "soft_target_k", DEFAULT_SOFT_TARGET_K),
         N_max=getattr(args, "soft_target_n_max", DEFAULT_SOFT_TARGET_N_MAX),
-        unigram_shortlist=getattr(
-            args, "soft_target_unigram_shortlist", DEFAULT_SOFT_TARGET_UNIGRAM_SHORTLIST
-        ),
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -178,9 +173,6 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         tokenizer=tokenizer,
         instance_sources=instance_sources,
         data_loader=ComposableDataLoaderConfig(  # noqa: F405
-            # Bumped from 8 → 16 so dataloader workers can keep up with GPU
-            # step time for the soft-target lookup. Each worker prepares one
-            # instance at a time; per-instance ngram lookup is the bottleneck.
             num_workers=16, instance_filter_config=InstanceFilterConfig()  # noqa: F405
         ),
     )
@@ -199,8 +191,8 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         type=str,
         default=DEFAULT_NGRAM_TABLE_DIR,
         help=(
-            "Path to the ngram_table_n<N>.bin files. Defaults to the "
-            "pilot-v4 1e-3 n=5 tables on Weka."
+            "Directory containing forward_index_topk.bin (FXTK v=1). Defaults "
+            "to the pilot 1e-3 n=5 tables on Weka."
         ),
     )
     parser.add_argument(

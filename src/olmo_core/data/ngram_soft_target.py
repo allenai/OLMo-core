@@ -1,30 +1,20 @@
 """
 Training-time soft-target lookup for ngram-train.
 
-Backed by:
-  - A KenLM trie binary (``pilot.binary``) built with
-    ``build_binary trie -q 8 -a 22`` — provides KN-smoothed conditional
-    probabilities via ``BaseScore``.
-  - A forward-indexed continuation file (``forward_index.bin``) built by
-    ``data_gen/build_forward_index.py`` — for each prefix h of length 1
-    through ``N_max - 1``, lists the dolma2 token IDs that complete it at
-    order ``|h|+1``.
+Reads a precomputed top-K forward index (FXTK v=1) produced by
+``data_gen/build_topk_forward_index.py``. For each query position with
+context h, we binary-search the longest matching order's prefix table,
+read the row's K (token, log-prob) pairs, and renormalize to a
+distribution over those K tokens.
 
-For each query position with context h:
-  1. We enumerate candidate next-tokens by binary-searching the forward
-     index at every relevant order, plus a precomputed top-N unigram
-     shortlist.
-  2. For each candidate w, we compute log P_KN(w | h) via KenLM's
-     ``BaseScore`` (full modified-KN cross-order combine).
-  3. Top-K by log-prob; renormalize to sum to 1.
+No kenlm or C++ adapter at runtime — all cross-order P_KN combination is
+done at build time, and the lookup is a constant-time row read after a
+binary search.
 
-The C++ adapter (``data_gen/_ngram_lookup/lookup.cc``) does steps 1-2;
-this wrapper handles ctypes plumbing and step 3's renormalization.
-
-Inputs (per position): a context of up to ``N_max - 1`` tokens (the
-caller — an InstanceSource — is responsible for walking left from the
-target position and stopping at the preceding EOS so the window doesn't
-cross document boundaries).
+Inputs (per position): a context of up to ``N_max - 1`` tokens (the caller
+walks left from the target position; doc-boundary handling is the caller's
+responsibility — high-order probes that cross a boundary just miss and the
+lookup degrades through the order ladder).
 
 Outputs (per position): ``(topk_ids: int32[K], topk_probs: float32[K])``
 with ``topk_probs`` summing to 1.
@@ -32,38 +22,32 @@ with ``topk_probs`` summing to 1.
 
 from __future__ import annotations
 
-import ctypes
 import fcntl
 import hashlib
+import mmap
 import os
 import shutil
-import subprocess
-import sys
+import struct
 from pathlib import Path
-from typing import Sequence, Tuple, Union
+from typing import Optional, Sequence, Tuple, Union
 
 import numpy as np
 
 
-# File-system prefixes whose contents we treat as "remote" and copy into a
-# RAM-backed local cache before opening. Weka-mounted training data lives
-# at /weka/...; reading the kenlm trie binary + forward index directly from
-# Weka via mmap with 64+ concurrent dataloader workers thrashes the OS page
-# cache and stalls training at step 0. /dev/shm is tmpfs (RAM-backed) on
-# all our beaker training nodes; one sequential copy populates it.
+# ----------------------------------------------------------------------
+# /dev/shm staging — same idea as before. mmap'd reads from weka with 64+
+# concurrent dataloader workers thrash the OS page cache; one sequential
+# copy into tmpfs avoids that.
+# ----------------------------------------------------------------------
+
 _REMOTE_PREFIXES = ("/weka/",)
-_SHM_CACHE_ROOT = Path(os.environ.get("OLMO_NGRAM_SHM_ROOT", "/dev/shm/olmo_core_ngram_cache"))
+_SHM_CACHE_ROOT = Path(
+    os.environ.get("OLMO_NGRAM_SHM_ROOT", "/dev/shm/olmo_core_ngram_cache")
+)
 
 
 def _mirror_to_shm(path: str) -> str:
-    """If ``path`` lives on a remote-ish filesystem (weka), copy it once
-    into ``/dev/shm`` (tmpfs / RAM-backed) and return the cache path. The
-    copy is guarded by an exclusive flock so concurrent dataloader
-    processes don't race; whichever gets the lock first does the copy and
-    the rest attach to the already-cached file.
-
-    Local-disk paths (e.g. /tmp/...) are returned unchanged.
-    """
+    """Copy a remote-ish file to /dev/shm once per node (flock-protected)."""
     if not any(path.startswith(p) for p in _REMOTE_PREFIXES):
         return path
     src_size = os.path.getsize(path)
@@ -71,7 +55,6 @@ def _mirror_to_shm(path: str) -> str:
     cache_dir = _SHM_CACHE_ROOT / path_hash
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / Path(path).name
-    # Fast path: cache already populated by a sibling process.
     try:
         if cache_path.is_file() and cache_path.stat().st_size == src_size:
             return str(cache_path)
@@ -80,7 +63,6 @@ def _mirror_to_shm(path: str) -> str:
     lock_path = str(cache_path) + ".lock"
     with open(lock_path, "w") as lock_f:
         fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
-        # Re-check inside the lock — another process may have done it.
         if cache_path.is_file() and cache_path.stat().st_size == src_size:
             return str(cache_path)
         tmp_path = Path(str(cache_path) + ".partial")
@@ -107,119 +89,173 @@ def _mirror_to_shm(path: str) -> str:
     return str(cache_path)
 
 
-# Default OUT_DIR matches what _ngram_lookup/build.sh uses; both must agree.
-_DEFAULT_DYLIB_OUT = Path("/tmp/olmo_core_ngram_lookup")
-_NGRAM_LOOKUP_SRC = Path(__file__).parent / "_ngram_lookup"
+# ----------------------------------------------------------------------
+# FXTK v=1 file format — must match data_gen/build_topk_forward_index.py.
+# ----------------------------------------------------------------------
+
+_MAGIC = b"FXTK"
+_VERSION = 1
+_HEADER_SIZE = 64
+_SECTION_HEADER_SIZE = 64
 
 
-def _build_dylib_with_lock(out_dir: Path) -> Path:
-    """Run build.sh under an exclusive flock so concurrent dataloader processes
-    don't race on the build. Returns the path to the resulting .so/.dylib.
-    """
-    out_dir.mkdir(parents=True, exist_ok=True)
-    suffix = "dylib" if sys.platform == "darwin" else "so"
-    so_path = out_dir / f"libngram_lookup.{suffix}"
-    lock_path = out_dir / "build.lock"
+class _OrderSection:
+    """Per-order tables, mmap-backed numpy views."""
 
-    with open(lock_path, "w") as lock_f:
-        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
-        if so_path.is_file():
-            # Another process built it while we were waiting on the lock.
-            return so_path
-        env = os.environ.copy()
-        env["OUT_DIR"] = str(out_dir)
-        result = subprocess.run(
-            ["bash", str(_NGRAM_LOOKUP_SRC / "build.sh")],
-            env=env,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        if result.returncode != 0 or not so_path.is_file():
-            raise RuntimeError(
-                f"_ngram_lookup/build.sh failed (returncode={result.returncode})\n"
-                f"--- output ---\n{result.stdout.decode(errors='replace')}"
+    def __init__(
+        self,
+        order: int,
+        prefixes_2d: np.ndarray,
+        topk_tokens: np.ndarray,
+        topk_logprobs: np.ndarray,
+    ):
+        self.order = order
+        self.plen = order - 1
+        self.prefixes_2d = prefixes_2d  # (n, plen) uint32, lex-sorted
+        self.topk_tokens = topk_tokens  # (n, K) uint32
+        self.topk_logprobs = topk_logprobs  # (n, K) float32
+        # Structured 1-D view for lex-comparison binary search. uint32
+        # cells in the 2-D array reinterpret as a struct of ``plen`` u4
+        # fields, which numpy compares lex-first when sorting/searching.
+        if self.plen > 0:
+            struct_dtype = np.dtype([(f"f{j}", "<u4") for j in range(self.plen)])
+            self.prefixes_struct = prefixes_2d.view(struct_dtype).reshape(-1)
+        else:
+            # Order 1: single empty-prefix row. No search needed.
+            self.prefixes_struct = None
+
+
+class TopKForwardIndex:
+    """Mmap-backed reader for FXTK v=1 precomputed top-K forward index."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self._mm: Optional[mmap.mmap] = None
+        self._fd: Optional[int] = None
+        self.K: int = 0
+        self.vocab_size: int = 0
+        self.sections_by_order: dict[int, _OrderSection] = {}
+
+    def _ensure_open(self):
+        if self._mm is not None:
+            return
+        fd = os.open(self.path, os.O_RDONLY)
+        try:
+            mm = mmap.mmap(fd, 0, prot=mmap.PROT_READ)
+        except BaseException:
+            os.close(fd)
+            raise
+        self._fd = fd
+        self._mm = mm
+
+        if mm[:4] != _MAGIC:
+            raise ValueError(
+                f"unexpected magic {bytes(mm[:4])!r} in {self.path} (expected {_MAGIC!r})"
             )
-    return so_path
+        version, K, n_orders, vocab_size = struct.unpack("<IIII", mm[4:20])
+        if version != _VERSION:
+            raise ValueError(
+                f"FXTK version {version} != {_VERSION}; rebuild with current "
+                "data_gen/build_topk_forward_index.py"
+            )
+        self.K = int(K)
+        self.vocab_size = int(vocab_size)
+
+        sh_off = _HEADER_SIZE
+        for _ in range(n_orders):
+            sh = mm[sh_off : sh_off + _SECTION_HEADER_SIZE]
+            order, _pad, n_prefixes, p_off, tt_off, tl_off = struct.unpack(
+                "<II QQQQ", sh[:40]
+            )
+            sh_off += _SECTION_HEADER_SIZE
+
+            plen = order - 1
+            if plen > 0:
+                prefixes = np.frombuffer(
+                    mm, dtype=np.uint32, count=n_prefixes * plen, offset=p_off
+                ).reshape(n_prefixes, plen)
+            else:
+                # Order 1: zero-byte prefix block.
+                prefixes = np.zeros((1, 0), dtype=np.uint32)
+
+            topk_tokens = np.frombuffer(
+                mm, dtype=np.uint32, count=n_prefixes * self.K, offset=tt_off
+            ).reshape(n_prefixes, self.K)
+            topk_logprobs = np.frombuffer(
+                mm, dtype=np.float32, count=n_prefixes * self.K, offset=tl_off
+            ).reshape(n_prefixes, self.K)
+
+            self.sections_by_order[order] = _OrderSection(
+                order=order,
+                prefixes_2d=prefixes,
+                topk_tokens=topk_tokens,
+                topk_logprobs=topk_logprobs,
+            )
+
+    def lookup_one(self, context: Sequence[int]) -> tuple[np.ndarray, np.ndarray]:
+        """Return (tokens, logprobs) for the longest matching order.
+
+        ``context`` is the up-to-(N_max-1)-token window ending at the target
+        position's left boundary, oldest first. We try longest-match first
+        and fall through; order 1 (empty prefix) is always present.
+        """
+        self._ensure_open()
+        ctx_len = len(context)
+        # Try the longest order first. We have sections for orders that
+        # exist in the file (typically 1..N_max).
+        max_order_in_file = max(self.sections_by_order)
+        upper = min(max_order_in_file, ctx_len + 1)
+        for n in range(upper, 0, -1):
+            sect = self.sections_by_order.get(n)
+            if sect is None:
+                continue
+            plen = sect.plen
+            if plen == 0:
+                # Order 1 always matches with the empty prefix.
+                return sect.topk_tokens[0], sect.topk_logprobs[0]
+            if ctx_len < plen:
+                continue
+            query = np.asarray(context[-plen:], dtype=np.uint32).reshape(1, plen)
+            struct_dtype = sect.prefixes_struct.dtype
+            query_view = query.view(struct_dtype).reshape(-1)
+            idx = int(np.searchsorted(sect.prefixes_struct, query_view[0]))
+            if idx < sect.prefixes_struct.shape[0] and (
+                sect.prefixes_struct[idx] == query_view[0]
+            ):
+                return sect.topk_tokens[idx], sect.topk_logprobs[idx]
+
+        # Should be unreachable: order 1 (empty prefix) is always present.
+        raise RuntimeError(
+            f"top-K forward index lookup fell through all orders for context "
+            f"of length {ctx_len}; index file may be missing order 1"
+        )
+
+    def close(self):
+        if self._mm is not None:
+            self._mm.close()
+            self._mm = None
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+        self.sections_by_order.clear()
 
 
-def _resolve_dylib_path() -> Path:
-    """Find ``libngram_lookup.{dylib,so}``.
-
-    Resolution order:
-      1. ``$OLMO_NGRAM_LOOKUP_DYLIB`` env var, if set.
-      2. The default training-job build dir (``/tmp/olmo_core_ngram_lookup``);
-         if missing, build it via the bundled ``_ngram_lookup/build.sh``.
-    """
-    env = os.environ.get("OLMO_NGRAM_LOOKUP_DYLIB")
-    if env:
-        p = Path(env)
-        if p.is_file():
-            return p
-        raise FileNotFoundError(f"OLMO_NGRAM_LOOKUP_DYLIB={env} does not exist")
-
-    suffix = "dylib" if sys.platform == "darwin" else "so"
-    candidate = _DEFAULT_DYLIB_OUT / f"libngram_lookup.{suffix}"
-    if candidate.is_file():
-        return candidate
-    return _build_dylib_with_lock(_DEFAULT_DYLIB_OUT)
-
-
-_LIB = None
-
-
-def _get_lib() -> ctypes.CDLL:
-    """Lazy-load the dylib once per process and bind ctypes signatures."""
-    global _LIB
-    if _LIB is not None:
-        return _LIB
-    lib = ctypes.CDLL(str(_resolve_dylib_path()))
-
-    lib.ngram_lookup_open.argtypes = [
-        ctypes.c_char_p,  # trie_path
-        ctypes.c_char_p,  # forward_index_path
-        ctypes.c_uint,    # unigram_shortlist_size
-        ctypes.c_uint,    # max_continuations_per_prefix
-    ]
-    lib.ngram_lookup_open.restype = ctypes.c_void_p
-
-    lib.ngram_lookup_close.argtypes = [ctypes.c_void_p]
-    lib.ngram_lookup_close.restype = None
-
-    lib.ngram_lookup_order.argtypes = [ctypes.c_void_p]
-    lib.ngram_lookup_order.restype = ctypes.c_uint
-
-    lib.ngram_lookup_vocab_size.argtypes = [ctypes.c_void_p]
-    lib.ngram_lookup_vocab_size.restype = ctypes.c_uint64
-
-    lib.ngram_lookup_n_forward_orders.argtypes = [ctypes.c_void_p]
-    lib.ngram_lookup_n_forward_orders.restype = ctypes.c_uint
-
-    lib.ngram_lookup_enumerate_top_k.argtypes = [
-        ctypes.c_void_p,                                 # handle
-        ctypes.POINTER(ctypes.c_uint32),                 # prefix
-        ctypes.c_uint,                                   # prefix_len
-        ctypes.c_uint,                                   # k
-        ctypes.POINTER(ctypes.c_uint32),                 # out_token_ids
-        ctypes.POINTER(ctypes.c_float),                  # out_log_probs
-    ]
-    lib.ngram_lookup_enumerate_top_k.restype = ctypes.c_int
-
-    _LIB = lib
-    return lib
+# ----------------------------------------------------------------------
+# Public class — same name + lookup_batch signature as the previous
+# kenlm-backed implementation, so InstanceSource and collator code don't
+# need to change.
+# ----------------------------------------------------------------------
 
 
 class NgramTableSoftTargetSource:
-    """Soft-target lookup over a KenLM trie binary + a forward continuation index.
+    """Soft-target lookup over a precomputed top-K forward index.
 
-    :param table_dir: Directory containing ``pilot.binary`` and
-        ``forward_index.bin``. Or a path directly to either file (we'll
-        find the sibling).
-    :param K: Top-K size per position.
-    :param N_max: Highest ngram order — must equal the order the trie
-        binary was built with (e.g., 5 for our pilot-1e-3-n5 build).
-    :param unigram_shortlist: Size of the precomputed unigram fallback
-        candidate set used at the order-1 level.
+    :param table_dir: Directory containing ``forward_index_topk.bin`` (FXTK v=1).
+        Or a path directly to that file.
+    :param K: Top-K size per position. Must equal the K the index was built
+        with.
+    :param N_max: Highest ngram order. Must be ≤ the highest order present
+        in the index.
     """
 
     def __init__(
@@ -227,124 +263,78 @@ class NgramTableSoftTargetSource:
         table_dir: Union[str, os.PathLike],
         K: int = 16,
         N_max: int = 5,
-        unigram_shortlist: int = 100,
-        max_continuations_per_prefix: int = 64,
+        # Accepted for backwards-compatibility with the pre-FXTK config but
+        # ignored — the precompute already folded in the unigram path
+        # exactly (top-K' unigrams with K' = K is mathematically sufficient
+        # because the γ-product is per-prefix, ordering preserved).
+        unigram_shortlist: Optional[int] = None,
     ):
         self.K = int(K)
         self.N_max = int(N_max)
-        self.unigram_shortlist_size = int(unigram_shortlist)
-        self.max_continuations_per_prefix = int(max_continuations_per_prefix)
-        if self.unigram_shortlist_size < self.K:
-            raise ValueError(
-                f"unigram_shortlist ({self.unigram_shortlist_size}) must be >= K ({self.K})"
-            )
-        if self.max_continuations_per_prefix < self.K:
-            raise ValueError(
-                f"max_continuations_per_prefix ({self.max_continuations_per_prefix}) "
-                f"must be >= K ({self.K}) — otherwise we can't fill K candidates "
-                f"from a single observed prefix"
-            )
 
         p = Path(table_dir)
         if p.is_dir():
-            trie_path = p / "pilot.binary"
-            fwd_path = p / "forward_index.bin"
-        elif p.name == "pilot.binary":
-            trie_path = p
-            fwd_path = p.parent / "forward_index.bin"
-        elif p.name == "forward_index.bin":
-            trie_path = p.parent / "pilot.binary"
+            fwd_path = p / "forward_index_topk.bin"
+        elif p.name == "forward_index_topk.bin":
             fwd_path = p
         else:
             raise ValueError(
-                f"table_dir must be a directory containing pilot.binary + "
-                f"forward_index.bin, or one of those files directly. Got: {p}"
+                f"table_dir must be a directory containing forward_index_topk.bin "
+                f"or that file directly. Got: {p}"
             )
-        if not trie_path.is_file():
-            raise FileNotFoundError(f"missing trie binary: {trie_path}")
         if not fwd_path.is_file():
-            raise FileNotFoundError(f"missing forward index: {fwd_path}")
-        self.trie_path = trie_path
-        self.forward_index_path = fwd_path
+            raise FileNotFoundError(f"missing top-K forward index: {fwd_path}")
+        self.forward_index_topk_path = str(fwd_path)
 
-        # Lazy: don't open the dylib or kenlm in __init__. The wrapper has
-        # to be picklable so torch DataLoader can spawn worker processes
-        # with it — and ctypes.CDLL's internal _FuncPtr type can't pickle.
-        # First call to lookup_batch triggers the actual open, which
-        # mirrors weka files to /dev/shm (one per node) and constructs
-        # the C++ ModelWrapper. Each worker process pays this once.
-        self._lib = None
-        self._handle = None
+        # Lazy: don't open mmap in __init__ so the source pickles cleanly
+        # to spawn-mode dataloader workers. First lookup_batch triggers
+        # /dev/shm mirror + mmap.
+        self._index: Optional[TopKForwardIndex] = None
 
     def __getstate__(self):
-        # Drop the unpicklable lib + handle; everything else is plain data.
         state = self.__dict__.copy()
-        state["_lib"] = None
-        state["_handle"] = None
+        state["_index"] = None
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
 
     def _ensure_open(self):
-        """Mirror tables to /dev/shm and open the C++ ModelWrapper. Idempotent.
-
-        Heavily instrumented because this runs once per dataloader worker
-        across N×8 worker processes; if any phase silently hangs, the
-        per-process logs are how we'd find the broken phase.
-        """
-        if self._handle is not None:
+        if self._index is not None:
             return
-        # Tag logs with pid so per-worker progress is distinguishable.
         tag = f"[ngram_soft_target pid={os.getpid()}]"
         import time as _t
+
         t0 = _t.time()
-        print(f"{tag} _ensure_open: mirror trie + forward_index to /dev/shm", flush=True)
-        trie_local = _mirror_to_shm(str(self.trie_path))
-        fwd_local = _mirror_to_shm(str(self.forward_index_path))
-        print(f"{tag} mirror done in {_t.time() - t0:.2f}s; resolving dylib", flush=True)
-        t1 = _t.time()
-        lib = _get_lib()
-        print(f"{tag} dylib loaded in {_t.time() - t1:.2f}s; opening kenlm + forward index", flush=True)
-        t2 = _t.time()
-        handle = lib.ngram_lookup_open(
-            trie_local.encode("utf-8"),
-            fwd_local.encode("utf-8"),
-            self.unigram_shortlist_size,
-            self.max_continuations_per_prefix,
-        )
-        print(
-            f"{tag} ngram_lookup_open returned in {_t.time() - t2:.2f}s "
-            f"(handle={'ok' if handle else 'NULL'})",
-            flush=True,
-        )
-        if not handle:
-            raise RuntimeError(
-                f"ngram_lookup_open failed; check stderr. trie={self.trie_path}, "
-                f"forward_index={self.forward_index_path}"
-            )
-        actual_order = int(lib.ngram_lookup_order(handle))
-        if actual_order != self.N_max:
-            lib.ngram_lookup_close(handle)
+        print(f"{tag} _ensure_open: mirroring forward_index_topk to /dev/shm", flush=True)
+        local_path = _mirror_to_shm(self.forward_index_topk_path)
+        print(f"{tag} mirror done in {_t.time() - t0:.2f}s; opening", flush=True)
+        idx = TopKForwardIndex(local_path)
+        idx._ensure_open()
+        if idx.K != self.K:
             raise ValueError(
-                f"trie binary has order={actual_order} but caller passed N_max={self.N_max}"
+                f"top-K forward index has K={idx.K} but caller passed K={self.K}"
             )
-        # Bind only after both checks pass.
-        self._lib = lib
-        self._handle = handle
+        max_order = max(idx.sections_by_order)
+        if max_order < self.N_max:
+            raise ValueError(
+                f"top-K forward index has max order {max_order} but caller "
+                f"passed N_max={self.N_max}"
+            )
+        self._index = idx
         print(f"{tag} _ensure_open: total {_t.time() - t0:.2f}s; ready", flush=True)
 
     def __del__(self):
-        h = getattr(self, "_handle", None)
-        lib = getattr(self, "_lib", None)
-        if h and lib is not None:
-            lib.ngram_lookup_close(h)
-            self._handle = None
+        idx = getattr(self, "_index", None)
+        if idx is not None:
+            try:
+                idx.close()
+            except Exception:
+                pass
 
-    # Per-process counter: log the first N lookup_batch calls so we can see
-    # warm-up behavior without spamming every training step.
+    # Per-process counter: log only the first few lookup_batch calls.
     _lookup_batch_call_count: dict = {}
-    _lookup_batch_log_first_n: int = 16
+    _lookup_batch_log_first_n: int = 8
 
     def lookup_batch(
         self, contexts: Sequence[Sequence[int]]
@@ -352,9 +342,10 @@ class NgramTableSoftTargetSource:
         """For each context, return top-K continuations and renormalized probs.
 
         :param contexts: One sequence of ints per query position. Each
-            sequence is the (up to N_max-1)-token context, oldest first.
+            sequence is the (up to N_max-1)-token left context, oldest first.
         :returns: ``(ids[N, K] int32, probs[N, K] float32)``. Each row of
-            ``probs`` sums to 1.
+            ``probs`` sums to 1 (or 0 if the row had no valid candidates,
+            which shouldn't happen at any order ≤ N_max).
         """
         self._ensure_open()
         my_pid = os.getpid()
@@ -363,44 +354,39 @@ class NgramTableSoftTargetSource:
         NgramTableSoftTargetSource._lookup_batch_call_count[my_pid] = cnt + 1
         if log_this:
             import time as _t
+
             t_start = _t.time()
             print(
                 f"[ngram_soft_target pid={my_pid}] lookup_batch call #{cnt}: "
                 f"{len(contexts)} contexts",
                 flush=True,
             )
+
         N = len(contexts)
         K = self.K
-        all_ids = np.zeros((N, K), dtype=np.int32)
-        all_probs = np.zeros((N, K), dtype=np.float32)
+        ids_out = np.zeros((N, K), dtype=np.int32)
+        probs_out = np.zeros((N, K), dtype=np.float32)
 
-        ids_buf = np.zeros(K, dtype=np.uint32)
-        logp_buf = np.zeros(K, dtype=np.float32)
-        ids_ptr = ids_buf.ctypes.data_as(ctypes.POINTER(ctypes.c_uint32))
-        logp_ptr = logp_buf.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        enumerate_fn = self._lib.ngram_lookup_enumerate_top_k
-
+        idx = self._index
         for i, ctx in enumerate(contexts):
-            ctx_arr = np.ascontiguousarray(ctx, dtype=np.uint32)
-            ctx_ptr = ctx_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_uint32))
-            n_out = enumerate_fn(self._handle, ctx_ptr, ctx_arr.size, K, ids_ptr, logp_ptr)
-            if n_out <= 0:
+            tokens, logprobs = idx.lookup_one(ctx)
+            # Renormalize. Sentinel slots have logprob = -inf → 10^-inf = 0,
+            # so they contribute nothing. Shift by max for numerical safety.
+            mx = float(logprobs.max())
+            if mx == float("-inf"):
                 continue
-
-            logp = logp_buf[:n_out]
-            shifted = logp - logp.max()
-            linear = np.power(10.0, shifted)
-            total = linear.sum()
+            shifted = logprobs.astype(np.float32) - np.float32(mx)
+            linear = np.power(np.float32(10.0), shifted, dtype=np.float32)
+            total = float(linear.sum())
             if total > 0:
-                linear /= total
-
-            all_ids[i, :n_out] = ids_buf[:n_out].astype(np.int32)
-            all_probs[i, :n_out] = linear
+                linear = linear / np.float32(total)
+            ids_out[i] = tokens.astype(np.int32, copy=False)
+            probs_out[i] = linear
 
         if log_this:
             print(
                 f"[ngram_soft_target pid={my_pid}] lookup_batch call #{cnt} done "
-                f"in {_t.time() - t_start:.2f}s",
+                f"in {_t.time() - t_start:.3f}s",
                 flush=True,
             )
-        return all_ids, all_probs
+        return ids_out, probs_out

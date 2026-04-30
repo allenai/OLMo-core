@@ -10,15 +10,14 @@ For each instance, we add two (S, K) arrays:
 
 The per-position probe uses
 :class:`olmo_core.data.ngram_soft_target.NgramTableSoftTargetSource`,
-which does full modified-KN cross-order backoff and falls through to a
-precomputed unigram shortlist — so every position is guaranteed a full
-top-K (no empty or padded slots).
+which reads a precomputed top-K forward index (FXTK v=1; built offline by
+``data_gen/build_topk_forward_index.py``). Lookup is binary-search on the
+longest-matching order's prefix table, then a single row read of K
+(token, log_prob) pairs — no kenlm at runtime.
 
 We do *not* EOS-stop the context window: the n-gram tables were built
 one-line-per-document, so high-order probes that straddle a document
-boundary naturally miss and degrade through the backoff ladder to a
-within-document top-K or the unigram floor. See the module docstring of
-``ngram_soft_target.py`` for the combine rule.
+boundary naturally miss and degrade through the order ladder.
 """
 
 from __future__ import annotations
@@ -41,13 +40,12 @@ class NgramSoftTargetInstanceSource(InstanceSource):
     instance with per-position ngram soft targets.
 
     :param source: The wrapped instance source.
-    :param table_dir: Directory containing ``ngram_table_n<N>.bin`` files
-        produced by ``data_gen/arpa_to_table.py``.
-    :param K: Top-K size per position.
-    :param N_max: Highest ngram order to probe. ``table_dir`` must contain
-        ``ngram_table_n1.bin`` through ``ngram_table_n{N_max}.bin``.
-    :param unigram_shortlist: Size of the precomputed unigram fallback
-        shortlist used at the order-1 level of the backoff ladder.
+    :param table_dir: Directory containing ``forward_index_topk.bin`` (FXTK
+        v=1) produced by ``data_gen/build_topk_forward_index.py``.
+    :param K: Top-K size per position. Must match the K the index was built
+        with.
+    :param N_max: Highest ngram order to probe. Must be ≤ the highest order
+        present in the index.
     """
 
     DISPLAY_ICON = "\U000f0d77"  # nf-md-graphql
@@ -59,7 +57,6 @@ class NgramSoftTargetInstanceSource(InstanceSource):
         table_dir: PathOrStr,
         K: int = 16,
         N_max: int = 5,
-        unigram_shortlist: int = 100,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -73,18 +70,8 @@ class NgramSoftTargetInstanceSource(InstanceSource):
         self._table_dir = str(table_dir)
         self._K = int(K)
         self._N_max = int(N_max)
-        self._unigram_shortlist = int(unigram_shortlist)
-        if self._unigram_shortlist < self._K:
-            # Otherwise the order-1 fallback path can't always fill K
-            # candidates, and trailing slots end up zero-prob padding.
-            # Harmless at loss time (0 * log p = 0) but indicates a
-            # misconfiguration — flag it loudly.
-            raise ValueError(
-                f"unigram_shortlist ({self._unigram_shortlist}) must be >= K ({self._K})"
-            )
-        # Lazy per-process init: we don't open the mmap'd tables in the
-        # main process, so each DataLoader worker ends up with its own
-        # _NgramTable instances (OS page cache dedupes the underlying I/O).
+        # Lazy per-process init: don't mmap in the main process so the source
+        # pickles cleanly to spawn workers; first lookup populates.
         self._lookup = None
 
     @property
@@ -114,7 +101,6 @@ class NgramSoftTargetInstanceSource(InstanceSource):
                 table_dir=self._table_dir,
                 K=self._K,
                 N_max=self._N_max,
-                unigram_shortlist=self._unigram_shortlist,
             )
         return self._lookup
 
@@ -128,7 +114,7 @@ class NgramSoftTargetInstanceSource(InstanceSource):
                 f"table_dir={self._table_dir},"
                 f"K={self._K},"
                 f"N_max={self._N_max},"
-                f"unigram_shortlist={self._unigram_shortlist},"
+                f"format=FXTKv1,"
             ).encode()
         )
         return sha.hexdigest()
@@ -170,7 +156,6 @@ class NgramSoftTargetInstanceSourceConfig(InstanceSourceConfig):
     table_dir: str
     K: int = 16
     N_max: int = 5
-    unigram_shortlist: int = 100
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> NgramSoftTargetInstanceSource:
@@ -180,7 +165,6 @@ class NgramSoftTargetInstanceSourceConfig(InstanceSourceConfig):
             table_dir=self.table_dir,
             K=self.K,
             N_max=self.N_max,
-            unigram_shortlist=self.unigram_shortlist,
             work_dir=work_dir,
             label=self.label,
         )
