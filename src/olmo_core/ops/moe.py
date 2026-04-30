@@ -312,7 +312,7 @@ class AllToAllAsyncOp(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, *grad_outputs):
-        x_grad, y_grad = grad_outputs[0], grad_outputs[1]
+        x_grad, _ = grad_outputs[0], grad_outputs[1]
         x_grad_handle = x_grad._a2a_handle
         x_grad_handle.wait()
         del x_grad._a2a_handle
@@ -384,7 +384,7 @@ def _example():
     y0, y_handle = all_to_all_async(x)
     z = x * 2  # some random compute
     y = all_to_all_wait(y0, y_handle)
-    out = y + z
+    out = y + z  # noqa: F841
 
     # backward order:
     # backward(out)

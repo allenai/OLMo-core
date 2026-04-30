@@ -153,7 +153,7 @@ class SharedExperts(nn.Module):
         """
         Split the forward pass into two parts for better overlap in EP.
         """
-        E, H = self.num_experts, self.hidden_size
+        E, H = self.num_experts, self.hidden_size  # noqa: F841
         B, S, D = xshape
         # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
 

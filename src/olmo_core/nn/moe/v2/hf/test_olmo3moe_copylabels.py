@@ -186,7 +186,7 @@ def evaluate_prompt_family(
     device: torch.device,
     max_failures: int,
 ) -> dict:
-    num_options = examples[0]["num_options"]
+    # num_options = examples[0]["num_options"]
     allowed_labels = [get_option_label(option) for option in examples[0]["options"]]
 
     correct = 0

@@ -626,7 +626,7 @@ class MoEFusedV2Optimizer(Optimizer):
         # dp grad
         flat_main_grad_buf_dp = self._flat_main_grad_buf["dp"]
         if flat_main_grad_buf_dp is not None:
-            mesh_shape = self.dp_mesh.shape
+            # mesh_shape = self.dp_mesh.shape
             norm_dp = flat_main_grad_buf_dp.norm(p=2.0).unsqueeze(0)
             flat_main_grad_buf_dp_dt = DTensor.from_local(
                 # flat_main_grad_buf_dp,
@@ -640,7 +640,7 @@ class MoEFusedV2Optimizer(Optimizer):
         if self.moe_mesh is not None:
             flat_main_grad_buf_ep_dp = self._flat_main_grad_buf["ep_dp"]
             if flat_main_grad_buf_ep_dp is not None:
-                mesh_shape = self.dp_mesh.shape
+                # mesh_shape = self.dp_mesh.shape
                 norm_ep_dp = flat_main_grad_buf_ep_dp.norm(p=2.0).unsqueeze(0)
                 flat_main_grad_buf_ep_dp_dt = DTensor.from_local(
                     # flat_main_grad_buf_ep_dp.unsqueeze(0),

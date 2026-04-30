@@ -1443,7 +1443,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
+        with contextlib.ExitStack() as stack:  # noqa: F841
             # if self.autocast_precision is not None:
             #     stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             # NOTE: autocast_precision is deleted

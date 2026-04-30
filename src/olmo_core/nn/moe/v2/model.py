@@ -427,10 +427,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         :param device: The device the local copy of the model will be trained on.
         """
         device = device or self.device
-        params = list(self.parameters())
+        params = list(self.parameters())  # noqa: F841
         self.to(torch.bfloat16)  # TODO: better way to do this?
         self.to_empty(device=device)
-        new_params = list(self.parameters())
+        new_params = list(self.parameters())  # noqa: F841
         for name, module in self.named_modules():
             if hasattr(module, "reset_parameters"):  # TODO: what's the point of this
                 module.reset_parameters()  # type: ignore
@@ -540,9 +540,9 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             )
         # get one next int from the generator
         # if everything goes right, all ranks should have the same next int
-        valid_test = (
-            torch.randint(0, 1000000, (1,), generator=generator, device=device).cpu().item()
-        )  # attach debugger to check
+        # valid_test = (
+        #     torch.randint(0, 1000000, (1,), generator=generator, device=device).cpu().item()
+        # )  # attach debugger to check
 
         # call lazy_init to make sure params has the _mp_param and _fp_param fields
         # replicate.state(self).lazy_init()

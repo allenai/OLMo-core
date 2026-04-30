@@ -43,7 +43,7 @@ class ZeroOptimConfig(OptimConfig[Opt]):
         kwargs.pop("fixed_fields")
 
         assert self.inner_optimizer is not None
-        inner_optimizer = self.inner_optimizer.build(
+        inner_optimizer = self.inner_optimizer.build(  # noqa: F841  # TODO: is this a bug?
             model, train_module, strict=strict, param_filter=param_filter
         )
 

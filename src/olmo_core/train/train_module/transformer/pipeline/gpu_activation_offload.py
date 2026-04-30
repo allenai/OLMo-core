@@ -55,7 +55,7 @@ class GPUActivationOffloader:
     def wait_reload(self, group: str):
         """Wait for the reload event of the given group to complete."""
         if group in self._reload_events:
-            reload_event = self._reload_events[group]
+            reload_event = self._reload_events[group]  # noqa: F841
             # torch.cuda.current_stream().wait_event(reload_event) # type: ignore
             # reload_event.synchronize()
             # torch.cuda.current_stream().synchronize()

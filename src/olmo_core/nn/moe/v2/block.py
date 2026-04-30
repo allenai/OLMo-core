@@ -651,7 +651,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert (
             self.routed_experts is not None
         ), "ep can only be applied when routed_experts is enabled"
-        ep_dp_mesh = ep_mesh["ep_dp"]
+        # ep_dp_mesh = ep_mesh["ep_dp"]
         ep_mp_mesh = ep_mesh["ep_mp"]
         ep_pg = kwargs.get("ep_pg")
         self.ep_mesh = ep_mesh

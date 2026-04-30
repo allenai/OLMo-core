@@ -640,7 +640,7 @@ class CustomScheduleInterleaved1F1B:
         # cooldown_ops should encompass the remaining backwards
         cooldown_ops = microbatch_ops - fwd_bwd_ops
         # total ops encompass both forward and backward ops
-        total_ops = warmup_ops + fwd_bwd_ops + cooldown_ops
+        # total_ops = warmup_ops + fwd_bwd_ops + cooldown_ops
         # warmup_ops + fwd_bwd_ops * 2 + cooldown_ops == microbatch_ops * 2
 
         # Calculates the stage index based on step and pp_group_size
