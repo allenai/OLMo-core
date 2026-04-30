@@ -106,16 +106,6 @@ def build_config(script: str, run_name: str, cluster: str, overrides: List[str])
         num_nodes=1,
         num_gpus=8,
         allow_dirty=False,
-        setup_steps=[
-            # Clone repo.
-            'git clone "$REPO_URL" .',
-            'git checkout "$GIT_REF"',
-            "git submodule update --init --recursive",
-            # Setup python environment.
-            "conda shell.bash activate base",
-            "pip install -e '.[all]'",
-            "pip freeze",
-        ],
     )
 
     return BenchmarkConfig(launch=launch_config).merge(overrides)

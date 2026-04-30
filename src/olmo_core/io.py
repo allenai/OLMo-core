@@ -10,7 +10,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Generator, Optional, Tuple, Type, Union
+from typing import Any, Callable, Generator, List, Optional, Tuple, Type, Union
 
 try:
     from functools import cache
@@ -31,6 +31,7 @@ from .exceptions import (
     OLMoNetworkError,
     OLMoUploadError,
 )
+from .fs_cache import maybe_cache
 
 log = logging.getLogger(__name__)
 
@@ -48,19 +49,36 @@ def normalize_path(path: PathOrStr) -> str:
     return str(path).rstrip("/").replace("file://", "")
 
 
-def join_path(path1: PathOrStr, path2: PathOrStr) -> PathOrStr:
+def join_path(path: PathOrStr, *paths: PathOrStr) -> PathOrStr:
     """
-    Join two paths.
-
-    :param path1: The first path.
-    :param path2: The second path.
+    Join two or more paths.
 
     :returns: The joined result.
     """
-    if is_url(path1):
-        return f"{normalize_path(path1)}/{normalize_path(path2)}"
+    if not paths:
+        return path
+    for p in paths:
+        if is_url(path):
+            path = f"{normalize_path(path)}/{normalize_path(p)}"
+        else:
+            path = Path(path) / p
+    return path
+
+
+def get_parent(path: PathOrStr) -> PathOrStr:
+    """
+    Get the parent directory of a path.
+
+    :param path: The path/URL to get the parent of.
+    """
+    if is_url(path):
+        path = str(normalize_path(path))
+        if path.count("/") > 2:
+            return "/".join(path.split("/")[:-1])
+        else:
+            return path
     else:
-        return Path(path1) / path2
+        return Path(normalize_path(path)).parent
 
 
 def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None) -> Path:
@@ -86,9 +104,14 @@ def is_url(path: PathOrStr) -> bool:
     return re.match(r"[a-z0-9]+://.*", str(path)) is not None
 
 
+@maybe_cache(condition=is_url)
 def get_file_size(path: PathOrStr) -> int:
     """
     Get the size of a local or remote file in bytes.
+
+    .. warning::
+        Uses caching if the argument is URL if the filesystem cache is enabled
+        (see :func:`olmo_core.fs_cache.maybe_cache`).
 
     :param path: Path/URL to the file.
     """
@@ -470,6 +493,18 @@ def glob_directory(pattern: str) -> Generator[str, None, None]:
             yield path
 
 
+@maybe_cache(condition=is_url)
+def deterministic_glob_directory(pattern: str) -> List[str]:
+    """
+    Like :func:`glob_directory` but returns a sorted list for deterministic ordering.
+
+    .. warning::
+        Uses caching if the argument is URL if the filesystem cache is enabled
+        (see :func:`olmo_core.fs_cache.maybe_cache`).
+    """
+    return sorted(glob_directory(pattern))
+
+
 def init_client(remote_path: str):
     """
     Initialize the right client for the given remote resource. This is helpful to avoid threading issues
@@ -644,9 +679,15 @@ def _http_file_exists(url: str) -> bool:
 
 @cache
 def _get_gcs_client():
+    import google.auth
+    import google.auth.exceptions
     from google.cloud import storage as gcs
 
-    return gcs.Client()
+    try:
+        google.auth.default()
+        return gcs.Client()
+    except google.auth.exceptions.DefaultCredentialsError:
+        return gcs.Client.create_anonymous_client()
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:

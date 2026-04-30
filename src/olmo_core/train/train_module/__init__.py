@@ -23,6 +23,7 @@ from .transformer import (
 )
 
 __all__ = [
+    "TrainModuleConfig",
     "TrainModule",
     "TrainModuleConfig",
     "EvalBatchSpec",

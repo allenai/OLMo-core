@@ -21,7 +21,10 @@ from .evaluator_callback import (
 from .gap_monitor import GAPMonitorCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
+from .hf_converter import HFConverterCallback
 from .list_checkpointer import ListCheckpointerCallback
+from .metric_saver import MetricSaverCallback
+from .model_merger import ModelMergeCallback
 from .monkey_patcher import MonkeyPatcherCallback
 from .profiler import (
     NvidiaProfilerCallback,
@@ -31,6 +34,7 @@ from .profiler import (
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
+from .stability_monitor import StabilityMonitorCallback
 from .wandb import WandBCallback
 
 __all__ = [
@@ -48,15 +52,19 @@ __all__ = [
     "GAPMonitorCallback",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
+    "HFConverterCallback",
     "ProfilerCallback",
     "NvidiaProfilerCallback" "SlackNotifierCallback",
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
+    "StabilityMonitorCallback",
     "WandBCallback",
     "BeakerCallback",
     "BatchSizeSchedulerCallback",
     "MonkeyPatcherCallback",
+    "MetricSaverCallback",
+    "ModelMergeCallback",
     "ListCheckpointerCallback",
     "NvidiaProfilerCallback",
     "TorchMemoryHistoryCallback",

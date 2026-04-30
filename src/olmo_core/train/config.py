@@ -97,8 +97,7 @@ class TrainerConfig(Config):
         cluster: str,
         task_set: str = "full",
         eval_interval: int = 10_000,
-        root_dir=None,
-        with_lm_eval: bool = True,
+        lazy_load: bool = False,
     ) -> "TrainerConfig":
         """
         Return a new trainer config with added callbacks for downstream evaluation and validation sets.
@@ -120,26 +119,26 @@ class TrainerConfig(Config):
         callbacks = self.with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=tasks, tokenizer=tokenizer, eval_interval=eval_interval
+                tasks=tasks,
+                tokenizer=tokenizer,
+                eval_interval=eval_interval,
+                lazy=lazy_load,
+                eval_on_finish=True,
+            ),
+        ).with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+                    DataMix.v3_small_ppl_validation,
+                    mix_base_dir=get_root_dir(cluster),
+                    sequence_length=sequence_length,
+                    tokenizer=tokenizer,
+                    work_dir=get_work_dir(get_root_dir(cluster)),
+                ),
+                eval_interval=eval_interval,
+                eval_on_finish=True,
             ),
         )
-
-        if with_lm_eval:
-            callbacks = callbacks.with_callback(
-                "lm_evaluator",
-                LMEvaluatorCallbackConfig(
-                    eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
-                        DataMix.v3_small_ppl_validation,
-                        mix_base_dir=get_root_dir(cluster) if root_dir is None else root_dir,
-                        sequence_length=sequence_length,
-                        tokenizer=tokenizer,
-                        work_dir=get_work_dir(
-                            get_root_dir(cluster) if root_dir is None else root_dir
-                        ),
-                    ),
-                    eval_interval=eval_interval,
-                ),
-            )
 
         return callbacks
 

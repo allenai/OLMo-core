@@ -35,6 +35,7 @@ from ..io import (
     dir_is_empty,
     file_exists,
     is_url,
+    join_path,
     list_directory,
     normalize_path,
     upload,
@@ -57,6 +58,7 @@ class CheckpointerConfig(Config):
     pre_download: bool = False
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
+    #  save_process_count: Optional[int] = None
     throttle_uploads: bool = False
 
     def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
@@ -69,6 +71,7 @@ class CheckpointerConfig(Config):
 
 @dataclass
 class CheckpointMetadata(Config):
+    ephemeral: Optional[bool] = None
     version: str = VERSION
 
 
@@ -80,6 +83,7 @@ class Checkpointer:
 
     METADATA_FNAME: ClassVar[str] = ".metadata.json"
     CHECKPOINT_DIR: ClassVar[str] = "step{step}"
+    FS_TIMEOUT: ClassVar[float] = 120.0
 
     work_dir: Path
     save_overwrite: bool = False
@@ -87,6 +91,7 @@ class Checkpointer:
     process_group: Optional[dist.ProcessGroup] = None
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
+    #  save_process_count: Optional[int] = None  # TODO: leads to some MP issues, needs more investigating.
     throttle_uploads: bool = False
 
     def __post_init__(self):
@@ -94,7 +99,13 @@ class Checkpointer:
         if get_fs_local_rank() == 0:
             self.work_dir.mkdir(exist_ok=True, parents=True)
 
-    def save(self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]):
+    def save(
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+        train_state: Dict[str, Any],
+        ephemeral: bool = False,
+    ):
         """
         Save model, optim, and other training state to a local or remote directory.
         """
@@ -107,34 +118,27 @@ class Checkpointer:
 
             # Save model and optim state.
             train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
-            # if the train module has implemented state_dict_to_save, use it
-            if hasattr(train_module, "save_state_dict_direct"):
-                # it should be the case for moe train module
-                train_module.save_state_dict_direct(  # type: ignore
-                    train_module_dir,
-                    process_group=self.process_group,
-                    save_overwrite=self.save_overwrite,
-                    thread_count=self.save_thread_count,
-                    throttle_uploads=self.throttle_uploads,
-                )
-            else:
-                train_module_sd = train_module.state_dict()
-                save_state_dict(
-                    train_module_dir,
-                    train_module_sd,
-                    process_group=self.process_group,
-                    thread_count=self.save_thread_count,
-                    throttle_uploads=self.throttle_uploads,
-                    enable_plan_caching=True,
-                    # NOTE: we've already checked and cleared the directory at this point so we can skip
-                    # the extra synchronization.
-                    _skip_prepare=True,
-                )
+            save_state_dict(
+                train_module_dir,
+                train_module.state_dict_to_save(),
+                process_group=self.process_group,
+                thread_count=self.save_thread_count,
+                #  process_count=self.save_process_count,
+                throttle_uploads=self.throttle_uploads,
+                enable_plan_caching=True,
+                # NOTE: we've already checked and cleared the directory at this point so we can skip
+                # the extra synchronization.
+                _skip_prepare=True,
+            )
 
-        self._save_metadata(dir, CheckpointMetadata())
+        self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
 
     def save_async(
-        self, dir: PathOrStr, train_module: TrainModule, train_state: Dict[str, Any]
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+        train_state: Dict[str, Any],
+        ephemeral: bool = False,
     ) -> Future[None]:
         """
         An async version of :meth:`save()`.
@@ -159,6 +163,7 @@ class Checkpointer:
             train_module.state_dict_to_save(),
             process_group=self.process_group,
             thread_count=self.save_thread_count,
+            #  process_count=self.save_process_count,
             throttle_uploads=self.throttle_uploads,
             enable_plan_caching=True,
             # NOTE: we've already checked and cleared the directory at this point so we can skip
@@ -168,7 +173,7 @@ class Checkpointer:
 
         def done_callback(fut: Future):
             del fut
-            self._save_metadata(dir, CheckpointMetadata())
+            self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
 
         # Upload metadata when everything else is done.
         future.add_done_callback(done_callback)
@@ -271,7 +276,12 @@ class Checkpointer:
         tmp_path = Path(tmp_file.name)
         try:
             tmp_file.write(contents)
+
+            # Ensure all data is written to disk.
             tmp_file.flush()
+            if hasattr(os, "fdatasync"):  # only available on linux
+                os.fdatasync(tmp_file)  # type: ignore
+            tmp_file.close()
 
             target: PathOrStr
             if is_url(dir):
@@ -282,10 +292,11 @@ class Checkpointer:
                 if target.is_file() and not self.save_overwrite:
                     raise FileExistsError(target)
                 target.parent.mkdir(exist_ok=True, parents=True)
-                tmp_path.rename(target)
+                tmp_path.replace(target)
 
             return target
         finally:
+            tmp_file.close()
             tmp_path.unlink(missing_ok=True)
 
     @classmethod
@@ -311,7 +322,9 @@ class Checkpointer:
         return True
 
     @classmethod
-    def find_checkpoints(cls, dir: PathOrStr) -> Generator[Tuple[int, str], None, None]:
+    def find_checkpoints(
+        cls, dir: PathOrStr, ephemeral: Optional[bool] = None
+    ) -> Generator[Tuple[int, str], None, None]:
         """
         Find checkpoints within a directory.
         """
@@ -324,6 +337,18 @@ class Checkpointer:
                 # Make sure the directory is a valid checkpoint dir.
                 if not cls.dir_is_checkpoint(path):
                     continue
+
+                # Filter out based on ephemeral flag.
+                if ephemeral is not None:
+                    metadata_path = cached_path(join_path(path, cls.METADATA_FNAME), quiet=True)
+                    metadata = CheckpointMetadata.from_file(metadata_path)
+
+                    # Assume not ephemeral for backwards compat.
+                    if metadata.ephemeral is None:
+                        metadata.ephemeral = False
+
+                    if metadata.ephemeral != ephemeral:
+                        continue
 
                 yield step, path
 
@@ -366,7 +391,11 @@ class Checkpointer:
         # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
         if is_url(dir) or get_fs_local_rank() == 0:
             train_dir.mkdir(exist_ok=True, parents=True)
-        wait_for(train_dir.exists, description=f"Waiting for '{train_dir}' to be created...")
+        wait_for(
+            train_dir.exists,
+            description=f"waiting for '{train_dir}' to be created...",
+            timeout=self.FS_TIMEOUT,
+        )
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
 
     def _save_metadata(self, dir: PathOrStr, metadata: CheckpointMetadata):
@@ -398,7 +427,11 @@ class Checkpointer:
                 Path(dir).mkdir(exist_ok=True, parents=True)
             # Ensure the dir exists for all ranks before continuing. This might take a second if we're
             # saving to an NFS drive or something like that.
-            wait_for(Path(dir).exists, description=f"Waiting on '{dir}' to be created...")
+            wait_for(
+                Path(dir).exists,
+                description=f"waiting on '{dir}' to be created...",
+                timeout=self.FS_TIMEOUT,
+            )
 
         return dir
 
@@ -421,7 +454,11 @@ class Checkpointer:
             # creating the temp directory from rank 0 might not be immediately
             # realized in the file systems of the other ranks.
             # So we wait here across all ranks until that tmp checkpoint directory is visible.
-            wait_for(lambda: tmp_dir.exists(), "Waiting for checkpoint directory", timeout=10.0)
+            wait_for(
+                lambda: tmp_dir.exists(),
+                "Waiting for checkpoint directory",
+                timeout=self.FS_TIMEOUT,
+            )
 
         return tmp_dir
 
@@ -447,7 +484,11 @@ class Checkpointer:
             # replacing the temp directory with the final directory from rank 0 might not be immediately
             # realized in the file systems of the other ranks.
             # So we wait here across all ranks until that final checkpoint directory is visible.
-            wait_for(lambda: Path(dir).exists(), "Waiting for checkpoint directory", timeout=10.0)
+            wait_for(
+                lambda: Path(dir).exists(),
+                f"waiting for checkpoint directory '{dir}' from rank {get_rank()}",
+                timeout=self.FS_TIMEOUT,
+            )
         else:
             # NOTE: When dir is a URL, each rank will have its own tmp dir so synchronizing with a
             # barrier isn't necessary.

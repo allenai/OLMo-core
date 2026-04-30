@@ -17,7 +17,8 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.utils import get_or_init_stream
 
-from ..attention import AttentionConfig, RingAttentionLoadBalancerType
+from ..attention.base import SequenceMixerConfig
+from ..attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
 from ..functional import l2_normalize
@@ -73,8 +74,8 @@ class TransformerBlockBase(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
         raise NotImplementedError
 
@@ -91,6 +92,10 @@ class TransformerBlockBase(nn.Module):
     ):
         raise NotImplementedError
 
+    @abstractmethod
+    def num_flops_per_token(self, seq_len: int) -> int:
+        raise NotImplementedError
+
 
 class TransformerBlock(TransformerBlockBase):
     """
@@ -98,7 +103,7 @@ class TransformerBlock(TransformerBlockBase):
 
     :param d_model: The model dimensionality.
     :param block_idx: The index/position of the block within the model. Ranges from 0 to ``n_layers - 1``.
-    :param attention: The attention module config.
+    :param sequence_mixer: The sequence mixer module config (e.g. attention, recurrent, convolution, etc.).
     :param feed_forward: The feed forward module config.
     :param layer_norm: The layer norm config for both the attention LN and the feed forward LN.
     :param dropout: Dropout probability.
@@ -111,7 +116,7 @@ class TransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         attention_norm: LayerNormConfig,
         feed_forward_norm: LayerNormConfig,
@@ -124,7 +129,11 @@ class TransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
 
@@ -199,10 +208,10 @@ class TransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def apply_fsdp(
         self,
@@ -220,6 +229,11 @@ class TransformerBlock(TransformerBlockBase):
                 fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
         else:
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        attn_flops = self.attention.num_flops_per_token(seq_len)
+        ff_flops = self.feed_forward.num_flops_per_token(seq_len)
+        return attn_flops + ff_flops
 
 
 class LayerNormScaledTransformerBlock(TransformerBlock):
@@ -239,7 +253,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
@@ -252,7 +266,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
             d_model=d_model,
             block_idx=block_idx,
             n_layers=n_layers,
-            attention=attention,
+            sequence_mixer=sequence_mixer,
             feed_forward=feed_forward,
             attention_norm=layer_norm,
             feed_forward_norm=layer_norm,
@@ -314,7 +328,7 @@ class PeriNormTransformerBlock(TransformerBlock):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         attention_norm: LayerNormConfig,
         feed_forward_norm: LayerNormConfig,
@@ -328,7 +342,7 @@ class PeriNormTransformerBlock(TransformerBlock):
             d_model=d_model,
             block_idx=block_idx,
             n_layers=n_layers,
-            attention=attention,
+            sequence_mixer=sequence_mixer,
             feed_forward=feed_forward,
             attention_norm=attention_norm,
             feed_forward_norm=feed_forward_norm,
@@ -392,7 +406,7 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -400,7 +414,11 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
@@ -461,10 +479,10 @@ class NormalizedTransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def apply_fsdp(
         self,
@@ -505,6 +523,11 @@ class NormalizedTransformerBlock(TransformerBlockBase):
     def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
         w.copy_(l2_normalize(w, dim=dim))
 
+    def num_flops_per_token(self, seq_len: int) -> int:
+        attn_flops = self.attention.num_flops_per_token(seq_len)
+        ff_flops = self.feed_forward.num_flops_per_token(seq_len)
+        return attn_flops + ff_flops
+
 
 @beta_feature
 class MoETransformerBlock(TransformerBlockBase):
@@ -519,7 +542,7 @@ class MoETransformerBlock(TransformerBlockBase):
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward_moe: MoEConfig,
         attention_norm: Optional[LayerNormConfig] = None,
         feed_forward_norm: Optional[LayerNormConfig] = None,
@@ -530,7 +553,11 @@ class MoETransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.attention = attention.build(
+
+        # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
+        # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
+        # Generally it's ok to think of these as "attention" modules at the block level.
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm: nn.Module
@@ -648,10 +675,10 @@ class MoETransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
         self.feed_forward_moe.apply_cp(cp_mesh)
 
     def apply_fsdp(
@@ -672,6 +699,11 @@ class MoETransformerBlock(TransformerBlockBase):
                 fsdp_att.set_modules_to_forward_prefetch([fsdp_moe])
         else:
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        attn_flops = self.attention.num_flops_per_token(seq_len)
+        moe_flops = self.feed_forward_moe.num_flops_per_token(seq_len)
+        return attn_flops + moe_flops
 
 
 @beta_feature

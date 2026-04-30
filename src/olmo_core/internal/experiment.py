@@ -1,20 +1,27 @@
 import logging
-import os
 import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
 import torch
+import torch.distributed as dist
 from rich import print
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.data import (
+    DataLoaderBase,
+    DataLoaderConfig,
     DataMix,
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
+)
+from olmo_core.data.composable import (
+    ComposableDataLoaderConfig,
+    InstanceSource,
+    InstanceSourceConfig,
 )
 from olmo_core.data.numpy_dataset import NumpyFSLDatasetConfig
 from olmo_core.distributed.utils import get_local_rank
@@ -37,7 +44,6 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     SlackNotifierCallback,
 )
-from olmo_core.train.callbacks.slack_notifier import SLACK_WEBHOOK_URL_ENV_VAR
 from olmo_core.train.train_module import (
     MoEV2TransformerTrainModuleConfig,
     TransformerTrainModuleConfig,
@@ -86,8 +92,8 @@ class CommonComponents(Config):
 
 @dataclass
 class DataComponents(Config):
-    dataset: NumpyDatasetConfig
-    data_loader: NumpyDataLoaderConfig
+    dataset: NumpyDatasetConfig | List[InstanceSourceConfig]
+    data_loader: DataLoaderConfig
 
 
 @dataclass
@@ -95,8 +101,8 @@ class ExperimentConfig(Config):
     run_name: str
     launch: Optional[BeakerLaunchConfig]
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
-    data_loader: NumpyDataLoaderConfig
+    dataset: NumpyDatasetConfig | List[InstanceSourceConfig]
+    data_loader: DataLoaderConfig
     train_module: TrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
@@ -157,13 +163,13 @@ class SubCmd(StrEnum):
                     "'dp_config' is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
                     config.train_module.dp_config,
                 )
-                config.train_module.dp_config = None
-            if config.train_module.tp_config is not None:
+                config.train_module.dp_config = None  # type: ignore
+            if (tp_config := getattr(config.train_module, "tp_config", None)) is not None:
                 log.warning(
                     "'tp_config' is set to %s, but you can't use tensor parallelism when running on a single node. Disabling.",
-                    config.train_module.dp_config,
+                    tp_config,
                 )
-                config.train_module.tp_config = None
+                config.train_module.tp_config = None  # type: ignore
             train(config)
             teardown_training_environment()
         elif self == SubCmd.prep:
@@ -191,7 +197,6 @@ def build_common_components(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
-    use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
     flight_recorder: bool = False,
 ) -> CommonComponents:
@@ -211,7 +216,6 @@ def build_common_components(
             beaker_image=beaker_image,
             num_nodes=num_nodes,
             workspace=beaker_workspace,
-            use_hostname_constraints=use_hostname_constraints,
             num_execution_units=num_execution_units,
         )
         launch_config.launch_timeout = 5 * 60
@@ -300,38 +304,36 @@ def _build_default_eval_callbacks(common: CommonComponents) -> Dict[str, Callbac
     }
 
 
-def _set_beaker_execution_units(config: ExperimentConfig):
-    # When running on Augusta with hostname constraints enabled, setting more beaker
-    # execution units than model replicas may result in the replicas being split across
-    # Augusta hardware blocks.
-    if (
-        config.launch
-        and config.launch.use_hostname_constraints
-        and any("augusta" in cluster for cluster in config.launch.clusters)
-        and isinstance(
-            config.train_module,
-            (TransformerTrainModuleConfig, MoEV2TransformerTrainModuleConfig),
-        )
-        and (dp_config := config.train_module.dp_config) is not None
-    ):
-        if dp_config.num_replicas is not None:
-            num_model_replicas = dp_config.num_replicas
-        elif dp_config.shard_degree is not None:
-            nodes_per_replica = max(1, dp_config.shard_degree // config.launch.num_gpus)
-            num_model_replicas = config.launch.num_nodes // nodes_per_replica
-        else:
-            return
+# NOTE: unused, but here's the logic in case we need it again.
+#
+#  def _set_beaker_execution_units(config: ExperimentConfig):
+#      # When running on Augusta with hostname constraints enabled, setting more beaker
+#      # execution units than model replicas may result in the replicas being split across
+#      # Augusta hardware blocks.
+#      if (
+#          config.launch
+#          and config.launch.use_hostname_constraints
+#          and any("augusta" in cluster for cluster in config.launch.clusters)
+#          and (dp_config := getattr(config.train_module, "dp_config", None)) is not None
+#      ):
+#          if dp_config.num_replicas is not None:
+#              num_model_replicas = dp_config.num_replicas
+#          elif dp_config.shard_degree is not None:
+#              nodes_per_replica = max(1, dp_config.shard_degree // config.launch.num_gpus)
+#              num_model_replicas = config.launch.num_nodes // nodes_per_replica
+#          else:
+#              return
 
-        if config.launch.num_execution_units is None:
-            log.info(f"Setting number of execution units to {num_model_replicas}.")
-            config.launch.num_execution_units = num_model_replicas
-        elif config.launch.num_execution_units > num_model_replicas:
-            log.warning(
-                f"Number of execution units {config.launch.num_execution_units} exceeds number of model replicas {num_model_replicas}. "
-                "On Augusta, this may result in suboptimal performance due to model replicas being split "
-                "across hardware blocks. To resolve, decrease num_execution_units in beaker launch config, "
-                "increase number of model replicas or disable use_hostname_constraints in beaker launch config."
-            )
+#          if config.launch.num_execution_units is None:
+#              log.info(f"Setting number of execution units to {num_model_replicas}.")
+#              config.launch.num_execution_units = num_model_replicas
+#          elif config.launch.num_execution_units > num_model_replicas:
+#              log.warning(
+#                  f"Number of execution units {config.launch.num_execution_units} exceeds number of model replicas {num_model_replicas}. "
+#                  "On Augusta, this may result in suboptimal performance due to model replicas being split "
+#                  "across hardware blocks. To resolve, decrease num_execution_units in beaker launch config, "
+#                  "increase number of model replicas or disable use_hostname_constraints in beaker launch config."
+#              )
 
 
 def build_config(
@@ -349,7 +351,7 @@ def build_config(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
-    use_hostname_constraints: bool = False,
+    #  use_hostname_constraints: bool = False,
     flight_recorder: bool = False,
     num_execution_units: Optional[int] = None,
     include_default_evals: bool = False,
@@ -380,7 +382,6 @@ def build_config(
     :param beaker_image: The Beaker image to use for the experiment.
     :param num_nodes: Number of nodes to use for training.
     :param beaker_workspace: The Beaker workspace to use.
-    :param use_hostname_constraints: Whether to use hostname constraints in Beaker.
     :param num_execution_units: Number of execution units for Beaker.
     :param include_default_evals: Whether to include default evaluation callbacks.
     :param data_kwargs: Additional keyword arguments to pass to the data config builder.
@@ -395,7 +396,7 @@ def build_config(
         beaker_image=beaker_image,
         num_nodes=num_nodes,
         beaker_workspace=beaker_workspace,
-        use_hostname_constraints=use_hostname_constraints,
+        #  use_hostname_constraints=use_hostname_constraints,
         flight_recorder=flight_recorder,
         num_execution_units=num_execution_units,
     )
@@ -426,9 +427,7 @@ def build_config(
     )
 
     config = config.merge(cli_context.overrides)
-
-    _set_beaker_execution_units(config)
-
+    #  _set_beaker_execution_units(config)
     if finalize_config is not None:
         finalize_config(config)
 
@@ -436,37 +435,39 @@ def build_config(
 
 
 def launch(config: ExperimentConfig):
-    log.info(config)
     assert config.launch is not None
+    config.launch.launch()
 
-    # Only send local Slack notifications when slack callback is enabled.
-    slack_enabled = False
-    for callback in config.trainer.callbacks.values():
-        if isinstance(callback, SlackNotifierCallback):
-            if callback.enabled and SLACK_WEBHOOK_URL_ENV_VAR in os.environ:
-                slack_enabled = True
-            break
 
-    config.launch.launch(
-        follow=True,
-        slack_notifications=slack_enabled,
-        launch_timeout=5 * 60,
-        #  step_timeout=30 * 60,  # hard timeout kills the job
-        step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
-    )
+def _build_data_loader(
+    config: ExperimentConfig, dp_process_group: Optional[dist.ProcessGroup] = None
+) -> DataLoaderBase:
+    if isinstance(config.data_loader, NumpyDataLoaderConfig):
+        assert isinstance(config.dataset, NumpyDatasetConfig)
+        dataset = config.dataset.build()
+        return config.data_loader.build(dataset, dp_process_group=dp_process_group)
+    elif isinstance(config.data_loader, ComposableDataLoaderConfig):
+        assert isinstance(config.dataset, list)
+        work_dir = config.data_loader.work_dir
+        assert work_dir is not None, "Please set 'work_dir' on data loader config"
+        sources: List[InstanceSource] = []
+        for source in config.dataset:
+            assert isinstance(source, InstanceSourceConfig)
+            sources.append(source.build(work_dir))
+        return config.data_loader.build(*sources, dp_process_group=dp_process_group)
+    else:
+        raise NotImplementedError(type(config.data_loader))
 
 
 def launch_prep(config: ExperimentConfig):
     assert config.launch is not None
     config.launch.num_gpus = 0
     config.launch.num_nodes = 1
-    log.info(config)
-    config.launch.launch(follow=True, torchrun=False)
+    config.launch.launch(torchrun=False)
 
 
 def prep(config: ExperimentConfig):
-    dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset)
+    data_loader = _build_data_loader(config)
     data_loader.reshuffle(epoch=1)
 
 
@@ -477,8 +478,7 @@ def train(config: ExperimentConfig):
     # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
-    dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    data_loader = _build_data_loader(config, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
     # Record the config to W&B/Comet and each checkpoint dir.
@@ -564,6 +564,5 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/neptune --launch.num_nodes=2
     cli_context = CliContext(script, cmd, run_name, cluster, overrides)
 
     config: ExperimentConfig = config_builder(cli_context)
-
     cmd.prepare_environment(config)
     cmd.run(config)

@@ -8,6 +8,12 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 
 from olmo_core.config import StrEnum
+from olmo_core.distributed.parallel.context_parallel import (
+    all_to_all_cp2hp,
+    all_to_all_single_cp2hp,
+    all_to_all_single_cp2hp_qkvpacked,
+    all_to_all_single_hp2cp,
+)
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.buffer_cache import BufferCache
 
@@ -16,15 +22,21 @@ from .flash_attn_api import (
     dispatch_flash_attn_3,
     dispatch_flash_attn_3_qkvpacked,
     dispatch_flash_attn_3_with_kvcache,
+    dispatch_flash_attn_4,
     dispatch_flash_attn_qkvpacked,
     dispatch_flash_attn_with_kvcache,
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
     has_flash_attn_2,
     has_flash_attn_3,
+    has_flash_attn_4,
     has_ring_flash_attn,
 )
-from .ring import RingAttentionLoadBalancerType
+from .ring import (
+    RingAttentionLoadBalancerType,
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from .te_attn_api import TEDotProductAttention, has_te_attn
 
 
@@ -35,22 +47,31 @@ class AttentionBackendName(StrEnum):
 
     torch = "torch"
     """
-    PyTorch's built-in SDPA ➡️ :class:`TorchAttentionBackend`
+    PyTorch's built-in SDPA. Works on all devices. ➡️ :class:`TorchAttentionBackend`
     """
     flash_2 = "flash_2"
     """
     Flash attention 2 from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
+    Supports Ampere (SM 8.0+) and newer NVIDIA GPUs.
     To use this with context-parallelism, `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_
     is also required. ➡️ :class:`FlashAttention2Backend`
     """
     flash_3 = "flash_3"
     """
     Flash attention 3 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
-    library ``hopper/`` subdirectory. Only supports H100/H800 GPUs. ➡️ :class:`FlashAttention3Backend`
+    library ``hopper/`` subdirectory. Supports Hopper (SM 9.0) GPUs only (H100/H800).
+    ➡️ :class:`FlashAttention3Backend`
+    """
+    flash_4 = "flash_4"
+    """
+    Flash attention 4, the CUTE implementation from `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
+    in the ``flash_attn/cute`` subdirectory. Supports Blackwell (SM 10.0, e.g. B200) GPUs only.
+    ➡️ :class:`FlashAttention4Backend`
     """
     te = "te"
     """
-    Transformer Engine attention ➡️ :class:`TEAttentionBackend`.
+    Transformer Engine attention. Supports Hopper (SM 9.0+) and newer NVIDIA GPUs.
+    ➡️ :class:`TEAttentionBackend`.
     """
 
     def get_class(self) -> Type["AttentionBackend"]:
@@ -60,6 +81,8 @@ class AttentionBackendName(StrEnum):
             return FlashAttention2Backend
         elif self == self.flash_3:
             return FlashAttention3Backend
+        elif self == self.flash_4:
+            return FlashAttention4Backend
         elif self == self.te:
             return TEAttentionBackend
         else:
@@ -92,8 +115,11 @@ class AttentionBackendName(StrEnum):
     def assert_supports_swa(self):
         self.get_class().assert_supports_swa()
 
-    def assert_supports_cp(self):
-        self.get_class().assert_supports_cp()
+    def assert_supports_ring_cp(self):
+        self.get_class().assert_supports_ring_cp()
+
+    def assert_supports_ulysses_cp(self):
+        self.get_class().assert_supports_ulysses_cp()
 
     def assert_supports_packed_qkv(self):
         self.get_class().assert_supports_packed_qkv()
@@ -131,7 +157,6 @@ class AttentionBackend(nn.Module):
         self.cache = cache
         self.cp_pg: Optional[dist.ProcessGroup] = None
         self.cp_enabled = False
-        self.cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
         self.head_stride: int = 1
 
     @classmethod
@@ -154,9 +179,18 @@ class AttentionBackend(nn.Module):
 
     @classmethod
     @abstractmethod
-    def assert_supports_cp(cls):
+    def assert_supports_ring_cp(cls):
         """
-        Validates that this backend supports context parallelism.
+        Validates that this backend supports ring context parallelism.
+        Raises an error if not supported.
+        """
+        pass
+
+    @classmethod
+    @abstractmethod
+    def assert_supports_ulysses_cp(cls):
+        """
+        Validates that this backend supports ulysses context parallelism.
         Raises an error if not supported.
         """
         pass
@@ -206,17 +240,23 @@ class AttentionBackend(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
         """
         Apply context parallelism if supported by the backend.
         """
-        self.assert_supports_cp()
+        if ring is not None:
+            self.assert_supports_ring_cp()
+        elif uly is not None:
+            self.assert_supports_ulysses_cp()
+        else:
+            raise ValueError("One of ring or uly must be specified")
+
         self.cp_pg = cp_mesh.get_group()
-        self.cp_load_balancer = load_balancer
+        self.ring = ring
+        self.uly = uly
         self.cp_enabled = True
-        self.cp_head_stride = head_stride
 
 
 class TorchAttentionBackend(AttentionBackend):
@@ -233,8 +273,12 @@ class TorchAttentionBackend(AttentionBackend):
         pass
 
     @classmethod
-    def assert_supports_cp(cls):
-        raise RuntimeError(f"'{cls.__name__}' doesn't support context parallelism")
+    def assert_supports_ring_cp(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support ring context parallelism")
+
+    @classmethod
+    def assert_supports_ulysses_cp(cls):
+        pass
 
     @classmethod
     def assert_supports_packed_qkv(cls):
@@ -298,6 +342,13 @@ class TorchAttentionBackend(AttentionBackend):
                 f"'{self.__class__.__name__}' doesn't support intra-document masking"
             )
 
+        if self.cp_enabled and self.uly is not None:
+            assert self.cp_pg is not None
+            # Transform from context-parallel to head-parallel partitioning
+            # [B, T/CP, H, D] -> [B, T, H/CP, D]
+            q = all_to_all_single_cp2hp(q, self.cp_pg)
+            k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+
         # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
         n_rep = self.n_heads // self.n_kv_heads
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -322,7 +373,15 @@ class TorchAttentionBackend(AttentionBackend):
         )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
-        return att.transpose(1, 2).contiguous()
+        att = att.transpose(1, 2)
+
+        if self.cp_enabled and self.uly is not None:
+            assert self.cp_pg is not None
+            # Transform back from head-parallel to context-parallel partitioning
+            # [B, T, H/CP, D] -> [B, T/CP, H, D]
+            att = all_to_all_single_hp2cp(att, self.cp_pg)
+
+        return att.contiguous()
 
     def _get_sliding_window_mask(
         self,
@@ -393,18 +452,24 @@ class FlashAttention2Backend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_flash_attn_2():
-            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn package.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the flash-attn package or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):
         pass
 
     @classmethod
-    def assert_supports_cp(cls):
+    def assert_supports_ring_cp(cls):
         if not has_ring_flash_attn():
             raise RuntimeError(
                 f"'{cls.__name__}' requires the ring-flash-attn package for context parallelism."
             )
+
+    @classmethod
+    def assert_supports_ulysses_cp(cls):
+        pass
 
     @classmethod
     def assert_supports_packed_qkv(cls):
@@ -438,17 +503,44 @@ class FlashAttention2Backend(AttentionBackend):
                 )
 
             if self.cp_enabled:
-                assert self.cp_pg is not None and self.cp_load_balancer is not None
-                return dispatch_ring_flash_attn_qkvpacked(
-                    qkv,
-                    group=self.cp_pg,
-                    strategy=self.cp_load_balancer,
-                    cu_seqlens=cu_doc_lens,
-                    max_seqlen=max_doc_len,
-                    dropout_p=self.dropout_p,
-                    softmax_scale=self.scale,
-                    causal=True,
-                )
+                assert self.cp_pg is not None
+                if self.ring is not None:
+                    return dispatch_ring_flash_attn_qkvpacked(
+                        qkv,
+                        group=self.cp_pg,
+                        strategy=self.ring.load_balancer,
+                        cu_seqlens=cu_doc_lens,
+                        max_seqlen=max_doc_len,
+                        dropout_p=self.dropout_p,
+                        softmax_scale=self.scale,
+                        causal=True,
+                        window_size=self.window_size,
+                    )
+                elif self.uly is not None:
+                    # Transform packed qkv from context-parallel to head-parallel partitioning
+                    # [B, T/CP, 3, H, D] -> [B, T, 3, H/CP, D]
+                    qkv = all_to_all_single_cp2hp_qkvpacked(qkv, self.cp_pg)
+                    B, T, _, H_local, D = qkv.shape
+
+                    # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                    # (same on all CP ranks), so we use them directly after gathering the full sequence.
+
+                    # Run attention with full sequence, partitioned heads
+                    out = dispatch_flash_attn_qkvpacked(
+                        qkv,
+                        cu_seqlens=cu_doc_lens,
+                        max_seqlen=max_doc_len,
+                        dropout_p=self.dropout_p,
+                        softmax_scale=self.scale,
+                        causal=True,
+                        window_size=self.window_size,
+                    )
+
+                    # Transform back from head-parallel to context-parallel partitioning
+                    # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                    return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                else:
+                    raise RuntimeError("One of ring or uly must be specified")
             else:
                 return dispatch_flash_attn_qkvpacked(
                     qkv,
@@ -457,6 +549,7 @@ class FlashAttention2Backend(AttentionBackend):
                     dropout_p=self.dropout_p,
                     softmax_scale=self.scale,
                     causal=True,
+                    window_size=self.window_size,
                 )
 
         q, k, v = qkv
@@ -483,26 +576,60 @@ class FlashAttention2Backend(AttentionBackend):
             )
 
         if self.cp_enabled:
-            assert self.cp_pg is not None and self.cp_load_balancer is not None
-            return dispatch_ring_flash_attn(
-                q,
-                k,
-                v,
-                group=self.cp_pg,
-                strategy=self.cp_load_balancer,
-                cu_seqlens=cu_doc_lens,
-                cu_seqlens_q=cu_doc_lens_q,
-                cu_seqlens_k=cu_doc_lens_k,
-                max_seqlen=max_doc_len,
-                max_seqlen_q=max_doc_len_q,
-                max_seqlen_k=max_doc_len_k,
-                heads_k_stride=self.cp_head_stride,
-                local_k_slice=local_k_slice,
-                dropout_p=self.dropout_p,
-                causal=True,
-                softmax_scale=self.scale,
-                window_size=self.window_size,
-            )
+            assert self.cp_pg is not None
+            if self.ring is not None:
+                return dispatch_ring_flash_attn(
+                    q,
+                    k,
+                    v,
+                    group=self.cp_pg,
+                    strategy=self.ring.load_balancer,
+                    cu_seqlens=cu_doc_lens,
+                    cu_seqlens_q=cu_doc_lens_q,
+                    cu_seqlens_k=cu_doc_lens_k,
+                    max_seqlen=max_doc_len,
+                    max_seqlen_q=max_doc_len_q,
+                    max_seqlen_k=max_doc_len_k,
+                    heads_k_stride=self.ring.head_stride,
+                    local_k_slice=local_k_slice,
+                    dropout_p=self.dropout_p,
+                    causal=True,
+                    softmax_scale=self.scale,
+                    window_size=self.window_size,
+                )
+            elif self.uly is not None:
+                # Transform from context-parallel to head-parallel partitioning
+                # [B, T/CP, H, D] -> [B, T, H/CP, D]
+                q = all_to_all_single_cp2hp(q, self.cp_pg)
+                k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+                B, T, H_local, D = q.shape
+
+                # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                # (same on all CP ranks), so we use them directly after gathering the full sequence.
+                # This is the default state of cu_doc_lens and max_doc_len before a load balancer is applied.
+
+                # Run attention with full sequence, partitioned heads
+                out = dispatch_flash_attn(
+                    q,
+                    k,
+                    v,
+                    cu_seqlens=cu_doc_lens,
+                    cu_seqlens_q=cu_doc_lens_q,
+                    cu_seqlens_k=cu_doc_lens_k,
+                    max_seqlen=max_doc_len,
+                    max_seqlen_q=max_doc_len_q,
+                    max_seqlen_k=max_doc_len_k,
+                    dropout_p=self.dropout_p,
+                    causal=True,
+                    softmax_scale=self.scale,
+                    window_size=self.window_size,
+                )
+
+                # Transform back from head-parallel to context-parallel partitioning
+                # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+            else:
+                raise RuntimeError("One of ring or uly must be specified")
 
         return dispatch_flash_attn(
             q,
@@ -552,15 +679,21 @@ class FlashAttention3Backend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_flash_attn_3():
-            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn 3 package.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the flash-attn 3 package or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):
         pass
 
     @classmethod
-    def assert_supports_cp(cls):
-        raise RuntimeError(f"'{cls.__name__}' doesn't support context parallelism")
+    def assert_supports_ring_cp(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support ring context parallelism")
+
+    @classmethod
+    def assert_supports_ulysses_cp(cls):
+        pass
 
     @classmethod
     def assert_supports_packed_qkv(cls):
@@ -593,17 +726,53 @@ class FlashAttention3Backend(AttentionBackend):
                     f"'{self.__class__.__name__}' doesn't support packed QKV with sliding window attention"
                 )
 
+            if self.cp_enabled:
+                assert self.cp_pg is not None
+                if self.ring is not None:
+                    raise RuntimeError(
+                        f"'{self.__class__.__name__}' doesn't support ring context parallelism"
+                    )
+                elif self.uly is not None:
+                    # Transform packed qkv from context-parallel to head-parallel partitioning
+                    # [B, T/CP, 3, H, D] -> [B, T, 3, H/CP, D]
+                    qkv = all_to_all_single_cp2hp_qkvpacked(qkv, self.cp_pg)
+                    B, T, _, H_local, D = qkv.shape
+
+                    # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                    # (same on all CP ranks), so we use them directly after gathering the full sequence.
+
+                    # Run attention with full sequence, partitioned heads
+                    out = dispatch_flash_attn_3_qkvpacked(
+                        qkv,
+                        cu_seqlens=cu_doc_lens,
+                        max_seqlen=max_doc_len,
+                        softmax_scale=self.scale,
+                        causal=True,
+                        window_size=self.window_size,
+                    )
+
+                    # Transform back from head-parallel to context-parallel partitioning
+                    # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                    return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+                else:
+                    raise RuntimeError("One of ring or uly must be specified")
+
             return dispatch_flash_attn_3_qkvpacked(
                 qkv,
                 cu_seqlens=cu_doc_lens,
                 max_seqlen=max_doc_len,
                 softmax_scale=self.scale,
                 causal=True,
+                window_size=self.window_size,
             )
 
         q, k, v = qkv
 
         if kv_cache_manager:
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support KV caching with context parallelism"
+                )
             return dispatch_flash_attn_3_with_kvcache(
                 q,
                 k=k,
@@ -619,7 +788,195 @@ class FlashAttention3Backend(AttentionBackend):
                 ).contiguous(),
             )
 
+        if self.cp_enabled:
+            if self.ring is not None:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support ring context parallelism"
+                )
+            elif self.uly is not None:
+                assert self.cp_pg is not None
+
+                # Transform from context-parallel to head-parallel partitioning
+                # [B, T/CP, H, D] -> [B, T, H/CP, D]
+                q = all_to_all_single_cp2hp(q, self.cp_pg)
+                k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+                B, T, H_local, D = q.shape
+
+                # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                # (same on all CP ranks), so we use them directly after gathering the full sequence.
+                # This is the default state of cu_doc_lens and max_doc_len before a load balancer is applied.
+
+                # Run attention with full sequence, partitioned heads
+                out = dispatch_flash_attn_3(
+                    q,
+                    k,
+                    v,
+                    cu_seqlens=cu_doc_lens,
+                    cu_seqlens_q=cu_doc_lens_q,
+                    cu_seqlens_k=cu_doc_lens_k,
+                    max_seqlen=max_doc_len,
+                    max_seqlen_q=max_doc_len_q,
+                    max_seqlen_k=max_doc_len_k,
+                    softmax_scale=self.scale,
+                    causal=True,
+                    window_size=self.window_size,
+                )
+
+                # Transform back from head-parallel to context-parallel partitioning
+                # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+            else:
+                raise RuntimeError("One of ring or uly must be specified")
+
         return dispatch_flash_attn_3(
+            q,
+            k,
+            v,
+            cu_seqlens=cu_doc_lens,
+            cu_seqlens_q=cu_doc_lens_q,
+            cu_seqlens_k=cu_doc_lens_k,
+            max_seqlen=max_doc_len,
+            max_seqlen_q=max_doc_len_q,
+            max_seqlen_k=max_doc_len_k,
+            softmax_scale=self.scale,
+            causal=True,
+            window_size=self.window_size,
+        )
+
+
+class FlashAttention4Backend(AttentionBackend):
+    """
+    SDPA from flash-attn 4 (CUTE implementation).
+    """
+
+    def __init__(
+        self,
+        *,
+        head_dim: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        scale: Optional[float] = None,
+        dropout_p: float = 0.0,
+        window_size: Tuple[int, int] = (-1, -1),
+        cache: Optional[BufferCache] = None,
+    ):
+        if dropout_p > 0.0:
+            raise RuntimeError("dropout_p > 0.0 is not supported for flash-attn 4")
+        super().__init__(
+            head_dim=head_dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            scale=scale,
+            dropout_p=dropout_p,
+            window_size=window_size,
+            cache=cache,
+        )
+
+    @classmethod
+    def assert_supported(cls):
+        if not has_flash_attn_4():
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the flash-attn CUTE implementation or is not supported on this platform."
+            )
+
+    @classmethod
+    def assert_supports_swa(cls):
+        pass
+
+    @classmethod
+    def assert_supports_ring_cp(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support ring context parallelism")
+
+    @classmethod
+    def assert_supports_ulysses_cp(cls):
+        pass
+
+    @classmethod
+    def assert_supports_packed_qkv(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support packed QKV")
+
+    @classmethod
+    def assert_supports_kv_cache(cls):
+        pass
+
+    def forward(
+        self,
+        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+    ) -> torch.Tensor:
+        assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
+        assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
+
+        q, k, v = qkv
+
+        if kv_cache_manager is not None:
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support KV caching with context parallelism"
+                )
+            pos = int(kv_cache_manager.cache_seqlens.item())
+            T_new = k.shape[1]
+            kv_cache_manager.k_cache[:, pos : pos + T_new] = k
+            kv_cache_manager.v_cache[:, pos : pos + T_new] = v
+            seqused_k = torch.full((q.shape[0],), pos + T_new, dtype=torch.int32, device=q.device)
+            return dispatch_flash_attn_4(
+                q,
+                kv_cache_manager.k_cache,
+                kv_cache_manager.v_cache,
+                seqused_k=seqused_k,
+                softmax_scale=self.scale,
+                causal=True,
+                window_size=self.window_size,
+            )
+
+        if self.cp_enabled:
+            if self.ring is not None:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support ring context parallelism"
+                )
+            elif self.uly is not None:
+                assert self.cp_pg is not None
+
+                # Transform from context-parallel to head-parallel partitioning
+                # [B, T/CP, H, D] -> [B, T, H/CP, D]
+                q = all_to_all_single_cp2hp(q, self.cp_pg)
+                k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+                B, T, H_local, D = q.shape
+
+                # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                # (same on all CP ranks), so we use them directly after gathering the full sequence.
+                # This is the default state of cu_doc_lens and max_doc_len before a load balancer is applied.
+
+                # Run attention with full sequence, partitioned heads
+                out = dispatch_flash_attn_4(
+                    q,
+                    k,
+                    v,
+                    cu_seqlens=cu_doc_lens,
+                    cu_seqlens_q=cu_doc_lens_q,
+                    cu_seqlens_k=cu_doc_lens_k,
+                    max_seqlen=max_doc_len,
+                    max_seqlen_q=max_doc_len_q,
+                    max_seqlen_k=max_doc_len_k,
+                    softmax_scale=self.scale,
+                    causal=True,
+                    window_size=self.window_size,
+                )
+
+                # Transform back from head-parallel to context-parallel partitioning
+                # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                return all_to_all_single_hp2cp(out.view(B, T, H_local, D), self.cp_pg)
+            else:
+                raise RuntimeError("One of ring or uly must be specified")
+
+        return dispatch_flash_attn_4(
             q,
             k,
             v,
@@ -673,7 +1030,9 @@ class TEAttentionBackend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         if not has_te_attn():
-            raise RuntimeError(f"'{cls.__name__}' requires NVIDIA's TransformerEngine package.")
+            raise RuntimeError(
+                f"'{cls.__name__}' is missing the TransformerEngine package or is not supported on this platform."
+            )
 
     @classmethod
     def assert_supports_swa(cls):
@@ -694,19 +1053,35 @@ class TEAttentionBackend(AttentionBackend):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        if load_balancer != RingAttentionLoadBalancerType.zig_zag:
-            raise RuntimeError(f"'{self.__class__.__name__}' only supports zig-zag load balancing")
-        super().apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
-        self.te_attn.set_context_parallel_group(
-            cp_group=cp_mesh.get_group(),
-            cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
-            cp_stream=torch.cuda.default_stream(),
-            #  cp_stream=get_or_init_stream("cp"),  # this doesn't seem to help
-            cp_comm_type="p2p",
-        )
+        super().apply_cp(cp_mesh, ring=ring, uly=uly)
+        if self.ring is not None:
+            if self.ring.load_balancer == RingAttentionLoadBalancerType.zig_zag:
+                cp_comm_type = "p2p"  # Note: zig-zag/p2p is preferred bc it overlaps with the attention computation
+            elif self.ring.load_balancer == RingAttentionLoadBalancerType.llama3:
+                cp_comm_type = "all_gather"
+            else:
+                raise ValueError(self.ring.load_balancer)
+
+            self.te_attn.set_context_parallel_group(
+                cp_group=cp_mesh.get_group(),
+                cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
+                cp_stream=torch.cuda.default_stream(),
+                #  cp_stream=get_or_init_stream("cp"),  # this doesn't seem to help
+                cp_comm_type=cp_comm_type,
+            )
+        elif self.uly is not None:
+            self.te_attn.set_context_parallel_group(
+                cp_group=cp_mesh.get_group(),
+                cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
+                cp_stream=torch.cuda.default_stream(),
+                #  cp_stream=get_or_init_stream("cp"),  # this doesn't seem to help
+                cp_comm_type="a2a",
+            )
+        else:
+            raise ValueError("One of ring or uly must be specified")
 
     @torch.compiler.disable(
         reason="Transformer Engine attention uses Python/pybind setup that Dynamo should not trace"

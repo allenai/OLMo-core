@@ -1,5 +1,8 @@
+import logging
+import re
 from typing import Any, Dict, List
 
+import torch
 from transformers import PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
@@ -9,6 +12,8 @@ from olmo_core.nn.conversion.state_mapping import (
     StateType,
     TemplatePlaceholder,
 )
+
+log = logging.getLogger(__name__)
 
 LAYER = TemplatePlaceholder.LAYER
 EXPERT = TemplatePlaceholder.EXPERT
@@ -97,6 +102,14 @@ MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] =
     "llama": {
         f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
     },
+    "gemma3_text": {
+        f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.post_attention_norm.weight",
+        f"model.layers.{LAYER}.pre_feedforward_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight",
+        f"model.layers.{LAYER}.post_feedforward_layernorm.weight": f"blocks.{LAYER}.post_feed_forward_norm.weight",
+    },
+    "qwen3": {
+        f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
+    },
 }
 
 #: Map of Hugging Face module keys to OLMo Core module keys. This map captures overrides of the standard
@@ -105,6 +118,14 @@ MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] =
 #: how HF state maps to OLMo Core state.
 MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, Dict[str, str]] = {
     "llama": {
+        f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
+    },
+    "gemma3_text": {
+        f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.post_attention_norm",
+        f"model.layers.{LAYER}.pre_feedforward_layernorm": f"blocks.{LAYER}.feed_forward_norm",
+        f"model.layers.{LAYER}.post_feedforward_layernorm": f"blocks.{LAYER}.post_feed_forward_norm",
+    },
+    "qwen3": {
         f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
     },
 }
@@ -337,6 +358,33 @@ def get_converter_from_hf(model_type: str | None = None) -> StateConverter:
     return _get_converter_from_hf(model_type=model_type)
 
 
+def _apply_gemma3_norm_transform(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform Gemma 3 norm weights from HF format to OLMo format.
+
+    HF Gemma 3 uses zero-initialized RMSNorm weights with `hidden_states * (1 + weight)`,
+    while OLMo uses ones-initialized weights with `hidden_states * weight`.
+
+    This function adds 1 to all norm weights to convert between the two conventions.
+    """
+    norm_patterns = [
+        "attention_norm.weight",
+        "post_attention_norm.weight",
+        "feed_forward_norm.weight",
+        "post_feed_forward_norm.weight",
+        "lm_head.norm.weight",
+        "q_norm.weight",
+        "k_norm.weight",
+    ]
+
+    for key, value in state.items():
+        if any(pattern in key for pattern in norm_patterns):
+            if isinstance(value, torch.Tensor):
+                state[key] = value + 1.0
+
+    return state
+
+
 def _convert_state(
     config: PretrainedConfig,
     state: Dict[str, Any],
@@ -374,7 +422,12 @@ def convert_state_from_hf(
 
     converter = _get_converter_from_hf(model_type=model_type)
 
-    return _convert_state(config, hf_state, converter)
+    converted_state = _convert_state(config, hf_state, converter)
+
+    if model_type == "gemma3_text":
+        converted_state = _apply_gemma3_norm_transform(converted_state)
+
+    return converted_state
 
 
 def _get_converter_to_hf(model_type: str | None = None) -> StateConverter:
@@ -418,3 +471,107 @@ def convert_state_to_hf(
     converter = _get_converter_to_hf(getattr(config, "model_type", None))
 
     return _convert_state(config, olmo_core_state, converter)
+
+
+# ---------------------------------------------------------------------------
+# Hybrid (GDN + attention) per-layer key maps.
+#
+# These can't use the LAYER template because GDN and attention layers sharing
+# the same OLMo-core prefix (``blocks.{i}.attention.*``) need different HF
+# prefixes (``linear_attn.*`` vs ``self_attn.*``).
+# ---------------------------------------------------------------------------
+
+#: GDN layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.linear_attn.*``.
+#: These layers use pre-norm in HF (input_layernorm before the sequence mixer).
+HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
+    "attention.w_q.weight": "linear_attn.q_proj.weight",
+    "attention.w_k.weight": "linear_attn.k_proj.weight",
+    "attention.w_v.weight": "linear_attn.v_proj.weight",
+    "attention.w_a.weight": "linear_attn.a_proj.weight",
+    "attention.w_b.weight": "linear_attn.b_proj.weight",
+    "attention.w_g.weight": "linear_attn.g_proj.weight",
+    "attention.w_out.weight": "linear_attn.o_proj.weight",
+    "attention.q_conv1d.weight": "linear_attn.q_conv1d.weight",
+    "attention.k_conv1d.weight": "linear_attn.k_conv1d.weight",
+    "attention.v_conv1d.weight": "linear_attn.v_conv1d.weight",
+    "attention.o_norm.weight": "linear_attn.o_norm.weight",
+    "attention.A_log": "linear_attn.A_log",
+    "attention.dt_bias": "linear_attn.dt_bias",
+    "attention_norm.weight": "input_layernorm.weight",
+    "feed_forward_norm.weight": "post_attention_layernorm.weight",
+    "feed_forward.w1.weight": "mlp.gate_proj.weight",
+    "feed_forward.w2.weight": "mlp.down_proj.weight",
+    "feed_forward.w3.weight": "mlp.up_proj.weight",
+}
+
+#: Attention layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.self_attn.*``.
+#: These layers use post-norm in HF (layernorm after the sequence mixer and after the MLP).
+HYBRID_ATTN_LAYER_KEY_MAP: Dict[str, str] = {
+    "attention.w_q.weight": "self_attn.q_proj.weight",
+    "attention.w_k.weight": "self_attn.k_proj.weight",
+    "attention.w_v.weight": "self_attn.v_proj.weight",
+    "attention.w_out.weight": "self_attn.o_proj.weight",
+    "attention.q_norm.weight": "self_attn.q_norm.weight",
+    "attention.k_norm.weight": "self_attn.k_norm.weight",
+    "attention_norm.weight": "post_attention_layernorm.weight",
+    "feed_forward_norm.weight": "post_feedforward_layernorm.weight",
+    "feed_forward.w1.weight": "mlp.gate_proj.weight",
+    "feed_forward.w2.weight": "mlp.down_proj.weight",
+    "feed_forward.w3.weight": "mlp.up_proj.weight",
+}
+
+#: Non-block keys shared across all hybrid models.
+HYBRID_SHARED_KEY_MAP: Dict[str, str] = {
+    "embeddings.weight": "model.embed_tokens.weight",
+    "lm_head.norm.weight": "model.norm.weight",
+    "lm_head.w_out.weight": "lm_head.weight",
+}
+
+_HYBRID_BLOCK_KEY_RE = re.compile(r"^blocks\.(\d+)\.(.+)$")
+
+
+@beta_feature
+def convert_hybrid_state_to_hf(
+    state_dict: Dict[str, Any],
+    layer_types: List[str],
+) -> Dict[str, Any]:
+    """
+    Convert an OLMo-core hybrid state dict to HF ``olmo_hybrid`` format.
+
+    Uses :data:`HYBRID_SHARED_KEY_MAP` for non-block keys, and per-layer
+    :data:`HYBRID_GDN_LAYER_KEY_MAP` / :data:`HYBRID_ATTN_LAYER_KEY_MAP`
+    based on *layer_types*.
+
+    :param state_dict: An unsharded OLMo-core model state dict.
+    :param layer_types: Per-layer type list (``"linear_attention"`` or ``"full_attention"``).
+    """
+    hf_state: Dict[str, Any] = {}
+
+    for olmo_key, value in state_dict.items():
+        # Try shared (non-block) keys first.
+        if olmo_key in HYBRID_SHARED_KEY_MAP:
+            hf_state[HYBRID_SHARED_KEY_MAP[olmo_key]] = value
+            continue
+
+        m = _HYBRID_BLOCK_KEY_RE.match(olmo_key)
+        if m is None:
+            raise KeyError(f"Unmapped key: {olmo_key}")
+
+        layer_idx = int(m.group(1))
+        suffix = m.group(2)
+
+        key_map = (
+            HYBRID_GDN_LAYER_KEY_MAP
+            if layer_types[layer_idx] == "linear_attention"
+            else HYBRID_ATTN_LAYER_KEY_MAP
+        )
+        if suffix not in key_map:
+            raise KeyError(
+                f"Unmapped block suffix for layer {layer_idx} "
+                f"(type={layer_types[layer_idx]!r}): {olmo_key}"
+            )
+
+        hf_key = f"model.layers.{layer_idx}.{key_map[suffix]}"
+        hf_state[hf_key] = value
+
+    return hf_state

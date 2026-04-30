@@ -38,10 +38,13 @@ jobs:
 
           - name: Test
             run: |
-              pytest -v --color=yes --durations=3 \
+              pytest -v --color=yes --durations=6 \
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 --ignore-glob='src/test/train/checkpoint*' \
-                --ignore-glob='src/test/nn/*' \
+                --ignore-glob='src/test/nn/transformer*' \
+                --ignore-glob='src/test/nn/attention*' \
+                --ignore-glob='src/test/examples/*' \
+                --ignore-glob='src/test/scripts/*' \
                 src/test/
 
           - name: Test checkpoint
@@ -50,10 +53,39 @@ jobs:
                 src/test/distributed/checkpoint* \
                 src/test/train/checkpoint*
 
-          - name: Test nn
+          - name: Test transformer
             run: |
               pytest -v --color=yes --durations=3 \
-                src/test/nn/
+                src/test/nn/transformer/
+
+          - name: Test attention
+            run: |
+              # Note: Exclude tensor parallel tests because they are resource-intensive and we test
+              # them on GPU anway.
+              pytest -v --color=yes --durations=3 \
+                -k 'not tensor_parallel' \
+                src/test/nn/attention*
+
+          - name: Test examples
+            run: |
+              pytest -v --color=yes --durations=3 \
+                src/test/examples/
+
+          - name: Test scripts
+            run: |
+              pytest -v --color=yes --durations=3 \
+                src/test/scripts/
+
+          - name: Integration tests
+            run: |
+              pytest -v --color=yes --durations=3 -m "not gpu" \
+                src/integration_tests/
+
+          - name: Test olmo3 ladder
+            run: |
+              for size in 190M 370M 600M 760M 1B 3B 7B 13B; do
+                python ./src/scripts/train/ladder/olmo3_ladder.py dry-run --size="$size" --output-dir=./
+              done
 
           - name: Type check
             run: make type-check
@@ -78,7 +110,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Python environment
-        uses: ./.github/actions/setup-venv
+        uses: ./.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python }}
           cache-prefix: ${{ env.CACHE_PREFIX }}
@@ -101,7 +133,6 @@ jobs:
 
       - name: ${{ matrix.task.name }}
         run: |
-          . .venv/bin/activate
           ${{ matrix.task.run }}
 
       - name: Upload package distribution files
@@ -110,12 +141,6 @@ jobs:
         with:
           name: package
           path: dist
-
-      - name: Clean up
-        if: always()
-        run: |
-          . .venv/bin/activate
-          pip uninstall -y ai2-olmo-core
 
   gpu_checks:
     name: ${{ matrix.task.name }}
@@ -134,7 +159,9 @@ jobs:
               pytest -v --color=yes --durations=3 -m gpu \
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 --ignore-glob='src/test/nn/transformer*' \
+                --ignore-glob='src/test/nn/attention*' \
                 --ignore-glob='src/test/nn/moe*' \
+                --ignore-glob='src/test/optim*' \
                 src/test/
 
           - name: Test checkpoint (GPU)
@@ -151,12 +178,33 @@ jobs:
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
 
+          - name: Test attention (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/nn/attention*
+
           - name: Test MoE (GPU)
             image: *gpu_test_image
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/moe*
+
+          - name: Test optim (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/optim*
+
+          - name: Integration tests (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes -m gpu \
+                src/integration_tests/
     steps:
       - uses: actions/checkout@v5
         with:
@@ -169,7 +217,7 @@ jobs:
       - name: Install Gantry
         run:
           # uv tool install git+https://github.com/allenai/beaker-gantry
-          uv tool install 'beaker-gantry>=3.1,<4.0'
+          uv tool install 'beaker-gantry>=3.4.5,<4.0'
 
       - name: Determine Beaker workspace
         if: env.BEAKER_TOKEN != ''
@@ -191,7 +239,7 @@ jobs:
       - name: GPU Tests
         if: env.BEAKER_TOKEN != ''
         run: |
-          gantry run \
+          exec gantry run \
             --show-logs \
             --yes \
             --workspace ${{ env.BEAKER_WORKSPACE }} \
@@ -227,7 +275,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Python environment
-        uses: ./.github/actions/setup-venv
+        uses: ./.github/actions/setup-python-env
         with:
           python-version: "3.11"
           cache-prefix: ${{ env.CACHE_PREFIX }}
@@ -245,12 +293,10 @@ jobs:
 
       - name: Generate release notes
         run: |
-          . .venv/bin/activate
           python src/scripts/release/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
 
       - name: Publish package to PyPI
         run: |
-          . .venv/bin/activate
           twine upload -u __token__ -p '${{ secrets.PYPI_TOKEN }}' dist/*
 
       - name: Publish GitHub release
@@ -273,5 +319,4 @@ jobs:
       - name: Send Slack notifications about release
         continue-on-error: true
         run: |
-          . .venv/bin/activate
           python ./src/scripts/release/slack_notification.py '${{ secrets.SLACK_WEBHOOK_URL}}'

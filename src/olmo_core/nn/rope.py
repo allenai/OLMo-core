@@ -9,6 +9,7 @@ import torch.nn as nn
 from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
+from .config import ModuleConfig
 
 __all__ = [
     "RoPEType",
@@ -290,7 +291,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
 
 
 @dataclass
-class RoPEConfig(Config):
+class RoPEConfig(ModuleConfig):
     """
     A config for conveniently building any of the different RoPE classes.
 
@@ -308,6 +309,9 @@ class RoPEConfig(Config):
     full_precision: bool = True
     """Whether to always apply RoPE in full precision regardless of the input data type."""
 
+    no_global_rope: bool = False
+    """Whether to disable RoPE on global (non-SWA) attention layers."""
+
     scaling: Optional[RoPEScalingConfig] = None
     """The scaling config to apply to RoPE."""
 
@@ -323,6 +327,7 @@ class RoPEConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        kwargs.pop("no_global_rope")
         kwargs.update(head_size=head_size, cache=cache)
 
         try:

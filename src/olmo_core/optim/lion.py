@@ -138,8 +138,9 @@ class SkipStepLion(SkipStepOptimizer):
                 )
 
 
+@OptimConfig.register("lion")
 @dataclass
-class LionConfig(OptimConfig):
+class LionConfig(OptimConfig[Lion]):
     """
     Configuration class for building a :class:`Lion` optimizer.
     """
@@ -153,8 +154,9 @@ class LionConfig(OptimConfig):
         return Lion
 
 
+@OptimConfig.register("skip_step_lion")
 @dataclass
-class SkipStepLionConfig(OptimConfig):
+class SkipStepLionConfig(OptimConfig[SkipStepLion]):
     """
     Configuration class for building a :class:`SkipStepLion` optimizer.
     """

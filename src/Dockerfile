@@ -48,18 +48,15 @@ ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
-ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
-
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21
-# ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
-RUN unset GROUPED_GEMM_CUTLASS && pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
+RUN TORCH_CUDA_ARCH_LIST="9.0 10.0" GROUPED_GEMM_CUTLASS="1" pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
 # Install flash-attn 2
 ARG FLASH_ATTN_VERSION=2.8.2
-RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+RUN FLASH_ATTN_CUDA_ARCHS="90;100" pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install flash-attn 3.
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
@@ -70,7 +67,7 @@ RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github
     git checkout ${FLASH_ATTN_3_SHA} && \
     git submodule update --init --depth 1 && \
     cd hopper && \
-    FLASH_ATTENTION_DISABLE_FP16=TRUE MAX_JOBS=${FA3_MAX_JOBS} python setup.py install && \
+    FLASH_ATTENTION_DISABLE_FP16=TRUE FLASH_ATTENTION_DISABLE_SM80=TRUE MAX_JOBS=${FA3_MAX_JOBS} python setup.py install && \
     cd /app/build && \
     rm -rf flash-attention
 
@@ -85,19 +82,6 @@ RUN cd /opt/conda/lib/python${PYTHON_VERSION}/site-packages/ && \
     touch flash_attn_3/__init__.py && \
     rm -rf flash_attn_3-*
 
-# Install flash-attn 4 if requested.
-ARG FLASH_ATTN_4_SHA=""
-RUN if [ -n "${FLASH_ATTN_4_SHA}" ] ; then \
-    git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
-    cd flash-attention && \
-    git fetch --depth 1 origin ${FLASH_ATTN_4_SHA} && \
-    git checkout ${FLASH_ATTN_4_SHA} && \
-    git submodule update --init --depth 1 && \
-    cd flash_attn/cute && \
-    pip install --no-build-isolation --no-cache-dir . && \
-    cd /app/build && \
-    rm -rf flash-attention; fi
-
 # Install transformer-engine.
 ARG TE_VERSION=2.9
 RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
@@ -109,6 +93,11 @@ RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLAS
 # Install liger-kernel.
 ARG LIGER_KERNEL_VERSION=0.6.4
 RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
+
+# Optionally install Quack kernels.
+ARG QUACK_VERSION=""
+RUN if [ -n "${QUACK_VERSION}" ]; then \
+    pip install --no-build-isolation --no-cache-dir quack-kernels==${QUACK_VERSION}; fi
 
 # Install direct dependencies, but not source code.
 COPY pyproject.toml .
@@ -182,27 +171,12 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda
 
-# Keep these for non-interactive processes (docker run / docker exec / VS Code server)
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
 ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:$PATH
-
-# One canonical env script (login shells) + source it for interactive non-login bash shells (VS Code terminal)
-RUN set -eux; \
-  cat > /etc/profile.d/99-container-env.sh <<'EOF'
-# Container-wide env for login shells (SSH, su -) and (via bash.bashrc below) interactive shells.
-export PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:${PATH}
-export LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
-export UV_SYSTEM_PYTHON=1
-export UV_BREAK_SYSTEM_PACKAGES=1
-EOF
-RUN chmod 0644 /etc/profile.d/99-container-env.sh && \
-  grep -q '99-container-env.sh' /etc/bash.bashrc || \
-  printf '\n# Load container env for interactive shells\n[ -r /etc/profile.d/99-container-env.sh ] && . /etc/profile.d/99-container-env.sh\n' >> /etc/bash.bashrc
-
 
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core

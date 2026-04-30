@@ -1,37 +1,30 @@
 import logging
+import os
 
 import pytest
 import torch
 
+import olmo_core.nn.attention.flash_attn_api as flash_attn_api
+import olmo_core.nn.attention.flash_linear_attn_api as flash_linear_attn_api
+
 log = logging.getLogger(__name__)
+
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 has_cuda = torch.cuda.is_available()
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 has_mps = torch.mps.is_available()
 compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
-has_flash_attn_2 = False
-has_flash_attn_3 = False
+has_flash_attn_2 = flash_attn_api.has_flash_attn_2()
+has_flash_attn_3 = flash_attn_api.has_flash_attn_3()
+has_flash_attn_4 = flash_attn_api.has_flash_attn_4()
+has_fla = flash_linear_attn_api.has_fla()
 has_torchao = False
 has_grouped_gemm = False
 has_te = False
+has_dion = False
+has_quack = False
 
-try:
-    import flash_attn  # type: ignore
-
-    has_flash_attn_2 = True
-    del flash_attn
-except ModuleNotFoundError:
-    pass
-
-try:
-    import flash_attn_interface  # type: ignore
-
-    if compute_capability is not None:
-        is_supported = 9 <= compute_capability < 10  # H100 / H800
-        has_flash_attn_3 = is_supported
-    del flash_attn_interface
-except ModuleNotFoundError:
-    pass
 
 try:
     import torchao  # type: ignore
@@ -54,6 +47,22 @@ try:
 
     has_te = True
     del transformer_engine
+except ImportError:
+    pass
+
+try:
+    import dion  # type: ignore
+
+    has_dion = True
+    del dion
+except ImportError:
+    pass
+
+try:
+    import quack  # type: ignore
+
+    has_quack = True
+    del quack
 except ImportError:
     pass
 
@@ -113,6 +122,30 @@ def requires_flash_attn_3(func):
     return func
 
 
+FLASH_4_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_flash_attn_4, reason="Requires flash-attn 4"),
+)
+
+
+def requires_flash_attn_4(func):
+    for mark in FLASH_4_MARKS:
+        func = mark(func)
+    return func
+
+
+FLA_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_fla, reason="Requires flash-linear-attention (fla)"),
+)
+
+
+def requires_fla(func):
+    for mark in FLA_MARKS:
+        func = mark(func)
+    return func
+
+
 GROUPED_GEMM_MARKS = (
     pytest.mark.gpu,
     pytest.mark.skipif(not has_grouped_gemm, reason="Requires grouped_gemm"),
@@ -137,6 +170,30 @@ def requires_te(func):
     return func
 
 
+DION_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_dion, reason="Requires Dion"),
+)
+
+
+def requires_dion(func):
+    for mark in DION_MARKS:
+        func = mark(func)
+    return func
+
+
+QUACK_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_quack, reason="Requires Quack"),
+)
+
+
+def requires_quack(func):
+    for mark in QUACK_MARKS:
+        func = mark(func)
+    return func
+
+
 MPS_MARKS = (pytest.mark.skipif(not has_mps, reason="Requires MPS"),)
 
 
@@ -144,6 +201,12 @@ def requires_mps(func):
     for mark in MPS_MARKS:
         func = mark(func)
     return func
+
+
+requires_hf_token = pytest.mark.skipif(
+    HF_TOKEN is None,
+    reason="HF_TOKEN environment variable not set - required for accessing gated models",
+)
 
 
 INIT_DEVICES = [

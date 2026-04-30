@@ -54,6 +54,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def finalize_config(config: ExperimentConfig):
+    assert not isinstance(config.model.block, dict)
     if config.model.block.name in (
         TransformerBlockType.moe_hybrid,
         TransformerBlockType.moe_hybrid_reordered_norm,
@@ -95,14 +96,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
         #  ep_config=TransformerExpertParallelConfig(degree=-1),
-        float8_config=Float8Config(
-            ao=AOFloat8LinearConfig(
-                enable_fsdp_float8_all_gather=True,
-                force_recompute_fp8_weight_in_bwd=True,
-                round_scales_to_power_of_2=True,
-            ),
-            enabled=False,
-        ),
+        float8_config=Float8Config(ao=AOFloat8LinearConfig.recommended(), enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),

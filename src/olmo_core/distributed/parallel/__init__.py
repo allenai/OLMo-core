@@ -43,7 +43,6 @@ __all__ = [
     "PipelineScheduleType",
     "PipelineSplitStyle",
     "PipelineSchedule",
-    "ContextParallelConfig",
 ]
 
 log = logging.getLogger(__name__)
@@ -422,6 +421,36 @@ def get_dp_process_group(device_mesh: DeviceMesh) -> ProcessGroup:
         return dp_mesh.get_group()
 
 
+def get_dp_shard_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
+    """
+    Get the data parallel shard sub-mesh associated with a ``DeviceMesh``
+    created from :func:`build_world_mesh()`.
+    :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
+    """
+    device_mesh, dim_names = _get_model_mesh(device_mesh)
+    if MeshDimName.dp_shard in dim_names:
+        return device_mesh[MeshDimName.dp_shard]
+    else:
+        raise RuntimeError(
+            f"could not determine data parallel shard sub-mesh from mesh with dimensions {dim_names}"
+        )
+
+
+def get_dp_replicate_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
+    """
+    Get the data parallel replicate sub-mesh associated with a ``DeviceMesh``
+    created from :func:`build_world_mesh()`.
+    :param device_mesh: The world mesh created by :func:`build_world_mesh()`.
+    """
+    device_mesh, dim_names = _get_model_mesh(device_mesh)
+    if MeshDimName.dp_replicate in dim_names:
+        return device_mesh[MeshDimName.dp_replicate]
+    else:
+        raise RuntimeError(
+            f"could not determine data parallel replicate sub-mesh from mesh with dimensions {dim_names}"
+        )
+
+
 def get_ep_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
     """
     Get the expert parallel sub-mesh associated with a ``DeviceMesh`` that was potentially
@@ -556,15 +585,17 @@ def _flatten_dims(
     flatten_mesh(device_mesh[dims], name)  # in-place flatten on sub-mesh
     new_names = tuple(out_names)
 
-    try:
-        # NOTE: device_mesh.mesh_dim_names is not updated based on the flatten operation.
-        # We need to check that the root mesh is indexable by the new dimension names.
-        _ = device_mesh[new_names]
-    except KeyError as exc:
-        raise RuntimeError(
-            "Flattening failed: root device mesh does not recognize the new "
-            f"dimension names {new_names}. Original dims: {dims}."
-        ) from exc
+    # NOTE: device_mesh.mesh_dim_names is not updated based on the flatten operation.
+    # We need to check that the root mesh is indexable by the new dimension names.
+    # Check each dimension individually since PyTorch requires ascending order for multi-dim indexing.
+    for dim_name in new_names:
+        try:
+            _ = device_mesh[dim_name]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Flattening failed: root device mesh does not recognize dimension "
+                f"'{dim_name}'. New dims: {new_names}, original dims: {dims}."
+            ) from exc
 
     return device_mesh, new_names
 

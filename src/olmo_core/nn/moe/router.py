@@ -13,7 +13,7 @@ from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 import olmo_core.ops.moe as ops
-from olmo_core.config import Config, DType, StrEnum
+from olmo_core.config import DType, StrEnum
 from olmo_core.distributed.utils import (
     _HiddenTensor,
     distribute_like,
@@ -25,6 +25,7 @@ from olmo_core.distributed.utils import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
+from ..config import ModuleConfig
 from .loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 
 if TYPE_CHECKING:
@@ -81,7 +82,7 @@ class MoERouterGatingFunction(StrEnum):
 
 
 @dataclass
-class MoERouterConfig(Config):
+class MoERouterConfig(ModuleConfig):
     """
     A configuration class for easily building any of the different MoE router modules.
     """

@@ -37,7 +37,13 @@ from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
-from ..io import _get_s3_client, get_file_size, glob_directory, is_url, normalize_path
+from ..io import (
+    _get_s3_client,
+    deterministic_glob_directory,
+    get_file_size,
+    is_url,
+    normalize_path,
+)
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
 from .tokenizer import TokenizerConfig
@@ -725,6 +731,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             generate_doc_lengths=generate_doc_lengths,
             bos_token_id=bos_token_id,
             max_target_sequence_length=max_target_sequence_length,
+            instance_filter_config=instance_filter_config,
         )
         self._num_instances: Optional[int] = None
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
@@ -1264,6 +1271,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             *source_paths,
             max_sequence_length=self.sequence_length,
             eos_token_id=self.eos_token_id,
+            bos_token_id=self.bos_token_id,
             dtype=self.dtype,
             indices_dtype=self.indices_dtype,
             long_doc_strategy=self._long_doc_strategy,
@@ -1380,8 +1388,8 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         self._chunks_per_doc = chunks_per_doc
         self._seed = seed
         self._interleaving_exempt_paths = interleaving_exempt_paths
-        self._num_interleaving_exempt_instances = None
-        self._num_interleavable_instances = None
+        self._num_interleaving_exempt_instances: Optional[int] = None
+        self._num_interleavable_instances: Optional[int] = None
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
@@ -2389,7 +2397,7 @@ class NumpyDatasetConfig(Config, ABC):
         expanded: List[str] = []
         for pattern in patterns:
             log.info(f"Expanding '{pattern}'...")
-            matches = sorted(glob_directory(pattern))
+            matches = deterministic_glob_directory(pattern)
             if not matches:
                 error_msg = f"Pattern '{pattern}' did not match any files"
                 # Add helpful hint for mix-0625 which has unavailable files

@@ -3,6 +3,7 @@ import importlib.util
 import pytest
 
 from olmo_core.float8.ao import AOCastConfig, AOFloat8LinearConfig, AOScalingType
+from olmo_core.testing import requires_gpu
 
 
 def has_torchao() -> bool:
@@ -21,3 +22,27 @@ def test_ao_float8_linear_config():
         .cast_config_input.scaling_type
         == ScalingType.DISABLED
     )
+
+    float8_config = AOFloat8LinearConfig.recommended()
+    assert float8_config.enable_fsdp_float8_all_gather
+    assert float8_config.force_recompute_fp8_weight_in_bwd
+    assert float8_config.round_scales_to_power_of_2
+
+
+@requires_gpu
+@pytest.mark.skipif(not has_torchao(), reason="Requires torchao")
+def test_ao_mx_linear_config():
+    from torchao.prototype.mx_formats.config import MXLinearConfig
+
+    from olmo_core.float8.ao import (
+        AOMXFP8Dim1CastKernelChoice,
+        AOMXLinearConfig,
+        AOScaleCalculationMode,
+    )
+
+    assert isinstance(AOMXLinearConfig().to_ao_type(), MXLinearConfig)
+    assert AOMXLinearConfig(block_size=32).to_ao_type().block_size == 32
+
+    mxfp8_rceil_config = AOMXLinearConfig.mxfp8_cublas_rceil()
+    assert mxfp8_rceil_config.mxfp8_cast_kernel_choice == AOMXFP8Dim1CastKernelChoice.cuda
+    assert mxfp8_rceil_config.scale_calculation_mode == AOScaleCalculationMode.rceil

@@ -61,7 +61,7 @@ class CheckpointerCallback(Callback):
 
     priority: ClassVar[int] = 1
 
-    save_interval: int = 250
+    save_interval: Optional[int] = 250
     """
     The interval, in steps, with which to save permanent checkoints.
     """
@@ -90,6 +90,16 @@ class CheckpointerCallback(Callback):
     The strategy for removing old checkpoints found in the save folder.
     """
 
+    ephemeral_cooldown: Optional[int] = None
+    """
+    The number of steps to wait after saving a checkpoint before saving another ephemeral one is allowed.
+    """
+
+    fixed_steps: Optional[List[int]] = None
+    """
+    A list of fixed steps at which to save additional permanent checkpoints.
+    """
+
     enabled: bool = True
 
     # Bookkeeping
@@ -104,12 +114,15 @@ class CheckpointerCallback(Callback):
     _checkpoints_to_remove: List[str] = field(default_factory=list)
 
     def __post_init__(self):
-        if self.save_interval < 1:
+        if self.save_interval is not None and self.save_interval < 1:
             raise OLMoConfigurationError("'save_interval' must be at least 1")
         if self.ephemeral_save_interval is not None:
             if self.ephemeral_save_interval < 1:
                 raise OLMoConfigurationError("'ephemeral_save_interval' must be at least 1")
-            if self.ephemeral_save_interval >= self.save_interval:
+            if (
+                self.save_interval is not None
+                and self.ephemeral_save_interval >= self.save_interval
+            ):
                 raise OLMoConfigurationError(
                     "'ephemeral_save_interval' must be less than 'save_interval'"
                 )
@@ -141,13 +154,13 @@ class CheckpointerCallback(Callback):
                 return fut
         return None
 
-    def _save_checkpoint(self, save_async: Optional[bool] = None) -> str:
+    def _save_checkpoint(self, save_async: Optional[bool] = None, ephemeral: bool = False) -> str:
         save_async = save_async if save_async is not None else self.save_async
         self._await_last_checkpoint()
         if save_async:
-            path, self._future = self.trainer.save_checkpoint_async()
+            path, self._future = self.trainer.save_checkpoint_async(ephemeral=ephemeral)
         else:
-            path = self.trainer.save_checkpoint()
+            path = self.trainer.save_checkpoint(ephemeral=ephemeral)
         self._latest_checkpoint_step = self.step
         self._latest_checkpoint_path = str(path)
         return str(path)
@@ -219,7 +232,11 @@ class CheckpointerCallback(Callback):
                         if (
                             step_num == 0
                             or step_num > self.step
-                            or step_num % self.save_interval == 0
+                            or (self.fixed_steps is not None and step_num in self.fixed_steps)
+                            or (
+                                self.save_interval is not None
+                                and step_num % self.save_interval == 0
+                            )
                         ):
                             continue
                         elif (
@@ -253,13 +270,27 @@ class CheckpointerCallback(Callback):
         if not self.checkpoint_pending:
             self._remove_old_checkpoints()
 
-        if self.step % self.save_interval == 0:
+        if self.fixed_steps is not None and self.step in self.fixed_steps:
+            # Save permanent checkpoint.
+            self._checkpoints.append(self._save_checkpoint())
+        elif self.save_interval is not None and self.step % self.save_interval == 0:
+            # Save permanent checkpoint.
             self._checkpoints.append(self._save_checkpoint())
         elif (
             self.ephemeral_save_interval is not None
             and self.step % self.ephemeral_save_interval == 0
+            and not self.trainer.block_ephemeral_checkpoints
         ):
-            self._ephemeral_checkpoints.append(self._save_checkpoint())
+            # Maybe save ephemeral checkpoint.
+            if (
+                self.ephemeral_cooldown is not None
+                and (self.step - self._latest_checkpoint_step) < self.ephemeral_cooldown
+            ):
+                return
+
+            self._ephemeral_checkpoints.append(self._save_checkpoint(ephemeral=True))
+
+            # Remove old ephemeral checkpoints.
             while len(self._ephemeral_checkpoints) > 1:
                 oldest_path = self._ephemeral_checkpoints.pop(0)
                 self._schedule_for_removal(oldest_path)
