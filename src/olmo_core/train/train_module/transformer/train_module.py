@@ -851,8 +851,11 @@ class TransformerTrainModule(TrainModule):
             chunk_probs = soft_target_probs[:, s_start:s_end].float()  # (B, M, K)
             soft_ce_per_pos[:, s_start:s_end] = -(chunk_probs * chunk_gathered).sum(dim=-1)
 
-        # Mask out ignored label positions.
-        mask = (labels != self.label_ignore_index).to(soft_ce_per_pos.dtype)
+        # Mask out ignored label positions. Labels arrive on CPU (the standard
+        # hard-CE path runs them through model_forward which handles the move
+        # internally); move them to logits' device for the dtype-cast multiply.
+        labels_dev = labels.to(soft_ce_per_pos.device, non_blocking=True)
+        mask = (labels_dev != self.label_ignore_index).to(soft_ce_per_pos.dtype)
         soft_ce_per_pos = soft_ce_per_pos * mask
         # Sum → scalar; divide by the same denominator hard CE used so the two
         # terms are on a comparable per-valid-token scale.
