@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `HFConverterCallback`, which can be used to convert models to huggingface format at the end of the training run.
+- Added `position_ids`-based variable-length RoPE support for packed transformer inputs.
 
 ### Fixed
 

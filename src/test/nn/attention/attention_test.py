@@ -5,7 +5,10 @@ import torch
 import torch.nn.functional as F
 from torch.distributed.tensor import Shard, init_device_mesh
 
-from olmo_core.data.utils import attention_mask_to_cache_leftpad
+from olmo_core.data.utils import (
+    attention_mask_to_cache_leftpad,
+    get_position_ids_from_doc_lens,
+)
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
@@ -424,6 +427,90 @@ def test_attention_with_intra_document_masking():
     torch.testing.assert_close(y1_fused, y2_fused)
     torch.testing.assert_close(y1, y1_fused)
     torch.testing.assert_close(y2, y2_fused)
+
+
+@requires_gpu
+@requires_flash_attn_2
+def test_attention_rope_position_ids_match_document_reference():
+    seed_all(0)
+
+    d_model = 128
+    n_heads = 8
+    doc_lens = torch.tensor([[3, 4, 5]], dtype=torch.int32)
+    seq_len = int(doc_lens.sum())
+    position_ids = get_position_ids_from_doc_lens(doc_lens, seq_len).to("cuda")
+    cu_doc_lens = torch.cat(
+        [
+            torch.tensor([0], dtype=torch.int32),
+            torch.cumsum(doc_lens.flatten(), dim=0, dtype=torch.int32),
+        ]
+    ).to("cuda")
+
+    attention = Attention(
+        d_model=d_model,
+        n_heads=n_heads,
+        rope=RoPEConfig(),
+        backend=AttentionBackendName.flash_2,
+        init_device="cuda",
+    )
+    x = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        y_packed = attention(
+            x,
+            max_doc_len=int(doc_lens.max()),
+            cu_doc_lens=cu_doc_lens,
+            position_ids=position_ids,
+        )
+
+        y_reference_parts = []
+        start = 0
+        for doc_len in doc_lens[0].tolist():
+            y_reference_parts.append(attention(x[:, start : start + doc_len, :]))
+            start += doc_len
+        y_reference = torch.cat(y_reference_parts, dim=1)
+
+    torch.testing.assert_close(y_packed, y_reference, rtol=BF16_RTOL, atol=BF16_ATOL)
+
+
+@requires_gpu
+@requires_flash_attn_2
+def test_fused_attention_rejects_position_ids_with_rope():
+    seed_all(0)
+
+    d_model = 128
+    seq_len = 16
+    fused_att = FusedAttention(
+        d_model=d_model, n_heads=8, rope=RoPEConfig(name=RoPEType.fused), init_device="cuda"
+    )
+    x = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+    position_ids = torch.arange(seq_len, device="cuda").unsqueeze(0)
+
+    with pytest.raises(NotImplementedError, match="position_ids"):
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            fused_att(x, position_ids=position_ids)
+
+
+@requires_gpu
+def test_attention_rejects_position_ids_with_kv_cache():
+    seed_all(0)
+
+    d_model = 128
+    seq_len = 8
+    attention = Attention(
+        d_model=d_model,
+        n_heads=8,
+        rope=RoPEConfig(),
+        backend=AttentionBackendName.torch,
+        init_device="cuda",
+    )
+    attention.init_kv_cache_manager(batch_size=1, max_seq_len=16)
+    x = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+    position_ids = torch.arange(seq_len, device="cuda").unsqueeze(0)
+
+    with pytest.raises(RuntimeError, match="KV caching"):
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            attention(x, position_ids=position_ids)
 
 
 @requires_gpu

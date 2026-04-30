@@ -11,6 +11,7 @@ from olmo_core.data.utils import (
     bucket_documents,
     get_cumulative_document_lengths,
     get_document_lengths,
+    get_position_ids_from_doc_lens,
     iter_batched,
     iter_document_indices,
     melt_batch,
@@ -182,6 +183,53 @@ def test_get_cumulative_document_lengths():
             dtype=torch.int32,
         )
     ).tolist() == [0, 1, 6, 9, 11, 16, 19, 22]
+
+
+@pytest.mark.parametrize(
+    ("doc_lens", "seq_len", "expected"),
+    [
+        pytest.param(
+            torch.tensor(
+                [
+                    [2, 3, 0],
+                    [1, 2, 1],
+                ],
+                dtype=torch.int32,
+            ),
+            6,
+            [
+                [0, 1, 0, 1, 2, 0],
+                [0, 0, 1, 0, 0, 0],
+            ],
+            id="batched",
+        ),
+        pytest.param(
+            torch.tensor([3, 2, 0], dtype=torch.int32),
+            6,
+            [0, 1, 2, 0, 1, 0],
+            id="single-instance",
+        ),
+        pytest.param(
+            torch.tensor([[2, 0, 3]], dtype=torch.int32),
+            6,
+            [[0, 1, 0, 1, 2, 0]],
+            id="internal-zero-length-doc",
+        ),
+    ],
+)
+def test_get_position_ids_from_doc_lens(doc_lens: torch.Tensor, seq_len: int, expected):
+    assert get_position_ids_from_doc_lens(doc_lens, seq_len=seq_len).tolist() == expected
+
+
+def test_get_position_ids_from_doc_lens_errors():
+    with pytest.raises(ValueError, match="non-negative"):
+        get_position_ids_from_doc_lens(torch.tensor([[2, -1]], dtype=torch.int32), seq_len=4)
+
+    with pytest.raises(ValueError, match="exceeds seq_len"):
+        get_position_ids_from_doc_lens(torch.tensor([[2, 3]], dtype=torch.int32), seq_len=4)
+
+    with pytest.raises(ValueError, match="must be 1D or 2D"):
+        get_position_ids_from_doc_lens(torch.ones(1, 1, 1, dtype=torch.int32), seq_len=1)
 
 
 def test_iter_batched():

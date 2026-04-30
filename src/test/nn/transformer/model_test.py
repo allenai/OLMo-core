@@ -10,6 +10,7 @@ import torch.nn as nn
 from torch.distributed.tensor import DTensor, Shard, init_device_mesh
 
 from olmo_core.config import DType
+from olmo_core.data.utils import get_position_ids_from_doc_lens
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
@@ -30,6 +31,7 @@ from olmo_core.nn.attention import (
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
+    UlyssesLoadBalancer,
 )
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
@@ -52,6 +54,7 @@ from olmo_core.testing import (
     GPU_MARKS,
     TE_MARKS,
     requires_flash_attn_2,
+    requires_gpu,
     requires_multi_gpu,
     run_distributed_test,
 )
@@ -216,6 +219,94 @@ def get_transformer_config(
 
 def get_transformer_inputs() -> torch.Tensor:
     return torch.arange(0, 128).unsqueeze(0)
+
+
+@requires_gpu
+@requires_flash_attn_2
+def test_transformer_auto_derives_position_ids_from_doc_lens():
+    seed_all(0)
+
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
+    config = TransformerConfig(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        block=TransformerBlockConfig(
+            sequence_mixer=AttentionConfig(
+                n_heads=4,
+                rope=RoPEConfig(),
+                backend=AttentionBackendName.flash_2,
+                bias=False,
+            ),
+            layer_norm=layer_norm,
+            feed_forward=FeedForwardConfig(hidden_size=128, bias=False),
+        ),
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+    )
+
+    device = torch.device("cuda")
+    model = config.build(init_device="cuda")
+    model.init_weights(device=device, max_seq_len=12)
+    model.eval()
+
+    doc_lens = torch.tensor([[3, 4, 5]], dtype=torch.int32)
+    input_ids = torch.randint(0, config.vocab_size, (1, 12), device=device)
+    position_ids = get_position_ids_from_doc_lens(doc_lens, input_ids.size(1)).to(device)
+
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        logits_auto = model(input_ids, doc_lens=doc_lens, max_doc_lens=[5])
+        logits_explicit = model(
+            input_ids, doc_lens=doc_lens, max_doc_lens=[5], position_ids=position_ids
+        )
+
+        logits_reference_parts = []
+        start = 0
+        for doc_len in doc_lens[0].tolist():
+            logits_reference_parts.append(model(input_ids[:, start : start + doc_len]))
+            start += doc_len
+        logits_reference = torch.cat(logits_reference_parts, dim=1)
+
+    torch.testing.assert_close(logits_auto, logits_explicit, rtol=BF16_RTOL, atol=BF16_ATOL)
+    torch.testing.assert_close(logits_auto, logits_reference, rtol=BF16_RTOL, atol=BF16_ATOL)
+
+
+def test_transformer_context_parallel_shards_position_ids_from_doc_lens():
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
+    config = TransformerConfig(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        block=TransformerBlockConfig(
+            sequence_mixer=AttentionConfig(
+                n_heads=4,
+                rope=RoPEConfig(),
+                backend=AttentionBackendName.torch,
+                bias=False,
+            ),
+            layer_norm=layer_norm,
+            feed_forward=FeedForwardConfig(hidden_size=128, bias=False),
+        ),
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+    )
+
+    model = config.build(init_device="cpu")
+    model._cp_load_balancer = UlyssesLoadBalancer(cp_rank=1, cp_world_size=2)
+
+    input_ids = torch.arange(9).unsqueeze(0)
+    doc_lens = torch.tensor([[3, 4, 2]], dtype=torch.int32)
+    (
+        input_ids_local,
+        _,
+        all_block_kwargs,
+        per_block_kwargs,
+        _,
+    ) = model._prepare_inputs(input_ids=input_ids, doc_lens=doc_lens, max_doc_lens=[4])
+
+    assert input_ids_local.tolist() == [[8, 0, 0, 0, 0, 0, 0, 0]]
+    assert all_block_kwargs["position_ids"].tolist() == [[1, 0, 0, 0, 0, 0, 0, 0]]
+    assert all_block_kwargs["cu_doc_lens"].tolist() == [0, 3, 7, 9, 16]
+    assert all_block_kwargs["max_doc_len"] == 7
+    assert per_block_kwargs == {}
 
 
 def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):
