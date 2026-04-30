@@ -178,7 +178,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         tokenizer=tokenizer,
         instance_sources=instance_sources,
         data_loader=ComposableDataLoaderConfig(  # noqa: F405
-            num_workers=8, instance_filter_config=InstanceFilterConfig()  # noqa: F405
+            # Bumped from 8 → 16 so dataloader workers can keep up with GPU
+            # step time for the soft-target lookup. Each worker prepares one
+            # instance at a time; per-instance ngram lookup is the bottleneck.
+            num_workers=16, instance_filter_config=InstanceFilterConfig()  # noqa: F405
         ),
     )
     return ladder
