@@ -4,7 +4,7 @@ from cached_path import cached_path
 
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 
-OLMO3_7B_CHECKPOINT = "https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage1/step0"
+OLMO3_7B_CHECKPOINT = "https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage2/step47684"
 
 
 def test_load_olmo3_7b_config():

@@ -1,3 +1,4 @@
+import os
 import uuid
 from functools import partial
 from typing import Generator
@@ -24,9 +25,18 @@ def unique_name() -> str:
     return uuid.uuid4().hex
 
 
+def _has_aws_credentials() -> bool:
+    return bool(os.environ.get("AWS_ACCESS_KEY_ID")) and bool(
+        os.environ.get("AWS_SECRET_ACCESS_KEY")
+    )
+
+
 @pytest.fixture
 def s3_checkpoint_dir(bucket_name, unique_name) -> Generator[str, None, None]:
     from botocore.exceptions import NoCredentialsError
+
+    if not _has_aws_credentials():
+        pytest.skip("Requires AWS credentials")
 
     folder = f"s3://{bucket_name}/checkpoints/{unique_name}"
     yield folder

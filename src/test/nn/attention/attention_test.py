@@ -5,7 +5,10 @@ import torch
 import torch.nn.functional as F
 from torch.distributed.tensor import Shard, init_device_mesh
 
-from olmo_core.data.utils import attention_mask_to_cache_leftpad, get_position_ids_from_doc_lens
+from olmo_core.data.utils import (
+    attention_mask_to_cache_leftpad,
+    get_position_ids_from_doc_lens,
+)
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
