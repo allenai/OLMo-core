@@ -34,13 +34,77 @@ from __future__ import annotations
 
 import ctypes
 import fcntl
+import hashlib
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Sequence, Tuple, Union
 
 import numpy as np
+
+
+# File-system prefixes whose contents we treat as "remote" and copy into a
+# RAM-backed local cache before opening. Weka-mounted training data lives
+# at /weka/...; reading the kenlm trie binary + forward index directly from
+# Weka via mmap with 64+ concurrent dataloader workers thrashes the OS page
+# cache and stalls training at step 0. /dev/shm is tmpfs (RAM-backed) on
+# all our beaker training nodes; one sequential copy populates it.
+_REMOTE_PREFIXES = ("/weka/",)
+_SHM_CACHE_ROOT = Path(os.environ.get("OLMO_NGRAM_SHM_ROOT", "/dev/shm/olmo_core_ngram_cache"))
+
+
+def _mirror_to_shm(path: str) -> str:
+    """If ``path`` lives on a remote-ish filesystem (weka), copy it once
+    into ``/dev/shm`` (tmpfs / RAM-backed) and return the cache path. The
+    copy is guarded by an exclusive flock so concurrent dataloader
+    processes don't race; whichever gets the lock first does the copy and
+    the rest attach to the already-cached file.
+
+    Local-disk paths (e.g. /tmp/...) are returned unchanged.
+    """
+    if not any(path.startswith(p) for p in _REMOTE_PREFIXES):
+        return path
+    src_size = os.path.getsize(path)
+    path_hash = hashlib.sha1(path.encode("utf-8")).hexdigest()[:12]
+    cache_dir = _SHM_CACHE_ROOT / path_hash
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / Path(path).name
+    # Fast path: cache already populated by a sibling process.
+    try:
+        if cache_path.is_file() and cache_path.stat().st_size == src_size:
+            return str(cache_path)
+    except OSError:
+        pass
+    lock_path = str(cache_path) + ".lock"
+    with open(lock_path, "w") as lock_f:
+        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+        # Re-check inside the lock — another process may have done it.
+        if cache_path.is_file() and cache_path.stat().st_size == src_size:
+            return str(cache_path)
+        tmp_path = Path(str(cache_path) + ".partial")
+        try:
+            print(
+                f"[ngram_soft_target] mirroring {path} ({src_size // 2**20} MB) "
+                f"→ {cache_path} ...",
+                flush=True,
+            )
+            with open(path, "rb") as src, open(tmp_path, "wb") as dst:
+                shutil.copyfileobj(src, dst, length=32 * 1024 * 1024)
+            tmp_path.replace(cache_path)
+            print(
+                f"[ngram_soft_target] mirrored {Path(path).name} "
+                f"({src_size // 2**20} MB) into /dev/shm",
+                flush=True,
+            )
+        except BaseException:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+    return str(cache_path)
 
 
 # Default OUT_DIR matches what _ngram_lookup/build.sh uses; both must agree.
@@ -190,10 +254,18 @@ class NgramTableSoftTargetSource:
         self.trie_path = trie_path
         self.forward_index_path = fwd_path
 
+        # If either file lives on weka, mirror it into /dev/shm (tmpfs)
+        # once per node — the kenlm trie binary + forward index are
+        # accessed at random offsets by dozens of dataloader workers,
+        # which thrashes the OS page cache when the backing store is a
+        # network filesystem.
+        trie_local = _mirror_to_shm(str(trie_path))
+        fwd_local = _mirror_to_shm(str(fwd_path))
+
         self._lib = _get_lib()
         self._handle = self._lib.ngram_lookup_open(
-            str(trie_path).encode("utf-8"),
-            str(fwd_path).encode("utf-8"),
+            trie_local.encode("utf-8"),
+            fwd_local.encode("utf-8"),
             self.unigram_shortlist_size,
         )
         if not self._handle:
