@@ -327,6 +327,9 @@ class NgramTableSoftTargetSource:
             lib.ngram_lookup_close(h)
             self._handle = None
 
+    # Class-level flag so each process logs only its first lookup_batch.
+    _logged_first_lookup_batch_pid: int = -1
+
     def lookup_batch(
         self, contexts: Sequence[Sequence[int]]
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -338,6 +341,18 @@ class NgramTableSoftTargetSource:
             ``probs`` sums to 1.
         """
         self._ensure_open()
+        # First-call instrumentation per process.
+        my_pid = os.getpid()
+        first = NgramTableSoftTargetSource._logged_first_lookup_batch_pid != my_pid
+        if first:
+            NgramTableSoftTargetSource._logged_first_lookup_batch_pid = my_pid
+            import time as _t
+            t_start = _t.time()
+            print(
+                f"[ngram_soft_target pid={my_pid}] lookup_batch first call: "
+                f"{len(contexts)} contexts",
+                flush=True,
+            )
         N = len(contexts)
         K = self.K
         all_ids = np.zeros((N, K), dtype=np.int32)
@@ -366,4 +381,10 @@ class NgramTableSoftTargetSource:
             all_ids[i, :n_out] = ids_buf[:n_out].astype(np.int32)
             all_probs[i, :n_out] = linear
 
+        if first:
+            print(
+                f"[ngram_soft_target pid={my_pid}] lookup_batch first call done "
+                f"in {_t.time() - t_start:.2f}s",
+                flush=True,
+            )
         return all_ids, all_probs
