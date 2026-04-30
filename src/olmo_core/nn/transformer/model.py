@@ -26,7 +26,10 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
-from olmo_core.data.utils import get_cumulative_document_lengths, get_position_ids_from_doc_lens
+from olmo_core.data.utils import (
+    get_cumulative_document_lengths,
+    get_position_ids_from_doc_lens,
+)
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature

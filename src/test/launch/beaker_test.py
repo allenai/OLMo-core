@@ -4,7 +4,12 @@ import pytest
 
 from olmo_core.launch.beaker import OLMoCoreBeakerImage, get_beaker_client
 
+requires_beaker_token = pytest.mark.skipif(
+    os.environ.get("BEAKER_TOKEN", "") == "", reason="Missing 'BEAKER_TOKEN' env var"
+)
 
+
+@requires_beaker_token
 def test_get_beaker_client_caching():
     with get_beaker_client(workspace="ai2/OLMo-core") as beaker1:
         # Should get the same client since we're requesting the same workspace.
@@ -37,9 +42,7 @@ def beaker():
         yield beaker
 
 
-@pytest.mark.skipif(
-    os.environ.get("BEAKER_TOKEN", "") == "", reason="Missing 'BEAKER_TOKEN' env var"
-)
+@requires_beaker_token
 @pytest.mark.parametrize("image", list(OLMoCoreBeakerImage))
 def test_official_images_exist(image, beaker):
     beaker.image.get(image)

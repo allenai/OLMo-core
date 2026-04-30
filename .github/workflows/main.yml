@@ -83,6 +83,10 @@ jobs:
 
           - name: Test olmo3 ladder
             run: |
+              if [ -z "$BEAKER_TOKEN" ]; then
+                echo "Skipping OLMo 3 ladder dry-runs because BEAKER_TOKEN is unavailable."
+                exit 0
+              fi
               for size in 190M 370M 600M 760M 1B 3B 7B 13B; do
                 python ./src/scripts/train/ladder/olmo3_ladder.py dry-run --size="$size" --output-dir=./
               done
