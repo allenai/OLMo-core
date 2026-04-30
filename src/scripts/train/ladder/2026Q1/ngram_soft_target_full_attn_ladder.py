@@ -54,12 +54,14 @@ DOLMA2_BASELINE_PATHS = [
     "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/wikipedia/**/*.npy",
 ]
 
-# Built by data_gen/arpa_to_table.py from the pilot-v4 ARPA (1e-3 fraction,
-# n=5, prune 0 1 1 1 1). Must live on a filesystem reachable from the training
-# cluster — Weka for AI2 clusters. Override via CLI if needed.
+# Built from the pilot-v4 ARPA (1e-3 fraction, n=5, prune 0 1 1 1 1).
+# Must contain ``pilot.binary`` (KenLM trie binary, source of KN-smoothed
+# probabilities) and ``forward_index.bin`` (forward continuation index, for
+# enumerating candidates per left-context). Weka for AI2 clusters; override
+# via CLI for smoke tests on a different pilot.
 DEFAULT_NGRAM_TABLE_DIR = (
     "/weka/oe-training-default/ai2-llm/ngram-tables/pilots/"
-    "pilot-2026-04-22-fraction1e-3-n5/tables"
+    "pilot-2026-04-22-fraction1e-3-n5"
 )
 
 # Soft-target hyperparameters. K=16 and unigram_shortlist=100 align with our
