@@ -812,24 +812,34 @@ class TransformerTrainModule(TrainModule):
         on θ, the cross-entropy/KL equivalence breaks, and this function
         needs to be rewritten.
 
-        Memory note: we avoid materializing log_softmax over the full vocab,
-        which would allocate (B, S, V) at fp32 — at 190M scale that's tens
-        of GiB per microbatch and OOMs an H100. Instead we compute
-        ``logsumexp`` (returns (B, S)) and gather the K target logits
-        directly, then use ``log_softmax_at_target = logit_target - logsumexp``.
+        Memory note: a naive ``log_softmax(logits).gather(...)`` allocates
+        (B, S, V) fp32 — at 190M with rank_microbatch_size=16×4096 that's
+        ~26 GiB per microbatch and OOMs an H100. We chunk along the
+        sequence dimension and only ever upcast a (B, chunk, V) slice to
+        fp32, computing logsumexp + gather per chunk. With chunk=1024 the
+        peak fp32 allocation is ~3 GB.
         """
-        # (B, S, V) — upcast for numerical stability. We need this temp once
-        # for both logsumexp and gather; PyTorch can free it after the gather.
-        logits_f32 = get_local_tensor(logits).float()
-        # (B, S) — log normalizer per position.
-        log_sum_exp = torch.logsumexp(logits_f32, dim=-1)
-        # (B, S, K) — raw logits at the K target tokens for each position.
-        gathered_logits = logits_f32.gather(-1, soft_target_token_ids)
-        del logits_f32
-        # log_softmax at target positions = logit_target - log_sum_exp.
-        gathered = gathered_logits - log_sum_exp.unsqueeze(-1)
-        # (B, S) — soft CE per position.
-        soft_ce_per_pos = -(soft_target_probs.float() * gathered).sum(dim=-1)
+        logits_local = get_local_tensor(logits)  # bf16, (B, S, V)
+        B, S, V = logits_local.shape
+        soft_ce_per_pos = torch.zeros(
+            (B, S), dtype=torch.float32, device=logits_local.device
+        )
+        # 1024 positions per chunk: peak allocation is
+        #   B * 1024 * V * 4 bytes  (fp32 chunk_logits)
+        # which is ~3 GB for B=8, V≈100K. Tunable; smaller is safer.
+        chunk_size = 1024
+        for s_start in range(0, S, chunk_size):
+            s_end = min(s_start + chunk_size, S)
+            chunk_logits_f32 = logits_local[:, s_start:s_end].float()
+            chunk_lse = torch.logsumexp(chunk_logits_f32, dim=-1)  # (B, M)
+            chunk_target_ids = soft_target_token_ids[:, s_start:s_end]  # (B, M, K)
+            chunk_gathered_logits = chunk_logits_f32.gather(-1, chunk_target_ids)
+            del chunk_logits_f32
+            # log_softmax at target = logit_target - log_sum_exp.
+            chunk_gathered = chunk_gathered_logits - chunk_lse.unsqueeze(-1)
+            chunk_probs = soft_target_probs[:, s_start:s_end].float()  # (B, M, K)
+            soft_ce_per_pos[:, s_start:s_end] = -(chunk_probs * chunk_gathered).sum(dim=-1)
+
         # Mask out ignored label positions.
         mask = (labels != self.label_ignore_index).to(soft_ce_per_pos.dtype)
         soft_ce_per_pos = soft_ce_per_pos * mask
