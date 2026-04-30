@@ -33,7 +33,9 @@ with ``topk_probs`` summing to 1.
 from __future__ import annotations
 
 import ctypes
+import fcntl
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Sequence, Tuple, Union
@@ -41,13 +43,49 @@ from typing import Sequence, Tuple, Union
 import numpy as np
 
 
+# Default OUT_DIR matches what _ngram_lookup/build.sh uses; both must agree.
+_DEFAULT_DYLIB_OUT = Path("/tmp/olmo_core_ngram_lookup")
+_NGRAM_LOOKUP_SRC = Path(__file__).parent / "_ngram_lookup"
+
+
+def _build_dylib_with_lock(out_dir: Path) -> Path:
+    """Run build.sh under an exclusive flock so concurrent dataloader processes
+    don't race on the build. Returns the path to the resulting .so/.dylib.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    suffix = "dylib" if sys.platform == "darwin" else "so"
+    so_path = out_dir / f"libngram_lookup.{suffix}"
+    lock_path = out_dir / "build.lock"
+
+    with open(lock_path, "w") as lock_f:
+        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+        if so_path.is_file():
+            # Another process built it while we were waiting on the lock.
+            return so_path
+        env = os.environ.copy()
+        env["OUT_DIR"] = str(out_dir)
+        result = subprocess.run(
+            ["bash", str(_NGRAM_LOOKUP_SRC / "build.sh")],
+            env=env,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        if result.returncode != 0 or not so_path.is_file():
+            raise RuntimeError(
+                f"_ngram_lookup/build.sh failed (returncode={result.returncode})\n"
+                f"--- output ---\n{result.stdout.decode(errors='replace')}"
+            )
+    return so_path
+
+
 def _resolve_dylib_path() -> Path:
     """Find ``libngram_lookup.{dylib,so}``.
 
     Resolution order:
       1. ``$OLMO_NGRAM_LOOKUP_DYLIB`` env var, if set.
-      2. Sibling ``_ngram_lookup/build/libngram_lookup.{dylib,so}`` next
-         to this file (production layout).
+      2. The default training-job build dir (``/tmp/olmo_core_ngram_lookup``);
+         if missing, build it via the bundled ``_ngram_lookup/build.sh``.
     """
     env = os.environ.get("OLMO_NGRAM_LOOKUP_DYLIB")
     if env:
@@ -57,13 +95,10 @@ def _resolve_dylib_path() -> Path:
         raise FileNotFoundError(f"OLMO_NGRAM_LOOKUP_DYLIB={env} does not exist")
 
     suffix = "dylib" if sys.platform == "darwin" else "so"
-    candidate = Path(__file__).parent / "_ngram_lookup" / "build" / f"libngram_lookup.{suffix}"
+    candidate = _DEFAULT_DYLIB_OUT / f"libngram_lookup.{suffix}"
     if candidate.is_file():
         return candidate
-    raise FileNotFoundError(
-        f"could not find libngram_lookup.{suffix}; "
-        f"set $OLMO_NGRAM_LOOKUP_DYLIB or build at {candidate.parent}"
-    )
+    return _build_dylib_with_lock(_DEFAULT_DYLIB_OUT)
 
 
 _LIB = None

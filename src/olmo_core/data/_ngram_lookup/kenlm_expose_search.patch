@@ -1,0 +1,16 @@
+diff --git a/lm/model.hh b/lm/model.hh
+index db43d8b..d6ff105 100644
+--- a/lm/model.hh
++++ b/lm/model.hh
+@@ -102,6 +102,11 @@ template <class Search, class VocabularyT> class GenericModel : public base::Mod
+       return Search::kDifferentRest ? InternalUnRest(pointers_begin, pointers_end, first_length) : 0.0;
+     }
+ 
++    // Access to the underlying Search backend (e.g., TrieSearch). Used by
++    // callers that need to iterate over unigrams (the standard LookupUnigram
++    // is the only public entry point per word) to build a candidate set.
++    const Search &GetSearch() const { return search_; }
++
+   private:
+     FullScoreReturn ScoreExceptBackoff(const WordIndex *const context_rbegin, const WordIndex *const context_rend, const WordIndex new_word, State &out_state) const;
+ 
