@@ -910,6 +910,7 @@ class Transformer(nn.Module):
         return self.num_params - self.embeddings.weight.numel()
 
     def num_flops_per_token(self, seq_len: int) -> int:
+        assert self.config is not None
         flops = []
 
         # calculate flops for each block (each block might have different config)

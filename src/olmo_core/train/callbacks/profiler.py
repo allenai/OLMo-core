@@ -1,7 +1,7 @@
 import logging
 import os
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 
@@ -210,7 +210,7 @@ class NvidiaProfilerCallback(Callback):
     """
     Set to ``False`` to disable profiling.
     """
-    profile_ranks: list[int] = None
+    profile_ranks: list[int] = field(default_factory=lambda: [0])
     """
     The ranks to profile.
     """
@@ -252,7 +252,7 @@ class TorchMemoryHistoryCallback(Callback):
     """
     Set to ``False`` to disable profiling.
     """
-    profile_ranks: list[int] = None
+    profile_ranks: list[int] = field(default_factory=lambda: [0])
     """
     The ranks to profile.
     """

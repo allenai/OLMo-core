@@ -156,7 +156,9 @@ class TransformerPipelineTrainModule(TrainModule):
             model,
             pp_mesh=self.pp_mesh,
             device=self.device,
-            use_ddp=(self.dp_world_size > 1 and dp_config.name == "ddp"),
+            use_ddp=(
+                self.dp_world_size > 1 and dp_config is not None and dp_config.name == "ddp"
+            ),
         )
         self._pp_stages = stages
         log.info(
@@ -270,7 +272,6 @@ class TransformerPipelineTrainModule(TrainModule):
             stages=self._pp_stages,
             pp_mesh=pp_mesh,
             schedule_name=self._pp_config.schedule,
-            loss_fn=self.loss_fn,
             num_microbatches=num_microbatches,
         )
 

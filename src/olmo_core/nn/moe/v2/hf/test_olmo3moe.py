@@ -34,13 +34,10 @@ if __name__ == "__main__":
 
     # dict_keys(['doc_id', 'cont_id', 'ctx', 'continuation', 'ctx_len', 'dc_len', 'cont_len', 'cont_str_len', 'cont_byte_len', 'cont_str_len_no_leading_space', 'cont_byte_len_no_leading_space', 'query', 'dc_query', 'label_id', 'choices', 'fast_mc'])
     acc = []
-    pred_dist = Counter()
-    gold_dist = Counter()
+    pred_dist: Counter = Counter()
+    gold_dist: Counter = Counter()
     for ex in examples:
-        input_ids = [
-            ex["ctx"],
-        ]
-        input_ids = torch.tensor(input_ids).to(device)
+        input_ids = torch.tensor([ex["ctx"]]).to(device)
         # ctx
         print(tokenizer.decode(ex["ctx"][171:]))
         # answer

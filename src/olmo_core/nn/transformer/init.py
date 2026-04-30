@@ -49,20 +49,6 @@ def kaiming_fan_in_uniform_(
     return tensor
 
 
-def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
-    if not isinstance(x, DTensor):
-        init_fun(x, *args, **kwargs)
-        return
-
-    # Initialize full version of x locally, then apply init to that.
-    full_x = torch.zeros(x.shape, dtype=x.dtype, device=x.device)
-    init_fun(full_x, *args, **kwargs)
-    full_x = distribute_like(x, full_x)
-
-    # Now copy over the corresponding shard of `full_x` into `x`.
-    get_local_tensor(x).copy_(get_local_tensor(full_x))
-
-
 class InitMethod(StrEnum):
     normal = "normal"
     """

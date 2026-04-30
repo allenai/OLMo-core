@@ -192,7 +192,7 @@ def draw_pipeline_timeline(
     # for w in col_w:
     #     x_edges.append(x_edges[-1] + w)
     # total_w = x_edges[-1]
-    total_w = []
+    total_w_per_row: List[int] = []
     for r in ranks:
         w = 0
         for t in range(num_steps):
@@ -200,12 +200,12 @@ def draw_pipeline_timeline(
                 w += 2
             else:
                 w += 1
-        total_w.append(w)
+        total_w_per_row.append(w)
 
     # assert all rows have the same total width
-    if not all(w == total_w[0] for w in total_w):
-        assert False, f"Not all rows have the same total width: {total_w}"
-    total_w = total_w[0]
+    if not all(w == total_w_per_row[0] for w in total_w_per_row):
+        assert False, f"Not all rows have the same total width: {total_w_per_row}"
+    total_w = total_w_per_row[0]
     # ---- figure sizing
     width = max(8, total_w * figsize_per_cell)
     height = max(2.5, num_ranks * 0.55 * 2 + 1.4)
@@ -433,6 +433,7 @@ class PipelineSchedule:
         else:
             target = None
 
+        args: Tuple[Any, ...]
         if not self.has_first_stage:
             args = ()  # If there is no first stage, we need to provide an empty tuple for single_1F1B
         else:

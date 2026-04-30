@@ -203,6 +203,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
         # x3 for fwd+bwd
         # x2 for GEMM
         if self.routed_experts is not None:
+            assert self.routed_experts_router is not None
             flops += (
                 (3 * 3 * 2)
                 * seqlen
@@ -714,7 +715,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     ):
         raise NotImplementedError("TP is not supported in MoEFusedV1TransformerBlock")
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         raise NotImplementedError("CP is not supported in MoEFusedV1TransformerBlock")
         self.attention.apply_cp(cp_mesh, load_balancer)
         self.shared_experts.apply_cp(cp_mesh)
@@ -734,8 +740,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         )
 
         # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
-        self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo)
-        self._res_norm_attn = torch.compile(self._res_norm_attn)
+        self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo)  # type: ignore[method-assign]
+        self._res_norm_attn = torch.compile(self._res_norm_attn)  # type: ignore[method-assign]
 
     @property
     def ep_world_size(self) -> int:

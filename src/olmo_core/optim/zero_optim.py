@@ -32,8 +32,8 @@ from ..train.train_module import TrainModule
 
 
 @dataclass
-class ZeroOptimConfig(OptimConfig):
-    inner_optimizer: OptimConfig
+class ZeroOptimConfig(OptimConfig[Opt]):
+    inner_optimizer: Optional[OptimConfig] = None
 
     @classmethod
     def optimizer(cls):
@@ -53,6 +53,7 @@ class ZeroOptimConfig(OptimConfig):
         kwargs.pop("compile")
         kwargs.pop("fixed_fields")
 
+        assert self.inner_optimizer is not None
         inner_optimizer = self.inner_optimizer.build(
             model, train_module, strict=strict, param_filter=param_filter
         )

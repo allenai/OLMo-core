@@ -233,13 +233,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 continue
             cast(MoEFusedV2TransformerBlock, block).reset_metrics()
 
-    def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
-        raise OLMoConfigurationError("Do not use `apply_ep`, use `apply_epdp` instead.")
-
     def apply_compile(self):
         super().apply_compile()
-        self._tbo_last_step = torch.compile(self._tbo_last_step)
-        self.forward_embed = torch.compile(self.forward_embed)
+        self._tbo_last_step = torch.compile(self._tbo_last_step)  # type: ignore[method-assign]
+        self.forward_embed = torch.compile(self.forward_embed)  # type: ignore[method-assign]
         # self._forward_blocks = torch.compile(self._forward_blocks)
 
     def apply_ddp(
@@ -869,7 +866,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         return h0
 
     def _forward_blocks(
-        self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[str, Any]
+        self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[int, Dict[str, Any]]
     ) -> torch.Tensor:
         # Run each block.
         for block_idx, (block_key, block) in enumerate(self.blocks.items()):
@@ -879,7 +876,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
                 block_kwargs = per_block_kwargs.get(block_key, {})
                 combined_kwargs = {**all_block_kwargs, **block_kwargs}
-                do_not_recompute = []  # HACK
+                do_not_recompute: List[int] = []  # HACK
                 if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (
                     self.recompute_block_keys and block_key in self.recompute_block_keys
                 ):

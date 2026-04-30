@@ -132,7 +132,7 @@ class GPUActivationOffloader:
         _saved_tensors = self._saved_tensors_by_group.get(group, {})
 
         if len(_saved_tensors) == 0:
-            return
+            return None
 
         # wait for current stream to be done with these tensors
         # self._stream.wait_stream(torch.cuda.current_stream()) # BUG;TODO
@@ -164,7 +164,7 @@ class GPUActivationOffloader:
 
         _saved_tensors = self._saved_tensors_by_group.get(group, {})
         if len(_saved_tensors) == 0:
-            return
+            return None
 
         # before reloading, make sure offload is done
         if group in self._offload_events:

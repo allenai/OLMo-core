@@ -603,9 +603,9 @@ class TransformerTrainModule(TrainModule):
         self, micro_batch_idx: int, num_micro_batches: int
     ) -> Generator[None, None, None]:
         is_last_mb = micro_batch_idx == num_micro_batches - 1
+        assert self.dp_config is not None
         with contextlib.ExitStack() as stack:
             if isinstance(self.model, FSDPModule):
-                assert self.dp_config is not None
                 # On the last backward FSDP waits on pending gradient reduction and clears internal data
                 # data structures for backward prefetching.
                 self.model.set_is_last_backward(is_last_mb)

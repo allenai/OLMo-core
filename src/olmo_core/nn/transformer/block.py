@@ -254,7 +254,8 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
             n_layers=n_layers,
             attention=attention,
             feed_forward=feed_forward,
-            layer_norm=layer_norm,
+            attention_norm=layer_norm,
+            feed_forward_norm=layer_norm,
             dropout=dropout,
             attention_residual_alpha=attention_residual_alpha,
             feed_forward_residual_alpha=feed_forward_residual_alpha,
@@ -532,17 +533,19 @@ class MoETransformerBlock(TransformerBlockBase):
         self.attention = attention.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
+        self.attention_norm: nn.Module
         if attention_norm is not None:
             self.attention_norm = attention_norm.build(d_model, init_device=init_device)
         else:
-            self.attention_norm = lambda x: x  # identity
+            self.attention_norm = nn.Identity()
         self.feed_forward_moe = feed_forward_moe.build(
             d_model=d_model, n_layers=n_layers, init_device=init_device, cache=cache
         )
+        self.feed_forward_norm: nn.Module
         if feed_forward_norm is not None:
             self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
         else:
-            self.feed_forward_norm = lambda x: x  # identity
+            self.feed_forward_norm = nn.Identity()
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self._ep_enabled = False
         self._tp_enabled = False
@@ -1025,7 +1028,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # self.dense_stream = get_or_init_stream(id=2, priority=20) # positive number -> low priority # does not work with pp split_model
 
     def get_dense_stream(self) -> torch.cuda.Stream:
-        return get_or_init_stream(id=2, priority=20)
+        return get_or_init_stream(id="dense", priority=20)
 
     def forward(
         self,

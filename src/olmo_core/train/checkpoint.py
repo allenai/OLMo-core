@@ -534,7 +534,7 @@ class UpcycleCheckpointer(Checkpointer):
                 else:
                     raise
 
-        model_module_dir = scatter_object(model_module_dir)
+        model_module_dir = broadcast_object(model_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(model_module_dir)
 
@@ -562,6 +562,7 @@ class CompactablityCheckpointer(Checkpointer):
         train_module: TrainModule,
         *,
         load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
@@ -599,7 +600,7 @@ class CompactablityCheckpointer(Checkpointer):
                 else:
                     raise
 
-        train_module_dir = scatter_object(train_module_dir)
+        train_module_dir = broadcast_object(train_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 

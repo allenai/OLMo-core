@@ -9,6 +9,7 @@ import nvtx
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
@@ -38,7 +39,9 @@ from .backend import (
     FlashAttention3Backend,
     TEAttentionBackend,
     TorchAttentionBackend,
+    _repeat_kv,
 )
+from .flash_attn_api import dispatch_flash_attn, dispatch_ring_flash_attn
 from .ring import (
     RingAttentionLlama3LoadBalancer,
     RingAttentionLoadBalancer,
@@ -321,14 +324,14 @@ class AttentionConfig(Config):
         # (seq_length, head_dim) x (head_dim, seq_length) for each head.
         # mnk = seq_length * seq_length * head_dim, repeated n_heads times.
         flops += (
-            flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2
+            flops_factor * (n_heads * seq_length * seq_length * head_dim) // 2
         )  # divide by 2 for causal attention
 
         # Attention @ V:
         # Again n_heads independent GEMMs:
         # (seq_length, seq_length) x (seq_length, head_dim) for each head.
         flops += (
-            flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2
+            flops_factor * (n_heads * seq_length * seq_length * head_dim) // 2
         )  # divide by 2 for causal attention
 
         # Output projection (seq_length, d_attn) x (d_attn, d_model)
@@ -1118,7 +1121,7 @@ class MultiheadLatentAttentionConfig(AttentionConfig):
     splitting the queries into non-positional and rotary components.
     """
 
-    name: str = "mla"
+    name: AttentionType = AttentionType.mla
     # n_heads: int = 16
     # bias: Optional[bool] = None
     # dropout: Optional[float] = 0.0
@@ -1186,9 +1189,12 @@ class MultiheadLatentAttentionConfig(AttentionConfig):
         self,
         d_model: int,
         *,
+        layer_idx: int = 0,
+        n_layers: int = 1,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "MultiheadLatentAttention":
+        del layer_idx, n_layers
         assert self.qk_norm is None, "qk_norm is not used in MLA, use qkv_norm instead"
         assert self.clip_qkv is None, "clip_qkv is not supported"
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -1506,7 +1512,13 @@ class MultiheadLatentAttention(AttentionBase):
             parallelize_plan=plan,
         )
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        del head_stride
         self._cp_pg = cp_mesh.get_group()
         self._cp_load_balancer = load_balancer
         self._cp_enabled = True
@@ -1592,8 +1604,8 @@ class MultiheadLatentAttention(AttentionBase):
 
             # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
             # shape: (batch_size, n_heads, seq_len, head_dim)
-            k = repeat_kv(k, self.n_rep)
-            v = repeat_kv(v, self.n_rep)
+            k = _repeat_kv(k, self.n_rep)
+            v = _repeat_kv(v, self.n_rep)
 
             # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
             # shape: (batch_size, n_heads, seq_len, head_dim),

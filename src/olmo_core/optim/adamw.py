@@ -291,31 +291,6 @@ class SkipStepAdamWConfig(OptimConfig):
     The number of standard deviations above the mean loss to skip a step.
     """
 
-    foreach: bool = True
-    """
-    Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
-    Faster than the non-foreach version.
-    """
-
-    step_increment_bugfix: bool = True
-    """
-    Whether or not to fix the step-incrementing bug discovered in SkipStepAdamW.
-
-    If this flag is set to False, the step will not be incremented, which
-    gives the optimizer an effective lr that is 2.2x higher than the specified lr,
-    and no bias correction is applied.
-    """
-
-    rolling_interval_length: int = 128
-    """
-    The length of the rolling interval to use for computing the mean and standard deviation of the loss.
-    """
-
-    sigma_factor: int = 6
-    """
-    The number of standard deviations above the mean loss to skip a step.
-    """
-
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:
         return SkipStepAdamW

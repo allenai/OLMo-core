@@ -24,7 +24,7 @@ from olmo_core.ops import attach_auxiliary_loss
 
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
-from ..layer_norm import LayerNormConfig
+from ..layer_norm import LayerNorm, LayerNormConfig
 from .loss import MoELoadBalancingLossGranularity
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
@@ -184,6 +184,7 @@ class MoEBase(nn.Module):
         )
         self._ep_enabled = False
 
+        self.shared_expert_norm: Optional[LayerNorm]
         if shared_expert_norm is not None:
             self.shared_expert_norm = shared_expert_norm.build(
                 size=d_model,
@@ -191,6 +192,7 @@ class MoEBase(nn.Module):
             )
         else:
             self.shared_expert_norm = None
+        self.routed_expert_norm: Optional[LayerNorm]
         if routed_expert_norm is not None:
             self.routed_expert_norm = routed_expert_norm.build(
                 size=d_model,

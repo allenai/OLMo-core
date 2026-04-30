@@ -66,10 +66,9 @@ class MultiGroupDistributedDataParallel(Module):
         self._reversed_module_parameters = list(reversed(self._module_parameters))
 
         if not any(p.requires_grad for p in self._module_parameters):
-            raise (
-                RuntimeError,
+            raise RuntimeError(
                 "DistributedDataParallel is not needed when a module "
-                "doesn't have any parameter that requires a gradient.",
+                "doesn't have any parameter that requires a gradient."
             )
 
         is_multi_device_module = len({p.device for p in self._module_parameters}) > 1

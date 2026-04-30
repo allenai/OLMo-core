@@ -157,10 +157,10 @@ if __name__ == "__main__":
     mc_color_correct_letter_wrong = 0
     qonly_color_correct_letter_wrong = 0
 
-    pred_letter_dist = Counter()
-    gold_letter_dist = Counter()
-    pred_mc_color_dist = Counter()
-    pred_qonly_color_dist = Counter()
+    pred_letter_dist: Counter = Counter()
+    gold_letter_dist: Counter = Counter()
+    pred_mc_color_dist: Counter = Counter()
+    pred_qonly_color_dist: Counter = Counter()
 
     failure_examples: list[ExampleDiagnostics] = []
 

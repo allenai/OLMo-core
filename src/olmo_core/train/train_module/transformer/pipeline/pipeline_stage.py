@@ -481,7 +481,7 @@ class CustomPipelineStage:
                 assert (
                     getattr(self.submod, "set_requires_gradient_sync", None) is not None
                 ), "submod must have set_requires_gradient_sync method"
-                assert isinstance(self.submod.set_requires_gradient_sync, Callable)
+                assert callable(self.submod.set_requires_gradient_sync)
 
                 flip_requires_sync(self.submod, False)
                 out_val = self.submod(*args, **kwargs)

@@ -70,7 +70,7 @@ def flatten_args(args):
     return flat_args
 
 
-def normalize_model_output_as_tuple(output: Any) -> tuple[Any]:
+def normalize_model_output_as_tuple(output: Any) -> tuple[Any, ...]:
     if type(output) is list:
         # HACK: this is a hacky workaround for the fact that export creates
         # output in list format

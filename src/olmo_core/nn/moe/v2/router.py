@@ -58,7 +58,6 @@ class MoERouterConfigV2(Config):
     )
     z_loss_weight: Optional[float] = None
     orth_loss_weight: Optional[float] = None
-    record_routing_batch_size: bool = False
     restore_weight_scale: bool = False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
     original_top_k: Optional[
         int

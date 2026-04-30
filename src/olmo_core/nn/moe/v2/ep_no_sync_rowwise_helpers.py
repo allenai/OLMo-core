@@ -8,6 +8,8 @@ import torch
 from olmo_core.distributed.utils import get_rank
 
 if TYPE_CHECKING:
+    from olmo_core.train.common import ReduceType
+
     from .block import MoEFusedV2TransformerBlock
 
 

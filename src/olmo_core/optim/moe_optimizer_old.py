@@ -617,14 +617,6 @@ class MoEFusedV2Optimizer(Optimizer):
         else:
             return torch.tensor(0.0)
 
-    @overload  # make pylance happy
-    def step(self, closure: None = ...) -> None:
-        ...
-
-    @overload  # make pylance happy
-    def step(self, closure: Callable[[], float]) -> float:
-        ...
-
     def set_reduce_scatter_grads(self, enabled: bool = True):
         self._use_reduce_scatter_grads = enabled
 
@@ -719,6 +711,14 @@ class MoEFusedV2Optimizer(Optimizer):
             flat_main_grad_buf_ep_dp.mul_(clip_coef_clamped)
 
         return total_grad_norm
+
+    @overload  # make pylance happy
+    def step(self, closure: None = ...) -> None:
+        ...
+
+    @overload  # make pylance happy
+    def step(self, closure: Callable[[], float]) -> float:
+        ...
 
     @torch.no_grad()
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
@@ -1506,7 +1506,7 @@ class MoEFusedV2Optimizer(Optimizer):
 
     def state_dict(self) -> dict:
         # ori_sd = super().state_dict()  # validate unsharded state
-        sd = {"meta": {}}
+        sd: Dict[str, Any] = {"meta": {}}
         for tag in ("dp", "ep_dp"):
             pg, order = self._pg_and_order_for_tag(tag)
             if pg is None or not order:

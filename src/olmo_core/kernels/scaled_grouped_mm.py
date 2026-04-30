@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
 
 import torch
 import torch.nn.functional as F
@@ -70,7 +70,7 @@ def prequantize_scaled_grouped_mm_rhs(mat_b: Tensor) -> ScaledGroupedMMPrequanti
     return ScaledGroupedMMPrequantizedRHS(
         mat_b_q=mat_b_q,
         scale_b=scale_b,
-        mat_b_shape=tuple(mat_b.shape),
+        mat_b_shape=cast(Tuple[int, int, int], tuple(mat_b.shape)),
         mat_b_version=_tensor_version(mat_b),
     )
 
@@ -245,6 +245,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
             prequantized_lhs is not None and not prequantized_lhs.scales_are_blocked
         )
         if use_saved_prequantized_lhs:
+            assert prequantized_lhs is not None
             ctx.save_for_backward(mat_b, offs, prequantized_lhs.mat_a_q, prequantized_lhs.scale_a)
             ctx._saved_mat_a_from_prequantized_lhs = True
         else:

@@ -8,7 +8,7 @@ from typing import (
     Generator,
     List,
     Optional,
-    Sequence,
+    Set,
     Tuple,
     TypeVar,
     Union,
@@ -20,6 +20,7 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+import torch.nn as nn
 from torch.distributed import ProcessGroup
 from torch.distributed.checkpoint.default_planner import (
     DefaultSavePlanner,
@@ -467,8 +468,8 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         else:
             # Build up moe mesh dimensions. (PP , EP_DP, EP_MP)
-            names: List[str] = []
-            dims: List[int] = []
+            names = []
+            dims = []
 
             # Pipeline parallel first.
             if pp is not None:
@@ -782,7 +783,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         return model_state
 
     def _resolve_model_checkpoint_key(
-        self, param_name: str, checkpoint_keys: Sequence[str]
+        self, param_name: str, checkpoint_keys: Set[str]
     ) -> Optional[str]:
         candidates = (
             f"{param_name}.main",
@@ -795,7 +796,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     def _dump_debug_info(self, step=None, tag=None):
         # dump model param stats
-        debug_info = {}
+        debug_info: Dict[int, Dict[str, Any]] = {}
         step = self.trainer.global_step if step is None else step
         rank = dist.get_rank()
         for m_idx, model_part in enumerate(self.model_parts):
@@ -1559,7 +1560,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 m.apply_pp(self.pp_mesh)
 
         else:
-            model_parts: List[MoEFusedV2Transformer] = [model]  # no PP, single part
+            model_parts = [model]  # no PP, single part
 
         # Maybe apply FP8 training.
         if float8_config is not None and float8_config.enabled:
@@ -1611,7 +1612,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                     dist.get_backend(),
                 )
 
-            ddp_model_parts = []
+            ddp_model_parts: List[nn.Module] = []
             for m in model_parts:
                 if not m.is_moe:
                     raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")

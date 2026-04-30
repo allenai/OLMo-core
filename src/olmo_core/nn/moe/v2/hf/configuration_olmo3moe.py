@@ -123,13 +123,14 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.use_peri_ln = use_peri_ln
 
         self.sliding_window = sliding_window
+        self.layer_types: List[str]
         if layer_types is None:
-            self.layer_types: List[str] = [
+            self.layer_types = [
                 "sliding_attention" if (i + 1) % 2 != 0 else "full_attention"
                 for i in range(self.num_hidden_layers)
             ]
         else:
-            self.layer_types: List[str] = layer_types
+            self.layer_types = layer_types
 
         layer_type_validation(self.layer_types)
 

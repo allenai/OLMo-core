@@ -2,7 +2,7 @@ import logging
 import re
 from collections import Counter, defaultdict
 from enum import Enum
-from typing import Any, List, NamedTuple, Optional, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 import nvtx
 import torch
@@ -199,7 +199,7 @@ class CustomScheduleInterleaved1F1B:
 
         self.reset_n_microbatches(n_microbatches)
 
-        self.stage_index_to_group_rank: dict[int, int] = {}
+        self.stage_index_to_group_rank = {}
         for stage_idx in range(self._num_stages):
             self.stage_index_to_group_rank[stage_idx] = stage_idx % self.pp_group_size
 
@@ -303,10 +303,10 @@ class CustomScheduleInterleaved1F1B:
                         f"input batch size {input_ids.size(0)} is smaller than num_microbatches={self._n_microbatches}"
                     )
                 input_id_chunks = list(torch.tensor_split(input_ids, self._n_microbatches, dim=0))
-                args_split = [(chunk,) for chunk in input_id_chunks]
+                args_split: List[Tuple[Any, ...]] = [(chunk,) for chunk in input_id_chunks]
             else:
                 args_split = [()] * self._n_microbatches
-            kwargs_split = [{} for _ in range(self._n_microbatches)]
+            kwargs_split: List[Dict[str, Any]] = [{} for _ in range(self._n_microbatches)]
 
             supported_keys = {
                 "loss_div_factor",
@@ -413,7 +413,7 @@ class CustomScheduleInterleaved1F1B:
         # count either full_backward or backward_weight together, to determine when to sync DP grads
         backward_counter: Counter[int] = Counter()
         forward_counter: Counter[int] = Counter()
-        handles = []
+        handles: List[dist.Work] = []
         past_first_backward = False
         # reload_event: Optional[torch.cuda.Event] = None
         for time_step, action in enumerate(self.pipeline_order[self.rank]):

@@ -190,10 +190,10 @@ def evaluate_prompt_family(
     allowed_labels = [get_option_label(option) for option in examples[0]["options"]]
 
     correct = 0
-    gold_dist = Counter()
-    pred_dist = Counter()
-    correct_by_label = Counter()
-    total_by_label = Counter()
+    gold_dist: Counter = Counter()
+    pred_dist: Counter = Counter()
+    correct_by_label: Counter = Counter()
+    total_by_label: Counter = Counter()
     failures: list[FailureExample] = []
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
 

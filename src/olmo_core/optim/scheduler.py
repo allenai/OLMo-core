@@ -304,8 +304,16 @@ class PowerLR(Scheduler):
             the tail to ``decay_min_lr``.
         """
         # --- warm‑up and decay extents ------------------------------------------------
-        warmup = self.warmup if self.warmup is not None else round(t_max * self.warmup_fraction)
-        decay = self.decay if self.decay is not None else round(t_max * self.decay_fraction)
+        if self.warmup is not None:
+            warmup = self.warmup
+        else:
+            assert self.warmup_fraction is not None
+            warmup = round(t_max * self.warmup_fraction)
+        if self.decay is not None:
+            decay = self.decay
+        else:
+            assert self.decay_fraction is not None
+            decay = round(t_max * self.decay_fraction)
 
         # --- phase 1: warm‑up ---------------------------------------------------------
         if current <= warmup:

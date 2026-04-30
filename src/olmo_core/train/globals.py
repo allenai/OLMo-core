@@ -1,8 +1,9 @@
 """ A centeral place to store global variables used in training. """
 
 from collections import defaultdict
+from typing import Any, DefaultDict
 
-_GLOBAL_ARGS = defaultdict(None)
+_GLOBAL_ARGS: DefaultDict[str, Any] = defaultdict(None)
 
 
 def set_global_args(args: dict) -> None:

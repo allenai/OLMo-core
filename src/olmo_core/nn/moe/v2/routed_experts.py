@@ -26,7 +26,7 @@ Implication:
 
 import weakref
 from dataclasses import dataclass
-from typing import Optional, cast
+from typing import Optional, Tuple, cast
 
 import grouped_gemm  # type: ignore
 import grouped_gemm.ops
@@ -211,6 +211,7 @@ def gmm(
 import os
 
 env_val = os.getenv("OLMO_USE_TORCH_GROUPED_MM")
+USE_TORCH_GROUPED_MM: Optional[bool]
 if env_val is not None:
     if env_val.lower() in ("1", "true", "yes"):
         USE_TORCH_GROUPED_MM = True
@@ -443,7 +444,7 @@ class RoutedExperts(nn.Module):
             prequantized_lhs = ScaledGroupedMMPrequantizedLHS(
                 mat_a_q=prequantized_input_q,
                 scale_a=prequantized_input_scales,
-                mat_a_shape=tuple(x.shape),
+                mat_a_shape=cast(Tuple[int, int], tuple(x.shape)),
                 scales_are_blocked=False,
             )
 
@@ -468,7 +469,7 @@ class RoutedExperts(nn.Module):
         h_prequantized_lhs = ScaledGroupedMMPrequantizedLHS(
             mat_a_q=h_q,
             scale_a=h_scales,
-            mat_a_shape=tuple(h.shape),
+            mat_a_shape=cast(Tuple[int, int], tuple(h.shape)),
             scales_are_blocked=False,
         )
 

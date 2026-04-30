@@ -64,6 +64,7 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
             Tuple of (`torch.Tensor`, `float`), containing the inverse frequencies for the RoPE embeddings and the
             post-processing scaling factor applied to the computed cos/sin (unused in this type of RoPE).
         """
+        assert config is not None
         base = config.rope_parameters["rope_theta"]
         dim = (
             getattr(config, "head_dim", None)
@@ -194,6 +195,7 @@ class Olmo3MoeSparseMLP(nn.Module):
                 hidden_act=config.hidden_act,
             )
             self.experts.append(expert)
+        self.shared_expert: Optional[Olmo3MoeExpert]
         if config.shared_expert_intermediate_size is not None:
             self.shared_expert = Olmo3MoeExpert(
                 hidden_size=config.hidden_size,
@@ -298,6 +300,8 @@ class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
+        self.pre_attention_layernorm: Optional[Olmo3MoeRMSNorm]
+        self.pre_feedforward_layernorm: Optional[Olmo3MoeRMSNorm]
         if config.use_peri_ln:
             self.pre_attention_layernorm = Olmo3MoeRMSNorm(
                 config.hidden_size, eps=config.rms_norm_eps
