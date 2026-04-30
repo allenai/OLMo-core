@@ -1007,20 +1007,14 @@ class Trainer:
         if namespace is not None:
             name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
 
-        if not isinstance(value, torch.Tensor):
-            value = torch.tensor(value)
-        else:
-            value = get_local_tensor(value.detach()).float()
+        value = self._to_metric_tensor(value)
 
         if reduce_type == ReduceType.weighted_mean:
             if weight is None:
                 raise ValueError(
                     "'weight' is required when reduce_type is ReduceType.weighted_mean"
                 )
-            if not isinstance(weight, torch.Tensor):
-                weight = torch.tensor(weight)
-            else:
-                weight = get_local_tensor(weight.detach()).float()
+            weight = self._to_metric_tensor(weight, like=value)
             value = value * weight
         elif weight is not None:
             raise ValueError(
@@ -1032,6 +1026,22 @@ class Trainer:
         if reduce_type == ReduceType.weighted_mean:
             weight_name = WEIGHTED_MEAN_WEIGHT_PREFIX + name
             self._store_metric(weight_name, weight, ReduceType.sum, merge_strategy)
+
+    @staticmethod
+    def _to_metric_tensor(
+        value: Union[float, torch.Tensor],
+        *,
+        like: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if isinstance(value, torch.Tensor):
+            tensor = get_local_tensor(value.detach())
+        else:
+            tensor = torch.tensor(value)
+
+        tensor = tensor.float()
+        if like is not None:
+            tensor = tensor.to(device=like.device, dtype=like.dtype)
+        return tensor
 
     def _store_metric(
         self,
@@ -1380,9 +1390,6 @@ class Trainer:
 
     def _check_and_pass_on_metrics(self, metrics: Dict[int, Dict[str, float]]):
         for step in sorted(metrics.keys()):
-            for key in list(metrics[step].keys()):
-                if key.startswith(WEIGHTED_MEAN_WEIGHT_PREFIX):
-                    del metrics[step][key]
             # Check for nan/inf loss and add perplexity.
             if (ce_loss := metrics[step].get(TRAIN_CE_LOSS_METRIC)) is not None:
                 if not math.isfinite(ce_loss):
