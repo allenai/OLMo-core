@@ -55,7 +55,7 @@ constexpr uint32_t kInvalidTokenId = UINT32_MAX;
 constexpr char kForwardIndexMagic[4] = {'F', 'I', 'X', '1'};
 constexpr uint32_t kForwardIndexVersion = 1;
 constexpr size_t kForwardIndexHeaderSize = 64;
-constexpr size_t kForwardIndexSectionHeaderSize = 32;
+constexpr size_t kForwardIndexSectionHeaderSize = 48;
 
 // EnumerateVocab subclass that captures every vocab string during model
 // load. Lives only on the stack during ngram_lookup_open.
@@ -199,15 +199,22 @@ bool load_forward_index(const char* path, ModelWrapper* w) {
     size_t hdr_off = kForwardIndexHeaderSize;
     for (unsigned int i = 0; i < n_orders; ++i) {
         const char* sh = p + hdr_off;
+        // Layout (must match build_forward_index.py):
+        //   off  0: order (uint32)
+        //   off  4: pad   (uint32, zero — for 8-byte alignment)
+        //   off  8: n_prefixes (uint64)
+        //   off 16: n_continuations (uint64)
+        //   off 24: prefix_words_off (uint64)
+        //   off 32: cont_offsets_off (uint64)
+        //   off 40: continuations_off (uint64)
         uint32_t order;
-        uint64_t n_pref, n_cont;
-        uint32_t pw_off, co_off, c_off;
+        uint64_t n_pref, n_cont, pw_off, co_off, c_off;
         std::memcpy(&order, sh + 0, 4);
-        std::memcpy(&n_pref, sh + 4, 8);
-        std::memcpy(&n_cont, sh + 12, 8);
-        std::memcpy(&pw_off, sh + 20, 4);
-        std::memcpy(&co_off, sh + 24, 4);
-        std::memcpy(&c_off, sh + 28, 4);
+        std::memcpy(&n_pref, sh + 8, 8);
+        std::memcpy(&n_cont, sh + 16, 8);
+        std::memcpy(&pw_off, sh + 24, 8);
+        std::memcpy(&co_off, sh + 32, 8);
+        std::memcpy(&c_off, sh + 40, 8);
 
         ForwardSection s;
         s.order = order;
