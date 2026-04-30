@@ -3,6 +3,7 @@ Train a medium OLMoE model. Run this script without any arguments to see usage i
 """
 
 import logging
+import sys
 from functools import partial
 from typing import Optional
 
@@ -31,7 +32,6 @@ from olmo_core.train.train_module import (
 )
 
 log = logging.getLogger(__name__)
-import sys
 
 _, _, run_name, _, *overrides = sys.argv
 

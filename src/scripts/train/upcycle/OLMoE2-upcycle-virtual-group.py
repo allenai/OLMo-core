@@ -12,6 +12,7 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
+from transformers import AutoModelForCausalLM
 
 from olmo_core.config import Config, DType
 from olmo_core.internal.experiment import CommonComponents
@@ -148,8 +149,6 @@ class UpcycleConfig(Config):
     target_model: TransformerConfig
     init_seed: int = 2025
 
-
-from transformers import AutoModelForCausalLM
 
 ''' [Routed Expert MLP]
 class MoEMLP(MoEMLPBase):

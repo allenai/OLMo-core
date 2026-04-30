@@ -25,13 +25,20 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
+from olmo_core.nn.attention import (
+    AttentionConfig,
+    AttentionType,
+    SlidingWindowAttentionConfig,
+)
 from olmo_core.nn.feed_forward import FeedForwardConfig
-from olmo_core.nn.lm_head import LMLossImplementation
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+from olmo_core.nn.lm_head import LMHeadConfig, LMLossImplementation
 from olmo_core.nn.moe import MoELoadBalancingLossGranularity, MoERouterGatingFunction
 from olmo_core.nn.moe.v2.block import MoERouterConfigV2
+from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.nn.transformer import (
     MoEFusedV2TransformerConfig,
+    TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
     TransformerType,
@@ -58,6 +65,8 @@ from olmo_core.train.train_module import (
     TransformerExpertParallelConfig,
 )
 from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
+
+# from olmo_core.nn.moe.v2.block import LayerNormConfigV2
 
 log = logging.getLogger(__name__)
 
@@ -178,14 +187,6 @@ MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.linear
 TAG = "c1"
 
 
-from olmo_core.nn.attention import AttentionConfig, AttentionType
-from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
-from olmo_core.nn.lm_head import LMHeadConfig
-from olmo_core.nn.rope import RoPEConfig, RoPEType
-from olmo_core.nn.transformer import TransformerBlockConfig
-
-
-# from olmo_core.nn.moe.v2.block import LayerNormConfigV2
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     from olmo_core.nn.attention.backend import AttentionBackendName
     from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlockConfig
