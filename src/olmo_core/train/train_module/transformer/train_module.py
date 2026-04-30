@@ -811,12 +811,24 @@ class TransformerTrainModule(TrainModule):
         (KL(q_θ || p) — mode-seeking), the entropy term H(q_θ) does depend
         on θ, the cross-entropy/KL equivalence breaks, and this function
         needs to be rewritten.
+
+        Memory note: we avoid materializing log_softmax over the full vocab,
+        which would allocate (B, S, V) at fp32 — at 190M scale that's tens
+        of GiB per microbatch and OOMs an H100. Instead we compute
+        ``logsumexp`` (returns (B, S)) and gather the K target logits
+        directly, then use ``log_softmax_at_target = logit_target - logsumexp``.
         """
-        # (B, S, V) — upcast for numerical stability
-        log_probs = F.log_softmax(get_local_tensor(logits).float(), dim=-1)
-        # (B, S, K)
-        gathered = log_probs.gather(-1, soft_target_token_ids)
-        # (B, S)
+        # (B, S, V) — upcast for numerical stability. We need this temp once
+        # for both logsumexp and gather; PyTorch can free it after the gather.
+        logits_f32 = get_local_tensor(logits).float()
+        # (B, S) — log normalizer per position.
+        log_sum_exp = torch.logsumexp(logits_f32, dim=-1)
+        # (B, S, K) — raw logits at the K target tokens for each position.
+        gathered_logits = logits_f32.gather(-1, soft_target_token_ids)
+        del logits_f32
+        # log_softmax at target positions = logit_target - log_sum_exp.
+        gathered = gathered_logits - log_sum_exp.unsqueeze(-1)
+        # (B, S) — soft CE per position.
         soft_ce_per_pos = -(soft_target_probs.float() * gathered).sum(dim=-1)
         # Mask out ignored label positions.
         mask = (labels != self.label_ignore_index).to(soft_ce_per_pos.dtype)
