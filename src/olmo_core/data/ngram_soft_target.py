@@ -274,16 +274,35 @@ class NgramTableSoftTargetSource:
         self.__dict__.update(state)
 
     def _ensure_open(self):
-        """Mirror tables to /dev/shm and open the C++ ModelWrapper. Idempotent."""
+        """Mirror tables to /dev/shm and open the C++ ModelWrapper. Idempotent.
+
+        Heavily instrumented because this runs once per dataloader worker
+        across N×8 worker processes; if any phase silently hangs, the
+        per-process logs are how we'd find the broken phase.
+        """
         if self._handle is not None:
             return
+        # Tag logs with pid so per-worker progress is distinguishable.
+        tag = f"[ngram_soft_target pid={os.getpid()}]"
+        import time as _t
+        t0 = _t.time()
+        print(f"{tag} _ensure_open: mirror trie + forward_index to /dev/shm", flush=True)
         trie_local = _mirror_to_shm(str(self.trie_path))
         fwd_local = _mirror_to_shm(str(self.forward_index_path))
+        print(f"{tag} mirror done in {_t.time() - t0:.2f}s; resolving dylib", flush=True)
+        t1 = _t.time()
         lib = _get_lib()
+        print(f"{tag} dylib loaded in {_t.time() - t1:.2f}s; opening kenlm + forward index", flush=True)
+        t2 = _t.time()
         handle = lib.ngram_lookup_open(
             trie_local.encode("utf-8"),
             fwd_local.encode("utf-8"),
             self.unigram_shortlist_size,
+        )
+        print(
+            f"{tag} ngram_lookup_open returned in {_t.time() - t2:.2f}s "
+            f"(handle={'ok' if handle else 'NULL'})",
+            flush=True,
         )
         if not handle:
             raise RuntimeError(
@@ -299,6 +318,7 @@ class NgramTableSoftTargetSource:
         # Bind only after both checks pass.
         self._lib = lib
         self._handle = handle
+        print(f"{tag} _ensure_open: total {_t.time() - t0:.2f}s; ready", flush=True)
 
     def __del__(self):
         h = getattr(self, "_handle", None)
