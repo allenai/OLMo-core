@@ -31,10 +31,17 @@ from .block import (
 from .ep_no_sync_buffers import (
     _NoSyncSymmSharedPool,
     _NoSyncTboPendingContext,
+    compute_ep_no_sync_rank_capacity,
+    get_ep_no_sync_buffers,
 )
 from .ep_no_sync_tbo_1d import (
     ep_no_sync_stage_c_launch,
     ep_no_sync_stage_tail,
+)
+from .ep_no_sync_tbo_rowwise import (
+    _NoSyncRowwiseTboPendingContext,
+    ep_no_sync_rowwise_tbo_stage_c_launch,
+    ep_no_sync_rowwise_tbo_stage_tail,
 )
 from .tbo_state import SyncedTboPendingContext
 from .checkpointing import checkpoint_recompute_context_fn
@@ -126,6 +133,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         super().__init__(*args, **kwargs)
         self.ep_enabled = False # default
         self._ep_modules = []
+        self._ep_no_sync_dummy_symm_tensors: List[torch.Tensor] = []
 
         assert not (self.recompute_all_blocks_by_chunk and self.recompute_each_block), "Only one of recompute_all_blocks_by_chunk and recompute_each_block can be True."
         assert not (self.tbo and self.recompute_each_block), "Cannot use TBO when recompute_each_block is True."
@@ -244,6 +252,125 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 continue
             cast(MoEFusedV2TransformerBlock, block).reset_metrics()
 
+    def count_ep_no_sync_blocks(self) -> int:
+        return sum(
+            1
+            for block in self.blocks.values()
+            if block.is_moe
+            and isinstance(block, MoEFusedV2TransformerBlock)
+            and block.ep_no_sync
+        )
+
+    @torch.no_grad()
+    def prewarm_ep_no_sync_symm_buffers(
+        self,
+        *,
+        max_local_microbatch_size: int,
+        pad_to_block_count: int,
+    ) -> None:
+        ep_blocks = [
+            cast(MoEFusedV2TransformerBlock, block)
+            for block in self.blocks.values()
+            if block.is_moe
+            and isinstance(block, MoEFusedV2TransformerBlock)
+            and block.ep_no_sync
+        ]
+        if not ep_blocks:
+            if pad_to_block_count != 0:
+                raise RuntimeError(
+                    "Cannot pad EP no-sync symmetric allocations for a model part "
+                    "with no EP no-sync blocks"
+                )
+            return
+
+        first_block = ep_blocks[0]
+        assert first_block.routed_experts_router is not None
+        if first_block.ep_pg is None:
+            raise RuntimeError("EP no-sync block is missing ep_pg during symmetric prewarm")
+
+        param = next((p for p in self.parameters() if p.is_floating_point()), None)
+        if param is None:
+            raise RuntimeError("Cannot infer dtype/device for EP no-sync symmetric prewarm")
+        dtype = param.dtype
+        device = param.device
+        d_model = self.d_model
+        top_k = first_block.routed_experts_router.top_k
+        num_out_tokens = max_local_microbatch_size * top_k
+        rank_capacity = compute_ep_no_sync_rank_capacity(first_block, num_out_tokens)
+
+        def _debug(msg: str) -> None:
+            import os
+
+            if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() in ("", "0", "false", "no"):
+                return
+            rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+            print(f"[EP_PP_DEBUG][rank={rank}] {msg}", flush=True)
+
+        _debug(
+            "prewarm_ep_no_sync_begin "
+            f"blocks={len(ep_blocks)} pad_to={pad_to_block_count} "
+            f"tokens={num_out_tokens} rank_capacity={rank_capacity} "
+            f"group={first_block.ep_pg.group_name}"
+        )
+
+        for block in ep_blocks:
+            if block.ep_no_sync_use_rowwise_all_to_all:
+                get_ep_no_sync_buffers(
+                    block,
+                    dispatch_in_cap=num_out_tokens,
+                    dispatch_out_cap=rank_capacity,
+                    combine_in_cap=rank_capacity,
+                    combine_out_cap=num_out_tokens,
+                    d_model=d_model,
+                    dtype=dtype,
+                    device=device,
+                    need_dispatch_in=False,
+                    need_dispatch_meta=False,
+                    need_combine_meta=False,
+                    need_combine_out=False,
+                )
+            else:
+                get_ep_no_sync_buffers(
+                    block,
+                    dispatch_in_cap=num_out_tokens,
+                    dispatch_out_cap=rank_capacity,
+                    combine_in_cap=rank_capacity,
+                    combine_out_cap=num_out_tokens,
+                    d_model=d_model,
+                    dtype=dtype,
+                    device=device,
+                )
+
+        pad_count = pad_to_block_count - len(ep_blocks)
+        if pad_count < 0:
+            raise RuntimeError(
+                f"pad_to_block_count ({pad_to_block_count}) is smaller than local EP no-sync block count ({len(ep_blocks)})"
+            )
+        if pad_count:
+            try:
+                import torch.distributed._symmetric_memory as symm_mem
+            except ImportError as e:
+                raise RuntimeError("EP no-sync requires torch.distributed._symmetric_memory") from e
+            for idx in range(pad_count):
+                _debug(
+                    "prewarm_ep_no_sync_dummy_alloc_begin "
+                    f"idx={idx} group={first_block.ep_pg.group_name} "
+                    f"shape=({rank_capacity}, {d_model}) dtype={dtype}"
+                )
+                tensor = symm_mem.empty(
+                    (rank_capacity, d_model),
+                    dtype=dtype,
+                    device=device,
+                )
+                symm_mem.rendezvous(tensor, group=first_block.ep_pg)
+                self._ep_no_sync_dummy_symm_tensors.append(tensor)
+                _debug(
+                    "prewarm_ep_no_sync_dummy_alloc_end "
+                    f"idx={idx} group={first_block.ep_pg.group_name}"
+                )
+
+        _debug("prewarm_ep_no_sync_end")
+
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         raise OLMoConfigurationError("Do not use `apply_ep`, use `apply_epdp` instead.")
 
@@ -310,7 +437,12 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             if not block.is_moe:
                 continue
             block = cast(MoEFusedV2TransformerBlock, block)
-            block.apply_ep(ep_mesh, ep_pg=ep_mp_group)
+            # NVSHMEM symmetric-memory allocation bootstraps from c10d group
+            # metadata. The high-priority NCCL EP group works for small count
+            # collectives, but can hang inside symm_mem.empty() before the
+            # explicit EP rendezvous runs. Use the regular DeviceMesh EP group
+            # for no-sync blocks.
+            block.apply_ep(ep_mesh, ep_pg=None if block.ep_no_sync else ep_mp_group)
             if block.ep_no_sync:
                 ep_no_sync_blocks.append(block)
 
@@ -695,6 +827,18 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
     # @torch.compile
     def _tbo_last_step(self, x0, x1_ctx: object, lm_head_kwargs: Dict[str, Any], labels0: Optional[torch.Tensor], labels1: Optional[torch.Tensor]):
+        if isinstance(x1_ctx, _NoSyncRowwiseTboPendingContext):
+            with nvtx.annotate("TBO-1", color='orange'):
+                pending_ctx = ep_no_sync_rowwise_tbo_stage_c_launch(x1_ctx.block, x1_ctx)
+
+            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
+
+            with nvtx.annotate("TBO-1", color='orange'):
+                x1 = ep_no_sync_rowwise_tbo_stage_tail(x1_ctx.block, pending_ctx)
+
+            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
+            return h0, h1
+
         if isinstance(x1_ctx, _NoSyncTboPendingContext):
             with nvtx.annotate("TBO-1", color='orange'):
                 pending_ctx = ep_no_sync_stage_c_launch(x1_ctx.block, x1_ctx)

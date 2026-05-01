@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
 import nvtx
 import torch
 
+from olmo_core.distributed.utils import get_rank
 from ...moe.utils import wait_stream_no_compile
 from .comm import (
     _DispatchRowwiseAutograd,
@@ -33,6 +35,18 @@ if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
+def _ep_pp_debug(msg: str) -> None:
+    if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() in ("", "0", "false", "no"):
+        return
+    try:
+        import torch.distributed as dist
+
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+    except Exception:
+        rank = -1
+    print(f"[EP_PP_DEBUG][rank={rank}] {msg}", flush=True)
+
+
 def combined_forward_ep_no_sync_rowwise(
     block: MoEFusedV2TransformerBlock,
     x: torch.Tensor,
@@ -55,17 +69,24 @@ def combined_forward_ep_no_sync_rowwise(
         )
 
     group_name = get_ep_no_sync_group_name(self)
+    _ep_pp_debug(
+        f"rowwise_block_begin block={self.block_idx} ep_rank={get_rank(self.ep_pg)} "
+        f"x={tuple(x.shape)} group={group_name}"
+    )
     B, S, D = x.shape
 
     block_inp = x
     del x
 
+    _ep_pp_debug(f"rowwise_attn_begin block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
     attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
+    _ep_pp_debug(f"rowwise_attn_end block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
 
     kwargs.pop("max_doc_len", None)
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)
 
+    _ep_pp_debug(f"rowwise_router_begin block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
     (
         local_x_global_routed_expert_weights,
         local_x_global_routed_expert_indices,
@@ -75,6 +96,11 @@ def combined_forward_ep_no_sync_rowwise(
         moe_inp,
         False,
         loss_div_factor=loss_div_factor,
+    )
+    _ep_pp_debug(
+        f"rowwise_router_end block={self.block_idx} ep_rank={get_rank(self.ep_pg)} "
+        f"routed={local_x_global_routed_expert_indices.numel()} "
+        f"split_sum={int(local_batch_size_per_global_routed_expert.sum().item())}"
     )
 
     wait_stream_no_compile(
@@ -236,6 +262,7 @@ def combined_forward_ep_no_sync_rowwise(
         shared_out_up, shared_out_gate = None, None
 
     with nvtx.annotate("Rowwise Dispatch", color="green"):
+        _ep_pp_debug(f"rowwise_dispatch_section_begin block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
         if use_rowwise_fp8:
             assert rowwise_fp8_cfg is not None
             assert dispatch_out_q is not None
@@ -262,7 +289,9 @@ def combined_forward_ep_no_sync_rowwise(
                 self.ep_pg,
                 rowwise_nblocks,
             )
+        _ep_pp_debug(f"rowwise_dispatch_section_end block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
 
+    _ep_pp_debug(f"rowwise_experts_begin block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
     dispatch_rank_major = self.routed_experts(
         dispatch_rank_major,
         padded_batch_size_per_local_expert,
@@ -272,6 +301,7 @@ def combined_forward_ep_no_sync_rowwise(
         rowwise_fp8_input_q=(dispatch_out_q if use_rowwise_fp8 else None),
         rowwise_fp8_input_scales=(dispatch_out_scales if use_rowwise_fp8 else None),
     )
+    _ep_pp_debug(f"rowwise_experts_end block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
 
     wait_stream_no_compile(
         this_stream=self.get_dense_stream(),
@@ -279,6 +309,7 @@ def combined_forward_ep_no_sync_rowwise(
     )
 
     with nvtx.annotate("Rowwise Combine Merge", color="green"):
+        _ep_pp_debug(f"rowwise_combine_section_begin block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
         route_probs = local_x_global_routed_expert_weights.view(
             -1, self.routed_experts_router.top_k
         )
@@ -311,6 +342,7 @@ def combined_forward_ep_no_sync_rowwise(
                 self.ep_pg,
                 self.ep_no_sync_rowwise_nblocks,
             )
+        _ep_pp_debug(f"rowwise_combine_section_end block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
 
     if self.shared_experts is not None:
         assert shared_out_up is not None
@@ -346,4 +378,5 @@ def combined_forward_ep_no_sync_rowwise(
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
     final_out = self._res_norm_mlp(attn_res_out, mlp_out)
+    _ep_pp_debug(f"rowwise_block_end block={self.block_idx} ep_rank={get_rank(self.ep_pg)}")
     return self._attach_routed_aux_loss(final_out, routed_expert_router_aux_loss_info)

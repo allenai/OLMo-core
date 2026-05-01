@@ -1,6 +1,7 @@
 
 
 
+import os
 import torch
 import torch.distributed as dist
 from collections import Counter, defaultdict
@@ -22,6 +23,22 @@ from .helpers import(
     flatten_args,
     normalize_model_output_as_tuple,
 )
+
+
+def _ep_pp_debug_enabled() -> bool:
+    return os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no")
+
+
+def _ep_pp_debug_mb(mb_index: Optional[int]) -> bool:
+    limit = int(os.getenv("OLMO_EP_PP_DEBUG_MB_LIMIT", "8"))
+    return mb_index is None or mb_index < limit
+
+
+def _ep_pp_debug(msg: str) -> None:
+    if not _ep_pp_debug_enabled():
+        return
+    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+    print(f"[EP_PP_DEBUG][rank={rank}] {msg}", flush=True)
 
 
 def _make_tensor_from_meta(
@@ -210,6 +227,12 @@ class CustomPipelineStage:
     ):
         # print(f"{self.stage_index}.forward_one_chunk({fwd_chunk_id})")
 
+        if _ep_pp_debug_mb(fwd_chunk_id):
+            _ep_pp_debug(
+                f"stage_forward_begin stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={fwd_chunk_id} first={self.is_first} last={self.is_last}"
+            )
+
         if self.is_first:
             # First stage doesn't need to receive anything
             composite_args = args
@@ -227,6 +250,12 @@ class CustomPipelineStage:
         # Compute forward
         # print(f'{self.stage_index}_{fwd_chunk_id}-F-Start')
         output: Union[torch.Tensor, LMOutputWithLoss] = self.forward_maybe_with_nosync(last_forward, *composite_args, **composite_kwargs)
+        if _ep_pp_debug_mb(fwd_chunk_id):
+            out_desc = tuple(output.loss.shape) if isinstance(output, LMOutputWithLoss) else tuple(output.shape)
+            _ep_pp_debug(
+                f"stage_forward_model_end stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={fwd_chunk_id} out={out_desc}"
+            )
         # print(f'{self.stage_index}_{fwd_chunk_id}-F-End')
 
         if self.is_last:
@@ -250,6 +279,11 @@ class CustomPipelineStage:
             composite_args[0],  # input_values
             stage_output_with_graph,  # stage_output
         )
+        if _ep_pp_debug_mb(fwd_chunk_id):
+            _ep_pp_debug(
+                f"stage_forward_end stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={fwd_chunk_id} cache={len(self.fwd_cache)}"
+            )
         # print(f"{self.stage_index}.forward_one_chunk({fwd_chunk_id}) ret")
         
     
@@ -272,6 +306,13 @@ class CustomPipelineStage:
         after the last backward.
         """
         # print(f"{self.stage_index}.backward_one_chunk({bwd_chunk_id})")
+
+        if _ep_pp_debug_mb(bwd_chunk_id):
+            _ep_pp_debug(
+                f"stage_backward_begin stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={bwd_chunk_id} first={self.is_first} last={self.is_last} "
+                f"last_backward={last_backward}"
+            )
 
         _ = torch.zeros(128, device=self.device) # to make nvtx ranges more visible
 
@@ -309,6 +350,11 @@ class CustomPipelineStage:
         grads_of_stage_input, _ = self.backward_maybe_with_nosync(
             "full", bwd_kwargs, last_backward=last_backward
         )
+        if _ep_pp_debug_mb(bwd_chunk_id):
+            _ep_pp_debug(
+                f"stage_backward_model_end stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={bwd_chunk_id}"
+            )
         # with torch.no_grad():
         #     names = [n for n, p in self.submod.named_parameters()]
         #     debug_norm = torch.nn.utils.get_total_norm([p.grad for p in self.submod.parameters()])
@@ -332,6 +378,11 @@ class CustomPipelineStage:
                     t.detach_()
 
         _ = torch.zeros(128, device=self.device) # to make nvtx ranges more visible
+        if _ep_pp_debug_mb(bwd_chunk_id):
+            _ep_pp_debug(
+                f"stage_backward_end stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={bwd_chunk_id} bwd_cache={len(self.bwd_cache)}"
+            )
 
 
     def _get_recv_ops(self, source_stage_index, recv_buffer) -> List[dist.P2POp]:
@@ -368,6 +419,11 @@ class CustomPipelineStage:
         ops = self._get_recv_ops(source_stage_index, recv_buffer)
 
         self.received_activations[fwd_chunk_id] = recv_buffer
+        if _ep_pp_debug_mb(fwd_chunk_id):
+            _ep_pp_debug(
+                f"p2p_fwd_recv_post stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={fwd_chunk_id} from_stage={source_stage_index} shape={tuple(recv_buffer.shape)}"
+            )
 
         return ops
 
@@ -385,6 +441,11 @@ class CustomPipelineStage:
         assert buffer.dtype == meta.dtype
 
         ops = self._get_send_ops(dst_stage_index, buffer.detach())
+        if _ep_pp_debug_mb(fwd_chunk_id):
+            _ep_pp_debug(
+                f"p2p_fwd_send_post stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={fwd_chunk_id} to_stage={dst_stage_index} shape={tuple(buffer.shape)}"
+            )
         return ops
 
 
@@ -405,6 +466,11 @@ class CustomPipelineStage:
         assert send_buffer.dtype == meta.dtype
 
         ops = self._get_send_ops(dest_stage_index, send_buffer.detach())
+        if _ep_pp_debug_mb(bwd_chunk_id):
+            _ep_pp_debug(
+                f"p2p_bwd_send_post stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={bwd_chunk_id} to_stage={dest_stage_index} shape={tuple(send_buffer.shape)}"
+            )
         return ops
     
 
@@ -425,6 +491,11 @@ class CustomPipelineStage:
         ops = self._get_recv_ops(source_stage_index, recv_buffer)
 
         self.received_grads[bwd_chunk_id] = recv_buffer
+        if _ep_pp_debug_mb(bwd_chunk_id):
+            _ep_pp_debug(
+                f"p2p_bwd_recv_post stage={self.stage_index} pp_rank={self.group_rank} "
+                f"mb={bwd_chunk_id} from_stage={source_stage_index} shape={tuple(recv_buffer.shape)}"
+            )
         return ops
         
     

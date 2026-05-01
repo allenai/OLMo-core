@@ -1,3 +1,4 @@
+import os
 from typing import Tuple
 
 import torch
@@ -9,6 +10,16 @@ from olmo_core.kernels.mxfp8_utils import (
     dot_gathered_rows_mxfp8_with_grad,
     quantize_rows_to_mxfp8,
 )
+
+
+def _ep_pp_debug(msg: str) -> None:
+    if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() in ("", "0", "false", "no"):
+        return
+    try:
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+    except Exception:
+        rank = -1
+    print(f"[EP_PP_DEBUG][rank={rank}] {msg}", flush=True)
 
 
 class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
@@ -86,6 +97,12 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                 dtype=symm_expert_out.dtype,
             )
 
+        _ep_pp_debug(
+            "rowwise_combine_forward_begin "
+            f"group={group_name} ep_rank={dist.get_rank(group)} "
+            f"expert_out={tuple(symm_expert_out.shape)} routes={tuple(src_ranks_i64.shape)} "
+            f"nblocks={nblocks}"
+        )
         symm_mem_vdev2d_kernels.rowwise_combine_get(
             symm_expert_out,
             combine_out,
@@ -95,6 +112,10 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             probs=probs_f32,
             nblocks=nblocks,
             gathered_out=(gathered_routes if need_grad_probs else None),
+        )
+        _ep_pp_debug(
+            "rowwise_combine_forward_end "
+            f"group={group_name} ep_rank={dist.get_rank(group)} out={tuple(combine_out.shape)}"
         )
 
         ctx.group = group
@@ -140,6 +161,11 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             # routed_experts uses batch_size_per_expert = recv_splits_by_src_local.sum(dim=0), so backward should only consume the valid prefix/segments, not tail capacity rows.
             # Route rows are built densely for kept routes, so consumed rows should be fully overwritten.
             # symm_grad_expert_out.zero_()  <----- Likely not necessary
+            _ep_pp_debug(
+                "rowwise_combine_backward_dispatch_begin "
+                f"group={ctx.group_name} ep_rank={dist.get_rank(ctx.group)} "
+                f"grad={tuple(grad_out_contig.shape)}"
+            )
             symm_mem_vdev2d_kernels.rowwise_dispatch_put(
                 grad_out_contig,
                 symm_grad_expert_out,
@@ -148,6 +174,10 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                 ctx.group_name,
                 probs=probs,
                 nblocks=ctx.nblocks,
+            )
+            _ep_pp_debug(
+                "rowwise_combine_backward_dispatch_end "
+                f"group={ctx.group_name} ep_rank={dist.get_rank(ctx.group)}"
             )
             grad_expert_out = symm_grad_expert_out
 
@@ -195,6 +225,12 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         if not dst_rows_i64.is_contiguous():
             dst_rows_i64 = dst_rows_i64.contiguous()
 
+        _ep_pp_debug(
+            "rowwise_dispatch_forward_begin "
+            f"group={group_name} ep_rank={dist.get_rank(group)} "
+            f"src={tuple(source_input_contig.shape)} dst={tuple(symm_out.shape)} "
+            f"routes={tuple(dst_ranks_i64.shape)} nblocks={nblocks}"
+        )
         symm_mem_vdev2d_kernels.rowwise_dispatch_put(
             source_input_contig,
             symm_out,
@@ -202,6 +238,10 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             dst_rows_i64,
             group_name,
             nblocks=nblocks,
+        )
+        _ep_pp_debug(
+            "rowwise_dispatch_forward_end "
+            f"group={group_name} ep_rank={dist.get_rank(group)} dst={tuple(symm_out.shape)}"
         )
 
         ctx.group_name = group_name
@@ -230,6 +270,11 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             device=symm_grad_out.device,
             dtype=symm_grad_out.dtype,
         )
+        _ep_pp_debug(
+            "rowwise_dispatch_backward_combine_begin "
+            f"group={ctx.group_name} ep_rank={dist.get_rank(ctx.group)} "
+            f"grad={tuple(symm_grad_out.shape)} routes={tuple(dst_ranks.shape)}"
+        )
         symm_mem_vdev2d_kernels.rowwise_combine_get(
             symm_grad_out,
             grad_input,
@@ -237,6 +282,10 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             dst_rows,
             ctx.group_name,
             nblocks=ctx.nblocks,
+        )
+        _ep_pp_debug(
+            "rowwise_dispatch_backward_combine_end "
+            f"group={ctx.group_name} ep_rank={dist.get_rank(ctx.group)}"
         )
         return grad_input, None, None, None, None, None, None
 

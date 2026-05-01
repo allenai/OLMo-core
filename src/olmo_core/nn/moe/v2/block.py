@@ -1,5 +1,6 @@
 import threading
 import weakref
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union, cast
 
@@ -50,7 +51,6 @@ from .fp8 import (
 )
 from .ep_no_sync_buffers import (
     _NoSyncSymmSharedPool,
-    _NoSyncTboPendingContext,
 )
 from .ep_sync_1d import (
     combined_forward_ep_1d as _combined_forward_ep_1d,
@@ -67,6 +67,9 @@ from .ep_no_sync_rowwise_helpers import (
 )
 from .ep_no_sync_tbo_1d import (
     combined_forward_ep_no_sync_tbo as _combined_forward_ep_no_sync_tbo,
+)
+from .ep_no_sync_tbo_rowwise import (
+    combined_forward_ep_no_sync_tbo_rowwise as _combined_forward_ep_no_sync_tbo_rowwise,
 )
 from .checkpointing import is_checkpoint_recomputing
 from .activation_debug import maybe_dump_ep_no_sync_saved_activations
@@ -570,11 +573,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
     def _try_alias_ep_group_as_world_for_symm_mem(self) -> bool:
         """
-        Try to alias EP group metadata as symmetric-memory group "0" so NVSHMEM
-        allocator bootstrap follows EP group topology instead of WORLD.
+        Try to alias EP group metadata as symmetric-memory group "0".
 
-        Returns True when aliasing is active (or unnecessary because EP==WORLD),
-        otherwise False so caller can fall back to WORLD bootstrap.
+        NVSHMEM-backed ``symm_mem.empty()`` bootstraps through group "0" before
+        the later tensor rendezvous sees the EP process group. Each process can
+        safely alias its local EP island as group "0" before the first symmetric
+        allocation.
         """
         global _EP_SYMM_GROUP0_ALIAS_RANKS
         if _symm_mem is None or self.ep_pg is None:
@@ -586,7 +590,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         try:
             import torch.distributed.distributed_c10d as c10d
-            from torch._C._distributed_c10d import _SymmetricMemory
         except Exception:
             return False
 
@@ -602,23 +605,45 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 if _symm_mem.is_symm_mem_enabled_for_group("0"):
                     return False
 
-                global_ranks_str = "_".join(map(str, alias_ranks))
-                store = c10d.PrefixStore(
-                    f"symmetric_memory-{global_ranks_str}",
-                    c10d._get_process_group_store(self.ep_pg),
-                )
-                _SymmetricMemory.set_group_info(
-                    "0",
-                    dist.get_rank(self.ep_pg),
-                    dist.get_world_size(self.ep_pg),
-                    store,
-                )
-                # Keep Python bookkeeping in sync to avoid duplicate registration.
-                group_to_store = getattr(_symm_mem, "_group_name_to_store", None)
-                if isinstance(group_to_store, dict):
-                    group_to_store["0"] = store
+                if not self._register_process_group_for_symm_mem(self.ep_pg, "0"):
+                    return False
                 _EP_SYMM_GROUP0_ALIAS_RANKS = alias_ranks
                 return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _register_process_group_for_symm_mem(
+        group: dist.ProcessGroup,
+        group_name: str,
+    ) -> bool:
+        if _symm_mem is None:
+            return False
+        if _symm_mem.is_symm_mem_enabled_for_group(group_name):
+            return True
+        try:
+            import torch.distributed.distributed_c10d as c10d
+            from torch._C._distributed_c10d import _SymmetricMemory
+        except Exception:
+            return False
+
+        try:
+            global_ranks = sorted(c10d._world.pg_group_ranks[group].keys())
+            global_ranks_str = "_".join(map(str, global_ranks))
+            store = c10d.PrefixStore(
+                f"symmetric_memory-{global_ranks_str}",
+                c10d._get_process_group_store(group),
+            )
+            _SymmetricMemory.set_group_info(
+                group_name,
+                dist.get_rank(group),
+                dist.get_world_size(group),
+                store,
+            )
+            group_to_store = getattr(_symm_mem, "_group_name_to_store", None)
+            if isinstance(group_to_store, dict):
+                group_to_store[group_name] = store
+            return True
         except Exception:
             return False
 
@@ -651,19 +676,16 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             world_group_name = dist.group.WORLD.group_name
             alias_group0_active = False
             try:
-                _symm_mem.enable_symm_mem_for_group(group_name)
-                # Default path: alias EP group as group "0" so NVSHMEM allocator
-                # bootstrap tracks EP topology. This keeps 2x8 intra-node teams
-                # from inheriting WORLD inter-node behavior.
-                alias_group0_active = self._try_alias_ep_group_as_world_for_symm_mem()
-                if not alias_group0_active:
-                    # Fallback path for environments where aliasing private APIs
-                    # are unavailable or group "0" is already occupied.
-                    # _symm_mem.enable_symm_mem_for_group(world_group_name)
-                    # Option: hard fail
+                if not self._register_process_group_for_symm_mem(self.ep_pg, group_name):
                     raise RuntimeError(
-                        f"Failed to alias EP group '{group_name}' as group '0' for symmetric memory support"
+                        f"Failed to register EP group '{group_name}' for symmetric memory support"
                     )
+                if os.getenv("OLMO_EP_NO_SYNC_ALIAS_GROUP0", "1").lower() not in ("", "0", "false", "no"):
+                    alias_group0_active = self._try_alias_ep_group_as_world_for_symm_mem()
+                    if not alias_group0_active:
+                        raise RuntimeError(
+                            f"Failed to alias EP group '{group_name}' as group '0' for symmetric memory support"
+                        )
 
             except Exception as e:
                 raise RuntimeError(
@@ -801,7 +823,16 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, _NoSyncTboPendingContext]:
+    ) -> Tuple[torch.Tensor, object]:
+        if self.ep_no_sync_use_rowwise_all_to_all:
+            return _combined_forward_ep_no_sync_tbo_rowwise(
+                self,
+                x0,
+                x1_ctx,
+                x1_is_fresh,
+                loss_div_factor=loss_div_factor,
+                **kwargs,
+            )
         return _combined_forward_ep_no_sync_tbo(
             self,
             x0,

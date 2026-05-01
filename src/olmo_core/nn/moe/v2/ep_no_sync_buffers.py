@@ -125,9 +125,34 @@ class _NoSyncSymmSharedPool:
             or cached.device != device
         )
         if needs_realloc:
+            if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no"):
+                rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+                group_rank = get_rank(self.group)
+                print(
+                    f"[EP_PP_DEBUG][rank={rank}] shared_symm_alloc_begin "
+                    f"ep_rank={group_rank} slot={slot_idx} name={name} "
+                    f"group={self.group.group_name} shape={shape} dtype={dtype}",
+                    flush=True,
+                )
             symm_tensor = _symm_mem.empty(shape, dtype=dtype, device=device)
+            if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no"):
+                rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+                group_rank = get_rank(self.group)
+                print(
+                    f"[EP_PP_DEBUG][rank={rank}] shared_symm_empty_end "
+                    f"ep_rank={group_rank} slot={slot_idx} name={name}",
+                    flush=True,
+                )
             _symm_mem.rendezvous(symm_tensor, group=self.group)
             slot_cache[name] = symm_tensor
+            if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no"):
+                rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+                group_rank = get_rank(self.group)
+                print(
+                    f"[EP_PP_DEBUG][rank={rank}] shared_symm_alloc_end "
+                    f"ep_rank={group_rank} slot={slot_idx} name={name}",
+                    flush=True,
+                )
         return slot_cache[name]
 
     def get_slot(
@@ -316,8 +341,24 @@ def get_or_init_ep_no_sync_symm_tensor(
     )
     if needs_realloc:
         try:
+            if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no"):
+                rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+                print(
+                    f"[EP_PP_DEBUG][rank={rank}] symm_alloc_begin "
+                    f"block={block.block_idx} ep_rank={get_rank(block.ep_pg)} "
+                    f"name={name} shape={shape} dtype={dtype}",
+                    flush=True,
+                )
             symm_tensor = _symm_mem.empty(shape, dtype=dtype, device=device)
             _symm_mem.rendezvous(symm_tensor, group=block.ep_pg)
+            if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no"):
+                rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+                print(
+                    f"[EP_PP_DEBUG][rank={rank}] symm_alloc_end "
+                    f"block={block.block_idx} ep_rank={get_rank(block.ep_pg)} "
+                    f"name={name}",
+                    flush=True,
+                )
         except Exception as e:
             raise RuntimeError(
                 f"Failed to allocate/rendezvous symmetric tensor '{name}' with shape={shape}, "
@@ -350,6 +391,17 @@ def get_ep_no_sync_buffers(
     assert block.routed_experts_router is not None
 
     ep_world_size = block.ep_world_size
+    if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no"):
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+        print(
+            f"[EP_PP_DEBUG][rank={rank}] get_no_sync_buffers "
+            f"block={block.block_idx} ep_rank={get_rank(block.ep_pg)} slot={slot_idx} "
+            f"caps=({dispatch_in_cap},{dispatch_out_cap},{combine_in_cap},{combine_out_cap}) "
+            f"need=(din:{need_dispatch_in},dmeta:{need_dispatch_meta},dout:{need_dispatch_out},"
+            f"cin:{need_combine_in},cmeta:{need_combine_meta},cout:{need_combine_out}) "
+            f"shared_pool={block._ep_no_sync_shared_pool is not None}",
+            flush=True,
+        )
     transient_slot: Optional[_NoSyncSymmTransientSlot] = None
     resolved_slot_idx = block._ep_no_sync_shared_slot if slot_idx is None else slot_idx
     name_suffix = f"_slot{resolved_slot_idx}" if slot_idx is not None else ""

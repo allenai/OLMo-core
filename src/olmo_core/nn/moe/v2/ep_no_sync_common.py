@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
 import nvtx
@@ -15,6 +16,20 @@ from ...moe.utils import (
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
+
+
+def _ep_pp_debug_enabled() -> bool:
+    return os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no")
+
+
+def _ep_pp_debug(msg: str) -> None:
+    if not _ep_pp_debug_enabled():
+        return
+    try:
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+    except Exception:
+        rank = -1
+    print(f"[EP_PP_DEBUG][rank={rank}] {msg}", flush=True)
 
 
 @nvtx.annotate("_build_keep_reorder")
@@ -86,10 +101,21 @@ def sync_tail_drop_allowed_splits_single_a2a(
         device=requested.device,
         dtype=requested.dtype,
     )
+    _ep_pp_debug(
+        "ep_allgather_counts_begin "
+        f"block={self.block_idx} ep_rank={get_rank(self.ep_pg)} "
+        f"ep_world={self.ep_world_size} requested_sum={int(requested.sum().item())} "
+        f"rank_capacity={rank_capacity} splits={requested.numel()}"
+    )
     dist.all_gather_into_tensor(
         gathered_payload,
         requested,
         group=self.ep_pg,
+    )
+    _ep_pp_debug(
+        "ep_allgather_counts_end "
+        f"block={self.block_idx} ep_rank={get_rank(self.ep_pg)} "
+        f"gathered_sum={int(gathered_payload.sum().item())}"
     )
 
     gathered_payload_2d = gathered_payload.view(self.ep_world_size, expected_splits)

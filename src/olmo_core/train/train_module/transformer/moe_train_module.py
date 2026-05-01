@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import os
 from dataclasses import replace
 from functools import cached_property
 from typing import Any, Dict, Generator, Optional, Tuple, Union, Iterable, Sequence
@@ -82,6 +83,17 @@ from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
 import nvtx
 
 log = logging.getLogger(__name__)
+
+
+def _ep_pp_debug_enabled() -> bool:
+    return os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no")
+
+
+def _ep_pp_debug(msg: str) -> None:
+    if not _ep_pp_debug_enabled():
+        return
+    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+    print(f"[EP_PP_DEBUG][rank={rank}] {msg}", flush=True)
 
 M = TypeVar("M", bound=List[MoEFusedV2Transformer])
 
@@ -749,18 +761,38 @@ class MoEV2TransformerTrainModule(TrainModule):
                 assert isinstance(tensor_meta, TensorStorageMetadata)
                 global_numel = tensor_meta.size.numel()
                 local_flat = param.data.view(-1)
+                local_numel = local_flat.numel()
 
-                if local_flat.numel() == global_numel:
+                if local_numel == global_numel:
                     model_state[checkpoint_key] = local_flat
                 else:
-                    if self.world_mesh["moe"] is None:
+                    moe_mesh = self.world_mesh["moe"]
+                    if moe_mesh is None:
                         raise RuntimeError(
-                            f"Expected MoE mesh when loading sharded param '{name}' in eval mode"
+                            f"Cannot load checkpoint tensor '{checkpoint_key}' for parameter "
+                            f"'{name}' in eval mode with expert parallelism disabled: checkpoint "
+                            f"has {global_numel:,d} elements but the model parameter has "
+                            f"{local_numel:,d} elements. EP=1 eval can load EP-trained "
+                            f"checkpoints when the checkpoint and model configs match; this "
+                            f"shape mismatch usually means the eval config does not match the "
+                            f"checkpoint."
+                        )
+
+                    ep_mp_size = moe_mesh["ep_mp"].size()
+                    expected_global_numel = local_numel * ep_mp_size
+                    if expected_global_numel != global_numel:
+                        raise RuntimeError(
+                            f"Cannot load checkpoint tensor '{checkpoint_key}' for sharded "
+                            f"parameter '{name}' in eval mode: checkpoint has "
+                            f"{global_numel:,d} elements, but the local parameter has "
+                            f"{local_numel:,d} elements across EP-MP size {ep_mp_size:,d} "
+                            f"({expected_global_numel:,d} total). This usually means the "
+                            f"eval config does not match the checkpoint."
                         )
 
                     model_state[checkpoint_key] = DTensor.from_local(
                         local_flat,
-                        device_mesh=self.world_mesh["moe"]["ep_dp", "ep_mp"],
+                        device_mesh=moe_mesh["ep_dp", "ep_mp"],
                         placements=[Replicate(), Shard(0)],
                         shape=(global_numel,),
                         stride=(1,),
@@ -994,8 +1026,10 @@ class MoEV2TransformerTrainModule(TrainModule):
             if DEBUG_MODE and not dry_run:
                 self._dump_debug_info()
 
-            for model in self.model_parts:
+            for idx, model in enumerate(self.model_parts):
+                _ep_pp_debug(f"finalize_grad_reduce_begin model_part={idx} pp_enabled={self.pp_enabled}")
                 model.finalize_grad_reduce()
+                _ep_pp_debug(f"finalize_grad_reduce_end model_part={idx} pp_enabled={self.pp_enabled}")
             
         else:
             # pipeline parallel forward / backward
@@ -1051,8 +1085,10 @@ class MoEV2TransformerTrainModule(TrainModule):
                 self._dump_debug_info()
 
 
-            for model in self.model_parts:
+            for idx, model in enumerate(self.model_parts):
+                _ep_pp_debug(f"finalize_grad_reduce_begin model_part={idx} pp_enabled={self.pp_enabled}")
                 model.finalize_grad_reduce()
+                _ep_pp_debug(f"finalize_grad_reduce_end model_part={idx} pp_enabled={self.pp_enabled}")
             
         #############################
 
@@ -1690,7 +1726,42 @@ class MoEV2TransformerTrainModule(TrainModule):
             # for n, p in m.named_parameters():
             #     print(f'{n} {p.shape}: mean={p.data.mean().item()}, std={p.data.std().item()}')
 
+        self._prewarm_ep_no_sync_symm_buffers(
+            model_parts=model_parts,
+            rank_microbatch_size=rank_microbatch_size,
+        )
+
         return
+
+    def _prewarm_ep_no_sync_symm_buffers(self, *, model_parts, rank_microbatch_size: int) -> None:
+        if self.world_mesh.get("moe") is None:
+            return
+        typed_parts = [cast(MoEFusedV2Transformer, m) for m in model_parts]
+        local_counts = [m.count_ep_no_sync_blocks() for m in typed_parts]
+        if not any(local_counts):
+            return
+
+        max_counts: List[int] = []
+        for count in local_counts:
+            count_tensor = torch.tensor(count, device=self.device, dtype=torch.int64)
+            dist.all_reduce(count_tensor, op=dist.ReduceOp.MAX)
+            max_counts.append(int(count_tensor.item()))
+
+        _ep_pp_debug(
+            "prewarm_ep_no_sync_counts "
+            f"local={local_counts} max={max_counts} rank_microbatch_size={rank_microbatch_size}"
+        )
+
+        for model_part_idx, (model_part, max_count) in enumerate(zip(typed_parts, max_counts)):
+            _ep_pp_debug(
+                "prewarm_ep_no_sync_model_part_begin "
+                f"idx={model_part_idx} local_blocks={local_counts[model_part_idx]} max_blocks={max_count}"
+            )
+            model_part.prewarm_ep_no_sync_symm_buffers(
+                max_local_microbatch_size=rank_microbatch_size,
+                pad_to_block_count=max_count,
+            )
+            _ep_pp_debug(f"prewarm_ep_no_sync_model_part_end idx={model_part_idx}")
 
     def compile_model(self):
         if torch.cuda.is_available():
@@ -1725,8 +1796,16 @@ class MoEV2TransformerTrainModule(TrainModule):
         if self.pp_group_rank == self.pp_final_stage_rank:
             assert x is not None
             # Reduce across DP process group.
+            _ep_pp_debug(
+                f"reduce_send_recv_dp_allreduce_begin pp_rank={self.pp_group_rank} "
+                f"dp_world={self.dp_world_size} x={float(x.detach().float().item()) if x.numel() == 1 else 'tensor'}"
+            )
             dist.all_reduce(x, group=self.dp_process_group)
             x.div_(self.dp_world_size)
+            _ep_pp_debug(
+                f"reduce_send_recv_dp_allreduce_end pp_rank={self.pp_group_rank} "
+                f"x={float(x.detach().float().item()) if x.numel() == 1 else 'tensor'}"
+            )
         else:
             assert x is None
             x = move_to_device(torch.empty([]), self.device)
@@ -1755,14 +1834,18 @@ class MoEV2TransformerTrainModule(TrainModule):
             send_ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
         
         if len(recv_ops) > 0:
+            _ep_pp_debug(f"reduce_send_recv_recv_begin pp_rank={self.pp_group_rank} ops={len(recv_ops)}")
             recv_reqs = dist.batch_isend_irecv(recv_ops)
             for req in recv_reqs:
                 req.wait()
+            _ep_pp_debug(f"reduce_send_recv_recv_end pp_rank={self.pp_group_rank}")
 
         if len(send_ops) > 0:
+            _ep_pp_debug(f"reduce_send_recv_send_begin pp_rank={self.pp_group_rank} ops={len(send_ops)}")
             send_reqs = dist.batch_isend_irecv(send_ops)
             for req in send_reqs:
                 req.wait()
+            _ep_pp_debug(f"reduce_send_recv_send_end pp_rank={self.pp_group_rank}")
 
         # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
         return x

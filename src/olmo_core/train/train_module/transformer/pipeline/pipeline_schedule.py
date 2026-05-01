@@ -1,5 +1,6 @@
 
 
+import os
 import torch
 import torch.distributed as dist
 from collections import Counter, defaultdict
@@ -18,6 +19,24 @@ from .gpu_activation_offload import GPUActivationOffloader
 from olmo_core.nn.lm_head import LMOutputWithLoss
 
 logger = logging.getLogger(__name__)
+
+
+def _ep_pp_debug_enabled() -> bool:
+    return os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no")
+
+
+def _ep_pp_debug_mb(mb_index: Optional[int]) -> bool:
+    if mb_index is None:
+        return True
+    limit = int(os.getenv("OLMO_EP_PP_DEBUG_MB_LIMIT", "8"))
+    return mb_index < limit
+
+
+def _ep_pp_debug(msg: str) -> None:
+    if not _ep_pp_debug_enabled():
+        return
+    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+    print(f"[EP_PP_DEBUG][rank={rank}] {msg}", flush=True)
 
 # Helper to parse an action string like 1F0 into a tuple of (stage_index, computation_type, microbatch_index)
 _action_regex = re.compile(
@@ -239,7 +258,9 @@ class CustomScheduleInterleaved1F1B():
         # passed to ``dist.P2POp``, all ranks of the ``group`` must participate in
         # this API call
         dummy = torch.tensor(1.0).to(torch.cuda.current_device())
+        _ep_pp_debug(f"pp_init_allreduce_begin pp_rank={self.rank} pp_size={self.pp_group_size}")
         dist.all_reduce(dummy, group=self._stages[0].group)
+        _ep_pp_debug(f"pp_init_allreduce_end pp_rank={self.rank} value={dummy.item()}")
         assert dummy.item() == self.pp_group_size
 
         self._stages_initialized = True
@@ -440,6 +461,11 @@ class CustomScheduleInterleaved1F1B():
                 computation_type = action.computation_type
                 mb_index = action.microbatch_index
                 stage_index = action.stage_index
+                if _ep_pp_debug_mb(mb_index):
+                    _ep_pp_debug(
+                        f"pp_action_begin pp_rank={self.rank} t={time_step} "
+                        f"stage={stage_index} mb={mb_index} kind={computation_type.name}"
+                    )
                 assert mb_index is not None, (
                     "All currently supported action types require valid microbatch_index"
                 )
@@ -467,6 +493,11 @@ class CustomScheduleInterleaved1F1B():
                             debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
                     # self._maybe_compute_loss(stage, output, target_mbs, mb_index)
                     ops.extend(stage.get_fwd_send_ops(mb_index))
+                    if _ep_pp_debug_mb(mb_index):
+                        _ep_pp_debug(
+                            f"pp_forward_done pp_rank={self.rank} t={time_step} "
+                            f"stage={stage_index} mb={mb_index} send_ops={len(ops)}"
+                        )
                 elif computation_type == PipelineActionType.FULL_BACKWARD:
                     if forward_only:
                         # in forward only (eval) mode, skip backward computation, but need to free fwd_cache wihch
@@ -503,6 +534,11 @@ class CustomScheduleInterleaved1F1B():
                             debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
                         ops.extend(stage.get_bwd_send_ops(mb_index))
                         past_first_backward = True
+                        if _ep_pp_debug_mb(mb_index):
+                            _ep_pp_debug(
+                                f"pp_backward_done pp_rank={self.rank} t={time_step} "
+                                f"stage={stage_index} mb={mb_index} send_ops={len(ops)}"
+                            )
                 elif computation_type == PipelineActionType.FULL_BACKWARD_CONT:
                     # continuation of full backward, no computation
                     pass
@@ -587,12 +623,16 @@ class CustomScheduleInterleaved1F1B():
 
             # at the end of step N, wait for the N-1 communication to finish, because N+1 compute may use the data from N-1 communication (F-B-F)
             if handles:
+                _ep_pp_debug(f"pp_wait_prev_handles_begin pp_rank={self.rank} t={time_step} count={len(handles)}")
                 for handle in handles:
                     handle.wait()
                 handles.clear()
+                _ep_pp_debug(f"pp_wait_prev_handles_end pp_rank={self.rank} t={time_step}")
 
             if ops:
+                _ep_pp_debug(f"pp_batch_isend_irecv_begin pp_rank={self.rank} t={time_step} ops={len(ops)}")
                 handles = dist.batch_isend_irecv(ops)
+                _ep_pp_debug(f"pp_batch_isend_irecv_end pp_rank={self.rank} t={time_step} handles={len(handles)}")
 
             # do the communication
             if handles:
@@ -604,9 +644,11 @@ class CustomScheduleInterleaved1F1B():
                 else:
                     # in training mode, we can do 1-step lookahead to overlap communication with computation in some cases
                     if not past_first_backward: # it's only safe collect the p2p handles at N+1 step in the stable 1F1B phase. Need to collect it immediately in the warmup phase
+                        _ep_pp_debug(f"pp_wait_warmup_handles_begin pp_rank={self.rank} t={time_step} count={len(handles)}")
                         for handle in handles:
                             handle.wait()
                         handles.clear()
+                        _ep_pp_debug(f"pp_wait_warmup_handles_end pp_rank={self.rank} t={time_step}")
 
             # print(f'{action}-Done')
 
