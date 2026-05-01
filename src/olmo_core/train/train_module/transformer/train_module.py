@@ -795,10 +795,6 @@ class TransformerTrainModule(TrainModule):
             return 0.0
         return float(self.soft_ce_alpha_start) * (1.0 - step / ramp_steps)
 
-    # Per-process counter for the diagnostic prints inside _compute_soft_ce_loss.
-    _soft_ce_diag_count: dict = {}
-    _soft_ce_diag_log_first_n: int = 4
-
     def _compute_soft_ce_loss(
         self,
         *,
@@ -843,33 +839,6 @@ class TransformerTrainModule(TrainModule):
         on θ, the cross-entropy/KL equivalence breaks, and this function
         needs to be rewritten.
         """
-        # Diagnostic: dump summary stats of the inputs on the first few calls
-        # per worker process. Helps catch upstream bugs (zero-valued probs,
-        # device mismatch, shape mistakes) before chasing math errors.
-        import os as _os
-        _diag_pid = _os.getpid()
-        _diag_cnt = TransformerTrainModule._soft_ce_diag_count.get(_diag_pid, 0)
-        if _diag_cnt < TransformerTrainModule._soft_ce_diag_log_first_n:
-            with torch.no_grad():
-                p = soft_target_probs.float()
-                row0_sum = float(p[0, 0].sum()) if p.numel() > 0 else 0.0
-                total_sum = float(p.sum())
-                nonzero = int((p > 0).sum())
-                p_max = float(p.max()) if p.numel() > 0 else 0.0
-                ids_max = int(soft_target_token_ids.max()) if soft_target_token_ids.numel() > 0 else 0
-            print(
-                f"[soft_ce pid={_diag_pid}] _compute_soft_ce_loss#{_diag_cnt}: "
-                f"probs.shape={tuple(soft_target_probs.shape)}, "
-                f"probs.dtype={soft_target_probs.dtype}, "
-                f"probs.device={soft_target_probs.device}, "
-                f"row0_sum={row0_sum:.4f}, total_sum={total_sum:.1f}, "
-                f"nonzero={nonzero}/{p.numel()}, max={p_max:.4f}, "
-                f"ids.max={ids_max}, "
-                f"logits.shape={tuple(logits.shape)}, logits.device={logits.device}",
-                flush=True,
-            )
-        TransformerTrainModule._soft_ce_diag_count[_diag_pid] = _diag_cnt + 1
-
         # Upcast logits to fp32 for numerical stability of the normalizer.
         logits_f32 = get_local_tensor(logits).float()
         # Per-position log-of-sum-of-exponentials normalizer over the full
@@ -892,29 +861,7 @@ class TransformerTrainModule(TrainModule):
         soft_ce_per_pos = soft_ce_per_pos * mask
         # Sum → scalar; divide by the same denominator hard CE used so the two
         # terms are on a comparable per-valid-token scale.
-        result = soft_ce_per_pos.sum() / loss_div_factor
-
-        # Diagnostic: confirm the return value is non-zero in those first calls.
-        if _diag_cnt < TransformerTrainModule._soft_ce_diag_log_first_n:
-            with torch.no_grad():
-                per_pos_sum = float(soft_ce_per_pos.sum())
-                per_pos_max = float(soft_ce_per_pos.max())
-                mask_frac = float(mask.float().mean())
-                lse_min = float(log_sum_exp.min())
-                lse_max = float(log_sum_exp.max())
-                gathered_min = float(gathered_log_probs.min())
-                gathered_max = float(gathered_log_probs.max())
-                div_factor_val = float(loss_div_factor)
-            print(
-                f"[soft_ce pid={_diag_pid}] _compute_soft_ce_loss#{_diag_cnt} OUT: "
-                f"per_pos.sum={per_pos_sum:.4f}, per_pos.max={per_pos_max:.4f}, "
-                f"mask.mean={mask_frac:.4f}, "
-                f"log_sum_exp range=[{lse_min:.3f}, {lse_max:.3f}], "
-                f"gathered_log_probs range=[{gathered_min:.3f}, {gathered_max:.3f}], "
-                f"div_factor={div_factor_val:.1f}, result={float(result):.6f}",
-                flush=True,
-            )
-        return result
+        return soft_ce_per_pos.sum() / loss_div_factor
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:

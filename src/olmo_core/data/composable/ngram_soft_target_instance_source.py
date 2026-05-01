@@ -122,12 +122,6 @@ class NgramSoftTargetInstanceSource(InstanceSource):
     def __len__(self) -> int:
         return len(self._source)
 
-    # Per-process counter: log summary stats for the first few __getitem__
-    # calls so we can see what values the wrapper is returning vs what the
-    # train_module ends up with downstream.
-    _diag_call_count: dict = {}
-    _diag_log_first_n: int = 4
-
     def __getitem__(self, idx: int) -> Instance:
         idx = self.validate_index(idx)
         inst = self._source[idx]
@@ -144,26 +138,6 @@ class NgramSoftTargetInstanceSource(InstanceSource):
             for i in range(S)
         ]
         ids, probs = self._get_lookup().lookup_batch(contexts)
-
-        # Diagnostic: confirm soft-target tensors contain real values (sums
-        # near 1, non-zero entries). Print a one-line summary for the first
-        # few __getitem__ calls per worker process.
-        import os as _os
-        my_pid = _os.getpid()
-        cnt = NgramSoftTargetInstanceSource._diag_call_count.get(my_pid, 0)
-        if cnt < NgramSoftTargetInstanceSource._diag_log_first_n:
-            row0_sum = float(probs[0].sum()) if probs.size > 0 else 0.0
-            probs_total_sum = float(probs.sum())
-            probs_nonzero = int((probs > 0).sum())
-            ids_max = int(ids.max()) if ids.size > 0 else 0
-            print(
-                f"[ngram_instance_source pid={my_pid}] __getitem__#{cnt} "
-                f"idx={idx}: probs.shape={tuple(probs.shape)}, "
-                f"row0_sum={row0_sum:.4f}, total_sum={probs_total_sum:.1f}, "
-                f"nonzero={probs_nonzero}/{probs.size}, ids.max={ids_max}",
-                flush=True,
-            )
-        NgramSoftTargetInstanceSource._diag_call_count[my_pid] = cnt + 1
 
         out = dict(inst)
         out["soft_target_token_ids"] = ids  # (S, K) int32
