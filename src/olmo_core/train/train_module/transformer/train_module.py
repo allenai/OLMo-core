@@ -804,14 +804,30 @@ class TransformerTrainModule(TrainModule):
         labels: torch.Tensor,
         loss_div_factor: torch.Tensor,
     ) -> torch.Tensor:
-        """Compute sum-reduction soft CE divided by ``loss_div_factor``.
+        """Compute sum-reduction soft cross-entropy divided by ``loss_div_factor``.
 
-        Soft CE at position i:  - sum_k p_k * log_softmax(logits_i)[w_k]
+        At each sequence position the loss is
 
-        where (w_k, p_k) is the top-K distribution carried on the batch. Positions
-        where ``labels == ignore_index`` are zeroed out so they match hard-CE's
-        ignore semantics (and because their ``loss_div_factor`` denominator
-        already excluded them).
+            L = - sum_{k in 1..K} p_k * log q_k
+
+        — the negative weighted sum, taken over the K target tokens, of each
+        target's probability ``p_k`` (from the ngram top-K distribution carried
+        on the batch) times the model's predicted log-probability for that
+        token, ``log q_k``. Positions where ``labels == ignore_index`` are
+        zeroed out to match hard CE's ignore semantics (and because their
+        ``loss_div_factor`` denominator already excluded them).
+
+        We avoid materializing the full per-position log-probability
+        distribution by computing the log-of-sum-of-exponentials normalizer
+        once per position (one scalar) and the K target raw logits separately
+        (one small tensor), then using the textbook identity
+
+            log_softmax(logits)[k] = logits[k] - logsumexp(logits)
+
+        — the model's log-probability for any token equals the token's raw
+        logit minus the per-position normalizer. This produces the same
+        number as ``F.log_softmax(logits).gather(...)`` while avoiding a
+        second (sequences, positions, vocab) tensor.
 
         Note on naming: this IS forward KL up to a constant. The ngram-side
         target distribution p is fixed (not a function of model parameters),
@@ -822,34 +838,20 @@ class TransformerTrainModule(TrainModule):
         (KL(q_θ || p) — mode-seeking), the entropy term H(q_θ) does depend
         on θ, the cross-entropy/KL equivalence breaks, and this function
         needs to be rewritten.
-
-        Memory note: a naive ``log_softmax(logits).gather(...)`` allocates
-        (B, S, V) fp32 — at 190M with rank_microbatch_size=16×4096 that's
-        ~26 GiB per microbatch and OOMs an H100. We chunk along the
-        sequence dimension and only ever upcast a (B, chunk, V) slice to
-        fp32, computing logsumexp + gather per chunk. With chunk=1024 the
-        peak fp32 allocation is ~3 GB.
         """
-        logits_local = get_local_tensor(logits)  # bf16, (B, S, V)
-        B, S, V = logits_local.shape
-        soft_ce_per_pos = torch.zeros(
-            (B, S), dtype=torch.float32, device=logits_local.device
-        )
-        # 1024 positions per chunk: peak allocation is
-        #   B * 1024 * V * 4 bytes  (fp32 chunk_logits)
-        # which is ~3 GB for B=8, V≈100K. Tunable; smaller is safer.
-        chunk_size = 1024
-        for s_start in range(0, S, chunk_size):
-            s_end = min(s_start + chunk_size, S)
-            chunk_logits_f32 = logits_local[:, s_start:s_end].float()
-            chunk_lse = torch.logsumexp(chunk_logits_f32, dim=-1)  # (B, M)
-            chunk_target_ids = soft_target_token_ids[:, s_start:s_end]  # (B, M, K)
-            chunk_gathered_logits = chunk_logits_f32.gather(-1, chunk_target_ids)
-            del chunk_logits_f32
-            # log_softmax at target = logit_target - log_sum_exp.
-            chunk_gathered = chunk_gathered_logits - chunk_lse.unsqueeze(-1)
-            chunk_probs = soft_target_probs[:, s_start:s_end].float()  # (B, M, K)
-            soft_ce_per_pos[:, s_start:s_end] = -(chunk_probs * chunk_gathered).sum(dim=-1)
+        # Upcast logits to fp32 for numerical stability of the normalizer.
+        logits_f32 = get_local_tensor(logits).float()
+        # Per-position log-of-sum-of-exponentials normalizer over the full
+        # vocabulary. Shape: (sequences in microbatch, positions per sequence).
+        log_sum_exp = torch.logsumexp(logits_f32, dim=-1)
+        # Raw logits at the K target tokens for each position.
+        # Shape: (sequences, positions, K).
+        gathered_logits = logits_f32.gather(-1, soft_target_token_ids)
+        # Convert to log-probabilities by subtracting the per-position
+        # normalizer (broadcast across the K dimension via unsqueeze).
+        gathered_log_probs = gathered_logits - log_sum_exp.unsqueeze(-1)
+        # Soft CE per position: weighted sum of model log-probs by target probs.
+        soft_ce_per_pos = -(soft_target_probs.float() * gathered_log_probs).sum(dim=-1)
 
         # Mask out ignored label positions. Labels arrive on CPU (the standard
         # hard-CE path runs them through model_forward which handles the move
