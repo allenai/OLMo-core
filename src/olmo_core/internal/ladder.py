@@ -447,6 +447,11 @@ def configure_launcher(
     )
     if num_gpus < 8:
         launch_config.num_gpus = num_gpus
+    # Always wrap in torchrun. The default heuristic in BeakerLaunchConfig
+    # only enables torchrun for num_gpus > 1, but our training scripts
+    # unconditionally read LOCAL_RANK / WORLD_SIZE etc. from the env, so
+    # even 1-GPU smokes need the torchrun launcher to set them up.
+    launch_config.torchrun = True
     launch_config.priority = args.priority
     if args.preemptible is not None:
         launch_config.preemptible = args.preemptible
