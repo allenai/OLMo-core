@@ -120,10 +120,13 @@ class _WSDSChinchillaSmoke(WSDSChinchillaRunConfigurator):
         # to use a single period at the requested multiple).
 
     def configure_chinchilla_periods(self, num_params: int) -> tuple[int, list[float]]:
-        # Smoke runs use a single anneal at the requested multiple. The
-        # production configurator generates one anneal per power of 2 from
-        # 2^-1 up, which produces an empty list when chinchilla_multiple < 0.5.
-        return num_params, [self.chinchilla_multiple]
+        # Smoke: single anneal at the requested multiple. Production uses
+        # one anneal per power of 2 from 2^-1 up which is empty for
+        # chinchilla_multiple < 0.5.
+        # Smoke: drastically shorter warmup (single batch) — production
+        # uses 1 token per param = 190M tokens which exceeds the entire
+        # smoke training budget. Smokes don't need realistic warmup.
+        return 16384, [self.chinchilla_multiple]
 
     def configure_target_batch_size(self, num_params: int) -> int:
         # Override to a small fixed batch size so each optimizer step is
