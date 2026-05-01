@@ -57,7 +57,7 @@ def build_launch_config(
     *,
     name: str,
     cmd: List[str],
-    cluster: str,
+    cluster: Union[str, List[str]],
     root_dir: Optional[str] = None,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
@@ -70,14 +70,23 @@ def build_launch_config(
     step_timeout: Optional[int] = None,
     step_soft_timeout: Optional[int] = 10 * 60,
 ) -> BeakerLaunchConfig:
+    """``cluster`` may be a single Beaker cluster name (e.g. ``"ai2/jupiter"``)
+    or a list of allowed clusters; in the list case Beaker's scheduler picks
+    one based on availability, and on preemption can re-place to another
+    cluster in the list.
+    """
     weka_buckets: List[BeakerWekaBucket] = []
 
-    default_root_dir = get_root_dir(cluster)
+    cluster_list: List[str] = [cluster] if isinstance(cluster, str) else list(cluster)
+    if len(cluster_list) == 0:
+        raise ValueError("cluster argument must not be empty")
+    primary_cluster = cluster_list[0]
+    default_root_dir = get_root_dir(primary_cluster)
     if root_dir is None:
         root_dir = default_root_dir
     elif root_dir != default_root_dir:
         log.warning(
-            f"Overriding default root_dir for {cluster=} to {root_dir} ({default_root_dir=})."
+            f"Overriding default root_dir for cluster={primary_cluster!r} to {root_dir} ({default_root_dir=})."
         )
 
     if root_dir.startswith("/weka/"):
@@ -148,7 +157,7 @@ def build_launch_config(
         cmd=cmd,
         task_name=task_name,
         workspace=workspace,
-        clusters=[cluster],
+        clusters=cluster_list,
         weka_buckets=weka_buckets,
         beaker_image=beaker_image,
         num_nodes=num_nodes,
@@ -172,6 +181,7 @@ CLUSTER_TO_GPU_TYPE = {
     "ai2/jupiter": "NVIDIA H100 80GB HBM3",
     "ai2/ceres": "NVIDIA H100 80GB HBM3",
     "ai2/titan": "NVIDIA B200",
+    "ai2/saturn": "NVIDIA A100 80GB",
 }
 
 
