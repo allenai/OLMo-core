@@ -31,7 +31,15 @@ def get_beaker_username() -> Optional[str]:
         return None
 
 
-def get_root_dir(cluster: str) -> str:
+def get_root_dir(cluster: Union[str, List[str]]) -> str:
+    """``cluster`` may be a single Beaker cluster name or a list of allowed
+    clusters. When passed a list, this returns the root_dir of the first
+    entry — the four AI2 H100/B200/A100 clusters all mount the same Weka
+    root, so this is safe for the multi-cluster ladder use case."""
+    if isinstance(cluster, list):
+        if not cluster:
+            raise ValueError("cluster list must not be empty")
+        cluster = cluster[0]
     if cluster.startswith("ai2/"):
         with get_beaker_client() as beaker:
             cl = beaker.cluster.get(cluster)
@@ -185,7 +193,15 @@ CLUSTER_TO_GPU_TYPE = {
 }
 
 
-def get_gpu_type(cluster: str) -> str:
+def get_gpu_type(cluster: Union[str, List[str]]) -> str:
+    """Same list-tolerance contract as :func:`get_root_dir` — returns the
+    GPU type of the first cluster when passed a list. The returned string
+    is consumed only by sanity-check assertions in the model configurator
+    and an auto-mbz heuristic that's bypassed when ``--rank-mbz`` is set."""
+    if isinstance(cluster, list):
+        if not cluster:
+            raise ValueError("cluster list must not be empty")
+        cluster = cluster[0]
     if cluster in CLUSTER_TO_GPU_TYPE:
         return CLUSTER_TO_GPU_TYPE[cluster]
     elif cluster.startswith("ai2/"):
