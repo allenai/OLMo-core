@@ -537,11 +537,37 @@ class TransformerTrainModule(TrainModule):
                         labels=labels,
                         loss_div_factor=batch_num_tokens_for_loss,
                     )
+
+                    # z_loss with gradient. ``output.z_loss`` is detached
+                    # (metrics-only), so we recompute the regularizer here
+                    # from the same logits we used for the PoE loss. The
+                    # formula matches olmo-core's
+                    # ``cross_entropy_loss``:
+                    #   z_loss = z_multiplier · Σ (logsumexp(logits))² · mask
+                    #            / div_factor
+                    # over positions where labels != ignore_index.
+                    if self.z_loss_multiplier is not None:
+                        logits_local_f32 = get_local_tensor(logits).float()
+                        z_log_sum_exp = torch.logsumexp(logits_local_f32, dim=-1)
+                        z_labels_dev = labels.to(
+                            z_log_sum_exp.device, non_blocking=True
+                        )
+                        z_mask = (z_labels_dev != self.label_ignore_index).to(
+                            z_log_sum_exp.dtype
+                        )
+                        z_loss_with_grad = (
+                            self.z_loss_multiplier
+                            * (z_log_sum_exp.pow(2) * z_mask).sum()
+                            / batch_num_tokens_for_loss
+                        )
+                        del logits_local_f32, z_log_sum_exp, z_mask
+                    else:
+                        z_loss_with_grad = None
                     del logits
 
                     combined_loss = poe_loss
-                    if z_loss is not None:
-                        combined_loss = combined_loss + z_loss
+                    if z_loss_with_grad is not None:
+                        combined_loss = combined_loss + z_loss_with_grad
 
                     # We log "CE loss" as the PoE-joint cross-entropy at the
                     # hard label — i.e. the actual training objective. That's
@@ -549,11 +575,16 @@ class TransformerTrainModule(TrainModule):
                     # the metric is comparable to baseline runs.
                     ce_batch_loss += get_local_tensor(poe_loss.detach())
                     if z_batch_loss is not None:
+                        # Use the detached value from the LMHead for the
+                        # metric (it matches the reduction conventions); the
+                        # gradient-bearing version above feeds the optimizer.
                         assert z_loss is not None
                         z_batch_loss += get_local_tensor(z_loss.detach())
 
                     combined_loss.backward()
                     del combined_loss, poe_loss
+                    if z_loss_with_grad is not None:
+                        del z_loss_with_grad
                     if z_loss is not None:
                         del z_loss
                 elif soft_ce_active and soft_target_probs is not None:
