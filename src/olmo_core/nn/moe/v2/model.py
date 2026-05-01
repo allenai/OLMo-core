@@ -23,6 +23,7 @@ from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.kernels import olmo_symm_mem
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from .block import (
     MoEFusedV2TransformerBlock,
@@ -298,21 +299,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         num_out_tokens = max_local_microbatch_size * top_k
         rank_capacity = compute_ep_no_sync_rank_capacity(first_block, num_out_tokens)
 
-        def _debug(msg: str) -> None:
-            import os
-
-            if os.getenv("OLMO_EP_PP_DEBUG", "0").lower() in ("", "0", "false", "no"):
-                return
-            rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
-            print(f"[EP_PP_DEBUG][rank={rank}] {msg}", flush=True)
-
-        _debug(
-            "prewarm_ep_no_sync_begin "
-            f"blocks={len(ep_blocks)} pad_to={pad_to_block_count} "
-            f"tokens={num_out_tokens} rank_capacity={rank_capacity} "
-            f"group={first_block.ep_pg.group_name}"
-        )
-
         for block in ep_blocks:
             if block.ep_no_sync_use_rowwise_all_to_all:
                 get_ep_no_sync_buffers(
@@ -347,29 +333,31 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 f"pad_to_block_count ({pad_to_block_count}) is smaller than local EP no-sync block count ({len(ep_blocks)})"
             )
         if pad_count:
-            try:
-                import torch.distributed._symmetric_memory as symm_mem
-            except ImportError as e:
-                raise RuntimeError("EP no-sync requires torch.distributed._symmetric_memory") from e
-            for idx in range(pad_count):
-                _debug(
-                    "prewarm_ep_no_sync_dummy_alloc_begin "
-                    f"idx={idx} group={first_block.ep_pg.group_name} "
-                    f"shape=({rank_capacity}, {d_model}) dtype={dtype}"
-                )
-                tensor = symm_mem.empty(
-                    (rank_capacity, d_model),
-                    dtype=dtype,
-                    device=device,
-                )
-                symm_mem.rendezvous(tensor, group=first_block.ep_pg)
+            if olmo_symm_mem.is_enabled():
+                symm_mem = None
+            else:
+                try:
+                    import torch.distributed._symmetric_memory as symm_mem
+                except ImportError as e:
+                    raise RuntimeError("EP no-sync requires torch.distributed._symmetric_memory") from e
+            for _ in range(pad_count):
+                if olmo_symm_mem.is_enabled():
+                    tensor = olmo_symm_mem.empty(
+                        (rank_capacity, d_model),
+                        dtype=dtype,
+                        device=device,
+                        group=first_block.ep_pg,
+                    )
+                    olmo_symm_mem.rendezvous(tensor, group=first_block.ep_pg)
+                else:
+                    assert symm_mem is not None
+                    tensor = symm_mem.empty(
+                        (rank_capacity, d_model),
+                        dtype=dtype,
+                        device=device,
+                    )
+                    symm_mem.rendezvous(tensor, group=first_block.ep_pg)
                 self._ep_no_sync_dummy_symm_tensors.append(tensor)
-                _debug(
-                    "prewarm_ep_no_sync_dummy_alloc_end "
-                    f"idx={idx} group={first_block.ep_pg.group_name}"
-                )
-
-        _debug("prewarm_ep_no_sync_end")
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         raise OLMoConfigurationError("Do not use `apply_ep`, use `apply_epdp` instead.")

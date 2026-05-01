@@ -25,6 +25,7 @@ _EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
+from olmo_core.kernels import olmo_symm_mem
 from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedRHS,
@@ -536,6 +537,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         pass # nothing to do
 
     def _ensure_ep_no_sync_symm_backend(self):
+        if olmo_symm_mem.is_enabled():
+            if not torch.cuda.is_available():
+                raise RuntimeError("EP no-sync requires CUDA")
+            return
+
         if _symm_mem is None:
             raise RuntimeError(
                 "EP no-sync requires torch.distributed._symmetric_memory, but it is unavailable"
@@ -665,7 +671,13 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.ep_pg = ep_pg if ep_pg is not None else ep_mp_mesh.get_group()
 
         if self.ep_no_sync:
-            if _symm_mem is None:
+            if olmo_symm_mem.is_enabled() and not self.ep_no_sync_use_rowwise_all_to_all:
+                raise RuntimeError(
+                    "OLMo-owned symmetric memory currently supports only the rowwise "
+                    "EP no-sync path. Set OLMO_USE_OWN_SYMM_MEM=0 to use the legacy "
+                    "torch.ops.symm_mem.all_to_all_vdev path."
+                )
+            if _symm_mem is None and not olmo_symm_mem.is_enabled():
                 raise RuntimeError(
                     "EP no-sync requires torch.distributed._symmetric_memory, but it is unavailable"
                 )
@@ -676,16 +688,19 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             world_group_name = dist.group.WORLD.group_name
             alias_group0_active = False
             try:
-                if not self._register_process_group_for_symm_mem(self.ep_pg, group_name):
-                    raise RuntimeError(
-                        f"Failed to register EP group '{group_name}' for symmetric memory support"
-                    )
-                if os.getenv("OLMO_EP_NO_SYNC_ALIAS_GROUP0", "1").lower() not in ("", "0", "false", "no"):
-                    alias_group0_active = self._try_alias_ep_group_as_world_for_symm_mem()
-                    if not alias_group0_active:
+                if olmo_symm_mem.is_enabled():
+                    olmo_symm_mem.register_group(self.ep_pg, device=torch.device("cuda", torch.cuda.current_device()))
+                else:
+                    if not self._register_process_group_for_symm_mem(self.ep_pg, group_name):
                         raise RuntimeError(
-                            f"Failed to alias EP group '{group_name}' as group '0' for symmetric memory support"
+                            f"Failed to register EP group '{group_name}' for symmetric memory support"
                         )
+                    if os.getenv("OLMO_EP_NO_SYNC_ALIAS_GROUP0", "1").lower() not in ("", "0", "false", "no"):
+                        alias_group0_active = self._try_alias_ep_group_as_world_for_symm_mem()
+                        if not alias_group0_active:
+                            raise RuntimeError(
+                                f"Failed to alias EP group '{group_name}' as group '0' for symmetric memory support"
+                            )
 
             except Exception as e:
                 raise RuntimeError(

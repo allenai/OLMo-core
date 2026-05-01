@@ -10,10 +10,15 @@
 
 #include <algorithm>
 #include <cub/cub.cuh>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 // NVSHMEM minimum SM arch
 #define _NVSHMEM_MIN_SM_ARCH 700
@@ -44,6 +49,71 @@
 #define ROWWISE_COMBINE_FUSED_VECS_PER_THREAD 16
 
 namespace {
+
+struct OlmoSymmGroupInfo {
+  int world_size = 0;
+  int* rank_to_pe_dev = nullptr;
+};
+
+struct OlmoSymmState {
+  bool initialized = false;
+  int rank = -1;
+  int world_size = -1;
+  int device_idx = -1;
+  std::mutex mutex;
+  std::vector<void*> allocations;
+  std::unordered_map<std::string, OlmoSymmGroupInfo> groups;
+};
+
+OlmoSymmState& olmo_symm_state() {
+  static OlmoSymmState state;
+  return state;
+}
+
+void olmo_maybe_initialize_env_vars() {
+  const char* nccl_socket_if_name = std::getenv("NCCL_SOCKET_IFNAME");
+  const char* nccl_hca_list = std::getenv("NCCL_IB_HCA");
+  const char* nccl_ib_gid_index = std::getenv("NCCL_IB_GID_INDEX");
+
+  if (std::getenv("NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME") == nullptr &&
+      nccl_socket_if_name != nullptr) {
+    setenv("NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME", nccl_socket_if_name, 0);
+  }
+  if (std::getenv("NVSHMEM_HCA_LIST") == nullptr && nccl_hca_list != nullptr) {
+    setenv("NVSHMEM_ENABLE_NIC_PE_MAPPING", "1", 0);
+    setenv("NVSHMEM_HCA_LIST", nccl_hca_list, 0);
+  }
+  if (std::getenv("NVSHMEM_IB_GID_INDEX") == nullptr &&
+      nccl_ib_gid_index != nullptr) {
+    setenv("NVSHMEM_IB_GID_INDEX", nccl_ib_gid_index, 0);
+  }
+}
+
+OlmoSymmGroupInfo* olmo_symm_find_group(const std::string& group_name) {
+  auto& state = olmo_symm_state();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  auto it = state.groups.find(group_name);
+  if (it == state.groups.end()) {
+    return nullptr;
+  }
+  return &it->second;
+}
+
+__device__ __forceinline__ int olmo_route_npes(
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
+  return rank_to_pe == nullptr ? nvshmem_team_n_pes(team) : group_size;
+}
+
+__device__ __forceinline__ int olmo_route_peer_global(
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int peer) {
+  return rank_to_pe == nullptr
+      ? nvshmem_team_translate_pe(team, peer, NVSHMEM_TEAM_WORLD)
+      : rank_to_pe[peer];
+}
 
 __device__ int64_t prefixSum(int64_t* odata, int64_t* idata, int n) {
   using BlockScanT =
@@ -262,12 +332,14 @@ __global__ void dispatchRowsPut(
     int64_t num_input_rows,
     int64_t top_k,
     int64_t out_capacity_rows,
-    nvshmem_team_t team) {
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
 #ifndef _NVSHMEM_DEVICELIB_SUPPORTED
   CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
 #else
   CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
-  int npes = nvshmem_team_n_pes(team);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
   int64_t num_routes = num_input_rows * top_k;
   int warp_id = threadIdx.x / WARP_SIZE;
 
@@ -285,8 +357,7 @@ __global__ void dispatchRowsPut(
     CUDA_KERNEL_ASSERT(dst_row < out_capacity_rows);
 
     int64_t src_row = route_id / top_k;
-    auto peer_global = nvshmem_team_translate_pe(
-        team, static_cast<int>(peer), NVSHMEM_TEAM_WORLD);
+    auto peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
     nvshmemx_putmem_warp(
         (char*)out_data + static_cast<size_t>(dst_row) * row_bytes,
         (const char*)input_data + static_cast<size_t>(src_row) * row_bytes,
@@ -309,7 +380,9 @@ __global__ void dispatchRowsPutWeighted(
     int64_t input_row_stride,
     int64_t out_row_stride,
     int64_t out_capacity_rows,
-    nvshmem_team_t team) {
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
 #ifndef _NVSHMEM_DEVICELIB_SUPPORTED
   CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
 #else
@@ -318,7 +391,7 @@ __global__ void dispatchRowsPutWeighted(
   constexpr int CHUNK_ELEMS = WARP_SIZE * ELEMS_PER_THREAD;
   __shared__ scalar_t shared_rows[ROWWISE_WARPS_PER_BLOCK][CHUNK_ELEMS];
 
-  int npes = nvshmem_team_n_pes(team);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
   int warp_id = threadIdx.x / WARP_SIZE;
   int lane_id = threadIdx.x % WARP_SIZE;
 
@@ -342,8 +415,7 @@ __global__ void dispatchRowsPutWeighted(
     float p = probs[route_id];
     int peer_global = 0;
     if (lane_id == 0) {
-      peer_global =
-          nvshmem_team_translate_pe(team, static_cast<int>(peer), NVSHMEM_TEAM_WORLD);
+      peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
     }
     peer_global = __shfl_sync(0xffffffff, peer_global, 0);
 
@@ -384,12 +456,14 @@ __global__ void gatherRowsGet(
     int64_t num_out_rows,
     int64_t top_k,
     int64_t expert_capacity_rows,
-    nvshmem_team_t team) {
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
 #ifndef _NVSHMEM_DEVICELIB_SUPPORTED
   CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
 #else
   CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
-  int npes = nvshmem_team_n_pes(team);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
   int64_t num_routes = num_out_rows * top_k;
   int warp_id = threadIdx.x / WARP_SIZE;
   int lane_id = threadIdx.x % WARP_SIZE;
@@ -412,8 +486,7 @@ __global__ void gatherRowsGet(
 
     CUDA_KERNEL_ASSERT(peer < npes);
     CUDA_KERNEL_ASSERT(src_row < expert_capacity_rows);
-    auto peer_global = nvshmem_team_translate_pe(
-        team, static_cast<int>(peer), NVSHMEM_TEAM_WORLD);
+    auto peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
     nvshmemx_getmem_warp(
         dst_ptr,
         (const char*)expert_out_data + static_cast<size_t>(src_row) * row_bytes,
@@ -463,7 +536,9 @@ __global__ void combineRowsGetKernel(
     int64_t expert_row_stride,
     int64_t out_row_stride,
     int64_t expert_capacity_rows,
-    nvshmem_team_t team) {
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
 #ifndef _NVSHMEM_DEVICELIB_SUPPORTED
   CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
 #else
@@ -474,7 +549,7 @@ __global__ void combineRowsGetKernel(
       ROWWISE_COMBINE_FUSED_THREADS_PER_BLOCK *
       ROWWISE_COMBINE_FUSED_VECS_PER_THREAD;
 
-  int npes = nvshmem_team_n_pes(team);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
   int tid = threadIdx.x;
   int warp_id = tid / WARP_SIZE;
   int lane_id = tid % WARP_SIZE;
@@ -518,8 +593,7 @@ __global__ void combineRowsGetKernel(
 
       int peer_global = 0;
       if (lane_id == 0) {
-        peer_global =
-            nvshmem_team_translate_pe(team, static_cast<int>(peer), NVSHMEM_TEAM_WORLD);
+        peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
       }
       peer_global = __shfl_sync(0xffffffff, peer_global, 0);
 
@@ -676,6 +750,164 @@ void maybe_init_nvshmem_cumodule(const void* kernel_symbol) {
 }
 
 } // namespace
+
+std::vector<uint8_t> olmo_symm_get_unique_id() {
+  nvshmemx_uniqueid_t unique_id;
+  int status = nvshmemx_get_uniqueid(&unique_id);
+  TORCH_CHECK(status == 0, "nvshmemx_get_uniqueid failed with status ", status);
+  const auto* begin = reinterpret_cast<const uint8_t*>(&unique_id);
+  return std::vector<uint8_t>(begin, begin + sizeof(nvshmemx_uniqueid_t));
+}
+
+void olmo_symm_init(
+    const std::vector<std::vector<uint8_t>>& unique_ids,
+    int64_t rank,
+    int64_t world_size,
+    int64_t device_idx) {
+  auto& state = olmo_symm_state();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (state.initialized) {
+    TORCH_CHECK(
+        state.rank == rank && state.world_size == world_size &&
+            state.device_idx == device_idx,
+        "OLMo symmetric memory is already initialized with rank=",
+        state.rank,
+        ", world_size=",
+        state.world_size,
+        ", device_idx=",
+        state.device_idx,
+        " but got rank=",
+        rank,
+        ", world_size=",
+        world_size,
+        ", device_idx=",
+        device_idx);
+    return;
+  }
+  TORCH_CHECK(world_size > 0, "world_size must be positive");
+  TORCH_CHECK(rank >= 0 && rank < world_size, "rank must be in [0, world_size)");
+  TORCH_CHECK(
+      static_cast<int64_t>(unique_ids.size()) == world_size,
+      "unique_ids length must equal world_size");
+
+  std::vector<nvshmemx_uniqueid_t> ids(static_cast<size_t>(world_size));
+  for (int64_t i = 0; i < world_size; ++i) {
+    TORCH_CHECK(
+        unique_ids[i].size() == sizeof(nvshmemx_uniqueid_t),
+        "NVSHMEM unique ID has unexpected size: ",
+        unique_ids[i].size(),
+        " expected ",
+        sizeof(nvshmemx_uniqueid_t));
+    std::memcpy(
+        &ids[static_cast<size_t>(i)],
+        unique_ids[i].data(),
+        sizeof(nvshmemx_uniqueid_t));
+  }
+
+  c10::cuda::CUDAGuard guard(static_cast<int>(device_idx));
+  olmo_maybe_initialize_env_vars();
+  AT_CUDA_CHECK(cudaFree(nullptr));
+
+  nvshmemx_init_attr_t attr;
+  int set_status = nvshmemx_set_attr_uniqueid_args(
+      static_cast<int>(rank), static_cast<int>(world_size), ids.data(), &attr);
+  TORCH_CHECK(
+      set_status == 0,
+      "nvshmemx_set_attr_uniqueid_args failed with status ",
+      set_status);
+  int init_status = nvshmemx_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID, &attr);
+  TORCH_CHECK(
+      init_status == 0,
+      "nvshmemx_init_attr failed with status ",
+      init_status);
+
+  state.initialized = true;
+  state.rank = static_cast<int>(rank);
+  state.world_size = static_cast<int>(world_size);
+  state.device_idx = static_cast<int>(device_idx);
+}
+
+at::Tensor olmo_symm_empty(
+    const std::vector<int64_t>& sizes,
+    c10::ScalarType dtype,
+    c10::Device device) {
+  auto& state = olmo_symm_state();
+  {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    TORCH_CHECK(state.initialized, "OLMo symmetric memory is not initialized");
+  }
+  TORCH_CHECK(device.is_cuda(), "OLMo symmetric memory tensors must be CUDA tensors");
+  c10::cuda::CUDAGuard guard(device);
+
+  size_t numel = 1;
+  for (auto dim : sizes) {
+    TORCH_CHECK(dim >= 0, "negative tensor dimension: ", dim);
+    numel *= static_cast<size_t>(dim);
+  }
+  size_t alloc_size = numel * c10::elementSize(dtype);
+  void* ptr = nvshmem_malloc(alloc_size);
+  TORCH_CHECK(ptr != nullptr || alloc_size == 0, "nvshmem_malloc failed");
+
+  std::vector<int64_t> strides(sizes.size());
+  int64_t stride = 1;
+  for (int64_t i = static_cast<int64_t>(sizes.size()) - 1; i >= 0; --i) {
+    strides[static_cast<size_t>(i)] = stride;
+    stride *= sizes[static_cast<size_t>(i)];
+  }
+  auto options = at::TensorOptions().dtype(dtype).device(device);
+  auto tensor = at::from_blob(ptr, sizes, strides, [](void*) {}, options);
+  {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    state.allocations.push_back(ptr);
+  }
+  return tensor;
+}
+
+void olmo_symm_register_group(
+    const std::string& group_name,
+    const std::vector<int64_t>& rank_to_pe) {
+  auto& state = olmo_symm_state();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  TORCH_CHECK(state.initialized, "OLMo symmetric memory is not initialized");
+  TORCH_CHECK(!rank_to_pe.empty(), "rank_to_pe must not be empty");
+
+  auto existing = state.groups.find(group_name);
+  if (existing != state.groups.end()) {
+    TORCH_CHECK(
+        existing->second.world_size == static_cast<int>(rank_to_pe.size()),
+        "OLMo symmetric-memory group ",
+        group_name,
+        " was already registered with a different size");
+    return;
+  }
+
+  std::vector<int> host_rank_to_pe(rank_to_pe.size());
+  for (size_t i = 0; i < rank_to_pe.size(); ++i) {
+    TORCH_CHECK(
+        rank_to_pe[i] >= 0 && rank_to_pe[i] < state.world_size,
+        "rank_to_pe entry is outside the NVSHMEM bootstrap world: ",
+        rank_to_pe[i]);
+    host_rank_to_pe[i] = static_cast<int>(rank_to_pe[i]);
+  }
+
+  c10::cuda::CUDAGuard guard(state.device_idx);
+  int* rank_to_pe_dev = nullptr;
+  AT_CUDA_CHECK(cudaMalloc(&rank_to_pe_dev, sizeof(int) * host_rank_to_pe.size()));
+  AT_CUDA_CHECK(cudaMemcpy(
+      rank_to_pe_dev,
+      host_rank_to_pe.data(),
+      sizeof(int) * host_rank_to_pe.size(),
+      cudaMemcpyHostToDevice));
+
+  OlmoSymmGroupInfo info;
+  info.world_size = static_cast<int>(host_rank_to_pe.size());
+  info.rank_to_pe_dev = rank_to_pe_dev;
+  state.groups.emplace(group_name, info);
+}
+
+bool olmo_symm_has_group(const std::string& group_name) {
+  return olmo_symm_find_group(group_name) != nullptr;
+}
 
 void all_to_all_vdev_2d_nblocks(
     at::Tensor& input,
@@ -960,7 +1192,11 @@ void rowwise_dispatch_put(
     const std::optional<at::Tensor>& probs,
     const std::string& group_name,
     int64_t nblocks) {
-  auto out_hdl = c10d::symmetric_memory::rendezvous(out, group_name);
+  auto* olmo_group = olmo_symm_find_group(group_name);
+  c10::intrusive_ptr<c10d::symmetric_memory::SymmetricMemory> out_hdl;
+  if (olmo_group == nullptr) {
+    out_hdl = c10d::symmetric_memory::rendezvous(out, group_name);
+  }
 
   TORCH_CHECK(
       nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
@@ -998,8 +1234,18 @@ void rowwise_dispatch_put(
   c10::cuda::CUDAGuard guard(device);
 
   auto stream = at::cuda::getCurrentCUDAStream();
-  auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
-  auto team = team_manager.get_team(group_name, out_hdl->get_rank_to_global_rank());
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  const int* rank_to_pe_dev = nullptr;
+  int group_size = 0;
+  bool world_within_direct_access = true;
+  if (olmo_group != nullptr) {
+    rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+    group_size = olmo_group->world_size;
+  } else {
+    auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
+    team = team_manager.get_team(group_name, out_hdl->get_rank_to_global_rank());
+    world_within_direct_access = out_hdl->world_within_direct_access();
+  }
   const float* probs_ptr = nullptr;
   if (probs.has_value()) {
     TORCH_CHECK(probs->defined(), "probs optional tensor must be defined");
@@ -1031,7 +1277,7 @@ void rowwise_dispatch_put(
   int64_t out_capacity_rows = out.size(0);
   size_t row_bytes = static_cast<size_t>(input.stride(0)) * input.element_size();
   int num_blocks = resolve_num_blocks_rowwise(
-      num_input_rows * top_k, nblocks, out_hdl->world_within_direct_access());
+      num_input_rows * top_k, nblocks, world_within_direct_access);
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
 
   // Ensure all peers have completed prior stream work (e.g., local zero_/copy_)
@@ -1052,7 +1298,9 @@ void rowwise_dispatch_put(
         &num_input_rows,
         &top_k,
         &out_capacity_rows,
-        &team};
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
     nvshmemx_collective_launch(
         (const void*)dispatchRowsPut,
         dim3(num_blocks),
@@ -1081,7 +1329,9 @@ void rowwise_dispatch_put(
               &input_row_stride,
               &out_row_stride,
               &out_capacity_rows,
-              &team};
+              &team,
+              &rank_to_pe_dev,
+              &group_size};
           nvshmemx_collective_launch(
               (const void*)dispatchRowsPutWeighted<scalar_t>,
               dim3(num_blocks),
@@ -1107,7 +1357,11 @@ void rowwise_combine_get(
     const std::string& group_name,
     int64_t nblocks,
     const std::optional<at::Tensor>& gathered_out) {
-  auto expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
+  auto* olmo_group = olmo_symm_find_group(group_name);
+  c10::intrusive_ptr<c10d::symmetric_memory::SymmetricMemory> expert_out_hdl;
+  if (olmo_group == nullptr) {
+    expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
+  }
 
   TORCH_CHECK(
       nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
@@ -1178,9 +1432,19 @@ void rowwise_combine_get(
 
   c10::cuda::CUDAGuard guard(device);
   auto stream = at::cuda::getCurrentCUDAStream();
-  auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
-  auto team =
-      team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  const int* rank_to_pe_dev = nullptr;
+  int group_size = 0;
+  bool world_within_direct_access = true;
+  if (olmo_group != nullptr) {
+    rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+    group_size = olmo_group->world_size;
+  } else {
+    auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
+    team =
+        team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
+    world_within_direct_access = expert_out_hdl->world_within_direct_access();
+  }
   maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(gatherRowsGet<true>));
 
   int64_t num_out_rows = out.size(0);
@@ -1190,7 +1454,7 @@ void rowwise_combine_get(
   size_t row_bytes =
       static_cast<size_t>(expert_out.stride(0)) * expert_out.element_size();
   int num_blocks = resolve_num_blocks_rowwise(
-      num_out_rows * top_k, nblocks, expert_out_hdl->world_within_direct_access());
+      num_out_rows * top_k, nblocks, world_within_direct_access);
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
 
   // Ensure all peers have completed prior stream work before remote gets start.
@@ -1236,7 +1500,9 @@ void rowwise_combine_get(
       &num_out_rows,
       &top_k,
       &expert_capacity_rows,
-      &team};
+      &team,
+      &rank_to_pe_dev,
+      &group_size};
   nvshmemx_collective_launch(
       (const void*)gatherRowsGet<true>,
       dim3(num_blocks),
@@ -1288,7 +1554,11 @@ void rowwise_combine_get_fused(
     const std::optional<at::Tensor>& probs,
     const std::string& group_name,
     int64_t nblocks) {
-  auto expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
+  auto* olmo_group = olmo_symm_find_group(group_name);
+  c10::intrusive_ptr<c10d::symmetric_memory::SymmetricMemory> expert_out_hdl;
+  if (olmo_group == nullptr) {
+    expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
+  }
 
   TORCH_CHECK(
       nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
@@ -1344,9 +1614,19 @@ void rowwise_combine_get_fused(
 
   c10::cuda::CUDAGuard guard(device);
   auto stream = at::cuda::getCurrentCUDAStream();
-  auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
-  auto team =
-      team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  const int* rank_to_pe_dev = nullptr;
+  int group_size = 0;
+  bool world_within_direct_access = true;
+  if (olmo_group != nullptr) {
+    rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+    group_size = olmo_group->world_size;
+  } else {
+    auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
+    team =
+        team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
+    world_within_direct_access = expert_out_hdl->world_within_direct_access();
+  }
   maybe_init_nvshmem_cumodule(
       reinterpret_cast<const void*>(combineRowsGetKernel<float, false>));
 
@@ -1357,7 +1637,7 @@ void rowwise_combine_get_fused(
   int64_t expert_row_stride = expert_out.stride(0);
   int64_t out_row_stride = out.stride(0);
   int num_blocks = resolve_num_blocks_rowwise(
-      num_out_rows * top_k, nblocks, expert_out_hdl->world_within_direct_access());
+      num_out_rows * top_k, nblocks, world_within_direct_access);
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
 
   // Ensure all peers have completed prior stream work before remote gets start.
@@ -1402,7 +1682,9 @@ void rowwise_combine_get_fused(
                   expert_row_stride,
                   out_row_stride,
                   expert_capacity_rows,
-                  team);
+                  team,
+                  rank_to_pe_dev,
+                  group_size);
         } else {
           combineRowsGetKernel<scalar_t, true>
               <<<grid, block, 0, stream>>>(
@@ -1417,7 +1699,9 @@ void rowwise_combine_get_fused(
                   expert_row_stride,
                   out_row_stride,
                   expert_capacity_rows,
-                  team);
+                  team,
+                  rank_to_pe_dev,
+                  group_size);
         }
       });
 }
@@ -1429,7 +1713,11 @@ void rowwise_gather_get(
     at::Tensor& src_rows,
     const std::string& group_name,
     int64_t nblocks) {
-  auto expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
+  auto* olmo_group = olmo_symm_find_group(group_name);
+  c10::intrusive_ptr<c10d::symmetric_memory::SymmetricMemory> expert_out_hdl;
+  if (olmo_group == nullptr) {
+    expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
+  }
 
   TORCH_CHECK(
       nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
@@ -1469,9 +1757,19 @@ void rowwise_gather_get(
   c10::cuda::CUDAGuard guard(device);
 
   auto stream = at::cuda::getCurrentCUDAStream();
-  auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
-  auto team =
-      team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  const int* rank_to_pe_dev = nullptr;
+  int group_size = 0;
+  bool world_within_direct_access = true;
+  if (olmo_group != nullptr) {
+    rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+    group_size = olmo_group->world_size;
+  } else {
+    auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
+    team =
+        team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
+    world_within_direct_access = expert_out_hdl->world_within_direct_access();
+  }
   // rowwise_gather_get is used by combine-2d-offset, where dropped routes are
   // masked downstream by packed_keep_mask. Skipping per-route zero-fill here
   // avoids substantial extra work on ranks with more dropped routes.
@@ -1483,7 +1781,7 @@ void rowwise_gather_get(
   size_t row_bytes =
       static_cast<size_t>(expert_out.stride(0)) * expert_out.element_size();
   int num_blocks = resolve_num_blocks_rowwise(
-      num_out_rows, nblocks, expert_out_hdl->world_within_direct_access());
+      num_out_rows, nblocks, world_within_direct_access);
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
 
   // Ensure all peers have completed prior stream work before remote gets start.
@@ -1509,7 +1807,9 @@ void rowwise_gather_get(
       &num_out_rows,
       &top_k,
       &expert_capacity_rows,
-      &team};
+      &team,
+      &rank_to_pe_dev,
+      &group_size};
   nvshmemx_collective_launch(
       (const void*)gatherRowsGet<false>,
       dim3(num_blocks),

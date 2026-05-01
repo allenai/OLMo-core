@@ -1,7 +1,27 @@
 #include <torch/extension.h>
 #include <optional>
+#include <pybind11/stl.h>
 
 namespace py = pybind11;
+
+std::vector<uint8_t> olmo_symm_get_unique_id();
+
+void olmo_symm_init(
+    const std::vector<std::vector<uint8_t>>& unique_ids,
+    int64_t rank,
+    int64_t world_size,
+    int64_t device_idx);
+
+torch::Tensor olmo_symm_empty(
+    const std::vector<int64_t>& sizes,
+    c10::ScalarType dtype,
+    c10::Device device);
+
+void olmo_symm_register_group(
+    const std::string& group_name,
+    const std::vector<int64_t>& rank_to_pe);
+
+bool olmo_symm_has_group(const std::string& group_name);
 
 void all_to_all_vdev_2d_nblocks(
     torch::Tensor& input,
@@ -57,6 +77,37 @@ void rowwise_gather_get(
     int64_t nblocks);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def(
+      "olmo_symm_get_unique_id",
+      &olmo_symm_get_unique_id,
+      "Create an NVSHMEM unique ID for OLMo-owned symmetric memory");
+  m.def(
+      "olmo_symm_init",
+      &olmo_symm_init,
+      "Initialize OLMo-owned NVSHMEM symmetric memory",
+      py::arg("unique_ids"),
+      py::arg("rank"),
+      py::arg("world_size"),
+      py::arg("device_idx"));
+  m.def(
+      "olmo_symm_empty",
+      &olmo_symm_empty,
+      "Allocate an OLMo-owned NVSHMEM symmetric tensor",
+      py::arg("sizes"),
+      py::arg("dtype"),
+      py::arg("device"));
+  m.def(
+      "olmo_symm_register_group",
+      &olmo_symm_register_group,
+      "Register an OLMo symmetric-memory group mapping",
+      py::arg("group_name"),
+      py::arg("rank_to_pe"));
+  m.def(
+      "olmo_symm_has_group",
+      &olmo_symm_has_group,
+      "Return whether an OLMo symmetric-memory group mapping exists",
+      py::arg("group_name"));
+
   m.def(
       "all_to_all_vdev_2d_nblocks",
       &all_to_all_vdev_2d_nblocks,

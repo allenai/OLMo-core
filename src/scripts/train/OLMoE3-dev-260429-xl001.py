@@ -93,8 +93,6 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
 SEQUENCE_LENGTH = 8192
 
 torch.set_float32_matmul_precision('high')
-os.environ.setdefault("OLMO_EP_PP_DEBUG", "1")
-os.environ.setdefault("OLMO_EP_PP_DEBUG_MB_LIMIT", "8")
 
 IN_EVAL_MODE = False
 import sys
@@ -105,7 +103,7 @@ if sys.argv[1] == "eval_checkpoints":
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 1000
 
-NUM_EXPERTS = 16
+NUM_EXPERTS = 128
 TOP_K = 4
 D_MODEL=4096 - 512
 D_ATTN=4096 + 1024
@@ -124,7 +122,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=8
 PP_DIM=2
 
 # ref
@@ -188,10 +186,10 @@ else:
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=False
+USE_COMPILE=True
 USE_NO_SYNC_EP=True
 # USE_AC=False
-PER_LAYER_RECOMPUTE=False
+PER_LAYER_RECOMPUTE=True
 USE_TBO=False
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True

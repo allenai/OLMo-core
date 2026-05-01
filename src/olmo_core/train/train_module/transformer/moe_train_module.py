@@ -85,16 +85,6 @@ import nvtx
 log = logging.getLogger(__name__)
 
 
-def _ep_pp_debug_enabled() -> bool:
-    return os.getenv("OLMO_EP_PP_DEBUG", "0").lower() not in ("", "0", "false", "no")
-
-
-def _ep_pp_debug(msg: str) -> None:
-    if not _ep_pp_debug_enabled():
-        return
-    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
-    print(f"[EP_PP_DEBUG][rank={rank}] {msg}", flush=True)
-
 M = TypeVar("M", bound=List[MoEFusedV2Transformer])
 
 def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
@@ -1027,9 +1017,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 self._dump_debug_info()
 
             for idx, model in enumerate(self.model_parts):
-                _ep_pp_debug(f"finalize_grad_reduce_begin model_part={idx} pp_enabled={self.pp_enabled}")
                 model.finalize_grad_reduce()
-                _ep_pp_debug(f"finalize_grad_reduce_end model_part={idx} pp_enabled={self.pp_enabled}")
             
         else:
             # pipeline parallel forward / backward
@@ -1086,9 +1074,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
 
             for idx, model in enumerate(self.model_parts):
-                _ep_pp_debug(f"finalize_grad_reduce_begin model_part={idx} pp_enabled={self.pp_enabled}")
                 model.finalize_grad_reduce()
-                _ep_pp_debug(f"finalize_grad_reduce_end model_part={idx} pp_enabled={self.pp_enabled}")
             
         #############################
 
@@ -1736,32 +1722,44 @@ class MoEV2TransformerTrainModule(TrainModule):
     def _prewarm_ep_no_sync_symm_buffers(self, *, model_parts, rank_microbatch_size: int) -> None:
         if self.world_mesh.get("moe") is None:
             return
+        from olmo_core.kernels import olmo_symm_mem
+
         typed_parts = [cast(MoEFusedV2Transformer, m) for m in model_parts]
         local_counts = [m.count_ep_no_sync_blocks() for m in typed_parts]
         if not any(local_counts):
             return
 
-        max_counts: List[int] = []
-        for count in local_counts:
-            count_tensor = torch.tensor(count, device=self.device, dtype=torch.int64)
-            dist.all_reduce(count_tensor, op=dist.ReduceOp.MAX)
-            max_counts.append(int(count_tensor.item()))
+        use_olmo_symm = olmo_symm_mem.is_enabled()
+        if not use_olmo_symm and self.pp_enabled:
+            raise OLMoConfigurationError(
+                "EP no-sync with pipeline parallelism cannot use the legacy PyTorch symmetric-memory "
+                "backend. PyTorch's NVSHMEM symm_mem.empty() allocates through c10d group '0' before "
+                "the EP group is applied, which can hang when PP stages allocate unevenly. Use the "
+                "OLMo-owned symmetric-memory backend by setting OLMO_USE_OWN_SYMM_MEM=1, or disable "
+                "pipeline parallelism / EP no-sync."
+            )
 
-        _ep_pp_debug(
-            "prewarm_ep_no_sync_counts "
-            f"local={local_counts} max={max_counts} rank_microbatch_size={rank_microbatch_size}"
-        )
+        if use_olmo_symm:
+            prewarm_olmo = os.getenv("OLMO_OWN_SYMM_PREWARM", "0").lower() not in (
+                "",
+                "0",
+                "false",
+                "no",
+                "off",
+            )
+            if not prewarm_olmo:
+                return
+
+        # Prewarm only the local model part's real blocks. The legacy PyTorch
+        # backend is only allowed here without PP, so there is no cross-stage
+        # allocation sequence to align with dummy padding.
+        max_counts = list(local_counts)
 
         for model_part_idx, (model_part, max_count) in enumerate(zip(typed_parts, max_counts)):
-            _ep_pp_debug(
-                "prewarm_ep_no_sync_model_part_begin "
-                f"idx={model_part_idx} local_blocks={local_counts[model_part_idx]} max_blocks={max_count}"
-            )
             model_part.prewarm_ep_no_sync_symm_buffers(
                 max_local_microbatch_size=rank_microbatch_size,
                 pad_to_block_count=max_count,
             )
-            _ep_pp_debug(f"prewarm_ep_no_sync_model_part_end idx={model_part_idx}")
 
     def compile_model(self):
         if torch.cuda.is_available():
@@ -1796,16 +1794,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         if self.pp_group_rank == self.pp_final_stage_rank:
             assert x is not None
             # Reduce across DP process group.
-            _ep_pp_debug(
-                f"reduce_send_recv_dp_allreduce_begin pp_rank={self.pp_group_rank} "
-                f"dp_world={self.dp_world_size} x={float(x.detach().float().item()) if x.numel() == 1 else 'tensor'}"
-            )
             dist.all_reduce(x, group=self.dp_process_group)
             x.div_(self.dp_world_size)
-            _ep_pp_debug(
-                f"reduce_send_recv_dp_allreduce_end pp_rank={self.pp_group_rank} "
-                f"x={float(x.detach().float().item()) if x.numel() == 1 else 'tensor'}"
-            )
         else:
             assert x is None
             x = move_to_device(torch.empty([]), self.device)
@@ -1834,18 +1824,14 @@ class MoEV2TransformerTrainModule(TrainModule):
             send_ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
         
         if len(recv_ops) > 0:
-            _ep_pp_debug(f"reduce_send_recv_recv_begin pp_rank={self.pp_group_rank} ops={len(recv_ops)}")
             recv_reqs = dist.batch_isend_irecv(recv_ops)
             for req in recv_reqs:
                 req.wait()
-            _ep_pp_debug(f"reduce_send_recv_recv_end pp_rank={self.pp_group_rank}")
 
         if len(send_ops) > 0:
-            _ep_pp_debug(f"reduce_send_recv_send_begin pp_rank={self.pp_group_rank} ops={len(send_ops)}")
             send_reqs = dist.batch_isend_irecv(send_ops)
             for req in send_reqs:
                 req.wait()
-            _ep_pp_debug(f"reduce_send_recv_send_end pp_rank={self.pp_group_rank}")
 
         # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
         return x
