@@ -110,9 +110,16 @@ def parse_args(
         parser.add_argument(
             "--cluster",
             type=str,
-            choices=["ai2/jupiter", "ai2/titan", "ai2/saturn"],
-            default="ai2/jupiter",
-            help="The Beaker cluster to launch each run on.",
+            nargs="+",
+            choices=["ai2/jupiter", "ai2/titan", "ai2/saturn", "ai2/ceres"],
+            default=["ai2/jupiter"],
+            help=(
+                "Beaker cluster(s) to allow. Pass one or more, separated by "
+                "spaces. Beaker's scheduler picks an available cluster from "
+                "the list and can re-place to another on preemption. "
+                "Single-node runs (≤8 GPUs) work on any cluster regardless of "
+                "InfiniBand availability."
+            ),
         )
         parser.add_argument(
             "--max-gpus",
@@ -366,13 +373,20 @@ def get_default_ladder_factory(
                 sequence_length=args.sequence_length,
             ),
         ]
+        # ``args.cluster`` is a list (--cluster has nargs='+'). All H100/B200/A100
+        # clusters mount the same Weka root, so picking the first cluster's
+        # root_dir is safe. ``device_type`` is used for assertions and an
+        # auto-mbz heuristic; we explicitly pass --rank-mbz so the heuristic
+        # is bypassed and the string just needs to pass the {h100, b200, a100}
+        # assertion in the configurator.
+        primary_cluster = args.cluster[0]
         ladder = ModelLadder(
             name=args.name,
             project=args.project,
-            dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
+            dir=str(io.join_path(get_root_dir(primary_cluster), "model-ladders", args.name)),
             sizes=list(TransformerSize),
             max_devices=args.max_gpus,
-            device_type=get_gpu_type(args.cluster),
+            device_type=get_gpu_type(primary_cluster),
             model_configurator=configure_model(args),
             run_configurator=configure_run(args)
             if configure_run is not None
