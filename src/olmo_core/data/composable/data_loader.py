@@ -493,11 +493,15 @@ class ComposableDataLoader(TextDataLoaderBase):
                     out["vis_limit"] = as_tensor(vis_limit)
 
                 # Soft-target fields from NgramSoftTargetInstanceSource. Pass
-                # through unchanged; the collator pads them along the seq dim.
+                # through preserving dtype — these are float probabilities, NOT
+                # integer indices. We use ``torch.as_tensor`` directly because
+                # this module's local ``as_tensor`` (composable.utils.as_tensor)
+                # is hard-wired to cast non-bool numpy arrays via ``astype(np.int_)``,
+                # which silently truncates [0,1] float probs to 0.
                 if (s_ids := instance.get("soft_target_token_ids")) is not None:
-                    out["soft_target_token_ids"] = as_tensor(s_ids)
+                    out["soft_target_token_ids"] = torch.as_tensor(s_ids)
                 if (s_probs := instance.get("soft_target_probs")) is not None:
-                    out["soft_target_probs"] = as_tensor(s_probs)
+                    out["soft_target_probs"] = torch.as_tensor(s_probs)
 
                 if self.generate_doc_lengths:
                     out["doc_lens"] = get_document_lengths(
