@@ -1,19 +1,26 @@
 """
 Wrap a base :class:`InstanceSource` with per-position ngram soft targets.
 
-For each instance, we add two (S, K) arrays:
+For each instance, we add a ``soft_target_token_ids`` (S, K) array of top-K
+next-token candidate IDs plus one of two value arrays, controlled by the
+``output_log_probs`` flag:
 
-- ``soft_target_token_ids[i]``: top-K next-token candidate IDs for
-  predicting the token at position ``i+1`` given ``input_ids[.. i]``.
-- ``soft_target_probs[i]``: the corresponding top-K probabilities,
-  summing to 1 along the K axis.
+- ``soft_target_probs[i]`` (default): K linear probabilities renormalized
+  to sum to 1 over the K candidates. Right shape for the soft-cross-entropy
+  arm where the ngram is treated as a self-contained target distribution
+  over those K tokens.
+- ``soft_target_log_probs[i]`` (when ``output_log_probs=True``): K raw kenlm
+  log-probabilities, in natural log (full-vocabulary log-probabilities for
+  those K tokens). Right shape for the product-of-experts arm where we add
+  ``λ * log_p_ngram`` to ``log_p_lm = log_softmax(LM_logits)`` at the K
+  positions and rely on softmax to renormalize the joint.
 
 The per-position probe uses
 :class:`olmo_core.data.ngram_soft_target.NgramTableSoftTargetSource`,
-which reads a precomputed top-K forward index (FXTK v=1; built offline by
-``data_gen/build_topk_forward_index.py``). Lookup is binary-search on the
+which reads a precomputed top-K forward index built offline by
+``data_gen/build_topk_forward_index.py``. Lookup is binary-search on the
 longest-matching order's prefix table, then a single row read of K
-(token, log_prob) pairs — no kenlm at runtime.
+(token, value) pairs — no kenlm at runtime.
 
 We do *not* EOS-stop the context window: the n-gram tables were built
 one-line-per-document, so high-order probes that straddle a document
@@ -57,6 +64,7 @@ class NgramSoftTargetInstanceSource(InstanceSource):
         table_dir: PathOrStr,
         K: int = 16,
         N_max: int = 5,
+        output_log_probs: bool = False,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -70,6 +78,7 @@ class NgramSoftTargetInstanceSource(InstanceSource):
         self._table_dir = str(table_dir)
         self._K = int(K)
         self._N_max = int(N_max)
+        self._output_log_probs = bool(output_log_probs)
         # Lazy per-process init: don't mmap in the main process so the source
         # pickles cleanly to spawn workers; first lookup populates.
         self._lookup = None
@@ -101,6 +110,7 @@ class NgramSoftTargetInstanceSource(InstanceSource):
                 table_dir=self._table_dir,
                 K=self._K,
                 N_max=self._N_max,
+                output_log_probs=self._output_log_probs,
             )
         return self._lookup
 
@@ -114,7 +124,7 @@ class NgramSoftTargetInstanceSource(InstanceSource):
                 f"table_dir={self._table_dir},"
                 f"K={self._K},"
                 f"N_max={self._N_max},"
-                f"format=FXTKv1,"
+                f"output_log_probs={self._output_log_probs},"
             ).encode()
         )
         return sha.hexdigest()
@@ -137,11 +147,18 @@ class NgramSoftTargetInstanceSource(InstanceSource):
             tuple(int(t) for t in input_ids[max(0, i + 1 - prefix_len) : i + 1])
             for i in range(S)
         ]
-        ids, probs = self._get_lookup().lookup_batch(contexts)
+        ids, values = self._get_lookup().lookup_batch(contexts)
 
         out = dict(inst)
-        out["soft_target_token_ids"] = ids  # (S, K) int32
-        out["soft_target_probs"] = probs  # (S, K) float32
+        out["soft_target_token_ids"] = ids  # (S, K) int32 / int64
+        if self._output_log_probs:
+            # Natural-log full-vocabulary log-probabilities for the K
+            # candidates. PoE-arm signal — added directly to LM log-probs.
+            out["soft_target_log_probs"] = values  # (S, K) float32
+        else:
+            # Linear probabilities renormalized to sum 1 over K candidates.
+            # Soft-cross-entropy-arm signal.
+            out["soft_target_probs"] = values  # (S, K) float32
         return out
 
     def children(self):
@@ -156,6 +173,7 @@ class NgramSoftTargetInstanceSourceConfig(InstanceSourceConfig):
     table_dir: str
     K: int = 16
     N_max: int = 5
+    output_log_probs: bool = False
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> NgramSoftTargetInstanceSource:
@@ -165,6 +183,7 @@ class NgramSoftTargetInstanceSourceConfig(InstanceSourceConfig):
             table_dir=self.table_dir,
             K=self.K,
             N_max=self.N_max,
+            output_log_probs=self.output_log_probs,
             work_dir=work_dir,
             label=self.label,
         )

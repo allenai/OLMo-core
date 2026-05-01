@@ -250,12 +250,22 @@ class TopKForwardIndex:
 class NgramTableSoftTargetSource:
     """Soft-target lookup over a precomputed top-K forward index.
 
-    :param table_dir: Directory containing ``forward_index_topk.bin`` (FXTK v=1).
+    :param table_dir: Directory containing ``forward_index_topk.bin``.
         Or a path directly to that file.
     :param K: Top-K size per position. Must equal the K the index was built
         with.
     :param N_max: Highest ngram order. Must be ≤ the highest order present
         in the index.
+    :param output_log_probs: If False (default), ``lookup_batch`` returns
+        per-position linear probabilities renormalized to sum to 1 over the
+        K candidates — the right shape for the soft-cross-entropy arm,
+        where the ngram is treated as a self-contained target distribution
+        over those K tokens. If True, ``lookup_batch`` returns the raw
+        kenlm log-probabilities for the K candidates, converted from log10
+        (the file's storage convention) to natural log. These are the
+        full-vocabulary log-probabilities for the K tokens — the right
+        thing for product-of-experts, where we add ``λ * log_p_ngram``
+        directly onto LM logits and rely on softmax to renormalize.
     """
 
     def __init__(
@@ -263,14 +273,16 @@ class NgramTableSoftTargetSource:
         table_dir: Union[str, os.PathLike],
         K: int = 16,
         N_max: int = 5,
-        # Accepted for backwards-compatibility with the pre-FXTK config but
-        # ignored — the precompute already folded in the unigram path
+        output_log_probs: bool = False,
+        # Accepted for backwards-compatibility with the pre-precompute config
+        # but ignored — the precompute already folded in the unigram path
         # exactly (top-K' unigrams with K' = K is mathematically sufficient
         # because the γ-product is per-prefix, ordering preserved).
         unigram_shortlist: Optional[int] = None,
     ):
         self.K = int(K)
         self.N_max = int(N_max)
+        self.output_log_probs = bool(output_log_probs)
 
         p = Path(table_dir)
         if p.is_dir():
@@ -339,13 +351,23 @@ class NgramTableSoftTargetSource:
     def lookup_batch(
         self, contexts: Sequence[Sequence[int]]
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """For each context, return top-K continuations and renormalized probs.
+        """For each context, return top-K continuations and an associated
+        per-candidate value. Output meaning depends on ``output_log_probs``:
+
+        - ``output_log_probs=False`` (default, soft-cross-entropy arm): values
+          are linear probabilities renormalized to sum to 1 over the K
+          candidates. Sentinel slots (no valid candidate) contribute 0 to
+          the row sum.
+        - ``output_log_probs=True`` (product-of-experts arm): values are the
+          raw kenlm log-probabilities for the K candidates, converted from
+          log10 (the file's storage convention) to natural log. Sentinel
+          slots are returned as ``-inf`` so a downstream scatter-add into
+          a softmax gives 0 weight at those slots.
 
         :param contexts: One sequence of ints per query position. Each
             sequence is the (up to N_max-1)-token left context, oldest first.
-        :returns: ``(ids[N, K] int32, probs[N, K] float32)``. Each row of
-            ``probs`` sums to 1 (or 0 if the row had no valid candidates,
-            which shouldn't happen at any order ≤ N_max).
+        :returns: ``(ids[N, K] int32, values[N, K] float32)``. See above
+            for the meaning of ``values``.
         """
         self._ensure_open()
         my_pid = os.getpid()
@@ -358,30 +380,40 @@ class NgramTableSoftTargetSource:
             t_start = _t.time()
             print(
                 f"[ngram_soft_target pid={my_pid}] lookup_batch call #{cnt}: "
-                f"{len(contexts)} contexts",
+                f"{len(contexts)} contexts (output_log_probs={self.output_log_probs})",
                 flush=True,
             )
 
         N = len(contexts)
         K = self.K
         ids_out = np.zeros((N, K), dtype=np.int32)
-        probs_out = np.zeros((N, K), dtype=np.float32)
+        if self.output_log_probs:
+            # Initialize to -inf so untouched rows / unused slots have no
+            # weight when downstream softmax exponentiates them.
+            values_out = np.full((N, K), -np.inf, dtype=np.float32)
+            ln10 = np.float32(np.log(10.0))
+        else:
+            values_out = np.zeros((N, K), dtype=np.float32)
 
         idx = self._index
         for i, ctx in enumerate(contexts):
             tokens, logprobs = idx.lookup_one(ctx)
-            # Renormalize. Sentinel slots have logprob = -inf → 10^-inf = 0,
-            # so they contribute nothing. Shift by max for numerical safety.
             mx = float(logprobs.max())
             if mx == float("-inf"):
                 continue
-            shifted = logprobs.astype(np.float32) - np.float32(mx)
-            linear = np.power(np.float32(10.0), shifted, dtype=np.float32)
-            total = float(linear.sum())
-            if total > 0:
-                linear = linear / np.float32(total)
             ids_out[i] = tokens.astype(np.int32, copy=False)
-            probs_out[i] = linear
+            if self.output_log_probs:
+                # Raw kenlm log-probabilities, converted log10 → natural log.
+                # Sentinel slots stay at -inf (their stored log10 was -inf).
+                values_out[i] = logprobs.astype(np.float32) * ln10
+            else:
+                # Renormalize over the K valid slots. Sentinels (-inf) → 0.
+                shifted = logprobs.astype(np.float32) - np.float32(mx)
+                linear = np.power(np.float32(10.0), shifted, dtype=np.float32)
+                total = float(linear.sum())
+                if total > 0:
+                    linear = linear / np.float32(total)
+                values_out[i] = linear
 
         if log_this:
             print(
@@ -389,4 +421,4 @@ class NgramTableSoftTargetSource:
                 f"in {_t.time() - t_start:.3f}s",
                 flush=True,
             )
-        return ids_out, probs_out
+        return ids_out, values_out

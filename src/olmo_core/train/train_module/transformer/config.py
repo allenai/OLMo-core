@@ -328,6 +328,31 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     soft_ce_alpha_start: Optional[float] = None
     soft_ce_alpha_ramp_fraction: float = 0.5
 
+    # Ngram product-of-experts logit bias. When ``poe_lambda`` is set and the
+    # batch carries ``soft_target_token_ids`` + ``soft_target_log_probs``
+    # (emitted by NgramSoftTargetInstanceSource with output_log_probs=True),
+    # the training loss becomes the cross-entropy of the joint distribution
+    #
+    #     log p_final(w|h) = log p_lm(w|h) + λ · log p_ngram(w|h) − log Z(h)
+    #
+    # at the hard label. The ngram contributes at the K candidate positions
+    # for each context; non-top-K positions get no bias. λ is a constant
+    # mixing weight (no schedule). Mutually exclusive with
+    # ``soft_ce_alpha_start``. Requires LMHead loss_implementation='default'
+    # so logits can be materialized; not yet compatible with TP / CP.
+    #
+    # ``poe_ngram_table_dir`` / ``poe_ngram_K`` / ``poe_ngram_N_max`` are used
+    # at eval time to apply the same bias when the in-loop evaluators run
+    # forward — eval batches don't go through the InstanceSource wrapper, so
+    # the train module instantiates its own NgramTableSoftTargetSource and
+    # computes per-position contexts on the fly. Required when poe_lambda
+    # is set; otherwise the bare-model eval would not match the deployed
+    # PoE inference distribution.
+    poe_lambda: Optional[float] = None
+    poe_ngram_table_dir: Optional[str] = None
+    poe_ngram_K: int = 16
+    poe_ngram_N_max: int = 5
+
     # Checkpoint settings.
 
     state_dict_save_opts: Optional[Dict[str, Any]] = None

@@ -55,6 +55,7 @@ class DataCollator:
         all_vis_limit = []
         all_soft_target_token_ids = []
         all_soft_target_probs = []
+        all_soft_target_log_probs = []
         all_indices = []
         all_metadata = []
         all_instance_mask = []
@@ -184,6 +185,23 @@ class DataCollator:
                     )
                 )
 
+            # Product-of-experts arm: raw natural-log kenlm log-probabilities
+            # for the K candidates. Pad with -inf so the downstream softmax
+            # gives 0 weight at padded slots.
+            soft_target_log_probs = (
+                x.get("soft_target_log_probs") if isinstance(x, dict) else None
+            )
+            if soft_target_log_probs is not None:
+                if not isinstance(soft_target_log_probs, torch.Tensor):
+                    soft_target_log_probs = torch.as_tensor(soft_target_log_probs)
+                all_soft_target_log_probs.append(
+                    F.pad(
+                        soft_target_log_probs.to(dtype=torch.float32),
+                        (0, 0) + pad_shape,
+                        value=float("-inf"),
+                    )
+                )
+
             # Indices.
             index = x.get("index") if isinstance(x, dict) else None
             if index is not None:
@@ -233,6 +251,8 @@ class DataCollator:
             out["soft_target_token_ids"] = torch.stack(all_soft_target_token_ids)
         if all_soft_target_probs:
             out["soft_target_probs"] = torch.stack(all_soft_target_probs)
+        if all_soft_target_log_probs:
+            out["soft_target_log_probs"] = torch.stack(all_soft_target_log_probs)
         if all_indices:
             out["index"] = torch.stack(all_indices)
         if all_instance_mask:

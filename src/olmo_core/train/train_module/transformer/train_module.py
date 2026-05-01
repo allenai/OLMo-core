@@ -116,6 +116,10 @@ class TransformerTrainModule(TrainModule):
         z_loss_multiplier: Optional[float] = None,
         soft_ce_alpha_start: Optional[float] = None,
         soft_ce_alpha_ramp_fraction: float = 0.5,
+        poe_lambda: Optional[float] = None,
+        poe_ngram_table_dir: Optional[str] = None,
+        poe_ngram_K: int = 16,
+        poe_ngram_N_max: int = 5,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -186,6 +190,14 @@ class TransformerTrainModule(TrainModule):
         self.z_loss_multiplier = z_loss_multiplier
         self.soft_ce_alpha_start = soft_ce_alpha_start
         self.soft_ce_alpha_ramp_fraction = soft_ce_alpha_ramp_fraction
+        self.poe_lambda = poe_lambda
+        if self.soft_ce_alpha_start is not None and self.poe_lambda is not None:
+            raise OLMoConfigurationError(
+                "soft_ce_alpha_start and poe_lambda are mutually exclusive — "
+                "they correspond to two different ways of injecting the ngram "
+                "signal (soft-cross-entropy auxiliary loss vs product-of-experts "
+                "logit bias). Pick one."
+            )
         if self.soft_ce_alpha_start is not None:
             if not (0.0 <= self.soft_ce_alpha_start <= 1.0):
                 raise OLMoConfigurationError(
@@ -199,6 +211,27 @@ class TransformerTrainModule(TrainModule):
                 raise OLMoConfigurationError(
                     "soft-CE auxiliary loss is not yet supported with TP or CP"
                 )
+        if self.poe_lambda is not None:
+            if self.poe_lambda <= 0:
+                raise OLMoConfigurationError(
+                    f"poe_lambda must be positive, got {self.poe_lambda}"
+                )
+            if tp_config is not None or cp_config is not None:
+                raise OLMoConfigurationError(
+                    "PoE training is not yet supported with TP or CP"
+                )
+            if poe_ngram_table_dir is None:
+                raise OLMoConfigurationError(
+                    "poe_lambda requires poe_ngram_table_dir to be set so that "
+                    "the eval path can apply the same ngram bias as the train path"
+                )
+        self.poe_ngram_table_dir = poe_ngram_table_dir
+        self.poe_ngram_K = int(poe_ngram_K)
+        self.poe_ngram_N_max = int(poe_ngram_N_max)
+        # Lazy: instantiated on first eval_batch call (per process), so we
+        # don't open the mmap on the main coordinator rank that may never
+        # actually run an eval.
+        self._poe_eval_ngram_source = None
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
         self.autocast_precision = autocast_precision
@@ -416,6 +449,16 @@ class TransformerTrainModule(TrainModule):
         if soft_ce_active:
             soft_ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
 
+        # Product-of-experts logit bias (ngram log-probs scattered onto LM
+        # log-probs). Active when the train module is configured with
+        # ``poe_lambda`` AND the batch carries ``soft_target_log_probs``
+        # (emitted by NgramSoftTargetInstanceSource with output_log_probs=True).
+        poe_active = (
+            self.poe_lambda is not None
+            and "soft_target_log_probs" in batch
+            and "soft_target_token_ids" in batch
+        )
+
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
             raise RuntimeError(
@@ -434,6 +477,7 @@ class TransformerTrainModule(TrainModule):
                 # mix CPU indices with CUDA logits.
                 soft_target_token_ids = micro_batch.pop("soft_target_token_ids", None)
                 soft_target_probs = micro_batch.pop("soft_target_probs", None)
+                soft_target_log_probs = micro_batch.pop("soft_target_log_probs", None)
                 if soft_target_token_ids is not None:
                     soft_target_token_ids = soft_target_token_ids.to(
                         self.device, non_blocking=True
@@ -442,10 +486,69 @@ class TransformerTrainModule(TrainModule):
                     soft_target_probs = soft_target_probs.to(
                         self.device, non_blocking=True
                     )
+                if soft_target_log_probs is not None:
+                    soft_target_log_probs = soft_target_log_probs.to(
+                        self.device, non_blocking=True
+                    )
 
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
-                if soft_ce_active and soft_target_probs is not None:
+                if poe_active and soft_target_log_probs is not None:
+                    # Product-of-experts path: at every position, compute the
+                    # model's full-vocabulary log-probability distribution, add
+                    # ``λ * log p_ngram`` at the K candidate positions, then
+                    # take negative log-likelihood at the hard label. Because
+                    # both terms are properly-normalized log-probabilities over
+                    # the full vocabulary, the result is the cross-entropy of
+                    # the joint distribution
+                    #     p_final(w|h) ∝ p_lm(w|h) * p_ngram(w|h)^λ
+                    # at the hard label.
+                    assert soft_target_token_ids is not None
+                    assert self.poe_lambda is not None
+                    output = self.model_forward(
+                        input_ids,
+                        labels=labels,
+                        ignore_index=self.label_ignore_index,
+                        loss_reduction="sum",
+                        z_loss_multiplier=self.z_loss_multiplier,
+                        loss_div_factor=batch_num_tokens_for_loss,
+                        return_logits=True,
+                        **model_kwargs,
+                    )
+                    logits = output.logits
+                    z_loss = output.z_loss
+                    assert logits is not None, (
+                        "PoE path requires LMHead loss_implementation='default' "
+                        "so full logits are returned"
+                    )
+
+                    poe_loss = self._compute_poe_loss(
+                        logits=logits,
+                        soft_target_token_ids=soft_target_token_ids,
+                        soft_target_log_probs=soft_target_log_probs,
+                        labels=labels,
+                        loss_div_factor=batch_num_tokens_for_loss,
+                    )
+                    del logits
+
+                    combined_loss = poe_loss
+                    if z_loss is not None:
+                        combined_loss = combined_loss + z_loss
+
+                    # We log "CE loss" as the PoE-joint cross-entropy at the
+                    # hard label — i.e. the actual training objective. That's
+                    # what the existing wandb panel calls "train/CE loss" so
+                    # the metric is comparable to baseline runs.
+                    ce_batch_loss += get_local_tensor(poe_loss.detach())
+                    if z_batch_loss is not None:
+                        assert z_loss is not None
+                        z_batch_loss += get_local_tensor(z_loss.detach())
+
+                    combined_loss.backward()
+                    del combined_loss, poe_loss
+                    if z_loss is not None:
+                        del z_loss
+                elif soft_ce_active and soft_target_probs is not None:
                     # Soft-CE path: materialize logits so we can compute soft CE.
                     assert soft_target_token_ids is not None
                     output = self.model_forward(
@@ -578,6 +681,13 @@ class TransformerTrainModule(TrainModule):
                 alpha,
                 namespace="train",
             )
+        # Log the PoE λ so the wandb panel shows the (constant) mixing weight.
+        if self.poe_lambda is not None:
+            self.record_metric(
+                "poe lambda",
+                self.poe_lambda,
+                namespace="train",
+            )
 
         # And additional metrics.
         for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
@@ -619,6 +729,32 @@ class TransformerTrainModule(TrainModule):
 
         self._set_model_mode("eval")
 
+        # PoE eval path: we need the model's full logits so we can scatter-add
+        # the ngram bias before computing CE. Force return_logits=True for PoE.
+        # Bare-model logits would represent the wrong distribution at eval time
+        # (the model trained as the complement of the ngram).
+        if self.poe_lambda is not None:
+            with self._eval_batch_context():
+                output = self.model_forward(
+                    input_ids,
+                    labels=labels,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="none",
+                    return_logits=True,
+                    **model_kwargs,
+                )
+            assert isinstance(output, LMOutputWithLoss)
+            assert output.logits is not None, (
+                "PoE eval requires LMHead loss_implementation='default' so logits "
+                "are returned"
+            )
+            biased_logits, biased_ce_loss = self._apply_poe_eval_bias(
+                logits=output.logits,
+                input_ids=input_ids,
+                labels=labels,
+            )
+            return output._replace(logits=biased_logits, ce_loss=biased_ce_loss)
+
         with self._eval_batch_context():
             output = self.model_forward(
                 input_ids,
@@ -633,6 +769,107 @@ class TransformerTrainModule(TrainModule):
             output = output._replace(ce_loss=get_local_tensor(output.ce_loss))
 
         return output
+
+    def _get_poe_eval_ngram_source(self):
+        """Lazy-instantiate the ngram source for eval-time PoE bias lookup.
+
+        Each process gets its own instance; the underlying mmap'd file is
+        shared via the OS page cache (and the /dev/shm mirror put there by
+        the training-time data-loader workers).
+        """
+        if self._poe_eval_ngram_source is None:
+            assert self.poe_ngram_table_dir is not None
+            from olmo_core.data.ngram_soft_target import NgramTableSoftTargetSource
+
+            self._poe_eval_ngram_source = NgramTableSoftTargetSource(
+                table_dir=self.poe_ngram_table_dir,
+                K=self.poe_ngram_K,
+                N_max=self.poe_ngram_N_max,
+                output_log_probs=True,
+            )
+        return self._poe_eval_ngram_source
+
+    def _apply_poe_eval_bias(
+        self,
+        *,
+        logits: torch.Tensor,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor],
+    ) -> tuple:
+        """Apply the PoE ngram bias to eval-time logits and recompute CE.
+
+        Computes per-position contexts from input_ids (same convention as
+        NgramSoftTargetInstanceSource.__getitem__), looks up per-position
+        top-K (token_ids, log_probs) from the ngram source, scatter-adds
+        ``λ * log_p_ngram`` onto the K candidate positions of the LM logits,
+        then computes per-position CE loss on the modified logits at the hard
+        labels. Returns the modified logits and the per-position CE loss.
+        """
+        import numpy as np
+
+        assert self.poe_lambda is not None
+        prefix_len = self.poe_ngram_N_max - 1
+        K = self.poe_ngram_K
+
+        local_logits = get_local_tensor(logits)
+        B, S, V = local_logits.shape
+
+        # Build per-position contexts (one per (b, s)) from input_ids.
+        # Same indexing as NgramSoftTargetInstanceSource: at position s, the
+        # context is the up-to-prefix_len tokens ending at s inclusive.
+        cpu_input_ids = input_ids.detach().to("cpu").numpy()
+        contexts = []
+        for b in range(B):
+            row = cpu_input_ids[b]
+            for s in range(S):
+                start = max(0, s + 1 - prefix_len)
+                contexts.append(tuple(int(t) for t in row[start : s + 1]))
+
+        ngram_source = self._get_poe_eval_ngram_source()
+        ids_np, log_probs_np = ngram_source.lookup_batch(contexts)
+        soft_target_token_ids = torch.as_tensor(
+            ids_np.reshape(B, S, K), dtype=torch.long, device=local_logits.device
+        )
+        soft_target_log_probs = torch.as_tensor(
+            log_probs_np.reshape(B, S, K), dtype=torch.float32, device=local_logits.device
+        )
+
+        # Scatter-add λ * log_p_ngram onto the LM logits at the K candidate
+        # positions per position. The scatter_add_ writes -inf-tagged sentinel
+        # slots as -inf bias; that's fine because in eval the labels never
+        # match a sentinel and the bias is ignored at non-label positions
+        # for CE computation (we only read the label's logit).
+        # Sanitize -inf values in log_probs to a very negative finite number
+        # so the bias doesn't propagate NaN into intermediate computations.
+        safe_log_probs = torch.where(
+            torch.isfinite(soft_target_log_probs),
+            soft_target_log_probs,
+            torch.full_like(soft_target_log_probs, -1e30),
+        )
+        biased_logits_f32 = local_logits.float().clone()
+        biased_logits_f32.scatter_add_(
+            -1, soft_target_token_ids, float(self.poe_lambda) * safe_log_probs
+        )
+
+        # Per-position CE on the biased logits at the hard label.
+        if labels is not None:
+            log_sum_exp = torch.logsumexp(biased_logits_f32, dim=-1)
+            # Replace ignored labels with 0 for safe gather; mask after.
+            safe_labels = labels.clone()
+            safe_labels[safe_labels == self.label_ignore_index] = 0
+            label_logits = biased_logits_f32.gather(
+                -1, safe_labels.unsqueeze(-1).to(biased_logits_f32.device)
+            ).squeeze(-1)
+            ce_loss = -(label_logits - log_sum_exp)
+            ce_loss = torch.where(
+                labels.to(ce_loss.device) == self.label_ignore_index,
+                torch.zeros_like(ce_loss),
+                ce_loss,
+            )
+        else:
+            ce_loss = None
+
+        return biased_logits_f32, ce_loss
 
     def optim_step(self):
         # Maybe clip gradients.
@@ -862,6 +1099,119 @@ class TransformerTrainModule(TrainModule):
         # Sum → scalar; divide by the same denominator hard CE used so the two
         # terms are on a comparable per-valid-token scale.
         return soft_ce_per_pos.sum() / loss_div_factor
+
+    def _compute_poe_loss(
+        self,
+        *,
+        logits: torch.Tensor,
+        soft_target_token_ids: torch.Tensor,
+        soft_target_log_probs: torch.Tensor,
+        labels: torch.Tensor,
+        loss_div_factor: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute sum-reduction product-of-experts cross-entropy at the hard
+        labels, divided by ``loss_div_factor``.
+
+        The product-of-experts joint is
+
+            log p_final(w | h) = log p_lm(w | h) + λ · log p_ngram(w | h) − log Z
+
+        — the joint log-probability of token w given context h equals the
+        model's log-probability plus λ times the ngram's log-probability,
+        minus a per-position normalizer. We add the K ngram log-probabilities
+        from the soft-target tensors at the K candidate vocab positions; the
+        other ~V−K positions get no bias (treated as the ngram having no
+        opinion, log p_ngram = 0). The training objective is the cross-entropy
+        of this joint at the hard label,
+
+            L = − log p_final(label | h)
+
+        which we compute by:
+          1. log_softmax of the LM logits (full-vocabulary log-probs).
+          2. Scatter-add λ * log_p_ngram onto the K candidate positions of
+             the per-position log-prob vector.
+          3. log_softmax again over the modified log-prob vector to renormalize
+             after the bias.
+          4. Negative log-likelihood at the hard label.
+
+        Step 3 is necessary because step 2 produces an unnormalized vector
+        (it's a sum of two log-distributions, which is the log of a product
+        and not itself a log-distribution). Re-running log_softmax computes
+        the per-position normalizer log Z and gives proper joint log-probs.
+
+        Note: a more standard implementation skips step 1 and instead
+        scatter-adds onto the raw LM logits, then log_softmax once. That's
+        mathematically equivalent because log_softmax is shift-invariant in
+        its input. We do the explicit log_softmax-first version because the
+        bias values we add live in log-probability space (kenlm log p_ngram),
+        making "add log-prob to log-prob, renormalize" the most direct
+        reading of the joint computation.
+        """
+        # Upcast logits to fp32 for numerical stability of the log_softmax.
+        logits_f32 = get_local_tensor(logits).float()
+        # Per-position log-of-sum-of-exponentials normalizer over the full
+        # vocabulary. Shape: (sequences in microbatch, positions per sequence).
+        log_sum_exp_lm = torch.logsumexp(logits_f32, dim=-1)
+        # Model's full-vocabulary log-probabilities for the K target tokens.
+        # Shape: (sequences, positions, K).
+        gathered_lm_log_probs = logits_f32.gather(-1, soft_target_token_ids) - log_sum_exp_lm.unsqueeze(-1)
+        # Joint log-probabilities at the K target tokens (unnormalized).
+        # log p_lm + λ · log p_ngram. Shape: (sequences, positions, K).
+        gathered_joint = gathered_lm_log_probs + float(self.poe_lambda) * soft_target_log_probs.float()
+
+        # The model's log-probabilities at NON-top-K tokens: logit - log_sum_exp.
+        # We don't materialize the full (sequences, positions, vocab) tensor.
+        # Instead we compute the joint normalizer Z directly:
+        #   Z = sum_v exp(modified_log_prob[v])
+        #     = sum_{v in top-K} exp(joint[v]) + sum_{v not in top-K} exp(lm_log_prob[v])
+        #     = sum_{v in top-K} exp(joint[v]) + (1 - sum_{v in top-K} exp(lm_log_prob[v]))
+        # because LM log-probs sum to 1 over the full vocab.
+        sum_lm_topk = torch.exp(gathered_lm_log_probs).sum(dim=-1)  # (B, S)
+        sum_joint_topk = torch.exp(gathered_joint).sum(dim=-1)      # (B, S)
+        # Mass left over for non-top-K tokens (no bias applied there).
+        non_topk_mass = (1.0 - sum_lm_topk).clamp_min(0.0)
+        Z = sum_joint_topk + non_topk_mass                           # (B, S)
+        log_Z = torch.log(Z.clamp_min(torch.finfo(Z.dtype).tiny))    # (B, S)
+
+        # Final per-position joint log-probabilities for the K target tokens.
+        # Shape: (sequences, positions, K).
+        gathered_joint_log_probs = gathered_joint - log_Z.unsqueeze(-1)
+
+        # Cross-entropy at the hard label. We need the joint log-probability
+        # at the label token. The label might or might not be in the top-K;
+        # cover both cases.
+        labels_dev = labels.to(logits_f32.device, non_blocking=True)
+        # Replace ignore_index entries with 0 so the gather is safe; we mask
+        # them out below.
+        safe_labels = labels_dev.clone()
+        safe_labels[safe_labels == self.label_ignore_index] = 0
+        # log p_lm at the label token (full vocabulary, not just top-K).
+        label_lm_log_probs = logits_f32.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1) - log_sum_exp_lm
+
+        # Where is the label among the K candidates? If yes, the modified
+        # log-prob is gathered_joint_log_probs at that K-index; if no, the
+        # modified log-prob is just log p_lm (no bias) − log Z.
+        # match[b, s] = True at position k_match if soft_target_token_ids[b, s, k_match] == labels[b, s].
+        match = soft_target_token_ids == safe_labels.unsqueeze(-1)  # (B, S, K)
+        any_match = match.any(dim=-1)                                # (B, S)
+        # The bias added at the matching K-index, or 0 if no match.
+        # (Shape (B, S), one per position.)
+        match_bias = torch.where(
+            any_match,
+            (match.to(soft_target_log_probs.dtype) * soft_target_log_probs.float()).sum(dim=-1),
+            torch.zeros_like(label_lm_log_probs),
+        )
+        # log p_final(label | h) = log p_lm(label | h) + λ · log p_ngram(label | h) − log Z.
+        # When the label isn't in top-K, the bias is 0 (consistent with the
+        # uniform-non-top-K approximation we use everywhere in PoE).
+        label_joint_log_probs = label_lm_log_probs + float(self.poe_lambda) * match_bias - log_Z
+
+        # NLL per position, masked at ignored labels.
+        per_pos_loss = -label_joint_log_probs
+        mask = (labels_dev != self.label_ignore_index).to(per_pos_loss.dtype)
+        per_pos_loss = per_pos_loss * mask
+        # Sum → scalar; divide by the same denominator hard CE uses.
+        return per_pos_loss.sum() / loss_div_factor
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:
