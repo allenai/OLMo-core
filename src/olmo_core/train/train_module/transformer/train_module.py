@@ -493,6 +493,14 @@ class TransformerTrainModule(TrainModule):
 
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
+                # NOTE on gradient flow: when ``return_logits=True`` is set,
+                # the LMHead returns ``output.ce_loss`` and ``output.z_loss``
+                # as detached tensors (they're meant for metric reporting,
+                # not for backprop). Only ``output.loss`` (= ce_loss +
+                # z_loss combined) carries gradient back to the model. So
+                # we always combine through ``output.loss`` for the gradient
+                # path, and only consult ``output.ce_loss`` / ``output.z_loss``
+                # for recording metrics.
                 if poe_active and soft_target_log_probs is not None:
                     # Product-of-experts path: at every position, compute the
                     # model's full-vocabulary log-probability distribution, add
@@ -562,8 +570,13 @@ class TransformerTrainModule(TrainModule):
                         **model_kwargs,
                     )
                     logits = output.logits
-                    hard_ce_loss = output.ce_loss  # already finalized (sum / div_factor)
-                    z_loss = output.z_loss
+                    # ``output.loss`` carries gradient and equals ce_loss +
+                    # z_loss combined (when z_loss_multiplier is set).
+                    # ``output.ce_loss`` and ``output.z_loss`` are detached
+                    # — for metrics only.
+                    hard_loss_with_grad = output.loss
+                    hard_ce_loss_metric = output.ce_loss
+                    z_loss_metric = output.z_loss
                     assert logits is not None, (
                         "soft-CE path requires LMHead loss_implementation='default' "
                         "so full logits are returned"
@@ -578,24 +591,29 @@ class TransformerTrainModule(TrainModule):
                     )
                     del logits
 
-                    # Combine: (1 - alpha) * hard_CE + alpha * soft_CE + z_loss.
-                    # hard_ce_loss from LMHead is already ce_loss + z_loss combined
-                    # in `output.loss`; we ignore output.loss and recombine ourselves.
-                    combined_loss = (1.0 - alpha) * hard_ce_loss + alpha * soft_ce_loss
-                    if z_loss is not None:
-                        combined_loss = combined_loss + z_loss
+                    # Backprop:
+                    #   (1 − α) · (hard_ce + z) + α · soft_ce
+                    # Slight z-loss discounting: at α > 0 the regularizer's
+                    # gradient is scaled by (1 − α) instead of being applied at
+                    # full strength, but z_loss is small (≈ 1e-3) and acts as
+                    # logit-norm regularization that's least useful when the
+                    # model is being trained primarily by the soft target
+                    # anyway. Cleaner alternative — recompute hard_ce + z_loss
+                    # with gradient inline from ``logits`` — would let us
+                    # weight z exactly at 1.0, but this minimal fix gets the
+                    # critical thing right: at α = 0, full hard_ce + full
+                    # z_loss gradient is applied.
+                    combined_loss = (1.0 - alpha) * hard_loss_with_grad + alpha * soft_ce_loss
 
-                    ce_batch_loss += get_local_tensor(hard_ce_loss.detach())
+                    ce_batch_loss += get_local_tensor(hard_ce_loss_metric.detach())
                     assert soft_ce_batch_loss is not None
                     soft_ce_batch_loss += get_local_tensor(soft_ce_loss.detach())
-                    if z_batch_loss is not None:
-                        assert z_loss is not None
-                        z_batch_loss += get_local_tensor(z_loss.detach())
+                    if z_batch_loss is not None and z_loss_metric is not None:
+                        z_batch_loss += get_local_tensor(z_loss_metric.detach())
 
                     combined_loss.backward()
-                    del combined_loss, hard_ce_loss, soft_ce_loss
-                    if z_loss is not None:
-                        del z_loss
+                    del combined_loss, hard_loss_with_grad, soft_ce_loss
+                    del hard_ce_loss_metric, z_loss_metric
                 else:
                     # Hard-CE-only path — baseline, byte-identical to pre-soft-CE behavior.
                     _, loss, ce_loss, z_loss = self.model_forward(
