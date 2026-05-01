@@ -116,6 +116,7 @@ class TransformerTrainModule(TrainModule):
         z_loss_multiplier: Optional[float] = None,
         soft_ce_alpha_start: Optional[float] = None,
         soft_ce_alpha_ramp_fraction: float = 0.5,
+        soft_ce_truncation: str = "renormalize",
         poe_lambda: Optional[float] = None,
         poe_ngram_table_dir: Optional[str] = None,
         poe_ngram_K: int = 16,
@@ -190,6 +191,12 @@ class TransformerTrainModule(TrainModule):
         self.z_loss_multiplier = z_loss_multiplier
         self.soft_ce_alpha_start = soft_ce_alpha_start
         self.soft_ce_alpha_ramp_fraction = soft_ce_alpha_ramp_fraction
+        if soft_ce_truncation not in ("renormalize", "uniform_residual"):
+            raise OLMoConfigurationError(
+                f"soft_ce_truncation must be 'renormalize' or 'uniform_residual', "
+                f"got {soft_ce_truncation!r}"
+            )
+        self.soft_ce_truncation = soft_ce_truncation
         self.poe_lambda = poe_lambda
         if self.soft_ce_alpha_start is not None and self.poe_lambda is not None:
             raise OLMoConfigurationError(
@@ -439,9 +446,17 @@ class TransformerTrainModule(TrainModule):
         # Soft-CE auxiliary loss (ngram soft targets). Active only when the
         # train module is configured for it AND the batch actually carries
         # soft-target tensors (emitted by NgramSoftTargetInstanceSource).
+        # The required field depends on truncation mode:
+        #   - "renormalize"      → soft_target_probs (linear, sums to 1 over top-K)
+        #   - "uniform_residual" → soft_target_log_probs (raw KN log-probs;
+        #     the loss computes residual mass = 1 - Σ topK p at runtime).
+        soft_ce_target_field = (
+            "soft_target_probs" if self.soft_ce_truncation == "renormalize"
+            else "soft_target_log_probs"
+        )
         soft_ce_active = (
             self.soft_ce_alpha_start is not None
-            and "soft_target_probs" in batch
+            and soft_ce_target_field in batch
             and "soft_target_token_ids" in batch
         )
         alpha: float = self._current_soft_ce_alpha() if soft_ce_active else 0.0
@@ -587,7 +602,10 @@ class TransformerTrainModule(TrainModule):
                         del z_loss_with_grad
                     if z_loss is not None:
                         del z_loss
-                elif soft_ce_active and soft_target_probs is not None:
+                elif soft_ce_active and (
+                    (self.soft_ce_truncation == "renormalize" and soft_target_probs is not None)
+                    or (self.soft_ce_truncation == "uniform_residual" and soft_target_log_probs is not None)
+                ):
                     # Soft-CE path: materialize logits so we can compute soft CE.
                     assert soft_target_token_ids is not None
                     output = self.model_forward(
@@ -617,6 +635,7 @@ class TransformerTrainModule(TrainModule):
                         logits=logits,
                         soft_target_token_ids=soft_target_token_ids,
                         soft_target_probs=soft_target_probs,
+                        soft_target_log_probs=soft_target_log_probs,
                         labels=labels,
                         loss_div_factor=batch_num_tokens_for_loss,
                     )
@@ -1116,58 +1135,104 @@ class TransformerTrainModule(TrainModule):
         *,
         logits: torch.Tensor,
         soft_target_token_ids: torch.Tensor,
-        soft_target_probs: torch.Tensor,
+        soft_target_probs: Optional[torch.Tensor] = None,
+        soft_target_log_probs: Optional[torch.Tensor] = None,
         labels: torch.Tensor,
         loss_div_factor: torch.Tensor,
     ) -> torch.Tensor:
         """Compute sum-reduction soft cross-entropy divided by ``loss_div_factor``.
 
-        At each sequence position the loss is
+        Two truncation-handling modes (selected by ``self.soft_ce_truncation``):
 
-            L = - sum_{k in 1..K} p_k * log q_k
+        **renormalize** (default). The target is a top-K distribution
+        renormalized to sum to 1 over the K candidate tokens; non-top-K
+        targets are zero. The loss at position t is
 
-        — the negative weighted sum, taken over the K target tokens, of each
-        target's probability ``p_k`` (from the ngram top-K distribution carried
-        on the batch) times the model's predicted log-probability for that
-        token, ``log q_k``. Positions where ``labels == ignore_index`` are
-        zeroed out to match hard CE's ignore semantics (and because their
-        ``loss_div_factor`` denominator already excluded them).
+            L = - Σ_{k=1..K} p_k · log q_k
 
-        We avoid materializing the full per-position log-probability
-        distribution by computing the log-of-sum-of-exponentials normalizer
-        once per position (one scalar) and the K target raw logits separately
-        (one small tensor), then using the textbook identity
+        where ``p_k`` is the renormalized top-K target probability (from
+        ``soft_target_probs``) and ``log q_k`` is the model's full-vocab
+        log-probability at the corresponding token id.
 
-            log_softmax(logits)[k] = logits[k] - logsumexp(logits)
+        **uniform_residual**. The target is the raw KN top-K distribution
+        extended into a proper full-vocab distribution by spreading the
+        residual mass ``r = 1 − Σ topK p_ngram`` uniformly over the V−K
+        non-top-K tokens. The loss is
 
-        — the model's log-probability for any token equals the token's raw
-        logit minus the per-position normalizer. This produces the same
-        number as ``F.log_softmax(logits).gather(...)`` while avoiding a
-        second (sequences, positions, vocab) tensor.
+            L = - Σ_topK p_k · log q_k
+                - (r / (V−K)) · Σ_non-topK log q_w
 
-        Note on naming: this IS forward KL up to a constant. The ngram-side
-        target distribution p is fixed (not a function of model parameters),
-        so KL(p || q_θ) = soft_CE(p, q_θ) - H(p) and the H(p) term has zero
+        This avoids forcing the model to put zero mass on out-of-top-K
+        tokens (including the gold whenever the gold is rare). We avoid
+        materializing the (B, S, V) log-probs tensor by writing
+
+            Σ_non-topK log q_w = Σ_all log q_w − Σ_topK log q_w
+                              = (Σ_all logit_w) − V·logsumexp − Σ_topK log q_w
+
+        — only the per-position scalar ``Σ_all logit_w`` is new; everything
+        else we already need to compute for the top-K branch.
+
+        Naming: forward KL up to a constant. The ngram-side target
+        distribution p is fixed (not a function of model parameters), so
+        KL(p ‖ q_θ) = soft_CE(p, q_θ) − H(p) and the H(p) term has zero
         gradient w.r.t. θ. We compute and log soft_CE because it's the
         actual quantity we're summing, but the optimization is equivalent
-        to forward KL minimization. If we ever switch to *reverse* KL
-        (KL(q_θ || p) — mode-seeking), the entropy term H(q_θ) does depend
-        on θ, the cross-entropy/KL equivalence breaks, and this function
-        needs to be rewritten.
+        to forward KL minimization. If we ever switch to reverse KL
+        (KL(q_θ ‖ p) — mode-seeking), this function needs to be rewritten.
         """
         # Upcast logits to fp32 for numerical stability of the normalizer.
         logits_f32 = get_local_tensor(logits).float()
+        V = logits_f32.size(-1)
         # Per-position log-of-sum-of-exponentials normalizer over the full
         # vocabulary. Shape: (sequences in microbatch, positions per sequence).
         log_sum_exp = torch.logsumexp(logits_f32, dim=-1)
-        # Raw logits at the K target tokens for each position.
-        # Shape: (sequences, positions, K).
+        # Raw logits at the K target tokens for each position. (B, S, K).
         gathered_logits = logits_f32.gather(-1, soft_target_token_ids)
-        # Convert to log-probabilities by subtracting the per-position
-        # normalizer (broadcast across the K dimension via unsqueeze).
+        # log q_k per top-K target. (B, S, K).
         gathered_log_probs = gathered_logits - log_sum_exp.unsqueeze(-1)
-        # Soft CE per position: weighted sum of model log-probs by target probs.
-        soft_ce_per_pos = -(soft_target_probs.float() * gathered_log_probs).sum(dim=-1)
+
+        if self.soft_ce_truncation == "renormalize":
+            assert soft_target_probs is not None
+            soft_ce_per_pos = -(soft_target_probs.float() * gathered_log_probs).sum(dim=-1)
+        else:  # uniform_residual
+            assert soft_target_log_probs is not None
+            # Convert raw KN log-probs to linear probs at the K slots. Slots
+            # whose stored log-prob is non-finite are sentinels — placeholder
+            # entries used when a prefix has fewer than K real candidates,
+            # padded with token_id=0 — and must be excluded from both the
+            # top-K sum and the non-top-K count.
+            log_p_ngram = soft_target_log_probs.float()
+            finite_mask = torch.isfinite(log_p_ngram)
+            finite_mask_f = finite_mask.to(log_p_ngram.dtype)
+            log_p_ngram_safe = torch.where(
+                finite_mask, log_p_ngram,
+                torch.full_like(log_p_ngram, float("-inf")),
+            )
+            top_k_p = torch.exp(log_p_ngram_safe)               # (B, S, K), 0 at sentinels
+            sum_top_k_p = top_k_p.sum(dim=-1)                   # (B, S)
+            residual_total = (1.0 - sum_top_k_p).clamp_min(0.0) # (B, S)
+
+            # Real-top-K count per position (K minus the number of sentinels).
+            K_real = finite_mask_f.sum(dim=-1)                  # (B, S)
+            V_minus_K_real = (float(V) - K_real).clamp_min(1.0) # (B, S)
+
+            # Top-K contribution: -Σ p_k · log q_k. Sentinel slots have p_k = 0
+            # so they contribute 0 to this sum automatically.
+            ce_topK = -(top_k_p * gathered_log_probs).sum(dim=-1)  # (B, S)
+
+            # Non-top-K contribution: -(r / (V − K_real)) · Σ_non-topK log q_w.
+            # Σ_all log q_w = Σ_all (logit_w − logsumexp) = sum_logits_all − V·logsumexp.
+            # Σ_non-topK log q_w = Σ_all log q_w − Σ_real-topK log q_w.
+            sum_logits_all = logits_f32.sum(dim=-1)                       # (B, S)
+            sum_log_q_all = sum_logits_all - float(V) * log_sum_exp        # (B, S)
+            # Mask gathered_log_probs to only sum over real top-K slots
+            # (sentinel slots' gathered log_q is whatever log_q[0] happens to
+            # be; we don't want it in this sum).
+            sum_log_q_real_topK = (gathered_log_probs * finite_mask_f).sum(dim=-1)
+            sum_log_q_non_topK = sum_log_q_all - sum_log_q_real_topK
+            ce_non_topK = -(residual_total / V_minus_K_real) * sum_log_q_non_topK
+
+            soft_ce_per_pos = ce_topK + ce_non_topK
 
         # Mask out ignored label positions. Labels arrive on CPU (the standard
         # hard-CE path runs them through model_forward which handles the move

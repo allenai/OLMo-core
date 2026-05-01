@@ -80,6 +80,12 @@ DEFAULT_SOFT_TARGET_N_MAX = 5
 # being pushed up — even when the soft target disagrees with the gold.
 DEFAULT_SOFT_CE_ALPHA_START = 0.9
 DEFAULT_SOFT_CE_ALPHA_RAMP_FRACTION = 0.5
+# How to extend the truncated top-K ngram into a target distribution:
+#   "renormalize"      — top-K probs sum to 1, non-top-K target = 0 (default;
+#                        forces model to put zero mass on out-of-top-K gold)
+#   "uniform_residual" — top-K = raw KN probs, non-top-K = uniform residual,
+#                        so the target is a proper full-vocab distribution
+DEFAULT_SOFT_CE_TRUNCATION = "renormalize"
 
 
 @dataclasses.dataclass(kw_only=True, eq=True)
@@ -92,6 +98,7 @@ class NgramSoftTargetConfigurator(Olmo3ModelConfigurator):
 
     soft_ce_alpha_start: float = DEFAULT_SOFT_CE_ALPHA_START
     soft_ce_alpha_ramp_fraction: float = DEFAULT_SOFT_CE_ALPHA_RAMP_FRACTION
+    soft_ce_truncation: str = DEFAULT_SOFT_CE_TRUNCATION
 
     def build_train_module(
         self,
@@ -125,6 +132,7 @@ class NgramSoftTargetConfigurator(Olmo3ModelConfigurator):
             z_loss_multiplier=1e-5,
             soft_ce_alpha_start=self.soft_ce_alpha_start,
             soft_ce_alpha_ramp_fraction=self.soft_ce_alpha_ramp_fraction,
+            soft_ce_truncation=self.soft_ce_truncation,
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -147,11 +155,18 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ],
         sequence_length=args.sequence_length,
     )
+    soft_ce_truncation = getattr(
+        args, "soft_ce_truncation", DEFAULT_SOFT_CE_TRUNCATION
+    )
+    # In "uniform_residual" mode the loss function needs the raw KN log-probs
+    # so it can compute the per-position residual at training time.
+    output_log_probs = soft_ce_truncation == "uniform_residual"
     wrapped_source = NgramSoftTargetInstanceSourceConfig(  # noqa: F405
         source=base_source,
         table_dir=getattr(args, "ngram_table_dir", DEFAULT_NGRAM_TABLE_DIR),
         K=getattr(args, "soft_target_k", DEFAULT_SOFT_TARGET_K),
         N_max=getattr(args, "soft_target_n_max", DEFAULT_SOFT_TARGET_N_MAX),
+        output_log_probs=output_log_probs,
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -173,6 +188,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             soft_ce_alpha_ramp_fraction=getattr(
                 args, "soft_ce_alpha_ramp_fraction", DEFAULT_SOFT_CE_ALPHA_RAMP_FRACTION
             ),
+            soft_ce_truncation=soft_ce_truncation,
         ),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple
@@ -220,6 +236,22 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_SOFT_TARGET_K,
         help="Top-K size for the soft-target distributions.",
+    )
+    parser.add_argument(
+        "--soft-ce-truncation",
+        type=str,
+        choices=["renormalize", "uniform_residual"],
+        default=DEFAULT_SOFT_CE_TRUNCATION,
+        help=(
+            "How to extend the truncated top-K ngram into a target distribution. "
+            "'renormalize' (default): top-K probs sum to 1, non-top-K target = 0. "
+            "'uniform_residual': top-K = raw KN probs, non-top-K = uniform "
+            "spread of (1 − Σ topK p_ngram), so the target is a proper full-vocab "
+            "distribution and the model isn't penalized for keeping mass on "
+            "out-of-top-K gold tokens. The 'uniform_residual' choice also "
+            "switches the wrapper to output_log_probs=True so the residual "
+            "can be computed at training time."
+        ),
     )
 
 
