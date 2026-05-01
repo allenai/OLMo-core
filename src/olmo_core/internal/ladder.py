@@ -137,8 +137,14 @@ def parse_args(
         parser.add_argument(
             "--budget",
             type=str,
-            default="ai2/oe-base",
-            help="The Beaker budget to use.",
+            default="ai2/oe-other",
+            help=(
+                "The Beaker budget to use. Default updated 2026-05-01 from "
+                "ai2/oe-base (deprecated April 30) to ai2/oe-other (the "
+                "post-migration parent budget for the oe-science-of-ai "
+                "workspace group, which contains ai2/oe-t-ladder and "
+                "ai2/oe-data)."
+            ),
         )
         parser.add_argument(
             "--beaker-image",
