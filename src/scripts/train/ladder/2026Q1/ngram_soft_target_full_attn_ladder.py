@@ -68,9 +68,17 @@ DEFAULT_NGRAM_TABLE_DIR = (
 DEFAULT_SOFT_TARGET_K = 16
 DEFAULT_SOFT_TARGET_N_MAX = 5
 
-# Soft-CE schedule defaults: start fully soft and linearly ramp down to 0
-# (pure hard CE) over the first half of training.
-DEFAULT_SOFT_CE_ALPHA_START = 1.0
+# Soft-CE schedule defaults: start soft-dominant (but always include some hard
+# CE — never α=1.0) and linearly ramp down to 0 (pure hard CE) over the first
+# half of training. The 0.9 starting value is deliberate: with α=1.0 the soft
+# loss puts all probability mass on the K=16 ngram-top tokens and zero on
+# everything else, including (often) the gold label. Forward-KL training then
+# actively drives the model away from the gold during the soft-dominant phase,
+# leaving it with very low logits at gold positions; the second half of
+# training is then spent recovering from that bad initialization. Setting
+# α_start < 1 ensures hard CE always contributes — gold logits are always
+# being pushed up — even when the soft target disagrees with the gold.
+DEFAULT_SOFT_CE_ALPHA_START = 0.9
 DEFAULT_SOFT_CE_ALPHA_RAMP_FRACTION = 0.5
 
 
