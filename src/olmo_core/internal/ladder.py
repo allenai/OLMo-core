@@ -463,20 +463,6 @@ def configure_launcher(
     # unconditionally read LOCAL_RANK / WORLD_SIZE etc. from the env, so
     # even 1-GPU smokes need the torchrun launcher to set them up.
     launch_config.torchrun = True
-    # Remove any stale ``olmo_core`` package baked into the docker image's
-    # site-packages before gantry's editable install runs. Without this,
-    # ``import olmo_core`` resolves to the baked copy and ignores our
-    # checked-out source — code edits silently no-op.
-    launch_config.pre_setup = (
-        "set -e; "
-        "for d in /opt/conda/lib/python*/site-packages/olmo_core "
-        "         /opt/conda/lib/python*/site-packages/ai2_olmo_core-*.dist-info "
-        "         /opt/conda/lib/python*/site-packages/olmo_core-*.dist-info; do "
-        "    rm -rf $d 2>/dev/null || true; "
-        "done; "
-        "pip uninstall ai2-olmo-core -y 2>/dev/null || true; "
-        "echo 'pre_setup: cleared any baked olmo_core install'"
-    )
     launch_config.priority = args.priority
     if args.preemptible is not None:
         launch_config.preemptible = args.preemptible

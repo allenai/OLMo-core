@@ -327,6 +327,12 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     # currently not supported together with soft CE.
     soft_ce_alpha_start: Optional[float] = None
     soft_ce_alpha_ramp_fraction: float = 0.5
+    # How to extend the truncated top-K ngram into a target distribution:
+    #   "renormalize"      - top-K probs sum to 1, non-top-K target = 0
+    #   "uniform_residual" - top-K = raw KN probs, non-top-K = uniform spread
+    #                        of (1 - sum_topK p_ngram), so target is a proper
+    #                        full-vocab distribution
+    soft_ce_truncation: str = "renormalize"
 
     # Ngram product-of-experts logit bias. When ``poe_lambda`` is set and the
     # batch carries ``soft_target_token_ids`` + ``soft_target_log_probs``
