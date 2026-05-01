@@ -377,7 +377,9 @@ def validate_conversion(
     device = device or torch.device("cpu")
     log.info(f"Running validation on {device}")
 
-    B, T = 1, 60
+    # T must be > 64: the HF hybrid model switches to recurrent mode for seq_len <= 64,
+    # which diverges numerically from OLMo Core's chunk mode even with identical weights.
+    B, T = 1, 128
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
     is_sliding = any(

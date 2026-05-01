@@ -439,3 +439,67 @@ def test_hybrid_key_maps_are_consistent():
     gdn_mixer = {v for k, v in HYBRID_GDN_LAYER_KEY_MAP.items() if k.startswith("attention.")}
     attn_mixer = {v for k, v in HYBRID_ATTN_LAYER_KEY_MAP.items() if k.startswith("attention.")}
     assert gdn_mixer.isdisjoint(attn_mixer), f"Overlapping mixer HF keys: {gdn_mixer & attn_mixer}"
+
+
+@requires_fla
+def test_convert_checkpoint_to_hf_forward_pass_matches(
+    tmp_path: Path,
+    olmo_core_model_path: Path,
+    hybrid_model_config: TransformerConfig,
+    hybrid_model: Transformer,
+    tokenizer_config: TokenizerConfig,
+):
+    """
+    Regression test: the converted HF model must produce logits close to the original
+    OLMo Core model on the same input.
+
+    The validation sequence length must be > 64 to avoid the HF hybrid model switching
+    to recurrent mode (seq_len <= 64), which diverges numerically from OLMo Core's chunk
+    mode even with identical weights.
+    """
+    try:
+        from transformers import AutoConfig, AutoModelForCausalLM
+    except ImportError:
+        pytest.skip("transformers not installed")
+
+    output_dir = tmp_path / "hf-output-fwd"
+
+    convert_checkpoint_to_hf(
+        original_checkpoint_path=olmo_core_model_path,
+        output_path=output_dir,
+        transformer_config_dict=hybrid_model_config.as_config_dict(),
+        tokenizer_config_dict=tokenizer_config.as_config_dict(),
+        max_sequence_length=256,
+        validate=False,
+        dtype=None,
+    )
+
+    vocab_size = tokenizer_config.vocab_size
+
+    # T > 64 is required: HF uses recurrent mode for seq_len <= 64, which diverges from
+    # OLMo Core's chunk mode and causes a large numerical mismatch.
+    T = 128
+    torch.manual_seed(42)
+    input_ids = torch.randint(0, vocab_size, (1, T))
+
+    # OLMo Core forward pass.
+    hybrid_model.eval()
+    with torch.no_grad():
+        olmo_logits = hybrid_model(input_ids)
+
+    # HF forward pass.
+    hf_config = AutoConfig.from_pretrained(output_dir)
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        output_dir, torch_dtype="auto", config=hf_config, attn_implementation="sdpa"
+    ).eval()
+    with torch.no_grad():
+        hf_logits = hf_model(input_ids=input_ids).logits
+
+    torch.testing.assert_close(
+        hf_logits[..., :vocab_size].float(),
+        olmo_logits[..., :vocab_size].float(),
+        rtol=1e-4,
+        atol=1e-4,
+    )
+
+    shutil.rmtree(output_dir)
