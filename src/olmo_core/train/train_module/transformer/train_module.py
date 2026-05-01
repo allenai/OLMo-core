@@ -883,21 +883,51 @@ class TransformerTrainModule(TrainModule):
             log_probs_np.reshape(B, S, K), dtype=torch.float32, device=local_logits.device
         )
 
-        # Scatter-add λ * log_p_ngram onto the LM logits at the K candidate
-        # positions per position. The scatter_add_ writes -inf-tagged sentinel
-        # slots as -inf bias; that's fine because in eval the labels never
-        # match a sentinel and the bias is ignored at non-label positions
-        # for CE computation (we only read the label's logit).
-        # Sanitize -inf values in log_probs to a very negative finite number
-        # so the bias doesn't propagate NaN into intermediate computations.
-        safe_log_probs = torch.where(
-            torch.isfinite(soft_target_log_probs),
-            soft_target_log_probs,
-            torch.full_like(soft_target_log_probs, -1e30),
+        # PoE bias under the uniform-residual approximation (see plan.md
+        # "Approach 2: Product of experts"): the truncated top-K ngram
+        # distribution is extended to a proper full-vocab distribution by
+        # spreading the residual mass (1 - Σ topK p_ngram) uniformly over the
+        # V−K non-top-K tokens. Per position the ngram log-prob is therefore
+        #
+        #     log p_ngram[w in topK] = stored value
+        #     log p_ngram[w not in topK] = log_residual = log((1 − Σ topK p) / (V − K))
+        #
+        # Naive PoE would add λ * log_p_ngram[w] at every position, but by
+        # softmax shift-invariance subtracting the per-position constant
+        # (λ * log_residual) from every logit doesn't change the joint. So the
+        # equivalent operation we actually run is:
+        #
+        #     bias[w in topK]    = λ * (log_p_ngram[w] − log_residual)
+        #     bias[w not in topK] = 0    (unchanged logit)
+        #
+        # log_residual is typically very negative (≈ −log V ≈ −11.5 at V=100K),
+        # so subtracting it adds ~+11 to top-K logits, which is the "boost
+        # top-K relative to non-top-K" behavior PoE prescribes. Sentinel slots
+        # (-inf log-prob, used when fewer than K candidates exist) scatter 0
+        # so they don't corrupt logit[0] when their token id collides.
+        finite_mask = torch.isfinite(soft_target_log_probs)
+        # Σ exp(log p_ngram) over the finite top-K entries, per position.
+        # Sentinel slots contribute 0 because exp(-inf) → 0.
+        masked_log_p = torch.where(
+            finite_mask, soft_target_log_probs,
+            torch.full_like(soft_target_log_probs, float("-inf")),
+        )
+        sum_topK_ngram_p = torch.exp(masked_log_p).sum(dim=-1, keepdim=True)  # (B, S, 1)
+        # Residual mass distributed uniformly over the V−K non-top-K tokens.
+        # Clamp to a small ε so log is finite even if top-K covers all mass.
+        residual_per_token = (
+            (1.0 - sum_topK_ngram_p).clamp_min(1e-12) / float(V - K)
+        )
+        log_residual = torch.log(residual_per_token)  # (B, S, 1)
+        # Bias to scatter onto top-K logits. Sentinel slots get 0.
+        scatter_bias = torch.where(
+            finite_mask,
+            soft_target_log_probs - log_residual,
+            torch.zeros_like(soft_target_log_probs),
         )
         biased_logits_f32 = local_logits.float().clone()
         biased_logits_f32.scatter_add_(
-            -1, soft_target_token_ids, float(self.poe_lambda) * safe_log_probs
+            -1, soft_target_token_ids, float(self.poe_lambda) * scatter_bias
         )
 
         # Per-position CE on the biased logits at the hard label.
@@ -1165,94 +1195,92 @@ class TransformerTrainModule(TrainModule):
 
             log p_final(w | h) = log p_lm(w | h) + λ · log p_ngram(w | h) − log Z
 
-        — the joint log-probability of token w given context h equals the
-        model's log-probability plus λ times the ngram's log-probability,
-        minus a per-position normalizer. We add the K ngram log-probabilities
-        from the soft-target tensors at the K candidate vocab positions; the
-        other ~V−K positions get no bias (treated as the ngram having no
-        opinion, log p_ngram = 0). The training objective is the cross-entropy
-        of this joint at the hard label,
+        — the joint log-probability of token w given context h equals the LM's
+        log-probability plus λ times the ngram's log-probability, minus a
+        per-position normalizer Z.
 
-            L = − log p_final(label | h)
+        The ngram input arrives as a top-K truncation: we have raw KN
+        log-probs for K specific tokens per position, nothing for the other
+        V−K. To make this a proper full-vocab distribution (which PoE
+        requires), we extend with a **uniform residual**: spread whatever
+        mass isn't in top-K uniformly over the V−K non-top-K tokens. So per
+        position
 
-        which we compute by:
-          1. log_softmax of the LM logits (full-vocabulary log-probs).
-          2. Scatter-add λ * log_p_ngram onto the K candidate positions of
-             the per-position log-prob vector.
-          3. log_softmax again over the modified log-prob vector to renormalize
-             after the bias.
-          4. Negative log-likelihood at the hard label.
+            sum_topK p_ngram = Σ exp(stored log-probs over finite slots)
+            log_residual    = log((1 − sum_topK p_ngram) / (V − K))
+            log p_ngram[w in topK]    = stored value
+            log p_ngram[w not in topK] = log_residual
 
-        Step 3 is necessary because step 2 produces an unnormalized vector
-        (it's a sum of two log-distributions, which is the log of a product
-        and not itself a log-distribution). Re-running log_softmax computes
-        the per-position normalizer log Z and gives proper joint log-probs.
+        With those values, Z decomposes cleanly:
 
-        Note: a more standard implementation skips step 1 and instead
-        scatter-adds onto the raw LM logits, then log_softmax once. That's
-        mathematically equivalent because log_softmax is shift-invariant in
-        its input. We do the explicit log_softmax-first version because the
-        bias values we add live in log-probability space (kenlm log p_ngram),
-        making "add log-prob to log-prob, renormalize" the most direct
-        reading of the joint computation.
+            Z = Σ_topK exp(log p_lm + λ · log p_ngram[w])
+              + Σ_non-topK exp(log p_lm[w] + λ · log_residual)
+              = sum_joint_topk + exp(λ · log_residual) · (1 − sum_lm_topk)
+
+        because the LM log-probs sum to 1 over the full vocab. We compute Z
+        without materializing the (B, S, V) tensor.
+
+        At the gold label position, the bias term is the stored log-prob if
+        the gold ∈ top-K, else log_residual.
         """
         # Upcast logits to fp32 for numerical stability of the log_softmax.
         logits_f32 = get_local_tensor(logits).float()
+        V = logits_f32.size(-1)
+        K = soft_target_log_probs.size(-1)
         # Per-position log-of-sum-of-exponentials normalizer over the full
         # vocabulary. Shape: (sequences in microbatch, positions per sequence).
         log_sum_exp_lm = torch.logsumexp(logits_f32, dim=-1)
-        # Model's full-vocabulary log-probabilities for the K target tokens.
+        # LM full-vocabulary log-probabilities at the K target tokens.
         # Shape: (sequences, positions, K).
         gathered_lm_log_probs = logits_f32.gather(-1, soft_target_token_ids) - log_sum_exp_lm.unsqueeze(-1)
-        # Joint log-probabilities at the K target tokens (unnormalized).
-        # log p_lm + λ · log p_ngram. Shape: (sequences, positions, K).
-        gathered_joint = gathered_lm_log_probs + float(self.poe_lambda) * soft_target_log_probs.float()
 
-        # The model's log-probabilities at NON-top-K tokens: logit - log_sum_exp.
-        # We don't materialize the full (sequences, positions, vocab) tensor.
-        # Instead we compute the joint normalizer Z directly:
-        #   Z = sum_v exp(modified_log_prob[v])
-        #     = sum_{v in top-K} exp(joint[v]) + sum_{v not in top-K} exp(lm_log_prob[v])
-        #     = sum_{v in top-K} exp(joint[v]) + (1 - sum_{v in top-K} exp(lm_log_prob[v]))
-        # because LM log-probs sum to 1 over the full vocab.
+        # Compute log_residual for the uniform-non-top-K extension.
+        soft_target_log_probs_f32 = soft_target_log_probs.float()
+        finite_mask = torch.isfinite(soft_target_log_probs_f32)
+        # Σ p_ngram over finite top-K entries (sentinels contribute 0 via exp(-inf)).
+        masked_log_p_ngram = torch.where(
+            finite_mask, soft_target_log_probs_f32,
+            torch.full_like(soft_target_log_probs_f32, float("-inf")),
+        )
+        sum_topK_ngram_p = torch.exp(masked_log_p_ngram).sum(dim=-1)  # (B, S)
+        # Residual mass per non-top-K token (uniform spread). Clamp for finite log.
+        residual_per_token = (
+            (1.0 - sum_topK_ngram_p).clamp_min(1e-12) / float(V - K)
+        )
+        log_residual = torch.log(residual_per_token)  # (B, S)
+
+        # Joint log-probabilities at top-K target tokens (unnormalized).
+        # For sentinel slots we use -inf so they contribute 0 to sum_joint_topk.
+        ngram_log_p_safe = torch.where(
+            finite_mask, soft_target_log_probs_f32,
+            torch.full_like(soft_target_log_probs_f32, float("-inf")),
+        )
+        gathered_joint = gathered_lm_log_probs + float(self.poe_lambda) * ngram_log_p_safe
+
+        # Compute the joint normalizer Z without materializing (B, S, V):
+        #   Z = sum_joint_topk + exp(λ · log_residual) · (1 − sum_lm_topk)
         sum_lm_topk = torch.exp(gathered_lm_log_probs).sum(dim=-1)  # (B, S)
         sum_joint_topk = torch.exp(gathered_joint).sum(dim=-1)      # (B, S)
-        # Mass left over for non-top-K tokens (no bias applied there).
-        non_topk_mass = (1.0 - sum_lm_topk).clamp_min(0.0)
-        Z = sum_joint_topk + non_topk_mass                           # (B, S)
+        non_topk_lm_mass = (1.0 - sum_lm_topk).clamp_min(0.0)
+        non_topk_contrib = torch.exp(float(self.poe_lambda) * log_residual) * non_topk_lm_mass
+        Z = sum_joint_topk + non_topk_contrib
         log_Z = torch.log(Z.clamp_min(torch.finfo(Z.dtype).tiny))    # (B, S)
 
-        # Final per-position joint log-probabilities for the K target tokens.
-        # Shape: (sequences, positions, K).
-        gathered_joint_log_probs = gathered_joint - log_Z.unsqueeze(-1)
-
-        # Cross-entropy at the hard label. We need the joint log-probability
-        # at the label token. The label might or might not be in the top-K;
-        # cover both cases.
+        # Cross-entropy at the hard label. Look up log p_lm(label) directly,
+        # then add λ · (log p_ngram[label] if in top-K else log_residual).
         labels_dev = labels.to(logits_f32.device, non_blocking=True)
-        # Replace ignore_index entries with 0 so the gather is safe; we mask
-        # them out below.
         safe_labels = labels_dev.clone()
         safe_labels[safe_labels == self.label_ignore_index] = 0
-        # log p_lm at the label token (full vocabulary, not just top-K).
         label_lm_log_probs = logits_f32.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1) - log_sum_exp_lm
 
-        # Where is the label among the K candidates? If yes, the modified
-        # log-prob is gathered_joint_log_probs at that K-index; if no, the
-        # modified log-prob is just log p_lm (no bias) − log Z.
-        # match[b, s] = True at position k_match if soft_target_token_ids[b, s, k_match] == labels[b, s].
         match = soft_target_token_ids == safe_labels.unsqueeze(-1)  # (B, S, K)
+        # match must also fall on a finite slot (sentinel tokens default to 0,
+        # which can spuriously match label 0); only count finite-slot matches.
+        match = match & finite_mask
         any_match = match.any(dim=-1)                                # (B, S)
-        # The bias added at the matching K-index, or 0 if no match.
-        # (Shape (B, S), one per position.)
-        match_bias = torch.where(
-            any_match,
-            (match.to(soft_target_log_probs.dtype) * soft_target_log_probs.float()).sum(dim=-1),
-            torch.zeros_like(label_lm_log_probs),
-        )
-        # log p_final(label | h) = log p_lm(label | h) + λ · log p_ngram(label | h) − log Z.
-        # When the label isn't in top-K, the bias is 0 (consistent with the
-        # uniform-non-top-K approximation we use everywhere in PoE).
+        # Bias at the gold position: stored log-prob if gold ∈ top-K, else log_residual.
+        topk_match_bias = (match.to(soft_target_log_probs_f32.dtype) * ngram_log_p_safe).sum(dim=-1)
+        match_bias = torch.where(any_match, topk_match_bias, log_residual)
         label_joint_log_probs = label_lm_log_probs + float(self.poe_lambda) * match_bias - log_Z
 
         # NLL per position, masked at ignored labels.
