@@ -26,7 +26,10 @@ from olmo_core.data.composable import *  # noqa: F401,F403
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
+import math
+
 from olmo_core.model_ladder import (
+    DeviceMeshSpec,
     ModelLadder,
     Olmo3ModelConfigurator,
     TransformerSize,
@@ -88,17 +91,84 @@ DEFAULT_SOFT_CE_ALPHA_RAMP_FRACTION = 0.5
 DEFAULT_SOFT_CE_TRUNCATION = "renormalize"
 
 
+@dataclasses.dataclass(kw_only=True)
+class _WSDSChinchillaSmoke(WSDSChinchillaRunConfigurator):
+    """Smoke variant of WSDS Chinchilla. Two changes relative to the
+    production configurator:
+
+    1. Relaxes the ``chinchilla_multiple >= 0.5`` floor so we can run very
+       short smokes (e.g. ``--chinchilla-multiple 0.0625``).
+    2. Reduces the anneal-period list to a single anneal at the requested
+       multiple, instead of the production behavior of generating one anneal
+       per power of two from 2^-1 up to ``max_pow``. This keeps the schedule
+       valid when ``chinchilla_multiple < 0.5`` (where the production range
+       would be empty).
+    """
+
+    def __post_init__(self):
+        from olmo_core.exceptions import OLMoConfigurationError
+
+        if self.chinchilla_multiple <= 0:
+            raise OLMoConfigurationError("'chinchilla_multiple' must be positive")
+        if not (0 < self.decay_fraction < 0.5):
+            raise OLMoConfigurationError(
+                "'decay_fraction' must be greater than 0.0 and less than 0.5"
+            )
+        # NOTE: smoke variant intentionally relaxes both the >= 0.5 floor and
+        # the "power of 2" requirement. The WSDS schedule shape doesn't need
+        # those for a single-anneal smoke (we override configure_chinchilla_periods
+        # to use a single period at the requested multiple).
+
+    def configure_chinchilla_periods(self, num_params: int) -> tuple[int, list[float]]:
+        # Smoke runs use a single anneal at the requested multiple. The
+        # production configurator generates one anneal per power of 2 from
+        # 2^-1 up, which produces an empty list when chinchilla_multiple < 0.5.
+        return num_params, [self.chinchilla_multiple]
+
+    def configure_target_batch_size(self, num_params: int) -> int:
+        # Override to a small fixed batch size so each optimizer step is
+        # one or two micro-batches, rather than the production ~475K-tokens
+        # batch which translates to ~30 grad-accum steps per optimizer
+        # step on 1 GPU. With 16K tokens per batch, a 0.0625xC smoke is
+        # ~100 optimizer steps and runs in a few minutes on 1 H100.
+        return 16384
+
+
 @dataclasses.dataclass(kw_only=True, eq=True)
 class NgramSoftTargetConfigurator(Olmo3ModelConfigurator):
     """
     Olmo3 configurator that also plumbs the soft-CE auxiliary-loss fields into
     :class:`TransformerTrainModuleConfig`. Identical to the parent's
-    ``build_train_module`` except for the two extra fields.
+    ``build_train_module`` except for the extra soft-CE / truncation fields.
+
+    When ``smoke_1gpu`` is true, override the parent's hardcoded 8-GPU minimum
+    device-mesh spec to allow a single-GPU smoke. At 190M, microbatch sizing
+    is set by activation memory (the ``(mbz, seq, vocab)`` fp32 tensor
+    materialized in soft-CE / PoE), which is identical on 1 GPU and 8 GPU
+    since FSDP doesn't shard activations. So a 1-GPU smoke faithfully
+    reproduces the per-GPU memory profile of the 8-GPU production run; mbz=2
+    works on both.
     """
 
     soft_ce_alpha_start: float = DEFAULT_SOFT_CE_ALPHA_START
     soft_ce_alpha_ramp_fraction: float = DEFAULT_SOFT_CE_ALPHA_RAMP_FRACTION
     soft_ce_truncation: str = DEFAULT_SOFT_CE_TRUNCATION
+    smoke_1gpu: bool = False
+
+    def configure_minimal_device_mesh_spec(
+        self,
+        *,
+        size_spec,
+        sequence_length,
+        device_type,
+    ) -> DeviceMeshSpec:
+        if self.smoke_1gpu:
+            return DeviceMeshSpec(world_size=1, dp_world_size=1)
+        return super().configure_minimal_device_mesh_spec(
+            size_spec=size_spec,
+            sequence_length=sequence_length,
+            device_type=device_type,
+        )
 
     def build_train_module(
         self,
@@ -171,11 +241,16 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
 
+    smoke_1gpu = getattr(args, "smoke_1gpu", False)
+    # In smoke mode force max_devices=1 so the ladder framework's device-count
+    # check matches the configurator's overridden world_size=1. The user's
+    # --max-gpus value is ignored when --smoke-1gpu is set.
+    max_devices = 1 if smoke_1gpu else args.max_gpus
     ladder = ModelLadder(
         name=args.name,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
         sizes=[s for s in TransformerSize if s.approx_num_params <= 1e9],
-        max_devices=args.max_gpus,
+        max_devices=max_devices,
         device_type=get_gpu_type(args.cluster),
         model_configurator=NgramSoftTargetConfigurator(
             model_construction_kwargs={"sliding_window": None},
@@ -189,9 +264,14 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 args, "soft_ce_alpha_ramp_fraction", DEFAULT_SOFT_CE_ALPHA_RAMP_FRACTION
             ),
             soft_ce_truncation=soft_ce_truncation,
+            smoke_1gpu=smoke_1gpu,
         ),
-        run_configurator=WSDSChinchillaRunConfigurator(
-            chinchilla_multiple=args.chinchilla_multiple
+        run_configurator=(
+            _WSDSChinchillaSmoke(chinchilla_multiple=args.chinchilla_multiple)
+            if smoke_1gpu
+            else WSDSChinchillaRunConfigurator(
+                chinchilla_multiple=args.chinchilla_multiple
+            )
         ),
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,
@@ -251,6 +331,21 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "out-of-top-K gold tokens. The 'uniform_residual' choice also "
             "switches the wrapper to output_log_probs=True so the residual "
             "can be computed at training time."
+        ),
+    )
+    parser.add_argument(
+        "--smoke-1gpu",
+        action="store_true",
+        help=(
+            "Run on a single GPU for fast end-to-end smoke testing. Overrides "
+            "the configurator's hardcoded 8-GPU minimum and forces "
+            "max_devices=1. At 190M, microbatch sizing transfers between "
+            "1-GPU and 8-GPU because the binding memory constraint is "
+            "activation memory (the (mbz, seq, vocab) fp32 tensor in soft-CE "
+            "/ PoE), which doesn't shard under FSDP. Pair with "
+            "--chinchilla-multiple 0.005-0.01 for a ~3-5 minute smoke. "
+            "Doesn't catch distributed-only bugs (NCCL ordering, FSDP shard "
+            "semantics) — those still need the 8-GPU smoke."
         ),
     )
 
