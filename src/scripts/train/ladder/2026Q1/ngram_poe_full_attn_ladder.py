@@ -39,6 +39,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import (
+    DeviceMeshSpec,
     ModelLadder,
     Olmo3ModelConfigurator,
     TransformerSize,
@@ -82,18 +83,66 @@ DEFAULT_SOFT_TARGET_N_MAX = 5
 DEFAULT_POE_LAMBDA = 1.0
 
 
+@dataclasses.dataclass(kw_only=True)
+class _WSDSChinchillaSmoke(WSDSChinchillaRunConfigurator):
+    """Smoke variant of WSDS Chinchilla. Mirrors the one in the soft-target
+    ladder. Three changes vs production: (a) relaxes the chinchilla_multiple
+    >= 0.5 floor and the power-of-2 check; (b) single anneal at the
+    requested multiple instead of one per power of 2 from 2^-1; (c) tiny
+    fixed batch size + minimal warmup so a 1-GPU smoke runs in minutes
+    rather than hours.
+    """
+
+    def __post_init__(self):
+        from olmo_core.exceptions import OLMoConfigurationError
+
+        if self.chinchilla_multiple <= 0:
+            raise OLMoConfigurationError("'chinchilla_multiple' must be positive")
+        if not (0 < self.decay_fraction < 0.5):
+            raise OLMoConfigurationError(
+                "'decay_fraction' must be greater than 0.0 and less than 0.5"
+            )
+
+    def configure_chinchilla_periods(self, num_params: int) -> tuple[int, list[float]]:
+        return 16384, [self.chinchilla_multiple]
+
+    def configure_target_batch_size(self, num_params: int) -> int:
+        return 16384
+
+
 @dataclasses.dataclass(kw_only=True, eq=True)
 class NgramPoEConfigurator(Olmo3ModelConfigurator):
     """
     Olmo3 configurator that plumbs the PoE auxiliary fields into
     :class:`TransformerTrainModuleConfig`. Identical to the parent's
     ``build_train_module`` except for the PoE knobs.
+
+    When ``smoke_1gpu`` is true, override the parent's hardcoded 8-GPU
+    minimum device-mesh spec to allow a 1-GPU smoke. At 190M, microbatch
+    sizing transfers between 1-GPU and 8-GPU because the binding memory
+    constraint is activation memory (not sharded by FSDP).
     """
 
     poe_lambda: float = DEFAULT_POE_LAMBDA
     ngram_table_dir: str = DEFAULT_NGRAM_TABLE_DIR
     soft_target_k: int = DEFAULT_SOFT_TARGET_K
     soft_target_n_max: int = DEFAULT_SOFT_TARGET_N_MAX
+    smoke_1gpu: bool = False
+
+    def configure_minimal_device_mesh_spec(
+        self,
+        *,
+        size_spec,
+        sequence_length,
+        device_type,
+    ) -> DeviceMeshSpec:
+        if self.smoke_1gpu:
+            return DeviceMeshSpec(world_size=1, dp_world_size=1)
+        return super().configure_minimal_device_mesh_spec(
+            size_spec=size_spec,
+            sequence_length=sequence_length,
+            device_type=device_type,
+        )
 
     def build_train_module(
         self,
@@ -164,11 +213,13 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
 
+    smoke_1gpu = getattr(args, "smoke_1gpu", False)
+    max_devices = 1 if smoke_1gpu else args.max_gpus
     ladder = ModelLadder(
         name=args.name,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
         sizes=[s for s in TransformerSize if s.approx_num_params <= 1e9],
-        max_devices=args.max_gpus,
+        max_devices=max_devices,
         device_type=get_gpu_type(args.cluster),
         model_configurator=NgramPoEConfigurator(
             model_construction_kwargs={"sliding_window": None},
@@ -179,9 +230,14 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             ngram_table_dir=getattr(args, "ngram_table_dir", DEFAULT_NGRAM_TABLE_DIR),
             soft_target_k=getattr(args, "soft_target_k", DEFAULT_SOFT_TARGET_K),
             soft_target_n_max=getattr(args, "soft_target_n_max", DEFAULT_SOFT_TARGET_N_MAX),
+            smoke_1gpu=smoke_1gpu,
         ),
-        run_configurator=WSDSChinchillaRunConfigurator(
-            chinchilla_multiple=args.chinchilla_multiple
+        run_configurator=(
+            _WSDSChinchillaSmoke(chinchilla_multiple=args.chinchilla_multiple)
+            if smoke_1gpu
+            else WSDSChinchillaRunConfigurator(
+                chinchilla_multiple=args.chinchilla_multiple
+            )
         ),
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,
@@ -215,6 +271,18 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_SOFT_TARGET_K,
         help="Top-K size for the ngram log-prob bias.",
+    )
+    parser.add_argument(
+        "--smoke-1gpu",
+        action="store_true",
+        help=(
+            "Run on a single GPU for fast end-to-end smoke testing. "
+            "Same semantics as the soft-target ladder's flag — overrides "
+            "the configurator's 8-GPU minimum, forces max_devices=1, "
+            "and swaps in a smoke run-configurator that allows tiny "
+            "chinchilla_multiple values with minimal warmup so a smoke "
+            "completes in minutes. Pair with --chinchilla-multiple ~0.001."
+        ),
     )
 
 
