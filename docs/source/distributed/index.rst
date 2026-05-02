@@ -8,5 +8,6 @@
    :caption: Submodules
 
    checkpoint
+   olmo_symm_mem_backend
    parallel
    utils

@@ -112,5 +112,12 @@ def empty(
     return ext.olmo_symm_empty(tuple(int(dim) for dim in shape), dtype, resolved_device)
 
 
-def rendezvous(tensor: torch.Tensor, *, group: dist.ProcessGroup) -> None:
+def rendezvous(
+    tensor: torch.Tensor,
+    *,
+    group: dist.ProcessGroup,
+    barrier: bool = True,
+) -> None:
     register_group(group, device=tensor.device)
+    if barrier:
+        dist.barrier(group=group)

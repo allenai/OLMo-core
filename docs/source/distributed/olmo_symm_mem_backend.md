@@ -135,6 +135,11 @@ tensor = olmo_symm_mem.empty(shape, dtype=dtype, device=device, group=ep_group)
 olmo_symm_mem.rendezvous(tensor, group=ep_group)
 ```
 
+`rendezvous(..., barrier=True)` registers the group metadata and, by default, runs a process-group
+barrier after allocation. The barrier keeps peers in the same EP group from entering the next
+symmetric allocation while another peer is still finishing the previous one. Callers that can prove
+the allocation sequence is already externally synchronized may pass `barrier=False`.
+
 C++/CUDA extension responsibilities:
 
 - `olmo_symm_get_unique_id()`
@@ -148,6 +153,15 @@ smaller than a PP-stage-local world and matches the current rowwise communicatio
 different EP groups do not communicate through symmetric memory. If a future topology needs several
 EP groups inside one process to share a single NVSHMEM world, the same backend can be extended to
 bootstrap on the PP-stage group and register multiple EP subgroup mappings.
+
+The rowwise CUDA entry points require that the OLMo group is registered. They hard-fail instead of
+falling back to `c10d::symmetric_memory::rendezvous()` so the EP no-sync path cannot silently
+re-enter PyTorch's stock SymmMem allocation assumptions.
+
+EP no-sync also prewarms OLMo-owned symmetric buffers by default
+(`OLMO_OWN_SYMM_PREWARM=1`). Prewarming allocates the per-block/shared symmetric buffers before the
+pipeline dry run, so lazy allocation does not happen inside an interleaved PP schedule. This should
+stay enabled for PP jobs; disabling it is mainly useful for debugging allocation behavior.
 
 ### Example: Current EP-Local Bootstrap
 

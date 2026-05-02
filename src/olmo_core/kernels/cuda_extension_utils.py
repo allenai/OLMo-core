@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -42,6 +43,13 @@ def cuda_arch_tag() -> str:
         return "cpu"
     major, minor = torch.cuda.get_device_capability(torch.cuda.current_device())
     return f"sm{major}{minor}"
+
+
+def torch_extension_abi_tag() -> str:
+    torch_version = re.sub(r"[^0-9A-Za-z]+", "_", torch.__version__).strip("_")
+    cxx11_abi = int(getattr(torch._C, "_GLIBCXX_USE_CXX11_ABI", False))
+    cuda_version = re.sub(r"[^0-9A-Za-z]+", "_", str(torch.version.cuda or "cpu")).strip("_")
+    return f"torch{torch_version}_cu{cuda_version}_cxxabi{cxx11_abi}"
 
 
 def _lock_file_is_open_by_another_process(lock_path: Path) -> Optional[bool]:
@@ -159,7 +167,10 @@ def load_cuda_extension(
 ):
     from torch.utils.cpp_extension import _get_build_directory, load
 
-    ext_name = f"{base_name}_{cuda_arch_tag()}" if with_arch_suffix else base_name
+    ext_name_parts = [base_name, torch_extension_abi_tag()]
+    if with_arch_suffix:
+        ext_name_parts.append(cuda_arch_tag())
+    ext_name = "_".join(ext_name_parts)
     build_directory = _get_build_directory(ext_name, verbose=False)
 
     stale_lock_timeout_s = max(

@@ -345,14 +345,10 @@ class CustomPipelineStage:
         assert source_stage_index >= 0
         assert source_stage_index < self.num_stages
         peer_rank = self.stage_index_to_group_rank[source_stage_index]
-        peer_global_rank = (
-            peer_rank
-            if self.group is None
-            else dist.get_global_rank(self.group, peer_rank)
-        )
-        ops.append(
-            dist.P2POp(p2p_type, recv_buffer, peer_global_rank, self.group)
-        )
+        if self.group is None:
+            ops.append(dist.P2POp(p2p_type, recv_buffer, peer=peer_rank))
+        else:
+            ops.append(dist.P2POp(p2p_type, recv_buffer, group=self.group, group_peer=peer_rank))
 
         return ops
     # ------------------- fwd ---------------------

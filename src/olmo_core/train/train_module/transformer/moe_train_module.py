@@ -39,6 +39,7 @@ from olmo_core.distributed.parallel import (
     DataParallelType,
 )
 from olmo_core.distributed.utils import (
+    backend_supports_cuda,
     get_local_tensor,
     get_reduce_divide_factor,
     get_world_size,
@@ -1586,7 +1587,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             dp_mesh = self.world_mesh["dense"]["dp"]
             ep_mp_group_override: Optional[ProcessGroup] = None
 
-            if dist.get_backend() == "nccl":
+            if backend_supports_cuda():
                 ep_mp_dim = ep_mesh.mesh_dim_names.index(MeshDimName.ep_mp)
                 ep_rank_grid = ep_mesh.mesh
                 if ep_mp_dim != ep_rank_grid.ndim - 1:
@@ -1740,7 +1741,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
 
         if use_olmo_symm:
-            prewarm_olmo = os.getenv("OLMO_OWN_SYMM_PREWARM", "0").lower() not in (
+            prewarm_olmo = os.getenv("OLMO_OWN_SYMM_PREWARM", "1").lower() not in (
                 "",
                 "0",
                 "false",

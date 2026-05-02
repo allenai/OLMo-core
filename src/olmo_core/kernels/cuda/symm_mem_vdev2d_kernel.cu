@@ -1193,10 +1193,10 @@ void rowwise_dispatch_put(
     const std::string& group_name,
     int64_t nblocks) {
   auto* olmo_group = olmo_symm_find_group(group_name);
-  c10::intrusive_ptr<c10d::symmetric_memory::SymmetricMemory> out_hdl;
-  if (olmo_group == nullptr) {
-    out_hdl = c10d::symmetric_memory::rendezvous(out, group_name);
-  }
+  TORCH_CHECK(
+      olmo_group != nullptr,
+      "OLMo rowwise dispatch requires registered OLMo symmetric-memory group ",
+      group_name);
 
   TORCH_CHECK(
       nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
@@ -1238,14 +1238,8 @@ void rowwise_dispatch_put(
   const int* rank_to_pe_dev = nullptr;
   int group_size = 0;
   bool world_within_direct_access = true;
-  if (olmo_group != nullptr) {
-    rank_to_pe_dev = olmo_group->rank_to_pe_dev;
-    group_size = olmo_group->world_size;
-  } else {
-    auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
-    team = team_manager.get_team(group_name, out_hdl->get_rank_to_global_rank());
-    world_within_direct_access = out_hdl->world_within_direct_access();
-  }
+  rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+  group_size = olmo_group->world_size;
   const float* probs_ptr = nullptr;
   if (probs.has_value()) {
     TORCH_CHECK(probs->defined(), "probs optional tensor must be defined");
@@ -1358,10 +1352,10 @@ void rowwise_combine_get(
     int64_t nblocks,
     const std::optional<at::Tensor>& gathered_out) {
   auto* olmo_group = olmo_symm_find_group(group_name);
-  c10::intrusive_ptr<c10d::symmetric_memory::SymmetricMemory> expert_out_hdl;
-  if (olmo_group == nullptr) {
-    expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
-  }
+  TORCH_CHECK(
+      olmo_group != nullptr,
+      "OLMo rowwise combine requires registered OLMo symmetric-memory group ",
+      group_name);
 
   TORCH_CHECK(
       nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
@@ -1436,15 +1430,8 @@ void rowwise_combine_get(
   const int* rank_to_pe_dev = nullptr;
   int group_size = 0;
   bool world_within_direct_access = true;
-  if (olmo_group != nullptr) {
-    rank_to_pe_dev = olmo_group->rank_to_pe_dev;
-    group_size = olmo_group->world_size;
-  } else {
-    auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
-    team =
-        team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
-    world_within_direct_access = expert_out_hdl->world_within_direct_access();
-  }
+  rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+  group_size = olmo_group->world_size;
   maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(gatherRowsGet<true>));
 
   int64_t num_out_rows = out.size(0);
@@ -1555,10 +1542,10 @@ void rowwise_combine_get_fused(
     const std::string& group_name,
     int64_t nblocks) {
   auto* olmo_group = olmo_symm_find_group(group_name);
-  c10::intrusive_ptr<c10d::symmetric_memory::SymmetricMemory> expert_out_hdl;
-  if (olmo_group == nullptr) {
-    expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
-  }
+  TORCH_CHECK(
+      olmo_group != nullptr,
+      "OLMo rowwise fused combine requires registered OLMo symmetric-memory group ",
+      group_name);
 
   TORCH_CHECK(
       nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
@@ -1618,15 +1605,8 @@ void rowwise_combine_get_fused(
   const int* rank_to_pe_dev = nullptr;
   int group_size = 0;
   bool world_within_direct_access = true;
-  if (olmo_group != nullptr) {
-    rank_to_pe_dev = olmo_group->rank_to_pe_dev;
-    group_size = olmo_group->world_size;
-  } else {
-    auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
-    team =
-        team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
-    world_within_direct_access = expert_out_hdl->world_within_direct_access();
-  }
+  rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+  group_size = olmo_group->world_size;
   maybe_init_nvshmem_cumodule(
       reinterpret_cast<const void*>(combineRowsGetKernel<float, false>));
 
@@ -1714,10 +1694,10 @@ void rowwise_gather_get(
     const std::string& group_name,
     int64_t nblocks) {
   auto* olmo_group = olmo_symm_find_group(group_name);
-  c10::intrusive_ptr<c10d::symmetric_memory::SymmetricMemory> expert_out_hdl;
-  if (olmo_group == nullptr) {
-    expert_out_hdl = c10d::symmetric_memory::rendezvous(expert_out, group_name);
-  }
+  TORCH_CHECK(
+      olmo_group != nullptr,
+      "OLMo rowwise gather requires registered OLMo symmetric-memory group ",
+      group_name);
 
   TORCH_CHECK(
       nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
@@ -1761,15 +1741,8 @@ void rowwise_gather_get(
   const int* rank_to_pe_dev = nullptr;
   int group_size = 0;
   bool world_within_direct_access = true;
-  if (olmo_group != nullptr) {
-    rank_to_pe_dev = olmo_group->rank_to_pe_dev;
-    group_size = olmo_group->world_size;
-  } else {
-    auto& team_manager = c10d::nvshmem_extension::TeamManager::get(device);
-    team =
-        team_manager.get_team(group_name, expert_out_hdl->get_rank_to_global_rank());
-    world_within_direct_access = expert_out_hdl->world_within_direct_access();
-  }
+  rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+  group_size = olmo_group->world_size;
   // rowwise_gather_get is used by combine-2d-offset, where dropped routes are
   // masked downstream by packed_keep_mask. Skipping per-route zero-fill here
   // avoids substantial extra work on ranks with more dropped routes.
