@@ -21,9 +21,13 @@ from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
+from olmo_core.internal.smoke import (
+    Olmo3SmokeConfigurator,
+    WSDSChinchillaSmoke,
+    add_smoke_args,
+)
 from olmo_core.model_ladder import (
     ModelLadder,
-    Olmo3ModelConfigurator,
     TransformerSize,
     WSDSChinchillaRunConfigurator,
 )
@@ -75,20 +79,26 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ),
     ]
 
+    smoke_1gpu = getattr(args, "smoke_1gpu", False)
     ladder = ModelLadder(
         name=args.name,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
         sizes=[s for s in TransformerSize if s.approx_num_params <= 1e9],
-        max_devices=args.max_gpus,
+        max_devices=1 if smoke_1gpu else args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=Olmo3ModelConfigurator(
+        model_configurator=Olmo3SmokeConfigurator(
             model_construction_kwargs={"sliding_window": None},
             rank_microbatch_size=None
             if args.rank_mbz is None
             else args.rank_mbz * args.sequence_length,
+            smoke_1gpu=smoke_1gpu,
         ),
-        run_configurator=WSDSChinchillaRunConfigurator(
-            chinchilla_multiple=args.chinchilla_multiple
+        run_configurator=(
+            WSDSChinchillaSmoke(chinchilla_multiple=args.chinchilla_multiple)
+            if smoke_1gpu
+            else WSDSChinchillaRunConfigurator(
+                chinchilla_multiple=args.chinchilla_multiple
+            )
         ),
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,
@@ -103,4 +113,4 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
 
 if __name__ == "__main__":
-    main(configure_ladder)
+    main(configure_ladder, add_additional_args=add_smoke_args)
