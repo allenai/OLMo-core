@@ -933,10 +933,19 @@ class TransformerTrainModule(TrainModule):
         )
         sum_topK_ngram_p = torch.exp(masked_log_p).sum(dim=-1, keepdim=True)  # (B, S, 1)
         # Residual mass distributed uniformly over the V−K non-top-K tokens.
-        # Clamp to a small ε so log is finite even if top-K covers all mass.
-        residual_per_token = (
-            (1.0 - sum_topK_ngram_p).clamp_min(1e-12) / float(V - K)
-        )
+        # Cap sum_topK_ngram_p at (1 − 1/V) so residual_per_token ≥ 1/(V·(V−K)),
+        # i.e. log_residual ≥ −log(V·(V−K)) ≈ −2·log V ≈ −23 (V=100K). Without
+        # this cap, KN smoothing artifacts at build time can produce
+        # sum_topK_ngram_p > 1 due to floating-point drift, causing the old
+        # ``clamp_min(1e-12)`` to push log_residual to ≈ −28 and producing huge
+        # gradient cliffs at affected positions (the optimizer sees the joint
+        # distribution flip violently between "top-K covers everything" and
+        # "uniform-residual" depending on numerical noise). Capping ensures the
+        # residual always represents at least 1/V of the non-top-K mass per
+        # token, which is a sensible floor — every token in vocab is
+        # "at least uniform-prior likely".
+        sum_topK_ngram_p_capped = sum_topK_ngram_p.clamp_max(1.0 - 1.0 / float(V))
+        residual_per_token = (1.0 - sum_topK_ngram_p_capped) / float(V - K)
         log_residual = torch.log(residual_per_token)  # (B, S, 1)
         # Bias to scatter onto top-K logits. Sentinel slots get 0.
         scatter_bias = torch.where(
@@ -1210,7 +1219,13 @@ class TransformerTrainModule(TrainModule):
             )
             top_k_p = torch.exp(log_p_ngram_safe)               # (B, S, K), 0 at sentinels
             sum_top_k_p = top_k_p.sum(dim=-1)                   # (B, S)
-            residual_total = (1.0 - sum_top_k_p).clamp_min(0.0) # (B, S)
+            # Cap sum_top_k_p ≤ 1 − 1/V to avoid residual_total < 0 due to KN
+            # smoothing drift; matches the cap in the PoE wrapper paths. With
+            # the cap, residual_total ≥ 1/V, and the non-top-K CE term keeps a
+            # well-defined small contribution at positions where the ngram
+            # numerically claims top-K covers everything.
+            sum_top_k_p = sum_top_k_p.clamp_max(1.0 - 1.0 / float(V))
+            residual_total = (1.0 - sum_top_k_p)                # (B, S), guaranteed ≥ 1/V
 
             # Real-top-K count per position (K minus the number of sentinels).
             K_real = finite_mask_f.sum(dim=-1)                  # (B, S)
@@ -1308,10 +1323,16 @@ class TransformerTrainModule(TrainModule):
             torch.full_like(soft_target_log_probs_f32, float("-inf")),
         )
         sum_topK_ngram_p = torch.exp(masked_log_p_ngram).sum(dim=-1)  # (B, S)
-        # Residual mass per non-top-K token (uniform spread). Clamp for finite log.
-        residual_per_token = (
-            (1.0 - sum_topK_ngram_p).clamp_min(1e-12) / float(V - K)
-        )
+        # Residual mass per non-top-K token (uniform spread). Cap
+        # sum_topK_ngram_p ≤ 1 − 1/V so log_residual is bounded below by
+        # −log(V·(V−K)) ≈ −2·log V (≈ −23 at V=100K). This protects against
+        # KN smoothing drift at build time producing sum_topK_ngram_p > 1,
+        # which would otherwise make log_residual ≈ log(eps) ≈ −28 at
+        # affected positions and create gradient cliffs that the optimizer
+        # sees as massive instability. See the matching cap in
+        # ``_apply_poe_eval_bias`` for the same rationale.
+        sum_topK_ngram_p_capped = sum_topK_ngram_p.clamp_max(1.0 - 1.0 / float(V))
+        residual_per_token = (1.0 - sum_topK_ngram_p_capped) / float(V - K)
         log_residual = torch.log(residual_per_token)  # (B, S)
 
         # Joint log-probabilities at top-K target tokens (unnormalized).
