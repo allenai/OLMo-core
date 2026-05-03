@@ -95,6 +95,7 @@ class CustomPipelineStage:
 
         # Whether this stage is using replicate (composable) DDP, affects how to control gradient sync in backward
         self.is_rddp: bool = kwargs.pop("is_rddp", False)
+        p2p_group: Optional[dist.ProcessGroup] = kwargs.pop("p2p_group", None)
 
         # the model
         self.submod = submodule
@@ -110,6 +111,7 @@ class CustomPipelineStage:
         
         # PP process group
         self.group = group
+        self.p2p_group = p2p_group if p2p_group is not None else group
 
         # hidden states size, used for creating p2p buffers
         d_model = getattr(submodule, 'd_model', None)
@@ -122,6 +124,23 @@ class CustomPipelineStage:
         # `group_rank` is rank in process group `group`.
         self.group_rank = dist.get_rank(self.group)
         self.group_size = dist.get_world_size(self.group)
+        self.p2p_group_rank = dist.get_rank(self.p2p_group)
+        self.p2p_group_size = dist.get_world_size(self.p2p_group)
+        if self.p2p_group_rank != self.group_rank or self.p2p_group_size != self.group_size:
+            raise RuntimeError(
+                "Pipeline P2P group must have the same rank order and size as the PP group; "
+                f"got PP rank/size {self.group_rank}/{self.group_size}, "
+                f"P2P rank/size {self.p2p_group_rank}/{self.p2p_group_size}"
+            )
+        for group_peer in range(self.group_size):
+            pp_global_rank = dist.get_global_rank(self.group, group_peer)
+            p2p_global_rank = dist.get_global_rank(self.p2p_group, group_peer)
+            if p2p_global_rank != pp_global_rank:
+                raise RuntimeError(
+                    "Pipeline P2P group must have the same global-rank order as the PP group; "
+                    f"group_peer={group_peer}, PP global rank={pp_global_rank}, "
+                    f"P2P global rank={p2p_global_rank}"
+                )
         if self.group_size > self.num_stages:
             raise RuntimeError(
                 f"Pipeline group size {self.group_size} cannot be larger than number of stages {self.num_stages}"
@@ -345,18 +364,65 @@ class CustomPipelineStage:
         assert source_stage_index >= 0
         assert source_stage_index < self.num_stages
         peer_rank = self.stage_index_to_group_rank[source_stage_index]
-        if self.group is None:
+        if peer_rank == self.group_rank:
+            return ops
+        if self.p2p_group is None:
             ops.append(dist.P2POp(p2p_type, recv_buffer, peer=peer_rank))
         else:
-            ops.append(dist.P2POp(p2p_type, recv_buffer, group=self.group, group_peer=peer_rank))
+            ops.append(
+                dist.P2POp(
+                    p2p_type,
+                    recv_buffer,
+                    group=self.p2p_group,
+                    group_peer=peer_rank,
+                )
+            )
 
         return ops
+
+    def has_local_forward_dst(self) -> bool:
+        return (
+            not self.is_last
+            and self.stage_index_to_group_rank[self.stage_index + 1] == self.group_rank
+        )
+
+    def has_local_forward_src(self) -> bool:
+        return (
+            not self.is_first
+            and self.stage_index_to_group_rank[self.stage_index - 1] == self.group_rank
+        )
+
+    def has_local_backward_dst(self) -> bool:
+        return (
+            not self.is_first
+            and self.stage_index_to_group_rank[self.stage_index - 1] == self.group_rank
+        )
+
+    def has_local_backward_src(self) -> bool:
+        return (
+            not self.is_last
+            and self.stage_index_to_group_rank[self.stage_index + 1] == self.group_rank
+        )
+
+    def pop_forward_handoff_tensor(self, fwd_chunk_id: int) -> torch.Tensor:
+        return self.fwd_cache[fwd_chunk_id][1].detach()
+
+    def pop_backward_handoff_tensor(self, bwd_chunk_id: int) -> torch.Tensor:
+        return self.bwd_cache.pop(bwd_chunk_id).detach()
+
+    def set_local_forward_input(self, fwd_chunk_id: int, tensor: torch.Tensor) -> None:
+        self.received_activations[fwd_chunk_id] = tensor
+
+    def set_local_backward_grad(self, bwd_chunk_id: int, tensor: torch.Tensor) -> None:
+        self.received_grads[bwd_chunk_id] = tensor
     # ------------------- fwd ---------------------
     def get_fwd_recv_ops(self, fwd_chunk_id: int) -> List[dist.P2POp]:
         if self.is_first:
             return []
         
         source_stage_index = self.stage_index - 1
+        if self.stage_index_to_group_rank[source_stage_index] == self.group_rank:
+            return []
         meta = self.inputs_meta
         assert meta is not None
         recv_buffer = _make_tensor_from_meta(meta, self.device)
@@ -372,6 +438,8 @@ class CustomPipelineStage:
             return []
         
         dst_stage_index = self.stage_index + 1
+        if self.stage_index_to_group_rank[dst_stage_index] == self.group_rank:
+            return []
         meta = self.outputs_meta
         assert meta is not None
         buffer = self.fwd_cache[fwd_chunk_id][1]  # stage_output
@@ -392,6 +460,8 @@ class CustomPipelineStage:
         
         dest_stage_index = self.stage_index - 1
         assert dest_stage_index >= 0
+        if self.stage_index_to_group_rank[dest_stage_index] == self.group_rank:
+            return []
 
         meta = self.inputs_meta # in backward, send grad has the same shape as stage input
         assert meta is not None
@@ -412,6 +482,8 @@ class CustomPipelineStage:
 
         source_stage_index = self.stage_index + 1
         assert source_stage_index < self.num_stages
+        if self.stage_index_to_group_rank[source_stage_index] == self.group_rank:
+            return []
 
 
         meta = self.outputs_meta # in backward, recv grad has the same shape as stage output

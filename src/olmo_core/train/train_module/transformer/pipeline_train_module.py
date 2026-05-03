@@ -150,9 +150,16 @@ class TransformerPipelineTrainModule(TrainModule):
         self.pp_prev_rank = (self.pp_group_rank - 1) % self.pp_group_size
         self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
         self.pp_final_stage_rank = self._pp_config.final_stage_rank()
+        pp_p2p_group = pp_config.build_p2p_process_group(self.world_mesh)
 
         # Split model into pipeline stages.
-        stages, model_parts = pp_config.split_model(model, pp_mesh=self.pp_mesh, device=self.device, use_ddp=(self.dp_world_size > 1 and dp_config.name == "ddp"))
+        stages, model_parts = pp_config.split_model(
+            model,
+            pp_mesh=self.pp_mesh,
+            device=self.device,
+            use_ddp=(self.dp_world_size > 1 and dp_config.name == "ddp"),
+            p2p_group=pp_p2p_group,
+        )
         self._pp_stages = stages
         log.info(
             f"Applied pipeline parallelism to the model with {get_device_mesh_info(self.pp_mesh)}"
@@ -267,6 +274,7 @@ class TransformerPipelineTrainModule(TrainModule):
             schedule_name=self._pp_config.schedule,
             loss_fn=self.loss_fn,
             num_microbatches=num_microbatches,
+            forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
         )
 
     def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:

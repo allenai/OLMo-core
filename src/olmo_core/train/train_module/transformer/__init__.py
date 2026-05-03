@@ -17,6 +17,7 @@ from .moe_train_module import MoEV2TransformerTrainModule
 from .pipeline.pipeline_schedule import (
     CustomPipelineStage,
     # CustomSchedule1F1B,
+    CustomSchedule1F1BV,
     CustomScheduleInterleaved1F1B,
 )
 
@@ -35,6 +36,7 @@ __all__ = [
     "TransformerPipelineParallelConfig",
     "CustomPipelineStage",
     # "CustomSchedule1F1B",
+    "CustomSchedule1F1BV",
     "CustomScheduleInterleaved1F1B",
     "MoEV2TransformerTrainModule",
     "MoEV2TransformerTrainModuleConfig"

@@ -6,7 +6,7 @@ import os
 
 # Keep this before any olmo_core imports: several modules import nvtx at import
 # time, and NVTX_DISABLE only works if it is set before nvtx is imported.
-USE_NV_PROFILE = False
+USE_NV_PROFILE = True
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
@@ -110,8 +110,8 @@ if sys.argv[1] == "eval_checkpoints":
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 1000
 
-NUM_EXPERTS = 64
-TOP_K = 4
+NUM_EXPERTS = 8
+TOP_K = 2
 D_MODEL=2560
 D_ATTN=2560 + 512
 
@@ -120,7 +120,7 @@ NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
 MOE_HIDDEN_SIZE = 2560 + 512
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2048 + 512  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560 + 512  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -129,7 +129,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=1
 PP_DIM=4
 
 # ref
@@ -141,7 +141,7 @@ LR_ALPHA = 0.53
 # stage 1 - 1M - 
 MAX_DURATION = int(100e9)
 MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 4) * 1
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
@@ -181,10 +181,10 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=32
+NUM_LAYERS=40
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=1
+    MINUS_LAST_STAGE=2
     NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
@@ -442,9 +442,14 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             # schedule=PipelineScheduleType.custom_1F1B,
-            schedule=PipelineScheduleType.custom_interleaved_1F1B,
+            schedule=PipelineScheduleType.custom_1F1B_V,  # V placement for comparison against interleaved 1F1B
+            # schedule=PipelineScheduleType.custom_interleaved_1F1B,
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
-            split_points=SPLIT_POINTS
+            p2p_use_separate_group=True,
+            # p2p_nccl_min_ctas=1,
+            # p2p_nccl_max_ctas=2,
+            # forward_pull_ahead_extra_activations=[1, 0, 1, 1],
+            split_points=SPLIT_POINTS,
         ) if PP_DIM > 1 else None,
 
         float8_config=None,
@@ -536,8 +541,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=1021,
-                                   end=1026
+                                   start=2061,
+                                   end=2065
             )
         )
         .with_callback(

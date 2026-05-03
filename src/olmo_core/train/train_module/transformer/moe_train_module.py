@@ -605,6 +605,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 stages=self._pp_stages,
                 pp_mesh=pp_mesh,
                 schedule_name=self._pp_config.schedule,
+                forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
 
                 num_microbatches=num_microbatches,
             )
@@ -1536,13 +1537,15 @@ class MoEV2TransformerTrainModule(TrainModule):
             self.pp_prev_rank = (self.pp_group_rank - 1) % self.pp_group_size
             self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
             self.pp_final_stage_rank = pp_config.final_stage_rank()
+            pp_p2p_group = pp_config.build_p2p_process_group(self.world_mesh["dense"])
 
             # Split model into pipeline stages.
             model.purge_cuda_events() # set event to None so that can be deepcopied
             
             stages_and_model_parts = pp_config.split_model(
                 model, pp_mesh=self.pp_mesh, device=self.device, 
-                use_ddp=self.world_mesh['dense']['dp'].size() > 1
+                use_ddp=self.world_mesh['dense']['dp'].size() > 1,
+                p2p_group=pp_p2p_group,
             )
             stages = stages_and_model_parts[0]
 

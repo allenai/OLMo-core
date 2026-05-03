@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
@@ -94,7 +95,13 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         return splits
 
     def split_model(
-        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device, use_ddp: bool = False
+        self,
+        model: Transformer,
+        *,
+        pp_mesh: DeviceMesh,
+        device: torch.device,
+        use_ddp: bool = False,
+        p2p_group: Optional[dist.ProcessGroup] = None,
     ) -> Tuple[List[PipelineStage], List[Transformer]]:
         split_points = self.get_split_points(model.n_layers)
         pp_rank = pp_mesh.get_local_rank()
@@ -134,6 +141,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
                     device,
                     is_rddp=use_ddp,
                     group=pp_mesh.get_group("pp"),
+                    p2p_group=p2p_group,
                 )
             else:
                 stage = PipelineStage(

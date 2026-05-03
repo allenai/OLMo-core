@@ -3,7 +3,7 @@
 import torch
 import torch.distributed as dist
 from collections import Counter, defaultdict
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, NamedTuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union, NamedTuple
 from enum import Enum
 from torch.fx.node import Argument
 import re
@@ -137,6 +137,13 @@ class PipelineAction(NamedTuple):
 
 
 class CustomScheduleInterleaved1F1B():
+    placement_style = "loop"
+    enable_activation_offload_schedule = True
+    enable_p2p_overlap = True
+    p2p_overlap_kinds = frozenset(("F", "B"))
+    p2p_overlap_ops = frozenset(("F_SEND", "F_RECV", "B_SEND", "B_RECV"))
+    max_p2p_overlap_steps: Optional[int] = 1
+    prioritize_next_action_input_p2p = False
         
     def reset_n_microbatches(self, n_microbatches: int):
         self._n_microbatches = n_microbatches
@@ -158,6 +165,7 @@ class CustomScheduleInterleaved1F1B():
         args_chunk_spec: Optional[Any] = None,
         kwargs_chunk_spec: Optional[dict[str, Any]] = None,
         output_merge_spec: Optional[Union[dict[str, Any], tuple[Any]]] = None,
+        forward_pull_ahead_extra_activations: int | Sequence[int] | Mapping[int, int] = 0,
 
     ):
         self.pp_group_size = stages[0].group_size
@@ -168,6 +176,7 @@ class CustomScheduleInterleaved1F1B():
         # Chunking specification for keyword inputs. (default: `None`)
         self._kwargs_chunk_spec = kwargs_chunk_spec
         self._output_merge_spec = output_merge_spec
+        self.forward_pull_ahead_extra_activations = forward_pull_ahead_extra_activations
 
 
         logger.info("Using %s", self.__class__.__name__)
@@ -177,9 +186,12 @@ class CustomScheduleInterleaved1F1B():
         self._num_stages = stages[0].num_stages
         self.pp_group_size = stages[0].group_size
         self.rank = stages[0].group_rank
+        self.uses_separate_p2p_group = any(
+            stage.p2p_group is not stage.group for stage in stages
+        )
         # Set the pipeline stage states
         self.stage_index_to_group_rank = generate_stage_to_rank_mapping(
-            self.pp_group_size, self._num_stages
+            self.pp_group_size, self._num_stages, style=self.placement_style
         )
         for stage in self._stages:
             stage.stage_index_to_group_rank = self.stage_index_to_group_rank
@@ -210,9 +222,11 @@ class CustomScheduleInterleaved1F1B():
         self.reset_n_microbatches(n_microbatches)
 
 
-        self.stage_index_to_group_rank: dict[int, int] = {}
-        for stage_idx in range(self._num_stages):
-            self.stage_index_to_group_rank[stage_idx] = stage_idx % self.pp_group_size
+        self.stage_index_to_group_rank = generate_stage_to_rank_mapping(
+            self.pp_group_size, self._num_stages, style=self.placement_style
+        )
+        for stage in self._stages:
+            stage.stage_index_to_group_rank = self.stage_index_to_group_rank
 
         target_pp_group_rank =  (self.pp_group_size - 1) - self.rank # rank in the pp group
         target_global_rank = torch.distributed.get_global_rank(stages[0].group, target_pp_group_rank) # global rank
@@ -225,13 +239,15 @@ class CustomScheduleInterleaved1F1B():
         # 1. Create the pipeline_order (all ranks do this calculation)
         # This will be used to keep track of the current state of the entire pipeline
         # pipeline_order[rank] = [Action(computation_type, microbatch_index, stage_index), ...]
+        self.pipeline_order_source = "interleaved_1f1b_loop"
         self.pipeline_order: dict[int, list[Optional[PipelineAction]]] = {}
         for rank in range(self.pp_group_size):
             rank_ops = self._calculate_single_rank_operations(rank)
             self.pipeline_order[rank] = rank_ops
 
         self.pipeline_order = pad_to_max_length(self.pipeline_order)
-        self.pipeline_order = configure_offload(self.pipeline_order)
+        if self.enable_activation_offload_schedule:
+            self.pipeline_order = configure_offload(self.pipeline_order)
 
     def _initialize_stages(self, args_mb: tuple[Any, ...], kwargs_mb):
 
@@ -242,6 +258,10 @@ class CustomScheduleInterleaved1F1B():
         dummy = torch.tensor(1.0).to(torch.cuda.current_device())
         dist.all_reduce(dummy, group=self._stages[0].group)
         assert dummy.item() == self.pp_group_size
+        if self.uses_separate_p2p_group:
+            dummy = torch.tensor(1.0).to(torch.cuda.current_device())
+            dist.all_reduce(dummy, group=self._stages[0].p2p_group)
+            assert dummy.item() == self.pp_group_size
 
         self._stages_initialized = True
 
@@ -389,6 +409,28 @@ class CustomScheduleInterleaved1F1B():
         for stage in self._stages:
             stage.clear_step_info()
 
+    def _maybe_local_forward_handoff(
+        self,
+        stage: CustomPipelineStage,
+        mb_index: int,
+        stage_index_to_stage: dict[int, CustomPipelineStage],
+    ) -> None:
+        if not stage.has_local_forward_dst():
+            return
+        dst_stage = stage_index_to_stage[stage.stage_index + 1]
+        dst_stage.set_local_forward_input(mb_index, stage.pop_forward_handoff_tensor(mb_index))
+
+    def _maybe_local_backward_handoff(
+        self,
+        stage: CustomPipelineStage,
+        mb_index: int,
+        stage_index_to_stage: dict[int, CustomPipelineStage],
+    ) -> None:
+        if not stage.has_local_backward_dst():
+            return
+        dst_stage = stage_index_to_stage[stage.stage_index - 1]
+        dst_stage.set_local_backward_grad(mb_index, stage.pop_backward_handoff_tensor(mb_index))
+
     def _step_microbatches(
         self,
         arg_mbs: list,
@@ -423,11 +465,85 @@ class CustomScheduleInterleaved1F1B():
         # count either full_backward or backward_weight together, to determine when to sync DP grads
         backward_counter: Counter[int] = Counter()
         forward_counter: Counter[int] = Counter()
-        handles = []
         past_first_backward = False
+        outstanding_p2p: dict[
+            tuple[str, int, int, int],
+            list[tuple[Any, dist.P2POp, str, int]],
+        ] = defaultdict(list)
+
+        def p2p_launch_label(
+            key: tuple[str, int, int, int],
+            peer_keyed_ops: list[tuple[tuple[str, int, int, int], str, dist.P2POp]],
+        ) -> str:
+            kind, src_stage, dst_stage, mb_index = key
+            labels = set()
+            for _key, op_kind, _op in peer_keyed_ops:
+                if op_kind.endswith("SEND"):
+                    labels.add(f"{src_stage}{kind}{mb_index}-S")
+                else:
+                    labels.add(f"{dst_stage}{kind}{mb_index}-R")
+            return ",".join(sorted(labels))
+
+        def wait_p2p_key(key: tuple[str, int, int, int]) -> None:
+            for handle, _op, _op_kind, _launch_step in outstanding_p2p.pop(key, []):
+                handle.wait()
+
+        def wait_all_p2p() -> None:
+            for key in list(outstanding_p2p):
+                wait_p2p_key(key)
+
+        def wait_p2p_ops(op_kinds: set[str] | frozenset[str]) -> None:
+            for key in list(outstanding_p2p):
+                pending = outstanding_p2p.pop(key)
+                still_pending: list[tuple[Any, dist.P2POp, str, int]] = []
+                for handle, op, op_kind, launch_step in pending:
+                    if op_kind in op_kinds:
+                        handle.wait()
+                    else:
+                        still_pending.append((handle, op, op_kind, launch_step))
+                if still_pending:
+                    outstanding_p2p[key] = still_pending
+
+        def prune_completed_p2p() -> None:
+            for key, entries in list(outstanding_p2p.items()):
+                pending: list[tuple[Any, dist.P2POp, str, int]] = []
+                for handle, op, op_kind, launch_step in entries:
+                    if handle.is_completed():
+                        handle.wait()
+                    else:
+                        pending.append((handle, op, op_kind, launch_step))
+                if pending:
+                    outstanding_p2p[key] = pending
+                else:
+                    outstanding_p2p.pop(key, None)
+
+        def wait_p2p_launched_at_or_before(time_step: int) -> None:
+            for key in list(outstanding_p2p):
+                pending = outstanding_p2p.pop(key)
+                still_pending: list[tuple[Any, dist.P2POp, str, int]] = []
+                for handle, op, op_kind, launch_step in pending:
+                    if launch_step <= time_step:
+                        handle.wait()
+                    else:
+                        still_pending.append((handle, op, op_kind, launch_step))
+                if still_pending:
+                    outstanding_p2p[key] = still_pending
+
+        def wait_for_action_inputs(action: PipelineAction) -> None:
+            assert action.microbatch_index is not None
+            stage = stage_index_to_stage[action.stage_index]
+            mb_index = action.microbatch_index
+            if action.computation_type == PipelineActionType.FORWARD:
+                if not stage.is_first and not stage.has_local_forward_src():
+                    wait_p2p_key(("F", action.stage_index - 1, action.stage_index, mb_index))
+            elif action.computation_type == PipelineActionType.FULL_BACKWARD:
+                if not forward_only and not stage.is_last and not stage.has_local_backward_src():
+                    wait_p2p_key(("B", action.stage_index + 1, action.stage_index, mb_index))
+
         # reload_event: Optional[torch.cuda.Event] = None
         for time_step, action in enumerate(self.pipeline_order[self.rank]):
             # print(f'{action}-Start')
+            prune_completed_p2p()
 
             # do a 1-step lookahead prefetch if needed
             next_action = self.pipeline_order[self.rank][time_step + 1] if time_step + 1 < len(self.pipeline_order[self.rank]) else None
@@ -436,8 +552,9 @@ class CustomScheduleInterleaved1F1B():
                 _ = self.gpu_activation_offloader.async_reload(f"{next_action.stage_index}F{next_action.microbatch_index}") # in saving, using "F" group for both F and B
                 debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
 
-            ops: list[dist.P2POp] = []
+            keyed_ops: list[tuple[tuple[str, int, int, int], str, dist.P2POp]] = []
             if action is not None:
+                wait_for_action_inputs(action)
                 computation_type = action.computation_type
                 mb_index = action.microbatch_index
                 stage_index = action.stage_index
@@ -467,7 +584,15 @@ class CustomScheduleInterleaved1F1B():
                             _ = self.gpu_activation_offloader.async_offload(offload_group)
                             debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
                     # self._maybe_compute_loss(stage, output, target_mbs, mb_index)
-                    ops.extend(stage.get_fwd_send_ops(mb_index))
+                    self._maybe_local_forward_handoff(stage, mb_index, stage_index_to_stage)
+                    keyed_ops.extend(
+                        (
+                            ("F", stage_index, stage_index + 1, mb_index),
+                            "F_SEND",
+                            op,
+                        )
+                        for op in stage.get_fwd_send_ops(mb_index)
+                    )
                 elif computation_type == PipelineActionType.FULL_BACKWARD:
                     if forward_only:
                         # in forward only (eval) mode, skip backward computation, but need to free fwd_cache wihch
@@ -502,7 +627,15 @@ class CustomScheduleInterleaved1F1B():
                             debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
                             self.gpu_activation_offloader.manual_release_group(f"{action.stage_index}F{action.microbatch_index}")
                             debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
-                        ops.extend(stage.get_bwd_send_ops(mb_index))
+                        self._maybe_local_backward_handoff(stage, mb_index, stage_index_to_stage)
+                        keyed_ops.extend(
+                            (
+                                ("B", stage_index, stage_index - 1, mb_index),
+                                "B_SEND",
+                                op,
+                            )
+                            for op in stage.get_bwd_send_ops(mb_index)
+                        )
                         past_first_backward = True
                 elif computation_type == PipelineActionType.FULL_BACKWARD_CONT:
                     # continuation of full backward, no computation
@@ -534,7 +667,14 @@ class CustomScheduleInterleaved1F1B():
                         # If not the last stage, then receive fwd activations
                         if stage_index + 1 in stage_index_to_stage:
                             stage = stage_index_to_stage[stage_index + 1]
-                            ops.extend(stage.get_fwd_recv_ops(mb_index))
+                            keyed_ops.extend(
+                                (
+                                    ("F", stage_index, stage_index + 1, mb_index),
+                                    "F_RECV",
+                                    op,
+                                )
+                                for op in stage.get_fwd_recv_ops(mb_index)
+                            )
                     elif computation_type == PipelineActionType.FULL_BACKWARD:
                         # Previous rank doing backward has no influence for the current rank forward recv
                         pass
@@ -580,39 +720,128 @@ class CustomScheduleInterleaved1F1B():
                             # If not the first stage, then receive bwd gradients
                             if stage_index - 1 in stage_index_to_stage:
                                 stage = stage_index_to_stage[stage_index - 1]
-                                ops.extend(stage.get_bwd_recv_ops(mb_index))
+                                keyed_ops.extend(
+                                    (
+                                        ("B", stage_index, stage_index - 1, mb_index),
+                                        "B_RECV",
+                                        op,
+                                    )
+                                    for op in stage.get_bwd_recv_ops(mb_index)
+                                )
                     else:
                         raise ValueError(
                             f"Unknown computation type {computation_type}"
                         )
 
-            # at the end of step N, wait for the N-1 communication to finish, because N+1 compute may use the data from N-1 communication (F-B-F)
-            if handles:
-                for handle in handles:
-                    handle.wait()
-                handles.clear()
+            if keyed_ops:
+                keyed_ops_by_peer_and_key: dict[
+                    tuple[int, tuple[str, int, int, int]],
+                    list[tuple[tuple[str, int, int, int], str, dist.P2POp]],
+                ] = defaultdict(list)
+                next_action_input_keys: set[tuple[str, int, int, int]] = set()
+                if next_action is not None and next_action.microbatch_index is not None:
+                    next_stage = stage_index_to_stage[next_action.stage_index]
+                    next_mb_index = next_action.microbatch_index
+                    if next_action.computation_type == PipelineActionType.FORWARD:
+                        if not next_stage.is_first and not next_stage.has_local_forward_src():
+                            next_action_input_keys.add(
+                                ("F", next_action.stage_index - 1, next_action.stage_index, next_mb_index)
+                            )
+                    elif next_action.computation_type == PipelineActionType.FULL_BACKWARD:
+                        if (
+                            not forward_only
+                            and not next_stage.is_last
+                            and not next_stage.has_local_backward_src()
+                        ):
+                            next_action_input_keys.add(
+                                ("B", next_action.stage_index + 1, next_action.stage_index, next_mb_index)
+                            )
 
-            if ops:
-                handles = dist.batch_isend_irecv(ops)
+                for keyed_op in keyed_ops:
+                    key, _op_kind, op = keyed_op
+                    keyed_ops_by_peer_and_key[(op.peer, key)].append(keyed_op)
+
+                peers = {peer for peer, _key in keyed_ops_by_peer_and_key}
+                if self.prioritize_next_action_input_p2p:
+                    priority_peers = {
+                        peer
+                        for peer, key in keyed_ops_by_peer_and_key
+                        if key in next_action_input_keys
+                    }
+                    peer_order = sorted(
+                        peers,
+                        key=lambda peer: (peer not in priority_peers, peer),
+                    )
+                else:
+                    # All ranks use the same total order over undirected PP
+                    # edges. This avoids ring cycles in interleaved warmup such
+                    # as 0->3->2->1->0 where every rank waits for a different
+                    # peer's first batch_isend_irecv call.
+                    peer_order = sorted(
+                        peers,
+                        key=lambda peer: (min(self.rank, peer), max(self.rank, peer)),
+                    )
+                for peer in peer_order:
+                    keys_for_peer = sorted(
+                        key for keyed_peer, key in keyed_ops_by_peer_and_key if keyed_peer == peer
+                    )
+                    for key in keys_for_peer:
+                        peer_keyed_ops = sorted(
+                            keyed_ops_by_peer_and_key[(peer, key)],
+                            key=lambda item: item[1],
+                        )
+                        with nvtx.annotate(
+                            p2p_launch_label(key, peer_keyed_ops),
+                            color="blue",
+                        ):
+                            handles = dist.batch_isend_irecv([op for _, _, op in peer_keyed_ops])
+                        if len(handles) == 1 and len(peer_keyed_ops) > 1:
+                            # NCCL coalescing may return a single Work that covers
+                            # the whole same-key peer batch. Associate it with every
+                            # keyed op so later dependency waits cannot skip any
+                            # receive, but do not coalesce unrelated keys together:
+                            # waiting on one key would otherwise force waits for
+                            # independent overlappable transfers.
+                            handles_for_ops = handles * len(peer_keyed_ops)
+                        elif len(handles) == len(peer_keyed_ops):
+                            handles_for_ops = handles
+                        else:
+                            raise RuntimeError(
+                                "Unexpected number of P2P work handles from batch_isend_irecv: "
+                                f"got {len(handles)} handles for {len(peer_keyed_ops)} ops"
+                            )
+                        for (key, op_kind, op), handle in zip(peer_keyed_ops, handles_for_ops):
+                            outstanding_p2p[key].append((handle, op, op_kind, time_step))
 
             # do the communication
-            if handles:
+            if outstanding_p2p:
                 if forward_only:
                     # in forward only mode, just wait right away for simplicity
-                    for handle in handles:
-                        handle.wait()
-                    handles.clear()
+                    wait_all_p2p()
+                elif not self.enable_p2p_overlap:
+                    wait_all_p2p()
                 else:
                     # in training mode, we can do 1-step lookahead to overlap communication with computation in some cases
+                    blocking_ops = {
+                        "F_SEND",
+                        "F_RECV",
+                        "B_SEND",
+                        "B_RECV",
+                    } - set(self.p2p_overlap_ops)
+                    if blocking_ops:
+                        wait_p2p_ops(blocking_ops)
                     if not past_first_backward: # it's only safe collect the p2p handles at N+1 step in the stable 1F1B phase. Need to collect it immediately in the warmup phase
-                        for handle in handles:
-                            handle.wait()
-                        handles.clear()
+                        wait_all_p2p()
+                    if self.max_p2p_overlap_steps is not None:
+                        wait_p2p_launched_at_or_before(
+                            time_step - self.max_p2p_overlap_steps
+                        )
 
             # print(f'{action}-Done')
 
             pass # time step done
 
+        wait_all_p2p()
 
         return
 
@@ -673,6 +902,515 @@ class CustomScheduleInterleaved1F1B():
         )
 
         return rank_ops
+
+
+class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
+    placement_style = "v"
+    enable_activation_offload_schedule = False
+    enable_p2p_overlap = True
+    p2p_overlap_kinds = frozenset(("F",))
+    p2p_overlap_ops = frozenset(("F_SEND", "F_RECV", "B_RECV"))
+    max_p2p_overlap_steps = None
+    prioritize_next_action_input_p2p = True
+    _symbol_pattern_size = 6
+    forward_pull_ahead_extra_activations: int | Sequence[int] | Mapping[int, int] = 0
+
+    def configure_pipeline_order(self):
+        if self._num_stages != 2 * self.pp_group_size:
+            raise ValueError(
+                "1F1B-V requires exactly 2 virtual stages per pipeline rank, "
+                f"got num_stages={self._num_stages}, pp_group_size={self.pp_group_size}"
+            )
+        self.stage_index_to_group_rank = generate_stage_to_rank_mapping(
+            self.pp_group_size, self._num_stages, style=self.placement_style
+        )
+        for stage in self._stages:
+            stage.stage_index_to_group_rank = self.stage_index_to_group_rank
+
+        self.pipeline_order = self._generate_1f1b_v_pipeline_order()
+        self.pipeline_order = pad_to_max_length(self.pipeline_order)
+        self._validate_pipeline_order()
+
+    def _stage_to_rank(self, stage_index: int) -> int:
+        return self.stage_index_to_group_rank[stage_index]
+
+    def _dependency_ready_time(self, producer_stage: int, consumer_stage: int, producer_time: int) -> int:
+        # Stage outputs are available to adjacent logical stages on the next
+        # schedule slot. Inter-rank handoffs enqueue P2P in the producer slot,
+        # and same-rank handoffs are direct local transfers.
+        return producer_time + 1
+
+    @classmethod
+    def _get_1f1bv_pattern_str(cls, positions: list[int]) -> str:
+        pattern = [" "] * cls._symbol_pattern_size
+        notations = "FfBbWw"
+        for idx, position in enumerate(positions):
+            if position >= 0:
+                pattern[position] = notations[idx]
+        return "".join(pattern)
+
+    @classmethod
+    def _create_1f1bv_whole_pattern(cls, pp_size: int) -> list[list[int]]:
+        whole_pattern = [[0 for _ in range(cls._symbol_pattern_size)] for _ in range(pp_size)]
+        now = 0
+        for rank in range(pp_size):
+            now += 1
+            whole_pattern[rank][0] = now
+        for rank in range(pp_size):
+            now += 1
+            whole_pattern[pp_size - 1 - rank][1] = now
+
+        now += 1
+        if pp_size % 3 == 0:
+            now += 3
+        cycle = (3 - (pp_size + 2) % 3) % 3
+        for rank in range(pp_size):
+            whole_pattern[rank][2], whole_pattern[rank][4] = now, now + 1
+            cycle += 1
+            now += 2
+            if cycle == 3:
+                cycle = 0
+                now += 3
+        for rank in range(pp_size):
+            whole_pattern[pp_size - 1 - rank][3], whole_pattern[pp_size - 1 - rank][5] = (
+                now,
+                now + 1,
+            )
+            cycle += 1
+            now += 2
+            if cycle == 3:
+                cycle = 0
+                now += 3
+
+        for rank in range(pp_size):
+            for idx in range(cls._symbol_pattern_size):
+                whole_pattern[rank][idx] %= cls._symbol_pattern_size
+        return whole_pattern
+
+    @classmethod
+    def _init_1f1bv_repeated_schedule(
+        cls,
+        pp_size: int,
+        n_microbatches: int,
+        patterns: list[list[int]],
+    ) -> list[list[str]]:
+        repeated = []
+        repeat_count = 4 * pp_size + n_microbatches + 1
+        for rank in range(pp_size):
+            repeated.append(list(cls._get_1f1bv_pattern_str(patterns[rank]) * repeat_count))
+        return repeated
+
+    @classmethod
+    def _clear_1f1bv_invalid(
+        cls,
+        symbols: list[list[str]],
+        rank: int,
+        position: int,
+        *,
+        offset: int = -1,
+    ) -> None:
+        while 0 <= position < len(symbols[rank]):
+            symbols[rank][position] = " "
+            position += offset * cls._symbol_pattern_size
+
+    @classmethod
+    def _clear_1f1bv_invalid_indices(
+        cls,
+        symbols: list[list[str]],
+        n_microbatches: int,
+    ) -> list[list[str]]:
+        pp_size = len(symbols)
+        index = cls._symbol_pattern_size
+        for identifier in "FfBb":
+            ranks = range(pp_size) if identifier in "FB" else range(pp_size - 1, -1, -1)
+            for rank in ranks:
+                for _ in range(cls._symbol_pattern_size):
+                    if symbols[rank][index] == identifier:
+                        cls._clear_1f1bv_invalid(symbols, rank, index - cls._symbol_pattern_size)
+                        cls._clear_1f1bv_invalid(
+                            symbols,
+                            rank,
+                            index + cls._symbol_pattern_size * n_microbatches,
+                            offset=1,
+                        )
+                        index += 1
+                        if identifier in "Bb":
+                            continuation = {"B": "W", "b": "w"}[identifier]
+                            for continuation_offset in range(cls._symbol_pattern_size):
+                                continuation_index = index + continuation_offset
+                                if symbols[rank][continuation_index] == continuation:
+                                    cls._clear_1f1bv_invalid(
+                                        symbols,
+                                        rank,
+                                        continuation_index - cls._symbol_pattern_size,
+                                    )
+                                    cls._clear_1f1bv_invalid(
+                                        symbols,
+                                        rank,
+                                        continuation_index
+                                        + cls._symbol_pattern_size * n_microbatches,
+                                        offset=1,
+                                    )
+                                    break
+                        break
+                    index += 1
+        return symbols
+
+    @classmethod
+    def _process_1f1bv_warmup_without_increasing_peak_mem(
+        cls,
+        symbols: list[list[str]],
+        n_microbatches: int,
+        *,
+        extra_peak_mem_by_rank: Sequence[int],
+    ) -> list[list[str]]:
+        peak_mem = 0
+        memory = [
+            [0 for _ in range(len(symbols[0]))]
+            for _ in range(len(symbols))
+        ]
+        locations = [
+            [
+                {key: -1 for key in ("F", "f", "B", "b", "W", "w")}
+                for _ in range(n_microbatches + 2)
+            ]
+            for _ in range(len(symbols))
+        ]
+        counters = [
+            {key: 0 for key in ("F", "f", "B", "b", "W", "w")}
+            for _ in range(len(symbols))
+        ]
+
+        for rank in range(len(symbols)):
+            current = 0
+            for idx, symbol in enumerate(symbols[rank]):
+                if symbol in "Ff":
+                    current += 1
+                if symbol in "Ww":
+                    current -= 1
+                memory[rank][idx] = current
+                peak_mem = max(peak_mem, current)
+
+        for idx in range(len(symbols[0])):
+            for rank in range(len(symbols)):
+                symbol = symbols[rank][idx]
+                if symbol == " ":
+                    continue
+
+                counters[rank][symbol] += 1
+                count = counters[rank][symbol]
+                position = -1
+                if count > 1:
+                    position = locations[rank][count - 1][symbol]
+                if symbol == "W":
+                    position = max(position, locations[rank][count]["B"])
+                if symbol == "w":
+                    position = max(position, locations[rank][count]["b"])
+                if symbol == "F" and rank > 0:
+                    position = max(position, locations[rank - 1][count]["F"])
+                if symbol == "f":
+                    if rank != len(symbols) - 1:
+                        position = max(position, locations[rank + 1][count]["f"])
+                    else:
+                        position = max(position, locations[rank][count]["F"])
+                if symbol == "B":
+                    if rank != 0:
+                        position = max(position, locations[rank - 1][count]["W"])
+                    else:
+                        position = max(position, locations[rank][count]["f"])
+                if symbol == "b":
+                    if rank != len(symbols) - 1:
+                        position = max(position, locations[rank + 1][count]["w"])
+                    else:
+                        position = max(position, locations[rank][count]["W"])
+
+                position += 1
+                while position < idx and symbols[rank][position] != " ":
+                    position += 1
+                if symbol in "Bb":
+                    while (
+                        position < idx
+                        and (
+                            symbols[rank][position] != " "
+                            or symbols[rank][position + 1] != " "
+                        )
+                    ):
+                        position += 1
+                if position == idx:
+                    locations[rank][count][symbol] = idx
+                    continue
+
+                if symbol in "BbWw":
+                    symbols[rank][position] = symbol
+                    symbols[rank][idx] = " "
+                    if symbol in "Ww":
+                        for mem_idx in range(position, idx):
+                            memory[rank][mem_idx] -= 1
+                    locations[rank][count][symbol] = position
+                    continue
+
+                allowed_peak_mem = peak_mem + extra_peak_mem_by_rank[rank]
+                place = idx
+                while place > position and memory[rank][place - 1] < allowed_peak_mem:
+                    place -= 1
+                while place < idx and symbols[rank][place] != " ":
+                    place += 1
+                if place == idx:
+                    locations[rank][count][symbol] = idx
+                    continue
+
+                symbols[rank][place] = symbol
+                symbols[rank][idx] = " "
+                for mem_idx in range(place, idx):
+                    memory[rank][mem_idx] += 1
+                locations[rank][count][symbol] = place
+
+        return symbols
+
+    @classmethod
+    def _generate_1f1bv_symbol_table(
+        cls,
+        pp_size: int,
+        n_microbatches: int,
+        *,
+        forward_pull_ahead_extra_activations: int | Sequence[int] | Mapping[int, int] = 0,
+    ) -> list[list[str]]:
+        extra_peak_mem_by_rank = cls._normalize_forward_pull_ahead_extra_activations(
+            pp_size,
+            forward_pull_ahead_extra_activations,
+        )
+        symbols = cls._init_1f1bv_repeated_schedule(
+            pp_size,
+            n_microbatches,
+            cls._create_1f1bv_whole_pattern(pp_size),
+        )
+        symbols = cls._clear_1f1bv_invalid_indices(symbols, n_microbatches)
+        symbols = cls._process_1f1bv_warmup_without_increasing_peak_mem(
+            symbols,
+            n_microbatches,
+            extra_peak_mem_by_rank=extra_peak_mem_by_rank,
+        )
+        for rank in range(len(symbols)):
+            counts = {symbol: 0 for symbol in "FfBbWw"}
+            for idx, symbol in enumerate(symbols[rank]):
+                if symbol == " ":
+                    continue
+                if counts[symbol] >= n_microbatches:
+                    symbols[rank][idx] = " "
+                else:
+                    counts[symbol] += 1
+
+        last_non_empty = max(
+            idx
+            for row in symbols
+            for idx, symbol in enumerate(row)
+            if symbol != " "
+        )
+        return [row[: last_non_empty + 1] for row in symbols]
+
+    @staticmethod
+    def _normalize_forward_pull_ahead_extra_activations(
+        pp_size: int,
+        extra_activations: int | Sequence[int] | Mapping[int, int],
+    ) -> tuple[int, ...]:
+        if isinstance(extra_activations, int):
+            if extra_activations < 0:
+                raise ValueError("forward pull-ahead extra activations must be non-negative")
+            return tuple(extra_activations for _ in range(pp_size))
+
+        if isinstance(extra_activations, Mapping):
+            values = tuple(int(extra_activations.get(rank, 0)) for rank in range(pp_size))
+        else:
+            values = tuple(int(value) for value in extra_activations)
+            if len(values) != pp_size:
+                raise ValueError(
+                    "forward pull-ahead extra activation sequence must have one entry per PP rank"
+                )
+
+        if any(value < 0 for value in values):
+            raise ValueError("forward pull-ahead extra activations must be non-negative")
+        return values
+
+    @staticmethod
+    def _format_forward_pull_ahead_source(extra_activations: tuple[int, ...]) -> str:
+        if not any(extra_activations):
+            return ""
+        if len(set(extra_activations)) == 1:
+            return f"_pull_fwd_plus{extra_activations[0]}"
+        active = "_".join(
+            f"r{rank}p{value}" for rank, value in enumerate(extra_activations) if value
+        )
+        return f"_pull_fwd_{active}"
+
+    @staticmethod
+    def _convert_1f1bv_symbols_to_actions(
+        symbols: list[list[str]],
+        pp_size: int,
+    ) -> dict[int, list[Optional[PipelineAction]]]:
+        rows: dict[int, list[Optional[PipelineAction]]] = {}
+        num_stages = 2 * pp_size
+        for rank, row in enumerate(symbols):
+            low_stage = rank
+            high_stage = num_stages - 1 - rank
+            next_microbatch = {symbol: 0 for symbol in ("F", "f", "B", "b")}
+            pending_continuation: Optional[tuple[str, int, int]] = None
+            actions: list[Optional[PipelineAction]] = []
+
+            for idx, symbol in enumerate(row):
+                if symbol == " ":
+                    if pending_continuation is not None:
+                        raise AssertionError(
+                            "1F1B-V symbol table has a bubble between backward "
+                            f"and continuation on rank={rank}, time={idx}"
+                        )
+                    actions.append(None)
+                elif symbol == "F":
+                    mb_index = next_microbatch["F"]
+                    next_microbatch["F"] += 1
+                    actions.append(PipelineAction(low_stage, FORWARD, mb_index))
+                elif symbol == "f":
+                    mb_index = next_microbatch["f"]
+                    next_microbatch["f"] += 1
+                    actions.append(PipelineAction(high_stage, FORWARD, mb_index))
+                elif symbol == "B":
+                    mb_index = next_microbatch["B"]
+                    next_microbatch["B"] += 1
+                    pending_continuation = ("W", high_stage, mb_index)
+                    actions.append(PipelineAction(high_stage, FULL_BACKWARD, mb_index))
+                elif symbol == "W":
+                    if pending_continuation != ("W", high_stage, next_microbatch["B"] - 1):
+                        raise AssertionError(
+                            f"1F1B-V W is not the continuation of B on rank={rank}, time={idx}"
+                        )
+                    _, stage_index, mb_index = pending_continuation
+                    actions.append(
+                        PipelineAction(stage_index, FULL_BACKWARD_CONT, mb_index)
+                    )
+                    pending_continuation = None
+                elif symbol == "b":
+                    mb_index = next_microbatch["b"]
+                    next_microbatch["b"] += 1
+                    pending_continuation = ("w", low_stage, mb_index)
+                    actions.append(PipelineAction(low_stage, FULL_BACKWARD, mb_index))
+                elif symbol == "w":
+                    if pending_continuation != ("w", low_stage, next_microbatch["b"] - 1):
+                        raise AssertionError(
+                            f"1F1B-V w is not the continuation of b on rank={rank}, time={idx}"
+                        )
+                    _, stage_index, mb_index = pending_continuation
+                    actions.append(
+                        PipelineAction(stage_index, FULL_BACKWARD_CONT, mb_index)
+                    )
+                    pending_continuation = None
+                else:
+                    raise AssertionError(f"Unexpected 1F1B-V symbol {symbol!r}")
+
+            if pending_continuation is not None:
+                raise AssertionError(
+                    f"1F1B-V symbol row ended during backward continuation on rank={rank}"
+                )
+            rows[rank] = actions
+
+        return rows
+
+
+    def _generate_1f1b_v_pipeline_order(self) -> dict[int, list[Optional[PipelineAction]]]:
+        num_microbatches = self._n_microbatches
+
+        extra_activations = self._normalize_forward_pull_ahead_extra_activations(
+            self.pp_group_size,
+            getattr(self, "forward_pull_ahead_extra_activations", 0),
+        )
+        self.pipeline_order_source = (
+            "generic_symbol_pattern" + self._format_forward_pull_ahead_source(extra_activations)
+        )
+        symbols = self._generate_1f1bv_symbol_table(
+            self.pp_group_size,
+            num_microbatches,
+            forward_pull_ahead_extra_activations=extra_activations,
+        )
+        return self._convert_1f1bv_symbols_to_actions(symbols, self.pp_group_size)
+
+    def _validate_pipeline_order(self) -> None:
+        fwd_seen: dict[tuple[int, int], int] = {}
+        bwd_seen: dict[tuple[int, int], int] = {}
+        bwd_cont_seen: dict[tuple[int, int], int] = {}
+
+        for rank, actions in self.pipeline_order.items():
+            for time_step, action in enumerate(actions):
+                if action is None:
+                    continue
+                if self._stage_to_rank(action.stage_index) != rank:
+                    raise AssertionError(
+                        f"1F1B-V schedule placed stage {action.stage_index} on rank {rank}, "
+                        f"expected rank {self._stage_to_rank(action.stage_index)}"
+                    )
+                if action.computation_type == FORWARD:
+                    assert action.microbatch_index is not None
+                    key = (action.stage_index, action.microbatch_index)
+                    if key in fwd_seen:
+                        raise AssertionError(f"Duplicate forward action for {key}")
+                    fwd_seen[key] = time_step
+                elif action.computation_type == FULL_BACKWARD:
+                    assert action.microbatch_index is not None
+                    key = (action.stage_index, action.microbatch_index)
+                    if key in bwd_seen:
+                        raise AssertionError(f"Duplicate backward action for {key}")
+                    bwd_seen[key] = time_step
+                elif action.computation_type == FULL_BACKWARD_CONT:
+                    assert action.microbatch_index is not None
+                    key = (action.stage_index, action.microbatch_index)
+                    if key in bwd_cont_seen:
+                        raise AssertionError(f"Duplicate backward continuation for {key}")
+                    bwd_cont_seen[key] = time_step
+
+        expected = {
+            (stage_index, mb_index)
+            for stage_index in range(self._num_stages)
+            for mb_index in range(self._n_microbatches)
+        }
+        if set(fwd_seen) != expected:
+            raise AssertionError(
+                f"Invalid 1F1B-V schedule forwards: got {len(fwd_seen)}, expected {len(expected)}"
+            )
+        if set(bwd_seen) != expected:
+            raise AssertionError(
+                f"Invalid 1F1B-V schedule backwards: got {len(bwd_seen)}, expected {len(expected)}"
+            )
+        if set(bwd_cont_seen) != expected:
+            raise AssertionError(
+                "Invalid 1F1B-V schedule backward continuations: "
+                f"got {len(bwd_cont_seen)}, expected {len(expected)}"
+            )
+
+        for stage_index, mb_index in expected:
+            fwd_time = fwd_seen[(stage_index, mb_index)]
+            bwd_time = bwd_seen[(stage_index, mb_index)]
+            bwd_cont_time = bwd_cont_seen[(stage_index, mb_index)]
+            if fwd_time >= bwd_time:
+                raise AssertionError(
+                    f"Backward for stage={stage_index}, mb={mb_index} occurs before forward"
+                )
+            if bwd_cont_time != bwd_time + 1:
+                raise AssertionError(
+                    f"Backward continuation for stage={stage_index}, mb={mb_index} "
+                    "must immediately follow backward"
+                )
+            if stage_index > 0:
+                dep_time = fwd_seen[(stage_index - 1, mb_index)]
+                ready_time = self._dependency_ready_time(stage_index - 1, stage_index, dep_time)
+                if ready_time > fwd_time:
+                    raise AssertionError(
+                        f"Forward dependency violation for stage={stage_index}, mb={mb_index}"
+                    )
+            if stage_index < self._num_stages - 1:
+                dep_time = bwd_cont_seen[(stage_index + 1, mb_index)]
+                ready_time = self._dependency_ready_time(stage_index + 1, stage_index, dep_time)
+                if ready_time > bwd_time:
+                    raise AssertionError(
+                        f"Backward dependency violation for stage={stage_index}, mb={mb_index}"
+                    )
+
 
 def configure_offload(rank_pipeline_order: dict[int, list[Optional[PipelineAction]]]):
     """
