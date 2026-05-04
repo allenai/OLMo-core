@@ -1,4 +1,5 @@
-from typing import Tuple
+import os
+from typing import Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -11,12 +12,73 @@ from olmo_core.kernels.mxfp8_utils import (
 )
 
 
+def _rowwise_debug_enabled() -> bool:
+    return os.getenv("OLMO_ROWWISE_DEBUG_PRINT", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _rowwise_debug_sync_enabled() -> bool:
+    return os.getenv("OLMO_ROWWISE_DEBUG_SYNC", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _rowwise_rank_tag() -> str:
+    if not dist.is_available() or not dist.is_initialized():
+        return "rank=? local_rank=?"
+    return f"rank={dist.get_rank()} local_rank={os.getenv('LOCAL_RANK', '?')}"
+
+
+def _rowwise_tensor_desc(name: str, tensor: Optional[torch.Tensor]) -> str:
+    if tensor is None:
+        return f"{name}=None"
+    return (
+        f"{name}=shape{tuple(tensor.shape)} dtype={tensor.dtype} "
+        f"dev={tensor.device} contig={tensor.is_contiguous()} "
+        f"data=0x{tensor.data_ptr():x} storage=0x{tensor.untyped_storage().data_ptr():x} "
+        f"offset={tensor.storage_offset()}"
+    )
+
+
+def _rowwise_debug_print(label: str, phase: str, group_name: str, **tensors: Optional[torch.Tensor]) -> None:
+    if not _rowwise_debug_enabled():
+        return
+    parts = [
+        "[OLMO_ROWWISE_DEBUG]",
+        _rowwise_rank_tag(),
+        f"{phase} {label}",
+        f"group={group_name}",
+    ]
+    parts.extend(_rowwise_tensor_desc(name, tensor) for name, tensor in tensors.items())
+    print(" | ".join(parts), flush=True)
+
+
+def _rowwise_debug_sync(label: str, device: torch.device) -> None:
+    if not _rowwise_debug_sync_enabled():
+        return
+    if _rowwise_debug_enabled():
+        print(
+            f"[OLMO_ROWWISE_DEBUG] {_rowwise_rank_tag()} sync {label} device={device}",
+            flush=True,
+        )
+    torch.cuda.synchronize(device)
+
+
 class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
         ctx,
         expert_out: torch.Tensor,
         symm_expert_out: torch.Tensor,
+        symm_combine_out: Optional[torch.Tensor],
+        symm_gathered_routes: Optional[torch.Tensor],
         src_ranks: torch.Tensor,
         src_rows: torch.Tensor,
         probs: torch.Tensor,
@@ -66,26 +128,87 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         if not input_aliases_symm_input:
             symm_expert_out.copy_(expert_out)
 
-        combine_out = torch.empty(
-            (src_ranks_i64.shape[0], symm_expert_out.shape[1]),
-            device=symm_expert_out.device,
-            dtype=symm_expert_out.dtype,
-        )
-
-        need_grad_probs = ctx.needs_input_grad[4]
-        if need_grad_probs:
-            gathered_routes = torch.empty(
-                (src_ranks_i64.shape[0], src_ranks_i64.shape[1], symm_expert_out.shape[1]),
+        combine_out_shape = (src_ranks_i64.shape[0], symm_expert_out.shape[1])
+        if symm_combine_out is not None:
+            if (
+                symm_combine_out.ndim != 2
+                or symm_combine_out.shape[0] < combine_out_shape[0]
+                or symm_combine_out.shape[1] != combine_out_shape[1]
+            ):
+                raise RuntimeError(
+                    "symm_combine_out must be [C, D] with C >= combine rows and matching hidden dim: "
+                    f"{tuple(symm_combine_out.shape)} vs {combine_out_shape}"
+                )
+            if symm_combine_out.dtype != symm_expert_out.dtype:
+                raise RuntimeError(
+                    "symm_combine_out dtype must match symm_expert_out dtype: "
+                    f"{symm_combine_out.dtype} vs {symm_expert_out.dtype}"
+                )
+            combine_out = symm_combine_out.narrow(0, 0, combine_out_shape[0])
+            if not combine_out.is_contiguous():
+                raise RuntimeError("symm_combine_out staging view must be contiguous")
+        else:
+            combine_out = torch.empty(
+                combine_out_shape,
                 device=symm_expert_out.device,
                 dtype=symm_expert_out.dtype,
             )
+
+        need_grad_probs = ctx.needs_input_grad[6]
+        gathered_shape = (
+            src_ranks_i64.shape[0],
+            src_ranks_i64.shape[1],
+            symm_expert_out.shape[1],
+        )
+        symm_gathered_routes_view = None
+        if symm_gathered_routes is not None:
+            if (
+                symm_gathered_routes.ndim != 3
+                or symm_gathered_routes.shape[0] < gathered_shape[0]
+                or symm_gathered_routes.shape[1] != gathered_shape[1]
+                or symm_gathered_routes.shape[2] != gathered_shape[2]
+            ):
+                raise RuntimeError(
+                    "symm_gathered_routes must be [C, K, D] with C >= combine rows: "
+                    f"{tuple(symm_gathered_routes.shape)} vs {gathered_shape}"
+                )
+            if symm_gathered_routes.dtype != symm_expert_out.dtype:
+                raise RuntimeError(
+                    "symm_gathered_routes dtype must match symm_expert_out dtype: "
+                    f"{symm_gathered_routes.dtype} vs {symm_expert_out.dtype}"
+                )
+            symm_gathered_routes_view = symm_gathered_routes.narrow(0, 0, gathered_shape[0])
+            if not symm_gathered_routes_view.is_contiguous():
+                raise RuntimeError("symm_gathered_routes staging view must be contiguous")
+        if need_grad_probs and symm_gathered_routes_view is not None:
+            gathered_routes_for_kernel = symm_gathered_routes_view
+            gathered_routes = gathered_routes_for_kernel
+        elif need_grad_probs:
+            gathered_routes_for_kernel = torch.empty(
+                gathered_shape,
+                device=symm_expert_out.device,
+                dtype=symm_expert_out.dtype,
+            )
+            gathered_routes = gathered_routes_for_kernel
         else:
+            gathered_routes_for_kernel = None
             gathered_routes = torch.empty(
                 (0, 0, symm_expert_out.shape[1]),
                 device=symm_expert_out.device,
                 dtype=symm_expert_out.dtype,
             )
 
+        _rowwise_debug_print(
+            "rowwise_combine_forward_get",
+            "enter",
+            group_name,
+            expert_out=symm_expert_out,
+            out=combine_out,
+            src_ranks=src_ranks_i64,
+            src_rows=src_rows_i64,
+            probs=probs_f32,
+            gathered_out=gathered_routes_for_kernel,
+        )
         symm_mem_vdev2d_kernels.rowwise_combine_get(
             symm_expert_out,
             combine_out,
@@ -94,14 +217,23 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             group_name,
             probs=probs_f32,
             nblocks=nblocks,
-            gathered_out=(gathered_routes if need_grad_probs else None),
+            gathered_out=gathered_routes_for_kernel,
         )
-
+        _rowwise_debug_sync("rowwise_combine_forward_get", symm_expert_out.device)
+        _rowwise_debug_print(
+            "rowwise_combine_forward_get",
+            "exit",
+            group_name,
+            expert_out=symm_expert_out,
+            out=combine_out,
+            gathered_out=gathered_routes_for_kernel,
+        )
         ctx.group = group
         ctx.group_name = group_name
         ctx.nblocks = int(nblocks)
         ctx.probs_input_dtype = probs.dtype
         ctx.symm_expert_out = symm_expert_out
+        ctx.symm_gathered_routes = symm_gathered_routes_view
         ctx.save_for_backward(src_ranks_i64, src_rows_i64, probs_f32, gathered_routes)
         return combine_out
 
@@ -121,7 +253,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         grad_out_contig = grad_out if grad_out.is_contiguous() else grad_out.contiguous()
 
         grad_probs = None
-        if ctx.needs_input_grad[4]:
+        if ctx.needs_input_grad[6]:
             grad_out_for_probs = grad_out_contig
             if grad_out_for_probs.dtype != gathered_routes.dtype:
                 grad_out_for_probs = grad_out_for_probs.to(dtype=gathered_routes.dtype)
@@ -140,18 +272,85 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             # routed_experts uses batch_size_per_expert = recv_splits_by_src_local.sum(dim=0), so backward should only consume the valid prefix/segments, not tail capacity rows.
             # Route rows are built densely for kept routes, so consumed rows should be fully overwritten.
             # symm_grad_expert_out.zero_()  <----- Likely not necessary
-            symm_mem_vdev2d_kernels.rowwise_dispatch_put(
-                grad_out_contig,
-                symm_grad_expert_out,
-                src_ranks,
-                src_rows,
-                ctx.group_name,
-                probs=probs,
-                nblocks=ctx.nblocks,
-            )
+            dispatch_source = grad_out_contig
+
+            symm_weighted_routes = ctx.symm_gathered_routes
+            if symm_weighted_routes is not None:
+                num_rows, top_k = src_ranks.shape
+                hidden = grad_out_contig.shape[1]
+                if tuple(symm_weighted_routes.shape) != (num_rows, top_k, hidden):
+                    raise RuntimeError(
+                        "symm_gathered_routes view shape must match combine backward weighted routes: "
+                        f"{tuple(symm_weighted_routes.shape)} vs {(num_rows, top_k, hidden)}"
+                    )
+                torch.mul(
+                    grad_out_contig.unsqueeze(1),
+                    probs.to(dtype=grad_out_contig.dtype).unsqueeze(-1),
+                    out=symm_weighted_routes,
+                )
+                dispatch_source = symm_weighted_routes.view(num_rows * top_k, hidden)
+                flat_ranks = src_ranks.reshape(-1, 1).contiguous()
+                flat_rows = src_rows.reshape(-1, 1).contiguous()
+
+                _rowwise_debug_print(
+                    "rowwise_combine_backward_dispatch_put_unweighted",
+                    "enter",
+                    ctx.group_name,
+                    input=dispatch_source,
+                    out=symm_grad_expert_out,
+                    dst_ranks=flat_ranks,
+                    dst_rows=flat_rows,
+                )
+                symm_mem_vdev2d_kernels.rowwise_dispatch_put(
+                    dispatch_source,
+                    symm_grad_expert_out,
+                    flat_ranks,
+                    flat_rows,
+                    ctx.group_name,
+                    nblocks=ctx.nblocks,
+                )
+                _rowwise_debug_sync("rowwise_combine_backward_dispatch_put_unweighted", symm_grad_expert_out.device)
+                _rowwise_debug_print(
+                    "rowwise_combine_backward_dispatch_put_unweighted",
+                    "exit",
+                    ctx.group_name,
+                    input=dispatch_source,
+                    out=symm_grad_expert_out,
+                )
+            else:
+                _rowwise_debug_print(
+                    "rowwise_combine_backward_dispatch_put",
+                    "enter",
+                    ctx.group_name,
+                    input=dispatch_source,
+                    out=symm_grad_expert_out,
+                    dst_ranks=src_ranks,
+                    dst_rows=src_rows,
+                    probs=probs,
+                )
+                symm_mem_vdev2d_kernels.rowwise_dispatch_put(
+                    dispatch_source,
+                    symm_grad_expert_out,
+                    src_ranks,
+                    src_rows,
+                    ctx.group_name,
+                    probs=probs,
+                    nblocks=ctx.nblocks,
+                )
+                _rowwise_debug_sync("rowwise_combine_backward_dispatch_put", symm_grad_expert_out.device)
+                _rowwise_debug_print(
+                    "rowwise_combine_backward_dispatch_put",
+                    "exit",
+                    ctx.group_name,
+                    input=dispatch_source,
+                    out=symm_grad_expert_out,
+                )
             grad_expert_out = symm_grad_expert_out
 
-        return grad_expert_out, None, None, None, grad_probs, None, None, None
+        ctx.symm_expert_out = None
+        ctx.symm_gathered_routes = None
+        ctx.group = None
+        return grad_expert_out, None, None, None, None, None, grad_probs, None, None, None
 
 
 class _DispatchRowwiseAutograd(torch.autograd.Function):
@@ -160,6 +359,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
     def forward(  # type: ignore[override]
         ctx,
         source_input: torch.Tensor,
+        symm_input: Optional[torch.Tensor],
         dst_ranks: torch.Tensor,
         dst_rows: torch.Tensor,
         symm_out: torch.Tensor,
@@ -195,18 +395,66 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         if not dst_rows_i64.is_contiguous():
             dst_rows_i64 = dst_rows_i64.contiguous()
 
+        dispatch_source = source_input_contig
+        if symm_input is not None:
+            if (
+                symm_input.ndim != 2
+                or symm_input.shape[0] < source_input.shape[0]
+                or symm_input.shape[1] != source_input.shape[1]
+            ):
+                raise RuntimeError(
+                    "symm_input must be [C, D] with C >= source_input rows and matching hidden dim: "
+                    f"{tuple(symm_input.shape)} vs {tuple(source_input.shape)}"
+                )
+            if symm_input.dtype != source_input.dtype:
+                raise RuntimeError(
+                    f"symm_input dtype must match source_input dtype: {symm_input.dtype} vs {source_input.dtype}"
+                )
+
+            symm_input_view = symm_input.narrow(0, 0, source_input.shape[0])
+            if not symm_input_view.is_contiguous():
+                raise RuntimeError("symm_input staging view must be contiguous")
+
+            input_aliases_symm_input = (
+                source_input_contig.untyped_storage().data_ptr() == symm_input_view.untyped_storage().data_ptr()
+                and source_input_contig.storage_offset() == symm_input_view.storage_offset()
+                and tuple(source_input_contig.shape) == tuple(symm_input_view.shape)
+                and tuple(source_input_contig.stride()) == tuple(symm_input_view.stride())
+            )
+            if not input_aliases_symm_input:
+                symm_input_view.copy_(source_input_contig)
+            dispatch_source = symm_input_view
+
+        _rowwise_debug_print(
+            "rowwise_dispatch_forward_put",
+            "enter",
+            group_name,
+            input=dispatch_source,
+            out=symm_out,
+            dst_ranks=dst_ranks_i64,
+            dst_rows=dst_rows_i64,
+        )
         symm_mem_vdev2d_kernels.rowwise_dispatch_put(
-            source_input_contig,
+            dispatch_source,
             symm_out,
             dst_ranks_i64,
             dst_rows_i64,
             group_name,
             nblocks=nblocks,
         )
+        _rowwise_debug_sync("rowwise_dispatch_forward_put", symm_out.device)
+        _rowwise_debug_print(
+            "rowwise_dispatch_forward_put",
+            "exit",
+            group_name,
+            input=dispatch_source,
+            out=symm_out,
+        )
 
         ctx.group_name = group_name
         ctx.group = group
         ctx.nblocks = int(nblocks)
+        ctx.symm_input = symm_input
         ctx.symm_out = symm_out
         ctx.save_for_backward(dst_ranks_i64, dst_rows_i64)
         return symm_out
@@ -230,6 +478,36 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             device=symm_grad_out.device,
             dtype=symm_grad_out.dtype,
         )
+        gathered_grad_out = None
+        symm_input = ctx.symm_input
+        if symm_input is not None:
+            gathered_rows = dst_ranks.numel()
+            if (
+                symm_input.ndim != 2
+                or symm_input.shape[0] < gathered_rows
+                or symm_input.shape[1] != symm_grad_out.shape[1]
+            ):
+                raise RuntimeError(
+                    "symm_input must have enough rows to serve as dispatch backward gather scratch: "
+                    f"need ({gathered_rows}, {symm_grad_out.shape[1]}), got {tuple(symm_input.shape)}"
+                )
+            gathered_grad_out = symm_input.narrow(0, 0, gathered_rows).view(
+                dst_ranks.shape[0],
+                dst_ranks.shape[1],
+                symm_grad_out.shape[1],
+            )
+            if not gathered_grad_out.is_contiguous():
+                raise RuntimeError("dispatch backward gather scratch must be contiguous")
+        _rowwise_debug_print(
+            "rowwise_dispatch_backward_combine_get",
+            "enter",
+            ctx.group_name,
+            expert_out=symm_grad_out,
+            out=grad_input,
+            src_ranks=dst_ranks,
+            src_rows=dst_rows,
+            gathered_out=gathered_grad_out,
+        )
         symm_mem_vdev2d_kernels.rowwise_combine_get(
             symm_grad_out,
             grad_input,
@@ -237,8 +515,21 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             dst_rows,
             ctx.group_name,
             nblocks=ctx.nblocks,
+            gathered_out=gathered_grad_out,
         )
-        return grad_input, None, None, None, None, None, None
+        _rowwise_debug_sync("rowwise_dispatch_backward_combine_get", symm_grad_out.device)
+        _rowwise_debug_print(
+            "rowwise_dispatch_backward_combine_get",
+            "exit",
+            ctx.group_name,
+            expert_out=symm_grad_out,
+            out=grad_input,
+            gathered_out=gathered_grad_out,
+        )
+        ctx.symm_input = None
+        ctx.symm_out = None
+        ctx.group = None
+        return grad_input, None, None, None, None, None, None, None
 
 
 class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
@@ -301,6 +592,16 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         if not dst_rows_i64.is_contiguous():
             dst_rows_i64 = dst_rows_i64.contiguous()
 
+        _rowwise_debug_print(
+            "rowwise_fp8_dispatch_forward_put_scaled",
+            "enter",
+            group_name,
+            input=source_input_contig,
+            out_q=symm_out_q,
+            out_scales=symm_out_scales,
+            dst_ranks=dst_ranks_i64,
+            dst_rows=dst_rows_i64,
+        )
         symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
             source_input_contig,
             symm_out_q,
@@ -310,6 +611,15 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             group_name,
             block_size=int(block_size),
             nblocks=nblocks,
+        )
+        _rowwise_debug_sync("rowwise_fp8_dispatch_forward_put_scaled", symm_out_q.device)
+        _rowwise_debug_print(
+            "rowwise_fp8_dispatch_forward_put_scaled",
+            "exit",
+            group_name,
+            input=source_input_contig,
+            out_q=symm_out_q,
+            out_scales=symm_out_scales,
         )
         # Keep dispatch payload fully FP8 through expert compute.
         # The bf16 mirror buffer is retained for backward scratch/output only.
@@ -345,6 +655,16 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             device=grad_out_hp.device,
             dtype=ctx.symm_out_hp.dtype,
         )
+        _rowwise_debug_print(
+            "rowwise_fp8_dispatch_backward_combine_get_scaled",
+            "enter",
+            ctx.group_name,
+            expert_out_q=ctx.symm_out_q,
+            expert_out_scales=ctx.symm_out_scales,
+            out=grad_input,
+            src_ranks=dst_ranks,
+            src_rows=dst_rows,
+        )
         symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
             ctx.symm_out_q,
             ctx.symm_out_scales,
@@ -354,6 +674,15 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             ctx.group_name,
             block_size=ctx.block_size,
             nblocks=ctx.nblocks,
+        )
+        _rowwise_debug_sync("rowwise_fp8_dispatch_backward_combine_get_scaled", ctx.symm_out_q.device)
+        _rowwise_debug_print(
+            "rowwise_fp8_dispatch_backward_combine_get_scaled",
+            "exit",
+            ctx.group_name,
+            expert_out_q=ctx.symm_out_q,
+            expert_out_scales=ctx.symm_out_scales,
+            out=grad_input,
         )
         return grad_input, None, None, None, None, None, None, None, None, None
 
@@ -474,6 +803,19 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 dtype=symm_expert_out_scales.dtype,
             )
 
+        _rowwise_debug_print(
+            "rowwise_fp8_combine_forward_get_scaled",
+            "enter",
+            group_name,
+            expert_out_q=symm_expert_out_q,
+            expert_out_scales=symm_expert_out_scales,
+            out=combine_out,
+            src_ranks=src_ranks_i64,
+            src_rows=src_rows_i64,
+            probs=probs_f32,
+            gathered_q_out=(gathered_q_saved if need_grad_probs else None),
+            gathered_scales_out=(gathered_scales_saved if need_grad_probs else None),
+        )
         symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
             symm_expert_out_q,
             symm_expert_out_scales,
@@ -486,6 +828,15 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
             nblocks=nblocks,
             gathered_q_out=(gathered_q_saved if need_grad_probs else None),
             gathered_scales_out=(gathered_scales_saved if need_grad_probs else None),
+        )
+        _rowwise_debug_sync("rowwise_fp8_combine_forward_get_scaled", symm_expert_out_q.device)
+        _rowwise_debug_print(
+            "rowwise_fp8_combine_forward_get_scaled",
+            "exit",
+            group_name,
+            expert_out_q=symm_expert_out_q,
+            expert_out_scales=symm_expert_out_scales,
+            out=combine_out,
         )
 
         ctx.group = group
@@ -539,6 +890,16 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
 
             flat_ranks = src_ranks.reshape(-1, 1).contiguous()
             flat_rows = src_rows.reshape(-1, 1).contiguous()
+            _rowwise_debug_print(
+                "rowwise_fp8_combine_backward_dispatch_put_scaled",
+                "enter",
+                ctx.group_name,
+                input=weighted_flat,
+                out_q=ctx.symm_expert_out_q,
+                out_scales=ctx.symm_expert_out_scales,
+                dst_ranks=flat_ranks,
+                dst_rows=flat_rows,
+            )
             symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
                 weighted_flat,
                 ctx.symm_expert_out_q,
@@ -548,6 +909,15 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 ctx.group_name,
                 block_size=ctx.block_size,
                 nblocks=ctx.nblocks,
+            )
+            _rowwise_debug_sync("rowwise_fp8_combine_backward_dispatch_put_scaled", ctx.symm_expert_out_q.device)
+            _rowwise_debug_print(
+                "rowwise_fp8_combine_backward_dispatch_put_scaled",
+                "exit",
+                ctx.group_name,
+                input=weighted_flat,
+                out_q=ctx.symm_expert_out_q,
+                out_scales=ctx.symm_expert_out_scales,
             )
             dequantize_rows_from_mxfp8(
                 ctx.symm_expert_out_q,

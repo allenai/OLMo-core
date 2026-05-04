@@ -245,6 +245,11 @@ class MoEV2TransformerTrainModule(TrainModule):
                 "Training parallelism is required for MoEV2TransformerTrainModule"
             )
 
+        self._dp_config = dp_config
+        self._cp_config = cp_config
+        self._tp_config = tp_config
+        self._ep_config = ep_config
+        self._pp_config = pp_config
 
         # Parallelize model.
         self.model_parts = self.parallelize_and_init_model(

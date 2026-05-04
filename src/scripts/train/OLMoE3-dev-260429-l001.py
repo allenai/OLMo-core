@@ -110,16 +110,16 @@ if sys.argv[1] == "eval_checkpoints":
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 1000
 
-NUM_EXPERTS = 8
-TOP_K = 2
-D_MODEL=2560
-D_ATTN=2560 + 512
+NUM_EXPERTS = 128
+TOP_K = 4
+D_MODEL=2880
+D_ATTN=4096
 
-HEAD_DIM=128
+HEAD_DIM=64
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 2560 + 512
-NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
+NUM_KV_HEAD= NUM_HEAD // 8
+MOE_HIDDEN_SIZE = 2880
+NUM_SHARED_EXPERTS = 0  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2560 + 512  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
@@ -129,8 +129,8 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=1
-PP_DIM=4
+EP_DIM=8
+PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
@@ -138,10 +138,10 @@ TAG=f'p1'
 
 LR_ALPHA = 0.53
 
-# stage 1 - 1M - 
+# stage 1 - xM - 
 MAX_DURATION = int(100e9)
 MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 4) * 1
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 1
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
@@ -181,10 +181,10 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=40
+NUM_LAYERS=6
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=2
+    MINUS_LAST_STAGE=1
     NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
@@ -193,18 +193,18 @@ else:
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=True
+USE_COMPILE=False
 USE_NO_SYNC_EP=True
 # USE_AC=False
 PER_LAYER_RECOMPUTE=False
-USE_TBO=False
+USE_TBO=True
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
 USE_FP8=False
-ROWWISE_A2A_NBLOCKS=256
+ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 16 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
@@ -339,7 +339,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE=2048
+    WINDOW_SIZE=128
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -442,8 +442,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             # schedule=PipelineScheduleType.custom_1F1B,
-            schedule=PipelineScheduleType.custom_1F1B_V,  # V placement for comparison against interleaved 1F1B
-            # schedule=PipelineScheduleType.custom_interleaved_1F1B,
+            # schedule=PipelineScheduleType.custom_1F1B_V,  # V placement for comparison against interleaved 1F1B
+            schedule=PipelineScheduleType.custom_interleaved_1F1B,
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
             p2p_use_separate_group=True,
             # p2p_nccl_min_ctas=1,
@@ -541,8 +541,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=2061,
-                                   end=2065
+                                   start=21,
+                                   end=25
             )
         )
         .with_callback(

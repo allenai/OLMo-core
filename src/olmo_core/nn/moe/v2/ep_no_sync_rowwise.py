@@ -18,6 +18,9 @@ from .ep_no_sync_buffers import (
     get_ep_no_sync_buffers,
     get_ep_no_sync_group_name,
     get_or_init_ep_no_sync_symm_tensor,
+    use_ep_no_sync_rowwise_symm_combine_gather,
+    use_ep_no_sync_rowwise_symm_combine_out,
+    use_ep_no_sync_rowwise_symm_dispatch_in,
 )
 from .fp8 import (
     shared_experts_forward1_rowwise_fp8,
@@ -115,6 +118,11 @@ def combined_forward_ep_no_sync_rowwise(
         rowwise_fp8_cfg = None
 
     num_out_tokens = local_x_global_routed_expert_indices.numel()
+    num_input_tokens = moe_inp.shape[0]
+    top_k = self.routed_experts_router.top_k
+    use_symm_dispatch_in = (not use_rowwise_fp8) and use_ep_no_sync_rowwise_symm_dispatch_in(self)
+    use_symm_combine_out = (not use_rowwise_fp8) and use_ep_no_sync_rowwise_symm_combine_out(self)
+    use_symm_combine_gather = (not use_rowwise_fp8) and use_ep_no_sync_rowwise_symm_combine_gather(self)
 
     with torch.no_grad():
         with nvtx.annotate("ConfigCapacity", color="green"):
@@ -137,7 +145,7 @@ def combined_forward_ep_no_sync_rowwise(
             dispatch_in_cap = num_out_tokens
             dispatch_out_cap = rank_capacity
             combine_in_cap = rank_capacity
-            combine_out_cap = num_out_tokens
+            combine_out_cap = num_input_tokens
             accumulate_ep_no_sync_rowwise_metrics(
                 self,
                 drop_token_cnt=_drop_token_cnt,
@@ -155,10 +163,13 @@ def combined_forward_ep_no_sync_rowwise(
         d_model=moe_inp.shape[-1],
         dtype=moe_inp.dtype,
         device=moe_inp.device,
-        need_dispatch_in=False,
+        need_dispatch_in=use_symm_dispatch_in,
         need_dispatch_meta=False,
         need_combine_meta=False,
-        need_combine_out=False,
+        need_combine_out=use_symm_combine_out,
+        need_combine_gather=use_symm_combine_gather,
+        combine_gather_cap=num_input_tokens,
+        combine_gather_top_k=top_k,
     )
 
     dispatch_out_q: Optional[torch.Tensor] = None
@@ -203,7 +214,7 @@ def combined_forward_ep_no_sync_rowwise(
         )
 
     routing_map = local_x_global_routed_expert_indices.view(
-        -1, self.routed_experts_router.top_k
+        -1, top_k
     ).int()
 
     with torch.no_grad():
@@ -255,6 +266,7 @@ def combined_forward_ep_no_sync_rowwise(
         else:
             dispatch_rank_major = _DispatchRowwiseAutograd.apply(
                 moe_inp,
+                buffers.dispatch_in if use_symm_dispatch_in else None,
                 dst_ranks,
                 dst_rows,
                 buffers.dispatch_out,
@@ -304,6 +316,8 @@ def combined_forward_ep_no_sync_rowwise(
             local_x = _RowwiseCombineWeightedAutograd.apply(
                 dispatch_rank_major,
                 buffers.combine_in,
+                buffers.combine_out if use_symm_combine_out else None,
+                buffers.combine_gather if use_symm_combine_gather else None,
                 dst_ranks,
                 dst_rows,
                 route_probs,

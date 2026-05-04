@@ -34,6 +34,9 @@ from .ep_no_sync_buffers import (
     _NoSyncTboPendingContext,
     compute_ep_no_sync_rank_capacity,
     get_ep_no_sync_buffers,
+    use_ep_no_sync_rowwise_symm_combine_gather,
+    use_ep_no_sync_rowwise_symm_combine_out,
+    use_ep_no_sync_rowwise_symm_dispatch_in,
 )
 from .ep_no_sync_tbo_1d import (
     ep_no_sync_stage_c_launch,
@@ -301,19 +304,25 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
         for block in ep_blocks:
             if block.ep_no_sync_use_rowwise_all_to_all:
+                use_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(block)
+                use_symm_combine_out = use_ep_no_sync_rowwise_symm_combine_out(block)
+                use_symm_combine_gather = use_ep_no_sync_rowwise_symm_combine_gather(block)
                 get_ep_no_sync_buffers(
                     block,
                     dispatch_in_cap=num_out_tokens,
                     dispatch_out_cap=rank_capacity,
                     combine_in_cap=rank_capacity,
-                    combine_out_cap=num_out_tokens,
+                    combine_out_cap=max_local_microbatch_size,
                     d_model=d_model,
                     dtype=dtype,
                     device=device,
-                    need_dispatch_in=False,
+                    need_dispatch_in=use_symm_dispatch_in,
                     need_dispatch_meta=False,
                     need_combine_meta=False,
-                    need_combine_out=False,
+                    need_combine_out=use_symm_combine_out,
+                    need_combine_gather=use_symm_combine_gather,
+                    combine_gather_cap=max_local_microbatch_size,
+                    combine_gather_top_k=top_k,
                 )
             else:
                 get_ep_no_sync_buffers(

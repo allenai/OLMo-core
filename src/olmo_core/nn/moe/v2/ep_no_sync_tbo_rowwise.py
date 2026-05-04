@@ -21,6 +21,9 @@ from .ep_no_sync_buffers import (
     ep_no_sync_slot_for_lane,
     get_ep_no_sync_buffers,
     get_ep_no_sync_group_name,
+    use_ep_no_sync_rowwise_symm_combine_gather,
+    use_ep_no_sync_rowwise_symm_combine_out,
+    use_ep_no_sync_rowwise_symm_dispatch_in,
 )
 from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
@@ -51,6 +54,9 @@ class _NoSyncRowwiseStageAState:
     dst_ranks: torch.Tensor
     dst_rows: torch.Tensor
     rowwise_nblocks: int
+    use_symm_dispatch_in: bool
+    use_symm_combine_out: bool
+    use_symm_combine_gather: bool
     buffers: _NoSyncSymmBuffers
     moe_inp: torch.Tensor
 
@@ -149,6 +155,11 @@ def ep_no_sync_rowwise_tbo_stage_a(
     del moe_inp_3d
 
     num_out_tokens = local_x_global_routed_expert_indices.numel()
+    num_input_tokens = moe_inp.shape[0]
+    top_k = self.routed_experts_router.top_k
+    use_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(self)
+    use_symm_combine_out = use_ep_no_sync_rowwise_symm_combine_out(self)
+    use_symm_combine_gather = use_ep_no_sync_rowwise_symm_combine_gather(self)
     with torch.no_grad():
         with nvtx.annotate("RowwiseTBO-A-ConfigCapacity", color="green"):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
@@ -170,7 +181,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
             dispatch_in_cap = num_out_tokens
             dispatch_out_cap = rank_capacity
             combine_in_cap = rank_capacity
-            combine_out_cap = num_out_tokens
+            combine_out_cap = num_input_tokens
             accumulate_ep_no_sync_rowwise_metrics(
                 self,
                 drop_token_cnt=drop_token_cnt,
@@ -189,14 +200,17 @@ def ep_no_sync_rowwise_tbo_stage_a(
         dtype=moe_inp.dtype,
         device=moe_inp.device,
         slot_idx=slot_idx,
-        need_dispatch_in=False,
+        need_dispatch_in=use_symm_dispatch_in,
         need_dispatch_meta=False,
         need_combine_meta=False,
-        need_combine_out=False,
+        need_combine_out=use_symm_combine_out,
+        need_combine_gather=use_symm_combine_gather,
+        combine_gather_cap=num_input_tokens,
+        combine_gather_top_k=top_k,
     )
 
     routing_map = local_x_global_routed_expert_indices.view(
-        -1, self.routed_experts_router.top_k
+        -1, top_k
     ).int()
 
     with torch.no_grad():
@@ -236,6 +250,9 @@ def ep_no_sync_rowwise_tbo_stage_a(
         dst_ranks=dst_ranks,
         dst_rows=dst_rows,
         rowwise_nblocks=rowwise_nblocks,
+        use_symm_dispatch_in=use_symm_dispatch_in,
+        use_symm_combine_out=use_symm_combine_out,
+        use_symm_combine_gather=use_symm_combine_gather,
         buffers=buffers,
         moe_inp=moe_inp,
     )
@@ -252,6 +269,7 @@ def ep_no_sync_rowwise_tbo_stage_d_launch(
     with torch.cuda.stream(comm_stream):
         dispatch_out = _DispatchRowwiseAutograd.apply(
             a_state.moe_inp,
+            a_state.buffers.dispatch_in if a_state.use_symm_dispatch_in else None,
             a_state.dst_ranks,
             a_state.dst_rows,
             a_state.buffers.dispatch_out,
@@ -312,6 +330,8 @@ def ep_no_sync_rowwise_tbo_stage_c_launch(
         combine_out = _RowwiseCombineWeightedAutograd.apply(
             pending_ctx.global_x_rank_major,
             a_state.buffers.combine_in,
+            a_state.buffers.combine_out if a_state.use_symm_combine_out else None,
+            a_state.buffers.combine_gather if a_state.use_symm_combine_gather else None,
             a_state.dst_ranks,
             a_state.dst_rows,
             route_probs,

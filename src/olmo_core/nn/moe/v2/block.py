@@ -106,6 +106,9 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     ep_no_sync_share_combine_out: bool = False
     ep_no_sync_major_align: int = 1
     ep_no_sync_restore_unpermute_backend: str = "te_fused"
+    ep_no_sync_rowwise_symm_dispatch_in: Optional[bool] = None
+    ep_no_sync_rowwise_symm_combine_out: Optional[bool] = None
+    ep_no_sync_rowwise_symm_combine_gather: Optional[bool] = None
     rowwise_fp8: Optional[MoERowwiseFP8Config] = None
 
     def build(
@@ -256,6 +259,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ep_no_sync_share_combine_out: bool = False,
         ep_no_sync_major_align: int = 1,
         ep_no_sync_restore_unpermute_backend: str = "te_fused",
+        ep_no_sync_rowwise_symm_dispatch_in: Optional[bool] = None,
+        ep_no_sync_rowwise_symm_combine_out: Optional[bool] = None,
+        ep_no_sync_rowwise_symm_combine_gather: Optional[bool] = None,
         rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -390,6 +396,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.ep_no_sync_share_combine_out = ep_no_sync_share_combine_out
         self.ep_no_sync_major_align = ep_no_sync_major_align
         self.ep_no_sync_restore_unpermute_backend = ep_no_sync_restore_unpermute_backend.lower()
+        self.ep_no_sync_rowwise_symm_dispatch_in = ep_no_sync_rowwise_symm_dispatch_in
+        self.ep_no_sync_rowwise_symm_combine_out = ep_no_sync_rowwise_symm_combine_out
+        self.ep_no_sync_rowwise_symm_combine_gather = ep_no_sync_rowwise_symm_combine_gather
         self._ep_symm_group_name: Optional[str] = None
         self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_last_debug: Dict[str, torch.Tensor] = {}

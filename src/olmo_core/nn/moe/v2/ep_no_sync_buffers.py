@@ -49,6 +49,7 @@ class _NoSyncSymmBuffers:
     combine_in: torch.Tensor
     combine_in_rank_splits: torch.Tensor
     combine_out: torch.Tensor
+    combine_gather: torch.Tensor
     combine_out_is_shared: bool
     combine_rank_splits_offsets: torch.Tensor
     combine_tmp_rank_splits_offsets: torch.Tensor
@@ -356,6 +357,73 @@ def get_or_init_ep_no_sync_symm_tensor(
     return block._ep_no_sync_symm_cache[name]
 
 
+def _parse_bool_env(value: str, *, env_name: str) -> Optional[bool]:
+    normalized = value.strip().lower()
+    if normalized in ("auto", ""):
+        return None
+    if normalized in ("1", "true", "yes", "y", "on"):
+        return True
+    if normalized in ("0", "false", "no", "n", "off"):
+        return False
+    raise RuntimeError(
+        f"{env_name} must be one of auto|0|1|true|false|yes|no|on|off, got {value!r}"
+    )
+
+
+def _rowwise_symm_auto_enabled(block: "MoEFusedV2TransformerBlock") -> bool:
+    local_world_size = 0
+    try:
+        local_world_size = int(os.getenv("LOCAL_WORLD_SIZE", "0") or "0")
+    except ValueError:
+        local_world_size = 0
+    local_cuda_devices = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    intra_node_limit = max(local_world_size, local_cuda_devices, 8)
+    return block.ep_world_size > intra_node_limit
+
+
+def _resolve_rowwise_symm_option(
+    block: "MoEFusedV2TransformerBlock",
+    *,
+    attr_name: str,
+    env_name: str,
+    auto_enabled: bool = True,
+) -> bool:
+    configured = getattr(block, attr_name, None)
+    if configured is not None:
+        return bool(configured)
+    env_value = os.getenv(env_name)
+    if env_value is not None:
+        parsed = _parse_bool_env(env_value, env_name=env_name)
+        if parsed is not None:
+            return parsed
+    return _rowwise_symm_auto_enabled(block) if auto_enabled else False
+
+
+def use_ep_no_sync_rowwise_symm_dispatch_in(block: "MoEFusedV2TransformerBlock") -> bool:
+    return _resolve_rowwise_symm_option(
+        block,
+        attr_name="ep_no_sync_rowwise_symm_dispatch_in",
+        env_name="OLMO_MOE_ROWWISE_SYMM_DISPATCH_IN",
+    )
+
+
+def use_ep_no_sync_rowwise_symm_combine_out(block: "MoEFusedV2TransformerBlock") -> bool:
+    return _resolve_rowwise_symm_option(
+        block,
+        attr_name="ep_no_sync_rowwise_symm_combine_out",
+        env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_OUT",
+        auto_enabled=False,
+    )
+
+
+def use_ep_no_sync_rowwise_symm_combine_gather(block: "MoEFusedV2TransformerBlock") -> bool:
+    return _resolve_rowwise_symm_option(
+        block,
+        attr_name="ep_no_sync_rowwise_symm_combine_gather",
+        env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_GATHER",
+    )
+
+
 @torch.compiler.disable
 def get_ep_no_sync_buffers(
     block: "MoEFusedV2TransformerBlock",
@@ -374,6 +442,9 @@ def get_ep_no_sync_buffers(
     need_combine_in: bool = True,
     need_combine_meta: bool = True,
     need_combine_out: bool = True,
+    need_combine_gather: bool = False,
+    combine_gather_cap: int = 0,
+    combine_gather_top_k: int = 0,
 ) -> _NoSyncSymmBuffers:
     assert block.routed_experts_router is not None
 
@@ -551,6 +622,22 @@ def get_ep_no_sync_buffers(
         combine_out = empty_data
         combine_out_is_shared = False
 
+    if need_combine_gather:
+        if combine_gather_cap <= 0 or combine_gather_top_k <= 0:
+            raise RuntimeError(
+                "combine_gather_cap and combine_gather_top_k must be positive "
+                "when need_combine_gather=True"
+            )
+        combine_gather = get_or_init_ep_no_sync_symm_tensor(
+            block,
+            name=f"combine_gather{name_suffix}",
+            shape=(combine_gather_cap, combine_gather_top_k, d_model),
+            dtype=dtype,
+            device=device,
+        )
+    else:
+        combine_gather = empty_data
+
     return _NoSyncSymmBuffers(
         dispatch_in=dispatch_in,
         dispatch_in_rank_splits=dispatch_in_rank_splits,
@@ -561,6 +648,7 @@ def get_ep_no_sync_buffers(
         combine_in=combine_in,
         combine_in_rank_splits=combine_in_rank_splits,
         combine_out=combine_out,
+        combine_gather=combine_gather,
         combine_out_is_shared=combine_out_is_shared,
         combine_rank_splits_offsets=combine_rank_splits_offsets,
         combine_tmp_rank_splits_offsets=combine_tmp_rank_splits_offsets,
