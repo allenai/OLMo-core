@@ -23,6 +23,8 @@ void olmo_symm_register_group(
 
 bool olmo_symm_has_group(const std::string& group_name);
 
+void olmo_symm_world_barrier();
+
 void all_to_all_vdev_2d_nblocks(
     torch::Tensor& input,
     torch::Tensor& out,
@@ -47,7 +49,9 @@ void rowwise_dispatch_put(
     torch::Tensor& dst_rows,
     const std::optional<torch::Tensor>& probs,
     const std::string& group_name,
-    int64_t nblocks);
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
 
 void rowwise_combine_get(
     torch::Tensor& expert_out,
@@ -57,7 +61,9 @@ void rowwise_combine_get(
     const std::optional<torch::Tensor>& probs,
     const std::string& group_name,
     int64_t nblocks,
-    const std::optional<torch::Tensor>& gathered_out);
+    const std::optional<torch::Tensor>& gathered_out,
+    bool pre_barrier,
+    bool post_barrier);
 
 void rowwise_combine_get_fused(
     torch::Tensor& expert_out,
@@ -66,7 +72,9 @@ void rowwise_combine_get_fused(
     torch::Tensor& src_rows,
     const std::optional<torch::Tensor>& probs,
     const std::string& group_name,
-    int64_t nblocks);
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
 
 void rowwise_gather_get(
     torch::Tensor& expert_out,
@@ -74,7 +82,9 @@ void rowwise_gather_get(
     torch::Tensor& src_ranks,
     torch::Tensor& src_rows,
     const std::string& group_name,
-    int64_t nblocks);
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def(
@@ -107,6 +117,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       &olmo_symm_has_group,
       "Return whether an OLMo symmetric-memory group mapping exists",
       py::arg("group_name"));
+  m.def(
+      "olmo_symm_world_barrier",
+      &olmo_symm_world_barrier,
+      "Enqueue an NVSHMEM_TEAM_WORLD barrier on the current CUDA stream for the OLMo NVSHMEM bootstrap world");
 
   m.def(
       "all_to_all_vdev_2d_nblocks",
@@ -141,7 +155,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("dst_rows"),
       py::arg("probs") = std::nullopt,
       py::arg("group_name"),
-      py::arg("nblocks") = 0);
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = false,
+      py::arg("post_barrier") = true);
 
   m.def(
       "rowwise_combine_get",
@@ -154,7 +170,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("probs") = std::nullopt,
       py::arg("group_name"),
       py::arg("nblocks") = 0,
-      py::arg("gathered_out") = std::nullopt);
+      py::arg("gathered_out") = std::nullopt,
+      py::arg("pre_barrier") = true,
+      py::arg("post_barrier") = false);
 
   m.def(
       "rowwise_combine_get_fused",
@@ -166,7 +184,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("src_rows"),
       py::arg("probs") = std::nullopt,
       py::arg("group_name"),
-      py::arg("nblocks") = 0);
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = true,
+      py::arg("post_barrier") = false);
 
   m.def(
       "rowwise_gather_get",
@@ -177,5 +197,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("src_ranks"),
       py::arg("src_rows"),
       py::arg("group_name"),
-      py::arg("nblocks") = 0);
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = true,
+      py::arg("post_barrier") = false);
 }

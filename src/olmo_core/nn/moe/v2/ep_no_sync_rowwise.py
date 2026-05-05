@@ -273,6 +273,8 @@ def combined_forward_ep_no_sync_rowwise(
                 group_name,
                 self.ep_pg,
                 rowwise_nblocks,
+                True,
+                False,
             )
 
     dispatch_rank_major = self.routed_experts(
@@ -324,6 +326,8 @@ def combined_forward_ep_no_sync_rowwise(
                 group_name,
                 self.ep_pg,
                 self.ep_no_sync_rowwise_nblocks,
+                True,
+                False,
             )
 
     if self.shared_experts is not None:

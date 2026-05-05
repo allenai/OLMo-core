@@ -159,6 +159,9 @@ def load_cuda_extension(
     sources: Sequence[PathLikeStr],
     extra_cflags: Optional[Sequence[str]] = None,
     extra_cuda_cflags: Optional[Sequence[str]] = None,
+    extra_include_paths: Optional[Sequence[PathLikeStr]] = None,
+    extra_ldflags: Optional[Sequence[str]] = None,
+    with_cuda: Optional[bool] = None,
     verbose_env_names: Sequence[str] = (),
     force_rebuild_env_names: Sequence[str] = (),
     stale_lock_timeout_env_names: Sequence[str] = ("OLMO_MOE_EXT_STALE_LOCK_TIMEOUT_SEC",),
@@ -193,8 +196,11 @@ def load_cuda_extension(
                 sources=[str(path) for path in sources],
                 extra_cflags=list(extra_cflags or []),
                 extra_cuda_cflags=list(extra_cuda_cflags or []),
+                extra_include_paths=[str(path) for path in (extra_include_paths or [])],
+                extra_ldflags=list(extra_ldflags or []),
                 build_directory=build_directory,
                 verbose=verbose,
+                with_cuda=with_cuda,
             )
         except Exception as e:
             is_last_attempt = attempt + 1 >= max_retries

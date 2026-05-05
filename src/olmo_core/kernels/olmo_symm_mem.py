@@ -99,6 +99,19 @@ def register_group(group: dist.ProcessGroup, *, device: torch.device | str | int
     _REGISTERED_GROUPS.add(group_name)
 
 
+def _require_bootstrap_world_group(group: dist.ProcessGroup) -> None:
+    assert _BOOTSTRAP_GLOBAL_RANKS is not None
+
+    global_ranks = _group_global_ranks(group)
+    if global_ranks != _BOOTSTRAP_GLOBAL_RANKS:
+        raise RuntimeError(
+            "OLMo symmetric-memory NVSHMEM barrier currently supports only the "
+            f"bootstrap world ranks {_BOOTSTRAP_GLOBAL_RANKS}, got group ranks {global_ranks}. "
+            "Use per-kernel group barriers for registered subgroups; exposing true NVSHMEM "
+            "subgroup barriers requires creating and caching NVSHMEM teams."
+        )
+
+
 def empty(
     shape: Iterable[int],
     *,
@@ -110,6 +123,15 @@ def empty(
     register_group(group, device=resolved_device)
     ext = _load_cuda_extension()
     return ext.olmo_symm_empty(tuple(int(dim) for dim in shape), dtype, resolved_device)
+
+
+def barrier(group: dist.ProcessGroup, *, device: torch.device | str | int | None = None) -> None:
+    """Enqueue an NVSHMEM barrier for the OLMo bootstrap world on the current CUDA stream."""
+    if _BOOTSTRAP_GLOBAL_RANKS is None:
+        init(group, device=device)
+    _require_bootstrap_world_group(group)
+    ext = _load_cuda_extension()
+    ext.olmo_symm_world_barrier()
 
 
 def rendezvous(

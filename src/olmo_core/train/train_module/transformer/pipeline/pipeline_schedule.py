@@ -144,6 +144,14 @@ class CustomScheduleInterleaved1F1B():
     p2p_overlap_ops = frozenset(("F_SEND", "F_RECV", "B_SEND", "B_RECV"))
     max_p2p_overlap_steps: Optional[int] = 1
     prioritize_next_action_input_p2p = False
+
+    @staticmethod
+    def _action_advances_p2p_overlap(action: Optional[PipelineAction]) -> bool:
+        return (
+            action is not None
+            and action.computation_type
+            in (PipelineActionType.FORWARD, PipelineActionType.FULL_BACKWARD)
+        )
         
     def reset_n_microbatches(self, n_microbatches: int):
         self._n_microbatches = n_microbatches
@@ -470,6 +478,7 @@ class CustomScheduleInterleaved1F1B():
             tuple[str, int, int, int],
             list[tuple[Any, dist.P2POp, str, int]],
         ] = defaultdict(list)
+        completed_p2p_overlap_compute_steps = 0
 
         def p2p_launch_label(
             key: tuple[str, int, int, int],
@@ -485,7 +494,9 @@ class CustomScheduleInterleaved1F1B():
             return ",".join(sorted(labels))
 
         def wait_p2p_key(key: tuple[str, int, int, int]) -> None:
-            for handle, _op, _op_kind, _launch_step in outstanding_p2p.pop(key, []):
+            for handle, _op, _op_kind, _launch_overlap_step in outstanding_p2p.pop(
+                key, []
+            ):
                 handle.wait()
 
         def wait_all_p2p() -> None:
@@ -496,36 +507,36 @@ class CustomScheduleInterleaved1F1B():
             for key in list(outstanding_p2p):
                 pending = outstanding_p2p.pop(key)
                 still_pending: list[tuple[Any, dist.P2POp, str, int]] = []
-                for handle, op, op_kind, launch_step in pending:
+                for handle, op, op_kind, launch_overlap_step in pending:
                     if op_kind in op_kinds:
                         handle.wait()
                     else:
-                        still_pending.append((handle, op, op_kind, launch_step))
+                        still_pending.append((handle, op, op_kind, launch_overlap_step))
                 if still_pending:
                     outstanding_p2p[key] = still_pending
 
         def prune_completed_p2p() -> None:
             for key, entries in list(outstanding_p2p.items()):
                 pending: list[tuple[Any, dist.P2POp, str, int]] = []
-                for handle, op, op_kind, launch_step in entries:
+                for handle, op, op_kind, launch_overlap_step in entries:
                     if handle.is_completed():
                         handle.wait()
                     else:
-                        pending.append((handle, op, op_kind, launch_step))
+                        pending.append((handle, op, op_kind, launch_overlap_step))
                 if pending:
                     outstanding_p2p[key] = pending
                 else:
                     outstanding_p2p.pop(key, None)
 
-        def wait_p2p_launched_at_or_before(time_step: int) -> None:
+        def wait_p2p_launched_at_or_before(overlap_compute_step: int) -> None:
             for key in list(outstanding_p2p):
                 pending = outstanding_p2p.pop(key)
                 still_pending: list[tuple[Any, dist.P2POp, str, int]] = []
-                for handle, op, op_kind, launch_step in pending:
-                    if launch_step <= time_step:
+                for handle, op, op_kind, launch_overlap_step in pending:
+                    if launch_overlap_step <= overlap_compute_step:
                         handle.wait()
                     else:
-                        still_pending.append((handle, op, op_kind, launch_step))
+                        still_pending.append((handle, op, op_kind, launch_overlap_step))
                 if still_pending:
                     outstanding_p2p[key] = still_pending
 
@@ -645,6 +656,12 @@ class CustomScheduleInterleaved1F1B():
             else:
                 # No operation for this time step
                 pass
+
+            # FULL_BACKWARD_CONT is only a schedule placeholder for the second
+            # half of backward. It does not launch model work, so do not age
+            # outstanding P2P against the overlap budget for that slot.
+            if self._action_advances_p2p_overlap(action):
+                completed_p2p_overlap_compute_steps += 1
 
             # Look at the neighboring ranks for this current timestep and determine whether
             # this current rank needs to do any recv communication
@@ -811,7 +828,14 @@ class CustomScheduleInterleaved1F1B():
                                 f"got {len(handles)} handles for {len(peer_keyed_ops)} ops"
                             )
                         for (key, op_kind, op), handle in zip(peer_keyed_ops, handles_for_ops):
-                            outstanding_p2p[key].append((handle, op, op_kind, time_step))
+                            outstanding_p2p[key].append(
+                                (
+                                    handle,
+                                    op,
+                                    op_kind,
+                                    completed_p2p_overlap_compute_steps,
+                                )
+                            )
 
             # do the communication
             if outstanding_p2p:
@@ -821,7 +845,9 @@ class CustomScheduleInterleaved1F1B():
                 elif not self.enable_p2p_overlap:
                     wait_all_p2p()
                 else:
-                    # in training mode, we can do 1-step lookahead to overlap communication with computation in some cases
+                    # In training mode, the overlap cap is measured in local
+                    # compute steps, not raw schedule slots. Placeholder slots
+                    # like FULL_BACKWARD_CONT do not consume the budget.
                     blocking_ops = {
                         "F_SEND",
                         "F_RECV",
@@ -834,7 +860,8 @@ class CustomScheduleInterleaved1F1B():
                         wait_all_p2p()
                     if self.max_p2p_overlap_steps is not None:
                         wait_p2p_launched_at_or_before(
-                            time_step - self.max_p2p_overlap_steps
+                            completed_p2p_overlap_compute_steps
+                            - self.max_p2p_overlap_steps
                         )
 
             # print(f'{action}-Done')

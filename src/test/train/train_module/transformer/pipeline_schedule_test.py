@@ -9,6 +9,7 @@ from olmo_core.distributed.parallel.pipeline_parallel import (
     get_pipeline_tick_exchange_stats,
 )
 from olmo_core.train.train_module.transformer.pipeline.pipeline_schedule import (
+    CustomScheduleInterleaved1F1B,
     CustomSchedule1F1BV,
     PipelineActionType,
     pad_to_max_length,
@@ -29,6 +30,19 @@ def _build_1f1b_v_schedule(
     schedule._stages = [SimpleNamespace(stage_index_to_group_rank={}) for _ in range(2)]
     schedule.forward_pull_ahead_extra_activations = forward_pull_ahead_extra_activations
     schedule.configure_pipeline_order()
+    return schedule
+
+
+def _build_interleaved_1f1b_schedule(
+    pp_size: int,
+    n_microbatches: int,
+) -> CustomScheduleInterleaved1F1B:
+    schedule = CustomScheduleInterleaved1F1B.__new__(CustomScheduleInterleaved1F1B)
+    schedule.pp_group_size = pp_size
+    schedule._num_stages = 2 * pp_size
+    schedule.n_local_stages = 2
+    schedule.enable_activation_offload_schedule = False
+    schedule.reset_n_microbatches(n_microbatches)
     return schedule
 
 
@@ -97,6 +111,27 @@ def test_1f1b_v_mapping():
         6: 1,
         7: 0,
     }
+
+
+def test_interleaved_1f1b_p2p_overlap_ignores_backward_continuation_slots():
+    schedule = _build_interleaved_1f1b_schedule(8, 64)
+    rank_1_actions = schedule.pipeline_order[1]
+
+    action_names = [
+        str(action) if action is not None else ".." for action in rank_1_actions
+    ]
+    assert action_names[42:46] == ["1F15", "9B3", "9B_3", "9F8"]
+
+    overlap_steps = []
+    completed_overlap_steps = 0
+    for action in rank_1_actions:
+        if schedule._action_advances_p2p_overlap(action):
+            completed_overlap_steps += 1
+        overlap_steps.append(completed_overlap_steps)
+
+    p2p_after_9b3_launch_step = overlap_steps[43]
+    assert overlap_steps[44] == p2p_after_9b3_launch_step
+    assert overlap_steps[45] == p2p_after_9b3_launch_step + 1
 
 
 @pytest.mark.parametrize("pp_size,n_microbatches", [(2, 1), (2, 4), (4, 4), (4, 8), (8, 8)])

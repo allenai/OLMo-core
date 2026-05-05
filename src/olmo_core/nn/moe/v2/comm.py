@@ -13,12 +13,18 @@ from olmo_core.kernels.mxfp8_utils import (
 
 
 def _rowwise_debug_enabled() -> bool:
-    return os.getenv("OLMO_ROWWISE_DEBUG_PRINT", "0").strip().lower() in {
+    if os.getenv("OLMO_ROWWISE_DEBUG_PRINT", "0").strip().lower() not in {
         "1",
         "true",
         "yes",
         "on",
-    }
+    }:
+        return False
+    ranks = os.getenv("OLMO_ROWWISE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
+    if not ranks or not dist.is_available() or not dist.is_initialized():
+        return True
+    rank = str(dist.get_rank())
+    return rank in {part.strip() for part in ranks.split(",") if part.strip()}
 
 
 def _rowwise_debug_sync_enabled() -> bool:
@@ -39,12 +45,7 @@ def _rowwise_rank_tag() -> str:
 def _rowwise_tensor_desc(name: str, tensor: Optional[torch.Tensor]) -> str:
     if tensor is None:
         return f"{name}=None"
-    return (
-        f"{name}=shape{tuple(tensor.shape)} dtype={tensor.dtype} "
-        f"dev={tensor.device} contig={tensor.is_contiguous()} "
-        f"data=0x{tensor.data_ptr():x} storage=0x{tensor.untyped_storage().data_ptr():x} "
-        f"offset={tensor.storage_offset()}"
-    )
+    return f"{name}=tensor"
 
 
 def _rowwise_debug_print(label: str, phase: str, group_name: str, **tensors: Optional[torch.Tensor]) -> None:
@@ -57,7 +58,7 @@ def _rowwise_debug_print(label: str, phase: str, group_name: str, **tensors: Opt
         f"group={group_name}",
     ]
     parts.extend(_rowwise_tensor_desc(name, tensor) for name, tensor in tensors.items())
-    print(" | ".join(parts), flush=True)
+    print(" | ".join(str(part) for part in parts), flush=True)
 
 
 def _rowwise_debug_sync(label: str, device: torch.device) -> None:
@@ -85,6 +86,8 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         group_name: str,
         group: dist.ProcessGroup,
         nblocks: int,
+        pre_barrier: bool,
+        post_barrier: bool,
     ) -> torch.Tensor:
         if expert_out.ndim != 2 or symm_expert_out.ndim != 2:
             raise RuntimeError("expert_out/symm_expert_out must be rank-2 [R, D]")
@@ -218,6 +221,8 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             probs=probs_f32,
             nblocks=nblocks,
             gathered_out=gathered_routes_for_kernel,
+            pre_barrier=pre_barrier,
+            post_barrier=post_barrier,
         )
         _rowwise_debug_sync("rowwise_combine_forward_get", symm_expert_out.device)
         _rowwise_debug_print(
@@ -350,7 +355,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         ctx.symm_expert_out = None
         ctx.symm_gathered_routes = None
         ctx.group = None
-        return grad_expert_out, None, None, None, None, None, grad_probs, None, None, None
+        return grad_expert_out, None, None, None, None, None, grad_probs, None, None, None, None, None
 
 
 class _DispatchRowwiseAutograd(torch.autograd.Function):
@@ -366,6 +371,8 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         group_name: str,
         group: dist.ProcessGroup,
         nblocks: int,
+        get_pre_barrier: bool,
+        get_post_barrier: bool,
     ) -> torch.Tensor:
         if source_input.ndim != 2:
             raise RuntimeError(
@@ -454,6 +461,8 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         ctx.group_name = group_name
         ctx.group = group
         ctx.nblocks = int(nblocks)
+        ctx.get_pre_barrier = bool(get_pre_barrier)
+        ctx.get_post_barrier = bool(get_post_barrier)
         ctx.symm_input = symm_input
         ctx.symm_out = symm_out
         ctx.save_for_backward(dst_ranks_i64, dst_rows_i64)
@@ -516,6 +525,8 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             ctx.group_name,
             nblocks=ctx.nblocks,
             gathered_out=gathered_grad_out,
+            pre_barrier=ctx.get_pre_barrier,
+            post_barrier=ctx.get_post_barrier,
         )
         _rowwise_debug_sync("rowwise_dispatch_backward_combine_get", symm_grad_out.device)
         _rowwise_debug_print(
@@ -529,7 +540,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         ctx.symm_input = None
         ctx.symm_out = None
         ctx.group = None
-        return grad_input, None, None, None, None, None, None, None
+        return grad_input, None, None, None, None, None, None, None, None, None
 
 
 class _DispatchRowwiseFP8Autograd(torch.autograd.Function):

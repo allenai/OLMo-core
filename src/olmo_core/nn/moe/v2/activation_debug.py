@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import weakref
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
 
@@ -11,7 +12,16 @@ if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
-_DEBUG_ACTIVATION = True
+EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENV_VAR = "OLMO_EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG"
+
+
+def _debug_activation_enabled() -> bool:
+    return os.getenv(EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENV_VAR, "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _get_train_global_arg(key: str, default=None):
@@ -39,7 +49,7 @@ def maybe_dump_ep_no_sync_saved_activations(
         _get_train_global_arg("dry_run_done", default=False)
         and block.block_idx == 3
         and not _get_train_global_arg(activation_dump_key, default=False)
-        and _DEBUG_ACTIVATION
+        and _debug_activation_enabled()
     ):
         return None
 

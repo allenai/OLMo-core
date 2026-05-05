@@ -909,6 +909,24 @@ bool olmo_symm_has_group(const std::string& group_name) {
   return olmo_symm_find_group(group_name) != nullptr;
 }
 
+void olmo_symm_world_barrier() {
+  auto& state = olmo_symm_state();
+  int device_idx = -1;
+  {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    TORCH_CHECK(state.initialized, "OLMo symmetric memory is not initialized");
+    device_idx = state.device_idx;
+  }
+
+  c10::cuda::CUDAGuard guard(device_idx);
+  auto stream = at::cuda::getCurrentCUDAStream();
+  int barrier_status = nvshmemx_barrier_on_stream(NVSHMEM_TEAM_WORLD, stream.stream());
+  TORCH_CHECK(
+      barrier_status == 0,
+      "nvshmemx_barrier_on_stream (world) failed with status ",
+      barrier_status);
+}
+
 void all_to_all_vdev_2d_nblocks(
     at::Tensor& input,
     at::Tensor& out,
@@ -1191,7 +1209,9 @@ void rowwise_dispatch_put(
     at::Tensor& dst_rows,
     const std::optional<at::Tensor>& probs,
     const std::string& group_name,
-    int64_t nblocks) {
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier) {
   auto* olmo_group = olmo_symm_find_group(group_name);
   TORCH_CHECK(
       olmo_group != nullptr,
@@ -1274,13 +1294,13 @@ void rowwise_dispatch_put(
       num_input_rows * top_k, nblocks, world_within_direct_access);
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
 
-  // Ensure all peers have completed prior stream work (e.g., local zero_/copy_)
-  // before remote puts in this launch start.
-  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
-  TORCH_CHECK(
-      pre_barrier_status == 0,
-      "nvshmemx_barrier_on_stream (pre) failed with status ",
-      pre_barrier_status);
+  if (pre_barrier) {
+    int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        pre_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (pre) failed with status ",
+        pre_barrier_status);
+  }
 
   if (probs_ptr == nullptr) {
     void* args[] = {
@@ -1335,11 +1355,13 @@ void rowwise_dispatch_put(
               stream);
         });
   }
-  int barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
-  TORCH_CHECK(
-      barrier_status == 0,
-      "nvshmemx_barrier_on_stream failed with status ",
-      barrier_status);
+  if (post_barrier) {
+    int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        post_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (post) failed with status ",
+        post_barrier_status);
+  }
 }
 
 void rowwise_combine_get(
@@ -1350,7 +1372,9 @@ void rowwise_combine_get(
     const std::optional<at::Tensor>& probs,
     const std::string& group_name,
     int64_t nblocks,
-    const std::optional<at::Tensor>& gathered_out) {
+    const std::optional<at::Tensor>& gathered_out,
+    bool pre_barrier,
+    bool post_barrier) {
   auto* olmo_group = olmo_symm_find_group(group_name);
   TORCH_CHECK(
       olmo_group != nullptr,
@@ -1444,12 +1468,13 @@ void rowwise_combine_get(
       num_out_rows * top_k, nblocks, world_within_direct_access);
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
 
-  // Ensure all peers have completed prior stream work before remote gets start.
-  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
-  TORCH_CHECK(
-      pre_barrier_status == 0,
-      "nvshmemx_barrier_on_stream (pre) failed with status ",
-      pre_barrier_status);
+  if (pre_barrier) {
+    int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        pre_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (pre) failed with status ",
+        pre_barrier_status);
+  }
 
   at::Tensor gathered;
   if (gathered_out.has_value()) {
@@ -1531,6 +1556,17 @@ void rowwise_combine_get(
                   dim);
         }
       });
+
+  if (post_barrier) {
+    // TBO reuses symmetric slots across adjacent blocks, so every rank has to
+    // wait until all peers have finished their GETs before a fast rank can
+    // overwrite its local expert_out/combine_in slot.
+    int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        post_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (post) failed with status ",
+        post_barrier_status);
+  }
 }
 
 void rowwise_combine_get_fused(
@@ -1540,7 +1576,9 @@ void rowwise_combine_get_fused(
     at::Tensor& src_rows,
     const std::optional<at::Tensor>& probs,
     const std::string& group_name,
-    int64_t nblocks) {
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier) {
   auto* olmo_group = olmo_symm_find_group(group_name);
   TORCH_CHECK(
       olmo_group != nullptr,
@@ -1620,12 +1658,13 @@ void rowwise_combine_get_fused(
       num_out_rows * top_k, nblocks, world_within_direct_access);
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
 
-  // Ensure all peers have completed prior stream work before remote gets start.
-  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
-  TORCH_CHECK(
-      pre_barrier_status == 0,
-      "nvshmemx_barrier_on_stream (pre) failed with status ",
-      pre_barrier_status);
+  if (pre_barrier) {
+    int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        pre_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (pre) failed with status ",
+        pre_barrier_status);
+  }
 
   dim3 block(ROWWISE_COMBINE_FUSED_THREADS_PER_BLOCK);
   constexpr int64_t cols_per_block =
@@ -1684,6 +1723,13 @@ void rowwise_combine_get_fused(
                   group_size);
         }
       });
+  if (post_barrier) {
+    int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        post_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (post) failed with status ",
+        post_barrier_status);
+  }
 }
 
 void rowwise_gather_get(
@@ -1692,7 +1738,9 @@ void rowwise_gather_get(
     at::Tensor& src_ranks,
     at::Tensor& src_rows,
     const std::string& group_name,
-    int64_t nblocks) {
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier) {
   auto* olmo_group = olmo_symm_find_group(group_name);
   TORCH_CHECK(
       olmo_group != nullptr,
@@ -1757,12 +1805,13 @@ void rowwise_gather_get(
       num_out_rows, nblocks, world_within_direct_access);
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
 
-  // Ensure all peers have completed prior stream work before remote gets start.
-  int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
-  TORCH_CHECK(
-      pre_barrier_status == 0,
-      "nvshmemx_barrier_on_stream (pre) failed with status ",
-      pre_barrier_status);
+  if (pre_barrier) {
+    int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        pre_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (pre) failed with status ",
+        pre_barrier_status);
+  }
 
   const void* expert_out_ptr = expert_out.data_ptr();
   void* out_ptr = out.mutable_data_ptr();
@@ -1790,4 +1839,11 @@ void rowwise_gather_get(
       args,
       0,
       stream);
+  if (post_barrier) {
+    int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        post_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (post) failed with status ",
+        post_barrier_status);
+  }
 }

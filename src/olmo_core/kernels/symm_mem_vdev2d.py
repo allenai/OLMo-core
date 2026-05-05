@@ -55,6 +55,13 @@ def _load_cuda_extension():
 
 
 @torch.compiler.disable
+def nvshmem_world_barrier() -> None:
+    """Enqueue an NVSHMEM_TEAM_WORLD barrier on the current CUDA stream."""
+    ext = _load_cuda_extension()
+    ext.olmo_symm_world_barrier()
+
+
+@torch.compiler.disable
 def all_to_all_vdev_2d_nblocks(
     input: torch.Tensor,
     out: torch.Tensor,
@@ -108,6 +115,8 @@ def rowwise_dispatch_put(
     *,
     probs: Optional[torch.Tensor] = None,
     nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
 ) -> None:
     ext = _load_cuda_extension()
     ext.rowwise_dispatch_put(
@@ -118,6 +127,8 @@ def rowwise_dispatch_put(
         probs,
         group_name,
         nblocks,
+        pre_barrier,
+        post_barrier,
     )
 
 
@@ -132,6 +143,8 @@ def rowwise_dispatch_put_scaled(
     *,
     block_size: int = 32,
     nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
 ) -> None:
     # Optional debug safety init for stale-capacity issues; off by default to
     # avoid full-buffer memset overhead in the fp8 hot path.
@@ -147,6 +160,8 @@ def rowwise_dispatch_put_scaled(
         dst_rows,
         group_name,
         nblocks=nblocks,
+        pre_barrier=pre_barrier,
+        post_barrier=False,
     )
     rowwise_dispatch_put(
         scales,
@@ -155,6 +170,8 @@ def rowwise_dispatch_put_scaled(
         dst_rows,
         group_name,
         nblocks=nblocks,
+        pre_barrier=False,
+        post_barrier=post_barrier,
     )
 
 
@@ -169,6 +186,8 @@ def rowwise_combine_get(
     probs: Optional[torch.Tensor] = None,
     nblocks: int = 0,
     gathered_out: Optional[torch.Tensor] = None,
+    pre_barrier: bool = True,
+    post_barrier: bool = False,
 ) -> None:
     ext = _load_cuda_extension()
     ext.rowwise_combine_get(
@@ -180,6 +199,8 @@ def rowwise_combine_get(
         group_name,
         nblocks,
         gathered_out,
+        pre_barrier,
+        post_barrier,
     )
 
 @nvtx.annotate("rowwise_combine_get_scaled")
@@ -197,6 +218,8 @@ def rowwise_combine_get_scaled(
     gathered_out: Optional[torch.Tensor] = None,
     gathered_q_out: Optional[torch.Tensor] = None,
     gathered_scales_out: Optional[torch.Tensor] = None,
+    pre_barrier: bool = True,
+    post_barrier: bool = False,
 ) -> None:
     if src_ranks.ndim != 2 or src_rows.ndim != 2:
         raise ValueError(
@@ -247,6 +270,8 @@ def rowwise_combine_get_scaled(
         flat_rows,
         group_name,
         nblocks=nblocks,
+        pre_barrier=pre_barrier,
+        post_barrier=False,
     )
 
     expected_scales_shape = (n, k, expert_out_scales.shape[1])
@@ -285,6 +310,8 @@ def rowwise_combine_get_scaled(
         flat_rows,
         group_name,
         nblocks=nblocks,
+        pre_barrier=False,
+        post_barrier=post_barrier,
     )
 
     reduce_gathered_rows_from_mxfp8(
@@ -308,6 +335,8 @@ def rowwise_combine_get_fused(
     *,
     probs: Optional[torch.Tensor] = None,
     nblocks: int = 0,
+    pre_barrier: bool = True,
+    post_barrier: bool = False,
 ) -> None:
     ext = _load_cuda_extension()
     ext.rowwise_combine_get_fused(
@@ -318,6 +347,8 @@ def rowwise_combine_get_fused(
         probs,
         group_name,
         nblocks,
+        pre_barrier,
+        post_barrier,
     )
 
 
@@ -330,6 +361,8 @@ def rowwise_gather_get(
     group_name: str,
     *,
     nblocks: int = 0,
+    pre_barrier: bool = True,
+    post_barrier: bool = False,
 ) -> None:
     ext = _load_cuda_extension()
     ext.rowwise_gather_get(
@@ -339,4 +372,6 @@ def rowwise_gather_get(
         src_rows,
         group_name,
         nblocks,
+        pre_barrier,
+        post_barrier,
     )

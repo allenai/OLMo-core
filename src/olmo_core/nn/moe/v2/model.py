@@ -299,7 +299,16 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         device = param.device
         d_model = self.d_model
         top_k = first_block.routed_experts_router.top_k
-        num_out_tokens = max_local_microbatch_size * top_k
+        prewarm_local_microbatch_size = max_local_microbatch_size
+        if self.tbo:
+            if max_local_microbatch_size % 2 != 0:
+                raise RuntimeError(
+                    "TBO EP no-sync symmetric prewarm requires an even local microbatch size "
+                    f"(got {max_local_microbatch_size})"
+                )
+            prewarm_local_microbatch_size = max_local_microbatch_size // 2
+
+        num_out_tokens = prewarm_local_microbatch_size * top_k
         rank_capacity = compute_ep_no_sync_rank_capacity(first_block, num_out_tokens)
 
         for block in ep_blocks:
@@ -307,23 +316,26 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 use_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(block)
                 use_symm_combine_out = use_ep_no_sync_rowwise_symm_combine_out(block)
                 use_symm_combine_gather = use_ep_no_sync_rowwise_symm_combine_gather(block)
-                get_ep_no_sync_buffers(
-                    block,
-                    dispatch_in_cap=num_out_tokens,
-                    dispatch_out_cap=rank_capacity,
-                    combine_in_cap=rank_capacity,
-                    combine_out_cap=max_local_microbatch_size,
-                    d_model=d_model,
-                    dtype=dtype,
-                    device=device,
-                    need_dispatch_in=use_symm_dispatch_in,
-                    need_dispatch_meta=False,
-                    need_combine_meta=False,
-                    need_combine_out=use_symm_combine_out,
-                    need_combine_gather=use_symm_combine_gather,
-                    combine_gather_cap=max_local_microbatch_size,
-                    combine_gather_top_k=top_k,
-                )
+                slot_indices = range(block.ep_no_sync_shared_slots) if self.tbo else (None,)
+                for slot_idx in slot_indices:
+                    get_ep_no_sync_buffers(
+                        block,
+                        dispatch_in_cap=num_out_tokens,
+                        dispatch_out_cap=rank_capacity,
+                        combine_in_cap=rank_capacity,
+                        combine_out_cap=prewarm_local_microbatch_size,
+                        d_model=d_model,
+                        dtype=dtype,
+                        device=device,
+                        slot_idx=slot_idx,
+                        need_dispatch_in=use_symm_dispatch_in,
+                        need_dispatch_meta=False,
+                        need_combine_meta=False,
+                        need_combine_out=use_symm_combine_out,
+                        need_combine_gather=use_symm_combine_gather,
+                        combine_gather_cap=prewarm_local_microbatch_size,
+                        combine_gather_top_k=top_k,
+                    )
             else:
                 get_ep_no_sync_buffers(
                     block,
