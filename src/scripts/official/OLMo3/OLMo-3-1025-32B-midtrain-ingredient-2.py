@@ -103,7 +103,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
-            load_path="https://storage.googleapis.com/ai2-llm/stego32-highlr-filter3/step656000/",
+            load_path="https://storage.googleapis.com/ai2-llm/checkpoints/stego32-highlr-filter3/step656000/",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
