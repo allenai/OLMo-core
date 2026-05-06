@@ -1,9 +1,9 @@
+from .config import TrainModuleConfig
 from .train_module import (
     BasicTrainModule,
     EvalBatchSizeUnit,
     EvalBatchSpec,
     TrainModule,
-    TrainModuleConfig,
 )
 from .transformer import (
     MoEV2TransformerTrainModule,
@@ -25,7 +25,6 @@ from .transformer import (
 __all__ = [
     "TrainModuleConfig",
     "TrainModule",
-    "TrainModuleConfig",
     "EvalBatchSpec",
     "EvalBatchSizeUnit",
     "BasicTrainModule",
