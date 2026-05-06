@@ -110,9 +110,9 @@ if sys.argv[1] == "eval_checkpoints":
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 500
 
-NUM_EXPERTS = 96
+NUM_EXPERTS = 32
 TOP_K = 4
-D_MODEL=3 * 1024
+D_MODEL=4 * 1024
 D_ATTN=4 * 1024
 
 HEAD_DIM=128
@@ -120,7 +120,7 @@ NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
 MOE_HIDDEN_SIZE = 4 * 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 4 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -129,19 +129,19 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=8
-PP_DIM=8
+EP_DIM=4
+PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
-TAG=f'p1'
+TAG=f'p0'
 
 LR_ALPHA = 0.53
 
 # stage 1 - xM - 
 MAX_DURATION = int(100e9)
-MICRO_BSZ = 1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 4
+MICRO_BSZ = 2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 // 2
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
@@ -181,7 +181,7 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=48
+NUM_LAYERS=6
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -198,8 +198,8 @@ USE_NO_SYNC_EP=True
 # USE_AC=False
 PER_LAYER_RECOMPUTE=False
 USE_TBO=False
-GRAD_ACC_IN_FP32=False
-GRAD_REDUCE_IN_FP32=False
+GRAD_ACC_IN_FP32=True
+GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
@@ -208,7 +208,7 @@ ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blo
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = True
+PRODUCTION_RUN = False
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1

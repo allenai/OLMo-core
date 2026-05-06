@@ -262,7 +262,7 @@ class MoEFusedV2OptimizerConfig(Config):
                         )
                         break
                 else:
-                    msg = f"optim group {g_idx} override pattern '{pattern}' does not match any parameters"
+                    msg = f"optim group {g_idx} override pattern '{pattern}' does not match any parameters" # TODO: might be false alarm, param can match patterns in other groups
                     if strict:
                         raise OLMoConfigurationError(msg)
                     else:

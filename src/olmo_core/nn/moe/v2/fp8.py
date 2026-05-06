@@ -126,12 +126,21 @@ def shared_experts_forward1_rowwise_fp8(
     use_fast_accum: bool,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     assert block.shared_experts is not None
-    B, S, D = x.shape
+    if x.ndim == 3:
+        B, S, D = x.shape
+        x2 = x.reshape(B * S, D)
+    elif x.ndim == 2:
+        x2 = x
+        D = x.shape[1]
+    else:
+        raise RuntimeError(
+            "shared_experts_forward1_rowwise_fp8 expects x to be [B, S, D] or [N, D], "
+            f"got shape={tuple(x.shape)}"
+        )
     E, H = block.shared_experts.num_experts, block.shared_experts.hidden_size
-    BS = B * S
+    BS = x2.shape[0]
 
     maybe_refresh_shared_rowwise_fp8_cache(block)
-    x2 = x.reshape(BS, D)
     offs = torch.tensor([BS], device=x.device, dtype=torch.int32)
     up_kwargs = dict(
         offs=offs,

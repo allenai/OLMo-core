@@ -268,19 +268,9 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
         if bool(getattr(ctx, "_saved_mat_a_from_prequantized_lhs", False)):
             mat_b, offs, mat_a_q, mat_a_scale = ctx.saved_tensors
             if ctx.needs_input_grad[1]:
-                active_rows = int(offs[-1].item()) if offs.numel() > 0 else 0
-                if active_rows < 0 or active_rows > mat_a_q.shape[0]:
-                    raise RuntimeError(
-                        "Invalid offs[-1] while reconstructing mat_a from prequantized lhs: "
-                        f"offs[-1]={active_rows}, mat_a_q_rows={mat_a_q.shape[0]}"
-                    )
-                mat_a_q_use = mat_a_q if active_rows == mat_a_q.shape[0] else mat_a_q[:active_rows]
-                mat_a_scale_use = (
-                    mat_a_scale if active_rows == mat_a_scale.shape[0] else mat_a_scale[:active_rows]
-                )
                 mat_a = dequantize_rows_from_mxfp8(
-                    mat_a_q_use,
-                    mat_a_scale_use,
+                    mat_a_q,
+                    mat_a_scale,
                     block_size=32,
                     out_dtype=grad_out_compute.dtype,
                 )

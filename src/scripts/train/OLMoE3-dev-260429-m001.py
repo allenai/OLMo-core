@@ -110,15 +110,15 @@ if sys.argv[1] == "eval_checkpoints":
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 500
 
-NUM_EXPERTS = 96
+NUM_EXPERTS = 128
 TOP_K = 4
-D_MODEL=3 * 1024
-D_ATTN=4 * 1024
+D_MODEL=3 * 1024 - 512
+D_ATTN=3 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 4 * 1024
+MOE_HIDDEN_SIZE = 4 * 1024 - 512
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
@@ -140,7 +140,7 @@ LR_ALPHA = 0.53
 
 # stage 1 - xM - 
 MAX_DURATION = int(100e9)
-MICRO_BSZ = 1
+MICRO_BSZ = 2
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 4
 # NO LR_REF_BSZ=4M
 
@@ -181,7 +181,7 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=48
+NUM_LAYERS=32
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -208,7 +208,7 @@ ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blo
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = True
+PRODUCTION_RUN = False
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1

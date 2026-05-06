@@ -12,6 +12,7 @@ from .context_parallel import ContextParallelConfig
 from .data_parallel import DataParallelConfig, DataParallelType, DPMeshDimName
 from .expert_parallel import ExpertParallelConfig
 from .pipeline_parallel import (
+    PipelineP2PBackend,
     PipelineParallelConfig,
     PipelineSchedule,
     PipelineScheduleType,
@@ -39,6 +40,7 @@ __all__ = [
     "DPMeshDimName",
     "TensorParallelConfig",
     "ExpertParallelConfig",
+    "PipelineP2PBackend",
     "PipelineParallelConfig",
     "PipelineScheduleType",
     "PipelineSplitStyle",

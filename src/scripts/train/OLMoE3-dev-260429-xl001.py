@@ -3,6 +3,13 @@
 import logging
 import math
 import os
+
+# Keep this before any olmo_core imports: several modules import nvtx at import
+# time, and NVTX_DISABLE only works if it is set before nvtx is imported.
+USE_NV_PROFILE = False
+if not USE_NV_PROFILE:
+    os.environ["NVTX_DISABLE"] = "1"
+
 import torch
 import transformer_engine
 from functools import partial
@@ -101,15 +108,16 @@ if sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 1000
+SAVE_INTERVAL = 250
 
 NUM_EXPERTS = 128
 TOP_K = 4
-D_MODEL=4096
+D_MODEL=4096 - 512
 D_ATTN=4096 + 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
+# NUM_KV_HEAD= NUM_HEAD // 8
 NUM_KV_HEAD= NUM_HEAD // 4
 MOE_HIDDEN_SIZE = 4096
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
@@ -131,10 +139,10 @@ TAG=f'p1'
 
 LR_ALPHA = 0.53
 
-# stage 1 - 4M - 
-MAX_DURATION = int(100e9)
-MICRO_BSZ = 1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 4
+# stage 1 - 8M - 
+MAX_DURATION = int(200e9)
+MICRO_BSZ = 2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 8
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
@@ -191,8 +199,8 @@ USE_NO_SYNC_EP=True
 # USE_AC=False
 PER_LAYER_RECOMPUTE=True
 USE_TBO=False
-GRAD_ACC_IN_FP32=True
-GRAD_REDUCE_IN_FP32=True
+GRAD_ACC_IN_FP32=False
+GRAD_REDUCE_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
@@ -333,7 +341,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE=2048
+    WINDOW_SIZE=256
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -365,7 +373,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
-        1: deepcopy(dense_block_config),
         # 1: deepcopy(dense_block_config),
     }
     
@@ -438,7 +445,9 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             degree=PP_DIM,
             # schedule=PipelineScheduleType.custom_1F1B,
             schedule=PipelineScheduleType.custom_interleaved_1F1B,
+            # schedule=PipelineScheduleType.custom_1F1B_V,
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
+            p2p_use_separate_group=True,
             split_points=SPLIT_POINTS
         ) if PP_DIM > 1 else None,
 
@@ -501,10 +510,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
-            checkpoints_to_eval=[
-                "/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step83000",
-                "/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step85000",
-            ]
+            # checkpoints_to_eval=[
+            #     "/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step83000",
+            #     "/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step85000",
+            # ]
         )
         .with_callback(
             "checkpointer",
@@ -529,7 +538,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
+            NvidiaProfilerCallback(enabled=USE_NV_PROFILE, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
                                    start=1021,
                                    end=1026

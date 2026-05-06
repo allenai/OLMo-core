@@ -89,9 +89,9 @@ def _tbo_debug_print(block: "MoEFusedV2TransformerBlock", label: str, **tensors:
 def _tbo_debug_sync(block: "MoEFusedV2TransformerBlock", label: str, device: torch.device) -> None:
     if not _tbo_debug_sync_enabled():
         return
-    _tbo_debug_print(block, f"sync-enter {label}")
+    # _tbo_debug_print(block, f"sync-enter {label}")
     torch.cuda.synchronize(device)
-    _tbo_debug_print(block, f"sync-exit {label}")
+    # _tbo_debug_print(block, f"sync-exit {label}")
 
 
 @dataclass
@@ -561,7 +561,7 @@ def ep_no_sync_rowwise_tbo_stage_tail(
 
     mlp_out = self._merge_routed_and_shared(local_x, a_state.mixed_shared_out)
     final_out = self._res_norm_mlp(a_state.attn_res_out, mlp_out)
-    _tbo_debug_print(self, f"T{pending_ctx.lane_id}:tail-exit", final_out=final_out)
+    # _tbo_debug_print(self, f"T{pending_ctx.lane_id}:tail-exit", final_out=final_out)
     return self._attach_routed_aux_loss(
         final_out,
         a_state.routed_expert_router_aux_loss_info,

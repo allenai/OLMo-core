@@ -22,6 +22,7 @@ from .helpers import(
     flatten_args,
     normalize_model_output_as_tuple,
 )
+from .p2p_transport import NCCLRMAPipelineP2PTransport, P2PKey, RMARecvOp, RMASendOp
 
 
 def _make_tensor_from_meta(
@@ -96,6 +97,8 @@ class CustomPipelineStage:
         # Whether this stage is using replicate (composable) DDP, affects how to control gradient sync in backward
         self.is_rddp: bool = kwargs.pop("is_rddp", False)
         p2p_group: Optional[dist.ProcessGroup] = kwargs.pop("p2p_group", None)
+        self.p2p_backend: str = kwargs.pop("p2p_backend", "nccl")
+        self.p2p_transport: Optional[NCCLRMAPipelineP2PTransport] = None
 
         # the model
         self.submod = submodule
@@ -145,6 +148,9 @@ class CustomPipelineStage:
             raise RuntimeError(
                 f"Pipeline group size {self.group_size} cannot be larger than number of stages {self.num_stages}"
             )
+
+        if self.p2p_backend not in {"nccl", "nccl_rma"}:
+            raise RuntimeError(f"Unsupported custom pipeline P2P backend: {self.p2p_backend}")
 
         # map microbatch ID to list of forward tensor args
         # used for: (1) after forward, need to store it before sending to next stage
@@ -380,6 +386,26 @@ class CustomPipelineStage:
 
         return ops
 
+    def set_p2p_transport(self, transport: Optional[NCCLRMAPipelineP2PTransport]) -> None:
+        self.p2p_transport = transport
+
+    def _get_rma_recv_op(self, key: P2PKey, source_stage_index: int) -> RMARecvOp:
+        if self.p2p_transport is None:
+            raise RuntimeError("NCCL RMA P2P transport is not initialized")
+        peer_rank = self.stage_index_to_group_rank[source_stage_index]
+        return self.p2p_transport.make_recv_op(key, peer=peer_rank)
+
+    def _get_rma_send_op(
+        self,
+        key: P2PKey,
+        dest_stage_index: int,
+        send_buffer: torch.Tensor,
+    ) -> RMASendOp:
+        if self.p2p_transport is None:
+            raise RuntimeError("NCCL RMA P2P transport is not initialized")
+        peer_rank = self.stage_index_to_group_rank[dest_stage_index]
+        return self.p2p_transport.make_send_op(key, peer=peer_rank, tensor=send_buffer)
+
     def has_local_forward_dst(self) -> bool:
         return (
             not self.is_last
@@ -425,6 +451,13 @@ class CustomPipelineStage:
             return []
         meta = self.inputs_meta
         assert meta is not None
+
+        key = ("F", source_stage_index, self.stage_index, fwd_chunk_id)
+        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+            op = self._get_rma_recv_op(key, source_stage_index)
+            self.received_activations[fwd_chunk_id] = op.recv_slot
+            return [op]  # type: ignore[list-item]
+
         recv_buffer = _make_tensor_from_meta(meta, self.device)
 
         ops = self._get_recv_ops(source_stage_index, recv_buffer)
@@ -448,6 +481,10 @@ class CustomPipelineStage:
         assert buffer.size() == meta.size()
         assert buffer.dtype == meta.dtype
 
+        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+            key = ("F", self.stage_index, dst_stage_index, fwd_chunk_id)
+            return [self._get_rma_send_op(key, dst_stage_index, buffer.detach())]  # type: ignore[list-item]
+
         ops = self._get_send_ops(dst_stage_index, buffer.detach())
         return ops
 
@@ -470,6 +507,10 @@ class CustomPipelineStage:
         assert send_buffer.size() == meta.size()
         assert send_buffer.dtype == meta.dtype
 
+        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+            key = ("B", self.stage_index, dest_stage_index, bwd_chunk_id)
+            return [self._get_rma_send_op(key, dest_stage_index, send_buffer.detach())]  # type: ignore[list-item]
+
         ops = self._get_send_ops(dest_stage_index, send_buffer.detach())
         return ops
     
@@ -488,6 +529,13 @@ class CustomPipelineStage:
 
         meta = self.outputs_meta # in backward, recv grad has the same shape as stage output
         assert meta is not None
+
+        key = ("B", source_stage_index, self.stage_index, bwd_chunk_id)
+        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+            op = self._get_rma_recv_op(key, source_stage_index)
+            self.received_grads[bwd_chunk_id] = op.recv_slot
+            return [op]  # type: ignore[list-item]
+
         recv_buffer = _make_tensor_from_meta(meta, self.device)
         
         ops = self._get_recv_ops(source_stage_index, recv_buffer)

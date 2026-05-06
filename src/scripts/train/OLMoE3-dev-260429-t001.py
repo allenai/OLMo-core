@@ -186,16 +186,18 @@ TAG=f'p1'
 # NO LR_REF_BSZ=4M
 
 # stage 4 - 12M -
-MAX_DURATION = int(600e9)
-MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 12
-LR_ALPHA = 0.53
+# MAX_DURATION = int(600e9)
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 12
+# LR_ALPHA = 0.53
 # TAG = 'p1-12M-a0.55'
 # NO LR_REF_BSZ=4M
 
-# stage 5 - 9M - 
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 9
+# stage 5 - 20M - 
+MAX_DURATION = int(1200e9)
+MICRO_BSZ = 5
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 20
+LR_ALPHA = 0.53
 # NO LR_REF_BSZ=4M
 
 # stage 6 - 15M - 

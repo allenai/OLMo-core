@@ -130,7 +130,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 # DP_DIM=2
 EP_DIM=8
-PP_DIM=8
+PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
@@ -141,7 +141,7 @@ LR_ALPHA = 0.53
 # stage 1 - xM - 
 MAX_DURATION = int(100e9)
 MICRO_BSZ = 1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 1
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
@@ -181,7 +181,7 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=48
+NUM_LAYERS=6
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -208,7 +208,7 @@ ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blo
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = True
+PRODUCTION_RUN = False
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -449,7 +449,6 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             schedule=PipelineScheduleType.custom_interleaved_1F1B,
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
             p2p_use_separate_group=True,
-            p2p_backend="nccl",
             # p2p_nccl_min_ctas=1,
             # p2p_nccl_max_ctas=2,
             # forward_pull_ahead_extra_activations=[1, 0, 1, 1],
@@ -545,16 +544,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=3531,
-                                   end=3535
+                                   start=3031,
+                                   end=3035
             )
         )
         .with_callback(
             "torch_mem_history",
             TorchMemoryHistoryCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=59161,
-                                   end=59164,
+                                   start=31,
+                                   end=35,
                                    output_dir='/workspace/tmp'
             )
         )

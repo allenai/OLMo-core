@@ -155,7 +155,7 @@ REF_NUM_NODES=8
 # NO LR_REF_BSZ=4M
 
 # stage 7 - 24M - 
-MICRO_BSZ = 3
+MICRO_BSZ = 2
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 24
 # NO LR_REF_BSZ=4M
 
@@ -303,7 +303,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 lb_loss_weight=0.01,
-                z_loss_weight=None,
+                # z_loss_weight=None,
+                z_loss_weight=1e-3, # changed may04 2026
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
                 normalize_expert_weights=1.0,

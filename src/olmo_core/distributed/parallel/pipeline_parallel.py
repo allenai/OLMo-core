@@ -74,6 +74,16 @@ class PipelineScheduleType(StrEnum):
             return PipelineSplitStyle.loop
 
 
+class PipelineP2PBackend(StrEnum):
+    """
+    Transport backend for custom pipeline activation/gradient P2P.
+    """
+
+    nccl = "nccl"
+    nccl_rma = "nccl_rma"
+    nccl_device = "nccl_device"
+
+
 @dataclass
 class PipelineParallelConfig(Config):
     """
@@ -101,6 +111,14 @@ class PipelineParallelConfig(Config):
     This leaves the normal pipeline group untouched for bookkeeping collectives.
     """
 
+    p2p_backend: PipelineP2PBackend = PipelineP2PBackend.nccl
+    """
+    Pipeline activation/gradient P2P backend. ``nccl`` is the existing
+    two-sided torch.distributed P2P path. ``nccl_rma`` is the experimental
+    NCCL 2.29 PutSignal/WaitSignal path. ``nccl_device`` is reserved for a
+    future NCCL device API / GIN backend.
+    """
+
     p2p_nccl_min_ctas: Optional[int] = None
     """
     Optional NCCL minCTAs override for the dedicated pipeline P2P group.
@@ -124,6 +142,12 @@ class PipelineParallelConfig(Config):
         return self.p2p_use_separate_group
 
     def _validate_p2p_nccl_ctas(self) -> None:
+        if self.p2p_backend != PipelineP2PBackend.nccl and (
+            self.p2p_nccl_min_ctas is not None or self.p2p_nccl_max_ctas is not None
+        ):
+            raise OLMoConfigurationError(
+                "p2p_nccl_min_ctas/p2p_nccl_max_ctas only apply to p2p_backend='nccl'"
+            )
         if self.p2p_nccl_min_ctas is not None and self.p2p_nccl_min_ctas <= 0:
             raise OLMoConfigurationError("p2p_nccl_min_ctas must be positive")
         if self.p2p_nccl_max_ctas is not None and self.p2p_nccl_max_ctas <= 0:
@@ -177,6 +201,10 @@ class PipelineParallelConfig(Config):
         return rank_groups
 
     def build_p2p_process_group(self, device_mesh: DeviceMesh) -> Optional[dist.ProcessGroup]:
+        self._validate_p2p_nccl_ctas()
+        if self.p2p_backend == PipelineP2PBackend.nccl_device:
+            raise OLMoConfigurationError("p2p_backend='nccl_device' is reserved but not implemented yet")
+
         if not self.uses_separate_p2p_group():
             if self.p2p_nccl_min_ctas is not None or self.p2p_nccl_max_ctas is not None:
                 raise OLMoConfigurationError(
@@ -792,7 +820,7 @@ class PipelineSchedule:
                 f"{plot_filename} and {text_filename}"
             )
         
-        print(f'[PipelineSchedule] Using {schedule_name} with {num_microbatches} microbatches')
+        print(f'[PipelineSchedule] Using {schedule_name} with {num_microbatches} microbatches') # TODO: no need to print on every rank
 
 
         self.schedule_impl = schedule_impl

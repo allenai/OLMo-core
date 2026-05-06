@@ -15,6 +15,7 @@ from olmo_core.distributed.parallel import (
     ContextParallelConfig,
     DataParallelConfig,
     ExpertParallelConfig,
+    PipelineP2PBackend,
     PipelineParallelConfig,
     TensorParallelConfig,
 )
@@ -103,6 +104,11 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         use_ddp: bool = False,
         p2p_group: Optional[dist.ProcessGroup] = None,
     ) -> Tuple[List[PipelineStage], List[Transformer]]:
+        if self.p2p_backend != PipelineP2PBackend.nccl and not self.use_custom_stage_implementation:
+            raise OLMoConfigurationError(
+                f"p2p_backend={self.p2p_backend.value!r} requires use_custom_stage_implementation=True"
+            )
+
         split_points = self.get_split_points(model.n_layers)
         pp_rank = pp_mesh.get_local_rank()
 
@@ -142,6 +148,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
                     is_rddp=use_ddp,
                     group=pp_mesh.get_group("pp"),
                     p2p_group=p2p_group,
+                    p2p_backend=self.p2p_backend.value,
                 )
             else:
                 stage = PipelineStage(

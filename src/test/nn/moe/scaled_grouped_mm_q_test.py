@@ -374,3 +374,59 @@ def test_scaled_grouped_mm_q_backward_uses_prequantized_lhs_when_mat_a_not_saved
     assert "lhs_for_grad_b" in captured
     mat_a_expected = dequantize_rows_from_mxfp8(mat_a_q, mat_a_s, block_size=32, out_dtype=out.dtype)
     torch.testing.assert_close(captured["lhs_for_grad_b"], mat_a_expected)
+
+
+def test_scaled_grouped_mm_q_backward_reconstructs_full_prequantized_lhs_capacity(monkeypatch):
+    torch.manual_seed(123)
+    offs = torch.tensor([3, 5, 9], dtype=torch.int32)
+    capacity_rows = 12
+    mat_a_real = torch.randn(capacity_rows, 512, dtype=torch.float32)
+    mat_a_bad = torch.zeros_like(mat_a_real)
+    mat_b = torch.randn(offs.numel(), 512, 512, dtype=torch.float32, requires_grad=True)
+    mat_a_q, mat_a_s = quantize_rows_to_mxfp8(mat_a_real, block_size=32)
+    preq_lhs = scaled_grouped_mm_module.ScaledGroupedMMPrequantizedLHS(
+        mat_a_q=mat_a_q,
+        scale_a=mat_a_s,
+        mat_a_shape=tuple(mat_a_bad.shape),
+        scales_are_blocked=False,
+    )
+
+    def _stub_forward(
+        mat_a: torch.Tensor,
+        mat_b: torch.Tensor,
+        offs: torch.Tensor,
+        *,
+        use_fast_accum: bool,
+        prequantized_lhs=None,
+        prequantized_rhs=None,
+    ) -> torch.Tensor:
+        del use_fast_accum, prequantized_lhs, prequantized_rhs
+        return F.grouped_mm(mat_a, mat_b, offs=offs)
+
+    monkeypatch.setattr(scaled_grouped_mm_module, "_forward_scaled_grouped_mm_mxfp8", _stub_forward)
+
+    captured = {}
+
+    def _fake_grouped_mm(mat_a: torch.Tensor, mat_b: torch.Tensor, *, offs: torch.Tensor):
+        # Backward grad_b path: mat_b is reconstructed lhs (rank-2 [capacity, K]).
+        if mat_b.ndim == 2 and tuple(mat_b.shape) == tuple(mat_a_bad.shape):
+            captured["lhs_for_grad_b"] = mat_b.clone()
+            return torch.zeros((offs.numel(), mat_a.shape[0], mat_b.shape[-1]), dtype=mat_a.dtype)
+        return torch.zeros((mat_a.shape[0], mat_b.shape[-1]), dtype=mat_a.dtype)
+
+    monkeypatch.setattr(F, "grouped_mm", _fake_grouped_mm)
+
+    out = scaled_grouped_mm_q(
+        mat_a_bad,
+        mat_b,
+        offs=offs,
+        prequantized_lhs=preq_lhs,
+    )
+    loss = out.sum()
+    (grad_b,) = torch.autograd.grad(loss, (mat_b,))
+    assert grad_b is not None
+
+    assert "lhs_for_grad_b" in captured
+    assert captured["lhs_for_grad_b"].shape[0] == capacity_rows
+    mat_a_expected = dequantize_rows_from_mxfp8(mat_a_q, mat_a_s, block_size=32, out_dtype=out.dtype)
+    torch.testing.assert_close(captured["lhs_for_grad_b"], mat_a_expected)

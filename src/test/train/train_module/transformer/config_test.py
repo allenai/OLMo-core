@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from olmo_core.distributed.parallel import PipelineScheduleType, PipelineSplitStyle
+from olmo_core.distributed.parallel import PipelineP2PBackend, PipelineScheduleType, PipelineSplitStyle
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
 
@@ -113,3 +113,40 @@ def test_pipeline_p2p_nccl_cta_caps_validate_range():
 
     with pytest.raises(OLMoConfigurationError, match="cannot exceed"):
         pp_config._validate_p2p_nccl_ctas()
+
+
+def test_pipeline_rma_backend_rejects_nccl_cta_caps():
+    pp_config = TransformerPipelineParallelConfig(
+        degree=4,
+        p2p_backend=PipelineP2PBackend.nccl_rma,
+        p2p_nccl_min_ctas=1,
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="only apply"):
+        pp_config._validate_p2p_nccl_ctas()
+
+
+def test_pipeline_rma_backend_requires_custom_stage_implementation():
+    pp_config = TransformerPipelineParallelConfig(
+        degree=2,
+        p2p_backend=PipelineP2PBackend.nccl_rma,
+        use_custom_stage_implementation=False,
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="use_custom_stage_implementation"):
+        pp_config.split_model(
+            SimpleNamespace(n_layers=2),
+            pp_mesh=SimpleNamespace(),
+            device=torch.device("cpu"),
+        )
+
+
+def test_pipeline_device_backend_is_reserved():
+    mesh = SimpleNamespace(mesh_dim_names=("pp",), mesh=torch.tensor([0, 1]))
+    pp_config = TransformerPipelineParallelConfig(
+        degree=2,
+        p2p_backend=PipelineP2PBackend.nccl_device,
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="not implemented"):
+        pp_config.build_p2p_process_group(mesh)
