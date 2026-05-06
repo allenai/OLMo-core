@@ -704,7 +704,8 @@ class ComposableScheduler(Scheduler):
     stages: List[ComposableSchedulerStage] = field(default_factory=list)
     monkey_patch_decay: Optional[ComposableSchedulerMonkeyPatchDecay] = None
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         if len(self.stages) == 0:
             raise OLMoConfigurationError("'stages' must be specified and non-empty.")
 
