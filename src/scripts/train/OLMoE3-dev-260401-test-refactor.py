@@ -269,7 +269,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             # ep_no_sync_capacity_factor=1.1875,
             # ep_no_sync_capacity_factor=1.21875,
             rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8) if USE_ROWWISE_A2A else None,
-            attention=AttentionConfig(
+            sequence_mixer=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,
                 n_kv_heads=NUM_KV_HEAD,
@@ -346,7 +346,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
     WINDOW_SIZE = 2048
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+    config.block.sequence_mixer.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
         pattern=[WINDOW_SIZE, -1],
@@ -354,7 +354,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     dense_block_config = TransformerBlockConfig(
         name=TransformerBlockType.peri_norm if USE_PERI_NORM else TransformerBlockType.default,
-        attention=AttentionConfig(
+        sequence_mixer=AttentionConfig(
             name=AttentionType.default,
             n_heads=NUM_HEAD,
             n_kv_heads=NUM_KV_HEAD,

@@ -24,6 +24,7 @@ from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.utils import get_or_init_stream
 
 from ...attention import AttentionConfig, RingAttentionLoadBalancerType
+from ...attention.base import SequenceMixerConfig
 from ...buffer_cache import BufferCache
 from ...layer_norm import LayerNormConfig
 from .activation_debug import maybe_dump_ep_no_sync_saved_activations
@@ -119,7 +120,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     def num_params(self, d_model: int) -> int:
         block_params = 0
 
-        block_params += self.attention.num_params(d_model)
+        block_params += self.sequence_mixer.num_params(d_model)
         if self.attention_norm is not None:
             block_params += self.attention_norm.num_params(d_model)
         if self.shared_experts is not None:
@@ -143,7 +144,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     def num_active_params(self, d_model: int) -> int:
         block_params = 0
 
-        block_params += self.attention.num_params(d_model)
+        block_params += self.sequence_mixer.num_params(d_model)
         if self.attention_norm is not None:
             block_params += self.attention_norm.num_params(d_model)
         if self.shared_experts is not None:
@@ -169,7 +170,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
         flops = 0
 
         # attention
-        flops += self.attention.flops_per_seq(d_model, seqlen)
+        flops += cast(AttentionConfig, self.sequence_mixer).flops_per_seq(d_model, seqlen)
 
         # router
         # (seq_len * d_model) * (d_model * num_total_experts)
@@ -234,7 +235,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         attention_norm: LayerNormConfig,
         routed_experts_router: Optional[MoERouterConfigV2],
         shared_experts_router: Optional[MoERouterConfigV2],
@@ -294,7 +295,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.use_peri_norm = use_peri_norm
 
         ######## START: Attention ########
-        self.attention = attention.build(
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm = attention_norm.build(d_model, init_device=init_device)
