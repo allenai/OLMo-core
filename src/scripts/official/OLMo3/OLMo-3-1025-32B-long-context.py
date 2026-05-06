@@ -110,7 +110,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
-            load_path="https://olmo-checkpoints.org/ai2-llm/stego32-highlr-filter3/step656000/",
+            load_path="https://storage.googleapis.com/ai2-llm/stego32-highlr-filter3/step656000/",
             # "gs://ai2-llm/checkpoints/stego32-midtraining-runs-merged-step23842-resharded16",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,

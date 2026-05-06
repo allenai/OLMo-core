@@ -98,7 +98,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
-            load_path="https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage1/step1413814/",
+            load_path="https://storage.googleapis.com/ai2-llm/checkpoints/OLMo25/step1413814/",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
