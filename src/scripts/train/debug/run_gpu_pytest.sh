@@ -7,6 +7,6 @@ echo "Running GPU tests for: $TEST_PATH"
 echo "Launching on Beaker..."
 
 uv run python src/scripts/beaker/launch_test.py \
-    --budget=ai2/oe-base \
+    --budget=ai2/oe-other \
     --num_gpus=1 \
     -- pytest -v "$TEST_PATH"

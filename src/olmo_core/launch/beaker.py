@@ -608,8 +608,7 @@ class BeakerLaunchConfig(Config):
                     if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR and self._secret_exists(
                         env_secret
                     ):
-                        secret = beaker.secret.get(env_secret.secret)
-                        slack_webhook_url = beaker.secret.read(secret)
+                        slack_webhook_url = beaker.secret.read(pb2.Secret(name=env_secret.secret))
                         break
 
             if slack_notifications is None:
