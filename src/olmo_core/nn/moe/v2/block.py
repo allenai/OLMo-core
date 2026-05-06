@@ -49,6 +49,7 @@ from .fp8 import (
     MoERowwiseFP8Config,
     invalidate_rowwise_fp8_cache as _invalidate_rowwise_fp8_cache,
     normalize_rowwise_fp8_config,
+    refresh_rowwise_fp8_cache as _refresh_rowwise_fp8_cache,
 )
 from .ep_no_sync_buffers import (
     _NoSyncSymmSharedPool,
@@ -434,7 +435,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 f"(got {self.ep_no_sync_restore_unpermute_backend!r})"
             )
 
+    def invalidate_rowwise_fp8_cache(self) -> None:
+        _invalidate_rowwise_fp8_cache(self)
 
+    def refresh_rowwise_fp8_cache(self) -> None:
+        _refresh_rowwise_fp8_cache(self)
 
     def purge_cuda_events(self):
         # set all events to None (so that the model can be deepcopied)

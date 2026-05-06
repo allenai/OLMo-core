@@ -460,7 +460,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         ) if PP_DIM > 1 else None,
 
         float8_config=None,
-        z_loss_multiplier=1e-5,
+        z_loss_multiplier=1e-4,
         max_grad_norm=1.0,
 
         scheduler=ComposableScheduler(

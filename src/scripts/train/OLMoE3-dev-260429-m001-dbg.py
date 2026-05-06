@@ -134,7 +134,7 @@ PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
-TAG=f'p0'
+TAG=f'p0-noshared'
 
 LR_ALPHA = 0.53
 
@@ -203,12 +203,12 @@ GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-USE_FP8=False
+USE_FP8=True
 ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = False
+PRODUCTION_RUN = True
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -506,7 +506,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            # load_path="/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step83448",
+            load_path="/workspace/checkpoint/OLMoE3-dev-260429-m001-dbg_4096d4096a_6L4096M4096S_32E4K1S_p0-noshared/step5000",
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
@@ -545,8 +545,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=3531,
-                                   end=3535
+                                   start=5031,
+                                   end=5035
             )
         )
         .with_callback(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Mapping, Optional, Tuple
 
+import nvtx
 import torch
 
 from olmo_core.config import Config, StrEnum
@@ -66,6 +67,10 @@ def reset_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
     block._shared_rowwise_fp8_weight_versions = None
 
 
+def _rowwise_fp8_enabled(cfg: Optional[MoERowwiseFP8Config]) -> bool:
+    return cfg is not None and cfg.enabled
+
+
 def invalidate_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
     if block.routed_experts is not None:
         block.routed_experts.invalidate_rowwise_fp8_cache()
@@ -73,13 +78,11 @@ def invalidate_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
 
 
 @torch.no_grad()
-def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
     cfg = block.rowwise_fp8
-    if cfg is None or not cfg.enabled:
-        invalidate_rowwise_fp8_cache(block)
+    if not _rowwise_fp8_enabled(cfg):
+        reset_shared_rowwise_fp8_cache(block)
         return
-    if block.routed_experts is not None:
-        block.routed_experts.refresh_rowwise_fp8_cache()
     if block.shared_experts is None:
         reset_shared_rowwise_fp8_cache(block)
         return
@@ -87,36 +90,52 @@ def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
         reset_shared_rowwise_fp8_cache(block)
         return
 
-    up_rhs = block.shared_experts.w_up_gate.unsqueeze(0)
-    down_rhs = block.shared_experts.w_down
-    up_rhs_t = block.shared_experts.w_up_gate.transpose(0, 1).unsqueeze(0)
-    down_rhs_t = block.shared_experts.w_down.transpose(1, 2)
-    block._shared_rowwise_fp8_up_prequant = prequantize_scaled_grouped_mm_rhs(up_rhs)
-    block._shared_rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(down_rhs)
-    block._shared_rowwise_fp8_up_prequant_t = prequantize_scaled_grouped_mm_rhs(up_rhs_t)
-    block._shared_rowwise_fp8_down_prequant_t = prequantize_scaled_grouped_mm_rhs(down_rhs_t)
-    block._shared_rowwise_fp8_weight_versions = (
-        int(block.shared_experts.w_up_gate._version),
-        int(block.shared_experts.w_down._version),
-    )
+    with nvtx.annotate("moe_rowwise_fp8_param_refresh_shared_weight_prequant"):
+        up_rhs = block.shared_experts.w_up_gate.unsqueeze(0)
+        down_rhs = block.shared_experts.w_down
+        up_rhs_t = block.shared_experts.w_up_gate.transpose(0, 1).unsqueeze(0)
+        down_rhs_t = block.shared_experts.w_down.transpose(1, 2)
+        block._shared_rowwise_fp8_up_prequant = prequantize_scaled_grouped_mm_rhs(
+            up_rhs,
+            check_mat_b_version=False,
+        )
+        block._shared_rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(
+            down_rhs,
+            check_mat_b_version=False,
+        )
+        block._shared_rowwise_fp8_up_prequant_t = prequantize_scaled_grouped_mm_rhs(
+            up_rhs_t,
+            check_mat_b_version=False,
+        )
+        block._shared_rowwise_fp8_down_prequant_t = prequantize_scaled_grouped_mm_rhs(
+            down_rhs_t,
+            check_mat_b_version=False,
+        )
+        block._shared_rowwise_fp8_weight_versions = (
+            int(block.shared_experts.w_up_gate._version),
+            int(block.shared_experts.w_down._version),
+        )
 
 
-def maybe_refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
-    cfg = block.rowwise_fp8
-    if cfg is None or not cfg.enabled:
-        return
-    if block.shared_experts is None:
-        return
-    versions = (
-        int(block.shared_experts.w_up_gate._version),
-        int(block.shared_experts.w_down._version),
+@torch.no_grad()
+def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+    block_cfg = block.rowwise_fp8
+    routed_cfg = (
+        block.routed_experts.rowwise_fp8 if block.routed_experts is not None else None
     )
-    if (
-        block._shared_rowwise_fp8_up_prequant is None
-        or block._shared_rowwise_fp8_down_prequant is None
-        or block._shared_rowwise_fp8_weight_versions != versions
-    ):
-        refresh_rowwise_fp8_cache(block)
+    shared_enabled = _rowwise_fp8_enabled(block_cfg)
+    routed_enabled = _rowwise_fp8_enabled(routed_cfg)
+    if not shared_enabled and not routed_enabled:
+        invalidate_rowwise_fp8_cache(block)
+        return
+
+    if block.routed_experts is not None:
+        if routed_enabled:
+            with nvtx.annotate("moe_rowwise_fp8_param_refresh_routed_weight_prequant"):
+                block.routed_experts.refresh_rowwise_fp8_cache()
+        else:
+            block.routed_experts.invalidate_rowwise_fp8_cache()
+    refresh_shared_rowwise_fp8_cache(block)
 
 
 def shared_experts_forward1_rowwise_fp8(
@@ -140,16 +159,17 @@ def shared_experts_forward1_rowwise_fp8(
     E, H = block.shared_experts.num_experts, block.shared_experts.hidden_size
     BS = x2.shape[0]
 
-    maybe_refresh_shared_rowwise_fp8_cache(block)
+    up_prequant = block._shared_rowwise_fp8_up_prequant
+    up_prequant_t = block._shared_rowwise_fp8_up_prequant_t
+    if up_prequant is None or up_prequant_t is None:
+        raise RuntimeError("shared rowwise FP8 up/gate prequant buffers were not initialized")
     offs = torch.tensor([BS], device=x.device, dtype=torch.int32)
     up_kwargs = dict(
         offs=offs,
         use_fast_accum=use_fast_accum,
-        prequantized_rhs=block._shared_rowwise_fp8_up_prequant,
+        prequantized_rhs=up_prequant,
+        prequantized_rhs_for_dgrad=up_prequant_t,
     )
-    up_prequant_t = getattr(block, "_shared_rowwise_fp8_up_prequant_t", None)
-    if up_prequant_t is not None:
-        up_kwargs["prequantized_rhs_for_dgrad"] = up_prequant_t
     up_gate = scaled_grouped_mm_q(
         x2,
         block.shared_experts.w_up_gate.unsqueeze(0),
@@ -176,17 +196,18 @@ def shared_experts_forward2_rowwise_fp8(
     gate = torch.nn.functional.silu(gate)
     hidden = up * gate
 
-    maybe_refresh_shared_rowwise_fp8_cache(block)
+    down_prequant = block._shared_rowwise_fp8_down_prequant
+    down_prequant_t = block._shared_rowwise_fp8_down_prequant_t
+    if down_prequant is None or down_prequant_t is None:
+        raise RuntimeError("shared rowwise FP8 down prequant buffers were not initialized")
     hidden_2d = hidden.reshape(E * BS, -1)
     offs = torch.arange(BS, E * BS + 1, BS, device=hidden.device, dtype=torch.int32)
     down_kwargs = dict(
         offs=offs,
         use_fast_accum=use_fast_accum,
-        prequantized_rhs=block._shared_rowwise_fp8_down_prequant,
+        prequantized_rhs=down_prequant,
+        prequantized_rhs_for_dgrad=down_prequant_t,
     )
-    down_prequant_t = getattr(block, "_shared_rowwise_fp8_down_prequant_t", None)
-    if down_prequant_t is not None:
-        down_kwargs["prequantized_rhs_for_dgrad"] = down_prequant_t
     out_2d = scaled_grouped_mm_q(
         hidden_2d,
         block.shared_experts.w_down,

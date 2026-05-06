@@ -20,15 +20,25 @@ def _stub_scaled_grouped_mm_q(
     use_fast_accum: bool = True,
     prequantized_lhs=None,
     prequantized_rhs=None,
+    prequantized_rhs_for_dgrad=None,
 ) -> torch.Tensor:
-    del input_grad_out, use_fast_accum, prequantized_lhs, prequantized_rhs
+    del input_grad_out, use_fast_accum, prequantized_lhs, prequantized_rhs, prequantized_rhs_for_dgrad
     return F.grouped_mm(mat_a, mat_b, offs=offs)
+
+
+def _forbid_forward_time_prequant(*args, **kwargs):
+    del args, kwargs
+    raise AssertionError("shared rowwise FP8 forward must not refresh/prequantize weights")
 
 
 def test_shared_experts_rowwise_fp8_helpers_match_bf16_reference(monkeypatch):
     monkeypatch.setattr(
         "olmo_core.nn.moe.v2.fp8.scaled_grouped_mm_q",
         _stub_scaled_grouped_mm_q,
+    )
+    monkeypatch.setattr(
+        "olmo_core.nn.moe.v2.fp8.prequantize_scaled_grouped_mm_rhs",
+        _forbid_forward_time_prequant,
     )
 
     torch.manual_seed(123)
@@ -46,8 +56,10 @@ def test_shared_experts_rowwise_fp8_helpers_match_bf16_reference(monkeypatch):
 
     fake_self = types.SimpleNamespace(
         shared_experts=shared,
-        _shared_rowwise_fp8_up_prequant=None,
-        _shared_rowwise_fp8_down_prequant=None,
+        _shared_rowwise_fp8_up_prequant=object(),
+        _shared_rowwise_fp8_down_prequant=object(),
+        _shared_rowwise_fp8_up_prequant_t=object(),
+        _shared_rowwise_fp8_down_prequant_t=object(),
         _shared_rowwise_fp8_weight_versions=None,
         rowwise_fp8=None,
     )
@@ -77,6 +89,10 @@ def test_shared_experts_rowwise_fp8_forward1_accepts_flattened_input(monkeypatch
         "olmo_core.nn.moe.v2.fp8.scaled_grouped_mm_q",
         _stub_scaled_grouped_mm_q,
     )
+    monkeypatch.setattr(
+        "olmo_core.nn.moe.v2.fp8.prequantize_scaled_grouped_mm_rhs",
+        _forbid_forward_time_prequant,
+    )
 
     torch.manual_seed(123)
     shared = SharedExperts(
@@ -93,8 +109,10 @@ def test_shared_experts_rowwise_fp8_forward1_accepts_flattened_input(monkeypatch
 
     fake_self = types.SimpleNamespace(
         shared_experts=shared,
-        _shared_rowwise_fp8_up_prequant=None,
-        _shared_rowwise_fp8_down_prequant=None,
+        _shared_rowwise_fp8_up_prequant=object(),
+        _shared_rowwise_fp8_down_prequant=object(),
+        _shared_rowwise_fp8_up_prequant_t=object(),
+        _shared_rowwise_fp8_down_prequant_t=object(),
         _shared_rowwise_fp8_weight_versions=None,
         rowwise_fp8=None,
     )

@@ -24,6 +24,7 @@ Implication:
   grouped_mm falls back even if offs is on GPU.
 """
 
+import os
 import grouped_gemm  # type: ignore
 import grouped_gemm.ops
 from abc import abstractmethod
@@ -35,6 +36,7 @@ from typing import List, Optional
 import nvtx
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.kernels import (
+    OlmoMXFP8Tensor,
     ScaledGroupedMMPrequantizedLHS,
     ScaledGroupedMMPrequantizedRHS,
     grouped_mm as grouped_mm_with_buffers,
@@ -86,22 +88,52 @@ class _SwiGLUQuantizeRowsMXFP8Autograd(torch.autograd.Function):
             return torch.zeros_like(up_gate), None
 
         (up_gate,) = ctx.saved_tensors
-        hidden = up_gate.shape[-1] // 2
-        up = up_gate[:, :hidden]
-        gate = up_gate[:, hidden:]
+        grad_up_gate = swiglu_backward_grad_up_gate(up_gate, grad_h)
+        return OlmoMXFP8Tensor.from_hp(grad_up_gate), None
 
-        gate_f32 = gate.to(torch.float32)
-        grad_h_f32 = grad_h.to(torch.float32)
-        up_f32 = up.to(torch.float32)
 
-        sig = torch.sigmoid(gate_f32)
-        silu_gate = gate_f32 * sig
-        dsilu = sig * (1.0 + gate_f32 * (1.0 - sig))
+def _swiglu_backward_grad_up_gate_impl(up_gate: torch.Tensor, grad_h: torch.Tensor) -> torch.Tensor:
+    hidden = up_gate.shape[-1] // 2
+    up = up_gate[:, :hidden]
+    gate = up_gate[:, hidden:]
 
-        grad_up = grad_h_f32 * silu_gate
-        grad_gate = grad_h_f32 * up_f32 * dsilu
-        grad_up_gate = torch.cat((grad_up, grad_gate), dim=-1).to(dtype=up_gate.dtype)
-        return grad_up_gate, None
+    gate_f32 = gate.to(torch.float32)
+    grad_h_f32 = grad_h.to(torch.float32)
+    up_f32 = up.to(torch.float32)
+
+    sig = torch.sigmoid(gate_f32)
+    silu_gate = gate_f32 * sig
+    dsilu = sig * (1.0 + gate_f32 * (1.0 - sig))
+
+    grad_up = grad_h_f32 * silu_gate
+    grad_gate = grad_h_f32 * up_f32 * dsilu
+    return torch.cat((grad_up, grad_gate), dim=-1).to(dtype=up_gate.dtype)
+
+
+_swiglu_backward_grad_up_gate_compiled = torch.compile(
+    _swiglu_backward_grad_up_gate_impl,
+    fullgraph=True,
+    dynamic=False,
+)
+
+
+def swiglu_backward_grad_up_gate(up_gate: torch.Tensor, grad_h: torch.Tensor) -> torch.Tensor:
+    if (
+        up_gate.is_cuda
+        and grad_h.is_cuda
+        and os.getenv("OLMO_MXFP8_COMPILE_SWIGLU_BWD", "1").strip().lower()
+        in {"1", "true", "yes", "on"}
+    ):
+        return _swiglu_backward_grad_up_gate_compiled(up_gate, grad_h)
+    return _swiglu_backward_grad_up_gate_impl(up_gate, grad_h)
+
+
+@torch.compiler.disable
+def swiglu_quantize_rows_mxfp8_autograd(
+    up_gate: torch.Tensor,
+    block_size: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return _SwiGLUQuantizeRowsMXFP8Autograd.apply(up_gate, int(block_size))
 
 
 class _SwiGLUQuantizeRowsFromMXFP8Autograd(torch.autograd.Function):
@@ -204,8 +236,33 @@ def gmm(
         )
     return gmm_no_compile(a, b, batch_sizes, trans_b)
 
+
+@torch.compiler.disable
+def scaled_grouped_mm_q_no_compile(
+    mat_a: torch.Tensor,
+    mat_b: torch.Tensor,
+    *,
+    offs: torch.Tensor,
+    use_fast_accum: bool,
+    prequantized_lhs: Optional[ScaledGroupedMMPrequantizedLHS] = None,
+    prequantized_rhs: Optional[ScaledGroupedMMPrequantizedRHS] = None,
+    prequantized_rhs_for_dgrad: Optional[ScaledGroupedMMPrequantizedRHS] = None,
+) -> torch.Tensor:
+    kwargs = dict(
+        offs=offs,
+        use_fast_accum=use_fast_accum,
+        prequantized_lhs=prequantized_lhs,
+        prequantized_rhs=prequantized_rhs,
+    )
+    if prequantized_rhs_for_dgrad is not None:
+        kwargs["prequantized_rhs_for_dgrad"] = prequantized_rhs_for_dgrad
+    return scaled_grouped_mm_q(
+        mat_a,
+        mat_b,
+        **kwargs,
+    )
+
 # if env variable OLMO_USE_TORCH_GROUPED_MM is set, use its value to determine whether to use torch grouped_mm; 
-import os
 env_val = os.getenv("OLMO_USE_TORCH_GROUPED_MM")
 if env_val is not None:
     if env_val.lower() in ("1", "true", "yes"):
@@ -380,25 +437,23 @@ class RoutedExperts(nn.Module):
             self.invalidate_rowwise_fp8_cache()
             return
         up_gate_rhs = self.w_up_gate.transpose(1, 2)
-        self._rowwise_fp8_up_gate_prequant = prequantize_scaled_grouped_mm_rhs(up_gate_rhs)
-        self._rowwise_fp8_up_gate_prequant_t = prequantize_scaled_grouped_mm_rhs(self.w_up_gate)
-        self._rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(self.w_down)
+        self._rowwise_fp8_up_gate_prequant = prequantize_scaled_grouped_mm_rhs(
+            up_gate_rhs,
+            check_mat_b_version=False,
+        )
+        self._rowwise_fp8_up_gate_prequant_t = prequantize_scaled_grouped_mm_rhs(
+            self.w_up_gate,
+            check_mat_b_version=False,
+        )
+        self._rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(
+            self.w_down,
+            check_mat_b_version=False,
+        )
         self._rowwise_fp8_down_prequant_t = prequantize_scaled_grouped_mm_rhs(
-            self.w_down.transpose(1, 2)
+            self.w_down.transpose(1, 2),
+            check_mat_b_version=False,
         )
         self._rowwise_fp8_weight_versions = (int(self.w_up_gate._version), int(self.w_down._version))
-
-    def _maybe_refresh_rowwise_fp8_cache(self) -> None:
-        cfg = self.rowwise_fp8
-        if cfg is None or not cfg.enabled:
-            return
-        versions = (int(self.w_up_gate._version), int(self.w_down._version))
-        if (
-            self._rowwise_fp8_up_gate_prequant is None
-            or self._rowwise_fp8_down_prequant is None
-            or self._rowwise_fp8_weight_versions != versions
-        ):
-            self.refresh_rowwise_fp8_cache()
 
     def _use_rowwise_fp8(self, x: torch.Tensor, *, enabled: bool) -> bool:
         if not enabled:
@@ -427,7 +482,13 @@ class RoutedExperts(nn.Module):
         assert cfg is not None
         
 
-        self._maybe_refresh_rowwise_fp8_cache()
+        if (
+            self._rowwise_fp8_up_gate_prequant is None
+            or self._rowwise_fp8_up_gate_prequant_t is None
+            or self._rowwise_fp8_down_prequant is None
+            or self._rowwise_fp8_down_prequant_t is None
+        ):
+            raise RuntimeError("rowwise FP8 expert weight prequant buffers were not initialized")
         offs = torch.cumsum(batch_size_per_expert_tensor.to(dtype=torch.int32), dim=0, dtype=torch.int32)
         prequantized_lhs = None
         if prequantized_input_q is not None and prequantized_input_scales is not None:
@@ -446,13 +507,13 @@ class RoutedExperts(nn.Module):
         )
         if self._rowwise_fp8_up_gate_prequant_t is not None:
             up_kwargs["prequantized_rhs_for_dgrad"] = self._rowwise_fp8_up_gate_prequant_t
-        up_gate = scaled_grouped_mm_q(
+        up_gate = scaled_grouped_mm_q_no_compile(
             x,
             self.w_up_gate.transpose(1, 2),
             **up_kwargs,
         )
         up_gate = cast(torch.Tensor, up_gate)
-        h, h_q, h_scales = _SwiGLUQuantizeRowsMXFP8Autograd.apply(
+        h, h_q, h_scales = swiglu_quantize_rows_mxfp8_autograd(
             up_gate,
             int(cfg.block_size),
         )
@@ -471,7 +532,7 @@ class RoutedExperts(nn.Module):
         )
         if self._rowwise_fp8_down_prequant_t is not None:
             down_kwargs["prequantized_rhs_for_dgrad"] = self._rowwise_fp8_down_prequant_t
-        down = scaled_grouped_mm_q(
+        down = scaled_grouped_mm_q_no_compile(
             h,
             self.w_down,
             **down_kwargs,

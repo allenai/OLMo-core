@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+import nvtx
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -12,6 +13,7 @@ from .mxfp8_utils import (
     quantize_grouped_weight_3d_to_mxfp8_blocked,
     quantize_rows_to_mxfp8,
 )
+from .mxfp8_tensor import OlmoMXFP8Tensor
 
 try:
     _MXFP8_RECIPE_BLOCKWISE_1X32 = [int(F.ScalingType.BlockWise1x32)]
@@ -58,20 +60,25 @@ def _to_col_major_last2(x: Tensor) -> Tensor:
 
 
 @torch.no_grad()
-def prequantize_scaled_grouped_mm_rhs(mat_b: Tensor) -> ScaledGroupedMMPrequantizedRHS:
-    if mat_b.ndim != 3:
-        raise ValueError(
-            "prequantize_scaled_grouped_mm_rhs expects mat_b rank-3 [G,K,N], "
-            f"got {tuple(mat_b.shape)}"
+def prequantize_scaled_grouped_mm_rhs(
+    mat_b: Tensor,
+    *,
+    check_mat_b_version: bool = True,
+) -> ScaledGroupedMMPrequantizedRHS:
+    with nvtx.annotate("prequantize_scaled_grouped_mm_rhs", color="red"):
+        if mat_b.ndim != 3:
+            raise ValueError(
+                "prequantize_scaled_grouped_mm_rhs expects mat_b rank-3 [G,K,N], "
+                f"got {tuple(mat_b.shape)}"
+            )
+        mat_b_q, scale_b = quantize_grouped_weight_3d_to_mxfp8_blocked(mat_b)
+        mat_b_q = _to_col_major_last2(mat_b_q)
+        return ScaledGroupedMMPrequantizedRHS(
+            mat_b_q=mat_b_q,
+            scale_b=scale_b,
+            mat_b_shape=tuple(mat_b.shape),
+            mat_b_version=_tensor_version(mat_b) if check_mat_b_version else -1,
         )
-    mat_b_q, scale_b = quantize_grouped_weight_3d_to_mxfp8_blocked(mat_b)
-    mat_b_q = _to_col_major_last2(mat_b_q)
-    return ScaledGroupedMMPrequantizedRHS(
-        mat_b_q=mat_b_q,
-        scale_b=scale_b,
-        mat_b_shape=tuple(mat_b.shape),
-        mat_b_version=_tensor_version(mat_b),
-    )
 
 
 @torch.compiler.disable
@@ -99,8 +106,6 @@ def _scaled_grouped_mm_v2_cuda(
         [],
         use_fast_accum,
     )
-
-
 
 
 def _forward_scaled_grouped_mm_mxfp8(
@@ -162,8 +167,9 @@ def _forward_scaled_grouped_mm_mxfp8(
         scale_b_blocked = prequantized_rhs.scale_b
         mat_b_q = _to_col_major_last2(mat_b_q)
     else:
-        mat_b_q, scale_b_blocked = quantize_grouped_weight_3d_to_mxfp8_blocked(mat_b)
-        mat_b_q = _to_col_major_last2(mat_b_q)
+        with nvtx.annotate("scaled_grouped_mm_q_rhs_cache_miss_quantize", color="red"):
+            mat_b_q, scale_b_blocked = quantize_grouped_weight_3d_to_mxfp8_blocked(mat_b)
+            mat_b_q = _to_col_major_last2(mat_b_q)
 
     if scale_a_blocked is None:
         raise RuntimeError("aten::_scaled_grouped_mm_v2 path requires blocked lhs scales")
@@ -178,8 +184,6 @@ def _forward_scaled_grouped_mm_mxfp8(
         offs=offs,
         use_fast_accum=use_fast_accum,
     )
-
-
 
 
 class _ScaledGroupedMMQFunction(torch.autograd.Function):
@@ -262,18 +266,20 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_out: Tensor):  # type: ignore[override]
         mat_a: Optional[Tensor] = None
+        saved_mat_a_q: Optional[Tensor] = None
+        saved_mat_a_scale: Optional[Tensor] = None
         grad_out_compute = grad_out
+        grad_out_mxfp8 = grad_out if isinstance(grad_out, OlmoMXFP8Tensor) else None
+        if grad_out_mxfp8 is not None:
+            grad_out_prequantized_lhs = grad_out_mxfp8.as_scaled_grouped_mm_prequantized_lhs()
+        else:
+            grad_out_prequantized_lhs = None
         if grad_out_compute.dtype == torch.float8_e4m3fn:
             grad_out_compute = grad_out_compute.to(dtype=torch.bfloat16)
         if bool(getattr(ctx, "_saved_mat_a_from_prequantized_lhs", False)):
             mat_b, offs, mat_a_q, mat_a_scale = ctx.saved_tensors
-            if ctx.needs_input_grad[1]:
-                mat_a = dequantize_rows_from_mxfp8(
-                    mat_a_q,
-                    mat_a_scale,
-                    block_size=32,
-                    out_dtype=grad_out_compute.dtype,
-                )
+            saved_mat_a_q = mat_a_q
+            saved_mat_a_scale = mat_a_scale
         else:
             mat_a, mat_b, offs = ctx.saved_tensors
 
@@ -298,7 +304,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
                     mat_b.transpose(-2, -1),
                     offs,
                     use_fast_accum=True,
-                    prequantized_lhs=None,
+                    prequantized_lhs=grad_out_prequantized_lhs,
                     prequantized_rhs=ctx.prequantized_rhs_for_dgrad,
                 )
                 if ctx.input_grad_out is not None:
@@ -311,13 +317,25 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
                     grad_a = ctx.input_grad_out
 
         if ctx.needs_input_grad[1]:
-            if mat_a is None:
-                raise RuntimeError("scaled_grouped_mm_q backward expected mat_a when grad_b is required")
-            grad_b = F.grouped_mm(
-                grad_out_compute.transpose(-2, -1),
-                mat_a,
-                offs=offs,
-            ).transpose(-2, -1)
+            if grad_b is None:
+                if mat_a is None:
+                    if saved_mat_a_q is None or saved_mat_a_scale is None:
+                        raise RuntimeError(
+                            "scaled_grouped_mm_q backward expected mat_a when grad_b is required"
+                        )
+                    mat_a = dequantize_rows_from_mxfp8(
+                        saved_mat_a_q,
+                        saved_mat_a_scale,
+                        block_size=32,
+                        out_dtype=grad_out_compute.dtype,
+                    )
+                if grad_out_mxfp8 is not None:
+                    grad_out_compute = grad_out_mxfp8.dequantize(out_dtype=mat_a.dtype)
+                grad_b = F.grouped_mm(
+                    grad_out_compute.transpose(-2, -1),
+                    mat_a,
+                    offs=offs,
+                ).transpose(-2, -1)
 
         return grad_a, grad_b, None, None, None, None, None, None
 

@@ -1377,6 +1377,9 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # Step optimizer.
         optim.step()
+        with nvtx.annotate("MoEV2TransformerTrainModule.refresh_rowwise_fp8_cache_after_optim", color="red"):
+            for model in self.model_parts:
+                model.refresh_rowwise_fp8_cache()
 
         # dist.barrier()
         # if dist.get_rank() == 0:
@@ -1673,6 +1676,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             # apply_dp() currently performs the bf16 cast used for MoE forward kernels.
             # Keep that cast in eval-only mode even though we intentionally skip DDP wrapping.
             self._cast_to_fwd_bwd_precision(model_parts)
+            for m in model_parts:
+                m.refresh_rowwise_fp8_cache()
             log.info("Skipping DDP wrapping because eval_only=True")
             return model_parts
 
@@ -1692,6 +1697,10 @@ class MoEV2TransformerTrainModule(TrainModule):
                 assert self._pp_stages is not None
                 assert self._pp_stages[idx].submod is m
                 self._pp_stages[idx].submod = ddp_m
+
+        with nvtx.annotate("MoEV2TransformerTrainModule.refresh_rowwise_fp8_cache_before_first_step", color="red"):
+            for m in ddp_model_parts:
+                m.refresh_rowwise_fp8_cache()
 
         return ddp_model_parts
 
@@ -1725,6 +1734,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             model_parts=model_parts,
             rank_microbatch_size=rank_microbatch_size,
         )
+        for m in model_parts:
+            m.refresh_rowwise_fp8_cache()
 
         return
 

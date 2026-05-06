@@ -34,6 +34,7 @@ from .ep_no_sync_buffers import (
     _NoSyncTboPendingContext,
     compute_ep_no_sync_rank_capacity,
     get_ep_no_sync_buffers,
+    get_ep_no_sync_rowwise_fp8_buffers,
     use_ep_no_sync_rowwise_symm_combine_gather,
     use_ep_no_sync_rowwise_symm_combine_out,
     use_ep_no_sync_rowwise_symm_dispatch_in,
@@ -266,6 +267,13 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         )
 
     @torch.no_grad()
+    def refresh_rowwise_fp8_cache(self) -> None:
+        for block in self.blocks.values():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            block.refresh_rowwise_fp8_cache()
+
+    @torch.no_grad()
     def prewarm_ep_no_sync_symm_buffers(
         self,
         *,
@@ -313,9 +321,21 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
         for block in ep_blocks:
             if block.ep_no_sync_use_rowwise_all_to_all:
-                use_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(block)
-                use_symm_combine_out = use_ep_no_sync_rowwise_symm_combine_out(block)
-                use_symm_combine_gather = use_ep_no_sync_rowwise_symm_combine_gather(block)
+                rowwise_fp8_cfg = block.rowwise_fp8
+                use_rowwise_fp8 = (
+                    rowwise_fp8_cfg is not None
+                    and rowwise_fp8_cfg.enabled
+                    and device.type == "cuda"
+                )
+                use_symm_dispatch_in = (
+                    not use_rowwise_fp8
+                ) and use_ep_no_sync_rowwise_symm_dispatch_in(block)
+                use_symm_combine_out = (
+                    not use_rowwise_fp8
+                ) and use_ep_no_sync_rowwise_symm_combine_out(block)
+                use_symm_combine_gather = (
+                    not use_rowwise_fp8
+                ) and use_ep_no_sync_rowwise_symm_combine_gather(block)
                 slot_indices = range(block.ep_no_sync_shared_slots) if self.tbo else (None,)
                 for slot_idx in slot_indices:
                     get_ep_no_sync_buffers(
@@ -330,11 +350,24 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                         slot_idx=slot_idx,
                         need_dispatch_in=use_symm_dispatch_in,
                         need_dispatch_meta=False,
+                        need_dispatch_out=not use_rowwise_fp8,
+                        need_combine_in=not use_rowwise_fp8,
                         need_combine_meta=False,
                         need_combine_out=use_symm_combine_out,
                         need_combine_gather=use_symm_combine_gather,
                         combine_gather_cap=prewarm_local_microbatch_size,
                         combine_gather_top_k=top_k,
+                    )
+                if use_rowwise_fp8:
+                    assert rowwise_fp8_cfg is not None
+                    rowwise_fp8_cfg.assert_runtime_supported()
+                    get_ep_no_sync_rowwise_fp8_buffers(
+                        block,
+                        dispatch_out_cap=rank_capacity,
+                        combine_in_cap=rank_capacity,
+                        d_model=d_model,
+                        block_size=rowwise_fp8_cfg.block_size,
+                        device=device,
                     )
             else:
                 get_ep_no_sync_buffers(

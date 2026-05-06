@@ -116,6 +116,14 @@ class _NoSyncSymmBuffers:
 
 
 @dataclass
+class _NoSyncRowwiseFP8SymmBuffers:
+    dispatch_out_q: torch.Tensor
+    dispatch_out_scales: torch.Tensor
+    combine_in_q: torch.Tensor
+    combine_in_scales: torch.Tensor
+
+
+@dataclass
 class _NoSyncSymmTransientSlot:
     dispatch_in: Optional[torch.Tensor]
     dispatch_out: Optional[torch.Tensor]
@@ -423,6 +431,59 @@ def get_or_init_ep_no_sync_symm_tensor(
     #     f"cached_shape={tuple(block._ep_no_sync_symm_cache[name].shape)} return_shape={shape}"
     # )
     return _view_cached_symm_tensor(block._ep_no_sync_symm_cache[name], shape)
+
+
+@torch.compiler.disable
+def get_ep_no_sync_rowwise_fp8_buffers(
+    block: "MoEFusedV2TransformerBlock",
+    *,
+    dispatch_out_cap: int,
+    combine_in_cap: int,
+    d_model: int,
+    block_size: int,
+    device: torch.device,
+) -> _NoSyncRowwiseFP8SymmBuffers:
+    if d_model % block_size != 0:
+        raise RuntimeError(
+            "Rowwise FP8 requires hidden dim divisible by block_size: "
+            f"hidden={d_model} block_size={block_size}"
+        )
+
+    scale_cols = d_model // block_size
+    dispatch_out_q = get_or_init_ep_no_sync_symm_tensor(
+        block,
+        name="dispatch_out_rowwise_fp8_q",
+        shape=(dispatch_out_cap, d_model),
+        dtype=torch.float8_e4m3fn,
+        device=device,
+    )
+    dispatch_out_scales = get_or_init_ep_no_sync_symm_tensor(
+        block,
+        name="dispatch_out_rowwise_fp8_scales",
+        shape=(dispatch_out_cap, scale_cols),
+        dtype=torch.float8_e8m0fnu,
+        device=device,
+    )
+    combine_in_q = get_or_init_ep_no_sync_symm_tensor(
+        block,
+        name="combine_in_rowwise_fp8_q",
+        shape=(combine_in_cap, d_model),
+        dtype=torch.float8_e4m3fn,
+        device=device,
+    )
+    combine_in_scales = get_or_init_ep_no_sync_symm_tensor(
+        block,
+        name="combine_in_rowwise_fp8_scales",
+        shape=(combine_in_cap, scale_cols),
+        dtype=torch.float8_e8m0fnu,
+        device=device,
+    )
+    return _NoSyncRowwiseFP8SymmBuffers(
+        dispatch_out_q=dispatch_out_q,
+        dispatch_out_scales=dispatch_out_scales,
+        combine_in_q=combine_in_q,
+        combine_in_scales=combine_in_scales,
+    )
 
 
 def _parse_bool_env(value: str, *, env_name: str) -> Optional[bool]:

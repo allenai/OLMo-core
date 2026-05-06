@@ -17,7 +17,7 @@ from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
     get_ep_no_sync_buffers,
     get_ep_no_sync_group_name,
-    get_or_init_ep_no_sync_symm_tensor,
+    get_ep_no_sync_rowwise_fp8_buffers,
     use_ep_no_sync_rowwise_symm_combine_gather,
     use_ep_no_sync_rowwise_symm_combine_out,
     use_ep_no_sync_rowwise_symm_dispatch_in,
@@ -165,6 +165,8 @@ def combined_forward_ep_no_sync_rowwise(
         device=moe_inp.device,
         need_dispatch_in=use_symm_dispatch_in,
         need_dispatch_meta=False,
+        need_dispatch_out=not use_rowwise_fp8,
+        need_combine_in=not use_rowwise_fp8,
         need_combine_meta=False,
         need_combine_out=use_symm_combine_out,
         need_combine_gather=use_symm_combine_gather,
@@ -178,40 +180,18 @@ def combined_forward_ep_no_sync_rowwise(
     combine_in_scales: Optional[torch.Tensor] = None
     if use_rowwise_fp8:
         assert rowwise_fp8_cfg is not None
-        if moe_inp.shape[1] % rowwise_fp8_cfg.block_size != 0:
-            raise RuntimeError(
-                "Rowwise FP8 requires hidden dim divisible by block_size: "
-                f"hidden={moe_inp.shape[1]} block_size={rowwise_fp8_cfg.block_size}"
-            )
-        scale_cols = moe_inp.shape[1] // rowwise_fp8_cfg.block_size
-        dispatch_out_q = get_or_init_ep_no_sync_symm_tensor(
+        fp8_buffers = get_ep_no_sync_rowwise_fp8_buffers(
             self,
-            name="dispatch_out_rowwise_fp8_q",
-            shape=(dispatch_out_cap, moe_inp.shape[1]),
-            dtype=torch.float8_e4m3fn,
+            dispatch_out_cap=dispatch_out_cap,
+            combine_in_cap=combine_in_cap,
+            d_model=moe_inp.shape[1],
+            block_size=rowwise_fp8_cfg.block_size,
             device=moe_inp.device,
         )
-        dispatch_out_scales = get_or_init_ep_no_sync_symm_tensor(
-            self,
-            name="dispatch_out_rowwise_fp8_scales",
-            shape=(dispatch_out_cap, scale_cols),
-            dtype=torch.float8_e8m0fnu,
-            device=moe_inp.device,
-        )
-        combine_in_q = get_or_init_ep_no_sync_symm_tensor(
-            self,
-            name="combine_in_rowwise_fp8_q",
-            shape=(combine_in_cap, moe_inp.shape[1]),
-            dtype=torch.float8_e4m3fn,
-            device=moe_inp.device,
-        )
-        combine_in_scales = get_or_init_ep_no_sync_symm_tensor(
-            self,
-            name="combine_in_rowwise_fp8_scales",
-            shape=(combine_in_cap, scale_cols),
-            dtype=torch.float8_e8m0fnu,
-            device=moe_inp.device,
-        )
+        dispatch_out_q = fp8_buffers.dispatch_out_q
+        dispatch_out_scales = fp8_buffers.dispatch_out_scales
+        combine_in_q = fp8_buffers.combine_in_q
+        combine_in_scales = fp8_buffers.combine_in_scales
 
     routing_map = local_x_global_routed_expert_indices.view(
         -1, top_k
@@ -255,7 +235,6 @@ def combined_forward_ep_no_sync_rowwise(
                 moe_inp,
                 dst_ranks,
                 dst_rows,
-                buffers.dispatch_out,
                 dispatch_out_q,
                 dispatch_out_scales,
                 rowwise_fp8_cfg.block_size,
@@ -303,7 +282,6 @@ def combined_forward_ep_no_sync_rowwise(
             assert combine_in_scales is not None
             local_x = _RowwiseCombineWeightedFP8Autograd.apply(
                 dispatch_rank_major,
-                buffers.combine_in,
                 dst_ranks,
                 dst_rows,
                 route_probs,
