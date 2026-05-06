@@ -247,7 +247,7 @@ jobs:
             --ref ${{ env.COMMIT_SHA }} \
             --branch ${{ env.BRANCH_NAME }} \
             --beaker-image ${{ matrix.task.image }} \
-            --budget ai2/oe-omai \
+            --budget ai2/oe-other \
             --priority normal \
             --preemptible \
             --gpus ${{ matrix.task.gpus }} \

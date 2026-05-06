@@ -70,7 +70,7 @@ LEARNING_RATE = 4e-4
 BEAKER_CLUSTER = "ai2/jupiter"
 NUM_NODES = 1
 BEAKER_WORKSPACE = "ai2/OLMo-core"
-BEAKER_BUDGET = "ai2/oe-omai"
+BEAKER_BUDGET = "ai2/oe-other"
 
 # Logging.
 COMET_PROJECT: Optional[str] = None  # set this to enable Comet logging

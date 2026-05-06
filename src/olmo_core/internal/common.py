@@ -61,7 +61,7 @@ def build_launch_config(
     root_dir: Optional[str] = None,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
-    budget: str = "ai2/oe-omai",
+    budget: str = "ai2/oe-other",
     nccl_debug: Union[bool, str] = False,
     flight_recorder: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
