@@ -520,6 +520,37 @@ class MoEV2TransformerTrainModule(TrainModule):
         }
 
     @property
+    def model(self) -> Transformer:
+        """
+        Convenience accessor for the single model part when pipeline parallelism is not in use.
+
+        Provided so callers that expect a single ``model`` attribute (e.g.
+        :class:`~olmo_core.train.callbacks.speed_monitor.SpeedMonitorCallback`,
+        :class:`~olmo_core.train.callbacks.hf_converter.HFConverterCallback`,
+        :class:`~olmo_core.train.callbacks.model_merger.ModelMergerCallback`,
+        :class:`~olmo_core.train.callbacks.gap_monitor.GAPMonitorCallback`,
+        and ``Checkpointer.load_model_module``) work without branching on train-module type.
+
+        Use :data:`model_parts` directly when iterating over all parts.
+
+        :raises RuntimeError: If pipeline parallelism is in use (``len(model_parts) > 1``).
+            ``model_parts[0]`` would only expose stage 0's weights/modules, which is silently
+            wrong for callers that read state-dicts, named parameters, or do full-model export.
+
+        .. todo::
+            Update the callers above to iterate ``model_parts`` (or otherwise stitch stages
+            together) so this property can return a coherent view when ``len(model_parts) > 1``.
+            Until then, the explicit error here is preferable to silently returning a partial model.
+        """
+        if len(self.model_parts) > 1:
+            raise RuntimeError(
+                f"{type(self).__name__}.model is only valid when pipeline parallelism is "
+                f"disabled (len(model_parts) == 1); got len(model_parts) == "
+                f"{len(self.model_parts)}. Iterate `train_module.model_parts` instead."
+            )
+        return self.model_parts[0]
+
+    @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
         return self.dp_group
 
