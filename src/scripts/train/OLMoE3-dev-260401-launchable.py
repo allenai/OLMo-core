@@ -20,15 +20,17 @@ directly or wrap with ``python -m olmo_core.launch.beaker``::
 import argparse
 import logging
 import math
-from typing import List, cast
+from dataclasses import dataclass
+from typing import List, Optional, cast
 
 import torch
 
-from olmo_core.config import DType
+from olmo_core.config import Config, DType
 from olmo_core.data import (
     DataMix,
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
+    NumpyDatasetConfig,
     NumpyFSLDatasetConfig,
     TokenizerConfig,
 )
@@ -49,6 +51,7 @@ from olmo_core.nn.transformer import (
     MoEFusedV2TransformerConfig,
     TransformerBlockConfig,
     TransformerBlockType,
+    TransformerConfig,
     TransformerType,
 )
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits
@@ -58,7 +61,7 @@ from olmo_core.optim.scheduler import (
     ComposableSchedulerStage,
     ComposableSchedulerStageType,
 )
-from olmo_core.script_utils import ExperimentConfig, main
+from olmo_core.script_utils import main
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -76,6 +79,23 @@ from olmo_core.train.train_module.transformer import TransformerPipelineParallel
 log = logging.getLogger(__name__)
 
 torch.set_float32_matmul_precision("high")
+
+
+# Local ExperimentConfig with the right ``train_module`` annotation. The version in
+# ``olmo_core.script_utils`` annotates ``train_module`` as ``TransformerTrainModuleConfig``,
+# but this script uses ``MoEV2TransformerTrainModuleConfig`` (a sibling, not subclass).
+# ``Config.merge()`` reads field annotations to coerce types, so passing a MoEV2 instance
+# into the script_utils class fails coercion. ``script_utils.main`` accesses the config
+# duck-typed, so a local class is sufficient.
+@dataclass
+class ExperimentConfig(Config):
+    model: TransformerConfig
+    dataset: NumpyDatasetConfig
+    data_loader: NumpyDataLoaderConfig
+    train_module: MoEV2TransformerTrainModuleConfig
+    trainer: TrainerConfig
+    init_seed: int = 12536
+    load_path: Optional[str] = None
 
 # -----------------------------------------------------------------------------
 # Hyperparameters (kept identical to OLMoE3-dev-260401-test-refactor.py).
@@ -522,7 +542,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         model=model_config,
         dataset=dataset_config,
         data_loader=data_loader_config,
-        train_module=train_module_config,  # type: ignore[arg-type]
+        train_module=train_module_config,
         trainer=trainer_config,
         init_seed=SEED,
     ).merge(overrides)
