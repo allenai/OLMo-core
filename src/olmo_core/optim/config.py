@@ -4,6 +4,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import (
+    TYPE_CHECKING,
     Any,
     Dict,
     Generic,
@@ -25,8 +26,18 @@ from olmo_core.nn.transformer import Transformer
 
 from ..config import Config, Registrable
 from ..exceptions import OLMoConfigurationError
-from ..train.train_module import TrainModule
 from ..utils import get_default_device, move_to_device
+
+if TYPE_CHECKING:
+    # NOTE: ``TrainModule`` is imported under ``TYPE_CHECKING`` (and referenced as a
+    # forward-reference string in :meth:`OptimConfig.build`) to avoid a circular import.
+    # ``olmo_core.train.train_module.transformer.config`` imports ``OptimConfig`` from
+    # ``olmo_core.optim`` at module load, so a top-level import of ``TrainModule`` here
+    # would deadlock the import graph (``optim.config`` → ``train.train_module`` →
+    # ``train.train_module.transformer.config`` → ``optim`` partially initialized).
+    # Subclass ``build()`` overrides that actually use ``train_module`` at runtime
+    # (e.g. ``ZeRoConfig``, ``MoEFusedV2OptimizerConfig``) import it eagerly themselves.
+    from ..train.train_module import TrainModule
 
 __all__ = [
     "OptimConfig",
@@ -170,12 +181,28 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
         raise NotImplementedError
 
     def build(
-        self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None
+        self,
+        model: nn.Module,
+        train_module: "TrainModule",
+        strict: bool = True,
+        param_filter=None,
     ) -> Opt:
         """
         Build the optimizer. This default implementation is suitable for standard, point-wise
         optimizers such as AdamW, Lion, etc.
 
+        :param model: The model whose parameters will be optimized.
+        :param train_module: The train module wrapping ``model``. The default implementation does
+            not use this argument, but it is part of the polymorphic ``build`` interface so that
+            subclasses which need access to the train module's process groups / device mesh
+            (e.g. :class:`~olmo_core.optim.zero_optim.ZeRoConfig`,
+            :class:`~olmo_core.optim.moe_optimizer.MoEFusedV2OptimizerConfig`) can use it without
+            forcing callers to branch on optimizer type.
+
+            .. note::
+                The annotation is a forward reference (string) and ``TrainModule`` is imported
+                under ``TYPE_CHECKING`` only — see the comment at the top of this module for the
+                circular-import constraint.
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
