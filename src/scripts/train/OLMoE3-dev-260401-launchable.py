@@ -39,18 +39,11 @@ from olmo_core.nn.attention import (
     AttentionType,
     SlidingWindowAttentionConfig,
 )
-from olmo_core.nn.attention.backend import AttentionBackendName
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig, LMLossImplementation
 from olmo_core.nn.moe import MoELoadBalancingLossGranularity, MoERouterGatingFunction
-from olmo_core.nn.moe.v2.block import (
-    MoEFusedV2TransformerBlockConfig,
-    MoERouterConfigV2,
-)
-from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
-from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
-from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
+from olmo_core.nn.moe.v2.block import MoERouterConfigV2
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.nn.transformer import (
     MoEFusedV2TransformerConfig,
@@ -59,7 +52,6 @@ from olmo_core.nn.transformer import (
     TransformerType,
 )
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits
-from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
     ComposableSchedulerMonkeyPatchDecay,
@@ -74,7 +66,6 @@ from olmo_core.train.callbacks import (
     TorchMemoryHistoryCallback,
     WandBCallback,
 )
-from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.train.train_module import (
     MoEV2TransformerTrainModuleConfig,
     TransformerDataParallelConfig,
@@ -188,6 +179,12 @@ MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine
 
 
 def build_model_config(tokenizer_config: TokenizerConfig) -> MoEFusedV2TransformerConfig:
+    from olmo_core.nn.attention.backend import AttentionBackendName
+    from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlockConfig
+    from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
+    from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
+    from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
+
     d_model = D_MODEL
     dtype = DType.float32
 
@@ -331,6 +328,8 @@ def build_model_config(tokenizer_config: TokenizerConfig) -> MoEFusedV2Transform
 
 
 def build_train_module_config(sequence_length: int) -> MoEV2TransformerTrainModuleConfig:
+    from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
+
     return MoEV2TransformerTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * sequence_length,
         max_sequence_length=sequence_length,
@@ -411,6 +410,8 @@ def build_train_module_config(sequence_length: int) -> MoEV2TransformerTrainModu
 
 
 def build_trainer_config(opts: argparse.Namespace) -> TrainerConfig:
+    from olmo_core.train.checkpoint import CheckpointerConfig
+
     cancel_check_interval = 10
     return (
         TrainerConfig(
