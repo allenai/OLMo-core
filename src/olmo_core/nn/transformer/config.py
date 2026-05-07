@@ -284,8 +284,8 @@ class TransformerBlockConfig(ModuleConfig):
 
         # Block attention params.
         block_params += self.sequence_mixer.num_params(d_model)
-        if self.layer_norm is not None:
-            block_params += self.layer_norm.num_params(d_model)
+        if self.attention_norm is not None:
+            block_params += self.attention_norm.num_params(d_model)
 
         # Block feed forward (dense and/or sparse).
         if self.feed_forward is not None:
