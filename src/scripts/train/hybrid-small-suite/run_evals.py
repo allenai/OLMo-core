@@ -1,12 +1,14 @@
+# uv run /Users/yashasbls/Desktop/OLMo-core-all/hybrid-final/src/scripts/train/hybrid-small-suite/run_evals.py --dry-run
+
 import argparse
 import subprocess
 
-COOKBOOK_EVAL = "/weka/oe-training-default/yashasbls/olmo-cookbook/.venv/bin/olmo-cookbook-eval"
-DASHBOARD = "yashasbls-hybrid-small-tests"
+GROUP = "yashasbls-hybrid-small-tests"
 CLUSTER = "ai2/jupiter"
 PRIORITY = "urgent"
 NUM_GPUS = 1
 WORKSPACE = "ai2/linear-rnns"
+BUDGET = "ai2/oe-omai"
 
 pretraining_hf_checkpoints = {
     "275m": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-275M-Cx100/step161186-hf/",
@@ -32,64 +34,73 @@ all_stages = {
     "long_context": long_context_hf_checkpoints,
 }
 
-TEST_TASKS = ["olmo3:dev:1b:main:v2"]
+TEST_TASKS = ["olmobase:easy:qa:rc"]
 
 DOWNSTREAM_TASKS = [
-    "olmo3:base_easy",
-    "olmo3:dev:7b:main:v2:fast",
+    # Math
+    "olmobase:math",
+    # Code
+    "olmobase:easy:code:bpb",
+    # MC STEM
+    "olmobase:mcqa_stem",
+    # MC Non-STEM
+    "olmobase:mcqa_non_stem",
+    # GenQA
+    "olmobase:gen",
+    # LBPP, BBH, MMLU Pro, DM Math — not yet in olmo-eval-internal
 ]
 
 LC_TASKS = [
-    "ruler:8k",
-    "ruler:16k",
-    "ruler:32k",
-    "ruler:64k",
-    "ruler:128k",
-    "helmet:8k",
-    "helmet:16k",
-    "helmet:32k",
-    "helmet:64k",
-    "helmet:128k",
+    "ruler_all__4096",
+    "ruler_all__8192",
+    "ruler_all__16384",
+    "ruler_all__32768",
+    "ruler_all__65536",
+    "ruler_all__131072",
 ]
 
 SAFETY_TASKS: list[str] = [
     # TODO(yashasbls): ask maliam
 ]
 
-GANTRY_INSTALL = (
-    "export PATH=/stage/.venv/bin:$PATH"
-    " && uv pip list"
-    " && uv pip install lm-eval==0.4.9.2"
-    " && uv pip install git+https://github.com/yashassamaga/transformers.git@olmo-3.5-hybrid"
-    " && uv pip install peft==0.18.1"
-    " && uv pip list"
-)
 
-def build_command(model_path: str, tasks: list[str]) -> list[str]:
-    return [
-        COOKBOOK_EVAL, "evaluate", model_path,
-        "--tasks", *tasks,
-        "--priority", PRIORITY,
-        "--cluster", CLUSTER,
-        "--num-gpus", str(NUM_GPUS),
-        "--model-backend", "vllm",
-        "--partition-size", str(len(tasks)),
-        "--huggingface-secret", "YASHASBLS_HF_TOKEN",
-        "--use-hf-token",
-        "--dashboard", DASHBOARD,
-        "--workspace", WORKSPACE,
-        "--vllm-use-v1-spec",
-        "--vllm-memory-utilization=0.7",
-        "--model-args", "trust_remote_code=true,max_length=4096",
-        "--gantry-args", (
-            "retries=0,"
-            # f'install="{GANTRY_INSTALL}"'
-        ),
-        "--use-gantry",
-        "--oe-eval-branch", "vllm-11-2-fix+better-time-tracking+eager-cascade",
-        "--beaker-image", "tylerr/oe_eval_auto-e5670e07b",
-        "--fim-tokens", "l2c",
-    ]
+def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS) -> list[str]:
+    # Derive a clean name: last two path components joined with underscore, slashes removed
+    parts = model_path.rstrip("/").split("/")
+    model_short = "_".join(parts[-2:]).lower()
+    tasks_short = "-".join(t.replace(":", "_") for t in tasks[:2])
+    if len(tasks) > 2:
+        tasks_short += f"-and-{len(tasks) - 2}-more"
+    exp_name = f"{model_short}-{tasks_short}"
+
+    cmd = ["uv", "run", "olmo-eval", "beaker", "launch"]
+    cmd += ["-H", "default"]
+    cmd += ["-n", exp_name]
+    cmd += ["-o", f"provider.num_instances={num_gpus}"]
+    cmd += ["-o", "provider.kwargs.enforce_eager=true"]
+    cmd += ["-o", 'provider.kwargs.compilation_config={"custom_ops":["-rms_norm"]}']
+    cmd += ["-o", "provider.add_bos_token=false"]
+    cmd += ["-o", "provider.prompt_logprobs=1"]
+    cmd += ["-o", "provider.logprob_temperature=1.0"]
+    cmd += ["-o", "provider.completion_use_prompt_token_ids=true"]
+    cmd += ["-o", "provider.completion_client_side_stop_trim=true"]
+    cmd += ["-o", "provider.completion_sentencepiece_cleanup=true"]
+    cmd += ["-o", "provider.dependencies=[transformers @ git+https://github.com/yashassamaga/transformers.git@olmo-3.5-hybrid]"]
+    cmd += ["-m", model_path]
+    for task in tasks:
+        cmd += ["-t", task]
+    cmd += ["--gpus", str(num_gpus)]
+    cmd += ["--priority", PRIORITY]
+    cmd += ["--group", GROUP]
+    cmd += ["--cluster", CLUSTER]
+    cmd += ["--workspace", WORKSPACE]
+    cmd += ["--budget", BUDGET]
+    # cmd += ["--store"]
+    cmd += ["--inspect"]
+    # cmd += ["--gcp-credentials"]
+    cmd += ["--no-follow"]
+    cmd += ["-y"]
+    return cmd
 
 
 def main():
@@ -111,8 +122,10 @@ def main():
         choices=["test", "downstream", "lc", "both", "safety"],
         default="test",
     )
+    parser.add_argument("--gpus", type=int, default=NUM_GPUS, help="Number of GPUs per job.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    num_gpus = args.gpus
 
     if args.eval_type == "test":
         tasks = TEST_TASKS
@@ -129,11 +142,12 @@ def main():
         checkpoints = all_stages[stage]
         for size in args.sizes:
             model_path = checkpoints[size]
-            cmd = build_command(model_path, tasks)
-            print(f"\n=== {stage}/{size} ===")
-            print(" ".join(cmd))
-            if not args.dry_run:
-                subprocess.run(cmd, check=True)
+            for task in tasks:
+                cmd = build_command(model_path, [task], num_gpus)
+                print(f"\n=== {stage}/{size} | {task} ===")
+                print(" ".join(cmd))
+                if not args.dry_run:
+                    subprocess.run(cmd, check=True)
 
 
 if __name__ == "__main__":
