@@ -254,7 +254,8 @@ class QwenRMSNorm(RMSNorm):
             x = x * torch.rsqrt(variance + self.eps)
             x = x.to(og_dtype)
 
-            x = x * self.weight.type_as(x)
+            if self.weight is not None:
+                x = x * self.weight.type_as(x)
             if self.bias is not None:
                 x = x + self.bias.type_as(x)
 

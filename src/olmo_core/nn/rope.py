@@ -535,11 +535,18 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                     raise RuntimeError(
                         "'cu_doc_lens' requires q_len == k_len (no kv-cache packed mode)"
                     )
-                arange_seq = torch.arange(k_len, device=q_.device, dtype=cu_doc_lens.dtype)
-                doc_id = torch.bucketize(arange_seq, cu_doc_lens[1:], right=True)
-                pos_idx = arange_seq - cu_doc_lens[doc_id]
-                sin_qk = _broadcast(pos_sin.index_select(0, pos_idx))
-                cos_qk = _broadcast(pos_cos.index_select(0, pos_idx))
+                B = q_.size(0)
+                flat_idx = torch.arange(B * k_len, device=q_.device, dtype=cu_doc_lens.dtype)
+                doc_id = torch.bucketize(flat_idx, cu_doc_lens[1:], right=True)
+                pos_idx = (flat_idx - cu_doc_lens[doc_id]).view(B, k_len)
+                sin_sel = pos_sin.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
+                cos_sel = pos_cos.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
+                if head_first:
+                    sin_qk = sin_sel.unsqueeze(1)
+                    cos_qk = cos_sel.unsqueeze(1)
+                else:
+                    sin_qk = sin_sel.unsqueeze(2)
+                    cos_qk = cos_sel.unsqueeze(2)
                 q_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, q_)
                 k_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, k_)
             else:
