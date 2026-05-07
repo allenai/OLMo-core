@@ -137,7 +137,7 @@ def parse_args(
         parser.add_argument(
             "--budget",
             type=str,
-            default="ai2/oe-base",
+            default="ai2/oe-other",
             help="The Beaker budget to use.",
         )
         parser.add_argument(
