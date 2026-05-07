@@ -1094,6 +1094,7 @@ class Trainer:
         dir = dir_to_scatter
 
         log.info(f"Loading checkpoint from '{dir}'...")
+        load_start = time.perf_counter()
         trainer_state = self.checkpointer.load(
             dir,
             self.train_module,
@@ -1102,6 +1103,12 @@ class Trainer:
         )
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
+
+        self.record_metric(
+            "checkpoint/load_duration_s",
+            time.perf_counter() - load_start,
+            reduce_type=ReduceType.max,
+        )
 
         for callback in self._iter_callbacks():
             callback.post_checkpoint_loaded(dir)
@@ -1155,6 +1162,7 @@ class Trainer:
         path = join_path(self.save_folder, dirname)
 
         log.info(f"Saving checkpoint for step {self.global_step} to '{path}'...")
+        save_start = time.perf_counter()
         # Some state (e.g. in a callback) might be tied to metrics, or depend on another bookkeeping
         # operation to be finished first.
         self._log_metrics()
@@ -1165,6 +1173,11 @@ class Trainer:
             self.train_module,
             cast(Dict[str, Any], self.state_dict()),
             ephemeral=ephemeral,
+        )
+        self.record_metric(
+            "checkpoint/save_duration_s",
+            time.perf_counter() - save_start,
+            reduce_type=ReduceType.max,
         )
         for callback in self._iter_callbacks():
             callback.post_checkpoint_saved(path)
@@ -1187,6 +1200,7 @@ class Trainer:
         path = join_path(self.save_folder, dirname)
 
         log.info(f"Saving checkpoint for step {step} to '{path}' asynchronously...")
+        save_start = time.perf_counter()
         # Some state (e.g. in a callback) might be tied to metrics, or depend on another bookkeeping
         # operation to be finished first.
         self._log_metrics()
@@ -1201,6 +1215,11 @@ class Trainer:
 
         def callback(future: Future):
             future.result()  # ensure it finished successfully
+            self.record_metric(
+                "checkpoint/save_async_duration_s",
+                time.perf_counter() - save_start,
+                reduce_type=ReduceType.max,
+            )
             for callback in self._iter_callbacks():
                 callback.post_checkpoint_saved(path)
             log.info(f"Checkpoint for step {step} saved successfully")

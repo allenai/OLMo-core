@@ -97,7 +97,7 @@ class BenchmarkConfig(Config):
 def build_config(script: str, run_name: str, cluster: str, overrides: List[str]) -> BenchmarkConfig:
     launch_config = BeakerLaunchConfig(
         name=f"{run_name}-{generate_uuid()[:8]}",
-        budget="ai2/oe-base",
+        budget="ai2/oe-other",
         cmd=[script, SubCmd.run, run_name, cluster, *overrides],
         task_name="benchmark",
         workspace="ai2/OLMo-core",
