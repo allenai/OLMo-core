@@ -1384,6 +1384,13 @@ class MoEV2TransformerTrainModule(TrainModule):
         # NOTE: it uses the config to calculate the FLOPs for the whole model, so it should be fine to just use the first model part.
         return self.model_parts[0].num_flops_per_token(seq_len)
 
+    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
+        if global_num_tokens is None:
+            return None
+        flops_per_token = self.num_flops_per_token(seq_len=batch["input_ids"].shape[1])
+        return flops_per_token * global_num_tokens if flops_per_token is not None else None
+
     @contextlib.contextmanager
     def _train_microbatch_context(
         self, micro_batch_idx: int, num_micro_batches: int
