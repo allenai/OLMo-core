@@ -503,6 +503,56 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             self.routed_experts_router.reset_metrics()
         reset_ep_no_sync_rowwise_metrics(self)
 
+    def num_flops_per_token(self, seq_len: int) -> int:
+        """
+        Per-token forward+backward FLOPs estimate for this block.
+
+        Mirrors :meth:`MoEFusedV2TransformerBlockConfig.flops_per_seq` divided by ``seqlen``
+        — every term in that formula is linear in ``seqlen``, so this is exact.
+
+        .. todo::
+            Confirm this implementation against a reference (e.g. compare ``num_flops_per_token *
+            seq_len * num_blocks`` against an instrumented forward+backward pass, or against
+            ``MoEFusedV2TransformerBlockConfig.flops_per_seq`` for a known config). The formula
+            here was derived from the config-side ``flops_per_seq`` accounting; it has not been
+            independently validated, and the comments in :meth:`flops_per_seq` (e.g. the SwiGLU
+            ``x3`` and the fwd+bwd ``x3``) should be re-checked.
+        """
+        d_model = self.d_model
+        flops = 0
+
+        # attention
+        flops += self.attention.num_flops_per_token(seq_len)
+
+        # router(s): (d_model) * (num_experts) per token, x6 (fwd + bwd, GEMM x2)
+        num_router_experts = 0
+        if self.routed_experts_router is not None:
+            num_router_experts += self.routed_experts_router.num_experts
+        if self.shared_experts_router is not None:
+            num_router_experts += self.shared_experts_router.num_experts
+        flops += 6 * d_model * num_router_experts
+
+        # routed experts: top_k active per token; SwiGLU has 3 matmuls; fwd+bwd x3; GEMM x2.
+        if self.routed_experts is not None:
+            assert self.routed_experts_router is not None
+            flops += (
+                (3 * 3 * 2)
+                * d_model
+                * self.routed_experts.hidden_size
+                * self.routed_experts_router.top_k
+            )
+
+        # shared experts: all `num_experts` are always active per token.
+        if self.shared_experts is not None:
+            flops += (
+                (3 * 3 * 2)
+                * d_model
+                * self.shared_experts.hidden_size
+                * self.shared_experts.num_experts
+            )
+
+        return flops
+
     @property
     def is_moe(self) -> bool:
         return True
