@@ -42,9 +42,12 @@ should_save_ops = [
     torch.ops.aten.addmm.default,
     torch.ops.aten.rand_like.default,
     # torch.ops.c10d.alltoall_base_.default,
-    torch.ops.flash_attn._flash_attn_forward.default,
     # torch.ops.flash_attn_3.fwd.default,
 ]
+try:
+    should_save_ops.append(torch.ops.flash_attn._flash_attn_forward.default)
+except (AttributeError, RuntimeError):  # pragma: no cover - flash_attn unavailable
+    pass
 
 
 def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):

@@ -4,8 +4,6 @@ from typing import Callable, Literal, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
-from .custom_fused_linear_cross_entropy import LigerFusedLinearCrossEntropyFunction
-
 __all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss"]
 
 log = logging.getLogger(__name__)
@@ -54,18 +52,14 @@ def cross_entropy_loss(
 
 _fused_linear_cross_entropy_loss: Optional[Callable] = None
 
-# try:
-#     from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
-#         LigerFusedLinearCrossEntropyFunction,
-#     )
+try:
+    from .custom_fused_linear_cross_entropy import LigerFusedLinearCrossEntropyFunction
 
-#     _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
-# except ImportError:
-#     pass
-# except Exception:
-#     log.exception("Error importing liger-kernel")
-
-_fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
+    _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
+except ImportError:
+    pass
+except Exception:
+    log.exception("Error importing liger-kernel")
 
 
 @torch._dynamo.disable()

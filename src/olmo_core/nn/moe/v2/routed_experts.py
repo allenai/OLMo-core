@@ -29,8 +29,11 @@ import weakref
 from dataclasses import dataclass
 from typing import Optional, Tuple, cast
 
-import grouped_gemm  # type: ignore
-import grouped_gemm.ops
+try:
+    import grouped_gemm  # type: ignore
+    import grouped_gemm.ops  # type: ignore  # noqa: F401
+except Exception:  # pragma: no cover - import guard
+    grouped_gemm = None  # type: ignore[assignment]
 import nvtx
 import torch
 import torch.nn as nn

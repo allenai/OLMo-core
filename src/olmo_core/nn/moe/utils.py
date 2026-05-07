@@ -13,13 +13,20 @@ except Exception:  # pragma: no cover - import guard
     tl = None  # type: ignore[assignment]
     _HAS_TRITON = False
 
-import transformer_engine_torch as tex
-from transformer_engine.pytorch.constants import TE_DType
-from transformer_engine.pytorch.permutation import (
-    moe_permute,
-    moe_sort_chunks_by_index,
-    moe_unpermute,
-)
+try:
+    import transformer_engine_torch as tex
+    from transformer_engine.pytorch.constants import TE_DType
+    from transformer_engine.pytorch.permutation import (
+        moe_permute,
+        moe_sort_chunks_by_index,
+        moe_unpermute,
+    )
+except Exception:  # pragma: no cover - import guard
+    tex = None  # type: ignore[assignment]
+    TE_DType = None  # type: ignore[assignment]
+    moe_permute = None  # type: ignore[assignment]
+    moe_sort_chunks_by_index = None  # type: ignore[assignment]
+    moe_unpermute = None  # type: ignore[assignment]
 
 from olmo_core.kernels.moe_chunk_reorder import moe_chunk_permute, moe_chunk_unpermute
 from olmo_core.kernels.moe_permute_drop import moe_permute_drop_fwd
