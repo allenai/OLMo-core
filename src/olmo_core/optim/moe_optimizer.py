@@ -4,6 +4,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -39,9 +40,16 @@ from olmo_core.utils import get_default_device, move_to_device
 
 from ..config import Config, DType
 from ..exceptions import OLMoConfigurationError
-from ..train.train_module import TrainModule
 from .adamw import foreach_adamw_step
 from .config import INITIAL_LR_FIELD, LR_FIELD, OptimGroupOverride
+
+if TYPE_CHECKING:
+    # See note in ``olmo_core.optim.config`` — importing ``TrainModule`` eagerly here
+    # creates a circular import via ``train.train_module.transformer.config`` which
+    # imports ``MoEFusedV2OptimizerConfig`` from this module. ``TrainModule`` is only
+    # used as a type annotation; the runtime cast is to ``MoEV2TransformerTrainModule``
+    # which is imported lazily inside ``build()``.
+    from ..train.train_module import TrainModule
 
 log = logging.getLogger(__name__)
 
@@ -337,7 +345,11 @@ class MoEFusedV2OptimizerConfig(Config):
         return ep_param_ids
 
     def build(
-        self, model_parts: List, train_module: TrainModule, strict: bool = True, param_filter=None
+        self,
+        model_parts: List,
+        train_module: "TrainModule",
+        strict: bool = True,
+        param_filter=None,
     ) -> "MoEFusedV2Optimizer":
         """
         Build the optimizer.

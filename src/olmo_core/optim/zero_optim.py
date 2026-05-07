@@ -1,15 +1,20 @@
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeVar, cast
 
 import torch
 import torch.nn as nn
 import torch.optim.optimizer
 from torch.distributed.optim import ZeroRedundancyOptimizer
 
-from ..train.train_module import TrainModule
 from ..utils import move_to_device
 from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig
+
+if TYPE_CHECKING:
+    # See note in ``olmo_core.optim.config`` — eager import causes a circular import
+    # via ``train.train_module.transformer.config``. Used only as a type annotation;
+    # ``train_module.dp_process_group`` is accessed via duck typing at runtime.
+    from ..train.train_module import TrainModule
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +34,11 @@ class ZeroOptimConfig(OptimConfig[Opt]):
         return ZeroRedundancyOptimizer
 
     def build(
-        self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None
+        self,
+        model: nn.Module,
+        train_module: "TrainModule",
+        strict: bool = True,
+        param_filter=None,
     ):
         """
         Build the optimizer.
