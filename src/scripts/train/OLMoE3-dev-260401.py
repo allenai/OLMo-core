@@ -2,6 +2,14 @@
 
 import logging
 import math
+import os
+
+# Keep this before any olmo_core imports: several modules import nvtx at import
+# time, and NVTX_DISABLE only works if it is set before nvtx is imported.
+USE_NV_PROFILE = False
+if not USE_NV_PROFILE:
+    os.environ["NVTX_DISABLE"] = "1"
+
 import torch
 import transformer_engine
 from functools import partial
@@ -93,7 +101,11 @@ SEQUENCE_LENGTH = 8192
 
 torch.set_float32_matmul_precision('high')
 
-
+IN_EVAL_MODE = False
+import sys
+if sys.argv[1] == "eval_checkpoints":
+    IN_EVAL_MODE = True
+    
 MAX_DURATION = int(3000e9)
 
 EVAL_INTERVAL = 2000
@@ -155,11 +167,14 @@ REF_NUM_NODES=8
 # NO LR_REF_BSZ=4M
 
 # stage 7 - 24M - 
-MICRO_BSZ = 2
+MICRO_BSZ = 3
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 24
 # NO LR_REF_BSZ=4M
 
-
+if IN_EVAL_MODE:
+    MICRO_BSZ = 2
+    EP_DIM=1
+    
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -304,7 +319,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 random_expert_assignment=RANDOM_ASSIGN,
                 lb_loss_weight=0.01,
                 # z_loss_weight=None,
-                z_loss_weight=1e-3, # changed may04 2026
+                z_loss_weight=1e-5, # changed may04 2026
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
                 normalize_expert_weights=1.0,
@@ -506,7 +521,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     from olmo_core.train.common import StepSkipRange
     from olmo_core.train.checkpoint import CheckpointerConfig
 
-    return (
+    config = (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
@@ -517,9 +532,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
-            # checkpoints_to_eval=[
-            #     "/workspace/checkpoint/OLMoE3-dev-260304-dbg_2048d2048a_6L2048M2048S_16E4K1S_c1"
-            # ]
+            checkpoints_to_eval=[
+                "/workspace/checkpoint/OLMoE3-dev-260401_2560d3072a_24L2560M1280S_48E4K1S_p1/step21*"
+            ]
         )
         .with_callback(
             "checkpointer",
@@ -558,11 +573,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                                    output_dir='/workspace/tmp'
             )
         )
-        # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        # )
     )
+    if IN_EVAL_MODE:
+        config = config.with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
+    return config
+        
 
 
 def finalize_config(config: ExperimentConfig):

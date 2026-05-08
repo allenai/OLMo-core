@@ -206,6 +206,7 @@ class _GroupedMMWithBuffersFunction(torch.autograd.Function):
         grad_mat_b = None
         offs = ctx.offs
 
+        # Wgrad
         if ctx.needs_input_grad[1]:
             if ctx.mat_a is None:
                 raise RuntimeError("Missing saved mat_a for grouped_mm backward")
@@ -216,6 +217,7 @@ class _GroupedMMWithBuffersFunction(torch.autograd.Function):
                 mat2_was_col_major=ctx.mat_b_was_col_major,
             )
 
+        # Dgrad
         # Compute grad(mat_a) after grad(mat_b), because input_grad_out can alias mat_a storage.
         if ctx.needs_input_grad[0]:
             if ctx.mat_b is None:

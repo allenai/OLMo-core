@@ -108,19 +108,19 @@ if sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 500
+SAVE_INTERVAL = 1000
 
-NUM_EXPERTS = 96
+NUM_EXPERTS = 64
 TOP_K = 4
-D_MODEL=3 * 1024
-D_ATTN=4 * 1024
+D_MODEL=6 * 1024
+D_ATTN=6 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 4 * 1024
+MOE_HIDDEN_SIZE = 8 * 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 4 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -208,7 +208,7 @@ ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blo
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = False
+PRODUCTION_RUN = True
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -525,8 +525,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=False,
-                pre_train_checkpoint=PRODUCTION_RUN,
-                # pre_train_checkpoint=False,
+                # pre_train_checkpoint=PRODUCTION_RUN,
+                pre_train_checkpoint=False,
             ),
         )
         .with_callback(
