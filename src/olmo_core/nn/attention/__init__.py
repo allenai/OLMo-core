@@ -516,6 +516,36 @@ class Attention(SequenceMixer):
             self.kv_cache_manager.update_seqlen(q.shape[1])
         return att
 
+    def _apply_rope(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        start_pos: Optional[int],
+        pos_sin: Optional[torch.Tensor],
+        pos_cos: Optional[torch.Tensor],
+        freqs_cis: Optional[torch.Tensor],
+        cu_doc_lens: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        assert self.rope is not None
+        rope_kwargs = {}
+        if cu_doc_lens is not None:
+            if not isinstance(self.rope, RotaryEmbedding):
+                raise NotImplementedError(
+                    "Intra-document RoPE (cu_doc_lens) is only supported by RotaryEmbedding; "
+                    f"got {type(self.rope).__name__}"
+                )
+            rope_kwargs["cu_doc_lens"] = cu_doc_lens
+        return self.rope(
+            q,
+            k,
+            head_first=False,
+            start_pos=start_pos,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            **rope_kwargs,
+        )
+
     def forward(
         self,
         x: torch.Tensor,
@@ -586,15 +616,7 @@ class Attention(SequenceMixer):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
-            q, k = self.rope(
-                q,
-                k,
-                head_first=False,
-                start_pos=start_pos,
-                pos_sin=pos_sin,
-                pos_cos=pos_cos,
-                freqs_cis=freqs_cis,
-            )
+            q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -895,15 +917,7 @@ class NormalizedAttention(Attention):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
-            q, k = self.rope(
-                q,
-                k,
-                head_first=False,
-                start_pos=start_pos,
-                pos_sin=pos_sin,
-                pos_cos=pos_cos,
-                freqs_cis=freqs_cis,
-            )
+            q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -1048,6 +1062,10 @@ class FusedAttention(SequenceMixer):
         if cache_leftpad:
             raise NotImplementedError(
                 "cache_leftpad is not supported for the fused attention variant"
+            )
+        if cu_doc_lens is not None and self.rope is not None:
+            raise NotImplementedError(
+                "Intra-document RoPE (cu_doc_lens) is not yet supported by FusedAttention"
             )
 
         B, T, _ = x.shape
