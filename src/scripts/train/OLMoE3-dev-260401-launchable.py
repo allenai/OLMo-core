@@ -15,6 +15,21 @@ directly or wrap with ``python -m olmo_core.launch.beaker``::
         --save-folder=/weka/oe-training-default/ai2-llm/checkpoints/$USER/olmoe3-dev-test \\
         --name=olmoe3-dev-test \\
         --data-root=/weka/oe-training-default/ai2-llm
+
+Eval over saved checkpoints (no training): pass ``--eval-checkpoints`` (one or more
+paths; globs supported). When set, the train module / trainer are built with
+``eval_only=True`` and ``Trainer.eval_checkpoints`` runs instead of ``Trainer.fit``.
+The script also forces ``MICRO_BSZ=4`` and ``EP_DIM=1`` in eval mode (mirrors the
+``IN_EVAL_MODE`` branch in the original test-refactor script)::
+
+    python -m olmo_core.launch.beaker --name=olmoe3-dev-eval --cluster ai2/jupiter \\
+      --nodes 1 --gpus 8 --weka oe-training-default \\
+      -- \\
+      python src/scripts/train/OLMoE3-dev-260401-launchable.py \\
+        --save-folder=/weka/oe-training-default/ai2-llm/checkpoints/$USER/olmoe3-dev-eval \\
+        --name=olmoe3-dev-eval \\
+        --data-root=/weka/oe-training-default/ai2-llm \\
+        --eval-checkpoints "/weka/.../checkpoints/$USER/some-run/step*"
 """
 
 import argparse
@@ -347,11 +362,19 @@ def build_model_config(tokenizer_config: TokenizerConfig) -> MoEFusedV2Transform
     return config
 
 
-def build_train_module_config(sequence_length: int) -> MoEV2TransformerTrainModuleConfig:
+def build_train_module_config(
+    sequence_length: int, in_eval_mode: bool = False
+) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
 
+    # Eval-mode overrides: smaller micro-batch and no expert parallelism. Mirrors the
+    # IN_EVAL_MODE branch in OLMoE3-dev-260401-test-refactor.py — eval needs less memory
+    # per rank and EP/grad-sync setup is wasted when there's no backward pass.
+    micro_bsz = 4 if in_eval_mode else MICRO_BSZ
+    ep_dim = 1 if in_eval_mode else EP_DIM
+
     return MoEV2TransformerTrainModuleConfig(
-        rank_microbatch_size=MICRO_BSZ * sequence_length,
+        rank_microbatch_size=micro_bsz * sequence_length,
         max_sequence_length=sequence_length,
         optim=MoEFusedV2OptimizerConfig(
             lr=LR,
@@ -388,7 +411,7 @@ def build_train_module_config(sequence_length: int) -> MoEV2TransformerTrainModu
             reduce_grads_in_fp32=GRAD_REDUCE_IN_FP32,
             accumulate_grads_in_fp32=GRAD_ACC_IN_FP32,
         ),
-        ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None,
+        ep_config=TransformerExpertParallelConfig(degree=ep_dim) if ep_dim != 1 else None,
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             schedule=PipelineScheduleType.custom_interleaved_1F1B,
@@ -429,11 +452,16 @@ def build_train_module_config(sequence_length: int) -> MoEV2TransformerTrainModu
     )
 
 
-def build_trainer_config(opts: argparse.Namespace) -> TrainerConfig:
+def build_trainer_config(
+    opts: argparse.Namespace,
+    tokenizer_config: TokenizerConfig,
+    sequence_length: int,
+    in_eval_mode: bool = False,
+) -> TrainerConfig:
     from olmo_core.train.checkpoint import CheckpointerConfig
 
     cancel_check_interval = 10
-    return (
+    config = (
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
@@ -484,6 +512,42 @@ def build_trainer_config(opts: argparse.Namespace) -> TrainerConfig:
         )
     )
 
+    if in_eval_mode:
+        # Mirrors ``TrainerConfig.with_recommended_evals(..., task_set="fast", ...)`` from
+        # the original test-refactor script's IN_EVAL_MODE branch, but we plumb data paths
+        # via ``opts.data_root`` / ``opts.work_dir`` instead of cluster-derived defaults.
+        from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig
+        from olmo_core.eval.task_groups import TASK_GROUPS
+        from olmo_core.train.callbacks import (
+            DownstreamEvaluatorCallbackConfig,
+            LMEvaluatorCallbackConfig,
+        )
+
+        config = config.with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=sorted(TASK_GROUPS["fast"]),
+                tokenizer=tokenizer_config,
+                eval_interval=EVAL_INTERVAL,
+                eval_on_finish=True,
+            ),
+        ).with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+                    DataMix.v3_small_ppl_validation,
+                    mix_base_dir=opts.data_root,
+                    sequence_length=sequence_length,
+                    tokenizer=tokenizer_config,
+                    work_dir=opts.work_dir,
+                ),
+                eval_interval=EVAL_INTERVAL,
+                eval_on_finish=True,
+            ),
+        )
+
+    return config
+
 
 def build_dataset_config(
     opts: argparse.Namespace,
@@ -527,6 +591,7 @@ def finalize_config(config: ExperimentConfig, opts: argparse.Namespace) -> None:
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
+    in_eval_mode = bool(getattr(opts, "eval_checkpoints", None))
 
     model_config = build_model_config(tokenizer_config)
     dataset_config = build_dataset_config(opts, tokenizer_config, sequence_length)
@@ -535,8 +600,10 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         seed=34521,
         num_workers=8,
     )
-    train_module_config = build_train_module_config(sequence_length)
-    trainer_config = build_trainer_config(opts)
+    train_module_config = build_train_module_config(sequence_length, in_eval_mode=in_eval_mode)
+    trainer_config = build_trainer_config(
+        opts, tokenizer_config, sequence_length, in_eval_mode=in_eval_mode
+    )
 
     config = ExperimentConfig(
         model=model_config,

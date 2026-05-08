@@ -88,6 +88,18 @@ def get_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="""Train on a single rank. Use this for debugging.""",
     )
+    parser.add_argument(
+        "--eval-checkpoints",
+        type=str,
+        nargs="*",
+        default=None,
+        help="""If provided, run eval over these checkpoint paths instead of training.
+        Globs are supported (e.g. '/path/to/run/step*'). The script's
+        :class:`~olmo_core.train.TrainerConfig.checkpoints_to_eval` field is overridden
+        with this list, the train module / trainer are built with ``eval_only=True``,
+        and :meth:`~olmo_core.train.Trainer.eval_checkpoints` is called instead of
+        :meth:`~olmo_core.train.Trainer.fit`.""",
+    )
     return parser
 
 
@@ -132,6 +144,12 @@ def main(
             )
             config.train_module.tp_config = None  # type: ignore
 
+    eval_mode = bool(opts.eval_checkpoints)
+    if eval_mode:
+        # Override the trainer's checkpoints_to_eval list with what was passed on the CLI.
+        # (See ``Trainer.eval_checkpoints`` / ``TrainerConfig.checkpoints_to_eval``.)
+        config.trainer.checkpoints_to_eval = list(opts.eval_checkpoints)
+
     if torch.cuda.is_available():
         backend = "cpu:gloo,cuda:nccl"
     else:
@@ -143,10 +161,10 @@ def main(
 
     # Build components.
     model = config.model.build(init_device="meta")
-    train_module = config.train_module.build(model)
+    train_module = config.train_module.build(model, eval_only=eval_mode)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
-    trainer = config.trainer.build(train_module, data_loader)
+    trainer = config.trainer.build(train_module, data_loader, eval_only=eval_mode)
 
     # Save config to W&B and each checkpoint dir.
     for callback in trainer.callbacks.values():
@@ -154,16 +172,21 @@ def main(
             callback.config = config.as_config_dict()
             break
 
-    # If we have a load path set and there is no checkpoint in the save folder, load the
-    # checkpoint from the load path.
-    if not trainer.no_checkpoints and not trainer.maybe_load_checkpoint() and config.load_path:
-        log.info(
-            f"Loading checkpoint from {config.load_path} since no checkpoints were found in the save folder..."
-        )
-        trainer.load_checkpoint(config.load_path, load_trainer_state=False)
+    if eval_mode:
+        # Eval flow: ``Trainer.eval_checkpoints`` handles loading each checkpoint itself,
+        # so we skip the ``maybe_load_checkpoint`` / ``config.load_path`` machinery.
+        trainer.eval_checkpoints()
+    else:
+        # If we have a load path set and there is no checkpoint in the save folder, load the
+        # checkpoint from the load path.
+        if not trainer.no_checkpoints and not trainer.maybe_load_checkpoint() and config.load_path:
+            log.info(
+                f"Loading checkpoint from {config.load_path} since no checkpoints were found in the save folder..."
+            )
+            trainer.load_checkpoint(config.load_path, load_trainer_state=False)
 
-    # Train.
-    trainer.fit()
+        # Train.
+        trainer.fit()
 
     # Tear-down distributed backend.
     teardown_training_environment()

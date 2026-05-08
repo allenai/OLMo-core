@@ -121,6 +121,7 @@ class TransformerTrainModule(TrainModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
+        eval_only: bool = False,
     ):
         super().__init__()
 
@@ -193,10 +194,24 @@ class TransformerTrainModule(TrainModule):
             flatten_optimizer_state_dict=True, strict=True
         )
         self.load_key_mapping = load_key_mapping
+        self.eval_only = eval_only
 
-        # Build optimizer(s).
-        log.info("Building optimizer...")
-        self.optim: Optimizer = optim.build(self.model, self, strict=True)
+        # Build optimizer(s) — skipped in ``eval_only`` mode (no backward, no step).
+        # NOTE: parallelize_model() above still runs because FSDP/HSDP wrapping is required for
+        # param sharding even at eval time. Only the optimizer construction is skipped here.
+        self.optim: Optional[Optimizer] = None
+        if not self.eval_only:
+            log.info("Building optimizer...")
+            self.optim = optim.build(self.model, self, strict=True)
+        else:
+            log.info("Skipping optimizer build because eval_only=True")
+
+    def _require_optimizer(self) -> Optimizer:
+        if self.optim is None:
+            raise RuntimeError(
+                f"{type(self).__name__} was built with eval_only=True and has no optimizer"
+            )
+        return self.optim
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -249,7 +264,8 @@ class TransformerTrainModule(TrainModule):
 
     def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         if optim is None:
-            optim = True
+            # Default to including optimizer state when an optimizer exists (training mode).
+            optim = self.optim is not None
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def state_dict_to_load(
@@ -262,7 +278,10 @@ class TransformerTrainModule(TrainModule):
                 break
 
         if optim is None:
-            if not has_optim_state:
+            if self.optim is None:
+                # eval_only: never load optim state, even if the checkpoint has it
+                optim = False
+            elif not has_optim_state:
                 log.warning("No optimizer state found in checkpoint")
                 optim = False
             else:
@@ -308,7 +327,7 @@ class TransformerTrainModule(TrainModule):
 
     def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         if optim is None:
-            optim = True
+            optim = self.optim is not None
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
@@ -338,7 +357,7 @@ class TransformerTrainModule(TrainModule):
         if load_optim:
             dist_cp_sd.set_optimizer_state_dict(
                 self.model,
-                self.optim,
+                self._require_optimizer(),
                 state_dict["optim"],
                 options=self.state_dict_load_opts,
             )
@@ -514,6 +533,7 @@ class TransformerTrainModule(TrainModule):
         return output
 
     def optim_step(self):
+        self._require_optimizer()
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
             grad_norm = self._clip_grad_norm(self.max_grad_norm)
@@ -603,7 +623,7 @@ class TransformerTrainModule(TrainModule):
         self.model.post_optim_step()
 
     def zero_grads(self):
-        self.optim.zero_grad(set_to_none=True)
+        self._require_optimizer().zero_grad(set_to_none=True)
 
     def model_forward(
         self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None, **kwargs
@@ -689,7 +709,7 @@ class TransformerTrainModule(TrainModule):
         }
         if optim:
             state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(
-                self.model, self.optim, options=sd_options
+                self.model, self._require_optimizer(), options=sd_options
             )
         return state_dict
 

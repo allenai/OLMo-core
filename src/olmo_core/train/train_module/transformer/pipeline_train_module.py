@@ -126,6 +126,7 @@ class TransformerPipelineTrainModule(TrainModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
+        eval_only: bool = False,
     ):
         super().__init__()
 
@@ -204,12 +205,26 @@ class TransformerPipelineTrainModule(TrainModule):
             flatten_optimizer_state_dict=True, strict=False
         )
         self.load_key_mapping = load_key_mapping
+        self.eval_only = eval_only
 
-        # Build optimizer(s).
-        log.info("Building optimizer(s)...")
-        self.optimizers: List[Optimizer] = [
-            optim.build(model, self, strict=False) for model in self.model_parts
-        ]
+        # Build optimizer(s) — skipped in ``eval_only`` mode (no backward, no step).
+        # NOTE: parallelize_model() above still runs because PP/FSDP/HSDP wrapping is required for
+        # param sharding even at eval time. Only the optimizer construction is skipped here.
+        self.optimizers: List[Optimizer] = []
+        if not self.eval_only:
+            log.info("Building optimizer(s)...")
+            self.optimizers = [
+                optim.build(model, self, strict=False) for model in self.model_parts
+            ]
+        else:
+            log.info("Skipping optimizer build because eval_only=True")
+
+    def _require_optimizers(self) -> List[Optimizer]:
+        if not self.optimizers:
+            raise RuntimeError(
+                f"{type(self).__name__} was built with eval_only=True and has no optimizers"
+            )
+        return self.optimizers
 
     @property
     def model(self) -> Transformer:
@@ -312,7 +327,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
     def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         if optim is None:
-            optim = True
+            optim = bool(self.optimizers)
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def state_dict_to_load(
@@ -325,7 +340,10 @@ class TransformerPipelineTrainModule(TrainModule):
                 break
 
         if optim is None:
-            if not has_optim_state:
+            if not self.optimizers:
+                # eval_only: never load optim state, even if the checkpoint has it
+                optim = False
+            elif not has_optim_state:
                 log.warning("No optimizer state found in checkpoint")
                 optim = False
             else:
@@ -371,7 +389,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
     def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         if optim is None:
-            optim = True
+            optim = bool(self.optimizers)
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
@@ -392,7 +410,12 @@ class TransformerPipelineTrainModule(TrainModule):
             full_state_dict = self._get_state_dict(load_opts, optim=load_optim)
             merge_state_dicts(state_dict, full_state_dict)
 
-        for model, optim in zip(self.model_parts, self.optimizers):
+        # In eval_only mode ``self.optimizers`` is empty, so we iterate model_parts directly to
+        # ensure model state still gets loaded; ``load_optim`` is False in that case.
+        optimizers_or_none: List[Optional[Optimizer]] = (
+            list(self.optimizers) if self.optimizers else [None] * len(self.model_parts)
+        )
+        for model, optim in zip(self.model_parts, optimizers_or_none):
             dist_cp_sd.set_model_state_dict(
                 model,
                 state_dict["model"],
@@ -400,6 +423,7 @@ class TransformerPipelineTrainModule(TrainModule):
             )
             gc_cuda()
             if load_optim:
+                assert optim is not None
                 dist_cp_sd.set_optimizer_state_dict(
                     model,
                     optim,
@@ -538,6 +562,7 @@ class TransformerPipelineTrainModule(TrainModule):
         raise RuntimeError(f"{self.__class__.__name__} does not support inference")
 
     def optim_step(self):
+        self._require_optimizers()
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
             grad_norm = self._clip_grad_norm(self.max_grad_norm)
@@ -576,7 +601,7 @@ class TransformerPipelineTrainModule(TrainModule):
             model.post_optim_step()
 
     def zero_grads(self):
-        for optim in self.optimizers:
+        for optim in self._require_optimizers():
             optim.zero_grad(set_to_none=True)
 
     def run_pipeline(
@@ -678,7 +703,7 @@ class TransformerPipelineTrainModule(TrainModule):
                 for sd in map(
                     partial(dist_cp_sd.get_optimizer_state_dict, options=sd_options),
                     self.model_parts,
-                    self.optimizers,
+                    self._require_optimizers(),
                 )
                 for k, v in sd.items()
             }
