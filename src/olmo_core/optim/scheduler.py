@@ -149,7 +149,7 @@ class ConstantWithWarmup(Scheduler):
         else:
             warmup = self.warmup
 
-        if current <= warmup:
+        if warmup > 0 and current <= warmup:
             return _linear_warmup(initial_lr, current, warmup, self.warmup_min_lr)
 
         return initial_lr
@@ -214,7 +214,7 @@ class WSD(Scheduler):
         else:
             warmup = self.warmup
 
-        if current <= warmup:
+        if warmup > 0 and current <= warmup:
             return _linear_warmup(initial_lr, current, warmup, self.warmup_min_lr)
 
         if self.decay is None:
@@ -223,7 +223,7 @@ class WSD(Scheduler):
         else:
             decay = self.decay
 
-        if current >= t_max - decay:
+        if decay > 0 and current >= t_max - decay:
             return _linear_decay(initial_lr, t_max - current, decay, self.decay_min_lr)
 
         return initial_lr
@@ -481,7 +481,7 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
         else:
             decay = self.decay
 
-        if current >= t_max - decay:
+        if decay > 0 and current >= t_max - decay:
             final_cosine_lr = super().get_lr(initial_lr, t_max - decay, t_max)
             return _linear_decay(final_cosine_lr, t_max - current, decay, self.decay_min_lr)
 
@@ -706,6 +706,8 @@ class WSDS(Scheduler):
             return self._get_peak_lr(initial_lr, pidx)
         else:
             t = pos - S
+            if D == 0:
+                return self.decay_min_lr
             return _linear_decay(self._get_peak_lr(initial_lr, pidx), D - t, D, self.decay_min_lr)
 
 
