@@ -118,18 +118,28 @@ class Checkpointer:
 
             # Save model and optim state.
             train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
-            save_state_dict(
-                train_module_dir,
-                train_module.state_dict_to_save(),
-                process_group=self.process_group,
-                thread_count=self.save_thread_count,
-                #  process_count=self.save_process_count,
-                throttle_uploads=self.throttle_uploads,
-                enable_plan_caching=True,
-                # NOTE: we've already checked and cleared the directory at this point so we can skip
-                # the extra synchronization.
-                _skip_prepare=True,
-            )
+            if hasattr(train_module, "save_state_dict_direct"):
+                # MoE V2 train module manages its own save flow.
+                train_module.save_state_dict_direct(  # type: ignore
+                    train_module_dir,
+                    process_group=self.process_group,
+                    save_overwrite=self.save_overwrite,
+                    thread_count=self.save_thread_count,
+                    throttle_uploads=self.throttle_uploads,
+                )
+            else:
+                save_state_dict(
+                    train_module_dir,
+                    train_module.state_dict_to_save(),
+                    process_group=self.process_group,
+                    thread_count=self.save_thread_count,
+                    #  process_count=self.save_process_count,
+                    throttle_uploads=self.throttle_uploads,
+                    enable_plan_caching=True,
+                    # NOTE: we've already checked and cleared the directory at this point so we can skip
+                    # the extra synchronization.
+                    _skip_prepare=True,
+                )
 
         self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
 
@@ -158,6 +168,22 @@ class Checkpointer:
 
         # Save model and optim state.
         train_module_dir = f"{dir}/model_and_optim"
+        if hasattr(train_module, "save_state_dict_direct"):
+            # MoE V2 train module manages its own save flow and only supports a sync save.
+            # Run it synchronously and return an already-completed future so callers can rely
+            # on the same future-based contract.
+            train_module.save_state_dict_direct(  # type: ignore
+                train_module_dir,
+                process_group=self.process_group,
+                save_overwrite=self.save_overwrite,
+                thread_count=self.save_thread_count,
+                throttle_uploads=self.throttle_uploads,
+            )
+            self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
+            future: Future[None] = Future()
+            future.set_result(None)
+            return future
+
         future = async_save_state_dict(
             train_module_dir,
             train_module.state_dict_to_save(),
