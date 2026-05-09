@@ -3,7 +3,7 @@
 import argparse
 import subprocess
 
-GROUP = "yashasbls-hybrid-small-tests"
+GROUP = "yashasbls-hybrid-small-downstream-evals"
 CLUSTER = "ai2/jupiter"
 PRIORITY = "urgent"
 NUM_GPUS = 1
@@ -34,32 +34,38 @@ all_stages = {
     "long_context": long_context_hf_checkpoints,
 }
 
-TEST_TASKS = ["olmobase:easy:qa:rc"]
+# (task_name, num_gpus)
+TEST_TASKS = [("olmobase:easy:qa:rc", 1)]
+
+PPLX_TASKS = [
+    ("c4_100k:ppl", 1),
+]
 
 DOWNSTREAM_TASKS = [
-    # Math
-    "olmobase:math",
-    # Code
-    "olmobase:easy:code:bpb",
-    # MC STEM
-    "olmobase:mcqa_stem",
-    # MC Non-STEM
-    "olmobase:mcqa_non_stem",
-    # GenQA
-    "olmobase:gen",
-    # LBPP, BBH, MMLU Pro, DM Math — not yet in olmo-eval-internal
+    # Math — 8 GPUs (10h single-GPU)
+    ("olmobase:math", 8),
+    # GenQA — 4 GPUs (3.5-7.5h single-GPU)
+    # ("olmobase:gen", 4),
+    # # MC Non-STEM — 4 GPUs (2-5h single-GPU)
+    # ("olmobase:mcqa_non_stem", 4),
+    # # MC STEM — 1 GPU (~1h)
+    # ("olmobase:mcqa_stem", 1),
+    # # Code — 1 GPU (~10min)
+    # ("olmobase:easy:code:bpb", 1),
+    # # LBPP, BBH, MMLU Pro, DM Math — not yet in olmo-eval-internal
+    # ("olmobase:easy:qa:rc", 1)
 ]
 
 LC_TASKS = [
-    "ruler_all__4096",
-    "ruler_all__8192",
-    "ruler_all__16384",
-    "ruler_all__32768",
-    "ruler_all__65536",
-    "ruler_all__131072",
+    ("ruler_all__4096", 1),
+    ("ruler_all__8192", 1),
+    ("ruler_all__16384", 1),
+    ("ruler_all__32768", 1),
+    ("ruler_all__65536", 1),
+    ("ruler_all__131072", 1),
 ]
 
-SAFETY_TASKS: list[str] = [
+SAFETY_TASKS: list[tuple[str, int]] = [
     # TODO(yashasbls): ask maliam
 ]
 
@@ -98,6 +104,7 @@ def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS) -
     # cmd += ["--store"]
     cmd += ["--inspect"]
     # cmd += ["--gcp-credentials"]
+    cmd += ["--secret-env", "yashasbls_HF_TOKEN:HF_TOKEN"]
     cmd += ["--no-follow"]
     cmd += ["-y"]
     return cmd
@@ -119,35 +126,48 @@ def main():
     )
     parser.add_argument(
         "--eval-type",
-        choices=["test", "downstream", "lc", "both", "safety"],
-        default="test",
+        nargs="+",
+        choices=["test", "downstream", "lc", "safety", "pplx"],
+        default=["test"],
     )
     parser.add_argument("--gpus", type=int, default=NUM_GPUS, help="Number of GPUs per job.")
+    parser.add_argument("--model", type=str, default=None, help="Custom model path or HF name (overrides --sizes/--stages)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     num_gpus = args.gpus
 
-    if args.eval_type == "test":
-        tasks = TEST_TASKS
-    elif args.eval_type == "downstream":
-        tasks = DOWNSTREAM_TASKS
-    elif args.eval_type == "lc":
-        tasks = LC_TASKS
-    elif args.eval_type == "safety":
-        tasks = SAFETY_TASKS
-    else:  # both
-        tasks = DOWNSTREAM_TASKS + LC_TASKS
+    eval_type_map = {
+        "test": TEST_TASKS,
+        "downstream": DOWNSTREAM_TASKS,
+        "lc": LC_TASKS,
+        "safety": SAFETY_TASKS,
+        "pplx": PPLX_TASKS,
+    }
+    tasks = []
+    for et in args.eval_type:
+        tasks.extend(eval_type_map[et])
 
-    for stage in args.stages:
-        checkpoints = all_stages[stage]
-        for size in args.sizes:
-            model_path = checkpoints[size]
-            for task in tasks:
-                cmd = build_command(model_path, [task], num_gpus)
-                print(f"\n=== {stage}/{size} | {task} ===")
-                print(" ".join(cmd))
-                if not args.dry_run:
-                    subprocess.run(cmd, check=True)
+    if args.model:
+        # Custom model: run all tasks against this single model
+        for task_name, task_gpus in tasks:
+            gpus = num_gpus if num_gpus != NUM_GPUS else task_gpus
+            cmd = build_command(args.model, [task_name], gpus)
+            print(f"\n=== custom | {task_name} | {gpus} GPUs ===")
+            print(" ".join(cmd))
+            if not args.dry_run:
+                subprocess.run(cmd, check=True)
+    else:
+        for stage in args.stages:
+            checkpoints = all_stages[stage]
+            for size in args.sizes:
+                model_path = checkpoints[size]
+                for task_name, task_gpus in tasks:
+                    gpus = num_gpus if num_gpus != NUM_GPUS else task_gpus
+                    cmd = build_command(model_path, [task_name], gpus)
+                    print(f"\n=== {stage}/{size} | {task_name} | {gpus} GPUs ===")
+                    print(" ".join(cmd))
+                    if not args.dry_run:
+                        subprocess.run(cmd, check=True)
 
 
 if __name__ == "__main__":
