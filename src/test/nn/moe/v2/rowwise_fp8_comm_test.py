@@ -3,6 +3,91 @@ import torch
 from olmo_core.nn.moe.v2 import comm
 
 
+class _FakeLease:
+    def __init__(self):
+        self.released = 0
+
+    def release(self):
+        self.released += 1
+
+
+def test_rowwise_bf16_combine_releases_lifetime_leases_and_grads_probs(monkeypatch):
+    def _stub_rowwise_combine_get(
+        expert_out,
+        combine_out,
+        src_ranks,
+        src_rows,
+        group_name,
+        *,
+        probs=None,
+        nblocks,
+        gathered_out=None,
+        pre_barrier,
+        post_barrier,
+    ):
+        del expert_out, src_ranks, src_rows, group_name, probs, nblocks, pre_barrier, post_barrier
+        combine_out.fill_(1.0)
+        if gathered_out is not None:
+            gathered_out.fill_(1.0)
+
+    def _stub_rowwise_dispatch_put(
+        dispatch_source,
+        symm_out,
+        dst_ranks,
+        dst_rows,
+        group_name,
+        *,
+        probs=None,
+        nblocks,
+    ):
+        del dispatch_source, dst_ranks, dst_rows, group_name, probs, nblocks
+        symm_out.zero_()
+
+    monkeypatch.setattr(
+        comm.symm_mem_vdev2d_kernels,
+        "rowwise_combine_get",
+        _stub_rowwise_combine_get,
+    )
+    monkeypatch.setattr(
+        comm.symm_mem_vdev2d_kernels,
+        "rowwise_dispatch_put",
+        _stub_rowwise_dispatch_put,
+    )
+
+    expert_out = torch.zeros(4, 8, dtype=torch.float32, requires_grad=True)
+    symm_expert_out = torch.zeros_like(expert_out)
+    symm_combine_out = torch.empty(2, 8, dtype=torch.float32)
+    symm_gathered_routes = torch.empty(2, 2, 8, dtype=torch.float32)
+    src_ranks = torch.tensor([[0, 0], [0, 0]], dtype=torch.long)
+    src_rows = torch.tensor([[0, 1], [2, 3]], dtype=torch.long)
+    probs = torch.ones(2, 2, dtype=torch.float32, requires_grad=True)
+    combine_out_lease = _FakeLease()
+    gather_lease = _FakeLease()
+
+    out = comm._RowwiseCombineWeightedAutograd.apply(
+        expert_out,
+        symm_expert_out,
+        symm_combine_out,
+        combine_out_lease,
+        symm_gathered_routes,
+        gather_lease,
+        src_ranks,
+        src_rows,
+        probs,
+        "test_group",
+        None,
+        1,
+        False,
+        False,
+    )
+    out.sum().backward()
+
+    assert combine_out_lease.released == 1
+    assert gather_lease.released == 1
+    assert probs.grad is not None
+    torch.testing.assert_close(probs.grad, torch.full_like(probs, 8.0))
+
+
 def test_rowwise_fp8_combine_backward_returns_grad_probs(monkeypatch):
     def _stub_quantize_rows_to_mxfp8(x, *, block_size, out, scales_out):
         del x, block_size

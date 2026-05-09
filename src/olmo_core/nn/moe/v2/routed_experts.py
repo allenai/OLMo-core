@@ -32,7 +32,7 @@ import weakref
 import torch
 import torch.nn as nn
 from ...moe import MoERouterConfig as MoERouterConfigV1
-from typing import List, Optional
+from typing import Iterator, List, Optional
 import nvtx
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.kernels import (
@@ -40,13 +40,14 @@ from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedLHS,
     ScaledGroupedMMPrequantizedRHS,
     grouped_mm as grouped_mm_with_buffers,
-    prequantize_scaled_grouped_mm_rhs,
     scaled_grouped_mm_q,
+    scaled_grouped_mm_q_fp8_weight,
 )
 import torch.nn.functional as F
 from dataclasses import dataclass
 from typing import cast
 from torch.distributed.device_mesh import DeviceMesh
+from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
 from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
 from olmo_core.kernels.mxfp8_utils import (
     dequantize_rows_from_mxfp8,
@@ -63,6 +64,24 @@ def _debug_get_row_indices_for_nan_or_inf(x):
 def _debug_get_row_indices_for_nan_or_inf_before_end(x, end):
     naninf_row_indices = _debug_get_row_indices_for_nan_or_inf(x)
     return naninf_row_indices[naninf_row_indices < end]
+
+
+def _identity_fp8_rhs(weight: torch.Tensor) -> torch.Tensor:
+    return weight
+
+
+def _transpose_last2_fp8_rhs(weight: torch.Tensor) -> torch.Tensor:
+    return weight.transpose(-2, -1)
+
+
+_ROUTED_UP_GATE_FP8_CACHE_SPECS = (
+    FP8WeightCacheSpec("rhs", _transpose_last2_fp8_rhs),
+    FP8WeightCacheSpec("rhs_for_dgrad", _identity_fp8_rhs),
+)
+_ROUTED_DOWN_FP8_CACHE_SPECS = (
+    FP8WeightCacheSpec("rhs", _identity_fp8_rhs),
+    FP8WeightCacheSpec("rhs_for_dgrad", _transpose_last2_fp8_rhs),
+)
 
 
 class _SwiGLUQuantizeRowsMXFP8Autograd(torch.autograd.Function):
@@ -262,6 +281,38 @@ def scaled_grouped_mm_q_no_compile(
         **kwargs,
     )
 
+
+@torch.compiler.disable
+def scaled_grouped_mm_q_fp8_weight_no_compile(
+    mat_a: torch.Tensor,
+    grad_anchor: torch.Tensor,
+    *,
+    offs: torch.Tensor,
+    use_fast_accum: bool,
+    prequantized_lhs: Optional[ScaledGroupedMMPrequantizedLHS] = None,
+    prequantized_rhs: ScaledGroupedMMPrequantizedRHS,
+    prequantized_rhs_for_dgrad: ScaledGroupedMMPrequantizedRHS,
+    wgrad_sink: Optional[FP8WeightStore] = None,
+    wgrad_sink_transpose_last2: bool = False,
+    wgrad_sink_squeeze_first_dim: bool = False,
+) -> torch.Tensor:
+    kwargs = dict(
+        offs=offs,
+        use_fast_accum=use_fast_accum,
+        prequantized_lhs=prequantized_lhs,
+        prequantized_rhs=prequantized_rhs,
+        prequantized_rhs_for_dgrad=prequantized_rhs_for_dgrad,
+    )
+    if wgrad_sink is not None:
+        kwargs["wgrad_sink"] = wgrad_sink
+        kwargs["wgrad_sink_transpose_last2"] = wgrad_sink_transpose_last2
+        kwargs["wgrad_sink_squeeze_first_dim"] = wgrad_sink_squeeze_first_dim
+    return scaled_grouped_mm_q_fp8_weight(
+        mat_a,
+        grad_anchor,
+        **kwargs,
+    )
+
 # if env variable OLMO_USE_TORCH_GROUPED_MM is set, use its value to determine whether to use torch grouped_mm; 
 env_val = os.getenv("OLMO_USE_TORCH_GROUPED_MM")
 if env_val is not None:
@@ -419,6 +470,109 @@ class RoutedExperts(nn.Module):
         self._rowwise_fp8_up_gate_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._rowwise_fp8_down_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._rowwise_fp8_weight_versions: Optional[tuple[int, int]] = None
+        self._rowwise_fp8_up_gate_weight = FP8WeightStore(
+            logical_name="w_up_gate",
+            logical_shape=tuple(self.w_up_gate.shape),
+            cache_specs=_ROUTED_UP_GATE_FP8_CACHE_SPECS,
+            anchor_param=self.w_up_gate,
+            optimizer_enabled=(
+                self.rowwise_fp8 is not None
+                and self.rowwise_fp8.enabled
+                and self.rowwise_fp8.fp8_only_params
+            ),
+        )
+        self._rowwise_fp8_down_weight = FP8WeightStore(
+            logical_name="w_down",
+            logical_shape=tuple(self.w_down.shape),
+            cache_specs=_ROUTED_DOWN_FP8_CACHE_SPECS,
+            anchor_param=self.w_down,
+            optimizer_enabled=(
+                self.rowwise_fp8 is not None
+                and self.rowwise_fp8.enabled
+                and self.rowwise_fp8.fp8_only_params
+            ),
+        )
+
+    def _sync_rowwise_fp8_weight_anchors(self) -> None:
+        fp8_only_params = (
+            self.rowwise_fp8 is not None
+            and self.rowwise_fp8.enabled
+            and self.rowwise_fp8.fp8_only_params
+        )
+        self._rowwise_fp8_up_gate_weight.anchor_param = self.w_up_gate
+        self._rowwise_fp8_up_gate_weight.logical_shape = tuple(self.w_up_gate.shape)
+        self._rowwise_fp8_up_gate_weight.optimizer_enabled = fp8_only_params
+        self._rowwise_fp8_down_weight.anchor_param = self.w_down
+        self._rowwise_fp8_down_weight.logical_shape = tuple(self.w_down.shape)
+        self._rowwise_fp8_down_weight.optimizer_enabled = fp8_only_params
+        if fp8_only_params:
+            self.w_up_gate.requires_grad_(False)
+            self.w_down.requires_grad_(False)
+
+    def disable_mxfp8_expert_anchor_grads(self) -> None:
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled or not cfg.fp8_only_params:
+            return
+        self._sync_rowwise_fp8_weight_anchors()
+        self.w_up_gate.grad = None
+        self.w_down.grad = None
+        if hasattr(self.w_up_gate, "_main_grad_fp32"):
+            self.w_up_gate._main_grad_fp32 = None  # type: ignore[attr-defined]
+        if hasattr(self.w_down, "_main_grad_fp32"):
+            self.w_down._main_grad_fp32 = None  # type: ignore[attr-defined]
+
+    def release_mxfp8_expert_anchor_storage(self) -> None:
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled or not cfg.fp8_only_params:
+            return
+        self._sync_rowwise_fp8_weight_anchors()
+        self._rowwise_fp8_up_gate_weight.release_anchor_storage()
+        self._rowwise_fp8_down_weight.release_anchor_storage()
+
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, FP8WeightStore]]:
+        self._sync_rowwise_fp8_weight_anchors()
+        yield "w_up_gate", self._rowwise_fp8_up_gate_weight
+        yield "w_down", self._rowwise_fp8_down_weight
+
+    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, FP8WeightStore]]:
+        yield from self.named_fp8_weight_stores()
+
+    def zero_mxfp8_expert_weight_grads(self, set_to_none: bool = True) -> None:
+        for _, weight in self.named_mxfp8_expert_weights():
+            weight.zero_grad(set_to_none=set_to_none)
+
+    def set_mxfp8_expert_weight_main_grads_to_none(self) -> None:
+        for _, weight in self.named_mxfp8_expert_weights():
+            weight.set_main_grad_to_none()
+
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        super().zero_grad(set_to_none=set_to_none)
+        self.zero_mxfp8_expert_weight_grads(set_to_none=set_to_none)
+
+    def _sync_mxfp8_weight_grad_from_anchor(
+        self,
+        weight: FP8WeightStore,
+        anchor: torch.nn.Parameter,
+    ) -> None:
+        anchor_grad = getattr(anchor, "_main_grad_fp32", None)
+        if anchor_grad is None:
+            anchor_grad = anchor.grad
+        if anchor_grad is None:
+            return
+        weight.replace_wgrad(anchor_grad)
+
+    def sync_mxfp8_expert_weight_grads_from_anchor(self) -> None:
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled or not cfg.fp8_only_params:
+            return
+        self._sync_mxfp8_weight_grad_from_anchor(
+            self._rowwise_fp8_up_gate_weight,
+            self.w_up_gate,
+        )
+        self._sync_mxfp8_weight_grad_from_anchor(
+            self._rowwise_fp8_down_weight,
+            self.w_down,
+        )
 
     def invalidate_rowwise_fp8_cache(self) -> None:
         self._rowwise_fp8_up_gate_prequant = None
@@ -426,6 +580,8 @@ class RoutedExperts(nn.Module):
         self._rowwise_fp8_up_gate_prequant_t = None
         self._rowwise_fp8_down_prequant_t = None
         self._rowwise_fp8_weight_versions = None
+        self._rowwise_fp8_up_gate_weight.invalidate()
+        self._rowwise_fp8_down_weight.invalidate()
 
     @torch.no_grad()
     def refresh_rowwise_fp8_cache(self) -> None:
@@ -433,25 +589,49 @@ class RoutedExperts(nn.Module):
         if cfg is None or not cfg.enabled:
             self.invalidate_rowwise_fp8_cache()
             return
+        self._sync_rowwise_fp8_weight_anchors()
+        if cfg.fp8_only_params and (
+            self._rowwise_fp8_up_gate_weight.anchor_storage_released
+            or self._rowwise_fp8_down_weight.anchor_storage_released
+        ):
+            if (
+                self._rowwise_fp8_up_gate_weight.prequantized_rhs is None
+                or self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad is None
+                or self._rowwise_fp8_down_weight.prequantized_rhs is None
+                or self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad is None
+            ):
+                raise RuntimeError(
+                    "Cannot refresh rowwise FP8 routed expert caches from released bf16 anchors. "
+                    "The optimizer must refresh MXFP8 stores directly from fp32 main params."
+                )
+            self._rowwise_fp8_up_gate_prequant = self._rowwise_fp8_up_gate_weight.prequantized_rhs
+            self._rowwise_fp8_up_gate_prequant_t = (
+                self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad
+            )
+            self._rowwise_fp8_down_prequant = self._rowwise_fp8_down_weight.prequantized_rhs
+            self._rowwise_fp8_down_prequant_t = (
+                self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad
+            )
+            self._rowwise_fp8_weight_versions = None
+            return
         if self.w_up_gate.device.type != "cuda" or self.w_down.device.type != "cuda":
             self.invalidate_rowwise_fp8_cache()
             return
-        up_gate_rhs = self.w_up_gate.transpose(1, 2)
-        self._rowwise_fp8_up_gate_prequant = prequantize_scaled_grouped_mm_rhs(
-            up_gate_rhs,
-            check_mat_b_version=False,
-        )
-        self._rowwise_fp8_up_gate_prequant_t = prequantize_scaled_grouped_mm_rhs(
+        self._rowwise_fp8_up_gate_weight.refresh_from_logical_weight(
             self.w_up_gate,
-            check_mat_b_version=False,
+            version_tensors=(self.w_up_gate,),
         )
-        self._rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(
+        self._rowwise_fp8_down_weight.refresh_from_logical_weight(
             self.w_down,
-            check_mat_b_version=False,
+            version_tensors=(self.w_down,),
         )
-        self._rowwise_fp8_down_prequant_t = prequantize_scaled_grouped_mm_rhs(
-            self.w_down.transpose(1, 2),
-            check_mat_b_version=False,
+        self._rowwise_fp8_up_gate_prequant = self._rowwise_fp8_up_gate_weight.prequantized_rhs
+        self._rowwise_fp8_up_gate_prequant_t = (
+            self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad
+        )
+        self._rowwise_fp8_down_prequant = self._rowwise_fp8_down_weight.prequantized_rhs
+        self._rowwise_fp8_down_prequant_t = (
+            self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad
         )
         self._rowwise_fp8_weight_versions = (int(self.w_up_gate._version), int(self.w_down._version))
 
@@ -482,13 +662,12 @@ class RoutedExperts(nn.Module):
         assert cfg is not None
         
 
-        if (
-            self._rowwise_fp8_up_gate_prequant is None
-            or self._rowwise_fp8_up_gate_prequant_t is None
-            or self._rowwise_fp8_down_prequant is None
-            or self._rowwise_fp8_down_prequant_t is None
-        ):
-            raise RuntimeError("rowwise FP8 expert weight prequant buffers were not initialized")
+        up_gate_weight = self._rowwise_fp8_up_gate_weight
+        down_weight = self._rowwise_fp8_down_weight
+        up_gate_prequant = up_gate_weight.require_prequantized_rhs()
+        up_gate_prequant_t = up_gate_weight.require_prequantized_rhs_for_dgrad()
+        down_prequant = down_weight.require_prequantized_rhs()
+        down_prequant_t = down_weight.require_prequantized_rhs_for_dgrad()
         offs = torch.cumsum(batch_size_per_expert_tensor.to(dtype=torch.int32), dim=0, dtype=torch.int32)
         prequantized_lhs = None
         if prequantized_input_q is not None and prequantized_input_scales is not None:
@@ -503,13 +682,18 @@ class RoutedExperts(nn.Module):
             offs=offs,
             use_fast_accum=cfg.use_fast_accum,
             prequantized_lhs=prequantized_lhs,
-            prequantized_rhs=self._rowwise_fp8_up_gate_prequant,
+            prequantized_rhs=up_gate_prequant,
+            prequantized_rhs_for_dgrad=up_gate_prequant_t,
         )
-        if self._rowwise_fp8_up_gate_prequant_t is not None:
-            up_kwargs["prequantized_rhs_for_dgrad"] = self._rowwise_fp8_up_gate_prequant_t
-        up_gate = scaled_grouped_mm_q_no_compile(
+        if cfg.fp8_only_params:
+            up_kwargs["wgrad_sink"] = up_gate_weight
+            up_kwargs["wgrad_sink_transpose_last2"] = True
+        up_gate_anchor = self.w_up_gate.transpose(1, 2)
+        if cfg.fp8_only_params:
+            up_gate_anchor = up_gate_anchor.detach()
+        up_gate = scaled_grouped_mm_q_fp8_weight_no_compile(
             x,
-            self.w_up_gate.transpose(1, 2),
+            up_gate_anchor,
             **up_kwargs,
         )
         up_gate = cast(torch.Tensor, up_gate)
@@ -528,13 +712,15 @@ class RoutedExperts(nn.Module):
             offs=offs,
             use_fast_accum=cfg.use_fast_accum,
             prequantized_lhs=h_prequantized_lhs,
-            prequantized_rhs=self._rowwise_fp8_down_prequant,
+            prequantized_rhs=down_prequant,
+            prequantized_rhs_for_dgrad=down_prequant_t,
         )
-        if self._rowwise_fp8_down_prequant_t is not None:
-            down_kwargs["prequantized_rhs_for_dgrad"] = self._rowwise_fp8_down_prequant_t
-        down = scaled_grouped_mm_q_no_compile(
+        if cfg.fp8_only_params:
+            down_kwargs["wgrad_sink"] = down_weight
+        down_anchor = self.w_down.detach() if cfg.fp8_only_params else self.w_down
+        down = scaled_grouped_mm_q_fp8_weight_no_compile(
             h,
-            self.w_down,
+            down_anchor,
             **down_kwargs,
         )
 
@@ -582,6 +768,19 @@ class RoutedExperts(nn.Module):
                 batch_size_per_expert_tensor,
                 prequantized_input_q=rowwise_fp8_input_q,
                 prequantized_input_scales=rowwise_fp8_input_scales,
+            )
+        if (
+            self.rowwise_fp8 is not None
+            and self.rowwise_fp8.enabled
+            and self.rowwise_fp8.fp8_only_params
+            and (
+                self._rowwise_fp8_up_gate_weight.anchor_storage_released
+                or self._rowwise_fp8_down_weight.anchor_storage_released
+            )
+        ):
+            raise RuntimeError(
+                "RoutedExperts with fp8_only_params=True cannot fall back to bf16 grouped-mm "
+                "after bf16 expert anchor storage has been released"
             )
         
         w_up_gate = self.w_up_gate # (E, H, 2D)
@@ -661,6 +860,28 @@ class RoutedExperts(nn.Module):
         owner_ref = weakref.ref(self)
         self.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
         self.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+        self._rowwise_fp8_up_gate_weight = FP8WeightStore(
+            logical_name="w_up_gate",
+            logical_shape=tuple(self.w_up_gate.shape),
+            cache_specs=_ROUTED_UP_GATE_FP8_CACHE_SPECS,
+            anchor_param=self.w_up_gate,
+            optimizer_enabled=(
+                self.rowwise_fp8 is not None
+                and self.rowwise_fp8.enabled
+                and self.rowwise_fp8.fp8_only_params
+            ),
+        )
+        self._rowwise_fp8_down_weight = FP8WeightStore(
+            logical_name="w_down",
+            logical_shape=tuple(self.w_down.shape),
+            cache_specs=_ROUTED_DOWN_FP8_CACHE_SPECS,
+            anchor_param=self.w_down,
+            optimizer_enabled=(
+                self.rowwise_fp8 is not None
+                and self.rowwise_fp8.enabled
+                and self.rowwise_fp8.fp8_only_params
+            ),
+        )
         self.invalidate_rowwise_fp8_cache()
 
 

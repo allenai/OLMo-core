@@ -5,6 +5,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Dict,
+    Iterator,
     List,
     Literal,
     Optional,
@@ -35,6 +36,7 @@ from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
     get_ep_no_sync_buffers,
     get_ep_no_sync_rowwise_fp8_buffers,
+    prewarm_ep_no_sync_rowwise_lifetime_leases,
     use_ep_no_sync_rowwise_symm_combine_gather,
     use_ep_no_sync_rowwise_symm_combine_out,
     use_ep_no_sync_rowwise_symm_dispatch_in,
@@ -143,10 +145,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         assert not (self.recompute_all_blocks_by_chunk and self.recompute_each_block), "Only one of recompute_all_blocks_by_chunk and recompute_each_block can be True."
         assert not (self.tbo and self.recompute_each_block), "Cannot use TBO when recompute_each_block is True."
 
-
-        self._debug_alloc_mem_layer_logs = []
-        self._debug_max_alloc_mem_layer_logs = []
-        
         self.cpu_offload = False    # NOTE : CPU activation offload is not useful due to low pcie bandwidth, so disable it for now
 
         # not used
@@ -160,14 +158,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     #     if self.cpu_offload:
     #         assert isinstance(self.offload_context, CpuOffloadHook)
     #         self.offload_context.offload_handler.groupid_reset()
-
-    def _log_debug_mem(self, tag: str):
-        self._debug_alloc_mem_layer_logs.append((tag, torch.cuda.memory_allocated()/1024**3))
-        self._debug_max_alloc_mem_layer_logs.append((tag, torch.cuda.max_memory_allocated()/1024**3))
-
-    def _reset_debug_mem_logs(self):
-        self._debug_alloc_mem_layer_logs = []
-        self._debug_max_alloc_mem_layer_logs = []
 
     def _check_tbo_requirements(self):
         # make sure dense blocks only appear before moe blocks
@@ -273,16 +263,65 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 continue
             block.refresh_rowwise_fp8_cache()
 
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, object]]:
+        for block_key, block in self.blocks.items():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            for name, weight in block.named_fp8_weight_stores():
+                yield f"blocks.{block_key}.{name}", weight
+
+    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, object]]:
+        yield from self.named_fp8_weight_stores()
+
+    def zero_fp8_weight_store_grads(self, set_to_none: bool = True) -> None:
+        for _, weight in self.named_fp8_weight_stores():
+            weight.zero_grad(set_to_none=set_to_none)
+
+    def zero_mxfp8_expert_weight_grads(self, set_to_none: bool = True) -> None:
+        self.zero_fp8_weight_store_grads(set_to_none=set_to_none)
+
+    def disable_fp8_weight_anchor_grads(self) -> None:
+        for block in self.blocks.values():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            block.disable_fp8_weight_anchor_grads()
+
+    def disable_mxfp8_expert_anchor_grads(self) -> None:
+        self.disable_fp8_weight_anchor_grads()
+
+    def release_fp8_weight_anchor_storage(self) -> None:
+        for block in self.blocks.values():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            block.release_fp8_weight_anchor_storage()
+
+    def release_mxfp8_expert_anchor_storage(self) -> None:
+        self.release_fp8_weight_anchor_storage()
+
+    def sync_fp8_weight_store_grads_from_anchor(self) -> None:
+        for block in self.blocks.values():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            block.sync_fp8_weight_store_grads_from_anchor()
+
+    def sync_mxfp8_expert_weight_grads_from_anchor(self) -> None:
+        self.sync_fp8_weight_store_grads_from_anchor()
+
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        super().zero_grad(set_to_none=set_to_none)
+        self.zero_fp8_weight_store_grads(set_to_none=set_to_none)
+
     @torch.no_grad()
     def prewarm_ep_no_sync_symm_buffers(
         self,
         *,
         max_local_microbatch_size: int,
         pad_to_block_count: int,
+        rowwise_lifetime_lease_slots: Optional[int] = None,
     ) -> None:
         ep_blocks = [
-            cast(MoEFusedV2TransformerBlock, block)
-            for block in self.blocks.values()
+            (block_key, cast(MoEFusedV2TransformerBlock, block))
+            for block_key, block in self.blocks.items()
             if block.is_moe
             and isinstance(block, MoEFusedV2TransformerBlock)
             and block.ep_no_sync
@@ -292,10 +331,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 raise RuntimeError(
                     "Cannot pad EP no-sync symmetric allocations for a model part "
                     "with no EP no-sync blocks"
-                )
+            )
             return
 
-        first_block = ep_blocks[0]
+        first_block = ep_blocks[0][1]
         assert first_block.routed_experts_router is not None
         if first_block.ep_pg is None:
             raise RuntimeError("EP no-sync block is missing ep_pg during symmetric prewarm")
@@ -319,7 +358,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         num_out_tokens = prewarm_local_microbatch_size * top_k
         rank_capacity = compute_ep_no_sync_rank_capacity(first_block, num_out_tokens)
 
-        for block in ep_blocks:
+        for block_key, block in ep_blocks:
             if block.ep_no_sync_use_rowwise_all_to_all:
                 rowwise_fp8_cfg = block.rowwise_fp8
                 use_rowwise_fp8 = (
@@ -336,6 +375,27 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 use_symm_combine_gather = (
                     not use_rowwise_fp8
                 ) and use_ep_no_sync_rowwise_symm_combine_gather(block)
+                block_is_checkpointed = (
+                    self.recompute_all_blocks_by_chunk
+                    or self.recompute_each_block
+                    or (
+                        self.recompute_block_keys is not None
+                        and block_key in self.recompute_block_keys
+                    )
+                )
+                # With our checkpoint context, the original checkpointed forward
+                # and its recompute both use scratch buffers; no long-lived lease
+                # is needed. The compile path currently uses noop_context_fn, so
+                # it cannot identify the original checkpointed forward here.
+                runtime_uses_lifetime_leases = not (
+                    block_is_checkpointed and not self.compile_enabled
+                )
+                if not runtime_uses_lifetime_leases:
+                    use_symm_combine_out = False
+                    use_symm_combine_gather = False
+                lease_dispatch_out = runtime_uses_lifetime_leases
+                lease_combine_out = use_symm_combine_out and runtime_uses_lifetime_leases
+                lease_combine_gather = use_symm_combine_gather and runtime_uses_lifetime_leases
                 slot_indices = range(block.ep_no_sync_shared_slots) if self.tbo else (None,)
                 for slot_idx in slot_indices:
                     get_ep_no_sync_buffers(
@@ -350,14 +410,30 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                         slot_idx=slot_idx,
                         need_dispatch_in=use_symm_dispatch_in,
                         need_dispatch_meta=False,
-                        need_dispatch_out=not use_rowwise_fp8,
+                        need_dispatch_out=(not use_rowwise_fp8) and not lease_dispatch_out,
                         need_combine_in=not use_rowwise_fp8,
                         need_combine_meta=False,
-                        need_combine_out=use_symm_combine_out,
-                        need_combine_gather=use_symm_combine_gather,
+                        need_combine_out=use_symm_combine_out and not lease_combine_out,
+                        need_combine_gather=use_symm_combine_gather and not lease_combine_gather,
                         combine_gather_cap=prewarm_local_microbatch_size,
                         combine_gather_top_k=top_k,
                     )
+                prewarm_ep_no_sync_rowwise_lifetime_leases(
+                    block,
+                    dispatch_out_cap=rank_capacity,
+                    combine_out_cap=prewarm_local_microbatch_size,
+                    combine_gather_cap=prewarm_local_microbatch_size,
+                    combine_gather_top_k=top_k,
+                    d_model=d_model,
+                    dtype=dtype,
+                    device=device,
+                    use_rowwise_fp8=use_rowwise_fp8,
+                    block_size=(rowwise_fp8_cfg.block_size if rowwise_fp8_cfg is not None else 0),
+                    need_dispatch_out=lease_dispatch_out,
+                    need_combine_out=lease_combine_out,
+                    need_combine_gather=lease_combine_gather,
+                    num_slots=rowwise_lifetime_lease_slots,
+                )
                 if use_rowwise_fp8:
                     assert rowwise_fp8_cfg is not None
                     rowwise_fp8_cfg.assert_runtime_supported()
@@ -368,6 +444,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                         d_model=d_model,
                         block_size=rowwise_fp8_cfg.block_size,
                         device=device,
+                        need_dispatch_out=not lease_dispatch_out,
                     )
             else:
                 get_ep_no_sync_buffers(
@@ -532,6 +609,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 ep_sharded_params.add(p)
 
         self.to(torch.bfloat16) # HACK, need fix
+        self.disable_mxfp8_expert_anchor_grads()
 
         dp_group = dp_mesh.get_group()
 
@@ -757,6 +835,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 continue
             if hasattr(p, '_main_grad_fp32'):
                 p._main_grad_fp32 = None # type: ignore[attr-defined]
+        for _, weight in self.named_fp8_weight_stores():
+            weight.set_main_grad_to_none()
 
 
     def forward_tbo(
@@ -784,7 +864,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             **kwargs,
         )
         assert input_ids.size(0) % 2 == 0, "When TBO is enabled, the batch size must be even."
-        self._log_debug_mem('before embed')
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
@@ -820,9 +899,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 else:
                     h = block(h, **all_block_kwargs, **one_block_kwargs)
 
-                self._log_debug_mem(f'{block_idx}')
-
-
             # commit cpu offload
             # if torch.is_grad_enabled() and self.offload_sync_func is not None:
             #     h = self.offload_sync_func(h)
@@ -854,7 +930,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 # x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
                 x0, x1_ctx = block.combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **all_block_kwargs)
                 x1_is_fresh = False # after the first TBO block, x1 is no longer fresh
-                self._log_debug_mem(f'{block_idx}')
 
             # if torch.is_grad_enabled() and self.offload_sync_func is not None:
             #     x0 = self.offload_sync_func(x0)
@@ -863,7 +938,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
         # finish x1 last steps
         h0, h1 = self._tbo_last_step(x0, x1_ctx, lm_head_kwargs, labels0, labels1)
-        self._log_debug_mem(f'last_step')
 
         return self._merge_tbo_outputs(h0, h1, loss_reduction=loss_reduction)
 
@@ -1061,18 +1135,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         return h
 
     def _forwrad_one_block(self, h, block_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
-        # debug_mem_block_start = torch.cuda.memory_allocated()/1024**3
         block = self.blocks[block_key]
         h = block(h, **block_kwargs)
-
-        # debug_mem_block_end = torch.cuda.memory_allocated()/1024**3
-
-        # mem_diff = debug_mem_block_end - debug_mem_block_start
-        # if block.block_idx == 1:
-        #     print(f'block mem: {mem_diff:.3f} GB')
-        # print(f'block {block_key} mem: {mem_diff:.3f} GB')
-        # if mem_diff > 1.0:
-        #     print('High memory usage detected')
         return h
 
     def forward_embed(self, input_ids: torch.Tensor) -> torch.Tensor:
@@ -1105,7 +1169,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        self._reset_debug_mem_logs()
         if self.tbo:
             return self.forward_tbo(
                 input_ids,
@@ -1133,7 +1196,14 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         h = self.forward_embed(input_ids)
 
         if self.recompute_all_blocks_by_chunk:
-            h = checkpoint(self._forward_blocks, h, all_block_kwargs, per_block_kwargs, use_reentrant=False)
+            h = checkpoint(
+                self._forward_blocks,
+                h,
+                all_block_kwargs,
+                per_block_kwargs,
+                use_reentrant=False,
+                context_fn=(noop_context_fn if self.compile_enabled else recompute_context_fn),
+            )
             h = cast(torch.Tensor, h)
         else:
             h = self._forward_blocks(h, all_block_kwargs, per_block_kwargs)

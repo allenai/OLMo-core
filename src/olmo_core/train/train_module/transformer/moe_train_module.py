@@ -133,15 +133,6 @@ from torch.distributed.checkpoint.planner_helpers import (
     _init_state_dict,
 )
 
-def debug_check_grad(name, tag, tensor, input_ids, micro_batch_idx):
-    if torch.isnan(tensor).any() or torch.isinf(tensor).any():
-        # save input_ids for debugging
-        # if input_ids is not None:
-        #     torch.save(input_ids, f"input_ids_rank{dist.get_rank()}_mbx{micro_batch_idx}.pt")
-        # raise RuntimeError(f"rank={dist.get_rank()} mbx={micro_batch_idx} NaN or Inf detected in {name} {tag}")
-        print(f"rank={dist.get_rank()} mbx={micro_batch_idx} NaN or Inf detected in {name} {tag}")
-        return True
-    return False
 
 class MoEV2TransformerTrainModule(TrainModule):
     def __init__(
@@ -614,6 +605,51 @@ class MoEV2TransformerTrainModule(TrainModule):
 
                 num_microbatches=num_microbatches,
             )
+            if not self._rowwise_lifetime_lease_slots_env_is_set():
+                self._prewarm_ep_no_sync_symm_buffers(
+                    model_parts=self.model_parts,
+                    rank_microbatch_size=self.rank_microbatch_size,
+                    rowwise_lifetime_lease_slots=self._estimate_pp_rowwise_lifetime_lease_slots(),
+                )
+
+    @staticmethod
+    def _rowwise_lifetime_lease_slots_env_is_set() -> bool:
+        return any(
+            os.getenv(name) is not None
+            for name in (
+                "OLMO_MOE_ROWWISE_LIFETIME_LEASE_SLOTS",
+                "OLMO_MOE_ROWWISE_DISPATCH_OUT_LEASE_SLOTS",
+            )
+        )
+
+    def _estimate_pp_rowwise_lifetime_lease_slots(self) -> int:
+        if self._train_pp_schedule is None:
+            return 1
+        schedule_impl = getattr(self._train_pp_schedule, "schedule_impl", None)
+        pipeline_order = getattr(schedule_impl, "pipeline_order", None)
+        rank = getattr(schedule_impl, "rank", None)
+        if pipeline_order is None or rank is None or rank not in pipeline_order:
+            return max(1, int(getattr(self._train_pp_schedule, "num_microbatches", 1)))
+
+        from olmo_core.train.train_module.transformer.pipeline.pipeline_schedule import (
+            PipelineActionType,
+        )
+
+        active_by_stage: Dict[int, int] = {}
+        high_water = 0
+        for action in pipeline_order[rank]:
+            if action is None:
+                continue
+            if action.computation_type == PipelineActionType.FORWARD:
+                stage_active = active_by_stage.get(action.stage_index, 0) + 1
+                active_by_stage[action.stage_index] = stage_active
+                high_water = max(high_water, stage_active)
+            elif action.computation_type == PipelineActionType.FULL_BACKWARD:
+                active_by_stage[action.stage_index] = max(
+                    0,
+                    active_by_stage.get(action.stage_index, 0) - 1,
+                )
+        return max(1, high_water)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         raise NotImplementedError("Use load_state_dict_direct instead")
@@ -813,47 +849,9 @@ class MoEV2TransformerTrainModule(TrainModule):
                 return key
         return None
 
-
-
-    def _dump_debug_info(self, step=None, tag=None):
-        # dump model param stats
-        debug_info = {}
-        step = self.trainer.global_step if step is None else step
-        rank = dist.get_rank()
-        for m_idx, model_part in enumerate(self.model_parts):
-            debug_info[m_idx] = {}
-            for name, param in model_part.named_parameters():
-                grad = param._main_grad_fp32
-                debug_info[m_idx][f'{name}'] = {
-                    'param': {
-                        'mean': param.data.mean().item(),
-                        'std': param.data.std().item(),
-                        'max': param.data.max().item(),
-                        'min': param.data.min().item(),
-                        'norm': param.data.norm().item(),
-                    },
-                    'grad': {
-                        'mean': grad.mean().item(),
-                        'std': grad.std().item(),   
-                        'max': grad.max().item(),
-                        'min': grad.min().item(),
-                        'norm': grad.norm().item(),
-                    }
-                }
-        base_dir = './debug_info'
-        filename = f'{base_dir}/rank{rank}_step{step}'
-        if tag is not None:
-            filename += f'_{tag}'
-        filename += '.pt'
-        import os
-        os.makedirs(base_dir, exist_ok=True)
-        torch.save(debug_info, filename)
-
-
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._require_optimizer()
-        DEBUG_MODE = False
 
         # Set model to train mode if it isn't already.
         for m in self.model_parts:
@@ -906,21 +904,12 @@ class MoEV2TransformerTrainModule(TrainModule):
             micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
             num_micro_batches = len(micro_batches)
 
-            dbg_mem_before_fwd0 = torch.cuda.memory_allocated()/1024**3
-
-            dbg_mem_activation_usage_all = []
-            dbg_mem_activation_freed_all = []
-
-            # for name, param in self.model_parts[0].named_parameters():
-            #     debug_check_grad(name, "param", param.data, input_ids=None, micro_batch_idx=-1)
-
             # Train one micro-batch at a time.
             for micro_batch_idx, micro_batch in enumerate(micro_batches):
                 with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                     with nvtx.annotate(f"fwd_mb{micro_batch_idx}", color='blue'):
                         
                         input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
-                        dbg_mem_before_fwd = torch.cuda.memory_allocated()/1024**3
                         # Run forward pass, get losses.
                         _, loss, ce_loss, z_loss = self.model_forward_no_pipeline(
                             input_ids,
@@ -932,9 +921,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                             return_logits=False,
                             **model_kwargs,
                         )
-                        dbg_mem_after_fwd = torch.cuda.memory_allocated()/1024**3
-                        dbg_mem_activation_usage = dbg_mem_after_fwd - dbg_mem_before_fwd
-                        dbg_mem_activation_usage_all.append(dbg_mem_activation_usage)
                         # Update total batch CE and Z loss.
                         ce_batch_loss += get_local_tensor(ce_loss.detach())
                         del ce_loss
@@ -943,85 +929,12 @@ class MoEV2TransformerTrainModule(TrainModule):
                             z_batch_loss += get_local_tensor(z_loss.detach())
                             del z_loss
 
-                        # if dry_run:
-                        #     torch.cuda.empty_cache()
-                        #     print(f'[Dry Run {dist.get_rank()}] after fwd mb{micro_batch_idx} {torch.cuda.memory_allocated()/1024**3:.2f} GB, activation used {dbg_mem_activation_usage:.2f} GB')
-
                     with nvtx.annotate(f"bwd_mb{micro_batch_idx}", color='red'):
                         # Run backward pass.
-                        dbg_mem_before_bwd = torch.cuda.memory_allocated()/1024**3
-
-
                         loss.backward()
-
-                        dbg_mem_after_bwd = torch.cuda.memory_allocated()/1024**3
-                        dbg_mem_activation_freed = dbg_mem_before_bwd - dbg_mem_after_bwd
-                        dbg_mem_activation_freed_all.append(dbg_mem_activation_freed)
-
-                        # if DEBUG_MODE and not dry_run and self.trainer.global_step == 23525:
-                        #     if micro_batch_idx == 17 and dist.get_rank() == 17:
-                        #         torch.save(input_ids.cpu(), f'input_ids_rank{dist.get_rank()}_step{self.trainer.global_step}_mb{micro_batch_idx}.pt')
-                            # self._dump_debug_info(step=micro_batch_idx)
-                        pass
 
 
             del batch  # In case this helps with memory utilization.
-
-            if dry_run:
-                symm_total_bytes = 0
-                symm_block_count = 0
-                symm_unique_storage_count = 0
-                seen_module_ids = set()
-                seen_storages = set()
-
-                def account_tensor_storage(tensor: torch.Tensor):
-                    nonlocal symm_total_bytes, symm_unique_storage_count
-                    storage = tensor.untyped_storage()
-                    key = (storage.data_ptr(), storage.nbytes(), str(tensor.device))
-                    if key in seen_storages:
-                        return
-                    seen_storages.add(key)
-                    symm_total_bytes += storage.nbytes()
-                    symm_unique_storage_count += 1
-
-                for model_part in self.model_parts:
-                    for module in model_part.modules():
-                        module_id = id(module)
-                        if module_id in seen_module_ids:
-                            continue
-                        seen_module_ids.add(module_id)
-                        symm_cache = getattr(module, "_ep_no_sync_symm_cache", None)
-                        shared_pool = getattr(module, "_ep_no_sync_shared_pool", None)
-                        has_local = bool(symm_cache)
-                        has_shared = shared_pool is not None
-                        if not has_local and not has_shared:
-                            continue
-                        symm_block_count += 1
-                        if symm_cache:
-                            for tensor in symm_cache.values():
-                                if isinstance(tensor, torch.Tensor):
-                                    account_tensor_storage(tensor)
-                        if shared_pool is not None:
-                            for tensor in shared_pool.iter_tensors():
-                                if isinstance(tensor, torch.Tensor):
-                                    account_tensor_storage(tensor)
-                print(
-                    f"[symm_mem] step={self.trainer.global_step} rank={dist.get_rank()} "
-                    f"blocks={symm_block_count} unique_storages={symm_unique_storage_count} "
-                    f"total={symm_total_bytes / (1024 ** 3):.3f} GiB "
-                    f"({symm_total_bytes} bytes)"
-                )
-                print("activation: ", dbg_mem_activation_usage_all)
-                print("freed:      ", dbg_mem_activation_freed_all)
-                for (tag, mem) in self.model_parts[0]._debug_alloc_mem_layer_logs:
-                    print(f"Alloc - {tag}: {mem:.2f} GB")
-                for (tag, mem) in self.model_parts[0]._debug_max_alloc_mem_layer_logs:
-                    print(f"Max - {tag}: {mem:.2f} GB")
-
-
-
-            if DEBUG_MODE and not dry_run:
-                self._dump_debug_info()
 
             for idx, model in enumerate(self.model_parts):
                 model.finalize_grad_reduce()
@@ -1075,10 +988,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                         # z loss is optional
                         if z_loss is not None: 
                             z_batch_loss = (z_batch_loss + z_loss.detach()) if z_batch_loss is not None else z_loss.detach()
-
-            if DEBUG_MODE and not dry_run:
-                self._dump_debug_info()
-
 
             for idx, model in enumerate(self.model_parts):
                 model.finalize_grad_reduce()
@@ -1739,7 +1648,13 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         return
 
-    def _prewarm_ep_no_sync_symm_buffers(self, *, model_parts, rank_microbatch_size: int) -> None:
+    def _prewarm_ep_no_sync_symm_buffers(
+        self,
+        *,
+        model_parts,
+        rank_microbatch_size: int,
+        rowwise_lifetime_lease_slots: Optional[int] = None,
+    ) -> None:
         if self.world_mesh.get("moe") is None:
             return
         from olmo_core.kernels import olmo_symm_mem
@@ -1779,6 +1694,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             model_part.prewarm_ep_no_sync_symm_buffers(
                 max_local_microbatch_size=rank_microbatch_size,
                 pad_to_block_count=max_count,
+                rowwise_lifetime_lease_slots=rowwise_lifetime_lease_slots,
             )
 
     def compile_model(self):

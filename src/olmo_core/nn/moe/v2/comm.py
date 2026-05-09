@@ -86,7 +86,9 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         expert_out: torch.Tensor,
         symm_expert_out: torch.Tensor,
         symm_combine_out: Optional[torch.Tensor],
+        symm_combine_out_lease,
         symm_gathered_routes: Optional[torch.Tensor],
+        symm_gathered_routes_lease,
         src_ranks: torch.Tensor,
         src_rows: torch.Tensor,
         probs: torch.Tensor,
@@ -164,7 +166,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                 dtype=symm_expert_out.dtype,
             )
 
-        need_grad_probs = ctx.needs_input_grad[6]
+        need_grad_probs = ctx.needs_input_grad[8]
         gathered_shape = (
             src_ranks_i64.shape[0],
             src_ranks_i64.shape[1],
@@ -245,7 +247,9 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         ctx.nblocks = int(nblocks)
         ctx.probs_input_dtype = probs.dtype
         ctx.symm_expert_out = symm_expert_out
+        ctx.symm_combine_out_lease = symm_combine_out_lease
         ctx.symm_gathered_routes = symm_gathered_routes_view
+        ctx.symm_gathered_routes_lease = symm_gathered_routes_lease
         ctx.save_for_backward(src_ranks_i64, src_rows_i64, probs_f32, gathered_routes)
         return combine_out
 
@@ -265,7 +269,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         grad_out_contig = grad_out if grad_out.is_contiguous() else grad_out.contiguous()
 
         grad_probs = None
-        if ctx.needs_input_grad[6]:
+        if ctx.needs_input_grad[8]:
             grad_out_for_probs = grad_out_contig
             if grad_out_for_probs.dtype != gathered_routes.dtype:
                 grad_out_for_probs = grad_out_for_probs.to(dtype=gathered_routes.dtype)
@@ -361,8 +365,29 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
 
         ctx.symm_expert_out = None
         ctx.symm_gathered_routes = None
+        if ctx.symm_combine_out_lease is not None:
+            ctx.symm_combine_out_lease.release()
+        ctx.symm_combine_out_lease = None
+        if ctx.symm_gathered_routes_lease is not None:
+            ctx.symm_gathered_routes_lease.release()
+        ctx.symm_gathered_routes_lease = None
         ctx.group = None
-        return grad_expert_out, None, None, None, None, None, grad_probs, None, None, None, None, None
+        return (
+            grad_expert_out,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            grad_probs,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
 
 class _DispatchRowwiseAutograd(torch.autograd.Function):
@@ -375,6 +400,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         dst_ranks: torch.Tensor,
         dst_rows: torch.Tensor,
         symm_out: torch.Tensor,
+        symm_out_lease,
         group_name: str,
         group: dist.ProcessGroup,
         nblocks: int,
@@ -472,6 +498,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         ctx.get_post_barrier = bool(get_post_barrier)
         ctx.symm_input = symm_input
         ctx.symm_out = symm_out
+        ctx.symm_out_lease = symm_out_lease
         ctx.save_for_backward(dst_ranks_i64, dst_rows_i64)
         return symm_out
 
@@ -546,8 +573,11 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         # )
         ctx.symm_input = None
         ctx.symm_out = None
+        if ctx.symm_out_lease is not None:
+            ctx.symm_out_lease.release()
+        ctx.symm_out_lease = None
         ctx.group = None
-        return grad_input, None, None, None, None, None, None, None, None, None
+        return grad_input, None, None, None, None, None, None, None, None, None, None
 
 
 class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
@@ -559,6 +589,7 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         dst_rows: torch.Tensor,
         symm_out_q: torch.Tensor,
         symm_out_scales: torch.Tensor,
+        symm_out_lease,
         block_size: int,
         group_name: str,
         group: dist.ProcessGroup,
@@ -654,6 +685,7 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         ctx.logical_out_device = source_input.device
         ctx.symm_out_q = symm_out_q
         ctx.symm_out_scales = symm_out_scales
+        ctx.symm_out_lease = symm_out_lease
         ctx.save_for_backward(dst_ranks_i64, dst_rows_i64)
         return _logical_rank2_tensor(
             ctx.logical_out_shape,
@@ -711,7 +743,11 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         #     expert_out_scales=ctx.symm_out_scales,
         #     out=grad_input,
         # )
-        return grad_input, None, None, None, None, None, None, None, None
+        if ctx.symm_out_lease is not None:
+            ctx.symm_out_lease.release()
+        ctx.symm_out_lease = None
+        ctx.group = None
+        return grad_input, None, None, None, None, None, None, None, None, None
 
 
 class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):

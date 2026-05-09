@@ -52,6 +52,7 @@ from torch.distributed.tensor._utils import (
     compute_local_stride,
 )
 import nvtx
+from olmo_core.nn.fp8_weight import FP8WeightStore
 
 log = logging.getLogger(__name__)
 
@@ -171,6 +172,50 @@ def _to_local_tensor(tensor: torch.Tensor) -> torch.Tensor:
         return tensor.to_local()
     return tensor
 
+
+def _is_fp8_weight_store(param: Any) -> bool:
+    return isinstance(param, FP8WeightStore)
+
+
+def _rowwise_fp8_only_params_enabled(owner: Any) -> bool:
+    cfg = getattr(owner, "rowwise_fp8", None)
+    return (
+        cfg is not None
+        and getattr(cfg, "enabled", False)
+        and getattr(cfg, "fp8_only_params", False)
+    )
+
+
+def _is_fp8_only_anchor_param(param: Any) -> bool:
+    owner_ref = getattr(param, "_moe_rowwise_fp8_cache_owner", None)
+    if owner_ref is None:
+        return False
+    owner = owner_ref() if callable(owner_ref) else owner_ref
+    if owner is None:
+        return False
+    if param is getattr(owner, "w_up_gate", None) or param is getattr(owner, "w_down", None):
+        return _rowwise_fp8_only_params_enabled(owner)
+    routed_experts = getattr(owner, "routed_experts", None)
+    if routed_experts is not None and (
+        param is getattr(routed_experts, "w_up_gate", None)
+        or param is getattr(routed_experts, "w_down", None)
+    ):
+        if _rowwise_fp8_only_params_enabled(routed_experts):
+            return True
+        return _rowwise_fp8_only_params_enabled(owner)
+    shared_experts = getattr(owner, "shared_experts", None)
+    if shared_experts is not None and (
+        param is getattr(shared_experts, "w_up_gate", None)
+        or param is getattr(shared_experts, "w_down", None)
+    ):
+        return _rowwise_fp8_only_params_enabled(owner)
+    return False
+
+
+def _is_fp8_only_expert_anchor_param(param: Any) -> bool:
+    return _is_fp8_only_anchor_param(param)
+
+
 @dataclass
 class MoEFusedV2OptimizerConfig(Config): 
 
@@ -280,10 +325,12 @@ class MoEFusedV2OptimizerConfig(Config):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        all_params: Dict[str, torch.Tensor] = OrderedDict()
+        all_params: Dict[str, Any] = OrderedDict()
         frozen_params: set = set()
         for part in model_parts:
             for n, p in part.named_parameters():
+                if _is_fp8_only_expert_anchor_param(p):
+                    continue
                 if p.requires_grad:
                     if param_filter is None: # No filter applied
                         all_params[n] = p
@@ -294,6 +341,16 @@ class MoEFusedV2OptimizerConfig(Config):
 
                 else:
                     frozen_params.add(n)
+            named_fp8_weight_stores = getattr(part, "named_fp8_weight_stores", None)
+            if named_fp8_weight_stores is None:
+                named_fp8_weight_stores = getattr(part, "named_mxfp8_expert_weights", None)
+            if named_fp8_weight_stores is not None:
+                logical_prefix = "module." if isinstance(getattr(part, "_modules", None), dict) and "module" in part._modules else ""
+                for n, p in named_fp8_weight_stores():
+                    if not getattr(p, "optimizer_enabled", False):
+                        continue
+                    if param_filter is None or param_filter(p):
+                        all_params[f"{logical_prefix}{n}"] = p
 
         group_overrides = [
             self._expand_param_globs(go, all_params, frozen_params, g_idx, strict=strict)
@@ -337,7 +394,16 @@ class MoEFusedV2OptimizerConfig(Config):
             for m in part.modules():
                 if getattr(m, "_ep_sharded", False):
                     for _, p in m.named_parameters(recurse=True):
+                        if _is_fp8_only_expert_anchor_param(p):
+                            continue
                         ep_param_ids.add(id(p))
+                    named_fp8_weight_stores = getattr(m, "named_fp8_weight_stores", None)
+                    if named_fp8_weight_stores is None:
+                        named_fp8_weight_stores = getattr(m, "named_mxfp8_expert_weights", None)
+                    if named_fp8_weight_stores is not None:
+                        for _, p in named_fp8_weight_stores():
+                            if getattr(p, "optimizer_enabled", False):
+                                ep_param_ids.add(id(p))
         return ep_param_ids
 
     def build(self, model_parts: List, train_module: TrainModule, strict: bool = True, param_filter=None) -> "MoEFusedV2Optimizer":
@@ -547,8 +613,19 @@ class MoEFusedV2Optimizer:
 
         # for print info
         self._model_param_sz = 0
+        self._mxfp8_logical_param_sz = 0
+        self._mxfp8_cache_sz = 0
         for param_group in param_groups:
-            self._model_param_sz += sum(p.numel() * p.element_size() for (n, p) in param_group['named_params'].items())
+            for _name, param in param_group['named_params'].items():
+                param_sz = param.numel() * param.element_size()
+                self._model_param_sz += param_sz
+                if _is_fp8_weight_store(param):
+                    self._mxfp8_logical_param_sz += param_sz
+                    for prequantized_rhs in param.iter_prequantized_caches():
+                        self._mxfp8_cache_sz += (
+                            prequantized_rhs.mat_b_q.numel() * prequantized_rhs.mat_b_q.element_size()
+                            + prequantized_rhs.scale_b.numel() * prequantized_rhs.scale_b.element_size()
+                        )
 
         # ---- Sharding context (DP and EP-DP) ----
         self._dp_group: Optional[ProcessGroup] = dp_group
@@ -597,7 +674,10 @@ class MoEFusedV2Optimizer:
                 if device is None:
                     device = param.device
                 else:
-                    assert device == param.device, "Inconsistent device found"
+                    assert device == param.device, (
+                        f"Inconsistent device found for param '{name}': "
+                        f"expected {device}, got {param.device}"
+                    )
                 # float16 params:
                 if param.type() in ['torch.cuda.HalfTensor', 'torch.cuda.BFloat16Tensor']:
                     has_bf16_param = True
@@ -615,6 +695,10 @@ class MoEFusedV2Optimizer:
             # The model has its own copy of fp32 main params
             self.should_maintain_fp32_main_param = False
 
+        for param_group in param_groups:
+            for _name, param in param_group['named_params'].items():
+                if _is_fp8_weight_store(param):
+                    param.accumulate_wgrad_in_fp32 = self.model_has_grad_accum_fp32_buffer
 
         self.states: Dict[str, DTensor] = OrderedDict()
 
@@ -688,12 +772,13 @@ class MoEFusedV2Optimizer:
             for param_group in param_groups:
                 for name, param in param_group['named_params'].items():
                     main_param = self.states[f'{name}.main']
-                    
                     assign_full_tensor_to_dtensor(dst=main_param, src=param.data.float().reshape(-1))
 
         if self.should_maintain_fp32_main_param:
             self._check_model_param_main_param_the_same()
 
+        self._copy_main_params_to_mxfp8_weights()
+        self._release_mxfp8_expert_anchor_storage()
         self.print_memory_summary()
 
         return
@@ -704,6 +789,18 @@ class MoEFusedV2Optimizer:
             for name, param in param_group['named_params'].items():
                 total_params += param.numel()
         log.info(f'[MoEFusedV2Optimizer] Total model params: {total_params:,}')
+        self._mxfp8_cache_sz = 0
+        seen_mxfp8_weights: Set[int] = set()
+        for param_group in self.param_groups:
+            for param in param_group['named_params'].values():
+                if not _is_fp8_weight_store(param) or id(param) in seen_mxfp8_weights:
+                    continue
+                seen_mxfp8_weights.add(id(param))
+                for prequantized_rhs in param.iter_prequantized_caches():
+                    self._mxfp8_cache_sz += (
+                        prequantized_rhs.mat_b_q.numel() * prequantized_rhs.mat_b_q.element_size()
+                        + prequantized_rhs.scale_b.numel() * prequantized_rhs.scale_b.element_size()
+                    )
 
         # main
         def count_numel(tag: str):
@@ -762,15 +859,26 @@ class MoEFusedV2Optimizer:
             exp_avg_stat[1] + exp_avg_sq_stat[1] + muon_momentum_stat[1]
         ) * self.states_dtype.itemsize / BYTES_IN_GB
 
-        total_model_gb = self._model_param_sz / BYTES_IN_GB
+        normal_model_param_gb = (
+            self._model_param_sz - self._mxfp8_logical_param_sz
+        ) / BYTES_IN_GB
+        total_model_gb = normal_model_param_gb
+        total_mxfp8_cache_gb = self._mxfp8_cache_sz / BYTES_IN_GB
         print_str += f'[MoEFusedV2Optimizer] Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n'
-         
+
         if self.model_has_grad_accum_fp32_buffer:
-            total_model_grad_gb = 2 * total_model_gb # extra fp32 grad buffer
+            logical_mxfp8_grad_gb = self._mxfp8_logical_param_sz / BYTES_IN_GB
+            total_model_grad_gb = 2 * normal_model_param_gb + logical_mxfp8_grad_gb # extra fp32 grad buffer for normal params
         else:
             total_model_grad_gb = total_model_gb # bf16 grad only
         print_str += f'[MoEFusedV2Optimizer] Model params size (GB): {total_model_gb:.4f} GB, model grads size (GB): {total_model_grad_gb:.4f} GB\n'
-        total_static = total_local_optim_gb + total_model_gb + total_model_grad_gb
+        if self._mxfp8_logical_param_sz > 0:
+            logical_mxfp8_param_gb = self._mxfp8_logical_param_sz / BYTES_IN_GB
+            print_str += (
+                f'[MoEFusedV2Optimizer] FP8 logical bf16-equivalent params skipped from model storage: '
+                f'{logical_mxfp8_param_gb:.4f} GB, FP8 RHS caches: {total_mxfp8_cache_gb:.4f} GB\n'
+            )
+        total_static = total_local_optim_gb + total_model_gb + total_model_grad_gb + total_mxfp8_cache_gb
 
         print_str += f'[MoEFusedV2Optimizer] Total estimated static memory (GB): {total_static:.4f} GB\n'
 
@@ -784,6 +892,8 @@ class MoEFusedV2Optimizer:
             tag = param_group["pg"]
             entries = groups_by_tag.setdefault(tag, [])
             for name, param in param_group["named_params"].items():
+                if _is_fp8_weight_store(param):
+                    continue
                 param_id = id(param)
                 if param_id in seen_param_ids:
                     raise RuntimeError(f"Parameter '{name}' appears multiple times in optimizer groups")
@@ -1021,60 +1131,12 @@ class MoEFusedV2Optimizer:
                    else:
                         ep_dp_grads_replicated.append(main_grad)
 
-        dp_grads_norm_sharded = nn.utils.get_total_norm(dp_grads_sharded, norm_type=2.0, error_if_nonfinite=False)
-        dp_grads_norm_replicated = nn.utils.get_total_norm(dp_grads_replicated, norm_type=2.0, error_if_nonfinite=False)
-
-
-        dp_grads_norm_sharded_reduced = self._reduce_norm(dp_grads_norm_sharded, self.dp_mesh.get_group()) # reduce across DP
-        dp_grad_norm = self._combine_norm(dp_grads_norm_replicated, dp_grads_norm_sharded_reduced)
-
-
-        if self.moe_mesh is not None:
-            ep_dp_grads_norm_sharded = nn.utils.get_total_norm(ep_dp_grads_sharded, norm_type=2.0, error_if_nonfinite=False)
-            ep_dp_grads_norm_replicated = nn.utils.get_total_norm(ep_dp_grads_replicated, norm_type=2.0, error_if_nonfinite=False)
-
-            ep_dp_grads_norm_sharded_reduced = self._reduce_norm(ep_dp_grads_norm_sharded, self.ep_dp_mesh.get_group()) # reduce across EP_DP
-            ep_dp_grad_norm = self._combine_norm(ep_dp_grads_norm_replicated, ep_dp_grads_norm_sharded_reduced)
-
-            ep_grad_norm = self._reduce_norm(ep_dp_grad_norm, self.ep_mp_mesh.get_group()) # reduce across EP_MP
-
-            total_grad_norm = self._combine_norm(dp_grad_norm, ep_grad_norm)
-        else:
-            total_grad_norm = dp_grad_norm
-
-
-
-
-        ################
-
-        # dp_grad_norm = nn.utils.get_total_norm(dp_grads, norm_type=2.0, error_if_nonfinite=False)
-        # dp_grad_norm = cast(DTensor, dp_grad_norm).full_tensor()
-
-
-        # if self.moe_mesh is not None:
-        #     ep_dp_grad_norm = nn.utils.get_total_norm(ep_dp_grads, norm_type=2.0, error_if_nonfinite=False)
-        #     ep_dp_grad_norm = cast(DTensor, ep_dp_grad_norm).full_tensor()
-
-        #     # reduce EP_MP
-        #     assert self.ep_mp_mesh is not None
-        #     ep_dp_grad_norm = ep_dp_grad_norm.square()
-        #     dist.all_reduce(ep_dp_grad_norm, op=dist.ReduceOp.SUM, group=self.ep_mp_mesh.get_group())
-        #     ep_dp_grad_norm = ep_dp_grad_norm.sqrt()
-
-        #     # combine DP and EP_DP grad norms
-        #     total_grad_norm = torch.sqrt(dp_grad_norm.square() + ep_dp_grad_norm.square())
-        # else:
-        #     assert len(ep_dp_grads) == 0, "No EP_DP grads should exist if no MOE mesh"
-        #     total_grad_norm = dp_grad_norm
-
-        # reduce PP
-        assert self.dense_mesh.mesh_dim_names is not None
-        if 'pp' in self.dense_mesh.mesh_dim_names:
-            total_grad_norm = self._reduce_norm(total_grad_norm, self.dense_mesh['pp'].get_group())
-            # total_grad_norm = total_grad_norm.square()
-            # dist.all_reduce(total_grad_norm, op=dist.ReduceOp.SUM, group=self.dense_mesh['pp'].get_group())
-            # total_grad_norm = total_grad_norm.sqrt()
-
+        total_grad_norm = self._compute_total_grad_norm(
+            dp_grads_replicated,
+            dp_grads_sharded,
+            ep_dp_grads_replicated,
+            ep_dp_grads_sharded,
+        )
 
         clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
         # Note: multiplying by the clamped coef is redundant when the coef is clamped to 1, but doing so
@@ -1092,10 +1154,53 @@ class MoEFusedV2Optimizer:
 
         return total_grad_norm
 
+    def _local_total_norm(self, grads: List[torch.Tensor]) -> torch.Tensor:
+        norms: List[torch.Tensor] = []
+        for grad in grads:
+            local_grad = _to_local_tensor(grad)
+            if local_grad.numel() == 0:
+                continue
+            norms.append(torch.linalg.vector_norm(local_grad.detach().float(), ord=2))
+        if not norms:
+            return torch.zeros((), device=self.device, dtype=torch.float32)
+        return torch.linalg.vector_norm(torch.stack(norms), ord=2)
+
+    def _compute_total_grad_norm(
+        self,
+        dp_grads_replicated: List[torch.Tensor],
+        dp_grads_sharded: List[torch.Tensor],
+        ep_dp_grads_replicated: List[torch.Tensor],
+        ep_dp_grads_sharded: List[torch.Tensor],
+    ) -> torch.Tensor:
+        dp_grads_norm_sharded = self._local_total_norm(dp_grads_sharded)
+        dp_grads_norm_replicated = self._local_total_norm(dp_grads_replicated)
+
+        dp_grads_norm_sharded_reduced = self._reduce_norm(dp_grads_norm_sharded, self.dp_mesh.get_group())
+        dp_grad_norm = self._combine_norm(dp_grads_norm_replicated, dp_grads_norm_sharded_reduced)
+
+        if self.moe_mesh is not None:
+            ep_dp_grads_norm_sharded = self._local_total_norm(ep_dp_grads_sharded)
+            ep_dp_grads_norm_replicated = self._local_total_norm(ep_dp_grads_replicated)
+
+            ep_dp_grads_norm_sharded_reduced = self._reduce_norm(ep_dp_grads_norm_sharded, self.ep_dp_mesh.get_group())
+            ep_dp_grad_norm = self._combine_norm(ep_dp_grads_norm_replicated, ep_dp_grads_norm_sharded_reduced)
+
+            ep_grad_norm = self._reduce_norm(ep_dp_grad_norm, self.ep_mp_mesh.get_group())
+            total_grad_norm = self._combine_norm(dp_grad_norm, ep_grad_norm)
+        else:
+            total_grad_norm = dp_grad_norm
+
+        assert self.dense_mesh.mesh_dim_names is not None
+        if 'pp' in self.dense_mesh.mesh_dim_names:
+            total_grad_norm = self._reduce_norm(total_grad_norm, self.dense_mesh['pp'].get_group())
+        return total_grad_norm
+
     def _combine_norm(self, n1, n2) -> torch.Tensor:
         return torch.sqrt(n1.square() + n2.square())
     
     def _reduce_norm(self, norm: torch.Tensor, pg: ProcessGroup) -> torch.Tensor:
+        if norm.device.type == "cpu" and self.device.type != "cpu":
+            norm = norm.to(self.device)
         norm = norm.square()
         dist.all_reduce(norm, op=dist.ReduceOp.SUM, group=pg)
         norm = norm.sqrt()
@@ -1227,7 +1332,10 @@ class MoEFusedV2Optimizer:
         
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():
-                if self.model_has_grad_accum_fp32_buffer:
+                is_fp8_store = _is_fp8_weight_store(param)
+                if is_fp8_store:
+                    model_grad_fp32 = self._get_fp8_weight_store_model_grad_fp32(name, param)
+                elif self.model_has_grad_accum_fp32_buffer:
                     # the model already has a fp32 grad buffer, so the grad is already in fp32
                     # and model's bf16 grad should be None
                     if param.grad is not None:
@@ -1287,11 +1395,37 @@ class MoEFusedV2Optimizer:
 
         return
 
+    def _get_fp8_weight_store_model_grad_fp32(self, name: str, param: FP8WeightStore) -> torch.Tensor:
+        if self.model_has_grad_accum_fp32_buffer:
+            if param.main_grad_fp32 is None:
+                raise RuntimeError(f"Missing logical FP32 grad for FP8 weight store '{name}'")
+            model_grad_fp32 = param.main_grad_fp32.detach().reshape(-1)
+            if model_grad_fp32.dtype != torch.float32:
+                model_grad_fp32 = model_grad_fp32.float()
+            return model_grad_fp32
+
+        if param.grad_bf16 is None:
+            raise RuntimeError(f"Missing logical BF16 grad for FP8 weight store '{name}'")
+        model_grad_fp32 = param.grad_bf16.detach().reshape(-1).float()
+        return model_grad_fp32
+
     @nvtx.annotate("MoEFusedV2Optimizer._copy_model_grads_to_main_grads")
     def _copy_model_grads_to_main_grads(self):
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():
-                if self.model_has_grad_accum_fp32_buffer:
+                if _is_fp8_weight_store(param):
+                    model_grad_fp32 = self._get_fp8_weight_store_model_grad_fp32(name, param)
+                    pg = self._get_process_group_for_tag(param_group['pg'])
+                    if dist.is_available() and dist.is_initialized():
+                        pg_world_size = dist.get_world_size(pg)
+                        if pg_world_size > 1:
+                            model_grad_fp32.div_(pg_world_size)
+                            dist.all_reduce(
+                                model_grad_fp32,
+                                op=dist.ReduceOp.SUM,
+                                group=pg,
+                            )
+                elif self.model_has_grad_accum_fp32_buffer:
                     # the model already has a fp32 grad buffer, so the grad is already in fp32
                     # and model's bf16 grad should be None
                     if param.grad is not None:
@@ -1362,6 +1496,7 @@ class MoEFusedV2Optimizer:
     def _copy_main_params_to_model_params(self):
         if self._flat_model_sync_groups:
             self._copy_main_params_to_flat_model_buffers()
+            self._copy_main_params_to_mxfp8_weights()
             self._refresh_rowwise_fp8_caches_from_model_params()
             return
 
@@ -1396,6 +1531,9 @@ class MoEFusedV2Optimizer:
 
             for name, param in param_group['named_params'].items():
                 
+                if _is_fp8_weight_store(param):
+                    self._copy_main_param_to_mxfp8_weight(name, param)
+                    continue
 
                 main_param = self.states[f'{name}.main']
                 if not any(isinstance(p, Shard) for p in main_param.placements):
@@ -1423,6 +1561,31 @@ class MoEFusedV2Optimizer:
 
         self._refresh_rowwise_fp8_caches_from_model_params()
         return
+
+    def _copy_main_params_to_mxfp8_weights(self) -> None:
+        for param_group in self.param_groups:
+            for name, param in param_group["named_params"].items():
+                if _is_fp8_weight_store(param):
+                    self._copy_main_param_to_mxfp8_weight(name, param)
+
+    def _copy_main_param_to_mxfp8_weight(self, name: str, weight: FP8WeightStore) -> None:
+        main_param = self.states[f"{name}.main"]
+        local_flat = main_param.to_local().reshape(-1)
+        full_flat = self._gather_sharded_flat_tensor(local_flat, main_param)
+        logical_weight = full_flat.reshape(weight.logical_shape).to(torch.bfloat16)
+        weight.refresh_from_logical_weight(
+            logical_weight,
+            update_anchor=not weight.anchor_storage_released,
+        )
+
+    def _release_mxfp8_expert_anchor_storage(self) -> None:
+        seen: Set[int] = set()
+        for param_group in self.param_groups:
+            for param in param_group["named_params"].values():
+                if not _is_fp8_weight_store(param) or id(param) in seen:
+                    continue
+                seen.add(id(param))
+                param.release_anchor_storage()
 
     def _copy_main_params_to_flat_model_buffers(self) -> None:
         for sync_group in self._flat_model_sync_groups.values():

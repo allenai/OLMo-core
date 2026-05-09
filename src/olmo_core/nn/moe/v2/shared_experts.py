@@ -92,6 +92,12 @@ class SharedExperts(nn.Module):
         # Per-expert down: (E, H, D)
         self.w_down = nn.Parameter(torch.empty(E, H, D, device=init_device, dtype=dtype.as_pt()))
 
+    def _raise_if_fp8_anchor_storage_released(self) -> None:
+        if getattr(self, "_fp8_anchor_storage_released", False):
+            raise RuntimeError(
+                "SharedExperts bf16 fallback cannot run after fp8-only anchor storage has been released"
+            )
+
         
     @nvtx.annotate("SharedExperts.forward", color='pink')
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -103,6 +109,7 @@ class SharedExperts(nn.Module):
           3) in-place SiLU on gate, elementwise multiply
           4) bmm with per-expert down: (E, BS, H) x (E, H, D) -> (E, BS, D)
         """
+        self._raise_if_fp8_anchor_storage_released()
         B, S, D = x.shape
         E, H = self.num_experts, self.hidden_size
         BS = B * S
@@ -131,6 +138,7 @@ class SharedExperts(nn.Module):
         """
         Split the forward pass into two parts for better overlap in EP.
         """
+        self._raise_if_fp8_anchor_storage_released()
         B, S, D = x.shape
         E, H = self.num_experts, self.hidden_size
         BS = B * S
@@ -153,6 +161,7 @@ class SharedExperts(nn.Module):
         """
         Split the forward pass into two parts for better overlap in EP.
         """
+        self._raise_if_fp8_anchor_storage_released()
         E, H = self.num_experts, self.hidden_size
         B, S, D = xshape
         # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
@@ -167,4 +176,3 @@ class SharedExperts(nn.Module):
 
     def extra_repr(self):
         return f'num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}'
-

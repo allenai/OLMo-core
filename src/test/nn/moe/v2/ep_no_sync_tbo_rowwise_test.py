@@ -244,11 +244,15 @@ def test_rowwise_stage_d_launch_uses_comm_stream_and_dispatch(monkeypatch):
     assert calls[1][0] == "dispatch"
     assert calls[1][1] == (
         a_state.moe_inp,
+        None,
         a_state.dst_ranks,
         a_state.dst_rows,
         buffers.dispatch_out,
+        None,
         "ep_group",
         "pg",
         64,
+        True,
+        True,
     )
     assert calls[2] == ("record_event", comm_stream)

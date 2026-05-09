@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple
 
 import nvtx
 import torch
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.kernels import prequantize_scaled_grouped_mm_rhs, scaled_grouped_mm_q
+from olmo_core.kernels import (
+    prequantize_scaled_grouped_mm_rhs,
+    scaled_grouped_mm_q,
+    scaled_grouped_mm_q_fp8_weight,
+)
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
@@ -23,6 +27,7 @@ class MoERowwiseFP8Config(Config):
     block_size: int = 32
     scale_mode: MoERowwiseFP8ScaleMode = MoERowwiseFP8ScaleMode.rceil
     use_fast_accum: bool = True
+    fp8_only_params: bool = True
 
     def validate(self) -> None:
         if self.block_size != 32:
@@ -65,6 +70,12 @@ def reset_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
     block._shared_rowwise_fp8_up_prequant_t = None
     block._shared_rowwise_fp8_down_prequant_t = None
     block._shared_rowwise_fp8_weight_versions = None
+    up_weight = getattr(block, "_shared_rowwise_fp8_up_gate_weight", None)
+    down_weight = getattr(block, "_shared_rowwise_fp8_down_weight", None)
+    if up_weight is not None:
+        up_weight.invalidate()
+    if down_weight is not None:
+        down_weight.invalidate()
 
 
 def _rowwise_fp8_enabled(cfg: Optional[MoERowwiseFP8Config]) -> bool:
@@ -86,31 +97,72 @@ def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
     if block.shared_experts is None:
         reset_shared_rowwise_fp8_cache(block)
         return
+    sync_shared_weights = getattr(block, "_sync_shared_rowwise_fp8_weight_anchors", None)
+    if sync_shared_weights is not None:
+        sync_shared_weights()
+    up_weight = getattr(block, "_shared_rowwise_fp8_up_gate_weight", None)
+    down_weight = getattr(block, "_shared_rowwise_fp8_down_weight", None)
+    if (
+        cfg.fp8_only_params
+        and up_weight is not None
+        and down_weight is not None
+        and (up_weight.anchor_storage_released or down_weight.anchor_storage_released)
+    ):
+        if (
+            up_weight.prequantized_rhs is None
+            or up_weight.prequantized_rhs_for_dgrad is None
+            or down_weight.prequantized_rhs is None
+            or down_weight.prequantized_rhs_for_dgrad is None
+        ):
+            raise RuntimeError(
+                "Cannot refresh rowwise FP8 shared expert caches from released bf16 anchors. "
+                "The optimizer must refresh FP8 stores directly from fp32 main params."
+            )
+        block._shared_rowwise_fp8_up_prequant = up_weight.prequantized_rhs
+        block._shared_rowwise_fp8_up_prequant_t = up_weight.prequantized_rhs_for_dgrad
+        block._shared_rowwise_fp8_down_prequant = down_weight.prequantized_rhs
+        block._shared_rowwise_fp8_down_prequant_t = down_weight.prequantized_rhs_for_dgrad
+        block._shared_rowwise_fp8_weight_versions = None
+        return
     if block.shared_experts.w_up_gate.device.type != "cuda":
         reset_shared_rowwise_fp8_cache(block)
         return
 
     with nvtx.annotate("moe_rowwise_fp8_param_refresh_shared_weight_prequant"):
-        up_rhs = block.shared_experts.w_up_gate.unsqueeze(0)
-        down_rhs = block.shared_experts.w_down
-        up_rhs_t = block.shared_experts.w_up_gate.transpose(0, 1).unsqueeze(0)
-        down_rhs_t = block.shared_experts.w_down.transpose(1, 2)
-        block._shared_rowwise_fp8_up_prequant = prequantize_scaled_grouped_mm_rhs(
-            up_rhs,
-            check_mat_b_version=False,
-        )
-        block._shared_rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(
-            down_rhs,
-            check_mat_b_version=False,
-        )
-        block._shared_rowwise_fp8_up_prequant_t = prequantize_scaled_grouped_mm_rhs(
-            up_rhs_t,
-            check_mat_b_version=False,
-        )
-        block._shared_rowwise_fp8_down_prequant_t = prequantize_scaled_grouped_mm_rhs(
-            down_rhs_t,
-            check_mat_b_version=False,
-        )
+        if up_weight is not None and down_weight is not None:
+            up_weight.refresh_from_logical_weight(
+                block.shared_experts.w_up_gate,
+                version_tensors=(block.shared_experts.w_up_gate,),
+            )
+            down_weight.refresh_from_logical_weight(
+                block.shared_experts.w_down,
+                version_tensors=(block.shared_experts.w_down,),
+            )
+            block._shared_rowwise_fp8_up_prequant = up_weight.prequantized_rhs
+            block._shared_rowwise_fp8_up_prequant_t = up_weight.prequantized_rhs_for_dgrad
+            block._shared_rowwise_fp8_down_prequant = down_weight.prequantized_rhs
+            block._shared_rowwise_fp8_down_prequant_t = down_weight.prequantized_rhs_for_dgrad
+        else:
+            up_rhs = block.shared_experts.w_up_gate.unsqueeze(0)
+            down_rhs = block.shared_experts.w_down
+            up_rhs_t = block.shared_experts.w_up_gate.transpose(0, 1).unsqueeze(0)
+            down_rhs_t = block.shared_experts.w_down.transpose(1, 2)
+            block._shared_rowwise_fp8_up_prequant = prequantize_scaled_grouped_mm_rhs(
+                up_rhs,
+                check_mat_b_version=False,
+            )
+            block._shared_rowwise_fp8_down_prequant = prequantize_scaled_grouped_mm_rhs(
+                down_rhs,
+                check_mat_b_version=False,
+            )
+            block._shared_rowwise_fp8_up_prequant_t = prequantize_scaled_grouped_mm_rhs(
+                up_rhs_t,
+                check_mat_b_version=False,
+            )
+            block._shared_rowwise_fp8_down_prequant_t = prequantize_scaled_grouped_mm_rhs(
+                down_rhs_t,
+                check_mat_b_version=False,
+            )
         block._shared_rowwise_fp8_weight_versions = (
             int(block.shared_experts.w_up_gate._version),
             int(block.shared_experts.w_down._version),
@@ -170,9 +222,22 @@ def shared_experts_forward1_rowwise_fp8(
         prequantized_rhs=up_prequant,
         prequantized_rhs_for_dgrad=up_prequant_t,
     )
-    up_gate = scaled_grouped_mm_q(
+    cfg = block.rowwise_fp8
+    fp8_only_params = cfg is not None and cfg.fp8_only_params
+    up_anchor = block.shared_experts.w_up_gate.unsqueeze(0)
+    if fp8_only_params:
+        up_weight = getattr(block, "_shared_rowwise_fp8_up_gate_weight", None)
+        if up_weight is None:
+            raise RuntimeError("shared rowwise FP8 up/gate weight store is not initialized")
+        up_kwargs["wgrad_sink"] = up_weight
+        up_kwargs["wgrad_sink_squeeze_first_dim"] = True
+        up_anchor = up_anchor.detach()
+        mm_impl = scaled_grouped_mm_q_fp8_weight
+    else:
+        mm_impl = scaled_grouped_mm_q
+    up_gate = mm_impl(
         x2,
-        block.shared_experts.w_up_gate.unsqueeze(0),
+        up_anchor,
         **up_kwargs,
     )
     up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
@@ -208,9 +273,21 @@ def shared_experts_forward2_rowwise_fp8(
         prequantized_rhs=down_prequant,
         prequantized_rhs_for_dgrad=down_prequant_t,
     )
-    out_2d = scaled_grouped_mm_q(
+    cfg = block.rowwise_fp8
+    fp8_only_params = cfg is not None and cfg.fp8_only_params
+    down_anchor = block.shared_experts.w_down
+    if fp8_only_params:
+        down_weight = getattr(block, "_shared_rowwise_fp8_down_weight", None)
+        if down_weight is None:
+            raise RuntimeError("shared rowwise FP8 down weight store is not initialized")
+        down_kwargs["wgrad_sink"] = down_weight
+        down_anchor = down_anchor.detach()
+        mm_impl = scaled_grouped_mm_q_fp8_weight
+    else:
+        mm_impl = scaled_grouped_mm_q
+    out_2d = mm_impl(
         hidden_2d,
-        block.shared_experts.w_down,
+        down_anchor,
         **down_kwargs,
     )
     return out_2d.view(E, BS, D).view(E, B, S, D)

@@ -2,7 +2,7 @@ import threading
 import weakref
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Callable, Dict, Iterator, Optional, Tuple, Union, cast
 
 import nvtx
 import torch
@@ -30,6 +30,7 @@ from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedRHS,
 )
+from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_or_init_stream
@@ -78,6 +79,32 @@ from .activation_debug import maybe_dump_ep_no_sync_saved_activations
 from olmo_core.nn.transformer.config import (
     TransformerBlockConfig,
     TransformerBlockType,
+)
+
+
+def _shared_up_gate_rhs(weight: torch.Tensor) -> torch.Tensor:
+    return weight.unsqueeze(0)
+
+
+def _shared_up_gate_rhs_for_dgrad(weight: torch.Tensor) -> torch.Tensor:
+    return weight.transpose(0, 1).unsqueeze(0)
+
+
+def _shared_down_rhs(weight: torch.Tensor) -> torch.Tensor:
+    return weight
+
+
+def _shared_down_rhs_for_dgrad(weight: torch.Tensor) -> torch.Tensor:
+    return weight.transpose(1, 2)
+
+
+_SHARED_UP_GATE_FP8_CACHE_SPECS = (
+    FP8WeightCacheSpec("rhs", _shared_up_gate_rhs),
+    FP8WeightCacheSpec("rhs_for_dgrad", _shared_up_gate_rhs_for_dgrad),
+)
+_SHARED_DOWN_FP8_CACHE_SPECS = (
+    FP8WeightCacheSpec("rhs", _shared_down_rhs),
+    FP8WeightCacheSpec("rhs_for_dgrad", _shared_down_rhs_for_dgrad),
 )
 
 
@@ -289,6 +316,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._shared_rowwise_fp8_up_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_down_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_weight_versions: Optional[Tuple[int, int]] = None
+        self._shared_rowwise_fp8_up_gate_weight: Optional[FP8WeightStore] = None
+        self._shared_rowwise_fp8_down_weight: Optional[FP8WeightStore] = None
         self.use_peri_norm = use_peri_norm
 
         ######## START: Attention ########
@@ -334,6 +363,28 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             owner_ref = weakref.ref(self)
             self.shared_experts.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
             self.shared_experts.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+            self._shared_rowwise_fp8_up_gate_weight = FP8WeightStore(
+                logical_name="shared_experts.w_up_gate",
+                logical_shape=tuple(self.shared_experts.w_up_gate.shape),
+                cache_specs=_SHARED_UP_GATE_FP8_CACHE_SPECS,
+                anchor_param=self.shared_experts.w_up_gate,
+                optimizer_enabled=(
+                    self.rowwise_fp8 is not None
+                    and self.rowwise_fp8.enabled
+                    and self.rowwise_fp8.fp8_only_params
+                ),
+            )
+            self._shared_rowwise_fp8_down_weight = FP8WeightStore(
+                logical_name="shared_experts.w_down",
+                logical_shape=tuple(self.shared_experts.w_down.shape),
+                cache_specs=_SHARED_DOWN_FP8_CACHE_SPECS,
+                anchor_param=self.shared_experts.w_down,
+                optimizer_enabled=(
+                    self.rowwise_fp8 is not None
+                    and self.rowwise_fp8.enabled
+                    and self.rowwise_fp8.fp8_only_params
+                ),
+            )
             # Shared Experts Router
             if shared_experts.num_experts > 1:
                 # Need router if more than one experts
@@ -402,6 +453,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.ep_no_sync_rowwise_symm_combine_gather = ep_no_sync_rowwise_symm_combine_gather
         self._ep_symm_group_name: Optional[str] = None
         self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
+        self._ep_no_sync_symm_lease_pools: Dict[str, object] = {}
         self._ep_no_sync_last_debug: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_shared_pool: Optional[_NoSyncSymmSharedPool] = None
         self._ep_no_sync_shared_slot: int = 0
@@ -440,6 +492,125 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
     def refresh_rowwise_fp8_cache(self) -> None:
         _refresh_rowwise_fp8_cache(self)
+
+    def _shared_fp8_only_params_enabled(self) -> bool:
+        cfg = self.rowwise_fp8
+        return cfg is not None and cfg.enabled and cfg.fp8_only_params
+
+    def _sync_shared_rowwise_fp8_weight_anchors(self) -> None:
+        if (
+            self.shared_experts is None
+            or self._shared_rowwise_fp8_up_gate_weight is None
+            or self._shared_rowwise_fp8_down_weight is None
+        ):
+            return
+        fp8_only_params = self._shared_fp8_only_params_enabled()
+        owner_ref = weakref.ref(self)
+        self.shared_experts.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+        self.shared_experts.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+        self._shared_rowwise_fp8_up_gate_weight.anchor_param = self.shared_experts.w_up_gate
+        self._shared_rowwise_fp8_up_gate_weight.logical_shape = tuple(self.shared_experts.w_up_gate.shape)
+        self._shared_rowwise_fp8_up_gate_weight.optimizer_enabled = fp8_only_params
+        self._shared_rowwise_fp8_down_weight.anchor_param = self.shared_experts.w_down
+        self._shared_rowwise_fp8_down_weight.logical_shape = tuple(self.shared_experts.w_down.shape)
+        self._shared_rowwise_fp8_down_weight.optimizer_enabled = fp8_only_params
+        if fp8_only_params:
+            self.shared_experts.w_up_gate.requires_grad_(False)
+            self.shared_experts.w_down.requires_grad_(False)
+
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, FP8WeightStore]]:
+        if self.routed_experts is not None:
+            for name, weight in self.routed_experts.named_fp8_weight_stores():
+                yield f"routed_experts.{name}", weight
+        self._sync_shared_rowwise_fp8_weight_anchors()
+        if self._shared_rowwise_fp8_up_gate_weight is not None:
+            yield "shared_experts.w_up_gate", self._shared_rowwise_fp8_up_gate_weight
+        if self._shared_rowwise_fp8_down_weight is not None:
+            yield "shared_experts.w_down", self._shared_rowwise_fp8_down_weight
+
+    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, object]]:
+        yield from self.named_fp8_weight_stores()
+
+    def zero_fp8_weight_store_grads(self, set_to_none: bool = True) -> None:
+        for _, weight in self.named_fp8_weight_stores():
+            weight.zero_grad(set_to_none=set_to_none)
+
+    def zero_mxfp8_expert_weight_grads(self, set_to_none: bool = True) -> None:
+        self.zero_fp8_weight_store_grads(set_to_none=set_to_none)
+
+    def set_fp8_weight_store_main_grads_to_none(self) -> None:
+        for _, weight in self.named_fp8_weight_stores():
+            weight.set_main_grad_to_none()
+
+    def set_mxfp8_expert_weight_main_grads_to_none(self) -> None:
+        self.set_fp8_weight_store_main_grads_to_none()
+
+    def disable_fp8_weight_anchor_grads(self) -> None:
+        if self.routed_experts is not None:
+            self.routed_experts.disable_mxfp8_expert_anchor_grads()
+        if self._shared_fp8_only_params_enabled() and self.shared_experts is not None:
+            self._sync_shared_rowwise_fp8_weight_anchors()
+            self.shared_experts.w_up_gate.grad = None
+            self.shared_experts.w_down.grad = None
+            if hasattr(self.shared_experts.w_up_gate, "_main_grad_fp32"):
+                self.shared_experts.w_up_gate._main_grad_fp32 = None  # type: ignore[attr-defined]
+            if hasattr(self.shared_experts.w_down, "_main_grad_fp32"):
+                self.shared_experts.w_down._main_grad_fp32 = None  # type: ignore[attr-defined]
+
+    def disable_mxfp8_expert_anchor_grads(self) -> None:
+        self.disable_fp8_weight_anchor_grads()
+
+    def release_fp8_weight_anchor_storage(self) -> None:
+        if self.routed_experts is not None:
+            self.routed_experts.release_mxfp8_expert_anchor_storage()
+        if not self._shared_fp8_only_params_enabled() or self.shared_experts is None:
+            return
+        self._sync_shared_rowwise_fp8_weight_anchors()
+        if self._shared_rowwise_fp8_up_gate_weight is not None:
+            self._shared_rowwise_fp8_up_gate_weight.release_anchor_storage()
+        if self._shared_rowwise_fp8_down_weight is not None:
+            self._shared_rowwise_fp8_down_weight.release_anchor_storage()
+        self.shared_experts._fp8_anchor_storage_released = True
+
+    def release_mxfp8_expert_anchor_storage(self) -> None:
+        self.release_fp8_weight_anchor_storage()
+
+    def _sync_fp8_weight_store_grad_from_anchor(
+        self,
+        weight: FP8WeightStore,
+        anchor: torch.nn.Parameter,
+    ) -> None:
+        anchor_grad = getattr(anchor, "_main_grad_fp32", None)
+        if anchor_grad is None:
+            anchor_grad = anchor.grad
+        if anchor_grad is None:
+            return
+        weight.replace_wgrad(anchor_grad)
+
+    def sync_fp8_weight_store_grads_from_anchor(self) -> None:
+        if self.routed_experts is not None:
+            self.routed_experts.sync_mxfp8_expert_weight_grads_from_anchor()
+        if (
+            self._shared_fp8_only_params_enabled()
+            and self.shared_experts is not None
+            and self._shared_rowwise_fp8_up_gate_weight is not None
+            and self._shared_rowwise_fp8_down_weight is not None
+        ):
+            self._sync_fp8_weight_store_grad_from_anchor(
+                self._shared_rowwise_fp8_up_gate_weight,
+                self.shared_experts.w_up_gate,
+            )
+            self._sync_fp8_weight_store_grad_from_anchor(
+                self._shared_rowwise_fp8_down_weight,
+                self.shared_experts.w_down,
+            )
+
+    def sync_mxfp8_expert_weight_grads_from_anchor(self) -> None:
+        self.sync_fp8_weight_store_grads_from_anchor()
+
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        super().zero_grad(set_to_none=set_to_none)
+        self.zero_mxfp8_expert_weight_grads(set_to_none=set_to_none)
 
     def purge_cuda_events(self):
         # set all events to None (so that the model can be deepcopied)
@@ -724,6 +895,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 ) from e
             self._ep_symm_group_name = group_name
             self._ep_no_sync_symm_cache.clear()
+            self._ep_no_sync_symm_lease_pools.clear()
             self._ep_no_sync_shared_pool = None
             self._ep_no_sync_shared_slot = 0
             self._ep_no_sync_te_backend_warned = False

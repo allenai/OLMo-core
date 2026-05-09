@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import nvtx
 import torch
@@ -27,7 +27,6 @@ except AttributeError:
     _MXFP8_RECIPE_BLOCKWISE_1X32 = [3]
     _MXFP8_SWIZZLE = [0] if torch.version.hip else [1]
 
-
 @dataclass(frozen=True)
 class ScaledGroupedMMPrequantizedLHS:
     mat_a_q: Tensor
@@ -49,6 +48,12 @@ def _tensor_version(x: Tensor) -> int:
         return int(x._version)
     except Exception:
         return -1
+
+
+def _prequantized_lhs_tensors_for_backward(
+    prequantized_lhs: ScaledGroupedMMPrequantizedLHS,
+) -> tuple[Tensor, Tensor]:
+    return prequantized_lhs.mat_a_q, prequantized_lhs.scale_a
 
 
 def _to_col_major_last2(x: Tensor) -> Tensor:
@@ -186,6 +191,75 @@ def _forward_scaled_grouped_mm_mxfp8(
     )
 
 
+def _forward_scaled_grouped_mm_mxfp8_prequantized_rhs(
+    mat_a: Tensor,
+    prequantized_rhs: ScaledGroupedMMPrequantizedRHS,
+    offs: Tensor,
+    *,
+    use_fast_accum: bool,
+    prequantized_lhs: Optional[ScaledGroupedMMPrequantizedLHS] = None,
+) -> Tensor:
+    if mat_a.ndim != 2:
+        raise ValueError(
+            "scaled_grouped_mm_q_fp8_weight currently supports rank-2 LHS only, "
+            f"got mat_a={tuple(mat_a.shape)}"
+        )
+
+    mat_b_shape = tuple(prequantized_rhs.mat_b_shape)
+    if len(mat_b_shape) != 3:
+        raise ValueError(
+            "prequantized_rhs must describe rank-3 [G,K,N] RHS, "
+            f"got mat_b_shape={mat_b_shape}"
+        )
+
+    if offs.dtype != torch.int32:
+        offs = offs.to(dtype=torch.int32)
+
+    if not mat_a.is_cuda or not prequantized_rhs.mat_b_q.is_cuda:
+        raise RuntimeError("scaled_grouped_mm_q_fp8_weight requires CUDA tensors")
+    if prequantized_rhs.mat_b_q.device != mat_a.device:
+        raise RuntimeError(
+            "prequantized_rhs device mismatch: "
+            f"rhs_device={prequantized_rhs.mat_b_q.device} mat_a_device={mat_a.device}"
+        )
+
+    scale_a_blocked: Optional[Tensor] = None
+    if prequantized_lhs is not None:
+        if tuple(prequantized_lhs.mat_a_shape) != tuple(mat_a.shape):
+            raise ValueError(
+                "prequantized_lhs shape mismatch: "
+                f"expected {tuple(mat_a.shape)}, got {tuple(prequantized_lhs.mat_a_shape)}"
+            )
+        if prequantized_lhs.mat_a_q.device != mat_a.device:
+            raise ValueError(
+                "prequantized_lhs device mismatch: "
+                f"q_device={prequantized_lhs.mat_a_q.device} mat_a_device={mat_a.device}"
+            )
+        mat_a_q = prequantized_lhs.mat_a_q
+        if prequantized_lhs.scales_are_blocked:
+            scale_a_blocked = prequantized_lhs.scale_a
+        else:
+            scale_a_blocked = grouped_scales_to_mxfp8_blocked(prequantized_lhs.scale_a, offs)
+    else:
+        mat_a_q, scale_a_unblocked = quantize_rows_to_mxfp8(mat_a, block_size=32)
+        scale_a_blocked = grouped_scales_to_mxfp8_blocked(scale_a_unblocked, offs)
+
+    mat_b_q = _to_col_major_last2(prequantized_rhs.mat_b_q)
+    scale_b_blocked = prequantized_rhs.scale_b
+
+    if scale_a_blocked is None:
+        raise RuntimeError("aten::_scaled_grouped_mm_v2 path requires blocked lhs scales")
+
+    return _scaled_grouped_mm_v2_cuda(
+        mat_a_q,
+        mat_b_q,
+        scale_a_blocked,
+        scale_b_blocked,
+        offs=offs,
+        use_fast_accum=use_fast_accum,
+    )
+
+
 class _ScaledGroupedMMQFunction(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
@@ -253,7 +327,13 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
             and not prequantized_lhs.scales_are_blocked
         )
         if use_saved_prequantized_lhs:
-            ctx.save_for_backward(mat_b, offs, prequantized_lhs.mat_a_q, prequantized_lhs.scale_a)
+            mat_a_q, scale_a = _prequantized_lhs_tensors_for_backward(prequantized_lhs)
+            ctx.save_for_backward(
+                mat_b,
+                offs,
+                mat_a_q,
+                scale_a,
+            )
             ctx._saved_mat_a_from_prequantized_lhs = True
         else:
             ctx.save_for_backward(mat_a, mat_b, offs)
@@ -340,6 +420,209 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
         return grad_a, grad_b, None, None, None, None, None, None
 
 
+class _ScaledGroupedMMQFP8WeightFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx,
+        mat_a: Tensor,
+        grad_anchor: Tensor,
+        offs: Optional[Tensor],
+        input_grad_out: Optional[Tensor],
+        use_fast_accum: bool,
+        prequantized_lhs: Optional[ScaledGroupedMMPrequantizedLHS],
+        prequantized_rhs: ScaledGroupedMMPrequantizedRHS,
+        prequantized_rhs_for_dgrad: ScaledGroupedMMPrequantizedRHS,
+        wgrad_sink: Optional[Any],
+        wgrad_sink_transpose_last2: bool,
+        wgrad_sink_squeeze_first_dim: bool,
+    ) -> Tensor:
+        if offs is None:
+            raise ValueError("offs is required for scaled_grouped_mm_q_fp8_weight")
+        if grad_anchor.ndim != 3:
+            raise ValueError(
+                "scaled_grouped_mm_q_fp8_weight expects a rank-3 gradient anchor, "
+                f"got {tuple(grad_anchor.shape)}"
+            )
+        if tuple(prequantized_rhs.mat_b_shape) != tuple(grad_anchor.shape):
+            raise ValueError(
+                "prequantized_rhs shape mismatch: "
+                f"expected {tuple(grad_anchor.shape)}, got {tuple(prequantized_rhs.mat_b_shape)}"
+            )
+        grad_anchor_t_shape = tuple(grad_anchor.transpose(-2, -1).shape)
+        if tuple(prequantized_rhs_for_dgrad.mat_b_shape) != grad_anchor_t_shape:
+            raise ValueError(
+                "prequantized_rhs_for_dgrad shape mismatch: "
+                f"expected {grad_anchor_t_shape}, got {tuple(prequantized_rhs_for_dgrad.mat_b_shape)}"
+            )
+
+        if input_grad_out is not None:
+            if input_grad_out.shape != mat_a.shape:
+                raise ValueError(
+                    f"input_grad_out shape mismatch: expected {tuple(mat_a.shape)}, got {tuple(input_grad_out.shape)}"
+                )
+            if input_grad_out.dtype != mat_a.dtype:
+                raise ValueError(
+                    f"input_grad_out dtype mismatch: expected {mat_a.dtype}, got {input_grad_out.dtype}"
+                )
+
+        ctx.grad_anchor_shape = tuple(grad_anchor.shape)
+        ctx.grad_anchor_dtype = grad_anchor.dtype
+        ctx.grad_anchor_device = grad_anchor.device
+        ctx.input_grad_out = input_grad_out
+        ctx.prequantized_rhs_for_dgrad = prequantized_rhs_for_dgrad
+        ctx.wgrad_sink = wgrad_sink
+        ctx.wgrad_sink_transpose_last2 = bool(wgrad_sink_transpose_last2)
+        ctx.wgrad_sink_squeeze_first_dim = bool(wgrad_sink_squeeze_first_dim)
+
+        if mat_a.numel() == 0:
+            result = torch.empty(
+                (mat_a.shape[0], grad_anchor.shape[-1]),
+                device=mat_a.device,
+                dtype=torch.bfloat16,
+            )
+            ctx.save_for_backward(mat_a, offs)
+            ctx._saved_mat_a_from_prequantized_lhs = False
+            ctx._mat_a_empty = True
+            return result
+
+        result = _forward_scaled_grouped_mm_mxfp8_prequantized_rhs(
+            mat_a,
+            prequantized_rhs,
+            offs,
+            use_fast_accum=use_fast_accum,
+            prequantized_lhs=prequantized_lhs,
+        )
+
+        use_saved_prequantized_lhs = (
+            prequantized_lhs is not None
+            and not prequantized_lhs.scales_are_blocked
+        )
+        if use_saved_prequantized_lhs:
+            mat_a_q, scale_a = _prequantized_lhs_tensors_for_backward(prequantized_lhs)
+            ctx.save_for_backward(
+                offs,
+                mat_a_q,
+                scale_a,
+            )
+            ctx._saved_mat_a_from_prequantized_lhs = True
+        else:
+            ctx.save_for_backward(mat_a, offs)
+            ctx._saved_mat_a_from_prequantized_lhs = False
+        ctx._mat_a_empty = False
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_out: Tensor):  # type: ignore[override]
+        mat_a: Optional[Tensor] = None
+        saved_mat_a_q: Optional[Tensor] = None
+        saved_mat_a_scale: Optional[Tensor] = None
+        grad_out_compute = grad_out
+        grad_out_mxfp8 = grad_out if isinstance(grad_out, OlmoMXFP8Tensor) else None
+        if grad_out_mxfp8 is not None:
+            grad_out_prequantized_lhs = grad_out_mxfp8.as_scaled_grouped_mm_prequantized_lhs()
+        else:
+            grad_out_prequantized_lhs = None
+        if grad_out_compute.dtype == torch.float8_e4m3fn:
+            grad_out_compute = grad_out_compute.to(dtype=torch.bfloat16)
+
+        if bool(getattr(ctx, "_saved_mat_a_from_prequantized_lhs", False)):
+            offs, mat_a_q, mat_a_scale = ctx.saved_tensors
+            saved_mat_a_q = mat_a_q
+            saved_mat_a_scale = mat_a_scale
+        else:
+            mat_a, offs = ctx.saved_tensors
+
+        grad_a = None
+        grad_anchor = None
+
+        if bool(getattr(ctx, "_mat_a_empty", False)):
+            if ctx.needs_input_grad[0]:
+                assert mat_a is not None
+                grad_a = torch.empty_like(mat_a)
+                if ctx.input_grad_out is not None:
+                    ctx.input_grad_out.copy_(grad_a)
+                    grad_a = ctx.input_grad_out
+            if ctx.needs_input_grad[1] or ctx.wgrad_sink is not None:
+                grad_anchor = torch.zeros(
+                    ctx.grad_anchor_shape,
+                    device=ctx.grad_anchor_device,
+                    dtype=ctx.grad_anchor_dtype,
+                )
+                if ctx.wgrad_sink is not None:
+                    sink_grad = (
+                        grad_anchor.transpose(-2, -1).contiguous()
+                        if ctx.wgrad_sink_transpose_last2
+                        else grad_anchor
+                    )
+                    if ctx.wgrad_sink_squeeze_first_dim:
+                        if sink_grad.shape[0] != 1:
+                            raise RuntimeError(
+                                "wgrad_sink_squeeze_first_dim expects first dim size 1, "
+                                f"got {tuple(sink_grad.shape)}"
+                            )
+                        sink_grad = sink_grad.squeeze(0).contiguous()
+                    ctx.wgrad_sink.accumulate_wgrad(sink_grad)
+            if not ctx.needs_input_grad[1]:
+                grad_anchor = None
+            return grad_a, grad_anchor, None, None, None, None, None, None, None, None, None
+
+        if ctx.needs_input_grad[0]:
+            if grad_out_compute.is_cuda and ctx.prequantized_rhs_for_dgrad.mat_b_q.is_cuda:
+                grad_a = _forward_scaled_grouped_mm_mxfp8_prequantized_rhs(
+                    grad_out_compute,
+                    ctx.prequantized_rhs_for_dgrad,
+                    offs,
+                    use_fast_accum=True,
+                    prequantized_lhs=grad_out_prequantized_lhs,
+                )
+                if ctx.input_grad_out is not None:
+                    ctx.input_grad_out.copy_(grad_a)
+                    grad_a = ctx.input_grad_out
+            else:
+                raise RuntimeError(
+                    "scaled_grouped_mm_q_fp8_weight dgrad requires CUDA cached RHS"
+                )
+
+        need_wgrad = ctx.needs_input_grad[1] or ctx.wgrad_sink is not None
+        if need_wgrad:
+            if mat_a is None:
+                if saved_mat_a_q is None or saved_mat_a_scale is None:
+                    raise RuntimeError(
+                        "scaled_grouped_mm_q_fp8_weight backward expected mat_a when wgrad is required"
+                    )
+                mat_a = dequantize_rows_from_mxfp8(
+                    saved_mat_a_q,
+                    saved_mat_a_scale,
+                    block_size=32,
+                    out_dtype=grad_out_compute.dtype,
+                )
+            if grad_out_mxfp8 is not None:
+                grad_out_compute = grad_out_mxfp8.dequantize(out_dtype=mat_a.dtype)
+            grad_anchor = F.grouped_mm(
+                grad_out_compute.transpose(-2, -1),
+                mat_a,
+                offs=offs,
+            ).transpose(-2, -1)
+            if ctx.wgrad_sink is not None:
+                sink_grad = (
+                    grad_anchor.transpose(-2, -1).contiguous()
+                    if ctx.wgrad_sink_transpose_last2
+                    else grad_anchor
+                )
+                if ctx.wgrad_sink_squeeze_first_dim:
+                    if sink_grad.shape[0] != 1:
+                        raise RuntimeError(
+                            "wgrad_sink_squeeze_first_dim expects first dim size 1, "
+                            f"got {tuple(sink_grad.shape)}"
+                        )
+                    sink_grad = sink_grad.squeeze(0).contiguous()
+                ctx.wgrad_sink.accumulate_wgrad(sink_grad)
+            if not ctx.needs_input_grad[1]:
+                grad_anchor = None
+
+        return grad_a, grad_anchor, None, None, None, None, None, None, None, None, None
+
+
 def scaled_grouped_mm_q(
     mat_a: Tensor,
     mat_b: Tensor,
@@ -375,8 +658,48 @@ def scaled_grouped_mm_q(
     )
 
 
+def scaled_grouped_mm_q_fp8_weight(
+    mat_a: Tensor,
+    grad_anchor: Tensor,
+    *,
+    offs: Tensor,
+    input_grad_out: Optional[Tensor] = None,
+    use_fast_accum: bool = True,
+    prequantized_lhs: Optional[ScaledGroupedMMPrequantizedLHS] = None,
+    prequantized_rhs: ScaledGroupedMMPrequantizedRHS,
+    prequantized_rhs_for_dgrad: ScaledGroupedMMPrequantizedRHS,
+    wgrad_sink: Optional[Any] = None,
+    wgrad_sink_transpose_last2: bool = False,
+    wgrad_sink_squeeze_first_dim: bool = False,
+) -> Tensor:
+    """
+    MXFP8 grouped mm for a prequantized expert weight.
+
+    This transitional API uses only the cached MXFP8 RHS tensors for forward
+    and dgrad, while `grad_anchor` receives the normal high-precision wgrad.
+    If `wgrad_sink` is provided, the same wgrad is also accumulated there as a
+    side channel for the staged FP8-only-params refactor. That keeps today's
+    DDP/optimizer behavior intact while decoupling kernel execution from the
+    bf16 model weight storage.
+    """
+    return _ScaledGroupedMMQFP8WeightFunction.apply(
+        mat_a,
+        grad_anchor,
+        offs,
+        input_grad_out,
+        use_fast_accum,
+        prequantized_lhs,
+        prequantized_rhs,
+        prequantized_rhs_for_dgrad,
+        wgrad_sink,
+        bool(wgrad_sink_transpose_last2),
+        bool(wgrad_sink_squeeze_first_dim),
+    )
+
+
 __all__ = [
     "scaled_grouped_mm_q",
+    "scaled_grouped_mm_q_fp8_weight",
     "prequantize_scaled_grouped_mm_rhs",
     "ScaledGroupedMMPrequantizedLHS",
     "ScaledGroupedMMPrequantizedRHS",

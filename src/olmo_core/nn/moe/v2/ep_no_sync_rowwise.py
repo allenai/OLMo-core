@@ -12,6 +12,7 @@ from .comm import (
     _RowwiseCombineWeightedAutograd,
     _RowwiseCombineWeightedFP8Autograd,
 )
+from .checkpointing import is_activation_checkpointing
 from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
@@ -120,9 +121,19 @@ def combined_forward_ep_no_sync_rowwise(
     num_out_tokens = local_x_global_routed_expert_indices.numel()
     num_input_tokens = moe_inp.shape[0]
     top_k = self.routed_experts_router.top_k
+    activation_checkpointing = is_activation_checkpointing()
     use_symm_dispatch_in = (not use_rowwise_fp8) and use_ep_no_sync_rowwise_symm_dispatch_in(self)
-    use_symm_combine_out = (not use_rowwise_fp8) and use_ep_no_sync_rowwise_symm_combine_out(self)
-    use_symm_combine_gather = (not use_rowwise_fp8) and use_ep_no_sync_rowwise_symm_combine_gather(self)
+    use_symm_combine_out = (
+        (not use_rowwise_fp8)
+        and (not activation_checkpointing)
+        and use_ep_no_sync_rowwise_symm_combine_out(self)
+    )
+    use_symm_combine_gather = (
+        (not use_rowwise_fp8)
+        and (not activation_checkpointing)
+        and use_ep_no_sync_rowwise_symm_combine_gather(self)
+    )
+    lease_lifetime_buffers = torch.is_grad_enabled() and not activation_checkpointing
 
     with torch.no_grad():
         with nvtx.annotate("ConfigCapacity", color="green"):
@@ -172,6 +183,9 @@ def combined_forward_ep_no_sync_rowwise(
         need_combine_gather=use_symm_combine_gather,
         combine_gather_cap=num_input_tokens,
         combine_gather_top_k=top_k,
+        lease_dispatch_out=(not use_rowwise_fp8) and lease_lifetime_buffers,
+        lease_combine_out=use_symm_combine_out and lease_lifetime_buffers,
+        lease_combine_gather=use_symm_combine_gather and lease_lifetime_buffers,
     )
 
     dispatch_out_q: Optional[torch.Tensor] = None
@@ -187,6 +201,7 @@ def combined_forward_ep_no_sync_rowwise(
             d_model=moe_inp.shape[1],
             block_size=rowwise_fp8_cfg.block_size,
             device=moe_inp.device,
+            lease_dispatch_out=lease_lifetime_buffers,
         )
         dispatch_out_q = fp8_buffers.dispatch_out_q
         dispatch_out_scales = fp8_buffers.dispatch_out_scales
@@ -237,6 +252,7 @@ def combined_forward_ep_no_sync_rowwise(
                 dst_rows,
                 dispatch_out_q,
                 dispatch_out_scales,
+                fp8_buffers.dispatch_out_lease,
                 rowwise_fp8_cfg.block_size,
                 group_name,
                 self.ep_pg,
@@ -249,6 +265,7 @@ def combined_forward_ep_no_sync_rowwise(
                 dst_ranks,
                 dst_rows,
                 buffers.dispatch_out,
+                buffers.dispatch_out_lease,
                 group_name,
                 self.ep_pg,
                 rowwise_nblocks,
@@ -297,7 +314,9 @@ def combined_forward_ep_no_sync_rowwise(
                 dispatch_rank_major,
                 buffers.combine_in,
                 buffers.combine_out if use_symm_combine_out else None,
+                buffers.combine_out_lease if use_symm_combine_out else None,
                 buffers.combine_gather if use_symm_combine_gather else None,
+                buffers.combine_gather_lease if use_symm_combine_gather else None,
                 dst_ranks,
                 dst_rows,
                 route_probs,

@@ -16,6 +16,7 @@ from ...moe.utils import (
     wait_stream_no_compile,
 )
 from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
+from .checkpointing import is_activation_checkpointing
 from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
 from .ep_no_sync_buffers import (
     _NoSyncSymmBuffers,
@@ -212,9 +213,17 @@ def ep_no_sync_rowwise_tbo_stage_a(
     num_out_tokens = local_x_global_routed_expert_indices.numel()
     num_input_tokens = moe_inp.shape[0]
     top_k = self.routed_experts_router.top_k
+    activation_checkpointing = is_activation_checkpointing()
     use_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(self)
-    use_symm_combine_out = use_ep_no_sync_rowwise_symm_combine_out(self)
-    use_symm_combine_gather = use_ep_no_sync_rowwise_symm_combine_gather(self)
+    use_symm_combine_out = (
+        (not activation_checkpointing)
+        and use_ep_no_sync_rowwise_symm_combine_out(self)
+    )
+    use_symm_combine_gather = (
+        (not activation_checkpointing)
+        and use_ep_no_sync_rowwise_symm_combine_gather(self)
+    )
+    lease_lifetime_buffers = torch.is_grad_enabled() and not activation_checkpointing
     with torch.no_grad():
         with nvtx.annotate("RowwiseTBO-A-ConfigCapacity", color="green"):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
@@ -284,6 +293,9 @@ def ep_no_sync_rowwise_tbo_stage_a(
         need_combine_gather=use_symm_combine_gather,
         combine_gather_cap=num_input_tokens,
         combine_gather_top_k=top_k,
+        lease_dispatch_out=lease_lifetime_buffers,
+        lease_combine_out=use_symm_combine_out and lease_lifetime_buffers,
+        lease_combine_gather=use_symm_combine_gather and lease_lifetime_buffers,
     )
     # _tbo_debug_print(
     #     self,
@@ -369,10 +381,11 @@ def ep_no_sync_rowwise_tbo_stage_d_launch(
         # )
         dispatch_out = _DispatchRowwiseAutograd.apply(
             a_state.moe_inp,
-            a_state.buffers.dispatch_in if a_state.use_symm_dispatch_in else None,
+            a_state.buffers.dispatch_in if getattr(a_state, "use_symm_dispatch_in", False) else None,
             a_state.dst_ranks,
             a_state.dst_rows,
             a_state.buffers.dispatch_out,
+            getattr(a_state.buffers, "dispatch_out_lease", None),
             a_state.group_name,
             self.ep_pg,
             a_state.rowwise_nblocks,
@@ -518,7 +531,17 @@ def ep_no_sync_rowwise_tbo_stage_c_launch(
             pending_ctx.global_x_rank_major,
             a_state.buffers.combine_in,
             a_state.buffers.combine_out if a_state.use_symm_combine_out else None,
+            (
+                a_state.buffers.combine_out_lease
+                if a_state.use_symm_combine_out
+                else None
+            ),
             a_state.buffers.combine_gather if a_state.use_symm_combine_gather else None,
+            (
+                a_state.buffers.combine_gather_lease
+                if a_state.use_symm_combine_gather
+                else None
+            ),
             a_state.dst_ranks,
             a_state.dst_rows,
             route_probs,
