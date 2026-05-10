@@ -5,6 +5,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Dict,
+    Iterable,
     List,
     Literal,
     Optional,
@@ -25,7 +26,10 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
-from olmo_core.data.utils import get_cumulative_document_lengths
+from olmo_core.data.utils import (
+    get_cumulative_document_lengths,
+    get_position_ids_from_doc_lens,
+)
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
@@ -247,6 +251,41 @@ class Transformer(nn.Module):
                 rope_buffers[int(key)] = None
         return rope_buffers
 
+    def _iter_context_parallel_rope_inputs(
+        self, seq_len: int
+    ) -> Iterable[Tuple[str, torch.Tensor, int, float]]:
+        # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
+        for block_idx, rope_buffers in self.get_rope_buffers(seq_len, torch.device("cpu")).items():
+            if rope_buffers is None:
+                continue
+            if rope_buffers.pos_sin is not None:
+                yield f"block_{block_idx}.pos_sin", rope_buffers.pos_sin, 0, 0.0
+            if rope_buffers.pos_cos is not None:
+                yield f"block_{block_idx}.pos_cos", rope_buffers.pos_cos, 0, 0.0
+            if rope_buffers.freqs_cis is not None:
+                yield f"block_{block_idx}.freqs_cis", rope_buffers.freqs_cis, 0, 0.0
+
+    def _has_rope(self) -> bool:
+        return any(
+            isinstance(block.attention, (Attention, FusedAttention))
+            and block.attention.rope is not None
+            for block in self.blocks.values()
+        )
+
+    def _validate_position_ids(
+        self, position_ids: torch.Tensor, batch_size: int, seq_len: int
+    ) -> None:
+        if position_ids.ndim != 2 or position_ids.shape != (batch_size, seq_len):
+            raise ValueError(
+                f"'position_ids' must have shape {(batch_size, seq_len)} "
+                f"(got {tuple(position_ids.shape)})"
+            )
+
+        for block in self.blocks.values():
+            if not isinstance(block.attention, FusedAttention) or block.attention.rope is None:
+                continue
+            raise NotImplementedError("position_ids are not yet supported with fused RoPE")
+
     @torch.no_grad()
     def init_weights(
         self,
@@ -390,14 +429,25 @@ class Transformer(nn.Module):
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
-        doc_lens: Optional[torch.Tensor] = None
+        position_ids: Optional[torch.Tensor] = kwargs.pop("position_ids", None)
         cache_leftpad: Optional[torch.Tensor] = kwargs.pop("cache_leftpad", None)
 
-        if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
-            max_doc_lens := kwargs.pop("max_doc_lens", None)
-        ) is not None:
+        doc_lens: Optional[torch.Tensor] = kwargs.pop("doc_lens", None)
+        max_doc_lens = kwargs.pop("max_doc_lens", None)
+
+        if max_doc_lens is not None and doc_lens is None:
+            raise ValueError("'max_doc_lens' is invalid without 'doc_lens'")
+
+        if doc_lens is not None and position_ids is None and self._has_rope():
+            position_ids = get_position_ids_from_doc_lens(doc_lens, S)
+
+        if max_doc_lens is not None:
             max_doc_len = max(max_doc_lens)
-            cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+            cu_doc_lens = get_cumulative_document_lengths(cast(torch.Tensor, doc_lens))
+
+        if position_ids is not None:
+            self._validate_position_ids(position_ids, B, S)
+            position_ids = position_ids.to(device=input_ids.device, dtype=torch.long)
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
@@ -406,25 +456,19 @@ class Transformer(nn.Module):
             pad_values: List[Union[int, float]] = [0]
             keys = ["input_ids"]
 
-            # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
-            for block_idx, rope_buffers in self.get_rope_buffers(S, torch.device("cpu")).items():
-                if rope_buffers is not None:
-                    # Also shard RoPE buffers based on the context parallelism load balancer.
-                    if rope_buffers.pos_sin is not None:
-                        inputs.append(rope_buffers.pos_sin)
-                        seq_dims.append(0)
-                        pad_values.append(0.0)
-                        keys.append(f"block_{block_idx}.pos_sin")
-                    if rope_buffers.pos_cos is not None:
-                        inputs.append(rope_buffers.pos_cos)
-                        seq_dims.append(0)
-                        pad_values.append(0.0)
-                        keys.append(f"block_{block_idx}.pos_cos")
-                    if rope_buffers.freqs_cis is not None:
-                        inputs.append(rope_buffers.freqs_cis)
-                        seq_dims.append(0)
-                        pad_values.append(0.0)
-                        keys.append(f"block_{block_idx}.freqs_cis")
+            if position_ids is not None:
+                inputs.append(position_ids)
+                seq_dims.append(1)
+                pad_values.append(0)
+                keys.append("position_ids")
+            else:
+                for key, rope_input, seq_dim, pad_value in self._iter_context_parallel_rope_inputs(
+                    S
+                ):
+                    inputs.append(rope_input)
+                    seq_dims.append(seq_dim)
+                    pad_values.append(pad_value)
+                    keys.append(key)
 
             if labels is not None:
                 inputs.append(labels)
@@ -482,11 +526,15 @@ class Transformer(nn.Module):
             if max_doc_len is not None or cu_doc_lens is not None:
                 all_block_kwargs["max_doc_len"] = max_doc_len
                 all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+            if position_ids is not None:
+                all_block_kwargs["position_ids"] = move_to_device(position_ids, self.device)
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
         if "cu_doc_lens" in all_block_kwargs:
             mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]
+        if "position_ids" in all_block_kwargs:
+            mark_dynamic(all_block_kwargs["position_ids"], (0, 1), strict=False)
 
         return (
             input_ids,

@@ -1,7 +1,14 @@
+import os
+
 import pytest
 
 from olmo_core.data import DataMix, TokenizerName
 from olmo_core.io import file_exists
+
+
+def _skip_without_aws_credentials() -> None:
+    if not os.environ.get("AWS_ACCESS_KEY_ID") or not os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        pytest.skip("Requires AWS credentials")
 
 
 def test_olmoe_mix():
@@ -14,6 +21,7 @@ def test_olmoe_mix():
         == "s3://ai2-llm/preprocessed/olmo-mix/danyh-compiled-v1_7/documents/wiki/allenai/dolma2-tokenizer/part-1-00000.npy"
     )
 
+    _skip_without_aws_credentials()
     try:
         assert file_exists(paths[-1])
     except NoCredentialsError:
@@ -30,6 +38,7 @@ def test_dolma17_mix():
         == "s3://ai2-llm/preprocessed/olmo-mix/v1_7-dd_ngram_dp_030-qc_cc_en_bin_001/cc_en_tail/gpt-neox-olmo-dolma-v1_5/part-092-00000.npy"
     )
 
+    _skip_without_aws_credentials()
     try:
         assert file_exists(paths[-1])
     except NoCredentialsError:
@@ -47,6 +56,7 @@ def test_v3_small_ppl_validation_mix():
     )
     assert labels[0] == "c4_en-validation"
 
+    _skip_without_aws_credentials()
     try:
         assert file_exists(paths[-1])
     except NoCredentialsError:
