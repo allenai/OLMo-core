@@ -379,6 +379,8 @@ def ep_no_sync_rowwise_tbo_stage_d_launch(
         #     dst_rows=a_state.dst_rows,
         #     dispatch_out=a_state.buffers.dispatch_out,
         # )
+        source_input_aliases_symm_input = False
+        grad_out_aliases_symm_out = True
         dispatch_out = _DispatchRowwiseAutograd.apply(
             a_state.moe_inp,
             a_state.buffers.dispatch_in if getattr(a_state, "use_symm_dispatch_in", False) else None,
@@ -389,6 +391,8 @@ def ep_no_sync_rowwise_tbo_stage_d_launch(
             a_state.group_name,
             self.ep_pg,
             a_state.rowwise_nblocks,
+            source_input_aliases_symm_input,
+            grad_out_aliases_symm_out,
             True,
             True,
         )
@@ -527,6 +531,7 @@ def ep_no_sync_rowwise_tbo_stage_c_launch(
         #     dst_rows=a_state.dst_rows,
         #     route_probs=route_probs,
         # )
+        expert_out_aliases_symm_expert_out = True
         combine_out = _RowwiseCombineWeightedAutograd.apply(
             pending_ctx.global_x_rank_major,
             a_state.buffers.combine_in,
@@ -548,6 +553,7 @@ def ep_no_sync_rowwise_tbo_stage_c_launch(
             a_state.group_name,
             block.ep_pg,
             a_state.rowwise_nblocks,
+            expert_out_aliases_symm_expert_out,
             True,
             True,
         )

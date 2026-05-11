@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
-import nvtx
 import torch
 
 from ...moe.utils import wait_stream_no_compile
@@ -12,10 +12,14 @@ from .comm import (
     _RowwiseCombineWeightedAutograd,
     _RowwiseCombineWeightedFP8Autograd,
 )
-from .checkpointing import is_activation_checkpointing
+from .checkpointing import get_rowwise_checkpoint_state
 from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
 from .ep_no_sync_buffers import (
+    acquire_ep_no_sync_fp8_dispatch_out_lease,
+    acquire_ep_no_sync_rowwise_lifetime_leases,
     compute_ep_no_sync_rank_capacity,
+    get_cached_ep_no_sync_buffers,
+    get_cached_ep_no_sync_rowwise_fp8_buffers,
     get_ep_no_sync_buffers,
     get_ep_no_sync_group_name,
     get_ep_no_sync_rowwise_fp8_buffers,
@@ -41,6 +45,8 @@ def combined_forward_ep_no_sync_rowwise(
     block: MoEFusedV2TransformerBlock,
     x: torch.Tensor,
     *,
+    activation_checkpointing: Optional[bool] = None,
+    accumulate_routed_aux_loss_metrics: Optional[bool] = None,
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
 ) -> torch.Tensor:
@@ -121,7 +127,8 @@ def combined_forward_ep_no_sync_rowwise(
     num_out_tokens = local_x_global_routed_expert_indices.numel()
     num_input_tokens = moe_inp.shape[0]
     top_k = self.routed_experts_router.top_k
-    activation_checkpointing = is_activation_checkpointing()
+    if activation_checkpointing is None or accumulate_routed_aux_loss_metrics is None:
+        activation_checkpointing, accumulate_routed_aux_loss_metrics = get_rowwise_checkpoint_state()
     use_symm_dispatch_in = (not use_rowwise_fp8) and use_ep_no_sync_rowwise_symm_dispatch_in(self)
     use_symm_combine_out = (
         (not use_rowwise_fp8)
@@ -134,79 +141,165 @@ def combined_forward_ep_no_sync_rowwise(
         and use_ep_no_sync_rowwise_symm_combine_gather(self)
     )
     lease_lifetime_buffers = torch.is_grad_enabled() and not activation_checkpointing
+    lease_dispatch_out = (not use_rowwise_fp8) and lease_lifetime_buffers
+    lease_combine_out = use_symm_combine_out and lease_lifetime_buffers
+    lease_combine_gather = use_symm_combine_gather and lease_lifetime_buffers
 
     with torch.no_grad():
-        with nvtx.annotate("ConfigCapacity", color="green"):
-            requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
-            rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
-            (
-                allowed_splits,
-                recv_splits_by_src_local,
-                _drop_token_cnt,
-                keep_from_src_dest_local,
-            ) = cast(
-                Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-                sync_tail_drop_allowed_splits_single_a2a(
-                    self,
-                    requested_splits,
-                    rank_capacity=rank_capacity,
-                    return_keep_matrix=True,
-                ),
-            )
-            dispatch_in_cap = num_out_tokens
-            dispatch_out_cap = rank_capacity
-            combine_in_cap = rank_capacity
-            combine_out_cap = num_input_tokens
-            accumulate_ep_no_sync_rowwise_metrics(
+        requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
+        rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
+        (
+            allowed_splits,
+            recv_splits_by_src_local,
+            _drop_token_cnt,
+            keep_from_src_dest_local,
+        ) = cast(
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+            sync_tail_drop_allowed_splits_single_a2a(
                 self,
-                drop_token_cnt=_drop_token_cnt,
-                num_out_tokens=num_out_tokens,
-                recv_splits_by_src_local=recv_splits_by_src_local,
+                requested_splits,
                 rank_capacity=rank_capacity,
-            )
+                return_keep_matrix=True,
+            ),
+        )
+        dispatch_in_cap = num_out_tokens
+        dispatch_out_cap = rank_capacity
+        combine_in_cap = rank_capacity
+        combine_out_cap = num_input_tokens
+        accumulate_ep_no_sync_rowwise_metrics(
+            self,
+            drop_token_cnt=_drop_token_cnt,
+            num_out_tokens=num_out_tokens,
+            recv_splits_by_src_local=recv_splits_by_src_local,
+            rank_capacity=rank_capacity,
+        )
 
-    buffers = get_ep_no_sync_buffers(
-        self,
-        dispatch_in_cap=dispatch_in_cap,
-        dispatch_out_cap=dispatch_out_cap,
-        combine_in_cap=combine_in_cap,
-        combine_out_cap=combine_out_cap,
-        d_model=moe_inp.shape[-1],
-        dtype=moe_inp.dtype,
-        device=moe_inp.device,
-        need_dispatch_in=use_symm_dispatch_in,
-        need_dispatch_meta=False,
-        need_dispatch_out=not use_rowwise_fp8,
-        need_combine_in=not use_rowwise_fp8,
-        need_combine_meta=False,
-        need_combine_out=use_symm_combine_out,
-        need_combine_gather=use_symm_combine_gather,
-        combine_gather_cap=num_input_tokens,
-        combine_gather_top_k=top_k,
-        lease_dispatch_out=(not use_rowwise_fp8) and lease_lifetime_buffers,
-        lease_combine_out=use_symm_combine_out and lease_lifetime_buffers,
-        lease_combine_gather=use_symm_combine_gather and lease_lifetime_buffers,
-    )
-
+    buffers = None
     dispatch_out_q: Optional[torch.Tensor] = None
     dispatch_out_scales: Optional[torch.Tensor] = None
     combine_in_q: Optional[torch.Tensor] = None
     combine_in_scales: Optional[torch.Tensor] = None
     if use_rowwise_fp8:
         assert rowwise_fp8_cfg is not None
-        fp8_buffers = get_ep_no_sync_rowwise_fp8_buffers(
+        fp8_buffers = get_cached_ep_no_sync_rowwise_fp8_buffers(
             self,
             dispatch_out_cap=dispatch_out_cap,
             combine_in_cap=combine_in_cap,
             d_model=moe_inp.shape[1],
             block_size=rowwise_fp8_cfg.block_size,
             device=moe_inp.device,
-            lease_dispatch_out=lease_lifetime_buffers,
+            need_dispatch_out=not lease_lifetime_buffers,
         )
+        if fp8_buffers is None:
+            fp8_buffers = get_ep_no_sync_rowwise_fp8_buffers(
+                self,
+                dispatch_out_cap=dispatch_out_cap,
+                combine_in_cap=combine_in_cap,
+                d_model=moe_inp.shape[1],
+                block_size=rowwise_fp8_cfg.block_size,
+                device=moe_inp.device,
+                lease_dispatch_out=False,
+                need_dispatch_out=not lease_lifetime_buffers,
+            )
+        if lease_lifetime_buffers:
+            dispatch_out_lease = acquire_ep_no_sync_fp8_dispatch_out_lease(
+                self,
+                dispatch_out_cap=dispatch_out_cap,
+                d_model=moe_inp.shape[1],
+                block_size=rowwise_fp8_cfg.block_size,
+                device=moe_inp.device,
+            )
+            fp8_buffers = replace(
+                fp8_buffers,
+                dispatch_out_q=dispatch_out_lease.tensor("dispatch_out_q"),
+                dispatch_out_scales=dispatch_out_lease.tensor("dispatch_out_scales"),
+                dispatch_out_lease=dispatch_out_lease,
+            )
         dispatch_out_q = fp8_buffers.dispatch_out_q
         dispatch_out_scales = fp8_buffers.dispatch_out_scales
         combine_in_q = fp8_buffers.combine_in_q
         combine_in_scales = fp8_buffers.combine_in_scales
+    else:
+        buffers = get_cached_ep_no_sync_buffers(
+            self,
+            dispatch_in_cap=dispatch_in_cap,
+            dispatch_out_cap=dispatch_out_cap,
+            combine_in_cap=combine_in_cap,
+            combine_out_cap=combine_out_cap,
+            d_model=moe_inp.shape[-1],
+            dtype=moe_inp.dtype,
+            device=moe_inp.device,
+            need_dispatch_in=use_symm_dispatch_in,
+            need_dispatch_meta=False,
+            need_dispatch_out=not lease_dispatch_out,
+            need_combine_in=True,
+            need_combine_meta=False,
+            need_combine_out=use_symm_combine_out and not lease_combine_out,
+            need_combine_gather=use_symm_combine_gather and not lease_combine_gather,
+            combine_gather_cap=num_input_tokens,
+            combine_gather_top_k=top_k,
+        )
+        if buffers is None:
+            buffers = get_ep_no_sync_buffers(
+                self,
+                dispatch_in_cap=dispatch_in_cap,
+                dispatch_out_cap=dispatch_out_cap,
+                combine_in_cap=combine_in_cap,
+                combine_out_cap=combine_out_cap,
+                d_model=moe_inp.shape[-1],
+                dtype=moe_inp.dtype,
+                device=moe_inp.device,
+                need_dispatch_in=use_symm_dispatch_in,
+                need_dispatch_meta=False,
+                need_dispatch_out=not lease_dispatch_out,
+                need_combine_in=True,
+                need_combine_meta=False,
+                need_combine_out=use_symm_combine_out and not lease_combine_out,
+                need_combine_gather=use_symm_combine_gather and not lease_combine_gather,
+                combine_gather_cap=num_input_tokens,
+                combine_gather_top_k=top_k,
+            )
+        if lease_dispatch_out or lease_combine_out or lease_combine_gather:
+            leases = acquire_ep_no_sync_rowwise_lifetime_leases(
+                self,
+                dispatch_out_cap=dispatch_out_cap,
+                combine_out_cap=combine_out_cap,
+                combine_gather_cap=num_input_tokens,
+                combine_gather_top_k=top_k,
+                d_model=moe_inp.shape[-1],
+                dtype=moe_inp.dtype,
+                device=moe_inp.device,
+                need_dispatch_out=lease_dispatch_out,
+                need_combine_out=lease_combine_out,
+                need_combine_gather=lease_combine_gather,
+            )
+            buffers = replace(
+                buffers,
+                dispatch_out=(
+                    leases.dispatch_out_lease.tensor("dispatch_out")
+                    if leases.dispatch_out_lease is not None
+                    else buffers.dispatch_out
+                ),
+                dispatch_out_is_shared=(
+                    True if leases.dispatch_out_lease is not None else buffers.dispatch_out_is_shared
+                ),
+                combine_out=(
+                    leases.combine_out_lease.tensor("combine_out")
+                    if leases.combine_out_lease is not None
+                    else buffers.combine_out
+                ),
+                combine_out_is_shared=(
+                    True if leases.combine_out_lease is not None else buffers.combine_out_is_shared
+                ),
+                combine_gather=(
+                    leases.combine_gather_lease.tensor("combine_gather")
+                    if leases.combine_gather_lease is not None
+                    else buffers.combine_gather
+                ),
+                dispatch_out_lease=leases.dispatch_out_lease,
+                combine_out_lease=leases.combine_out_lease,
+                combine_gather_lease=leases.combine_gather_lease,
+            )
 
     routing_map = local_x_global_routed_expert_indices.view(
         -1, top_k
@@ -241,43 +334,47 @@ def combined_forward_ep_no_sync_rowwise(
     else:
         shared_out_up, shared_out_gate = None, None
 
-    with nvtx.annotate("Rowwise Dispatch", color="green"):
-        if use_rowwise_fp8:
-            assert rowwise_fp8_cfg is not None
-            assert dispatch_out_q is not None
-            assert dispatch_out_scales is not None
-            dispatch_rank_major = _DispatchRowwiseFP8Autograd.apply(
-                moe_inp,
-                dst_ranks,
-                dst_rows,
-                dispatch_out_q,
-                dispatch_out_scales,
-                fp8_buffers.dispatch_out_lease,
-                rowwise_fp8_cfg.block_size,
-                group_name,
-                self.ep_pg,
-                rowwise_nblocks,
-            )
-        else:
-            dispatch_rank_major = _DispatchRowwiseAutograd.apply(
-                moe_inp,
-                buffers.dispatch_in if use_symm_dispatch_in else None,
-                dst_ranks,
-                dst_rows,
-                buffers.dispatch_out,
-                buffers.dispatch_out_lease,
-                group_name,
-                self.ep_pg,
-                rowwise_nblocks,
-                True,
-                False,
-            )
+    if use_rowwise_fp8:
+        assert rowwise_fp8_cfg is not None
+        assert dispatch_out_q is not None
+        assert dispatch_out_scales is not None
+        dispatch_rank_major = _DispatchRowwiseFP8Autograd.apply(
+            moe_inp,
+            dst_ranks,
+            dst_rows,
+            dispatch_out_q,
+            dispatch_out_scales,
+            fp8_buffers.dispatch_out_lease,
+            rowwise_fp8_cfg.block_size,
+            group_name,
+            self.ep_pg,
+            rowwise_nblocks,
+        )
+    else:
+        assert buffers is not None
+        source_input_aliases_symm_input = False
+        grad_out_aliases_symm_out = True
+        dispatch_rank_major = _DispatchRowwiseAutograd.apply(
+            moe_inp,
+            buffers.dispatch_in if use_symm_dispatch_in else None,
+            dst_ranks,
+            dst_rows,
+            buffers.dispatch_out,
+            buffers.dispatch_out_lease,
+            group_name,
+            self.ep_pg,
+            rowwise_nblocks,
+            source_input_aliases_symm_input,
+            grad_out_aliases_symm_out,
+            True,
+            False,
+        )
 
     dispatch_rank_major = self.routed_experts(
         dispatch_rank_major,
         padded_batch_size_per_local_expert,
-        down_proj_out=(None if use_rowwise_fp8 else buffers.combine_in.detach()),
-        up_proj_input_grad_out=(None if use_rowwise_fp8 else buffers.dispatch_out.detach()),
+        down_proj_out=(None if use_rowwise_fp8 else buffers.combine_in.detach()),  # type: ignore[union-attr]
+        up_proj_input_grad_out=(None if use_rowwise_fp8 else buffers.dispatch_out.detach()),  # type: ignore[union-attr]
         use_rowwise_fp8=use_rowwise_fp8,
         rowwise_fp8_input_q=(dispatch_out_q if use_rowwise_fp8 else None),
         rowwise_fp8_input_scales=(dispatch_out_scales if use_rowwise_fp8 else None),
@@ -288,44 +385,46 @@ def combined_forward_ep_no_sync_rowwise(
         other_stream=torch.cuda.current_stream(),
     )
 
-    with nvtx.annotate("Rowwise Combine Merge", color="green"):
-        route_probs = local_x_global_routed_expert_weights.view(
-            -1, self.routed_experts_router.top_k
-        )
+    route_probs = local_x_global_routed_expert_weights.view(
+        -1, self.routed_experts_router.top_k
+    )
 
-        if use_rowwise_fp8:
-            assert rowwise_fp8_cfg is not None
-            assert combine_in_q is not None
-            assert combine_in_scales is not None
-            local_x = _RowwiseCombineWeightedFP8Autograd.apply(
-                dispatch_rank_major,
-                dst_ranks,
-                dst_rows,
-                route_probs,
-                combine_in_q,
-                combine_in_scales,
-                rowwise_fp8_cfg.block_size,
-                group_name,
-                self.ep_pg,
-                self.ep_no_sync_rowwise_nblocks,
-            )
-        else:
-            local_x = _RowwiseCombineWeightedAutograd.apply(
-                dispatch_rank_major,
-                buffers.combine_in,
-                buffers.combine_out if use_symm_combine_out else None,
-                buffers.combine_out_lease if use_symm_combine_out else None,
-                buffers.combine_gather if use_symm_combine_gather else None,
-                buffers.combine_gather_lease if use_symm_combine_gather else None,
-                dst_ranks,
-                dst_rows,
-                route_probs,
-                group_name,
-                self.ep_pg,
-                self.ep_no_sync_rowwise_nblocks,
-                True,
-                False,
-            )
+    if use_rowwise_fp8:
+        assert rowwise_fp8_cfg is not None
+        assert combine_in_q is not None
+        assert combine_in_scales is not None
+        local_x = _RowwiseCombineWeightedFP8Autograd.apply(
+            dispatch_rank_major,
+            dst_ranks,
+            dst_rows,
+            route_probs,
+            combine_in_q,
+            combine_in_scales,
+            rowwise_fp8_cfg.block_size,
+            group_name,
+            self.ep_pg,
+            self.ep_no_sync_rowwise_nblocks,
+        )
+    else:
+        assert buffers is not None
+        expert_out_aliases_symm_expert_out = True
+        local_x = _RowwiseCombineWeightedAutograd.apply(
+            dispatch_rank_major,
+            buffers.combine_in,
+            buffers.combine_out if use_symm_combine_out else None,
+            buffers.combine_out_lease if use_symm_combine_out else None,
+            buffers.combine_gather if use_symm_combine_gather else None,
+            buffers.combine_gather_lease if use_symm_combine_gather else None,
+            dst_ranks,
+            dst_rows,
+            route_probs,
+            group_name,
+            self.ep_pg,
+            self.ep_no_sync_rowwise_nblocks,
+            expert_out_aliases_symm_expert_out,
+            True,
+            False,
+        )
 
     if self.shared_experts is not None:
         assert shared_out_up is not None
@@ -361,4 +460,8 @@ def combined_forward_ep_no_sync_rowwise(
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
     final_out = self._res_norm_mlp(attn_res_out, mlp_out)
-    return self._attach_routed_aux_loss(final_out, routed_expert_router_aux_loss_info)
+    return self._attach_routed_aux_loss(
+        final_out,
+        routed_expert_router_aux_loss_info,
+        accumulate_metrics=accumulate_routed_aux_loss_metrics,
+    )

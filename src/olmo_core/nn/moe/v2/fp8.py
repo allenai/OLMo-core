@@ -245,6 +245,88 @@ def shared_experts_forward1_rowwise_fp8(
     return up, gate
 
 
+def shared_experts_forward_rowwise_fp8(
+    block: MoEFusedV2TransformerBlock,
+    x: torch.Tensor,
+    *,
+    use_fast_accum: bool,
+) -> torch.Tensor:
+    assert block.shared_experts is not None
+    if x.ndim != 3:
+        raise RuntimeError(
+            "shared_experts_forward_rowwise_fp8 expects x to be [B, S, D], "
+            f"got shape={tuple(x.shape)}"
+        )
+    B, S, D = x.shape
+    E, H = block.shared_experts.num_experts, block.shared_experts.hidden_size
+    BS = B * S
+
+    x2 = x.reshape(BS, D)
+    up_prequant = block._shared_rowwise_fp8_up_prequant
+    up_prequant_t = block._shared_rowwise_fp8_up_prequant_t
+    if up_prequant is None or up_prequant_t is None:
+        raise RuntimeError("shared rowwise FP8 up/gate prequant buffers were not initialized")
+    up_offs = torch.tensor([BS], device=x.device, dtype=torch.int32)
+    up_kwargs = dict(
+        offs=up_offs,
+        use_fast_accum=use_fast_accum,
+        prequantized_rhs=up_prequant,
+        prequantized_rhs_for_dgrad=up_prequant_t,
+    )
+    cfg = block.rowwise_fp8
+    fp8_only_params = cfg is not None and cfg.fp8_only_params
+    up_anchor = block.shared_experts.w_up_gate.unsqueeze(0)
+    if fp8_only_params:
+        up_weight = getattr(block, "_shared_rowwise_fp8_up_gate_weight", None)
+        if up_weight is None:
+            raise RuntimeError("shared rowwise FP8 up/gate weight store is not initialized")
+        up_kwargs["wgrad_sink"] = up_weight
+        up_kwargs["wgrad_sink_squeeze_first_dim"] = True
+        up_anchor = up_anchor.detach()
+        up_mm_impl = scaled_grouped_mm_q_fp8_weight
+    else:
+        up_mm_impl = scaled_grouped_mm_q
+    up_gate = up_mm_impl(
+        x2,
+        up_anchor,
+        **up_kwargs,
+    )
+
+    up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
+    up, gate = up_gate.unbind(dim=2)
+    gate = torch.nn.functional.silu(gate)
+    hidden = up * gate
+
+    down_prequant = block._shared_rowwise_fp8_down_prequant
+    down_prequant_t = block._shared_rowwise_fp8_down_prequant_t
+    if down_prequant is None or down_prequant_t is None:
+        raise RuntimeError("shared rowwise FP8 down prequant buffers were not initialized")
+    hidden_2d = hidden.reshape(E * BS, -1)
+    down_offs = torch.arange(BS, E * BS + 1, BS, device=hidden.device, dtype=torch.int32)
+    down_kwargs = dict(
+        offs=down_offs,
+        use_fast_accum=use_fast_accum,
+        prequantized_rhs=down_prequant,
+        prequantized_rhs_for_dgrad=down_prequant_t,
+    )
+    down_anchor = block.shared_experts.w_down
+    if fp8_only_params:
+        down_weight = getattr(block, "_shared_rowwise_fp8_down_weight", None)
+        if down_weight is None:
+            raise RuntimeError("shared rowwise FP8 down weight store is not initialized")
+        down_kwargs["wgrad_sink"] = down_weight
+        down_anchor = down_anchor.detach()
+        down_mm_impl = scaled_grouped_mm_q_fp8_weight
+    else:
+        down_mm_impl = scaled_grouped_mm_q
+    out_2d = down_mm_impl(
+        hidden_2d,
+        down_anchor,
+        **down_kwargs,
+    )
+    return out_2d.view(E, BS, D).view(E, B, S, D)
+
+
 def shared_experts_forward2_rowwise_fp8(
     block: MoEFusedV2TransformerBlock,
     up: torch.Tensor,

@@ -1,5 +1,6 @@
 import threading
 from contextlib import contextmanager
+from typing import Tuple
 
 import torch
 
@@ -38,6 +39,13 @@ def is_checkpoint_recomputing() -> bool:
 @_torch_compile_disable
 def is_activation_checkpointing() -> bool:
     return is_checkpoint_forwarding() or is_checkpoint_recomputing()
+
+
+@_torch_compile_disable
+def get_rowwise_checkpoint_state() -> Tuple[bool, bool]:
+    checkpoint_forwarding = is_checkpoint_forwarding()
+    checkpoint_recomputing = is_checkpoint_recomputing()
+    return checkpoint_forwarding or checkpoint_recomputing, not checkpoint_recomputing
 
 
 @contextmanager

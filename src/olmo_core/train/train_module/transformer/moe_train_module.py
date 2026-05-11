@@ -609,7 +609,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 self._prewarm_ep_no_sync_symm_buffers(
                     model_parts=self.model_parts,
                     rank_microbatch_size=self.rank_microbatch_size,
-                    rowwise_lifetime_lease_slots=self._estimate_pp_rowwise_lifetime_lease_slots(),
+                    rowwise_lifetime_lease_slots=self._estimate_pp_rowwise_lifetime_lease_slots_for_model_parts(),
                 )
 
     @staticmethod
@@ -622,34 +622,61 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
         )
 
-    def _estimate_pp_rowwise_lifetime_lease_slots(self) -> int:
+    def _estimate_pp_rowwise_lifetime_lease_slots_by_stage(self) -> Dict[int, int]:
         if self._train_pp_schedule is None:
-            return 1
+            return {}
         schedule_impl = getattr(self._train_pp_schedule, "schedule_impl", None)
         pipeline_order = getattr(schedule_impl, "pipeline_order", None)
         rank = getattr(schedule_impl, "rank", None)
         if pipeline_order is None or rank is None or rank not in pipeline_order:
-            return max(1, int(getattr(self._train_pp_schedule, "num_microbatches", 1)))
+            return {}
 
         from olmo_core.train.train_module.transformer.pipeline.pipeline_schedule import (
             PipelineActionType,
         )
 
         active_by_stage: Dict[int, int] = {}
-        high_water = 0
+        high_water_by_stage: Dict[int, int] = {}
         for action in pipeline_order[rank]:
             if action is None:
                 continue
             if action.computation_type == PipelineActionType.FORWARD:
                 stage_active = active_by_stage.get(action.stage_index, 0) + 1
                 active_by_stage[action.stage_index] = stage_active
-                high_water = max(high_water, stage_active)
+                high_water_by_stage[action.stage_index] = max(
+                    high_water_by_stage.get(action.stage_index, 0),
+                    stage_active,
+                )
             elif action.computation_type == PipelineActionType.FULL_BACKWARD:
                 active_by_stage[action.stage_index] = max(
                     0,
                     active_by_stage.get(action.stage_index, 0) - 1,
                 )
-        return max(1, high_water)
+        return {stage_idx: max(1, slots) for stage_idx, slots in high_water_by_stage.items()}
+
+    def _estimate_pp_rowwise_lifetime_lease_slots_for_model_parts(self) -> List[int]:
+        if self._pp_stages is None:
+            return [1 for _ in self.model_parts]
+
+        high_water_by_stage = self._estimate_pp_rowwise_lifetime_lease_slots_by_stage()
+        fallback = max(1, int(getattr(self._train_pp_schedule, "num_microbatches", 1)))
+        slots_by_part = [
+            max(1, int(high_water_by_stage.get(stage.stage_index, fallback)))
+            for stage in self._pp_stages
+        ]
+        if len(slots_by_part) != len(self.model_parts):
+            raise RuntimeError(
+                "Could not size rowwise lifetime lease slots per PP model part: "
+                f"got {len(slots_by_part)} stages for {len(self.model_parts)} model parts"
+            )
+        log.info(
+            "Prewarming rowwise lifetime lease slots per local PP stage: %s",
+            {
+                stage.stage_index: slots
+                for stage, slots in zip(self._pp_stages, slots_by_part)
+            },
+        )
+        return slots_by_part
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         raise NotImplementedError("Use load_state_dict_direct instead")
@@ -1653,7 +1680,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         *,
         model_parts,
         rank_microbatch_size: int,
-        rowwise_lifetime_lease_slots: Optional[int] = None,
+        rowwise_lifetime_lease_slots: Optional[Union[int, Sequence[int]]] = None,
     ) -> None:
         if self.world_mesh.get("moe") is None:
             return
@@ -1690,11 +1717,21 @@ class MoEV2TransformerTrainModule(TrainModule):
         # allocation sequence to align with dummy padding.
         max_counts = list(local_counts)
 
+        if isinstance(rowwise_lifetime_lease_slots, Sequence):
+            if len(rowwise_lifetime_lease_slots) != len(typed_parts):
+                raise RuntimeError(
+                    "rowwise_lifetime_lease_slots sequence length must match model_parts: "
+                    f"{len(rowwise_lifetime_lease_slots)} vs {len(typed_parts)}"
+                )
+            rowwise_slots_by_part = [int(slots) for slots in rowwise_lifetime_lease_slots]
+        else:
+            rowwise_slots_by_part = [rowwise_lifetime_lease_slots for _ in typed_parts]
+
         for model_part_idx, (model_part, max_count) in enumerate(zip(typed_parts, max_counts)):
             model_part.prewarm_ep_no_sync_symm_buffers(
                 max_local_microbatch_size=rank_microbatch_size,
                 pad_to_block_count=max_count,
-                rowwise_lifetime_lease_slots=rowwise_lifetime_lease_slots,
+                rowwise_lifetime_lease_slots=rowwise_slots_by_part[model_part_idx],
             )
 
     def compile_model(self):

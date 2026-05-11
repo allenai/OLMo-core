@@ -6,7 +6,7 @@ import os
 
 # Keep this before any olmo_core imports: several modules import nvtx at import
 # time, and NVTX_DISABLE only works if it is set before nvtx is imported.
-USE_NV_PROFILE = False
+USE_NV_PROFILE = True
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
@@ -110,17 +110,17 @@ if sys.argv[1] == "eval_checkpoints":
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 500
 
-NUM_EXPERTS = 64
+NUM_EXPERTS = 16
 TOP_K = 4
-D_MODEL=3 * 1024
-D_ATTN=4 * 1024
+D_MODEL=2 * 1024
+D_ATTN=2 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 4 * 1024
+MOE_HIDDEN_SIZE = 2 * 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 1 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -129,8 +129,8 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=8
-PP_DIM=8
+EP_DIM=2
+PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
@@ -140,8 +140,8 @@ LR_ALPHA = 0.53
 
 # stage 1 - xM - 
 MAX_DURATION = int(100e9)
-MICRO_BSZ = 1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 4
+MICRO_BSZ = 2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) // 2
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
@@ -181,10 +181,10 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=48
+NUM_LAYERS=8
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=1
+    MINUS_LAST_STAGE=0
     NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
@@ -203,12 +203,12 @@ GRAD_REDUCE_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-USE_FP8=False
+USE_FP8=True
 ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = True
+PRODUCTION_RUN = False
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -275,7 +275,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 bias=False,
                 rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                 qk_norm=layer_norm ,
-                backend=AttentionBackendName.te,
+                backend=AttentionBackendName.flash_4,
                 use_head_qk_norm=True,
                 dtype=dtype,
                 d_attn=D_ATTN,
@@ -355,7 +355,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             bias=False,
             rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
             qk_norm=layer_norm ,
-            backend=AttentionBackendName.te,
+            backend=AttentionBackendName.flash_4,
             use_head_qk_norm=True,
             dtype=dtype,
             d_attn=D_ATTN,
@@ -371,7 +371,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
-        # 1: deepcopy(dense_block_config),
+        1: deepcopy(dense_block_config),
         
         # also make last layer dense
         # NUM_LAYERS-1: deepcopy(dense_block_config),
@@ -526,8 +526,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=False,
-                # pre_train_checkpoint=PRODUCTION_RUN,
-                pre_train_checkpoint=False,
+                pre_train_checkpoint=PRODUCTION_RUN,
+                # pre_train_checkpoint=False,
             ),
         )
         .with_callback(
@@ -545,8 +545,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=3531,
-                                   end=3535
+                                   start=30,
+                                   end=34
             )
         )
         .with_callback(

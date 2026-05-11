@@ -20,6 +20,11 @@ except ImportError:
     flash_attn_3 = None
 
 try:
+    from flash_attn.cute import flash_attn_func as flash_attn_4_func  # type: ignore
+except ImportError:
+    flash_attn_4_func = None
+
+try:
     import ring_flash_attn  # type: ignore
 except ImportError:
     ring_flash_attn = None
@@ -39,6 +44,10 @@ def has_flash_attn_3() -> bool:
             return is_supported
         return True
     return False
+
+
+def has_flash_attn_4() -> bool:
+    return flash_attn_4_func is not None
 
 
 def has_ring_flash_attn() -> bool:
@@ -153,6 +162,51 @@ def dispatch_flash_attn_3(
             causal=causal,
             window_size=window_size,
         )
+
+
+def dispatch_flash_attn_4(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    cu_seqlens: Optional[torch.Tensor] = None,
+    cu_seqlens_q: Optional[torch.Tensor] = None,
+    cu_seqlens_k: Optional[torch.Tensor] = None,
+    max_seqlen: Optional[int] = None,
+    max_seqlen_q: Optional[int] = None,
+    max_seqlen_k: Optional[int] = None,
+    softmax_scale: Optional[float] = None,
+    causal: bool = False,
+    window_size: Tuple[int, int] = (-1, -1),
+) -> torch.Tensor:
+    if flash_attn_4_func is None:
+        raise RuntimeError("flash-attn 4 is required!")
+
+    if any(
+        x is not None
+        for x in (
+            cu_seqlens,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen,
+            max_seqlen_q,
+            max_seqlen_k,
+        )
+    ):
+        raise RuntimeError("flash-attn 4 backend does not support varlen attention yet")
+
+    fa4_window_size = (None, None) if window_size == (-1, -1) else window_size
+    out = flash_attn_4_func(
+        q,
+        k,
+        v,
+        softmax_scale=softmax_scale,
+        causal=causal,
+        window_size=fa4_window_size,
+    )
+    if isinstance(out, tuple):
+        out = out[0]
+    return out
 
 
 def dispatch_flash_attn_qkvpacked(

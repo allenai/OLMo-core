@@ -95,6 +95,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         group_name: str,
         group: dist.ProcessGroup,
         nblocks: int,
+        expert_out_aliases_symm_expert_out: bool,
         pre_barrier: bool,
         post_barrier: bool,
     ) -> torch.Tensor:
@@ -131,13 +132,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         if not probs_f32.is_contiguous():
             probs_f32 = probs_f32.contiguous()
 
-        input_aliases_symm_input = (
-            expert_out.untyped_storage().data_ptr() == symm_expert_out.untyped_storage().data_ptr()
-            and expert_out.storage_offset() == symm_expert_out.storage_offset()
-            and tuple(expert_out.shape) == tuple(symm_expert_out.shape)
-            and tuple(expert_out.stride()) == tuple(symm_expert_out.stride())
-        )
-        if not input_aliases_symm_input:
+        if not expert_out_aliases_symm_expert_out:
             symm_expert_out.copy_(expert_out)
 
         combine_out_shape = (src_ranks_i64.shape[0], symm_expert_out.shape[1])
@@ -387,6 +382,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             None,
             None,
             None,
+            None,
         )
 
 
@@ -404,6 +400,8 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         group_name: str,
         group: dist.ProcessGroup,
         nblocks: int,
+        source_input_aliases_symm_input: bool,
+        grad_out_aliases_symm_out: bool,
         get_pre_barrier: bool,
         get_post_barrier: bool,
     ) -> torch.Tensor:
@@ -455,13 +453,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             if not symm_input_view.is_contiguous():
                 raise RuntimeError("symm_input staging view must be contiguous")
 
-            input_aliases_symm_input = (
-                source_input_contig.untyped_storage().data_ptr() == symm_input_view.untyped_storage().data_ptr()
-                and source_input_contig.storage_offset() == symm_input_view.storage_offset()
-                and tuple(source_input_contig.shape) == tuple(symm_input_view.shape)
-                and tuple(source_input_contig.stride()) == tuple(symm_input_view.stride())
-            )
-            if not input_aliases_symm_input:
+            if not source_input_aliases_symm_input:
                 symm_input_view.copy_(source_input_contig)
             dispatch_source = symm_input_view
 
@@ -496,6 +488,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         ctx.nblocks = int(nblocks)
         ctx.get_pre_barrier = bool(get_pre_barrier)
         ctx.get_post_barrier = bool(get_post_barrier)
+        ctx.grad_out_aliases_symm_out = bool(grad_out_aliases_symm_out)
         ctx.symm_input = symm_input
         ctx.symm_out = symm_out
         ctx.symm_out_lease = symm_out_lease
@@ -507,13 +500,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
     def backward(ctx, grad_out: torch.Tensor):  # type: ignore[override]
         dst_ranks, dst_rows = ctx.saved_tensors
         symm_grad_out = ctx.symm_out
-        grad_out_aliases = (
-            grad_out.untyped_storage().data_ptr() == symm_grad_out.untyped_storage().data_ptr()
-            and grad_out.storage_offset() == symm_grad_out.storage_offset()
-            and tuple(grad_out.shape) == tuple(symm_grad_out.shape)
-            and tuple(grad_out.stride()) == tuple(symm_grad_out.stride())
-        )
-        if not grad_out_aliases:
+        if not ctx.grad_out_aliases_symm_out:
             symm_grad_out.copy_(grad_out)
 
         grad_input = torch.empty(
@@ -577,7 +564,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             ctx.symm_out_lease.release()
         ctx.symm_out_lease = None
         ctx.group = None
-        return grad_input, None, None, None, None, None, None, None, None, None, None
+        return grad_input, None, None, None, None, None, None, None, None, None, None, None, None
 
 
 class _DispatchRowwiseFP8Autograd(torch.autograd.Function):

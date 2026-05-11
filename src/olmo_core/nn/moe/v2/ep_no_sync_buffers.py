@@ -127,6 +127,13 @@ class _NoSyncRowwiseFP8SymmBuffers:
     dispatch_out_lease: Optional["_NoSyncSymmLease"] = None
 
 
+@dataclass
+class _NoSyncRowwiseLifetimeLeases:
+    dispatch_out_lease: Optional["_NoSyncSymmLease"] = None
+    combine_out_lease: Optional["_NoSyncSymmLease"] = None
+    combine_gather_lease: Optional["_NoSyncSymmLease"] = None
+
+
 @dataclass(frozen=True)
 class _NoSyncSymmLeaseTensorSpec:
     name: str
@@ -1034,13 +1041,27 @@ def get_ep_no_sync_rowwise_fp8_buffers(
         dtype=torch.float8_e8m0fnu,
         device=device,
     )
-    return _NoSyncRowwiseFP8SymmBuffers(
+    buffers = _NoSyncRowwiseFP8SymmBuffers(
         dispatch_out_q=dispatch_out_q,
         dispatch_out_scales=dispatch_out_scales,
         combine_in_q=combine_in_q,
         combine_in_scales=combine_in_scales,
         dispatch_out_lease=dispatch_out_lease,
     )
+    if dispatch_out_lease is None:
+        cache = getattr(block, "_ep_no_sync_rowwise_fp8_static_buffer_cache", None)
+        if cache is not None:
+            cache[
+                _ep_no_sync_fp8_buffers_cache_key(
+                    dispatch_out_cap=dispatch_out_cap,
+                    combine_in_cap=combine_in_cap,
+                    d_model=d_model,
+                    block_size=block_size,
+                    device=device,
+                    need_dispatch_out=need_dispatch_out,
+                )
+            ] = buffers
+    return buffers
 
 
 def _parse_bool_env(value: str, *, env_name: str) -> Optional[bool]:
@@ -1085,6 +1106,172 @@ def _resolve_rowwise_symm_option(
     return _rowwise_symm_auto_enabled(block) if auto_enabled else False
 
 
+def resolve_ep_no_sync_rowwise_symm_options(block: "MoEFusedV2TransformerBlock") -> None:
+    """Resolve rowwise symmetric-buffer policy before compiled forwards run."""
+    if block.ep_no_sync_rowwise_symm_dispatch_in is None:
+        block.ep_no_sync_rowwise_symm_dispatch_in = _resolve_rowwise_symm_option(
+            block,
+            attr_name="ep_no_sync_rowwise_symm_dispatch_in",
+            env_name="OLMO_MOE_ROWWISE_SYMM_DISPATCH_IN",
+        )
+    if block.ep_no_sync_rowwise_symm_combine_out is None:
+        block.ep_no_sync_rowwise_symm_combine_out = _resolve_rowwise_symm_option(
+            block,
+            attr_name="ep_no_sync_rowwise_symm_combine_out",
+            env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_OUT",
+            auto_enabled=False,
+        )
+    if block.ep_no_sync_rowwise_symm_combine_gather is None:
+        block.ep_no_sync_rowwise_symm_combine_gather = _resolve_rowwise_symm_option(
+            block,
+            attr_name="ep_no_sync_rowwise_symm_combine_gather",
+            env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_GATHER",
+        )
+
+
+def _ep_no_sync_buffers_cache_key(
+    *,
+    dispatch_in_cap: int,
+    dispatch_out_cap: int,
+    combine_in_cap: int,
+    combine_out_cap: int,
+    d_model: int,
+    dtype: torch.dtype,
+    device: torch.device,
+    slot_idx: Optional[int],
+    need_dispatch_in: bool,
+    need_dispatch_meta: bool,
+    need_dispatch_out: bool,
+    need_combine_in: bool,
+    need_combine_meta: bool,
+    need_combine_out: bool,
+    need_combine_gather: bool,
+    combine_gather_cap: int,
+    combine_gather_top_k: int,
+) -> Tuple[object, ...]:
+    return (
+        int(dispatch_in_cap),
+        int(dispatch_out_cap),
+        int(combine_in_cap),
+        int(combine_out_cap),
+        int(d_model),
+        dtype,
+        device,
+        slot_idx,
+        bool(need_dispatch_in),
+        bool(need_dispatch_meta),
+        bool(need_dispatch_out),
+        bool(need_combine_in),
+        bool(need_combine_meta),
+        bool(need_combine_out),
+        bool(need_combine_gather),
+        int(combine_gather_cap),
+        int(combine_gather_top_k),
+    )
+
+
+def _ep_no_sync_buffers_cache_slot(
+    block: "MoEFusedV2TransformerBlock",
+    slot_idx: Optional[int],
+) -> Optional[int]:
+    if slot_idx is not None:
+        return slot_idx
+    if getattr(block, "_ep_no_sync_shared_pool", None) is not None:
+        return block._ep_no_sync_shared_slot
+    return None
+
+
+def _ep_no_sync_fp8_buffers_cache_key(
+    *,
+    dispatch_out_cap: int,
+    combine_in_cap: int,
+    d_model: int,
+    block_size: int,
+    device: torch.device,
+    need_dispatch_out: bool,
+) -> Tuple[object, ...]:
+    return (
+        int(dispatch_out_cap),
+        int(combine_in_cap),
+        int(d_model),
+        int(block_size),
+        device,
+        bool(need_dispatch_out),
+    )
+
+
+def get_cached_ep_no_sync_buffers(
+    block: "MoEFusedV2TransformerBlock",
+    *,
+    dispatch_in_cap: int,
+    dispatch_out_cap: int,
+    combine_in_cap: int,
+    combine_out_cap: int,
+    d_model: int,
+    dtype: torch.dtype,
+    device: torch.device,
+    slot_idx: Optional[int] = None,
+    need_dispatch_in: bool = True,
+    need_dispatch_meta: bool = True,
+    need_dispatch_out: bool = True,
+    need_combine_in: bool = True,
+    need_combine_meta: bool = True,
+    need_combine_out: bool = True,
+    need_combine_gather: bool = False,
+    combine_gather_cap: int = 0,
+    combine_gather_top_k: int = 0,
+) -> Optional[_NoSyncSymmBuffers]:
+    cache = getattr(block, "_ep_no_sync_static_buffer_cache", None)
+    if cache is None:
+        return None
+    return cache.get(
+        _ep_no_sync_buffers_cache_key(
+            dispatch_in_cap=dispatch_in_cap,
+            dispatch_out_cap=dispatch_out_cap,
+            combine_in_cap=combine_in_cap,
+            combine_out_cap=combine_out_cap,
+            d_model=d_model,
+            dtype=dtype,
+            device=device,
+            slot_idx=_ep_no_sync_buffers_cache_slot(block, slot_idx),
+            need_dispatch_in=need_dispatch_in,
+            need_dispatch_meta=need_dispatch_meta,
+            need_dispatch_out=need_dispatch_out,
+            need_combine_in=need_combine_in,
+            need_combine_meta=need_combine_meta,
+            need_combine_out=need_combine_out,
+            need_combine_gather=need_combine_gather,
+            combine_gather_cap=combine_gather_cap,
+            combine_gather_top_k=combine_gather_top_k,
+        )
+    )
+
+
+def get_cached_ep_no_sync_rowwise_fp8_buffers(
+    block: "MoEFusedV2TransformerBlock",
+    *,
+    dispatch_out_cap: int,
+    combine_in_cap: int,
+    d_model: int,
+    block_size: int,
+    device: torch.device,
+    need_dispatch_out: bool = True,
+) -> Optional[_NoSyncRowwiseFP8SymmBuffers]:
+    cache = getattr(block, "_ep_no_sync_rowwise_fp8_static_buffer_cache", None)
+    if cache is None:
+        return None
+    return cache.get(
+        _ep_no_sync_fp8_buffers_cache_key(
+            dispatch_out_cap=dispatch_out_cap,
+            combine_in_cap=combine_in_cap,
+            d_model=d_model,
+            block_size=block_size,
+            device=device,
+            need_dispatch_out=need_dispatch_out,
+        )
+    )
+
+
 def use_ep_no_sync_rowwise_symm_dispatch_in(block: "MoEFusedV2TransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
@@ -1107,6 +1294,59 @@ def use_ep_no_sync_rowwise_symm_combine_gather(block: "MoEFusedV2TransformerBloc
         block,
         attr_name="ep_no_sync_rowwise_symm_combine_gather",
         env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_GATHER",
+    )
+
+
+@torch.compiler.disable
+def acquire_ep_no_sync_rowwise_lifetime_leases(
+    block: "MoEFusedV2TransformerBlock",
+    *,
+    dispatch_out_cap: int,
+    combine_out_cap: int,
+    combine_gather_cap: int,
+    combine_gather_top_k: int,
+    d_model: int,
+    dtype: torch.dtype,
+    device: torch.device,
+    need_dispatch_out: bool,
+    need_combine_out: bool,
+    need_combine_gather: bool,
+) -> _NoSyncRowwiseLifetimeLeases:
+    return _NoSyncRowwiseLifetimeLeases(
+        dispatch_out_lease=(
+            acquire_ep_no_sync_dispatch_out_lease(
+                block,
+                dispatch_out_cap=dispatch_out_cap,
+                d_model=d_model,
+                dtype=dtype,
+                device=device,
+            )
+            if need_dispatch_out
+            else None
+        ),
+        combine_out_lease=(
+            acquire_ep_no_sync_combine_out_lease(
+                block,
+                combine_out_cap=combine_out_cap,
+                d_model=d_model,
+                dtype=dtype,
+                device=device,
+            )
+            if need_combine_out
+            else None
+        ),
+        combine_gather_lease=(
+            acquire_ep_no_sync_combine_gather_lease(
+                block,
+                combine_gather_cap=combine_gather_cap,
+                combine_gather_top_k=combine_gather_top_k,
+                d_model=d_model,
+                dtype=dtype,
+                device=device,
+            )
+            if need_combine_gather
+            else None
+        ),
     )
 
 
@@ -1382,7 +1622,7 @@ def get_ep_no_sync_buffers(
         combine_gather_lease = None
 
     # _tbo_buffer_debug_print(f"get_buffers:exit block={block.block_idx} slot={resolved_slot_idx}")
-    return _NoSyncSymmBuffers(
+    buffers = _NoSyncSymmBuffers(
         dispatch_in=dispatch_in,
         dispatch_in_rank_splits=dispatch_in_rank_splits,
         dispatch_out=dispatch_out,
@@ -1400,6 +1640,31 @@ def get_ep_no_sync_buffers(
         combine_out_lease=combine_out_lease,
         combine_gather_lease=combine_gather_lease,
     )
+    if not lease_dispatch_out and not lease_combine_out and not lease_combine_gather:
+        cache = getattr(block, "_ep_no_sync_static_buffer_cache", None)
+        if cache is not None:
+            cache[
+                _ep_no_sync_buffers_cache_key(
+                    dispatch_in_cap=dispatch_in_cap,
+                    dispatch_out_cap=dispatch_out_cap,
+                    combine_in_cap=combine_in_cap,
+                    combine_out_cap=combine_out_cap,
+                    d_model=d_model,
+                    dtype=dtype,
+                    device=device,
+                    slot_idx=_ep_no_sync_buffers_cache_slot(block, slot_idx),
+                    need_dispatch_in=need_dispatch_in,
+                    need_dispatch_meta=need_dispatch_meta,
+                    need_dispatch_out=need_dispatch_out,
+                    need_combine_in=need_combine_in,
+                    need_combine_meta=need_combine_meta,
+                    need_combine_out=need_combine_out,
+                    need_combine_gather=need_combine_gather,
+                    combine_gather_cap=combine_gather_cap,
+                    combine_gather_top_k=combine_gather_top_k,
+                )
+            ] = buffers
+    return buffers
 
 
 def iter_ep_no_sync_symm_tensors(block: "MoEFusedV2TransformerBlock") -> Iterator[torch.Tensor]:

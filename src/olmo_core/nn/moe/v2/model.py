@@ -383,6 +383,14 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                         and block_key in self.recompute_block_keys
                     )
                 )
+                block_uses_checkpointing = (
+                    block_is_checkpointed
+                    or block.checkpoint_attn
+                    or block.checkpoint_permute_moe_unpermute
+                )
+                block._ep_no_sync_rowwise_static_checkpoint_state = (
+                    None if block_uses_checkpointing else (False, True)
+                )
                 # With our checkpoint context, the original checkpointed forward
                 # and its recompute both use scratch buffers; no long-lived lease
                 # is needed. The compile path currently uses noop_context_fn, so

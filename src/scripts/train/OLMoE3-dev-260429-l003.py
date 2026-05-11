@@ -6,7 +6,7 @@ import os
 
 # Keep this before any olmo_core imports: several modules import nvtx at import
 # time, and NVTX_DISABLE only works if it is set before nvtx is imported.
-USE_NV_PROFILE = False
+USE_NV_PROFILE = True
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
@@ -141,7 +141,7 @@ LR_ALPHA = 0.53
 # stage 1 - xM - 
 MAX_DURATION = int(100e9)
 MICRO_BSZ = 1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
@@ -203,12 +203,12 @@ GRAD_REDUCE_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-USE_FP8=False
+USE_FP8=True
 ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = True
+PRODUCTION_RUN = False
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -371,7 +371,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
-        # 1: deepcopy(dense_block_config),
+        1: deepcopy(dense_block_config),
         
         # also make last layer dense
         # NUM_LAYERS-1: deepcopy(dense_block_config),
@@ -526,8 +526,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=False,
-                # pre_train_checkpoint=PRODUCTION_RUN,
-                pre_train_checkpoint=False,
+                pre_train_checkpoint=PRODUCTION_RUN,
+                # pre_train_checkpoint=False,
             ),
         )
         .with_callback(
@@ -545,8 +545,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=3531,
-                                   end=3535
+                                   start=12020,
+                                   end=12024
             )
         )
         .with_callback(

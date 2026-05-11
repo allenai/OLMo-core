@@ -54,6 +54,7 @@ from .fp8 import (
 )
 from .ep_no_sync_buffers import (
     _NoSyncSymmSharedPool,
+    resolve_ep_no_sync_rowwise_symm_options,
 )
 from .ep_sync_1d import (
     combined_forward_ep_1d as _combined_forward_ep_1d,
@@ -74,7 +75,7 @@ from .ep_no_sync_tbo_1d import (
 from .ep_no_sync_tbo_rowwise import (
     combined_forward_ep_no_sync_tbo_rowwise as _combined_forward_ep_no_sync_tbo_rowwise,
 )
-from .checkpointing import is_checkpoint_recomputing
+from .checkpointing import get_rowwise_checkpoint_state, is_checkpoint_recomputing
 from .activation_debug import maybe_dump_ep_no_sync_saved_activations
 from olmo_core.nn.transformer.config import (
     TransformerBlockConfig,
@@ -453,6 +454,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.ep_no_sync_rowwise_symm_combine_gather = ep_no_sync_rowwise_symm_combine_gather
         self._ep_symm_group_name: Optional[str] = None
         self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
+        self._ep_no_sync_static_buffer_cache: Dict[Tuple[object, ...], object] = {}
+        self._ep_no_sync_rowwise_fp8_static_buffer_cache: Dict[Tuple[object, ...], object] = {}
+        self._ep_no_sync_rowwise_static_checkpoint_state: Optional[Tuple[bool, bool]] = None
         self._ep_no_sync_symm_lease_pools: Dict[str, object] = {}
         self._ep_no_sync_last_debug: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_shared_pool: Optional[_NoSyncSymmSharedPool] = None
@@ -894,7 +898,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     f"(block={self.block_idx}, rank={get_rank(self.ep_pg)}): {e}"
                 ) from e
             self._ep_symm_group_name = group_name
+            if self.ep_no_sync_use_rowwise_all_to_all:
+                resolve_ep_no_sync_rowwise_symm_options(self)
             self._ep_no_sync_symm_cache.clear()
+            self._ep_no_sync_static_buffer_cache.clear()
+            self._ep_no_sync_rowwise_fp8_static_buffer_cache.clear()
             self._ep_no_sync_symm_lease_pools.clear()
             self._ep_no_sync_shared_pool = None
             self._ep_no_sync_shared_slot = 0
@@ -940,13 +948,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self,
         x: torch.Tensor,
         routed_expert_router_aux_loss_info: Optional[Tuple[object, ...]],
+        *,
+        accumulate_metrics: Optional[bool] = None,
     ) -> torch.Tensor:
         if routed_expert_router_aux_loss_info is None:
             return x
         assert self.routed_experts_router is not None
+        if accumulate_metrics is None:
+            accumulate_metrics = not is_checkpoint_recomputing()
         routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(
             *routed_expert_router_aux_loss_info,
-            accumulate_metrics=not is_checkpoint_recomputing(),
+            accumulate_metrics=accumulate_metrics,
         )
         if routed_expert_router_aux_loss is None:
             return x
@@ -1009,9 +1021,15 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
+        checkpoint_state = self._ep_no_sync_rowwise_static_checkpoint_state
+        if checkpoint_state is None:
+            checkpoint_state = get_rowwise_checkpoint_state()
+        activation_checkpointing, accumulate_routed_aux_loss_metrics = checkpoint_state
         return _combined_forward_ep_no_sync_rowwise(
             self,
             x,
+            activation_checkpointing=activation_checkpointing,
+            accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
             loss_div_factor=loss_div_factor,
             **kwargs,
         )

@@ -1395,33 +1395,38 @@ class MoEFusedV2Optimizer:
 
         return
 
-    def _get_fp8_weight_store_model_grad_fp32(self, name: str, param: FP8WeightStore) -> torch.Tensor:
+    def _get_fp8_weight_store_model_grad(self, name: str, param: FP8WeightStore) -> torch.Tensor:
         if self.model_has_grad_accum_fp32_buffer:
             if param.main_grad_fp32 is None:
                 raise RuntimeError(f"Missing logical FP32 grad for FP8 weight store '{name}'")
-            model_grad_fp32 = param.main_grad_fp32.detach().reshape(-1)
-            if model_grad_fp32.dtype != torch.float32:
-                model_grad_fp32 = model_grad_fp32.float()
-            return model_grad_fp32
+            model_grad = param.main_grad_fp32.detach().reshape(-1)
+            if model_grad.dtype != torch.float32:
+                model_grad = model_grad.float()
+            return model_grad
 
         if param.grad_bf16 is None:
             raise RuntimeError(f"Missing logical BF16 grad for FP8 weight store '{name}'")
-        model_grad_fp32 = param.grad_bf16.detach().reshape(-1).float()
-        return model_grad_fp32
+        return param.grad_bf16.detach().reshape(-1)
+
+    def _get_fp8_weight_store_model_grad_fp32(self, name: str, param: FP8WeightStore) -> torch.Tensor:
+        model_grad = self._get_fp8_weight_store_model_grad(name, param)
+        if model_grad.dtype != torch.float32:
+            model_grad = model_grad.float()
+        return model_grad
 
     @nvtx.annotate("MoEFusedV2Optimizer._copy_model_grads_to_main_grads")
     def _copy_model_grads_to_main_grads(self):
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():
                 if _is_fp8_weight_store(param):
-                    model_grad_fp32 = self._get_fp8_weight_store_model_grad_fp32(name, param)
+                    model_grad = self._get_fp8_weight_store_model_grad(name, param)
                     pg = self._get_process_group_for_tag(param_group['pg'])
                     if dist.is_available() and dist.is_initialized():
                         pg_world_size = dist.get_world_size(pg)
                         if pg_world_size > 1:
-                            model_grad_fp32.div_(pg_world_size)
+                            model_grad.div_(pg_world_size)
                             dist.all_reduce(
-                                model_grad_fp32,
+                                model_grad,
                                 op=dist.ReduceOp.SUM,
                                 group=pg,
                             )
@@ -1437,7 +1442,7 @@ class MoEFusedV2Optimizer:
                             "Grad buffers must stay bound to DDP bucket views."
                         )
 
-                    model_grad_fp32 = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
+                    model_grad = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
                 else:
                     if param.grad is None:
                         raise RuntimeError(
@@ -1447,21 +1452,21 @@ class MoEFusedV2Optimizer:
 
                     # model's grad is in bf16, need to convert to fp32 for reduce-scatter
                     # model_grad_fp32 = param.grad.detach().view(-1).float() # unsharded local shape, FP32
-                    model_grad_fp32 = param.grad.detach().view(-1) # unsharded local shape, BF16. It should be a view of the reducer bucket
+                    model_grad = param.grad.detach().view(-1) # unsharded local shape, BF16. It should be a view of the reducer bucket
 
 
                 # prepare main param grad view
                 main_param = self.states[f'{name}.main'] # DTensor, full shape unsharded
 
-                # self.main_grad[name] = distribute_tensor(model_grad_fp32, device_mesh=main_param.device_mesh, placements=main_param.placements, src_data_rank=None)
+                # self.main_grad[name] = distribute_tensor(model_grad, device_mesh=main_param.device_mesh, placements=main_param.placements, src_data_rank=None)
 
                 # it turns out distribute_tensor is too slow on cpu
                 # here is a more direct way
-                self.main_grad[name] = self.narrow_tensor(model_grad_fp32, main_param.device_mesh, main_param.placements)
+                self.main_grad[name] = self.narrow_tensor(model_grad, main_param.device_mesh, main_param.placements)
             
 
 
-                del model_grad_fp32
+                del model_grad
                 
                 # further divide by ep_mp world size if it's ep_mp sharded
                 if self.moe_mesh is not None and param_group['pg'] == 'ep_dp':
@@ -1650,6 +1655,9 @@ class MoEFusedV2Optimizer:
         for group in self.param_groups:
             for _, param in group["named_params"].items():
                 owner_ref = getattr(param, "_moe_rowwise_fp8_cache_owner", None)
+                if owner_ref is None and _is_fp8_weight_store(param):
+                    anchor_param = getattr(param, "anchor_param", None)
+                    owner_ref = getattr(anchor_param, "_moe_rowwise_fp8_cache_owner", None)
                 if owner_ref is None:
                     continue
                 owner = owner_ref() if callable(owner_ref) else owner_ref
