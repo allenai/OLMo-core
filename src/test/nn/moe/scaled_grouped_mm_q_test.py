@@ -5,6 +5,7 @@ import olmo_core.kernels.scaled_grouped_mm as scaled_grouped_mm_module
 from olmo_core.kernels.mxfp8_utils import dequantize_rows_from_mxfp8, quantize_rows_to_mxfp8
 from olmo_core.kernels.mxfp8_utils import (
     quantize_grouped_2d_to_mxfp8_blocked,
+    quantize_grouped_2d_to_mxfp8_blocked_fused,
     quantize_grouped_weight_3d_to_mxfp8_blocked,
 )
 from olmo_core.kernels.scaled_grouped_mm import scaled_grouped_mm_q, scaled_grouped_mm_q_fp8_weight
@@ -433,6 +434,22 @@ def test_quantize_grouped_2d_to_mxfp8_blocked_keeps_capacity_shape():
     assert scales_blocked.dtype == torch.float8_e8m0fnu
     assert scales_blocked.shape[1] == x.shape[1] // 32
     assert scales_blocked.shape[0] >= x.shape[0]
+
+
+def test_quantize_grouped_2d_to_mxfp8_blocked_fused_matches_two_stage_cuda():
+    if not torch.cuda.is_available():
+        return
+    x = torch.randn(64, 512, device="cuda", dtype=torch.bfloat16)
+    # Active rows are 41, but input has capacity 64.
+    offs = torch.tensor([11, 17, 41], device="cuda", dtype=torch.int32)
+
+    q_ref, scales_ref = quantize_grouped_2d_to_mxfp8_blocked(x, offs)
+    q_fused, scales_fused = quantize_grouped_2d_to_mxfp8_blocked_fused(x, offs)
+
+    assert q_fused.shape == q_ref.shape
+    assert scales_fused.shape == scales_ref.shape
+    assert torch.equal(q_fused.view(torch.uint8), q_ref.view(torch.uint8))
+    assert torch.equal(scales_fused.view(torch.uint8), scales_ref.view(torch.uint8))
 
 
 def test_quantize_grouped_weight_3d_to_mxfp8_blocked_returns_col_major_layout():

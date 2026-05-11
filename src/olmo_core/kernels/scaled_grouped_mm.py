@@ -152,10 +152,18 @@ def _forward_scaled_grouped_mm_mxfp8(
         if prequantized_lhs.scales_are_blocked:
             scale_a_blocked = prequantized_lhs.scale_a
         else:
-            scale_a_blocked = grouped_scales_to_mxfp8_blocked(prequantized_lhs.scale_a, offs)
+            scale_a_blocked = grouped_scales_to_mxfp8_blocked(
+                prequantized_lhs.scale_a,
+                offs,
+                zero_unwritten_tail=False,
+            )
     else:
         mat_a_q, scale_a_unblocked = quantize_rows_to_mxfp8(mat_a, block_size=32)
-        scale_a_blocked = grouped_scales_to_mxfp8_blocked(scale_a_unblocked, offs)
+        scale_a_blocked = grouped_scales_to_mxfp8_blocked(
+            scale_a_unblocked,
+            offs,
+            zero_unwritten_tail=False,
+        )
 
     use_cached_rhs = (
         prequantized_rhs is not None
@@ -239,10 +247,18 @@ def _forward_scaled_grouped_mm_mxfp8_prequantized_rhs(
         if prequantized_lhs.scales_are_blocked:
             scale_a_blocked = prequantized_lhs.scale_a
         else:
-            scale_a_blocked = grouped_scales_to_mxfp8_blocked(prequantized_lhs.scale_a, offs)
+            scale_a_blocked = grouped_scales_to_mxfp8_blocked(
+                prequantized_lhs.scale_a,
+                offs,
+                zero_unwritten_tail=False,
+            )
     else:
         mat_a_q, scale_a_unblocked = quantize_rows_to_mxfp8(mat_a, block_size=32)
-        scale_a_blocked = grouped_scales_to_mxfp8_blocked(scale_a_unblocked, offs)
+        scale_a_blocked = grouped_scales_to_mxfp8_blocked(
+            scale_a_unblocked,
+            offs,
+            zero_unwritten_tail=False,
+        )
 
     mat_b_q = _to_col_major_last2(prequantized_rhs.mat_b_q)
     scale_b_blocked = prequantized_rhs.scale_b

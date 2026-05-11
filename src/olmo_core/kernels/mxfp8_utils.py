@@ -127,19 +127,6 @@ def to_blocked(input_matrix: torch.Tensor) -> torch.Tensor:
     return rearranged.flatten().contiguous()
 
 
-def _compute_blocked_group_start_rows(offs: torch.Tensor) -> torch.Tensor:
-    """
-    Compute per-group start row offsets after 128-row blocked padding.
-
-    This stays entirely on device (no host sync).
-    """
-    zero = offs.new_zeros((1,))
-    group_sizes = torch.diff(offs, prepend=zero)
-    padded_group_sizes = ((group_sizes + 127) // 128) * 128
-    starts = torch.cumsum(padded_group_sizes, dim=0, dtype=offs.dtype) - padded_group_sizes
-    return starts.contiguous()
-
-
 if triton is not None:
 
     @triton.jit
@@ -163,7 +150,6 @@ if triton is not None:
         scales_stride_dim1,
         scale_cols,
         orig_offsets,
-        output_group_start_rows,
         output_scales_ptr,
         output_scales_stride_dim0,
         output_stride_per_block,
@@ -177,9 +163,14 @@ if triton is not None:
 
         input_group_start_row = tl.load(orig_offsets + group_pid - 1, mask=group_pid > 0, other=0)
         input_group_end_row = tl.load(orig_offsets + group_pid, mask=group_pid < num_groups, other=0)
-        output_group_start_row = tl.load(
-            output_group_start_rows + group_pid, mask=group_pid < num_groups, other=0
-        )
+        output_group_start_row = 0
+        prev_group_end_for_start = 0
+        for i in tl.static_range(0, num_groups):
+            group_end_for_start = tl.load(orig_offsets + i)
+            group_size = group_end_for_start - prev_group_end_for_start
+            padded_group_size = ((group_size + BLOCK_ROWS - 1) // BLOCK_ROWS) * BLOCK_ROWS
+            output_group_start_row += tl.where(i < group_pid, padded_group_size, 0)
+            prev_group_end_for_start = group_end_for_start
 
         row_offs = tl.arange(0, BLOCK_ROWS)[:, None]
         col_offs = tl.arange(0, BLOCK_COLS)[None, :]
@@ -342,6 +333,129 @@ if triton is not None:
         scale_mask = (row_idx < n_rows) & (scale_col_idx < n_scale_cols)
         scale_tile = tl.reshape(scale_biased_u8, (BLOCK_M, SCALE_BLOCKS_PER_TILE))
         tl.store(scale_ptr + scale_offsets, scale_tile, mask=scale_mask)
+
+
+    # NOTE: Deliberately no @triton.autotune here.
+    @triton.jit
+    def _triton_mxfp8_quantize_grouped_blocked_tiled_dim0(
+        x_ptr,
+        x_stride_0,
+        x_stride_1,
+        q_ptr,
+        q_stride_0,
+        q_stride_1,
+        blocked_scale_ptr,
+        blocked_scale_stride_0,
+        offs,
+        n_rows,
+        n_cols,
+        BLOCK_SIZE: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        NUM_GROUPS: tl.constexpr,
+        USE_BF16_EXP: tl.constexpr,
+    ):
+        # Same quantization tile shape as _triton_mxfp8_quantize_dim0, but
+        # writes scale bytes directly in grouped SWIZZLE_32_4_4 layout.
+        FP32_TINY: tl.constexpr = 1.1754943508222875e-38
+        F8E4M3_MAX: tl.constexpr = 448.0
+        E8M0_EXP_BIAS: tl.constexpr = 127.0
+        E8M0_EXP_BIAS_INT: tl.constexpr = 127
+        F8E4M3_LARGEST_POW2: tl.constexpr = 8.0
+        F8E4M3_LARGEST_POW2_INT: tl.constexpr = 8
+        BF16_MBITS: tl.constexpr = 7
+        SCALE_BLOCKS_PER_TILE: tl.constexpr = BLOCK_N // BLOCK_SIZE
+
+        pid_m = tl.program_id(0)
+        pid_n = tl.program_id(1)
+
+        row_idx = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)[:, None]
+        col_idx = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)[None, :]
+
+        x_offsets = row_idx * x_stride_0 + col_idx * x_stride_1
+        q_offsets = row_idx * q_stride_0 + col_idx * q_stride_1
+        q_mask = (row_idx < n_rows) & (col_idx < n_cols)
+        x = tl.load(x_ptr + x_offsets, mask=q_mask, other=0.0)
+
+        x_r = x.reshape(BLOCK_M * SCALE_BLOCKS_PER_TILE, BLOCK_SIZE).to(tl.float32)
+        max_abs = tl.max(tl.abs(x_r), axis=1)
+        max_abs = tl.where(max_abs == max_abs, max_abs, 0.0)  # NaN -> 0
+        max_abs = tl.maximum(max_abs, FP32_TINY)
+
+        if USE_BF16_EXP:
+            max_abs_bf16 = max_abs.to(tl.bfloat16)
+            max_abs_i16 = max_abs_bf16.to(tl.int16, bitcast=True)
+            largest_p2 = ((max_abs_i16 >> BF16_MBITS) & 0xFF) - E8M0_EXP_BIAS_INT
+            scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2_INT
+            scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS_INT)
+            scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS_INT)
+            scale_biased_i32 = (scale_unbiased + E8M0_EXP_BIAS_INT).to(tl.int32)
+            scale_biased_u8 = scale_biased_i32.to(tl.uint8)
+            inv_exp = 254 - scale_biased_i32
+            inv_bits = inv_exp.to(tl.uint32) << 23
+            inv_bits = tl.where(inv_exp == 0, 0x00400000, inv_bits)
+            inv_scale = inv_bits.to(tl.float32, bitcast=True)
+            q_hp = x_r * inv_scale[:, None]
+        else:
+            largest_p2 = tl.floor(tl.log2(max_abs))
+            scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2
+            scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS)
+            scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS)
+
+            scale_biased_u8 = (scale_unbiased + E8M0_EXP_BIAS).to(tl.uint8)
+            dequant_scale = tl.exp2(scale_unbiased).to(tl.float32)
+            q_hp = x_r / dequant_scale[:, None]
+
+        q_hp = tl.where(q_hp == q_hp, q_hp, 0.0)
+        q_hp = tl.maximum(q_hp, -F8E4M3_MAX)
+        q_hp = tl.minimum(q_hp, F8E4M3_MAX)
+
+        q_tile = tl.reshape(q_hp, (BLOCK_M, BLOCK_N)).to(tl.float8e4nv)
+        tl.store(q_ptr + q_offsets, q_tile, mask=q_mask)
+
+        row_vec = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        prev_group_end = 0
+        output_group_start = tl.zeros((BLOCK_M,), dtype=tl.int32)
+        running_output_group_start = 0
+        local_row = row_vec
+        row_is_active = tl.zeros((BLOCK_M,), dtype=tl.int1)
+        for group_idx in tl.static_range(0, NUM_GROUPS):
+            group_end = tl.load(offs + group_idx)
+            in_group = (row_vec >= prev_group_end) & (row_vec < group_end)
+            local_row = tl.where(in_group, row_vec - prev_group_end, local_row)
+            output_group_start = tl.where(in_group, running_output_group_start, output_group_start)
+            row_is_active = row_is_active | in_group
+            group_size = group_end - prev_group_end
+            running_output_group_start += ((group_size + 127) // 128) * 128
+            prev_group_end = group_end
+
+        scale_col_idx = pid_n * SCALE_BLOCKS_PER_TILE + tl.arange(0, SCALE_BLOCKS_PER_TILE)
+        scale_tile = tl.reshape(scale_biased_u8, (BLOCK_M, SCALE_BLOCKS_PER_TILE))
+        local_row_2d = local_row[:, None]
+        output_group_start_2d = output_group_start[:, None]
+        scale_col_2d = scale_col_idx[None, :]
+
+        macro_row_block = local_row_2d // 128
+        macro_col_block = scale_col_2d // 4
+        local_row_in_macro = local_row_2d % 128
+        local_col = scale_col_2d % 4
+        group_in_macro = local_row_in_macro // 32
+        sub_row = local_row_in_macro % 32
+
+        swizzled_offsets = (
+            (output_group_start_2d + macro_row_block * 128) * blocked_scale_stride_0
+            + macro_col_block * 512
+            + sub_row * 16
+            + group_in_macro * 4
+            + local_col
+        )
+        n_scale_cols = tl.cdiv(n_cols, BLOCK_SIZE)
+        scale_mask = (
+            (row_vec[:, None] < n_rows)
+            & row_is_active[:, None]
+            & (scale_col_2d < n_scale_cols)
+        )
+        tl.store(blocked_scale_ptr + swizzled_offsets, scale_tile, mask=scale_mask)
 
 
     # NOTE: Deliberately no @triton.autotune here.
@@ -748,7 +862,12 @@ if triton is not None:
         tl.store(out_ptr + out_offsets, acc, mask=rows_mask)
 
 
-def _to_blocked_m_groups_triton(scales_tensor: torch.Tensor, offs: torch.Tensor) -> torch.Tensor:
+def _to_blocked_m_groups_triton(
+    scales_tensor: torch.Tensor,
+    offs: torch.Tensor,
+    *,
+    zero_unwritten_tail: bool = True,
+) -> torch.Tensor:
     if triton is None:
         raise RuntimeError("Triton is required for CUDA no-sync grouped MXFP8 scale swizzle")
 
@@ -759,8 +878,13 @@ def _to_blocked_m_groups_triton(scales_tensor: torch.Tensor, offs: torch.Tensor)
 
     # Upper-bound static padding per group to avoid host-side offset inspection.
     padded_rows = rows + num_groups * 128
-    output = scales_tensor.new_zeros((padded_rows, padded_cols))
-    output_group_start_rows = _compute_blocked_group_start_rows(offs)
+    if zero_unwritten_tail:
+        output = scales_tensor.new_zeros((padded_rows, padded_cols))
+    else:
+        # The Triton kernel writes every row/column that grouped-mm can read
+        # from the per-group 128-row padded layout. The extra upper-bound tail
+        # rows are unreachable through `offs`, so the hot path can skip memset.
+        output = scales_tensor.new_empty((padded_rows, padded_cols))
 
     block_rows = 128
     block_cols = 4
@@ -774,7 +898,6 @@ def _to_blocked_m_groups_triton(scales_tensor: torch.Tensor, offs: torch.Tensor)
         scales_tensor.stride(1),
         cols,
         offs,
-        output_group_start_rows,
         output.view(torch.uint8),
         output.stride(0),
         output_stride_per_block,
@@ -1828,9 +1951,172 @@ def quantize_grouped_2d_to_mxfp8_blocked(
     return qdata, scales_blocked
 
 
+def _grouped_blocked_scale_shape(
+    rows: int,
+    cols: int,
+    num_groups: int,
+    *,
+    block_size: int,
+) -> tuple[int, int]:
+    scale_cols = cols // block_size
+    padded_scale_cols = ceil_div(scale_cols, 4) * 4
+    # Keep the same upper-bound shape as _to_blocked_m_groups_triton. The
+    # exact per-group padded row count depends on device-side offs; this avoids
+    # host inspection and leaves unused capacity rows zero.
+    return rows + num_groups * 128, padded_scale_cols
+
+
+def _quantize_grouped_2d_to_mxfp8_blocked_fused_triton(
+    x: torch.Tensor,
+    offs: torch.Tensor,
+    *,
+    block_size: int = 32,
+    out: Optional[torch.Tensor] = None,
+    blocked_scales_out: Optional[torch.Tensor] = None,
+    zero_unwritten_tail: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    if triton is None or tl is None:
+        raise RuntimeError("Triton is required for fused grouped MXFP8 quantize+swizzle")
+    if not x.is_cuda:
+        raise RuntimeError("fused grouped MXFP8 quantize+swizzle requires CUDA")
+    if x.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+        raise ValueError(f"Unsupported dtype for fused grouped MXFP8 quantization: {x.dtype}")
+
+    rows, cols = x.shape
+    num_groups = int(offs.shape[0])
+    blocked_shape = _grouped_blocked_scale_shape(
+        rows,
+        cols,
+        num_groups,
+        block_size=block_size,
+    )
+
+    qdata = out if out is not None else torch.empty_like(x, dtype=torch.float8_e4m3fn)
+    if tuple(qdata.shape) != tuple(x.shape):
+        raise ValueError(f"out shape mismatch: expected {tuple(x.shape)}, got {tuple(qdata.shape)}")
+    if qdata.dtype != torch.float8_e4m3fn:
+        raise ValueError(f"out dtype mismatch: expected {torch.float8_e4m3fn}, got {qdata.dtype}")
+    if qdata.device != x.device:
+        raise ValueError(f"out device mismatch: expected {x.device}, got {qdata.device}")
+    if not qdata.is_contiguous():
+        raise ValueError("out must be contiguous")
+
+    if blocked_scales_out is None and zero_unwritten_tail:
+        blocked_scales = torch.zeros(blocked_shape, device=x.device, dtype=torch.float8_e8m0fnu)
+    elif blocked_scales_out is None:
+        blocked_scales = torch.empty(blocked_shape, device=x.device, dtype=torch.float8_e8m0fnu)
+    else:
+        blocked_scales = blocked_scales_out
+        if tuple(blocked_scales.shape) != blocked_shape:
+            raise ValueError(
+                f"blocked_scales_out shape mismatch: expected {blocked_shape}, got {tuple(blocked_scales.shape)}"
+            )
+        if blocked_scales.dtype != torch.float8_e8m0fnu:
+            raise ValueError(
+                f"blocked_scales_out dtype mismatch: expected {torch.float8_e8m0fnu}, got {blocked_scales.dtype}"
+            )
+        if blocked_scales.device != x.device:
+            raise ValueError(
+                f"blocked_scales_out device mismatch: expected {x.device}, got {blocked_scales.device}"
+            )
+        if not blocked_scales.is_contiguous():
+            raise ValueError("blocked_scales_out must be contiguous")
+        if zero_unwritten_tail:
+            blocked_scales.zero_()
+
+    if offs.dtype != torch.int32:
+        offs = offs.to(dtype=torch.int32)
+    if offs.device != x.device:
+        offs = offs.to(device=x.device)
+
+    grid = (
+        triton.cdiv(rows, _MXFP8_Q_BLOCK_M),
+        triton.cdiv(cols, _MXFP8_Q_BLOCK_N),
+    )
+    _triton_mxfp8_quantize_grouped_blocked_tiled_dim0[grid](
+        x,
+        x.stride(0),
+        x.stride(1),
+        qdata,
+        qdata.stride(0),
+        qdata.stride(1),
+        blocked_scales.view(torch.uint8),
+        blocked_scales.stride(0),
+        offs,
+        rows,
+        cols,
+        BLOCK_SIZE=block_size,
+        BLOCK_M=_MXFP8_Q_BLOCK_M,
+        BLOCK_N=_MXFP8_Q_BLOCK_N,
+        NUM_GROUPS=num_groups,
+        USE_BF16_EXP=x.dtype == torch.bfloat16,
+        num_warps=_MXFP8_Q_NUM_WARPS,
+        num_stages=_MXFP8_Q_NUM_STAGES,
+    )
+    return qdata, blocked_scales
+
+
+def quantize_grouped_2d_to_mxfp8_blocked_fused(
+    x: torch.Tensor,
+    offs: torch.Tensor,
+    *,
+    block_size: int = 32,
+    out: Optional[torch.Tensor] = None,
+    blocked_scales_out: Optional[torch.Tensor] = None,
+    zero_unwritten_tail: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Quantize grouped 2D input and write scales directly in grouped blocked layout.
+
+    This is equivalent to quantize_rows_to_mxfp8(x) followed by
+    grouped_scales_to_mxfp8_blocked(scales, offs), but fuses the scale swizzle
+    into the quantization kernel for CUDA inputs.
+    """
+    if x.ndim != 2:
+        raise ValueError(f"Expected x to be rank-2, got {tuple(x.shape)}")
+    if offs.ndim != 1:
+        raise ValueError(f"Expected offs to be rank-1, got {tuple(offs.shape)}")
+    if block_size != 32:
+        raise ValueError(f"Only block_size=32 is supported (got {block_size})")
+    if x.shape[1] % block_size != 0:
+        raise ValueError(
+            f"x last dim must be divisible by {block_size}, got {tuple(x.shape)}"
+        )
+    k_blocks = x.shape[1] // block_size
+    if k_blocks % 4 != 0:
+        raise ValueError(
+            f"MXFP8 blocked scales require K//{block_size} divisible by 4, got {k_blocks}"
+        )
+
+    if x.is_cuda:
+        return _quantize_grouped_2d_to_mxfp8_blocked_fused_triton(
+            x,
+            offs,
+            block_size=block_size,
+            out=out,
+            blocked_scales_out=blocked_scales_out,
+            zero_unwritten_tail=zero_unwritten_tail,
+        )
+
+    qdata, scales_blocked = quantize_grouped_2d_to_mxfp8_blocked(
+        x,
+        offs,
+        block_size=block_size,
+    )
+    if out is not None:
+        out.copy_(qdata)
+        qdata = out
+    if blocked_scales_out is not None:
+        blocked_scales_out.copy_(scales_blocked)
+        scales_blocked = blocked_scales_out
+    return qdata, scales_blocked
+
+
 def grouped_scales_to_mxfp8_blocked(
     scales: torch.Tensor,
     offs: torch.Tensor,
+    *,
+    zero_unwritten_tail: bool = True,
 ) -> torch.Tensor:
     """
     Convert grouped row-wise MXFP8 scales [M, K//32] into grouped blocked layout.
@@ -1845,7 +2131,11 @@ def grouped_scales_to_mxfp8_blocked(
         offs = offs.to(device=scales.device)
 
     if scales.is_cuda:
-        return _to_blocked_m_groups_triton(scales, offs)
+        return _to_blocked_m_groups_triton(
+            scales,
+            offs,
+            zero_unwritten_tail=zero_unwritten_tail,
+        )
     return _to_blocked_m_groups_fallback(scales, offs)
 
 
