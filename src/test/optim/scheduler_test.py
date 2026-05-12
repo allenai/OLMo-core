@@ -105,6 +105,129 @@ def test_sequential_scheduler():
     )
 
 
+def test_sequential_scheduler_override_decay_linear():
+    initial_lr = 10.0
+    max_steps = 20_000
+
+    first_scheduler = ConstantWithWarmup(warmup=1_000)
+    second_scheduler = CosWithWarmup(warmup=0, alpha_f=0.1)
+    base = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+    )
+    scheduler = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+        override_decay=OverrideDecay(
+            start=10_000,
+            duration=2_000,
+            shape=ComposableSchedulerStageType.linear,
+            end_lr=1.0,
+        ),
+    )
+
+    # Before override: same as base sequence.
+    assert scheduler.get_lr(initial_lr, 500, max_steps) == base.get_lr(initial_lr, 500, max_steps)
+    assert scheduler.get_lr(initial_lr, 4_999, max_steps) == base.get_lr(
+        initial_lr, 4_999, max_steps
+    )
+    assert scheduler.get_lr(initial_lr, 9_999, max_steps) == base.get_lr(
+        initial_lr, 9_999, max_steps
+    )
+
+    # At override start: same LR as base would produce.
+    main_lr_at_start = base.get_lr(initial_lr, 10_000, max_steps)
+    assert scheduler.get_lr(initial_lr, 10_000, max_steps) == pytest.approx(main_lr_at_start)
+
+    # Midpoint of override: halfway between start LR and end LR.
+    expected_mid = main_lr_at_start + (1.0 - main_lr_at_start) * 0.5
+    assert scheduler.get_lr(initial_lr, 11_000, max_steps) == pytest.approx(expected_mid)
+
+    # End of override: at end_lr.
+    assert scheduler.get_lr(initial_lr, 12_000, max_steps) == pytest.approx(1.0)
+
+    # Past end of override: held at end_lr.
+    assert scheduler.get_lr(initial_lr, 15_000, max_steps) == pytest.approx(1.0)
+
+
+def test_sequential_scheduler_override_decay_cosine():
+    initial_lr = 10.0
+    max_steps = 20_000
+
+    first_scheduler = ConstantWithWarmup(warmup=1_000)
+    second_scheduler = CosWithWarmup(warmup=0, alpha_f=0.1)
+    base = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+    )
+    scheduler = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+        override_decay=OverrideDecay(
+            start=10_000,
+            duration=2_000,
+            shape=ComposableSchedulerStageType.cosine,
+            end_lr_fraction=0.05,
+        ),
+    )
+
+    main_lr_at_start = base.get_lr(initial_lr, 10_000, max_steps)
+    # Midpoint of cosine override: half-cosine -> start + (end - start) * 0.5.
+    end_lr = initial_lr * 0.05
+    expected_mid = end_lr + (main_lr_at_start - end_lr) * (1 + math.cos(math.pi * 0.5)) / 2
+    assert scheduler.get_lr(initial_lr, 11_000, max_steps) == pytest.approx(expected_mid)
+    assert scheduler.get_lr(initial_lr, 12_000, max_steps) == pytest.approx(end_lr)
+    assert scheduler.get_lr(initial_lr, 15_000, max_steps) == pytest.approx(end_lr)
+
+
+def test_sequential_scheduler_override_decay_inside_first_segment():
+    """Override starts inside the first sub-scheduler, not the last."""
+    initial_lr = 10.0
+    max_steps = 20_000
+
+    first_scheduler = ConstantWithWarmup(warmup=1_000)  # holds at 10.0 after step 1000
+    second_scheduler = CosWithWarmup(warmup=0, alpha_f=0.1)
+    scheduler = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+        override_decay=OverrideDecay(
+            start=2_000,
+            duration=1_000,
+            shape=ComposableSchedulerStageType.linear,
+            end_lr=2.0,
+        ),
+    )
+
+    # At override start: LR should be 10.0 (constant phase of first scheduler).
+    assert scheduler.get_lr(initial_lr, 2_000, max_steps) == pytest.approx(10.0)
+    # Midpoint: linear from 10.0 -> 2.0.
+    assert scheduler.get_lr(initial_lr, 2_500, max_steps) == pytest.approx(6.0)
+    # End of override and beyond.
+    assert scheduler.get_lr(initial_lr, 3_000, max_steps) == pytest.approx(2.0)
+    assert scheduler.get_lr(initial_lr, 10_000, max_steps) == pytest.approx(2.0)
+
+
+def test_sequential_scheduler_override_decay_t_max_warning():
+    scheduler = SequentialScheduler(
+        schedulers=[ConstantWithWarmup(warmup=100), CosWithWarmup(warmup=0)],
+        schedulers_max=[1_000],
+        override_decay=OverrideDecay(
+            start=500, duration=200, end_lr=0.0
+        ),
+    )
+
+    # Warning fires once, when override becomes active.
+    with pytest.warns(UserWarning, match="ignores 't_max'"):
+        scheduler.get_lr(10.0, 600, 10_000)
+
+    # No further warnings on subsequent calls.
+    import warnings as _warnings
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error", UserWarning)
+        scheduler.get_lr(10.0, 700, 10_000)
+
+
 def test_composable_scheduler_override_decay_linear():
     initial_lr = 10.0
     scheduler = ComposableScheduler(

@@ -748,6 +748,21 @@ class SequentialScheduler(Scheduler):
     """
     schedulers_max_steps: Optional[List[int]] = None  # deprecated, use 'schedulers_max' instead.
 
+    override_decay: Optional[OverrideDecay] = None
+    """
+    Optional late-stage override. When ``current >= override_decay.start``, the
+    sub-scheduler sequence is bypassed and the LR decays from "whatever the main
+    sequence would have produced at ``start``" to the override's target over
+    ``duration`` (linear or cosine). After ``start + duration``, the LR is held
+    at the override's end LR.
+
+    .. note::
+        While the override is active, ``t_max`` is ignored — the override is
+        defined absolutely by ``start`` and ``duration``.
+    """
+
+    _warned_t_max_ignored: bool = field(default=False, init=False, repr=False)
+
     def __post_init__(self, *args):
         del args
         if self.schedulers_max is None and self.schedulers_max_steps is not None:
@@ -773,10 +788,9 @@ class SequentialScheduler(Scheduler):
                 f"Max steps must be set for all schedulers except the last when using '{self.__class__.__name__}'"
             )
 
-    def get_lr(
+    def _sequential_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
-        assert 0 <= current <= t_max
         assert self.schedulers_max is not None
 
         # Call schedulers sequentially until the current step/token count is within the max steps/token count
@@ -793,6 +807,40 @@ class SequentialScheduler(Scheduler):
 
         assert t_max > 0
         return self.schedulers[-1].get_lr(initial_lr, current, t_max)
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        assert 0 <= current <= t_max
+
+        if self.override_decay is None or current < self.override_decay.start:
+            return self._sequential_lr(initial_lr, current, t_max)
+
+        if not self._warned_t_max_ignored:
+            warnings.warn(
+                f"'{self.__class__.__name__}' ignores 't_max' once 'override_decay' is active; "
+                f"the override is defined absolutely by 'start' ({self.override_decay.start}) "
+                f"and 'duration' ({self.override_decay.duration}) (t_max={t_max}).",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._warned_t_max_ignored = True
+
+        override_decay = self.override_decay
+        override_start_lr = self._sequential_lr(initial_lr, override_decay.start, t_max)
+        override_end_lr = _resolve_override_decay_end(override_decay, initial_lr)
+        override_current = current - override_decay.start
+
+        if override_current < override_decay.duration:
+            return _interpolate_lr(
+                shape=override_decay.shape,
+                start_lr=override_start_lr,
+                end_lr=override_end_lr,
+                current=override_current,
+                duration=override_decay.duration,
+            )
+
+        return override_end_lr
 
 
 @Scheduler.register("wsds")
