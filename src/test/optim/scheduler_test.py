@@ -7,6 +7,7 @@ from olmo_core.optim import (
     WSDS,
     ConstantWithWarmup,
     CosWithWarmup,
+    CosWithWarmupAndLinearDecay,
     ExponentialScheduler,
     InvSqrtWithWarmup,
     LinearWithWarmup,
@@ -53,6 +54,69 @@ def test_inv_sqrt_with_warmup():
     assert scheduler.get_lr(initial_lr, 3_000, max_steps) == 10.0
     assert scheduler.get_lr(initial_lr, 5_000, max_steps) == 2.0 + 8.0 * math.sqrt(3_000 / 5_000)
     assert scheduler.get_lr(initial_lr, 10_000, max_steps) == 2.0 + 8.0 * math.sqrt(3_000 / 10_000)
+
+
+def test_cos_with_warmup_and_linear_decay():
+    """
+    Schedule: linear warmup -> cosine fully completing to alpha_f * peak by
+    step (t_max - decay) -> linear tail to decay_min_lr over the last `decay`
+    steps.
+    """
+    initial_lr = 10.0
+    warmup_steps = 1_000
+    decay_steps = 2_000
+    max_steps = 10_000
+    alpha_f = 0.1
+    cosine_end = max_steps - decay_steps  # 8_000
+    scheduler = CosWithWarmupAndLinearDecay(
+        warmup=warmup_steps,
+        decay=decay_steps,
+        decay_fraction=None,
+        alpha_f=alpha_f,
+    )
+
+    # Warmup interior.
+    assert scheduler.get_lr(initial_lr, 0, max_steps) == pytest.approx(0.0)
+    assert scheduler.get_lr(initial_lr, 500, max_steps) == pytest.approx(5.0)
+    assert scheduler.get_lr(initial_lr, warmup_steps, max_steps) == pytest.approx(initial_lr)
+
+    # Cosine region: cosine runs over (t_max - warmup - decay) within the
+    # super-class call, which sees t_max == cosine_end. Test that the cosine
+    # value at step `current` matches the bare CosWithWarmup formula.
+    bare_cos = CosWithWarmup(warmup=warmup_steps, alpha_f=alpha_f)
+    for current in (1_500, 4_000, 7_000, cosine_end - 1):
+        assert scheduler.get_lr(initial_lr, current, max_steps) == pytest.approx(
+            bare_cos.get_lr(initial_lr, current, cosine_end)
+        )
+
+    # Boundary: at exactly t_max - decay the tail starts at alpha_f * peak.
+    assert scheduler.get_lr(initial_lr, cosine_end, max_steps) == pytest.approx(
+        initial_lr * alpha_f
+    )
+
+    # Linear decay tail: halfway through tail, halfway from alpha_f*peak to 0.
+    mid_tail = cosine_end + decay_steps // 2
+    assert scheduler.get_lr(initial_lr, mid_tail, max_steps) == pytest.approx(
+        initial_lr * alpha_f * 0.5
+    )
+
+    # End of schedule: LR reaches decay_min_lr (default 0).
+    assert scheduler.get_lr(initial_lr, max_steps, max_steps) == pytest.approx(0.0)
+
+
+def test_cos_with_warmup_and_linear_decay_migrates_deprecated_warmup_steps():
+    """
+    super().__post_init__() must run so the deprecated 'warmup_steps' alias
+    gets migrated to 'warmup'.
+    """
+    with pytest.warns(DeprecationWarning, match="warmup_steps.*deprecated"):
+        scheduler = CosWithWarmupAndLinearDecay(
+            warmup_steps=500,
+            decay=1_000,
+            decay_fraction=None,
+        )
+    assert scheduler.warmup == 500
+    assert scheduler.warmup_steps is None
 
 
 def test_cos_with_warmup_scheduler():
