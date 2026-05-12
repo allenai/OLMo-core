@@ -571,6 +571,7 @@ class ComposableSchedulerOverrideDecay(Config):
             raise OLMoConfigurationError("'end_lr_fraction' must be >= 0 for override decay.")
 
 
+@Scheduler.register("composable")
 @dataclass
 class ComposableScheduler(Scheduler):
     """
