@@ -14,7 +14,7 @@ from olmo_core.optim import (
 )
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
-    ComposableSchedulerOverrideDecay,
+    OverrideDecay,
     ComposableSchedulerStage,
     ComposableSchedulerStageType,
 )
@@ -121,7 +121,7 @@ def test_composable_scheduler_override_decay_linear():
                 end_lr_fraction=0.1,
             ),
         ],
-        override_decay=ComposableSchedulerOverrideDecay(
+        override_decay=OverrideDecay(
             start=200,
             duration=100,
             shape=ComposableSchedulerStageType.linear,
@@ -146,7 +146,7 @@ def test_composable_scheduler_override_decay_cosine():
                 end_lr_fraction=1.0,
             ),
         ],
-        override_decay=ComposableSchedulerOverrideDecay(
+        override_decay=OverrideDecay(
             start=100,
             duration=100,
             shape=ComposableSchedulerStageType.cosine,
@@ -163,7 +163,7 @@ def test_composable_scheduler_override_decay_cosine():
 
 def test_composable_scheduler_override_decay_validation():
     with pytest.raises(OLMoConfigurationError, match="exactly one of 'end_lr' or 'end_lr_fraction'"):
-        ComposableSchedulerOverrideDecay(start=100, duration=100)
+        OverrideDecay(start=100, duration=100)
 
 
 class TestWSDSScheduler:

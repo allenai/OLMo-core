@@ -536,7 +536,7 @@ class ComposableSchedulerStage(Config):
 
 
 @dataclass
-class ComposableSchedulerOverrideDecay(Config):
+class OverrideDecay(Config):
     """
     Optional decay override for :class:`ComposableScheduler`.
 
@@ -587,7 +587,7 @@ class ComposableScheduler(Scheduler):
     """
 
     stages: List[ComposableSchedulerStage] = field(default_factory=list)
-    override_decay: Optional[ComposableSchedulerOverrideDecay] = None
+    override_decay: Optional[OverrideDecay] = None
 
     _warned_t_max_ignored: bool = field(default=False, init=False, repr=False)
 
@@ -595,17 +595,6 @@ class ComposableScheduler(Scheduler):
         del args
         if len(self.stages) == 0:
             raise OLMoConfigurationError("'stages' must be specified and non-empty.")
-
-    def _resolve_from_initial(
-        self,
-        initial_lr: Union[float, torch.Tensor],
-        value: Optional[float],
-        fraction: Optional[float],
-    ) -> Union[float, torch.Tensor]:
-        if value is not None:
-            return value
-        assert fraction is not None
-        return initial_lr * fraction
 
     def _resolve_stage_start(
         self,
@@ -615,23 +604,7 @@ class ComposableScheduler(Scheduler):
     ) -> Union[float, torch.Tensor]:
         if stage.start_lr is None and stage.start_lr_fraction is None:
             return previous_end_lr
-        return self._resolve_from_initial(initial_lr, stage.start_lr, stage.start_lr_fraction)
-
-    def _resolve_stage_end(
-        self, stage: ComposableSchedulerStage, initial_lr: Union[float, torch.Tensor]
-    ) -> Union[float, torch.Tensor]:
-        return self._resolve_from_initial(initial_lr, stage.end_lr, stage.end_lr_fraction)
-
-    def _resolve_override_decay_end(
-        self,
-        override_decay: ComposableSchedulerOverrideDecay,
-        initial_lr: Union[float, torch.Tensor],
-    ) -> Union[float, torch.Tensor]:
-        return self._resolve_from_initial(
-            initial_lr,
-            override_decay.end_lr,
-            override_decay.end_lr_fraction,
-        )
+        return _resolve_lr_from_initial(initial_lr, stage.start_lr, stage.start_lr_fraction)
 
     def _main_schedule_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int
@@ -641,12 +614,12 @@ class ComposableScheduler(Scheduler):
         previous_end_lr: Union[float, torch.Tensor] = initial_lr
         for stage in self.stages:
             start_lr = self._resolve_stage_start(stage, initial_lr, previous_end_lr)
-            end_lr = self._resolve_stage_end(stage, initial_lr)
+            end_lr = _resolve_lr_from_initial(initial_lr, stage.end_lr, stage.end_lr_fraction)
 
             stage_end = stage_start + stage.duration
             if current < stage_end:
                 stage_current = current - stage_start
-                return self._interpolate(
+                return _interpolate_lr(
                     shape=stage.shape,
                     start_lr=start_lr,
                     end_lr=end_lr,
@@ -658,21 +631,6 @@ class ComposableScheduler(Scheduler):
             stage_start = stage_end
 
         return previous_end_lr
-
-    @staticmethod
-    def _interpolate(
-        shape: ComposableSchedulerStageType,
-        start_lr: Union[float, torch.Tensor],
-        end_lr: Union[float, torch.Tensor],
-        current: int,
-        duration: int,
-    ) -> Union[float, torch.Tensor]:
-        if shape == ComposableSchedulerStageType.linear:
-            return start_lr + (end_lr - start_lr) * current / duration
-        elif shape == ComposableSchedulerStageType.cosine:
-            return end_lr + (start_lr - end_lr) * (1 + cos(pi * current / duration)) / 2
-        else:
-            raise NotImplementedError(shape)
 
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
@@ -703,11 +661,11 @@ class ComposableScheduler(Scheduler):
 
         override_decay = self.override_decay
         override_start_lr = self._main_schedule_lr(initial_lr, override_decay.start)
-        override_end_lr = self._resolve_override_decay_end(override_decay, initial_lr)
+        override_end_lr = _resolve_override_decay_end(override_decay, initial_lr)
         override_current = current - override_decay.start
 
         if override_current < override_decay.duration:
-            return self._interpolate(
+            return _interpolate_lr(
                 shape=override_decay.shape,
                 start_lr=override_start_lr,
                 end_lr=override_end_lr,
@@ -716,6 +674,41 @@ class ComposableScheduler(Scheduler):
             )
 
         return override_end_lr
+
+
+def _resolve_lr_from_initial(
+    initial_lr: Union[float, torch.Tensor],
+    value: Optional[float],
+    fraction: Optional[float],
+) -> Union[float, torch.Tensor]:
+    if value is not None:
+        return value
+    assert fraction is not None
+    return initial_lr * fraction
+
+
+def _resolve_override_decay_end(
+    override_decay: OverrideDecay,
+    initial_lr: Union[float, torch.Tensor],
+) -> Union[float, torch.Tensor]:
+    return _resolve_lr_from_initial(
+        initial_lr, override_decay.end_lr, override_decay.end_lr_fraction
+    )
+
+
+def _interpolate_lr(
+    shape: ComposableSchedulerStageType,
+    start_lr: Union[float, torch.Tensor],
+    end_lr: Union[float, torch.Tensor],
+    current: int,
+    duration: int,
+) -> Union[float, torch.Tensor]:
+    if shape == ComposableSchedulerStageType.linear:
+        return start_lr + (end_lr - start_lr) * current / duration
+    elif shape == ComposableSchedulerStageType.cosine:
+        return end_lr + (start_lr - end_lr) * (1 + cos(pi * current / duration)) / 2
+    else:
+        raise NotImplementedError(shape)
 
 
 def _linear_warmup(
