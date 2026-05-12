@@ -207,6 +207,64 @@ def test_sequential_scheduler_override_decay_inside_first_segment():
     assert scheduler.get_lr(initial_lr, 10_000, max_steps) == pytest.approx(2.0)
 
 
+@pytest.mark.parametrize(
+    "stage_shape, sub_scheduler_cls, alpha_f",
+    [
+        (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.0),
+        (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.1),
+        (ComposableSchedulerStageType.cosine, CosWithWarmup, 0.0),
+        (ComposableSchedulerStageType.cosine, CosWithWarmup, 0.1),
+    ],
+)
+def test_composable_and_sequential_match_when_t_max_aligns(
+    stage_shape, sub_scheduler_cls, alpha_f
+):
+    """
+    A warmup + decay schedule should produce identical LR curves whether
+    expressed as a ComposableScheduler or as a SequentialScheduler, provided
+    't_max' passed at evaluation time equals the composable's total stage
+    duration (i.e. ComposableScheduler's absolute-time view and
+    SequentialScheduler's last-segment-stretches-to-t_max view happen to agree).
+    """
+    initial_lr = 10.0
+    warmup_steps = 1_000
+    decay_steps = 9_000
+    t_max = warmup_steps + decay_steps
+
+    composable = ComposableScheduler(
+        stages=[
+            ComposableSchedulerStage(
+                duration=warmup_steps,
+                shape=ComposableSchedulerStageType.linear,
+                start_lr_fraction=0.0,
+                end_lr_fraction=1.0,
+            ),
+            ComposableSchedulerStage(
+                duration=decay_steps,
+                shape=stage_shape,
+                end_lr_fraction=alpha_f,
+            ),
+        ],
+    )
+
+    sequential = SequentialScheduler(
+        schedulers=[
+            ConstantWithWarmup(warmup=warmup_steps),
+            sub_scheduler_cls(warmup=0, alpha_f=alpha_f),
+        ],
+        schedulers_max=[warmup_steps],
+    )
+
+    # Spans warmup interior, exact boundary, decay interior, exact end-of-schedule.
+    sample_points = [0, 1, 100, 500, 999, 1_000, 1_001, 2_500, 5_500, 7_500, 9_999, t_max]
+    for current in sample_points:
+        composable_lr = composable.get_lr(initial_lr, current, t_max)
+        sequential_lr = sequential.get_lr(initial_lr, current, t_max)
+        assert composable_lr == pytest.approx(sequential_lr), (
+            f"mismatch at step {current}: composable={composable_lr}, sequential={sequential_lr}"
+        )
+
+
 def test_sequential_scheduler_override_decay_t_max_warning():
     scheduler = SequentialScheduler(
         schedulers=[ConstantWithWarmup(warmup=100), CosWithWarmup(warmup=0)],
