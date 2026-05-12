@@ -1,4 +1,5 @@
 import math
+from typing import List, Tuple, Type
 
 import pytest
 
@@ -14,9 +15,10 @@ from olmo_core.optim import (
 )
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
-    OverrideDecay,
     ComposableSchedulerStage,
     ComposableSchedulerStageType,
+    OverrideDecay,
+    Scheduler,
 )
 
 
@@ -207,18 +209,16 @@ def test_sequential_scheduler_override_decay_inside_first_segment():
     assert scheduler.get_lr(initial_lr, 10_000, max_steps) == pytest.approx(2.0)
 
 
-@pytest.mark.parametrize(
-    "stage_shape, sub_scheduler_cls, alpha_f",
-    [
-        (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.0),
-        (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.1),
-        (ComposableSchedulerStageType.cosine, CosWithWarmup, 0.0),
-        (ComposableSchedulerStageType.cosine, CosWithWarmup, 0.1),
-    ],
-)
-def test_composable_and_sequential_match_when_t_max_aligns(
-    stage_shape, sub_scheduler_cls, alpha_f
-):
+_PARITY_CASES: List[Tuple[ComposableSchedulerStageType, Type[Scheduler], float]] = [
+    (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.0),
+    (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.1),
+    (ComposableSchedulerStageType.cosine, CosWithWarmup, 0.0),
+    (ComposableSchedulerStageType.cosine, CosWithWarmup, 0.1),
+]
+
+
+@pytest.mark.parametrize("stage_shape, sub_scheduler_cls, alpha_f", _PARITY_CASES)
+def test_composable_and_sequential_match_when_t_max_aligns(stage_shape, sub_scheduler_cls, alpha_f):
     """
     A warmup + decay schedule should produce identical LR curves whether
     expressed as a ComposableScheduler or as a SequentialScheduler, provided
@@ -260,18 +260,16 @@ def test_composable_and_sequential_match_when_t_max_aligns(
     for current in sample_points:
         composable_lr = composable.get_lr(initial_lr, current, t_max)
         sequential_lr = sequential.get_lr(initial_lr, current, t_max)
-        assert composable_lr == pytest.approx(sequential_lr), (
-            f"mismatch at step {current}: composable={composable_lr}, sequential={sequential_lr}"
-        )
+        assert composable_lr == pytest.approx(
+            sequential_lr
+        ), f"mismatch at step {current}: composable={composable_lr}, sequential={sequential_lr}"
 
 
 def test_sequential_scheduler_override_decay_t_max_warning():
     scheduler = SequentialScheduler(
         schedulers=[ConstantWithWarmup(warmup=100), CosWithWarmup(warmup=0)],
         schedulers_max=[1_000],
-        override_decay=OverrideDecay(
-            start=500, duration=200, end_lr=0.0
-        ),
+        override_decay=OverrideDecay(start=500, duration=200, end_lr=0.0),
     )
 
     # Warning fires once, when override becomes active.
@@ -343,7 +341,9 @@ def test_composable_scheduler_override_decay_cosine():
 
 
 def test_composable_scheduler_override_decay_validation():
-    with pytest.raises(OLMoConfigurationError, match="exactly one of 'end_lr' or 'end_lr_fraction'"):
+    with pytest.raises(
+        OLMoConfigurationError, match="exactly one of 'end_lr' or 'end_lr_fraction'"
+    ):
         OverrideDecay(start=100, duration=100)
 
 
