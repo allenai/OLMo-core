@@ -536,7 +536,7 @@ class ComposableSchedulerStage(Config):
 
 
 @dataclass
-class ComposableSchedulerMonkeyPatchDecay(Config):
+class ComposableSchedulerOverrideDecay(Config):
     """
     Optional decay override for :class:`ComposableScheduler`.
 
@@ -554,21 +554,25 @@ class ComposableSchedulerMonkeyPatchDecay(Config):
 
     def __post_init__(self):
         if self.start < 0:
-            raise OLMoConfigurationError("'start' must be >= 0 for monkey-patch decay.")
+            raise OLMoConfigurationError("'start' must be >= 0 for override decay.")
 
         if self.duration <= 0:
-            raise OLMoConfigurationError("'duration' must be > 0 for monkey-patch decay.")
+            raise OLMoConfigurationError("'duration' must be > 0 for override decay.")
 
         if (self.end_lr is None) == (self.end_lr_fraction is None):
             raise OLMoConfigurationError(
-                "Specify exactly one of 'end_lr' or 'end_lr_fraction' for monkey-patch decay."
+                "Specify exactly one of 'end_lr' or 'end_lr_fraction' for override decay."
             )
 
         if self.end_lr is not None and self.end_lr < 0:
-            raise OLMoConfigurationError("'end_lr' must be >= 0 for monkey-patch decay.")
+            raise OLMoConfigurationError("'end_lr' must be >= 0 for override decay.")
 
         if self.end_lr_fraction is not None and self.end_lr_fraction < 0:
-            raise OLMoConfigurationError("'end_lr_fraction' must be >= 0 for monkey-patch decay.")
+            raise OLMoConfigurationError("'end_lr_fraction' must be >= 0 for override decay.")
+
+
+# Deprecated alias retained for backwards compatibility.
+ComposableSchedulerMonkeyPatchDecay = ComposableSchedulerOverrideDecay
 
 
 @dataclass
@@ -583,10 +587,25 @@ class ComposableScheduler(Scheduler):
     """
 
     stages: List[ComposableSchedulerStage] = field(default_factory=list)
-    monkey_patch_decay: Optional[ComposableSchedulerMonkeyPatchDecay] = None
+    override_decay: Optional[ComposableSchedulerOverrideDecay] = None
+    monkey_patch_decay: Optional[ComposableSchedulerOverrideDecay] = (
+        None  # deprecated, use 'override_decay' instead.
+    )
 
     def __post_init__(self, *args):
         del args
+        if self.override_decay is None and self.monkey_patch_decay is not None:
+            self.override_decay = self.monkey_patch_decay
+            self.monkey_patch_decay = None
+            warnings.warn(
+                f"'{self.__class__.__name__}.monkey_patch_decay' is deprecated, please use '.override_decay' instead.",
+                DeprecationWarning,
+            )
+        elif self.override_decay is not None and self.monkey_patch_decay is not None:
+            raise OLMoConfigurationError(
+                "Specify at most one of 'override_decay' or the deprecated 'monkey_patch_decay'."
+            )
+
         if len(self.stages) == 0:
             raise OLMoConfigurationError("'stages' must be specified and non-empty.")
 
@@ -616,15 +635,15 @@ class ComposableScheduler(Scheduler):
     ) -> Union[float, torch.Tensor]:
         return self._resolve_from_initial(initial_lr, stage.end_lr, stage.end_lr_fraction)
 
-    def _resolve_monkey_patch_decay_end(
+    def _resolve_override_decay_end(
         self,
-        monkey_patch_decay: ComposableSchedulerMonkeyPatchDecay,
+        override_decay: ComposableSchedulerOverrideDecay,
         initial_lr: Union[float, torch.Tensor],
     ) -> Union[float, torch.Tensor]:
         return self._resolve_from_initial(
             initial_lr,
-            monkey_patch_decay.end_lr,
-            monkey_patch_decay.end_lr_fraction,
+            override_decay.end_lr,
+            override_decay.end_lr_fraction,
         )
 
     def _main_schedule_lr(
@@ -674,24 +693,24 @@ class ComposableScheduler(Scheduler):
         del t_max
         current = max(current, 0)
 
-        if self.monkey_patch_decay is None or current < self.monkey_patch_decay.start:
+        if self.override_decay is None or current < self.override_decay.start:
             return self._main_schedule_lr(initial_lr, current)
 
-        monkey_patch_decay = self.monkey_patch_decay
-        monkey_patch_start_lr = self._main_schedule_lr(initial_lr, monkey_patch_decay.start)
-        monkey_patch_end_lr = self._resolve_monkey_patch_decay_end(monkey_patch_decay, initial_lr)
-        monkey_patch_current = current - monkey_patch_decay.start
+        override_decay = self.override_decay
+        override_start_lr = self._main_schedule_lr(initial_lr, override_decay.start)
+        override_end_lr = self._resolve_override_decay_end(override_decay, initial_lr)
+        override_current = current - override_decay.start
 
-        if monkey_patch_current < monkey_patch_decay.duration:
+        if override_current < override_decay.duration:
             return self._interpolate(
-                shape=monkey_patch_decay.shape,
-                start_lr=monkey_patch_start_lr,
-                end_lr=monkey_patch_end_lr,
-                current=monkey_patch_current,
-                duration=monkey_patch_decay.duration,
+                shape=override_decay.shape,
+                start_lr=override_start_lr,
+                end_lr=override_end_lr,
+                current=override_current,
+                duration=override_decay.duration,
             )
 
-        return monkey_patch_end_lr
+        return override_end_lr
 
 
 def _linear_warmup(
