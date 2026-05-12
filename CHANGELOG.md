@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed LM in-loop evaluator data-order drift across repeated runs by resetting loader bookkeeping before each pass and making deterministic reshuffling the default.
 - Fixed Qwen3 implementation to match HuggingFace by applying RoPE in the input dtype (bf16) rather than upcasting to fp32.
 - Fixed Beaker secret existence check to use the case-insensitive HTTP endpoint, avoiding spurious "secret not found" errors when secret names differ only in case.
+- Fixed `CosWithWarmupAndLinearDecay`: now invokes `super().__post_init__()` (so the deprecated `warmup_steps` alias is migrated and parent validations run), and the cosine now completes to `alpha_f * peak` by step `t_max - decay`, with the linear tail carrying from there to `decay_min_lr`. Previously the cosine ran across the full `t_max` and the linear tail attached mid-flight at whatever value the cosine produced at `t_max - decay`.
 
 ### Changed
 
