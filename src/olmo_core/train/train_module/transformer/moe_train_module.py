@@ -729,6 +729,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             reset_optimizer_moments_on_load=False,
         )  # load back the optim state after save
 
+        torch.cuda.empty_cache()
+
         return
 
     def load_state_dict_direct(
@@ -1540,6 +1542,11 @@ class MoEV2TransformerTrainModule(TrainModule):
                 if ep_mp_dim != ep_rank_grid.ndim - 1:
                     ep_rank_grid = torch.movedim(ep_rank_grid, ep_mp_dim, -1).contiguous()
                 ep_mp_rank_groups = ep_rank_grid.view(-1, ep_rank_grid.shape[-1]).tolist()
+                # Keep small synchronized-EP collectives on a high-priority stream.
+                # Shared experts can overlap the token-count exchange; if some EP
+                # ranks arrive earlier than others, this is meant to keep that
+                # overlap from delaying the collective start. Revalidate whether it
+                # still buys useful overlap on current NCCL/torch versions.
                 nccl_opts = dist.ProcessGroupNCCL.Options(is_high_priority_stream=True)
                 ep_mp_group, ep_mp_groups = dist.new_subgroups_by_enumeration(
                     ranks_per_subgroup_list=ep_mp_rank_groups,
@@ -1773,7 +1780,10 @@ class MoEV2TransformerTrainModule(TrainModule):
             assert x is None
             x = move_to_device(torch.empty([]), self.device)
 
-        # Asynchronously send to previous stage rank in the PP group.
+        # Propagate final-stage scalar metrics through PP ranks in completion
+        # order instead of broadcasting. This was inherited from older PP code;
+        # it likely avoids an ordering cycle with surrounding PP collectives, but
+        # the exact constraint should be revalidated before simplifying it.
         ordered_ranks = list(self._pp_config.rank_completion_order())
         local_index = ordered_ranks.index(self.pp_group_rank)
         src_rank = None if local_index == 0 else ordered_ranks[local_index - 1]

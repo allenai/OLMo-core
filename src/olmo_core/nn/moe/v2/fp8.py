@@ -28,6 +28,8 @@ class MoERowwiseFP8Config(Config):
     scale_mode: MoERowwiseFP8ScaleMode = MoERowwiseFP8ScaleMode.rceil
     use_fast_accum: bool = True
     fp8_only_params: bool = True
+    fused_autograd: bool = True
+    fused_autograd_recompute_swiglu: bool = True
 
     def validate(self) -> None:
         if self.block_size != 32:

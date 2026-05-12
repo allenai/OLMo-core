@@ -65,12 +65,6 @@ class MultiGroupDistributedDataParallel(Module):
     ):
         super().__init__()
 
-        _use_python_reducer = (
-            torch._dynamo.utils.get_optimize_ddp_mode() == "python_reducer"
-        )
-        if not _use_python_reducer:
-             assert False, "Only python_reducer is supported. Please set torch._dynamo.config.optimize_ddp = \"python_reducer\""
-
         if process_group is None:
             if _get_default_group is None:
                 self.process_group = None
@@ -218,9 +212,8 @@ class MultiGroupDistributedDataParallel(Module):
                     p.register_post_accumulate_grad_hook(self._fp32_post_grad_acc_hook)
                 )
 
-        # Register the AccumulateGrad post hooks if optimize_ddp is
-        # True. The hooks will be deregistered if compiled_autograd is not
-        # enabled.
+        # Register the AccumulateGrad post hooks that drive this wrapper's
+        # own bucket readiness/all-reduce path.
         self._accum_grad_hooks: list[RemovableHandle] = []
 
         self._param_grad_ready: OrderedDict[torch.nn.Parameter, bool] = OrderedDict()

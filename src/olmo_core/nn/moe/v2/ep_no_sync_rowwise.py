@@ -9,6 +9,7 @@ from ...moe.utils import wait_stream_no_compile
 from .comm import (
     _DispatchRowwiseAutograd,
     _DispatchRowwiseFP8Autograd,
+    _RowwiseFP8DispatchExpertsCombineAutograd,
     _RowwiseCombineWeightedAutograd,
     _RowwiseCombineWeightedFP8Autograd,
 )
@@ -144,6 +145,7 @@ def combined_forward_ep_no_sync_rowwise(
     lease_dispatch_out = (not use_rowwise_fp8) and lease_lifetime_buffers
     lease_combine_out = use_symm_combine_out and lease_lifetime_buffers
     lease_combine_gather = use_symm_combine_gather and lease_lifetime_buffers
+    use_fused_rowwise_fp8 = use_rowwise_fp8 and rowwise_fp8_cfg is not None and rowwise_fp8_cfg.fused_autograd
 
     with torch.no_grad():
         requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
@@ -310,6 +312,11 @@ def combined_forward_ep_no_sync_rowwise(
             dim=0,
             dtype=torch.long,
         )
+        routed_expert_offsets = torch.cumsum(
+            padded_batch_size_per_local_expert.to(dtype=torch.int32),
+            dim=0,
+            dtype=torch.int32,
+        )
 
     with torch.no_grad():
         dst_ranks, dst_rows = build_rowwise_route_maps(
@@ -334,7 +341,71 @@ def combined_forward_ep_no_sync_rowwise(
     else:
         shared_out_up, shared_out_gate = None, None
 
-    if use_rowwise_fp8:
+    route_probs = local_x_global_routed_expert_weights.view(
+        -1, self.routed_experts_router.top_k
+    )
+
+    if use_fused_rowwise_fp8:
+        assert rowwise_fp8_cfg is not None
+        assert dispatch_out_q is not None
+        assert dispatch_out_scales is not None
+        assert combine_in_q is not None
+        assert combine_in_scales is not None
+        routed_experts = self.routed_experts
+        routed_fp8_cfg = routed_experts.rowwise_fp8
+        if routed_fp8_cfg is None or not routed_fp8_cfg.enabled:
+            raise RuntimeError("fused rowwise FP8 autograd requires routed expert rowwise_fp8 to be enabled")
+        up_gate_weight = routed_experts._rowwise_fp8_up_gate_weight
+        down_weight = routed_experts._rowwise_fp8_down_weight
+        up_gate_prequant = up_gate_weight.require_prequantized_rhs()
+        up_gate_prequant_t = up_gate_weight.require_prequantized_rhs_for_dgrad()
+        down_prequant = down_weight.require_prequantized_rhs()
+        down_prequant_t = down_weight.require_prequantized_rhs_for_dgrad()
+
+        up_wgrad_sink = None
+        down_wgrad_sink = None
+        up_wgrad_sink_transpose_last2 = False
+        down_wgrad_sink_transpose_last2 = False
+        up_gate_anchor = routed_experts.w_up_gate.transpose(1, 2)
+        down_anchor = routed_experts.w_down
+        if routed_fp8_cfg.fp8_only_params:
+            up_wgrad_sink = up_gate_weight
+            down_wgrad_sink = down_weight
+            up_wgrad_sink_transpose_last2 = True
+            up_gate_anchor = up_gate_anchor.detach()
+            down_anchor = down_anchor.detach()
+
+        local_x = _RowwiseFP8DispatchExpertsCombineAutograd.apply(
+            moe_inp,
+            dst_ranks,
+            dst_rows,
+            routed_expert_offsets,
+            route_probs,
+            dispatch_out_q,
+            dispatch_out_scales,
+            combine_in_q,
+            combine_in_scales,
+            up_gate_anchor,
+            down_anchor,
+            up_gate_prequant,
+            up_gate_prequant_t,
+            down_prequant,
+            down_prequant_t,
+            fp8_buffers.dispatch_out_lease,
+            rowwise_fp8_cfg.block_size,
+            rowwise_fp8_cfg.use_fast_accum,
+            rowwise_fp8_cfg.fused_autograd_recompute_swiglu,
+            group_name,
+            self.ep_pg,
+            rowwise_nblocks,
+            up_wgrad_sink,
+            up_wgrad_sink_transpose_last2,
+            False,
+            down_wgrad_sink,
+            down_wgrad_sink_transpose_last2,
+            False,
+        )
+    elif use_rowwise_fp8:
         assert rowwise_fp8_cfg is not None
         assert dispatch_out_q is not None
         assert dispatch_out_scales is not None
@@ -370,26 +441,25 @@ def combined_forward_ep_no_sync_rowwise(
             False,
         )
 
-    dispatch_rank_major = self.routed_experts(
-        dispatch_rank_major,
-        padded_batch_size_per_local_expert,
-        down_proj_out=(None if use_rowwise_fp8 else buffers.combine_in.detach()),  # type: ignore[union-attr]
-        up_proj_input_grad_out=(None if use_rowwise_fp8 else buffers.dispatch_out.detach()),  # type: ignore[union-attr]
-        use_rowwise_fp8=use_rowwise_fp8,
-        rowwise_fp8_input_q=(dispatch_out_q if use_rowwise_fp8 else None),
-        rowwise_fp8_input_scales=(dispatch_out_scales if use_rowwise_fp8 else None),
-    )
+    if not use_fused_rowwise_fp8:
+        dispatch_rank_major = self.routed_experts(
+            dispatch_rank_major,
+            padded_batch_size_per_local_expert,
+            down_proj_out=(None if use_rowwise_fp8 else buffers.combine_in.detach()),  # type: ignore[union-attr]
+            up_proj_input_grad_out=(None if use_rowwise_fp8 else buffers.dispatch_out.detach()),  # type: ignore[union-attr]
+            use_rowwise_fp8=use_rowwise_fp8,
+            rowwise_fp8_input_q=(dispatch_out_q if use_rowwise_fp8 else None),
+            rowwise_fp8_input_scales=(dispatch_out_scales if use_rowwise_fp8 else None),
+        )
 
     wait_stream_no_compile(
         this_stream=self.get_dense_stream(),
         other_stream=torch.cuda.current_stream(),
     )
 
-    route_probs = local_x_global_routed_expert_weights.view(
-        -1, self.routed_experts_router.top_k
-    )
-
-    if use_rowwise_fp8:
+    if use_fused_rowwise_fp8:
+        pass
+    elif use_rowwise_fp8:
         assert rowwise_fp8_cfg is not None
         assert combine_in_q is not None
         assert combine_in_scales is not None

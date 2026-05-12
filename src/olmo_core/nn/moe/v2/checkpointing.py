@@ -29,7 +29,9 @@ def is_checkpoint_recomputing() -> bool:
     # be TorchDispatchModes, so some call sites use noop_context_fn instead of
     # checkpoint_recompute_context_fn(). Non-reentrant checkpoint recomputation
     # still runs while autograd is executing a graph task; use that as a fallback
-    # so recomputed forwards don't repeat metric side effects.
+    # so recomputed forwards don't repeat metric side effects. With
+    # reduce_overhead/CUDA graph capture this is a best-effort workaround, not a
+    # fully proven signal.
     try:
         return torch.is_grad_enabled() and torch._C._current_graph_task_id() != -1
     except Exception:

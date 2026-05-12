@@ -549,6 +549,11 @@ class _FlatModelParamSyncGroup:
     world_size: int
 
 
+# Intentionally not a torch.optim.Optimizer subclass. This object owns
+# MoE-specific state layout, EP/DP sharding, gradient intake from MultiGroupDDP,
+# FP8 cache refresh, and checkpoint serialization directly. Revisit the choice
+# if trainer/callback integration starts needing more of the torch optimizer
+# interface.
 class MoEFusedV2Optimizer:
     LOSSES_STATE_DICT_KEY = "__moe_skip_step_losses"
     GRAD_NORMS_STATE_DICT_KEY = "__moe_skip_step_grad_norms"
@@ -641,6 +646,7 @@ class MoEFusedV2Optimizer:
         self.dp_mesh = self.dense_mesh['dp']
         self.ep_dp_mesh = self.moe_mesh['ep_dp'] if self.moe_mesh else None
         self.ep_mp_mesh = self.moe_mesh['ep_mp'] if self.moe_mesh else None
+        self._ep_checkpoint_mesh_cache: Optional[DeviceMesh] = None
 
         self.rolling_interval_length = rolling_interval_length
         self.sigma_factor = sigma_factor
@@ -1263,11 +1269,24 @@ class MoEFusedV2Optimizer:
             return ("main", "muon_momentum", "step")
         return ("main", "exp_avg", "exp_avg_sq", "step")
 
-    def _gather_sharded_flat_tensor(self, local_tensor: torch.Tensor, state_dt: DTensor) -> torch.Tensor:
+    def _gather_sharded_flat_tensor(
+        self,
+        local_tensor: torch.Tensor,
+        state_dt: DTensor,
+        *,
+        output_dtype: Optional[torch.dtype] = None,
+    ) -> torch.Tensor:
         if not any(isinstance(p, Shard) for p in state_dt.placements):
+            if output_dtype is not None and local_tensor.dtype != output_dtype:
+                return local_tensor.to(output_dtype)
             return local_tensor
 
-        gathered = coalesced_all_gather([local_tensor], state_dt.device_mesh.get_group())[0]
+        flat_global, sizes, offsets = coalesced_all_gather_flat(
+            [local_tensor],
+            state_dt.device_mesh.get_group(),
+            output_dtype=output_dtype,
+        )
+        gathered = flat_global[:, offsets[0] : offsets[0] + sizes[0]].contiguous()
         return gathered.reshape(-1)
 
     def _load_moment_state_or_zero(self, state_dict: Dict[str, Any], state_key: str) -> Optional[Any]:
@@ -1277,48 +1296,106 @@ class MoEFusedV2Optimizer:
         self._ensure_local_state_storage(state_key).to_local().zero_()
         return None
 
+    @staticmethod
+    def _shares_tensor_storage(a: torch.Tensor, b: torch.Tensor) -> bool:
+        if a.numel() == 0 or b.numel() == 0:
+            return False
+        return a.untyped_storage().data_ptr() == b.untyped_storage().data_ptr()
+
+    def _ep_checkpoint_mesh(self) -> DeviceMesh:
+        assert self.moe_mesh is not None
+        # Checkpoint chunks are ordered by logical expert shard first, then the
+        # optimizer shard within that expert shard. This gives a topology-neutral
+        # flat tensor without materializing all EP ranks on GPU.
+        if self._ep_checkpoint_mesh_cache is None:
+            ep_mesh = self.moe_mesh["ep_dp", "ep_mp"]
+            ranks = ep_mesh.mesh.permute(1, 0).contiguous()
+            self._ep_checkpoint_mesh_cache = DeviceMesh(
+                ep_mesh.device_type,
+                ranks,
+                mesh_dim_names=("ep_mp", "ep_dp"),
+                _init_backend=False,
+            )
+        return self._ep_checkpoint_mesh_cache
+
+    def _ep_checkpoint_placements(self, state_dt: DTensor) -> List[Placement]:
+        assert len(state_dt.placements) == 1
+        ep_dp_placement = state_dt.placements[0]
+        if ep_dp_placement.is_shard():
+            return [Shard(0), Shard(0)]
+        return [Shard(0), Replicate()]
+
+    def _ep_checkpoint_global_numel(self, state_dt: DTensor) -> int:
+        assert self.ep_mp_mesh is not None
+        return state_dt.numel() * self.ep_mp_mesh.size()
+
+    def _is_ep_checkpoint_view(self, state_dt: DTensor, ckpt_state: DTensor) -> bool:
+        expected_mesh = self._ep_checkpoint_mesh()
+        return (
+            torch.equal(ckpt_state.device_mesh.mesh, expected_mesh.mesh)
+            and tuple(ckpt_state.device_mesh.mesh_dim_names or ()) == tuple(expected_mesh.mesh_dim_names or ())
+            and list(ckpt_state.placements) == self._ep_checkpoint_placements(state_dt)
+            and ckpt_state.numel() == self._ep_checkpoint_global_numel(state_dt)
+        )
+
     def _ep_dp_state_to_checkpoint(self, live_state_dt: DTensor) -> DTensor:
         assert self.moe_mesh is not None
+        assert self.ep_dp_mesh is not None and self.ep_mp_mesh is not None
         assert len(live_state_dt.placements) == 1
-        ep_dp_placement = live_state_dt.placements[0]
-        if ep_dp_placement.is_shard():
-            combined_ep_dp_placement: Placement = Shard(1)
-        else:
-            combined_ep_dp_placement = Replicate()
+        flat_local = live_state_dt.to_local().reshape(-1)
+        checkpoint_mesh = self._ep_checkpoint_mesh()
+        checkpoint_placements = self._ep_checkpoint_placements(live_state_dt)
+        global_numel = self._ep_checkpoint_global_numel(live_state_dt)
 
-        state_local = live_state_dt.to_local()
-        state_dt_for_save = DTensor.from_local(
-            state_local.unsqueeze(0),
-            device_mesh=self.moe_mesh["ep_dp", "ep_mp"],
-            placements=[combined_ep_dp_placement, Shard(0)],
+        return DTensor.from_local(
+            flat_local,
+            device_mesh=checkpoint_mesh,
+            placements=checkpoint_placements,
+            shape=(global_numel,),
+            stride=(1,),
+            run_check=False,
         )
-        state_dt_for_save = state_dt_for_save.full_tensor().reshape(-1)
-        return self._distribute_tensor(state_dt_for_save, self.dp_mesh, force_shard=True)
 
     def _load_ep_dp_state_from_checkpoint(self, state_key: str, ckpt_state: DTensor) -> None:
         assert self.moe_mesh is not None
-        state_dt = self._ensure_local_state_storage(state_key)
-        ckpt_state = ckpt_state.full_tensor()
-        ckpt_state = distribute_tensor(
-            ckpt_state,
-            device_mesh=self.moe_mesh["ep_mp"],
-            placements=[Shard(0)],
-        ).to_local()
-
-        if state_dt.placements[0].is_shard():
-            ckpt_state = distribute_tensor(
-                ckpt_state,
-                device_mesh=self.moe_mesh["ep_dp"],
-                placements=[Shard(0)],
+        state_dt = self.states[state_key]
+        state_local = state_dt.to_local()
+        ckpt_local_direct = ckpt_state.to_local().reshape(-1)
+        is_checkpoint_view = self._is_ep_checkpoint_view(state_dt, ckpt_state)
+        if is_checkpoint_view and self._shares_tensor_storage(ckpt_local_direct, state_local.reshape(-1)):
+            return
+        if state_local.numel() == 0:
+            local_shape, _ = compute_local_shape_and_global_offset(
+                state_dt.shape,
+                state_dt.device_mesh,
+                state_dt.placements,
             )
         else:
-            ckpt_state = distribute_tensor(
-                ckpt_state,
-                device_mesh=self.moe_mesh["ep_dp"],
-                placements=[Replicate()],
-            )
+            local_shape = tuple(state_local.shape)
+        if is_checkpoint_view and ckpt_local_direct.numel() == math.prod(local_shape):
+            state_dt = self._ensure_local_state_storage(state_key)
+            state_dt.to_local().copy_(ckpt_local_direct.reshape(tuple(local_shape)))
+            return
 
-        ckpt_local = ckpt_state.to_local()
+        state_dt = self._ensure_local_state_storage(state_key)
+        ckpt_state = ckpt_state.full_tensor().reshape(-1)
+        # Slice views directly instead of re-wrapping with distribute_tensor, which
+        # would allocate another local expert shard during checkpoint restore-back.
+        ckpt_state = self.narrow_tensor(
+            ckpt_state,
+            self.moe_mesh["ep_mp"],
+            [Shard(0)],
+        )
+        if state_dt.placements[0].is_shard():
+            ckpt_local = self.narrow_tensor(
+                ckpt_state,
+                self.moe_mesh["ep_dp"],
+                [Shard(0)],
+            )
+        else:
+            ckpt_local = ckpt_state
+
+        ckpt_local = ckpt_local.reshape(state_dt.to_local().shape)
         assert ckpt_state.shape == state_dt.shape, (
             f"Global shape mismatch for {state_key}: {ckpt_state.shape} vs {state_dt.shape}"
         )
@@ -1414,22 +1491,184 @@ class MoEFusedV2Optimizer:
             model_grad = model_grad.float()
         return model_grad
 
+    def _ep_mp_world_size_for_group(self, param_group: Dict[str, Any]) -> int:
+        if self.moe_mesh is None or param_group["pg"] != "ep_dp":
+            return 1
+        assert self.ep_mp_mesh is not None
+        return int(self.ep_mp_mesh.size())
+
+    @staticmethod
+    def _clear_fp8_weight_store_grad(param: FP8WeightStore) -> None:
+        param.grad_bf16 = None
+        param.main_grad_fp32 = None
+
+    def _copy_fp8_model_grads_to_main_grads(
+        self,
+        param_group: Dict[str, Any],
+        entries: List[Tuple[str, FP8WeightStore, torch.Tensor, DTensor]],
+    ) -> None:
+        if not entries:
+            return
+
+        pg = self._get_process_group_for_tag(param_group["pg"])
+        pg_world_size = 1
+        if dist.is_available() and dist.is_initialized():
+            pg_world_size = dist.get_world_size(pg)
+        average_denominator = pg_world_size * self._ep_mp_world_size_for_group(param_group)
+
+        # The FP8-only weights are not normal DDP parameters, so their logical
+        # gradients are reduced here. Sharded optimizer states only need the
+        # local post-reduction shard, so use reduce-scatter instead of
+        # all-reducing the full logical gradient.
+        bucket_cap_bytes = 512 * 1024 * 1024
+        reduce_scatter_bucket: List[Tuple[str, FP8WeightStore, torch.Tensor, DTensor]] = []
+        reduce_scatter_bucket_bytes = 0
+        all_reduce_bucket: List[Tuple[str, FP8WeightStore, torch.Tensor, DTensor]] = []
+        all_reduce_bucket_bytes = 0
+
+        def flush_reduce_scatter_bucket() -> None:
+            nonlocal reduce_scatter_bucket
+            nonlocal reduce_scatter_bucket_bytes
+            if not reduce_scatter_bucket:
+                return
+
+            dtype = reduce_scatter_bucket[0][2].dtype
+            device = reduce_scatter_bucket[0][2].device
+            local_numels = [
+                main_param.to_local().numel()
+                for _, _, _, main_param in reduce_scatter_bucket
+            ]
+            total_local_numel = sum(local_numels)
+            flat_input = torch.empty(
+                (pg_world_size, total_local_numel),
+                device=device,
+                dtype=dtype,
+            )
+
+            offset = 0
+            for (_name, _param, model_grad, main_param), local_numel in zip(
+                reduce_scatter_bucket,
+                local_numels,
+            ):
+                expected_numel = local_numel * pg_world_size
+                if model_grad.numel() != expected_numel:
+                    raise RuntimeError(
+                        "FP8 reduce-scatter grad size mismatch: "
+                        f"model_grad={model_grad.numel()} expected={expected_numel}"
+                    )
+                flat_input[:, offset : offset + local_numel].copy_(
+                    model_grad.view(pg_world_size, local_numel)
+                )
+                offset += local_numel
+
+            if average_denominator != 1:
+                flat_input.div_(average_denominator)
+
+            flat_output = torch.empty(total_local_numel, device=device, dtype=dtype)
+            dist.reduce_scatter_tensor(
+                flat_output,
+                flat_input.reshape(-1),
+                op=dist.ReduceOp.SUM,
+                group=pg,
+            )
+
+            offset = 0
+            for (name, param, _model_grad, _main_param), local_numel in zip(
+                reduce_scatter_bucket,
+                local_numels,
+            ):
+                # Views keep the reduced bucket alive until _dealloc_main_grad().
+                self.main_grad[name] = flat_output[offset : offset + local_numel]
+                self._clear_fp8_weight_store_grad(param)
+                offset += local_numel
+
+            reduce_scatter_bucket = []
+            reduce_scatter_bucket_bytes = 0
+
+        def flush_all_reduce_bucket() -> None:
+            nonlocal all_reduce_bucket
+            nonlocal all_reduce_bucket_bytes
+            if not all_reduce_bucket:
+                return
+
+            if pg_world_size > 1:
+                dtype = all_reduce_bucket[0][2].dtype
+                device = all_reduce_bucket[0][2].device
+                total_numel = sum(model_grad.numel() for _, _, model_grad, _ in all_reduce_bucket)
+                flat = torch.empty(total_numel, device=device, dtype=dtype)
+                offset = 0
+                for _, _, model_grad, _ in all_reduce_bucket:
+                    numel = model_grad.numel()
+                    flat[offset : offset + numel].copy_(model_grad)
+                    offset += numel
+                if average_denominator != 1:
+                    flat.div_(average_denominator)
+                dist.all_reduce(flat, op=dist.ReduceOp.SUM, group=pg)
+                offset = 0
+                for name, param, model_grad, main_param in all_reduce_bucket:
+                    numel = model_grad.numel()
+                    reduced_grad = flat[offset : offset + numel]
+                    self.main_grad[name] = self.narrow_tensor(
+                        reduced_grad,
+                        main_param.device_mesh,
+                        main_param.placements,
+                    )
+                    self._clear_fp8_weight_store_grad(param)
+                    offset += numel
+            else:
+                for name, param, model_grad, main_param in all_reduce_bucket:
+                    if average_denominator != 1:
+                        model_grad.div_(average_denominator)
+                    self.main_grad[name] = self.narrow_tensor(
+                        model_grad,
+                        main_param.device_mesh,
+                        main_param.placements,
+                    )
+                    self._clear_fp8_weight_store_grad(param)
+
+            all_reduce_bucket = []
+            all_reduce_bucket_bytes = 0
+
+        for name, param, model_grad, main_param in entries:
+            model_grad = model_grad.reshape(-1)
+            model_grad_bytes = model_grad.numel() * model_grad.element_size()
+            can_reduce_scatter = (
+                pg_world_size > 1
+                and any(isinstance(p, Shard) for p in main_param.placements)
+            )
+            if can_reduce_scatter:
+                if reduce_scatter_bucket and (
+                    model_grad.dtype != reduce_scatter_bucket[0][2].dtype
+                    or model_grad.device != reduce_scatter_bucket[0][2].device
+                    or reduce_scatter_bucket_bytes + model_grad_bytes > bucket_cap_bytes
+                ):
+                    flush_reduce_scatter_bucket()
+                reduce_scatter_bucket.append((name, param, model_grad, main_param))
+                reduce_scatter_bucket_bytes += model_grad_bytes
+            else:
+                if all_reduce_bucket and (
+                    model_grad.dtype != all_reduce_bucket[0][2].dtype
+                    or model_grad.device != all_reduce_bucket[0][2].device
+                    or all_reduce_bucket_bytes + model_grad_bytes > bucket_cap_bytes
+                ):
+                    flush_all_reduce_bucket()
+                all_reduce_bucket.append((name, param, model_grad, main_param))
+                all_reduce_bucket_bytes += model_grad_bytes
+
+        flush_reduce_scatter_bucket()
+        flush_all_reduce_bucket()
+        entries.clear()
+
     @nvtx.annotate("MoEFusedV2Optimizer._copy_model_grads_to_main_grads")
     def _copy_model_grads_to_main_grads(self):
         for param_group in self.param_groups:
+            fp8_entries: List[Tuple[str, FP8WeightStore, torch.Tensor, DTensor]] = []
             for name, param in param_group['named_params'].items():
                 if _is_fp8_weight_store(param):
                     model_grad = self._get_fp8_weight_store_model_grad(name, param)
-                    pg = self._get_process_group_for_tag(param_group['pg'])
-                    if dist.is_available() and dist.is_initialized():
-                        pg_world_size = dist.get_world_size(pg)
-                        if pg_world_size > 1:
-                            model_grad.div_(pg_world_size)
-                            dist.all_reduce(
-                                model_grad,
-                                op=dist.ReduceOp.SUM,
-                                group=pg,
-                            )
+                    main_param = self.states[f'{name}.main']
+                    fp8_entries.append((name, param, model_grad, main_param))
+                    continue
                 elif self.model_has_grad_accum_fp32_buffer:
                     # the model already has a fp32 grad buffer, so the grad is already in fp32
                     # and model's bf16 grad should be None
@@ -1473,6 +1712,7 @@ class MoEFusedV2Optimizer:
                     ep_mp_world_process_group = self.ep_mp_mesh.get_group()
                     ep_mp_world_size = dist.get_world_size(ep_mp_world_process_group)
                     self.main_grad[name].div_(ep_mp_world_size)
+            self._copy_fp8_model_grads_to_main_grads(param_group, fp8_entries)
 
     def narrow_tensor(self, orignal: torch.Tensor, device_mesh: DeviceMesh, placements: List[Placement]):
         assert len(placements) == 1, "Only support 1D sharding"
@@ -1512,6 +1752,7 @@ class MoEFusedV2Optimizer:
             input_dtensors = []
             output_params = []
             input_numel = 0
+            fp8_entries: List[Tuple[str, FP8WeightStore, DTensor]] = []
 
             def flush_all_gather():
                 nonlocal input_dtensors, output_params, input_numel
@@ -1537,7 +1778,7 @@ class MoEFusedV2Optimizer:
             for name, param in param_group['named_params'].items():
                 
                 if _is_fp8_weight_store(param):
-                    self._copy_main_param_to_mxfp8_weight(name, param)
+                    fp8_entries.append((name, param, self.states[f"{name}.main"]))
                     continue
 
                 main_param = self.states[f'{name}.main']
@@ -1563,25 +1804,110 @@ class MoEFusedV2Optimizer:
             # final gather
             if len(input_dtensors) > 0:
                 flush_all_gather()
+            self._copy_main_params_to_mxfp8_weight_entries(fp8_entries)
 
         self._refresh_rowwise_fp8_caches_from_model_params()
         return
 
     def _copy_main_params_to_mxfp8_weights(self) -> None:
         for param_group in self.param_groups:
+            fp8_entries: List[Tuple[str, FP8WeightStore, DTensor]] = []
             for name, param in param_group["named_params"].items():
                 if _is_fp8_weight_store(param):
-                    self._copy_main_param_to_mxfp8_weight(name, param)
+                    fp8_entries.append((name, param, self.states[f"{name}.main"]))
+            self._copy_main_params_to_mxfp8_weight_entries(fp8_entries)
 
-    def _copy_main_param_to_mxfp8_weight(self, name: str, weight: FP8WeightStore) -> None:
-        main_param = self.states[f"{name}.main"]
-        local_flat = main_param.to_local().reshape(-1)
-        full_flat = self._gather_sharded_flat_tensor(local_flat, main_param)
-        logical_weight = full_flat.reshape(weight.logical_shape).to(torch.bfloat16)
+    def _refresh_mxfp8_weight_from_full_flat(
+        self,
+        name: str,
+        weight: FP8WeightStore,
+        full_flat: torch.Tensor,
+    ) -> None:
+        if full_flat.numel() != weight.numel():
+            raise RuntimeError(
+                f"Gathered FP8 weight '{name}' has {full_flat.numel()} elements, "
+                f"expected {weight.numel()}"
+            )
+        logical_weight = full_flat.reshape(weight.logical_shape)
+        if logical_weight.dtype != torch.bfloat16:
+            logical_weight = logical_weight.to(torch.bfloat16)
         weight.refresh_from_logical_weight(
             logical_weight,
             update_anchor=not weight.anchor_storage_released,
         )
+
+    def _copy_main_params_to_mxfp8_weight_entries(
+        self,
+        entries: List[Tuple[str, FP8WeightStore, DTensor]],
+    ) -> None:
+        if not entries:
+            return
+
+        gather_threshold_elems = 250_000_000
+        bucket: List[Tuple[str, FP8WeightStore, DTensor]] = []
+        bucket_numel = 0
+
+        def flush_bucket() -> None:
+            nonlocal bucket
+            nonlocal bucket_numel
+            if not bucket:
+                return
+
+            first_main = bucket[0][2]
+            pg = first_main.device_mesh.get_group()
+            local_tensors = [main_param.to_local().reshape(-1) for _, _, main_param in bucket]
+            flat_global, sizes, offsets = coalesced_all_gather_flat(
+                local_tensors,
+                pg,
+                output_dtype=torch.bfloat16,
+            )
+
+            for (name, weight, _main_param), size, offset in zip(bucket, sizes, offsets):
+                full_flat = flat_global[:, offset : offset + size].contiguous().reshape(-1)
+                self._refresh_mxfp8_weight_from_full_flat(name, weight, full_flat)
+
+            bucket = []
+            bucket_numel = 0
+
+        for name, weight, main_param in entries:
+            local_flat = main_param.to_local().reshape(-1)
+            if not any(isinstance(p, Shard) for p in main_param.placements):
+                self._refresh_mxfp8_weight_from_full_flat(
+                    name,
+                    weight,
+                    local_flat.to(torch.bfloat16),
+                )
+                continue
+
+            if main_param.device_mesh.size(0) == 1:
+                self._refresh_mxfp8_weight_from_full_flat(
+                    name,
+                    weight,
+                    local_flat.to(torch.bfloat16),
+                )
+                continue
+
+            if bucket:
+                first_main = bucket[0][2]
+                if main_param.device_mesh != first_main.device_mesh:
+                    flush_bucket()
+            if bucket and bucket_numel + main_param.numel() > gather_threshold_elems:
+                flush_bucket()
+
+            bucket.append((name, weight, main_param))
+            bucket_numel += main_param.numel()
+
+        flush_bucket()
+
+    def _copy_main_param_to_mxfp8_weight(self, name: str, weight: FP8WeightStore) -> None:
+        main_param = self.states[f"{name}.main"]
+        local_flat = main_param.to_local().reshape(-1)
+        full_flat = self._gather_sharded_flat_tensor(
+            local_flat,
+            main_param,
+            output_dtype=torch.bfloat16,
+        )
+        self._refresh_mxfp8_weight_from_full_flat(name, weight, full_flat)
 
     def _release_mxfp8_expert_anchor_storage(self) -> None:
         seen: Set[int] = set()
@@ -1928,17 +2254,19 @@ class MoEFusedV2Optimizer:
                         if suffix != 'step':
                             sd[state_key] = self._ep_dp_state_to_checkpoint(live_state_dt)
 
-                            # Free the local shard storage while keeping DTensor metadata.
                             state_local = live_state_dt.to_local()
-                            empty_local = torch.empty(0, dtype=state_local.dtype, device=state_local.device)
-                            self.states[state_key] = DTensor.from_local(
-                                empty_local,
-                                device_mesh=live_state_dt.device_mesh,
-                                placements=live_state_dt.placements,
-                                shape=live_state_dt.shape,
-                                stride=live_state_dt.stride(),
-                                run_check=False,
-                            )
+                            ckpt_local = sd[state_key].to_local()
+                            if not self._shares_tensor_storage(ckpt_local, state_local):
+                                # Free the local shard storage while keeping DTensor metadata.
+                                empty_local = torch.empty(0, dtype=state_local.dtype, device=state_local.device)
+                                self.states[state_key] = DTensor.from_local(
+                                    empty_local,
+                                    device_mesh=live_state_dt.device_mesh,
+                                    placements=live_state_dt.placements,
+                                    shape=live_state_dt.shape,
+                                    stride=live_state_dt.stride(),
+                                    run_check=False,
+                                )
                         else: # "step"
                             sd[state_key] = live_state_dt
 

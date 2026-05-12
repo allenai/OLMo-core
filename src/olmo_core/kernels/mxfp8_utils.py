@@ -19,7 +19,8 @@ _F8E8M0_EXP_BIAS = 127.0
 _F8E4M3_MAX = float(torch.finfo(torch.float8_e4m3fn).max)
 _FP32_TINY = float(torch.finfo(torch.float32).tiny)
 
-# Empirical fixed launch configs for Triton kernels (no autotuning).
+# Default launch configs for Triton kernels. Q/DQ can autotune a small set of
+# nearby configs, but these defaults are still used by non-autotuned kernels.
 _MXFP8_Q_BLOCK_M = 32
 _MXFP8_Q_BLOCK_N = 256
 _MXFP8_Q_NUM_WARPS = 4
@@ -128,6 +129,40 @@ def to_blocked(input_matrix: torch.Tensor) -> torch.Tensor:
 
 
 if triton is not None:
+    _MXFP8_Q_AUTOTUNE_CONFIGS = [
+        # Keep a broader set while we characterize B200 codegen. Two-chunk Q is
+        # the default for the routed up/gate save path, so wide 2H activations do
+        # not depend on one perfect full-width specialization.
+        triton.Config({"BLOCK_M": 8, "BLOCK_N": 256}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_M": 8, "BLOCK_N": 512}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_M": 8, "BLOCK_N": 1024}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 256}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 512}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 1024}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 256}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 256}, num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 512}, num_warps=8, num_stages=2),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 64}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 256}, num_warps=8, num_stages=2),
+    ]
+
+    _MXFP8_DQ_AUTOTUNE_CONFIGS = [
+        triton.Config({"BLOCK_M": 8, "BLOCK_N": 256}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_M": 8, "BLOCK_N": 512}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_M": 8, "BLOCK_N": 1024}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 256}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 512}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 1024}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 256}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 256}, num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 512}, num_warps=8, num_stages=2),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 64}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 256}, num_warps=8, num_stages=2),
+    ]
 
     @triton.jit
     def _dest_indices_for_block(
@@ -249,7 +284,13 @@ if triton is not None:
         block_offset = pid_col * local_numel + (pid_row * output_block_stride)
         tl.store(output_ptr + block_offset + dest_indices_flat, scales_flat)
 
-    # NOTE: Deliberately no @triton.autotune here.
+    # Broader Q autotune while we characterize B200 codegen. The routed up/gate
+    # save path defaults to two chunks, so the widest activation no longer
+    # depends on one fragile full-width specialization.
+    @triton.autotune(
+        configs=_MXFP8_Q_AUTOTUNE_CONFIGS,
+        key=["n_rows", "n_cols", "BLOCK_SIZE", "USE_BF16_EXP"],
+    )
     @triton.jit
     def _triton_mxfp8_quantize_dim0(
         x_ptr,
@@ -734,7 +775,10 @@ if triton is not None:
         tl.store(out_acc_ptr + out_offsets, acc, mask=out_mask)
 
 
-    # NOTE: Deliberately no @triton.autotune here.
+    @triton.autotune(
+        configs=_MXFP8_DQ_AUTOTUNE_CONFIGS,
+        key=["n_rows", "n_cols", "BLOCK_SIZE"],
+    )
     @triton.jit
     def _triton_mxfp8_dequantize_dim0(
         q_ptr,
@@ -1053,9 +1097,9 @@ def _quantize_to_mxfp8_triton(
     else:
         scales_u8 = torch.empty((rows, cols // block_size), device=x.device, dtype=torch.uint8)
 
-    grid = (
-        triton.cdiv(rows, _MXFP8_Q_BLOCK_M),
-        triton.cdiv(cols, _MXFP8_Q_BLOCK_N),
+    grid = lambda meta: (
+        triton.cdiv(rows, meta["BLOCK_M"]),
+        triton.cdiv(cols, meta["BLOCK_N"]),
     )
     _triton_mxfp8_quantize_dim0[grid](
         x,
@@ -1070,11 +1114,7 @@ def _quantize_to_mxfp8_triton(
         rows,
         cols,
         BLOCK_SIZE=block_size,
-        BLOCK_M=_MXFP8_Q_BLOCK_M,
-        BLOCK_N=_MXFP8_Q_BLOCK_N,
         USE_BF16_EXP=x.dtype == torch.bfloat16,
-        num_warps=_MXFP8_Q_NUM_WARPS,
-        num_stages=_MXFP8_Q_NUM_STAGES,
     )
     if scales_out is not None:
         return qdata, scales_out
@@ -1591,9 +1631,9 @@ def dequantize_from_mxfp8(
         scales_contig = scales if scales.is_contiguous() else scales.contiguous()
         scales_u8 = scales_contig.view(torch.uint8)
         out_contig = out_tensor if out_tensor.is_contiguous() else out_tensor.contiguous()
-        grid = (
-            triton.cdiv(m, _MXFP8_DQ_BLOCK_M),
-            triton.cdiv(k, _MXFP8_DQ_BLOCK_N),
+        grid = lambda meta: (
+            triton.cdiv(m, meta["BLOCK_M"]),
+            triton.cdiv(k, meta["BLOCK_N"]),
         )
         _triton_mxfp8_dequantize_dim0[grid](
             q_contig,
@@ -1608,10 +1648,6 @@ def dequantize_from_mxfp8(
             m,
             k,
             BLOCK_SIZE=block_size,
-            BLOCK_M=_MXFP8_DQ_BLOCK_M,
-            BLOCK_N=_MXFP8_DQ_BLOCK_N,
-            num_warps=_MXFP8_DQ_NUM_WARPS,
-            num_stages=_MXFP8_DQ_NUM_STAGES,
         )
         if out_contig is not out_tensor:
             out_tensor.copy_(out_contig)
@@ -2236,6 +2272,59 @@ def quantize_rows_to_mxfp8(
         out=out,
         scales_out=scales_out,
     )
+
+
+@torch.compiler.disable
+def quantize_row_halves_to_mxfp8(
+    x: torch.Tensor,
+    *,
+    block_size: int = 32,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Quantize a row-major [M, 2H] tensor as two [M, H] halves.
+
+    This is equivalent to quantize_rows_to_mxfp8(x) when H is block-aligned,
+    since MXFP8 scales are independent 32-column blocks. Keep this helper out
+    of Dynamo/Inductor: tracing the non-contiguous FP8 half views can make
+    Inductor generate an fp8 masked-load fill constant that Triton cannot lower.
+    The useful work is still done by the two explicit Triton quantize kernels.
+    """
+    if x.ndim != 2:
+        raise ValueError(f"Expected rank-2 tensor, got shape={tuple(x.shape)}")
+    if block_size != 32:
+        raise ValueError(f"Only block_size=32 is supported (got {block_size})")
+    if x.shape[1] % 2 != 0:
+        raise ValueError(f"Expected even last dim for split quantization, got {tuple(x.shape)}")
+
+    hidden = x.shape[1] // 2
+    if hidden % block_size != 0:
+        raise ValueError(
+            f"Split dim must be divisible by {block_size}, got hidden={hidden}"
+        )
+    if not x.is_cuda or triton is None or _mxfp8_backend_wants_te("Q"):
+        return quantize_rows_to_mxfp8(x, block_size=block_size)
+
+    rows = x.shape[0]
+    qdata = torch.empty((rows, 2 * hidden), device=x.device, dtype=torch.float8_e4m3fn)
+    scales = torch.empty(
+        (rows, (2 * hidden) // block_size),
+        device=x.device,
+        dtype=torch.float8_e8m0fnu,
+    )
+    scale_hidden = hidden // block_size
+    _quantize_to_mxfp8_triton(
+        x[:, :hidden],
+        block_size=block_size,
+        out=qdata[:, :hidden],
+        scales_out=scales[:, :scale_hidden],
+    )
+    _quantize_to_mxfp8_triton(
+        x[:, hidden:],
+        block_size=block_size,
+        out=qdata[:, hidden:],
+        scales_out=scales[:, scale_hidden:],
+    )
+    return qdata, scales
 
 
 def dequantize_rows_from_mxfp8(

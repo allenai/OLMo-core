@@ -140,6 +140,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         super().__init__(*args, **kwargs)
         self.ep_enabled = False # default
         self._ep_modules = []
+        # Historical padding tensors for single-world symmetric-memory paths:
+        # every PE had to execute the same allocation sequence even when PP
+        # stages owned different numbers of MoE blocks. Current OLMo-owned EP
+        # paths should generally avoid needing these.
         self._ep_no_sync_dummy_symm_tensors: List[torch.Tensor] = []
 
         assert not (self.recompute_all_blocks_by_chunk and self.recompute_each_block), "Only one of recompute_all_blocks_by_chunk and recompute_each_block can be True."
@@ -393,8 +397,9 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 )
                 # With our checkpoint context, the original checkpointed forward
                 # and its recompute both use scratch buffers; no long-lived lease
-                # is needed. The compile path currently uses noop_context_fn, so
-                # it cannot identify the original checkpointed forward here.
+                # is needed. The compile/reduce_overhead path can use
+                # noop_context_fn/CUDA graphs, so Python-side state cannot always
+                # identify the original checkpointed forward here.
                 runtime_uses_lifetime_leases = not (
                     block_is_checkpointed and not self.compile_enabled
                 )
@@ -466,6 +471,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                     device=device,
                 )
 
+        # Dummy padding keeps the symmetric allocation sequence aligned in older
+        # single-world designs where different PP stages had different local MoE
+        # block counts. In the current per-model-part prewarm path this should
+        # usually be zero.
         pad_count = pad_to_block_count - len(ep_blocks)
         if pad_count < 0:
             raise RuntimeError(
@@ -564,6 +573,9 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             if not block.is_moe:
                 continue
             block = cast(MoEFusedV2TransformerBlock, block)
+            # ep_mp_group is the optional high-priority NCCL group for
+            # synchronized EP collectives that should start promptly while shared
+            # experts run. It is intentionally not used by no-sync blocks.
             # NVSHMEM symmetric-memory allocation bootstraps from c10d group
             # metadata. The high-priority NCCL EP group works for small count
             # collectives, but can hang inside symm_mem.empty() before the
@@ -594,6 +606,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                         "All EP no-sync blocks in a model part must share the same ep_pg "
                         f"(block={block.block_idx})"
                     )
+                # Shared slots are transient scratch shared by model blocks,
+                # mainly combine_in-style buffers that are not saved for
+                # backward. Autograd-visible payloads must use lifetime leases
+                # instead of this pool.
                 block._ep_no_sync_shared_pool = shared_pool
                 block._ep_no_sync_shared_slot = block.block_idx % shared_slots
 
@@ -616,7 +632,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             for n, p in m.named_parameters():
                 ep_sharded_params.add(p)
 
-        self.to(torch.bfloat16) # HACK, need fix
+        # TODO(dtype): broad bf16 casting is a current MoE V2 shortcut. Replace
+        # this with explicit dtype ownership so FP8 state, optimizer main params,
+        # and normal model params are not coupled to a blanket module cast.
+        self.to(torch.bfloat16)
         self.disable_mxfp8_expert_anchor_grads()
 
         dp_group = dp_mesh.get_group()
@@ -633,8 +652,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             
             # Dense params → DP group
             return dp_group
-
-        torch._dynamo.config.optimize_ddp = "python_reducer" # TODO: still necessary for custom ddp class?
 
         ddp_model = MultiGroupDistributedDataParallel(
             module=self,
@@ -707,7 +724,9 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         """
         device = device or self.device
         params = list(self.parameters())
-        self.to(torch.bfloat16) # TODO: better way to do this?
+        # TODO(dtype): materialization currently relies on the same broad bf16
+        # cast as apply_dp(); replace with an explicit precision policy.
+        self.to(torch.bfloat16)
         self.to_empty(device=device)
         new_params = list(self.parameters())
         for name, module in self.named_modules():
@@ -1240,6 +1259,9 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
 def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
     del m
+    # Keep CPU-only metadata out of wrappers/hooks that assume every tensor kwarg
+    # belongs on the module device. This came from composable-DDP/FSDP-era
+    # behavior; revalidate under MultiGroupDDP before removing it.
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = hide_from_torch(doc_lens)
     return (args, kwargs)
