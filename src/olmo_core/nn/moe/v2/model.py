@@ -397,11 +397,12 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 )
                 # With our checkpoint context, the original checkpointed forward
                 # and its recompute both use scratch buffers; no long-lived lease
-                # is needed. The compile/reduce_overhead path can use
-                # noop_context_fn/CUDA graphs, so Python-side state cannot always
-                # identify the original checkpointed forward here.
-                runtime_uses_lifetime_leases = not (
-                    block_is_checkpointed and not self.compile_enabled
+                # is needed. Force the rowwise path into scratch-buffer mode for
+                # checkpointed blocks so compiled checkpoint paths do not depend
+                # on Python-side checkpoint-context detection.
+                block._ep_no_sync_force_scratch_lifetime_buffers = block_is_checkpointed
+                runtime_uses_lifetime_leases = (
+                    not block._ep_no_sync_force_scratch_lifetime_buffers
                 )
                 if not runtime_uses_lifetime_leases:
                     use_symm_combine_out = False
@@ -563,11 +564,13 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         param_dtype: Optional[torch.dtype] = None,
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
-    ):
+        ep_no_sync_shared_pool: Optional[_NoSyncSymmSharedPool] = None,
+    ) -> Optional[_NoSyncSymmSharedPool]:
         """
-        Apply DDP to the model.
+        Apply EP to the model.
         """
 
+        shared_pool_to_return = ep_no_sync_shared_pool
         ep_no_sync_blocks: List[MoEFusedV2TransformerBlock] = []
         for block in self.blocks.values():
             if not block.is_moe:
@@ -596,25 +599,40 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             first_pg = ep_no_sync_blocks[0].ep_pg
             if first_pg is None:
                 raise RuntimeError("EP no-sync block is missing ep_pg after apply_ep()")
-            shared_pool = _NoSyncSymmSharedPool(
-                num_slots=shared_slots,
-                group=first_pg,
-            )
+            shared_pool = shared_pool_to_return
+            if shared_pool is None:
+                shared_pool = _NoSyncSymmSharedPool(
+                    num_slots=shared_slots,
+                    group=first_pg,
+                )
+            else:
+                if shared_pool.num_slots != shared_slots:
+                    raise RuntimeError(
+                        "Cannot share EP no-sync symmetric scratch pool across model parts "
+                        f"with different slot counts: pool={shared_pool.num_slots}, "
+                        f"model_part={shared_slots}"
+                    )
+                if shared_pool.group is not first_pg:
+                    raise RuntimeError(
+                        "Cannot share EP no-sync symmetric scratch pool across model parts "
+                        "with different EP process groups"
+                    )
+            shared_pool_to_return = shared_pool
             for block in ep_no_sync_blocks:
                 if block.ep_pg is not first_pg:
                     raise RuntimeError(
                         "All EP no-sync blocks in a model part must share the same ep_pg "
                         f"(block={block.block_idx})"
                     )
-                # Shared slots are transient scratch shared by model blocks,
-                # mainly combine_in-style buffers that are not saved for
-                # backward. Autograd-visible payloads must use lifetime leases
-                # instead of this pool.
+                # Shared slots are transient scratch shared by model blocks.
+                # Payloads saved for backward must use lifetime leases unless
+                # checkpointing/recompute forces the rowwise path into scratch mode.
                 block._ep_no_sync_shared_pool = shared_pool
                 block._ep_no_sync_shared_slot = block.block_idx % shared_slots
 
 
         self.ep_enabled = True
+        return shared_pool_to_return
 
     def apply_dp(
         self,

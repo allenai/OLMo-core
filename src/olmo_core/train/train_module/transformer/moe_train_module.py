@@ -1566,17 +1566,42 @@ class MoEV2TransformerTrainModule(TrainModule):
                     dist.get_backend(),
                 )
 
+            share_ep_no_sync_scratch_pool = len(model_parts) > 1 and all(
+                (
+                    cast(MoEFusedV2Transformer, m).recompute_each_block
+                    or cast(MoEFusedV2Transformer, m).recompute_all_blocks_by_chunk
+                )
+                for m in model_parts
+            )
+            ep_no_sync_shared_pool: Optional[Any] = None
+            if share_ep_no_sync_scratch_pool:
+                log.info(
+                    "Sharing EP no-sync transient symmetric scratch pool across %d local PP model parts",
+                    len(model_parts),
+                )
+
             ddp_model_parts = []
             for m in model_parts:
                 if not m.is_moe:
                     raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
-                cast(MoEFusedV2Transformer, m).apply_ep(
+                returned_shared_pool = cast(MoEFusedV2Transformer, m).apply_ep(
                     dp_mesh=dp_mesh,
                     ep_mesh=ep_mesh,
                     ep_mp_group=ep_mp_group_override,
                     param_dtype=None,
-                    compile_enabled=compile_model
+                    compile_enabled=compile_model,
+                    ep_no_sync_shared_pool=(
+                        ep_no_sync_shared_pool if share_ep_no_sync_scratch_pool else None
+                    ),
                 )
+                if share_ep_no_sync_scratch_pool and returned_shared_pool is not None:
+                    if ep_no_sync_shared_pool is None:
+                        ep_no_sync_shared_pool = returned_shared_pool
+                    elif returned_shared_pool is not ep_no_sync_shared_pool:
+                        raise RuntimeError(
+                            "Expected all local PP model parts to share the same EP no-sync "
+                            "symmetric scratch pool"
+                        )
 
             log.info(
                 "Applied expert parallelism to the model with %s",

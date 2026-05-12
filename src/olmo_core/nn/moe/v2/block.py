@@ -457,6 +457,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._ep_no_sync_static_buffer_cache: Dict[Tuple[object, ...], object] = {}
         self._ep_no_sync_rowwise_fp8_static_buffer_cache: Dict[Tuple[object, ...], object] = {}
         self._ep_no_sync_rowwise_static_checkpoint_state: Optional[Tuple[bool, bool]] = None
+        self._ep_no_sync_force_scratch_lifetime_buffers = False
         self._ep_no_sync_symm_lease_pools: Dict[str, object] = {}
         self._ep_no_sync_last_debug: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_shared_pool: Optional[_NoSyncSymmSharedPool] = None

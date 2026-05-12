@@ -141,7 +141,17 @@ def combined_forward_ep_no_sync_rowwise(
         and (not activation_checkpointing)
         and use_ep_no_sync_rowwise_symm_combine_gather(self)
     )
-    lease_lifetime_buffers = torch.is_grad_enabled() and not activation_checkpointing
+    force_scratch_lifetime_buffers = bool(
+        getattr(self, "_ep_no_sync_force_scratch_lifetime_buffers", False)
+    )
+    if force_scratch_lifetime_buffers:
+        use_symm_combine_out = False
+        use_symm_combine_gather = False
+    lease_lifetime_buffers = (
+        torch.is_grad_enabled()
+        and not activation_checkpointing
+        and not force_scratch_lifetime_buffers
+    )
     lease_dispatch_out = (not use_rowwise_fp8) and lease_lifetime_buffers
     lease_combine_out = use_symm_combine_out and lease_lifetime_buffers
     lease_combine_gather = use_symm_combine_gather and lease_lifetime_buffers
