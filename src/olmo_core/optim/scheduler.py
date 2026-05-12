@@ -263,7 +263,8 @@ class PowerLR(Scheduler):
     decay_fraction: Optional[float] = 0.1
     decay_min_lr: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self, *args):
+        del args
         # --- handle deprecated aliases -------------------------------------------------
         if self.warmup is None and self.warmup_steps is not None:
             self.warmup = self.warmup_steps
