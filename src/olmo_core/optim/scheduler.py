@@ -571,10 +571,6 @@ class ComposableSchedulerOverrideDecay(Config):
             raise OLMoConfigurationError("'end_lr_fraction' must be >= 0 for override decay.")
 
 
-# Deprecated alias retained for backwards compatibility.
-ComposableSchedulerMonkeyPatchDecay = ComposableSchedulerOverrideDecay
-
-
 @dataclass
 class ComposableScheduler(Scheduler):
     """
@@ -588,24 +584,9 @@ class ComposableScheduler(Scheduler):
 
     stages: List[ComposableSchedulerStage] = field(default_factory=list)
     override_decay: Optional[ComposableSchedulerOverrideDecay] = None
-    monkey_patch_decay: Optional[ComposableSchedulerOverrideDecay] = (
-        None  # deprecated, use 'override_decay' instead.
-    )
 
     def __post_init__(self, *args):
         del args
-        if self.override_decay is None and self.monkey_patch_decay is not None:
-            self.override_decay = self.monkey_patch_decay
-            self.monkey_patch_decay = None
-            warnings.warn(
-                f"'{self.__class__.__name__}.monkey_patch_decay' is deprecated, please use '.override_decay' instead.",
-                DeprecationWarning,
-            )
-        elif self.override_decay is not None and self.monkey_patch_decay is not None:
-            raise OLMoConfigurationError(
-                "Specify at most one of 'override_decay' or the deprecated 'monkey_patch_decay'."
-            )
-
         if len(self.stages) == 0:
             raise OLMoConfigurationError("'stages' must be specified and non-empty.")
 
