@@ -43,7 +43,7 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
-ARG TORCH_VERSION=2.10.0
+ARG TORCH_VERSION=2.11.0
 ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
@@ -85,21 +85,14 @@ RUN cd /opt/conda/lib/python${PYTHON_VERSION}/site-packages/ && \
     touch flash_attn_3/__init__.py && \
     rm -rf flash_attn_3-*
 
-# Install flash-attn 4 if requested.
-ARG FLASH_ATTN_4_SHA=""
-RUN if [ -n "${FLASH_ATTN_4_SHA}" ] ; then \
-    git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
-    cd flash-attention && \
-    git fetch --depth 1 origin ${FLASH_ATTN_4_SHA} && \
-    git checkout ${FLASH_ATTN_4_SHA} && \
-    git submodule update --init --depth 1 && \
-    cd flash_attn/cute && \
-    pip install --no-build-isolation --no-cache-dir . && \
-    cd /app/build && \
-    rm -rf flash-attention; fi
+# Install flash-attn 4.
+ARG FLASH_ATTN_4_VERSION=4.0.0b12
+RUN python -c "import torch; print('torch=='+torch.__version__)" > /tmp/torch-constraint.txt && \
+    python -m pip install --no-cache-dir -c /tmp/torch-constraint.txt "flash-attn-4==${FLASH_ATTN_4_VERSION}" && \
+    rm -f /tmp/torch-constraint.txt
 
 # Install transformer-engine.
-ARG TE_VERSION=2.9
+ARG TE_VERSION=2.14
 RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
