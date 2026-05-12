@@ -580,10 +580,15 @@ class ComposableScheduler(Scheduler):
     - Stage start LR defaults to the previous stage's end LR.
     - Stage end LR is required and can be absolute or as a fraction of ``initial_lr``.
     - After all stages are exhausted, LR stays constant at the last stage's end LR.
+    - The ``t_max`` argument passed to :meth:`get_lr` is **ignored**: the schedule is
+      defined absolutely by the stage durations (and the optional :data:`override_decay`),
+      so it does not rescale to fit the trainer's max horizon.
     """
 
     stages: List[ComposableSchedulerStage] = field(default_factory=list)
     override_decay: Optional[ComposableSchedulerOverrideDecay] = None
+
+    _warned_t_max_ignored: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self, *args):
         del args
@@ -671,6 +676,24 @@ class ComposableScheduler(Scheduler):
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
+        """
+        Compute the LR at ``current``.
+
+        .. note::
+            ``t_max`` is ignored. The schedule is defined absolutely by the stage
+            durations (and the optional :data:`override_decay`), independent of
+            the trainer's max horizon.
+        """
+        if not self._warned_t_max_ignored:
+            total_duration = sum(stage.duration for stage in self.stages)
+            warnings.warn(
+                f"'{self.__class__.__name__}' ignores 't_max'; the schedule is defined "
+                f"absolutely by stage durations (total={total_duration}, "
+                f"t_max={t_max}). The LR will not rescale to fit the trainer's horizon.",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._warned_t_max_ignored = True
         del t_max
         current = max(current, 0)
 
