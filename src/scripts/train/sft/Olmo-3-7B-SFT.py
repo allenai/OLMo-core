@@ -5,12 +5,16 @@ Run the script without any arguments to see usage info. See the README for more 
 
 import argparse
 import fnmatch
+import json
 import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple, cast
+from typing import Dict, List, Optional, Tuple, cast
 from urllib.parse import urlparse
+
+import yaml
 
 from rich import print
 
@@ -19,6 +23,11 @@ from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyPackedFSLDatasetConfig,
     TokenizerConfig,
+)
+from olmo_core.data.source_mixture import (
+    SourceMixtureConfig,
+    SourceMixtureDatasetConfig,
+    SourceMixtureList,
 )
 from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
@@ -196,30 +205,202 @@ def glob_remote_dataset(prefix: str) -> List[str]:
     return paths
 
 
+def _derive_label_mask_path(token_ids_path: str) -> str:
+    """
+    Derive the label mask path from a token_ids path by replacing ``token_ids`` with
+    ``labels_mask`` in the filename. This follows the convention used by
+    ``convert_sft_data_for_olmocore.py``.
+    """
+    parts = token_ids_path.rsplit("/", 1)
+    if len(parts) == 2:
+        directory, filename = parts
+        return f"{directory}/{filename.replace('token_ids', 'labels_mask')}"
+    else:
+        return token_ids_path.replace("token_ids", "labels_mask")
+
+
+def _load_config_file(path: str) -> List[Dict]:
+    """
+    Load a JSON or YAML config file describing dataset sources.
+
+    Expected format (same for both JSON and YAML)::
+
+        sources:
+          - path: /path/to/dataset_a
+            ratio: 0.7
+            name: reasoning              # optional, derived from path if absent
+            max_repetition_ratio: 1.0    # optional, default 1.0
+          - path: /path/to/dataset_b
+            ratio: 0.3
+
+    A bare list (without the ``sources`` key) is also accepted for convenience.
+    """
+    with open(path) as f:
+        if path.endswith(".json"):
+            data = json.load(f)
+        else:
+            data = yaml.safe_load(f)
+
+    # Accept both {"sources": [...]} and bare [...]
+    if isinstance(data, dict):
+        data = data["sources"]
+
+    return data
+
+
+def parse_dataset_sources(sources_str: str) -> List[Tuple[str, float]]:
+    """
+    Parse a dataset sources string into a list of (path, ratio) tuples.
+
+    Accepts either:
+      - A single path (backward compat): ``/path/to/dataset``
+      - Comma-separated ``path:ratio`` pairs: ``/path/a:0.7,/path/b:0.3``
+      - A path to a config file (``.json``, ``.yaml``, ``.yml``) containing sources.
+    """
+    sources_str = sources_str.strip()
+
+    # Config file (JSON or YAML)
+    if sources_str.endswith((".json", ".yaml", ".yml")):
+        entries = _load_config_file(sources_str)
+        return [(entry["path"], float(entry["ratio"])) for entry in entries]
+
+    # Comma-separated path:ratio pairs
+    if ":" in sources_str:
+        sources = []
+        for part in sources_str.split(","):
+            part = part.strip()
+            path, ratio = part.rsplit(":", 1)
+            sources.append((path.strip(), float(ratio.strip())))
+        return sources
+
+    # Single path (backward compat) — ratio 1.0
+    return [(sources_str, 1.0)]
+
+
 def build_sft_dataset(
     root_dir: str,
     tokenizer_config: TokenizerConfig,
     sequence_length: int,
     dataset_path: str,
+    global_batch_size: int = 0,
 ) -> NumpyPackedFSLDatasetConfig:
-    clean_path = dataset_path.rstrip("/")
-    token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
-    label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
-    expand_glob = True
+    """
+    Build an SFT dataset config.
 
-    dataset = NumpyPackedFSLDatasetConfig(
-        # general config
-        tokenizer=tokenizer_config,
-        work_dir=get_work_dir(root_dir),
-        paths=token_id_paths,
-        expand_glob=expand_glob,
-        label_mask_paths=label_mask_paths,
-        generate_doc_lengths=True,  # ...and mask attention so that they don't attend to each other
-        long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
-        sequence_length=sequence_length,  # ...that are over this length
+    ``dataset_path`` can be:
+      - A single directory path (original behavior).
+      - Comma-separated ``path:ratio`` pairs for mixing.
+      - A path to a JSON config file (``.json``) describing sources.
+    """
+    sources = parse_dataset_sources(dataset_path)
+
+    # --- Single source (original behavior) ---
+    if len(sources) == 1 and sources[0][1] == 1.0:
+        clean_path = sources[0][0].rstrip("/")
+        token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
+        label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
+
+        return NumpyPackedFSLDatasetConfig(
+            tokenizer=tokenizer_config,
+            work_dir=get_work_dir(root_dir),
+            paths=token_id_paths,
+            expand_glob=True,
+            label_mask_paths=label_mask_paths,
+            generate_doc_lengths=True,
+            long_doc_strategy=LongDocStrategy.truncate,
+            sequence_length=sequence_length,
+        )
+
+    # --- Multiple sources: use SourceMixtureDatasetConfig to resolve the mixture ---
+    log.info(f"Building mixed SFT dataset from {len(sources)} sources")
+
+    # Load full config if available (for optional fields like name, max_repetition_ratio)
+    source_details: List[Dict] = []
+    if dataset_path.strip().endswith((".json", ".yaml", ".yml")):
+        source_details = _load_config_file(dataset_path.strip())
+    else:
+        for path, ratio in sources:
+            source_details.append({"path": path, "ratio": ratio})
+
+    # Build SourceMixtureConfig list
+    source_configs = []
+    for entry in source_details:
+        clean_path = entry["path"].rstrip("/")
+        name = entry.get("name", os.path.basename(clean_path))
+        source_configs.append(
+            SourceMixtureConfig(
+                source_name=name,
+                paths=[f"{clean_path}/token_ids_part_*.npy"],
+                target_ratio=float(entry["ratio"]),
+                max_repetition_ratio=float(entry.get("max_repetition_ratio", 1.02)),
+            )
+        )
+
+    source_list = SourceMixtureList(sources=source_configs)
+
+    # We need requested_tokens and global_batch_size for the mixture config.
+    # Count total available tokens across all sources to use as requested_tokens,
+    # which means "use everything, just maintain the ratios."
+    # Infer numpy dtype from vocab size (mirrors NumpyDatasetConfig.get_dtype)
+    import numpy as np
+
+    npdtype = np.uint16  # default
+    for dt in (np.uint8, np.uint16, np.uint32, np.uint64):
+        if (tokenizer_config.vocab_size - 1) <= np.iinfo(dt).max:
+            npdtype = dt
+            break
+
+    # Count tokens across all sources to determine requested_tokens.
+    # Use get_file_size (same as SourceMixtureDatasetConfig internally) for consistency.
+    from olmo_core.io import get_file_size
+
+    total_available_tokens = 0
+    for sc in source_configs:
+        for path in sc.resolved_paths:
+            total_available_tokens += get_file_size(path) // npdtype(0).itemsize
+
+    if global_batch_size <= 0:
+        global_batch_size = 64 * sequence_length
+
+    # Reduce requested_tokens slightly to avoid rounding edge cases where ceil()
+    # in the mixture builder demands more tokens than a source actually has.
+    # 1% headroom is enough to absorb rounding while keeping ratios accurate.
+    requested_tokens = int(total_available_tokens * 0.99)
+
+    mixture_config = SourceMixtureDatasetConfig(
+        source_list=source_list,
+        requested_tokens=requested_tokens,
+        global_batch_size=global_batch_size,
+        seed=42,
+        processes=min(os.cpu_count() or 1, 16),
     )
 
-    return dataset
+    # Build the mixture to get resolved paths with proper ratios
+    mixture = mixture_config.build(npdtype=npdtype, sequence_length=sequence_length)
+    token_paths = [str(p) for p in mixture.to_paths()]
+    label_mask_paths = [_derive_label_mask_path(p) for p in token_paths]
+
+    # Set source_group_size to the total number of files so that OBFD packs
+    # documents across all sources together, matching the packing efficiency of
+    # a single pre-mixed dataset.
+    num_files = len(token_paths)
+
+    log.info(
+        f"Mixture resolved to {num_files} token files, "
+        f"source_group_size={num_files} for cross-source packing"
+    )
+
+    return NumpyPackedFSLDatasetConfig(
+        tokenizer=tokenizer_config,
+        work_dir=get_work_dir(root_dir),
+        paths=token_paths,
+        expand_glob=False,  # paths are already resolved
+        label_mask_paths=label_mask_paths,
+        generate_doc_lengths=True,
+        long_doc_strategy=LongDocStrategy.truncate,
+        sequence_length=sequence_length,
+        source_group_size=num_files,
+    )
 
 
 @dataclass
@@ -269,6 +450,7 @@ class SFTConfig(Config):
             tokenizer_config=tokenizer_config,
             sequence_length=seq_len,
             dataset_path=dataset_path,
+            global_batch_size=global_batch_size,
         )
         gpu_type = CLUSTER_TO_GPU_TYPE[cluster]
 
@@ -499,7 +681,15 @@ Examples:
     )
     parser.add_argument("--budget", help="The beaker budget to use.")
     parser.add_argument("--workspace", help="The workspace to run in.")
-    parser.add_argument("--dataset_path", help="The path to the pre-tokenized SFT dataset.")
+    parser.add_argument(
+        "--dataset_path",
+        help=(
+            "Path to pre-tokenized SFT dataset(s). Accepts: "
+            "(1) a single directory path, "
+            "(2) comma-separated path:ratio pairs (e.g. '/data/a:0.7,/data/b:0.3'), "
+            "(3) a .json/.yaml/.yml config file with sources list."
+        ),
+    )
 
     # Parse known args to get positional arguments and cmd
     args, overrides = parser.parse_known_args()
