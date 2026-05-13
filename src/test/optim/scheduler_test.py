@@ -153,6 +153,8 @@ def test_power_lr_errors():
     # Specifying both 'decay' and 'decay_fraction' is rejected (PowerLR enforces exclusivity).
     with pytest.raises(OLMoConfigurationError, match="decay_fraction.*or.*decay"):
         PowerLR(warmup=100, decay=100, decay_fraction=0.1)
+
+
 def test_sequential_scheduler_override_decay_linear():
     initial_lr = 10.0
     max_steps = 20_000
