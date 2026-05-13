@@ -3,7 +3,8 @@
 import argparse
 import subprocess
 
-GROUP = "yashasbls-hybrid-small-downstream-evals"
+# GROUP = "yashasbls-hybrid-small-downstream-evals"
+GROUP = "yashasbls-hybrid-7b-reproduction"
 CLUSTER = "ai2/jupiter"
 PRIORITY = "urgent"
 NUM_GPUS = 1
@@ -45,15 +46,19 @@ DOWNSTREAM_TASKS = [
     # Math — 8 GPUs (10h single-GPU)
     ("olmobase:math", 8),
     # GenQA — 4 GPUs (3.5-7.5h single-GPU)
-    # ("olmobase:gen", 4),
-    # # MC Non-STEM — 4 GPUs (2-5h single-GPU)
-    # ("olmobase:mcqa_non_stem", 4),
-    # # MC STEM — 1 GPU (~1h)
-    # ("olmobase:mcqa_stem", 1),
-    # # Code — 1 GPU (~10min)
-    # ("olmobase:easy:code:bpb", 1),
-    # # LBPP, BBH, MMLU Pro, DM Math — not yet in olmo-eval-internal
-    # ("olmobase:easy:qa:rc", 1)
+    ("olmobase:gen", 4),
+    # MC Non-STEM — 4 GPUs (2-5h single-GPU)
+    ("olmobase:mcqa_non_stem", 4),
+    # MC STEM — 1 GPU (~1h)
+    ("olmobase:mcqa_stem", 1),
+    # Code — 1 GPU (~10min)
+    ("olmobase:easy:code:bpb", 1),
+    # LBPP, BBH, MMLU Pro, DM Math — not yet in olmo-eval-internal
+    ("olmobase:easy:qa:rc", 1)
+]
+
+EXTRA_DOWNSTREAM_TASKS = [
+
 ]
 
 LC_TASKS = [
@@ -84,14 +89,14 @@ def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS) -
     cmd += ["-n", exp_name]
     cmd += ["-o", f"provider.num_instances={num_gpus}"]
     cmd += ["-o", "provider.kwargs.enforce_eager=true"]
-    cmd += ["-o", 'provider.kwargs.compilation_config={"custom_ops":["-rms_norm"]}']
+    # cmd += ["-o", 'provider.kwargs.compilation_config={"custom_ops":["-rms_norm"]}']
     cmd += ["-o", "provider.add_bos_token=false"]
     cmd += ["-o", "provider.prompt_logprobs=1"]
     cmd += ["-o", "provider.logprob_temperature=1.0"]
     cmd += ["-o", "provider.completion_use_prompt_token_ids=true"]
     cmd += ["-o", "provider.completion_client_side_stop_trim=true"]
     cmd += ["-o", "provider.completion_sentencepiece_cleanup=true"]
-    cmd += ["-o", "provider.dependencies=[transformers @ git+https://github.com/yashassamaga/transformers.git@olmo-3.5-hybrid]"]
+    # cmd += ["-o", "provider.dependencies=[transformers @ git+https://github.com/yashassamaga/transformers.git@olmo-3.5-hybrid]"]
     cmd += ["-m", model_path]
     for task in tasks:
         cmd += ["-t", task]

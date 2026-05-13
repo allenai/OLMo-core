@@ -7,6 +7,7 @@ Usage:
 
 import json
 import glob
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -62,8 +63,12 @@ KEY_TASK_GROUPS = [
 KEY_TASKS = [t for _, tasks in KEY_TASK_GROUPS for t in tasks]
 
 # Model name -> (scale, stage) for sorting
-SCALE_ORDER = {"275M": 0, "275m": 0, "810M": 1, "810m": 1, "1B": 2, "1b": 2, "1.4B": 3, "1.4b": 3}
-STAGE_ORDER = {"pretrain": 0, "midtrain": 1, "long-context": 2, "baseline": 3}
+SCALE_ORDER = {"275M": 0, "275m": 0, "810M": 1, "810m": 1, "1B": 2, "1b": 2, "1.4B": 3, "1.4b": 3, "7B": 4, "7b": 4}
+STAGE_ORDER = {"pretrain": 0, "midtrain": 1, "long-context": 2, "baseline": 3, "hybrid-baseline": 4}
+BASELINE_STAGES = {"baseline", "hybrid-baseline"}
+
+# Tasks where lower scores are better (perplexity, bits-per-byte).
+LOWER_IS_BETTER_PATTERNS = ("ppl", "bpb")
 
 
 def parse_model_info(model_name: str) -> tuple[str, str, str]:
@@ -78,6 +83,8 @@ def parse_model_info(model_name: str) -> tuple[str, str, str]:
         scale = "1.4B"
     elif "-1b" in name:
         scale = "1B"
+    elif "7b" in name:
+        scale = "7B"
     else:
         scale = "?"
 
@@ -88,7 +95,9 @@ def parse_model_info(model_name: str) -> tuple[str, str, str]:
         stage = "midtrain"
     elif "cx100" in name:
         stage = "pretrain"
-    elif "olmo-2" in name:
+    elif "olmo-hybrid" in name:
+        stage = "hybrid-baseline"
+    elif "olmo-2" in name or "olmo-3" in name or "olmo3" in name:
         stage = "baseline"
     else:
         stage = "?"
@@ -149,18 +158,24 @@ def fmt_bold(s: str, no_color: bool) -> str:
     return f"\033[1m{s}\033[0m"
 
 
+def fmt_underline(s: str, no_color: bool) -> str:
+    if no_color:
+        return s
+    return f"\033[4m{s}\033[0m"
+
+
 def _plain_width(formatted: str) -> int:
     """Length of string after stripping ANSI escape codes."""
-    import re
     return len(re.sub(r"\033\[[^m]*m", "", formatted))
 
 
 def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color: bool = False, all_tasks: bool = False):
     """Print a formatted table with two-row headers grouped by scale."""
     sort_key = lambda m: (SCALE_ORDER.get(parse_model_info(m)[0], 99), STAGE_ORDER.get(parse_model_info(m)[1], 99))
-    baselines = sorted([m for m in results if parse_model_info(m)[1] == "baseline"], key=sort_key)
-    non_baselines = sorted([m for m in results if parse_model_info(m)[1] != "baseline"], key=sort_key)
+    baselines = sorted([m for m in results if parse_model_info(m)[1] in BASELINE_STAGES], key=sort_key)
+    non_baselines = sorted([m for m in results if parse_model_info(m)[1] not in BASELINE_STAGES], key=sort_key)
     models = baselines + non_baselines
+    baseline_set = set(baselines)
 
     active_tasks = [t for t in tasks if any(t in results[m] for m in models)]
     if not active_tasks:
@@ -175,7 +190,8 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
     stage_names = {m: parse_model_info(m)[1] for m in models}
 
     task_width = max(len(t) for t in active_tasks)
-    col_width = 10  # tight columns since header rows are separate
+    # Per-column width: baselines just need room for score, non-baselines need score + delta
+    col_widths = [max(16, len(stage_names[m])) if stage_names[m] not in BASELINE_STAGES else max(6, len(stage_names[m])) for m in models]
     vsep = " | "
 
     # Scale groups for vertical separators: after each scale group (and after baselines)
@@ -183,7 +199,7 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
     def needs_vsep(i: int) -> bool:
         if i == len(models) - 1:
             return False
-        if i == len(baselines) - 1:
+        if baselines and i == len(baselines) - 1:
             return True
         scale_i = parse_model_info(models[i])[0]
         scale_next = parse_model_info(models[i + 1])[0]
@@ -199,12 +215,17 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
         # For row1, only print scale at start of each group
         idxs = scales[scale]
         if i == idxs[0]:
-            # span = number of cols in this scale group
-            span = len(idxs)
-            span_width = span * (col_width + 2) + (len(vsep) if any(needs_vsep(j) for j in idxs[:-1]) else 0)
+            span_width = sum(col_widths[j] + 2 for j in idxs) + len(vsep) * sum(1 for j in idxs[:-1] if needs_vsep(j))
             label1 = scale[:span_width]
-            header1 += f"  {label1:<{span_width - 2}}"
-        header2 += f"  {stage:>{col_width}}"
+            centered = label1.center(span_width)
+            if scale == "1B" and not no_color:
+                centered = fmt_underline(centered.strip(), no_color).center(span_width + 8)  # 8 = ANSI codes len
+            header1 += centered
+        stage_hdr = f"{stage:>{col_widths[i]}}"
+        if scale == "1B" and not no_color:
+            stage_hdr = fmt_underline(stage_hdr.strip(), no_color)
+            stage_hdr = f"{stage_hdr:>{col_widths[i] + 8}}"
+        header2 += f"  {stage_hdr}"
         if needs_vsep(i):
             header1 += vsep
             header2 += vsep
@@ -221,7 +242,7 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
     else:
         groups = [(label, [t for t in task_list if t in active_task_set])
                   for label, task_list in KEY_TASK_GROUPS]
-        groups = [(label, tasks) for label, tasks in groups if tasks]
+        groups = [(label, grp_tasks) for label, grp_tasks in groups if grp_tasks]
 
     for group_label, group_tasks in groups:
         if not all_tasks:
@@ -231,83 +252,98 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
             scores = {m: results[m].get(task) for m in models}
             valid = {m: s for m, s in scores.items() if s is not None}
 
-            # Global best (green)
-            if valid:
-                sample = next(iter(valid.values()))
-                lower_is_better = sample > 1
-                best_global = min(valid, key=valid.__getitem__) if lower_is_better else max(valid, key=valid.__getitem__)
+            lower_is_better = any(p in task for p in LOWER_IS_BETTER_PATTERNS)
+
+            # 1B baseline score (reference for deltas)
+            baseline_1b_score = None
+            for m in baselines:
+                if parse_model_info(m)[0] == "1B" and scores[m] is not None:
+                    baseline_1b_score = scores[m]
+                    break
+
+            # Global best among test models (1B baseline + hybrids, excluding 7B baselines)
+            test_valid = {m: s for m, s in valid.items() if parse_model_info(m)[0] != "7B" or m not in baseline_set}
+            # Include 1B baseline in the competition
+            if baseline_1b_score is not None:
+                for m in baselines:
+                    if parse_model_info(m)[0] == "1B":
+                        test_valid[m] = baseline_1b_score
+            if test_valid:
+                best_global = min(test_valid, key=test_valid.__getitem__) if lower_is_better else max(test_valid, key=test_valid.__getitem__)
             else:
                 best_global = None
-                lower_is_better = False
 
             # Per-scale best (yellow) — only among non-baseline models
             best_in_scale: dict[str, str] = {}  # scale -> best model
             for scale, idxs in scales.items():
-                scale_models = [models[j] for j in idxs if models[j] not in baselines]
+                scale_models = [models[j] for j in idxs if models[j] not in baseline_set]
                 scale_valid = {m: scores[m] for m in scale_models if scores[m] is not None}
                 if scale_valid:
                     best_in_scale[scale] = min(scale_valid, key=scale_valid.__getitem__) if lower_is_better else max(scale_valid, key=scale_valid.__getitem__)
 
             row = f"{task:<{task_width}}"
             for i, m in enumerate(models):
-                is_baseline = m in baselines
+                is_baseline = m in baseline_set
                 score = scores[m]
                 scale = parse_model_info(m)[0]
                 is_best_global = (m == best_global)
                 is_best_group = (not is_baseline) and (m == best_in_scale.get(scale)) and not is_best_global
 
                 if score is None:
-                    cell = f"{'—':>{col_width}}"
+                    cell = f"{'—':>{col_widths[i]}}"
                     if is_baseline and not no_color:
                         cell = fmt_bold(cell, no_color)
+                    if scale == "1B" and is_baseline and not no_color:
+                        cell = fmt_underline(f"{'—':>{col_widths[i]}}", no_color)
                     row += f"  {cell}"
                 else:
                     plain = f"{score:.2f}" if score > 1 else f"{score:.3f}"
                     formatted = fmt_score(score, is_best_global, is_best_group, no_color)
                     if is_baseline and not is_best_global and not is_best_group:
                         formatted = fmt_bold(plain, no_color)
-                    ansi_extra = len(formatted) - len(plain)
-                    row += f"  {formatted:>{col_width + ansi_extra}}"
+                    # Underline the 1B reference baseline
+                    if scale == "1B" and is_baseline and not no_color:
+                        if is_best_global:
+                            formatted = f"\033[4;1;32m{plain}\033[0m"
+                        else:
+                            formatted = f"\033[4;1m{plain}\033[0m"
+                    # Build delta suffix for non-baseline models
+                    delta_plain = ""
+                    delta_formatted = ""
+                    if not is_baseline and baseline_1b_score is not None:
+                        delta = score - baseline_1b_score
+                        if lower_is_better:
+                            delta = -delta  # flip so positive = good
+                        sign = "+" if delta >= 0 else ""
+                        delta_plain = f" ({sign}{delta:.3f})" if abs(score - baseline_1b_score) <= 1 else f" ({sign}{delta:.2f})"
+                        if not no_color:
+                            # color just the parens part
+                            delta_inner = delta_plain[1:]  # strip leading space
+                            if delta > 0:
+                                delta_formatted = f" \033[32m{delta_inner}\033[0m"
+                            elif delta < 0:
+                                delta_formatted = f" \033[31m{delta_inner}\033[0m"
+                            else:
+                                delta_formatted = delta_plain
+                        else:
+                            delta_formatted = delta_plain
+                    # Right-align the full cell (score + delta) within col_width
+                    full_plain = plain + delta_plain
+                    full_formatted = formatted + delta_formatted
+                    pad = col_widths[i] - len(full_plain)
+                    if pad > 0:
+                        cell = " " * pad + full_formatted
+                    else:
+                        cell = full_formatted
+                    row += f"  {cell}"
                 if needs_vsep(i):
                     row += vsep
             print(row)
 
 
-def print_csv(results: dict[str, dict[str, float]], tasks: list[str]):
-    """Print CSV for easy pasting into spreadsheets."""
-    models = sorted(results.keys(), key=lambda m: (
-        SCALE_ORDER.get(parse_model_info(m)[0], 99),
-        STAGE_ORDER.get(parse_model_info(m)[1], 99),
-    ))
-
-    active_tasks = [t for t in tasks if any(t in results[m] for m in models)]
-
-    display_names = {}
-    for m in models:
-        scale, stage, _ = parse_model_info(m)
-        display_names[m] = f"{scale} {stage}"
-
-    # Header
-    print("Task," + ",".join(display_names[m] for m in models))
-
-    # Rows
-    for task in active_tasks:
-        row = [task]
-        for m in models:
-            score = results[m].get(task)
-            if score is None:
-                row.append("")
-            elif isinstance(score, float):
-                row.append(f"{score:.2f}" if score > 1 else f"{score:.3f}")
-            else:
-                row.append(str(score))
-        print(",".join(row))
-
-
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv", action="store_true", help="Output as CSV")
     parser.add_argument("--no-color", action="store_true", help="Disable color output")
     parser.add_argument("--all-tasks", action="store_true", help="Show all tasks, not just key ones")
     args = parser.parse_args()
@@ -321,10 +357,7 @@ def main():
     else:
         tasks = KEY_TASKS
 
-    if args.csv:
-        print_csv(results, tasks)
-    else:
-        print_table(results, tasks, no_color=args.no_color, all_tasks=args.all_tasks)
+    print_table(results, tasks, no_color=args.no_color, all_tasks=args.all_tasks)
 
 
 if __name__ == "__main__":
