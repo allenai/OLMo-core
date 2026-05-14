@@ -72,7 +72,7 @@ from olmo_core.nn.transformer import (
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
-    ComposableSchedulerMonkeyPatchDecay,
+    OverrideDecay,
     ComposableSchedulerStage,
     ComposableSchedulerStageType,
 )
@@ -438,8 +438,8 @@ def build_train_module_config(
                     end_lr_fraction=SCHED_FINAL_FRACTION,
                 ),
             ],
-            monkey_patch_decay=(
-                ComposableSchedulerMonkeyPatchDecay(
+            override_decay=(
+                OverrideDecay(
                     start=MONKEY_PATCH_DECAY_START_TOKENS,
                     duration=MONKEY_PATCH_DECAY_DURATION_TOKENS,
                     shape=MONKEY_PATCH_DECAY_SHAPE,

@@ -270,6 +270,10 @@ class Transformer(nn.Module):
         :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
             expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
+        :param model_part_idx: The local index of this model part on the current rank.
+            With interleaved pipeline schedules a single rank can own multiple model
+            chunks, and each must receive a distinct seed; otherwise their parameters
+            would be identical.
         """
         device = device or self.device
         self.to_empty(device=device)
@@ -281,10 +285,9 @@ class Transformer(nn.Module):
 
         seed = self.init_seed
         if world_mesh is not None and self.pp_enabled:
-            seed += get_pp_mesh(
-                world_mesh
-            ).get_local_rank()  # BUG: the same seed for all model parts on the same rank?
-            seed += model_part_idx * 997  # random prime
+            pp_mesh = get_pp_mesh(world_mesh)
+            seed += pp_mesh.get_local_rank() + model_part_idx * pp_mesh.size()
+
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:

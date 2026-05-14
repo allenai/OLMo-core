@@ -165,25 +165,25 @@ def composable_lr(
     initial_lr: float,
     current: int,
     stages: list[Stage],
-    monkey_patch_decay: Optional[MonkeyPatchDecay] = None,
+    override_decay: Optional[MonkeyPatchDecay] = None,
 ) -> float:
     current = max(current, 0)
-    if monkey_patch_decay is None or current < monkey_patch_decay.start_tokens:
+    if override_decay is None or current < override_decay.start_tokens:
         return staged_lr(initial_lr, current, stages)
 
-    start_lr = staged_lr(initial_lr, monkey_patch_decay.start_tokens, stages)
+    start_lr = staged_lr(initial_lr, override_decay.start_tokens, stages)
     end_lr = _resolve_from_initial(
-        initial_lr, monkey_patch_decay.end_lr, monkey_patch_decay.end_lr_fraction
+        initial_lr, override_decay.end_lr, override_decay.end_lr_fraction
     )
-    decay_current = current - monkey_patch_decay.start_tokens
+    decay_current = current - override_decay.start_tokens
 
-    if decay_current < monkey_patch_decay.duration_tokens:
+    if decay_current < override_decay.duration_tokens:
         return _interpolate(
-            monkey_patch_decay.shape,
+            override_decay.shape,
             start_lr,
             end_lr,
             decay_current,
-            monkey_patch_decay.duration_tokens,
+            override_decay.duration_tokens,
         )
 
     return end_lr

@@ -198,5 +198,96 @@ def test_fan_in_init_raises_for_gdn():
         model.init_weights(device=torch.device("cpu"))
 
 
+class _FakePPMesh:
+    def __init__(self, local_rank: int, size: int):
+        self._local_rank = local_rank
+        self._size = size
+
+    def get_local_rank(self) -> int:
+        return self._local_rank
+
+    def size(self) -> int:
+        return self._size
+
+
+def _build_tiny_model(init_seed: int = 42):
+    return TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=2,
+        feed_forward=FeedForwardConfig(hidden_size=128, bias=False),
+        init_seed=init_seed,
+    ).build(init_device="meta")
+
+
+def test_init_weights_diversifies_seed_across_model_parts(monkeypatch):
+    """
+    Under interleaved pipeline parallelism a single rank can own multiple model
+    chunks. They must each get a distinct init seed, or their parameters would
+    collide.
+    """
+    fake_pp_mesh = _FakePPMesh(local_rank=0, size=2)
+    monkeypatch.setattr(
+        "olmo_core.nn.transformer.model.get_pp_mesh",
+        lambda _world_mesh: fake_pp_mesh,
+    )
+
+    part_a = _build_tiny_model()
+    part_a._pp_enabled = True
+    part_a.init_weights(device=torch.device("cpu"), world_mesh=object(), model_part_idx=0)
+
+    part_b = _build_tiny_model()
+    part_b._pp_enabled = True
+    part_b.init_weights(device=torch.device("cpu"), world_mesh=object(), model_part_idx=1)
+
+    assert not torch.equal(part_a.embeddings.weight, part_b.embeddings.weight)
+    assert not torch.equal(
+        part_a.blocks["0"].attention.w_q.weight,
+        part_b.blocks["0"].attention.w_q.weight,
+    )
+
+
+def test_init_weights_same_model_part_idx_is_deterministic(monkeypatch):
+    """Two chunks with the same (pp_rank, model_part_idx) must init identically."""
+    fake_pp_mesh = _FakePPMesh(local_rank=0, size=2)
+    monkeypatch.setattr(
+        "olmo_core.nn.transformer.model.get_pp_mesh",
+        lambda _world_mesh: fake_pp_mesh,
+    )
+
+    part_a = _build_tiny_model()
+    part_a._pp_enabled = True
+    part_a.init_weights(device=torch.device("cpu"), world_mesh=object(), model_part_idx=1)
+
+    part_b = _build_tiny_model()
+    part_b._pp_enabled = True
+    part_b.init_weights(device=torch.device("cpu"), world_mesh=object(), model_part_idx=1)
+
+    assert torch.equal(part_a.embeddings.weight, part_b.embeddings.weight)
+    assert torch.equal(
+        part_a.blocks["0"].attention.w_q.weight,
+        part_b.blocks["0"].attention.w_q.weight,
+    )
+
+
+def test_init_weights_model_part_idx_ignored_without_pp():
+    """
+    Without PP enabled, ``model_part_idx`` must not affect initialization —
+    existing non-PP training runs must produce identical RNG streams to before.
+    """
+    part_a = _build_tiny_model()
+    part_a.init_weights(device=torch.device("cpu"), model_part_idx=0)
+
+    part_b = _build_tiny_model()
+    part_b.init_weights(device=torch.device("cpu"), model_part_idx=7)
+
+    assert torch.equal(part_a.embeddings.weight, part_b.embeddings.weight)
+    assert torch.equal(
+        part_a.blocks["0"].attention.w_q.weight,
+        part_b.blocks["0"].attention.w_q.weight,
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
