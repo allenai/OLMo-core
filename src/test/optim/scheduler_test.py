@@ -11,6 +11,7 @@ from olmo_core.optim import (
     ExponentialScheduler,
     InvSqrtWithWarmup,
     LinearWithWarmup,
+    PowerLR,
     SequentialScheduler,
 )
 from olmo_core.optim.scheduler import (
@@ -105,6 +106,53 @@ def test_sequential_scheduler():
     assert scheduler.get_lr(initial_lr, 7_500, max_steps) == third_scheduler.get_lr(
         second_scheduler_final_lr, 1_000, max_steps - 6_500
     )
+
+
+def test_power_lr():
+    initial_lr = 10.0
+    warmup_steps = 1_000
+    decay_steps = 2_000
+    t_max = 10_000
+    b = -0.5
+    scheduler = PowerLR(warmup=warmup_steps, decay=decay_steps, decay_fraction=None, b=b)
+
+    # Phase 1: linear warmup from 0 to initial_lr over warmup_steps.
+    assert scheduler.get_lr(initial_lr, 0, t_max) == pytest.approx(0.0)
+    assert scheduler.get_lr(initial_lr, 500, t_max) == pytest.approx(5.0)
+    assert scheduler.get_lr(initial_lr, warmup_steps, t_max) == pytest.approx(initial_lr)
+
+    # Phase 2: power-law decay lr = initial_lr * (current / warmup) ** b.
+    for current in (2_000, 4_000, 6_000):
+        expected = initial_lr * (current / warmup_steps) ** b
+        assert scheduler.get_lr(initial_lr, current, t_max) == pytest.approx(expected)
+
+    # Phase 3: linear decay tail from power-phase value at t_max - decay -> decay_min_lr=0.
+    decay_start = t_max - decay_steps  # 8_000
+    lr_at_tail_start = initial_lr * (decay_start / warmup_steps) ** b
+    assert scheduler.get_lr(initial_lr, decay_start, t_max) == pytest.approx(lr_at_tail_start)
+    # Midpoint of decay tail: halfway down linearly.
+    assert scheduler.get_lr(initial_lr, decay_start + decay_steps // 2, t_max) == pytest.approx(
+        lr_at_tail_start * 0.5
+    )
+    assert scheduler.get_lr(initial_lr, t_max, t_max) == pytest.approx(0.0)
+
+
+def test_power_lr_errors():
+    # b must be negative.
+    with pytest.raises(OLMoConfigurationError, match="'b' must be negative"):
+        PowerLR(warmup=100, decay=100, decay_fraction=None, b=0.5)
+
+    # Need exactly one of warmup / warmup_fraction.
+    with pytest.raises(OLMoConfigurationError, match="warmup_fraction.*or.*warmup"):
+        PowerLR(decay=100, decay_fraction=None)
+
+    # warmup_fraction out of range.
+    with pytest.raises(OLMoConfigurationError, match="warmup_fraction"):
+        PowerLR(warmup_fraction=1.5, decay=100, decay_fraction=None)
+
+    # Specifying both 'decay' and 'decay_fraction' is rejected (PowerLR enforces exclusivity).
+    with pytest.raises(OLMoConfigurationError, match="decay_fraction.*or.*decay"):
+        PowerLR(warmup=100, decay=100, decay_fraction=0.1)
 
 
 def test_sequential_scheduler_override_decay_linear():
