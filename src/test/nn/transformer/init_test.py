@@ -235,15 +235,11 @@ def test_init_weights_diversifies_seed_across_model_parts(monkeypatch):
 
     part_a = _build_tiny_model()
     part_a._pp_enabled = True
-    part_a.init_weights(
-        device=torch.device("cpu"), world_mesh=object(), model_part_idx=0
-    )
+    part_a.init_weights(device=torch.device("cpu"), world_mesh=object(), model_part_idx=0)
 
     part_b = _build_tiny_model()
     part_b._pp_enabled = True
-    part_b.init_weights(
-        device=torch.device("cpu"), world_mesh=object(), model_part_idx=1
-    )
+    part_b.init_weights(device=torch.device("cpu"), world_mesh=object(), model_part_idx=1)
 
     assert not torch.equal(part_a.embeddings.weight, part_b.embeddings.weight)
     assert not torch.equal(
@@ -262,15 +258,11 @@ def test_init_weights_same_model_part_idx_is_deterministic(monkeypatch):
 
     part_a = _build_tiny_model()
     part_a._pp_enabled = True
-    part_a.init_weights(
-        device=torch.device("cpu"), world_mesh=object(), model_part_idx=1
-    )
+    part_a.init_weights(device=torch.device("cpu"), world_mesh=object(), model_part_idx=1)
 
     part_b = _build_tiny_model()
     part_b._pp_enabled = True
-    part_b.init_weights(
-        device=torch.device("cpu"), world_mesh=object(), model_part_idx=1
-    )
+    part_b.init_weights(device=torch.device("cpu"), world_mesh=object(), model_part_idx=1)
 
     assert torch.equal(part_a.embeddings.weight, part_b.embeddings.weight)
     assert torch.equal(
