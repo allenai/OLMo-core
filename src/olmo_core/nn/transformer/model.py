@@ -347,6 +347,31 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
+                # Feed-forward weights (dense blocks).
+                if hasattr(block, "feed_forward"):
+                    self.init_method.init_feed_forward(
+                        block.feed_forward,
+                        d_model=self.d_model,
+                        block_idx=block.block_idx,
+                        num_blocks=self.n_layers,
+                        std=self.init_std,
+                        generator=generator,
+                    )
+
+                # MoE weights (legacy MoE blocks).
+                if hasattr(block, "feed_forward_moe"):
+                    block_moe = cast(MoETransformerBlock, block)
+                    if max_local_microbatch_size is not None:
+                        block_moe.feed_forward_moe.warmup_cache(max_local_microbatch_size)
+                    self.init_method.init_feed_forward_moe(
+                        block_moe.feed_forward_moe,
+                        d_model=self.d_model,
+                        block_idx=block.block_idx,
+                        num_blocks=self.n_layers,
+                        std=self.init_std,
+                        generator=generator,
+                    )
+
             if isinstance(att, (Attention, FusedAttention)):
                 # Warm up attention backend cache.
                 if max_seq_len is not None and att.backend is not None:

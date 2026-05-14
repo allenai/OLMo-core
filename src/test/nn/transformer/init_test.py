@@ -105,7 +105,8 @@ def test_fan_in_init_moe(d_model, init_device, device):
             name=TransformerBlockType.moe,
             sequence_mixer=AttentionConfig(n_heads=d_model // 64),
             feed_forward_moe=MoEConfig(num_experts=num_experts, hidden_size=hidden_size),
-            layer_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
+            attention_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
+            feed_forward_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
         ),
         lm_head=LMHeadConfig(bias=False),
     )
@@ -189,7 +190,8 @@ def test_fan_in_init_raises_for_gdn():
         block=TransformerBlockConfig(
             sequence_mixer=GatedDeltaNetConfig(n_heads=d_model // 64),
             feed_forward=FeedForwardConfig(hidden_size=d_model * 4, bias=False),
-            layer_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
+            attention_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
+            feed_forward_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
         ),
         lm_head=LMHeadConfig(bias=False),
     )
