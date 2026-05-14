@@ -145,12 +145,13 @@ def parallelize_model(
 
     # Materialize and init parameters.
     log.info("Initializing model weights...")
-    for m in model_parts:
+    for model_part_idx, m in enumerate(model_parts):
         m.init_weights(
             max_seq_len=max_sequence_length,
             max_local_microbatch_size=rank_microbatch_size,
             device=device,
             world_mesh=world_mesh,
+            model_part_idx=model_part_idx,
         )
 
     return model
