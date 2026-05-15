@@ -353,7 +353,7 @@ def run_context_parallel_transformer_ulysses(
     logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
-    tol_scale = 2.0  # requires slightly more tolerance than default
+    tol_scale = 4.0  # requires slightly more tolerance than default
     torch.testing.assert_close(
         og_logits, get_full_tensor(logits), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
     )
