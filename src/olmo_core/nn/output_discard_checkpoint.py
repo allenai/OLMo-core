@@ -194,10 +194,41 @@ class OutputDiscardCheckpoint:
     """
     A Megatron-style output-discard checkpoint utility.
 
-    - Forward runs under `no_grad` via a custom autograd Function.
+    - Forward runs under ``no_grad`` via a custom autograd Function.
     - Output storage can be discarded after downstream forward.
     - Backward hook recomputes outputs, then shares storage back into the
       original output tensor objects without triggering autograd version errors.
+
+    Usage:
+
+    .. code-block:: python
+
+        # ``submodule`` is the layer whose activations you want to discard
+        # to save memory. ``next_layer`` is the downstream consumer.
+        ckpt = OutputDiscardCheckpoint()
+
+        # 1. Forward through the checkpointed submodule under no_grad.
+        y = ckpt.checkpoint(submodule, x)
+
+        # 2. Run the downstream forward; it reads ``y`` while its storage
+        #    is still allocated.
+        z = next_layer(y)
+
+        # 3. Free ``y``'s storage and register a backward hook on a tensor
+        #    whose ``register_hook`` fires before any consumer of ``y``
+        #    needs it in backward. Typically pass the immediate downstream
+        #    output (``z`` here): when autograd computes ``z``'s grad, the
+        #    hook recomputes ``submodule`` and rebinds ``y``'s storage in
+        #    place so the original tensor object is usable again.
+        ckpt.discard_output_and_register_recompute(z)
+
+        # 4. Normal backward. The hook fires automatically.
+        z.sum().backward()
+
+    Picking ``hook_tensor``: it must (a) require grad, and (b) sit in the
+    autograd graph downstream of ``y`` so that its hook runs before any
+    saved-tensor reference to ``y`` is dereferenced during backward. The
+    output of the layer that immediately consumes ``y`` is the safe default.
     """
 
     def __init__(self):
@@ -207,6 +238,20 @@ class OutputDiscardCheckpoint:
         self._hook_handle: Optional[torch.utils.hooks.RemovableHandle] = None
 
     def checkpoint(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """
+        Run ``fn(*args, **kwargs)`` under ``no_grad`` and record the inputs so
+        that backward can recompute. Returns the forward outputs (the same
+        structure ``fn`` would normally return).
+
+        :param fn: The callable / submodule to checkpoint.
+        :param args: Positional arguments forwarded to ``fn``. Tensor args are
+            saved for recompute; non-tensor args are stashed verbatim.
+        :param kwargs: Keyword arguments forwarded to ``fn`` on both the
+            initial call and the recompute.
+
+        :returns: Whatever ``fn`` returns — a single tensor or a tuple/list of
+            tensors. Lists are normalized to tuples.
+        """
         if self._hook_handle is not None:
             self._hook_handle.remove()
             self._hook_handle = None
@@ -225,6 +270,17 @@ class OutputDiscardCheckpoint:
         return outputs
 
     def discard_output_and_register_recompute(self, hook_tensor: torch.Tensor):
+        """
+        Free the storage of every output returned by :meth:`checkpoint` and
+        register a backward hook on ``hook_tensor`` that will recompute the
+        forward pass and rebind the freed storage.
+
+        :param hook_tensor: A tensor downstream of the checkpoint outputs whose
+            ``register_hook`` is used to schedule recompute during backward. It
+            must require grad. If it does not, storage is discarded but no
+            hook is registered — only safe if you have arranged recompute by
+            other means.
+        """
         if self.outputs is None:
             raise RuntimeError("No checkpoint outputs found. Call checkpoint() first.")
 
@@ -279,6 +335,11 @@ class OutputDiscardCheckpoint:
         return grad
 
     def clear(self):
+        """
+        Remove any registered backward hook and drop references to the saved
+        forward state. Call this if you abandon a checkpoint before backward
+        (for example, in eval branches that take a different code path).
+        """
         if self._hook_handle is not None:
             self._hook_handle.remove()
             self._hook_handle = None
