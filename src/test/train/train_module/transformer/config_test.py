@@ -5,8 +5,8 @@ from olmo_core.distributed.parallel import (
     PipelineScheduleType,
     PipelineSplitStyle,
 )
-from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
 from olmo_core.testing import run_distributed_test
 from olmo_core.train.train_module.transformer import (
@@ -69,9 +69,9 @@ def _run_pp_num_flops_per_token():
     train_module = train_module_config.build(model, device=device)
 
     actual_flops = train_module.num_flops_per_token(seq_len)
-    assert actual_flops == expected_flops, (
-        f"PP train module reported {actual_flops} FLOPs/token but full model has {expected_flops}"
-    )
+    assert (
+        actual_flops == expected_flops
+    ), f"PP train module reported {actual_flops} FLOPs/token but full model has {expected_flops}"
 
 
 def test_pp_num_flops_per_token():
