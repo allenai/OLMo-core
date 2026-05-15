@@ -157,6 +157,12 @@ class TransformerPipelineTrainModule(TrainModule):
         self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
         self.pp_final_stage_rank = self._pp_config.final_stage_rank()
 
+        # Capture num_flops_per_token from the full unsplit model before split_model deepcopies
+        # and drops layers. Under PP each rank only holds its pipeline stage's layers, so querying
+        # model_parts would undercount. When the model is on meta device (the common case for PP)
+        # this reference has no memory cost.
+        self._full_model_num_flops_per_token = model.num_flops_per_token
+
         # Split model into pipeline stages.
         stages, model_parts = pp_config.split_model(model, pp_mesh=self.pp_mesh, device=self.device)
         self._pp_stages = stages
@@ -604,11 +610,11 @@ class TransformerPipelineTrainModule(TrainModule):
 
     @lru_cache
     def num_flops_per_token(self, seq_len: int) -> Optional[int]:
-        warn_once(
-            f"`{self.__class__.__name__}.num_flops_per_token()` is not implemented. "
-            "Extra work is needed to support PP-aware FLOPs/token calculation."
-        )
-        return None
+        try:
+            return self._full_model_num_flops_per_token(seq_len)
+        except NotImplementedError as ex:
+            warn_once(f"Unable to estimate num flops per token: {ex}")
+            return None
 
     def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
         global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
