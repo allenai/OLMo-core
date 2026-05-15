@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Beaker secret existence check to use the case-insensitive HTTP endpoint, avoiding spurious "secret not found" errors when secret names differ only in case.
 - Fixed `Transformer.init_weights` so that under interleaved pipeline parallelism (e.g. `Interleaved1F1B`, `InterleavedZeroBubble`) the multiple model chunks owned by a single rank no longer initialize to identical parameters. Adds a `model_part_idx` kwarg incorporated into the seed as `model_part_idx * pp_size`.
 - Disabled `torch.compile` tracing through `TEAttentionBackend.forward`, whose Python/pybind setup is not Dynamo-safe.
+- Fixed `TransformerPipelineTrainModule.num_flops_per_token` returning `None` under pipeline parallelism. Each PP rank only holds its stage's layers, so summing FLOPs from `model_parts` undercounts the model. Capture `model.num_flops_per_token` as a bound method before `split_model` deepcopies and drops layers, then call it at metric time. On meta device (the standard PP init path) this has no memory cost.
 
 ### Changed
 
