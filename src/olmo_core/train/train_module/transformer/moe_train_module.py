@@ -226,6 +226,12 @@ class MoEV2TransformerTrainModule(TrainModule):
                 "Training parallelism is required for MoEV2TransformerTrainModule"
             )
 
+        # Capture num_flops_per_token from the full unsplit model before parallelize_and_init_model
+        # calls split_model and drops layers. Under PP each rank only holds its pipeline stage's
+        # layers, so querying model_parts[0] would undercount block FLOPs. When the model is on
+        # meta device (the standard PP init path) this reference has no memory cost.
+        self._full_model_num_flops_per_token = model.num_flops_per_token
+
         # Parallelize model.
         self.model_parts = self.parallelize_and_init_model(
             model,
@@ -1412,8 +1418,14 @@ class MoEV2TransformerTrainModule(TrainModule):
             return self.model_parts[0](input_ids, labels=labels, **kwargs)
 
     def num_flops_per_token(self, seq_len: int) -> int:
+        # Use the pre-split full model's method so PP doesn't undercount block FLOPs.
+        # Under PP, model_parts[0].blocks only contains this rank's stage layers.
+        # NOTE: once the flops migration removes self.config from Transformer.num_flops_per_token,
+        # using model_parts[0] directly would silently undercount — this capture is the fix.
+        return self._full_model_num_flops_per_token(seq_len)
+        # Previous implementation (incorrect under PP — block FLOPs are partial per rank):
         # NOTE: it uses the config to calculate the FLOPs for the whole model, so it should be fine to just use the first model part.
-        return self.model_parts[0].num_flops_per_token(seq_len)
+        # return self.model_parts[0].num_flops_per_token(seq_len)
 
     def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
         global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
