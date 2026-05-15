@@ -229,6 +229,122 @@ class WSD(Scheduler):
         return initial_lr
 
 
+@Scheduler.register("power_lr")
+@dataclass
+class PowerLR(Scheduler):
+    """
+    Power learning‑rate schedule with
+
+    1. **Linear warm‑up** to a reference peak LR (`initial_lr`) during the first
+       `warmup` steps/tokens.
+    2. **Power phase** where the LR decays following a power‑law
+       `lr = initial_lr * (current / warmup) ** b`.
+       This makes the LR independent of the eventual training horizon.
+    3. **Optional linear decay tail** during the last `decay` steps/tokens to
+       smoothly anneal to `decay_min_lr`.
+
+    Notes
+    -----
+    * `b` should be *negative* (e.g. ‑0.51); magnitude controls how quickly the
+      LR decays in the power phase.
+    * If both `warmup` and `warmup_fraction` (or both `decay` and
+      `decay_fraction`) are specified, an `OLMoConfigurationError` is raised to
+      mirror the behaviour of other schedulers in this file.
+    """
+
+    b: float = -0.51  # power‑law exponent (negative)
+    warmup: Optional[int] = None
+    warmup_steps: Optional[int] = None  # deprecated alias
+    warmup_fraction: Optional[float] = None
+    warmup_min_lr: float = 0.0
+
+    decay: Optional[int] = None
+    decay_steps: Optional[int] = None  # deprecated alias
+    decay_fraction: Optional[float] = 0.1
+    decay_min_lr: float = 0.0
+
+    def __post_init__(self, *args):
+        del args
+        # --- handle deprecated aliases -------------------------------------------------
+        if self.warmup is None and self.warmup_steps is not None:
+            self.warmup = self.warmup_steps
+            self.warmup_steps = None
+            warnings.warn(
+                f"'{self.__class__.__name__}.warmup_steps' is deprecated, please use '.warmup' instead.",
+                DeprecationWarning,
+            )
+        if self.decay is None and self.decay_steps is not None:
+            self.decay = self.decay_steps
+            self.decay_steps = None
+            warnings.warn(
+                f"'{self.__class__.__name__}.decay_steps' is deprecated, please use '.decay' instead.",
+                DeprecationWarning,
+            )
+
+        # --- sanity checks -------------------------------------------------------------
+        if (self.warmup_fraction is None) == (self.warmup is None):
+            raise OLMoConfigurationError("Either 'warmup_fraction' or 'warmup' must be specified.")
+
+        if self.warmup_fraction is not None and not (0 <= self.warmup_fraction <= 1):
+            raise OLMoConfigurationError("'warmup_fraction' must be between 0 and 1.")
+
+        if (self.decay_fraction is None) == (self.decay is None):
+            raise OLMoConfigurationError(
+                "Either 'decay_fraction' or 'decay' must be specified. Never both."
+            )
+
+        if self.decay_fraction is not None and not (0 <= self.decay_fraction <= 1):
+            raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
+
+        if self.b >= 0:
+            raise OLMoConfigurationError("'b' must be negative for a decaying power‑law.")
+
+    # -------------------------------------------------------------------------
+    # Core scheduling logic
+    # -------------------------------------------------------------------------
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        """
+        Compute the learning rate for the given *current* step/token count.
+
+        *Linear warm‑up*:
+            lr = warmup_min_lr + (initial_lr - warmup_min_lr) * current / warmup
+
+        *Power phase*:
+            lr = initial_lr * (current / warmup) ** b
+
+        *Linear decay tail* (last ``decay`` steps/tokens):
+            lr is linearly annealed from the power‑phase value at the start of
+            the tail to ``decay_min_lr``.
+        """
+        # --- warm‑up and decay extents ------------------------------------------------
+        if self.warmup is not None:
+            warmup = self.warmup
+        else:
+            assert self.warmup_fraction is not None
+            warmup = round(t_max * self.warmup_fraction)
+        if self.decay is not None:
+            decay = self.decay
+        else:
+            assert self.decay_fraction is not None
+            decay = round(t_max * self.decay_fraction)
+
+        # --- phase 1: warm‑up ---------------------------------------------------------
+        if current <= warmup:
+            return _linear_warmup(initial_lr, current, warmup, self.warmup_min_lr)
+
+        # --- phase 3: linear decay tail ----------------------------------------------
+        if current >= t_max - decay:
+            # lr at the beginning of decay‑tail
+            lr_start_tail = initial_lr * ((t_max - decay) / warmup) ** self.b
+            return _linear_decay(lr_start_tail, t_max - current, decay, self.decay_min_lr)
+
+        # --- phase 2: power‑law region -----------------------------------------------
+        lr = initial_lr * (current / warmup) ** self.b
+        return lr
+
+
 @Scheduler.register("linear_with_warmup")
 @dataclass
 class LinearWithWarmup(Scheduler):
@@ -488,6 +604,229 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
         return super().get_lr(initial_lr, current, t_max)
 
 
+class ComposableSchedulerStageType(StrEnum):
+    linear = "linear"
+    cosine = "cosine"
+
+
+@dataclass
+class ComposableSchedulerStage(Config):
+    """
+    A single stage in :class:`ComposableScheduler`.
+    """
+
+    duration: int
+    shape: ComposableSchedulerStageType = ComposableSchedulerStageType.linear
+
+    start_lr: Optional[float] = None
+    start_lr_fraction: Optional[float] = None
+
+    end_lr: Optional[float] = None
+    end_lr_fraction: Optional[float] = None
+
+    def __post_init__(self):
+        if self.duration <= 0:
+            raise OLMoConfigurationError("'duration' must be > 0 for every stage.")
+
+        if self.start_lr is not None and self.start_lr_fraction is not None:
+            raise OLMoConfigurationError(
+                "Specify at most one of 'start_lr' or 'start_lr_fraction' for a stage."
+            )
+
+        if self.start_lr is not None and self.start_lr < 0:
+            raise OLMoConfigurationError("'start_lr' must be >= 0.")
+
+        if self.start_lr_fraction is not None and self.start_lr_fraction < 0:
+            raise OLMoConfigurationError("'start_lr_fraction' must be >= 0.")
+
+        if (self.end_lr is None) == (self.end_lr_fraction is None):
+            raise OLMoConfigurationError(
+                "Specify exactly one of 'end_lr' or 'end_lr_fraction' for each stage."
+            )
+
+        if self.end_lr is not None and self.end_lr < 0:
+            raise OLMoConfigurationError("'end_lr' must be >= 0.")
+
+        if self.end_lr_fraction is not None and self.end_lr_fraction < 0:
+            raise OLMoConfigurationError("'end_lr_fraction' must be >= 0.")
+
+
+@dataclass
+class OverrideDecay(Config):
+    """
+    Optional decay override for :class:`ComposableScheduler`.
+
+    When active, the main stage schedule is ignored from ``start`` onward.
+    The override starts from the LR that the main schedule would have produced at ``start``,
+    and then decays to ``end_lr`` (or ``end_lr_fraction`` of ``initial_lr``) over ``duration``.
+    """
+
+    start: int
+    duration: int
+    shape: ComposableSchedulerStageType = ComposableSchedulerStageType.linear
+
+    end_lr: Optional[float] = None
+    end_lr_fraction: Optional[float] = None
+
+    def __post_init__(self):
+        if self.start < 0:
+            raise OLMoConfigurationError("'start' must be >= 0 for override decay.")
+
+        if self.duration <= 0:
+            raise OLMoConfigurationError("'duration' must be > 0 for override decay.")
+
+        if (self.end_lr is None) == (self.end_lr_fraction is None):
+            raise OLMoConfigurationError(
+                "Specify exactly one of 'end_lr' or 'end_lr_fraction' for override decay."
+            )
+
+        if self.end_lr is not None and self.end_lr < 0:
+            raise OLMoConfigurationError("'end_lr' must be >= 0 for override decay.")
+
+        if self.end_lr_fraction is not None and self.end_lr_fraction < 0:
+            raise OLMoConfigurationError("'end_lr_fraction' must be >= 0 for override decay.")
+
+
+@Scheduler.register("composable")
+@dataclass
+class ComposableScheduler(Scheduler):
+    """
+    Piecewise LR schedule composed of multiple stages.
+
+    - Each stage has a duration and interpolation shape (linear/cosine).
+    - Stage start LR defaults to the previous stage's end LR.
+    - Stage end LR is required and can be absolute or as a fraction of ``initial_lr``.
+    - After all stages are exhausted, LR stays constant at the last stage's end LR.
+    - The ``t_max`` argument passed to :meth:`get_lr` is **ignored**: the schedule is
+      defined absolutely by the stage durations (and the optional :data:`override_decay`),
+      so it does not rescale to fit the trainer's max horizon.
+    """
+
+    stages: List[ComposableSchedulerStage] = field(default_factory=list)
+    override_decay: Optional[OverrideDecay] = None
+
+    _warned_t_max_ignored: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self, *args):
+        del args
+        if len(self.stages) == 0:
+            raise OLMoConfigurationError("'stages' must be specified and non-empty.")
+
+    def _resolve_stage_start(
+        self,
+        stage: ComposableSchedulerStage,
+        initial_lr: Union[float, torch.Tensor],
+        previous_end_lr: Union[float, torch.Tensor],
+    ) -> Union[float, torch.Tensor]:
+        if stage.start_lr is None and stage.start_lr_fraction is None:
+            return previous_end_lr
+        return _resolve_lr_from_initial(initial_lr, stage.start_lr, stage.start_lr_fraction)
+
+    def _main_schedule_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int
+    ) -> Union[float, torch.Tensor]:
+        current = max(current, 0)
+        stage_start = 0
+        previous_end_lr: Union[float, torch.Tensor] = initial_lr
+        for stage in self.stages:
+            start_lr = self._resolve_stage_start(stage, initial_lr, previous_end_lr)
+            end_lr = _resolve_lr_from_initial(initial_lr, stage.end_lr, stage.end_lr_fraction)
+
+            stage_end = stage_start + stage.duration
+            if current < stage_end:
+                stage_current = current - stage_start
+                return _interpolate_lr(
+                    shape=stage.shape,
+                    start_lr=start_lr,
+                    end_lr=end_lr,
+                    current=stage_current,
+                    duration=stage.duration,
+                )
+
+            previous_end_lr = end_lr
+            stage_start = stage_end
+
+        return previous_end_lr
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        """
+        Compute the LR at ``current``.
+
+        .. note::
+            ``t_max`` is ignored. The schedule is defined absolutely by the stage
+            durations (and the optional :data:`override_decay`), independent of
+            the trainer's max horizon.
+        """
+        if not self._warned_t_max_ignored:
+            total_duration = sum(stage.duration for stage in self.stages)
+            warnings.warn(
+                f"'{self.__class__.__name__}' ignores 't_max'; the schedule is defined "
+                f"absolutely by stage durations (total={total_duration}, "
+                f"t_max={t_max}). The LR will not rescale to fit the trainer's horizon.",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._warned_t_max_ignored = True
+        del t_max
+        current = max(current, 0)
+
+        if self.override_decay is None or current < self.override_decay.start:
+            return self._main_schedule_lr(initial_lr, current)
+
+        override_decay = self.override_decay
+        override_start_lr = self._main_schedule_lr(initial_lr, override_decay.start)
+        override_end_lr = _resolve_override_decay_end(override_decay, initial_lr)
+        override_current = current - override_decay.start
+
+        if override_current < override_decay.duration:
+            return _interpolate_lr(
+                shape=override_decay.shape,
+                start_lr=override_start_lr,
+                end_lr=override_end_lr,
+                current=override_current,
+                duration=override_decay.duration,
+            )
+
+        return override_end_lr
+
+
+def _resolve_lr_from_initial(
+    initial_lr: Union[float, torch.Tensor],
+    value: Optional[float],
+    fraction: Optional[float],
+) -> Union[float, torch.Tensor]:
+    if value is not None:
+        return value
+    assert fraction is not None
+    return initial_lr * fraction
+
+
+def _resolve_override_decay_end(
+    override_decay: OverrideDecay,
+    initial_lr: Union[float, torch.Tensor],
+) -> Union[float, torch.Tensor]:
+    return _resolve_lr_from_initial(
+        initial_lr, override_decay.end_lr, override_decay.end_lr_fraction
+    )
+
+
+def _interpolate_lr(
+    shape: ComposableSchedulerStageType,
+    start_lr: Union[float, torch.Tensor],
+    end_lr: Union[float, torch.Tensor],
+    current: int,
+    duration: int,
+) -> Union[float, torch.Tensor]:
+    if shape == ComposableSchedulerStageType.linear:
+        return start_lr + (end_lr - start_lr) * current / duration
+    elif shape == ComposableSchedulerStageType.cosine:
+        return end_lr + (start_lr - end_lr) * (1 + cos(pi * current / duration)) / 2
+    else:
+        raise NotImplementedError(shape)
+
+
 def _linear_warmup(
     initial_lr: Union[float, torch.Tensor], current: int, warmup: int, warmup_min_lr: float = 0.0
 ) -> Union[float, torch.Tensor]:
@@ -525,6 +864,21 @@ class SequentialScheduler(Scheduler):
     """
     schedulers_max_steps: Optional[List[int]] = None  # deprecated, use 'schedulers_max' instead.
 
+    override_decay: Optional[OverrideDecay] = None
+    """
+    Optional late-stage override. When ``current >= override_decay.start``, the
+    sub-scheduler sequence is bypassed and the LR decays from "whatever the main
+    sequence would have produced at ``start``" to the override's target over
+    ``duration`` (linear or cosine). After ``start + duration``, the LR is held
+    at the override's end LR.
+
+    .. note::
+        While the override is active, ``t_max`` is ignored — the override is
+        defined absolutely by ``start`` and ``duration``.
+    """
+
+    _warned_t_max_ignored: bool = field(default=False, init=False, repr=False)
+
     def __post_init__(self, *args):
         del args
         if self.schedulers_max is None and self.schedulers_max_steps is not None:
@@ -550,10 +904,9 @@ class SequentialScheduler(Scheduler):
                 f"Max steps must be set for all schedulers except the last when using '{self.__class__.__name__}'"
             )
 
-    def get_lr(
+    def _sequential_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
-        assert 0 <= current <= t_max
         assert self.schedulers_max is not None
 
         # Call schedulers sequentially until the current step/token count is within the max steps/token count
@@ -570,6 +923,40 @@ class SequentialScheduler(Scheduler):
 
         assert t_max > 0
         return self.schedulers[-1].get_lr(initial_lr, current, t_max)
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        assert 0 <= current <= t_max
+
+        if self.override_decay is None or current < self.override_decay.start:
+            return self._sequential_lr(initial_lr, current, t_max)
+
+        if not self._warned_t_max_ignored:
+            warnings.warn(
+                f"'{self.__class__.__name__}' ignores 't_max' once 'override_decay' is active; "
+                f"the override is defined absolutely by 'start' ({self.override_decay.start}) "
+                f"and 'duration' ({self.override_decay.duration}) (t_max={t_max}).",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._warned_t_max_ignored = True
+
+        override_decay = self.override_decay
+        override_start_lr = self._sequential_lr(initial_lr, override_decay.start, t_max)
+        override_end_lr = _resolve_override_decay_end(override_decay, initial_lr)
+        override_current = current - override_decay.start
+
+        if override_current < override_decay.duration:
+            return _interpolate_lr(
+                shape=override_decay.shape,
+                start_lr=override_start_lr,
+                end_lr=override_end_lr,
+                current=override_current,
+                duration=override_decay.duration,
+            )
+
+        return override_end_lr
 
 
 @Scheduler.register("wsds")

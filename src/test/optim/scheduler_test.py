@@ -1,4 +1,5 @@
 import math
+from typing import List, Tuple, Type
 
 import pytest
 
@@ -10,7 +11,15 @@ from olmo_core.optim import (
     ExponentialScheduler,
     InvSqrtWithWarmup,
     LinearWithWarmup,
+    PowerLR,
     SequentialScheduler,
+)
+from olmo_core.optim.scheduler import (
+    ComposableScheduler,
+    ComposableSchedulerStage,
+    ComposableSchedulerStageType,
+    OverrideDecay,
+    Scheduler,
 )
 
 
@@ -97,6 +106,293 @@ def test_sequential_scheduler():
     assert scheduler.get_lr(initial_lr, 7_500, max_steps) == third_scheduler.get_lr(
         second_scheduler_final_lr, 1_000, max_steps - 6_500
     )
+
+
+def test_power_lr():
+    initial_lr = 10.0
+    warmup_steps = 1_000
+    decay_steps = 2_000
+    t_max = 10_000
+    b = -0.5
+    scheduler = PowerLR(warmup=warmup_steps, decay=decay_steps, decay_fraction=None, b=b)
+
+    # Phase 1: linear warmup from 0 to initial_lr over warmup_steps.
+    assert scheduler.get_lr(initial_lr, 0, t_max) == pytest.approx(0.0)
+    assert scheduler.get_lr(initial_lr, 500, t_max) == pytest.approx(5.0)
+    assert scheduler.get_lr(initial_lr, warmup_steps, t_max) == pytest.approx(initial_lr)
+
+    # Phase 2: power-law decay lr = initial_lr * (current / warmup) ** b.
+    for current in (2_000, 4_000, 6_000):
+        expected = initial_lr * (current / warmup_steps) ** b
+        assert scheduler.get_lr(initial_lr, current, t_max) == pytest.approx(expected)
+
+    # Phase 3: linear decay tail from power-phase value at t_max - decay -> decay_min_lr=0.
+    decay_start = t_max - decay_steps  # 8_000
+    lr_at_tail_start = initial_lr * (decay_start / warmup_steps) ** b
+    assert scheduler.get_lr(initial_lr, decay_start, t_max) == pytest.approx(lr_at_tail_start)
+    # Midpoint of decay tail: halfway down linearly.
+    assert scheduler.get_lr(initial_lr, decay_start + decay_steps // 2, t_max) == pytest.approx(
+        lr_at_tail_start * 0.5
+    )
+    assert scheduler.get_lr(initial_lr, t_max, t_max) == pytest.approx(0.0)
+
+
+def test_power_lr_errors():
+    # b must be negative.
+    with pytest.raises(OLMoConfigurationError, match="'b' must be negative"):
+        PowerLR(warmup=100, decay=100, decay_fraction=None, b=0.5)
+
+    # Need exactly one of warmup / warmup_fraction.
+    with pytest.raises(OLMoConfigurationError, match="warmup_fraction.*or.*warmup"):
+        PowerLR(decay=100, decay_fraction=None)
+
+    # warmup_fraction out of range.
+    with pytest.raises(OLMoConfigurationError, match="warmup_fraction"):
+        PowerLR(warmup_fraction=1.5, decay=100, decay_fraction=None)
+
+    # Specifying both 'decay' and 'decay_fraction' is rejected (PowerLR enforces exclusivity).
+    with pytest.raises(OLMoConfigurationError, match="decay_fraction.*or.*decay"):
+        PowerLR(warmup=100, decay=100, decay_fraction=0.1)
+
+
+def test_sequential_scheduler_override_decay_linear():
+    initial_lr = 10.0
+    max_steps = 20_000
+
+    first_scheduler = ConstantWithWarmup(warmup=1_000)
+    second_scheduler = CosWithWarmup(warmup=0, alpha_f=0.1)
+    base = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+    )
+    scheduler = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+        override_decay=OverrideDecay(
+            start=10_000,
+            duration=2_000,
+            shape=ComposableSchedulerStageType.linear,
+            end_lr=1.0,
+        ),
+    )
+
+    # Before override: same as base sequence.
+    assert scheduler.get_lr(initial_lr, 500, max_steps) == base.get_lr(initial_lr, 500, max_steps)
+    assert scheduler.get_lr(initial_lr, 4_999, max_steps) == base.get_lr(
+        initial_lr, 4_999, max_steps
+    )
+    assert scheduler.get_lr(initial_lr, 9_999, max_steps) == base.get_lr(
+        initial_lr, 9_999, max_steps
+    )
+
+    # At override start: same LR as base would produce.
+    main_lr_at_start = base.get_lr(initial_lr, 10_000, max_steps)
+    assert scheduler.get_lr(initial_lr, 10_000, max_steps) == pytest.approx(main_lr_at_start)
+
+    # Midpoint of override: halfway between start LR and end LR.
+    expected_mid = main_lr_at_start + (1.0 - main_lr_at_start) * 0.5
+    assert scheduler.get_lr(initial_lr, 11_000, max_steps) == pytest.approx(expected_mid)
+
+    # End of override: at end_lr.
+    assert scheduler.get_lr(initial_lr, 12_000, max_steps) == pytest.approx(1.0)
+
+    # Past end of override: held at end_lr.
+    assert scheduler.get_lr(initial_lr, 15_000, max_steps) == pytest.approx(1.0)
+
+
+def test_sequential_scheduler_override_decay_cosine():
+    initial_lr = 10.0
+    max_steps = 20_000
+
+    first_scheduler = ConstantWithWarmup(warmup=1_000)
+    second_scheduler = CosWithWarmup(warmup=0, alpha_f=0.1)
+    base = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+    )
+    scheduler = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+        override_decay=OverrideDecay(
+            start=10_000,
+            duration=2_000,
+            shape=ComposableSchedulerStageType.cosine,
+            end_lr_fraction=0.05,
+        ),
+    )
+
+    main_lr_at_start = base.get_lr(initial_lr, 10_000, max_steps)
+    # Midpoint of cosine override: half-cosine -> start + (end - start) * 0.5.
+    end_lr = initial_lr * 0.05
+    expected_mid = end_lr + (main_lr_at_start - end_lr) * (1 + math.cos(math.pi * 0.5)) / 2
+    assert scheduler.get_lr(initial_lr, 11_000, max_steps) == pytest.approx(expected_mid)
+    assert scheduler.get_lr(initial_lr, 12_000, max_steps) == pytest.approx(end_lr)
+    assert scheduler.get_lr(initial_lr, 15_000, max_steps) == pytest.approx(end_lr)
+
+
+def test_sequential_scheduler_override_decay_inside_first_segment():
+    """Override starts inside the first sub-scheduler, not the last."""
+    initial_lr = 10.0
+    max_steps = 20_000
+
+    first_scheduler = ConstantWithWarmup(warmup=1_000)  # holds at 10.0 after step 1000
+    second_scheduler = CosWithWarmup(warmup=0, alpha_f=0.1)
+    scheduler = SequentialScheduler(
+        schedulers=[first_scheduler, second_scheduler],
+        schedulers_max=[5_000],
+        override_decay=OverrideDecay(
+            start=2_000,
+            duration=1_000,
+            shape=ComposableSchedulerStageType.linear,
+            end_lr=2.0,
+        ),
+    )
+
+    # At override start: LR should be 10.0 (constant phase of first scheduler).
+    assert scheduler.get_lr(initial_lr, 2_000, max_steps) == pytest.approx(10.0)
+    # Midpoint: linear from 10.0 -> 2.0.
+    assert scheduler.get_lr(initial_lr, 2_500, max_steps) == pytest.approx(6.0)
+    # End of override and beyond.
+    assert scheduler.get_lr(initial_lr, 3_000, max_steps) == pytest.approx(2.0)
+    assert scheduler.get_lr(initial_lr, 10_000, max_steps) == pytest.approx(2.0)
+
+
+_PARITY_CASES: List[Tuple[ComposableSchedulerStageType, Type[Scheduler], float]] = [
+    (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.0),
+    (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.1),
+    (ComposableSchedulerStageType.cosine, CosWithWarmup, 0.0),
+    (ComposableSchedulerStageType.cosine, CosWithWarmup, 0.1),
+]
+
+
+@pytest.mark.parametrize("stage_shape, sub_scheduler_cls, alpha_f", _PARITY_CASES)
+def test_composable_and_sequential_match_when_t_max_aligns(stage_shape, sub_scheduler_cls, alpha_f):
+    """
+    A warmup + decay schedule should produce identical LR curves whether
+    expressed as a ComposableScheduler or as a SequentialScheduler, provided
+    't_max' passed at evaluation time equals the composable's total stage
+    duration (i.e. ComposableScheduler's absolute-time view and
+    SequentialScheduler's last-segment-stretches-to-t_max view happen to agree).
+    """
+    initial_lr = 10.0
+    warmup_steps = 1_000
+    decay_steps = 9_000
+    t_max = warmup_steps + decay_steps
+
+    composable = ComposableScheduler(
+        stages=[
+            ComposableSchedulerStage(
+                duration=warmup_steps,
+                shape=ComposableSchedulerStageType.linear,
+                start_lr_fraction=0.0,
+                end_lr_fraction=1.0,
+            ),
+            ComposableSchedulerStage(
+                duration=decay_steps,
+                shape=stage_shape,
+                end_lr_fraction=alpha_f,
+            ),
+        ],
+    )
+
+    sequential = SequentialScheduler(
+        schedulers=[
+            ConstantWithWarmup(warmup=warmup_steps),
+            sub_scheduler_cls(warmup=0, alpha_f=alpha_f),
+        ],
+        schedulers_max=[warmup_steps],
+    )
+
+    # Spans warmup interior, exact boundary, decay interior, exact end-of-schedule.
+    sample_points = [0, 1, 100, 500, 999, 1_000, 1_001, 2_500, 5_500, 7_500, 9_999, t_max]
+    for current in sample_points:
+        composable_lr = composable.get_lr(initial_lr, current, t_max)
+        sequential_lr = sequential.get_lr(initial_lr, current, t_max)
+        assert composable_lr == pytest.approx(
+            sequential_lr
+        ), f"mismatch at step {current}: composable={composable_lr}, sequential={sequential_lr}"
+
+
+def test_sequential_scheduler_override_decay_t_max_warning():
+    scheduler = SequentialScheduler(
+        schedulers=[ConstantWithWarmup(warmup=100), CosWithWarmup(warmup=0)],
+        schedulers_max=[1_000],
+        override_decay=OverrideDecay(start=500, duration=200, end_lr=0.0),
+    )
+
+    # Warning fires once, when override becomes active.
+    with pytest.warns(UserWarning, match="ignores 't_max'"):
+        scheduler.get_lr(10.0, 600, 10_000)
+
+    # No further warnings on subsequent calls.
+    import warnings as _warnings
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error", UserWarning)
+        scheduler.get_lr(10.0, 700, 10_000)
+
+
+def test_composable_scheduler_override_decay_linear():
+    initial_lr = 10.0
+    scheduler = ComposableScheduler(
+        stages=[
+            ComposableSchedulerStage(
+                duration=100,
+                shape=ComposableSchedulerStageType.linear,
+                start_lr_fraction=0.0,
+                end_lr_fraction=1.0,
+            ),
+            ComposableSchedulerStage(
+                duration=900,
+                shape=ComposableSchedulerStageType.linear,
+                end_lr_fraction=0.1,
+            ),
+        ],
+        override_decay=OverrideDecay(
+            start=200,
+            duration=100,
+            shape=ComposableSchedulerStageType.linear,
+            end_lr=3.0,
+        ),
+    )
+
+    assert scheduler.get_lr(initial_lr, 150, 1000) == pytest.approx(9.5)
+    assert scheduler.get_lr(initial_lr, 200, 1000) == pytest.approx(9.0)
+    assert scheduler.get_lr(initial_lr, 250, 1000) == pytest.approx(6.0)
+    assert scheduler.get_lr(initial_lr, 300, 1000) == pytest.approx(3.0)
+    assert scheduler.get_lr(initial_lr, 800, 1000) == pytest.approx(3.0)
+
+
+def test_composable_scheduler_override_decay_cosine():
+    initial_lr = 10.0
+    scheduler = ComposableScheduler(
+        stages=[
+            ComposableSchedulerStage(
+                duration=1000,
+                shape=ComposableSchedulerStageType.linear,
+                end_lr_fraction=1.0,
+            ),
+        ],
+        override_decay=OverrideDecay(
+            start=100,
+            duration=100,
+            shape=ComposableSchedulerStageType.cosine,
+            end_lr_fraction=0.2,
+        ),
+    )
+
+    assert scheduler.get_lr(initial_lr, 99, 1000) == pytest.approx(10.0)
+    assert scheduler.get_lr(initial_lr, 100, 1000) == pytest.approx(10.0)
+    assert scheduler.get_lr(initial_lr, 150, 1000) == pytest.approx(6.0)
+    assert scheduler.get_lr(initial_lr, 200, 1000) == pytest.approx(2.0)
+    assert scheduler.get_lr(initial_lr, 500, 1000) == pytest.approx(2.0)
+
+
+def test_composable_scheduler_override_decay_validation():
+    with pytest.raises(
+        OLMoConfigurationError, match="exactly one of 'end_lr' or 'end_lr_fraction'"
+    ):
+        OverrideDecay(start=100, duration=100)
 
 
 class TestWSDSScheduler:
