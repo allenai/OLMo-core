@@ -75,4 +75,6 @@ def _run_pp_num_flops_per_token():
 
 
 def test_pp_num_flops_per_token():
-    run_distributed_test(_run_pp_num_flops_per_token, world_size=2, backend="gloo")
+    run_distributed_test(
+        _run_pp_num_flops_per_token, world_size=2, backend="gloo", start_method="spawn"
+    )
