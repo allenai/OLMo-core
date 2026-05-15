@@ -102,11 +102,15 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
     smoke_1gpu = getattr(args, "smoke_1gpu", False)
     max_devices = 1 if smoke_1gpu else args.max_gpus
+    ladder_kwargs = {}
+    if getattr(args, "seed", None) is not None:
+        ladder_kwargs["seed"] = args.seed
     ladder = ModelLadder(
         name=args.name,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
         sizes=[s for s in TransformerSize if s.approx_num_params <= 1e9],
         max_devices=max_devices,
+        **ladder_kwargs,
         device_type=get_gpu_type(args.cluster),
         model_configurator=_BaselineSmokeConfigurator(
             model_construction_kwargs={"sliding_window": None},
@@ -144,6 +148,16 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "in a smoke run-configurator that allows tiny chinchilla_multiple "
             "values with minimal warmup. Pair with --chinchilla-multiple "
             "~0.001 for a ~5 minute reference run."
+        ),
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help=(
+            "Override the ModelLadder.seed (default 42). Used to spread "
+            "a multi-seed baseline cohort (baseline-v02-seed1/2/3 "
+            "convention). Pass a different int per launch."
         ),
     )
 
