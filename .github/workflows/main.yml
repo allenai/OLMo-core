@@ -210,7 +210,7 @@ jobs:
             image: *gpu_test_image
             gpus: 1
             run: |
-              python src/scripts/benchmark_odc.py --layers 1 4 8 --iters 5
+              python src/scripts/benchmark_odc.py --layers 1 4 8 --dtype bf16 fp32 --iters 5
 
           - name: ODC FFN integration check (GPU, temporary - revert before merge)
             image: *gpu_test_image
