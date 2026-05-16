@@ -48,7 +48,6 @@ from olmo_core.nn import OutputDiscardCheckpoint
 from olmo_core.nn import output_discard_checkpoint as odc_module
 
 WARMUP_ITERS = 3
-TIMED_ITERS = 10
 
 
 @dataclass
@@ -220,6 +219,7 @@ def _benchmark_one(
     runner: Callable[[Stack, torch.Tensor], torch.Tensor],
     model: Stack,
     x: torch.Tensor,
+    timed_iters: int,
 ) -> Result:
     for _ in range(WARMUP_ITERS):
         for p in model.parameters():
@@ -232,7 +232,7 @@ def _benchmark_one(
     peak_mbs: List[float] = []
     fwd_mss: List[float] = []
     bwd_mss: List[float] = []
-    for _ in range(TIMED_ITERS):
+    for _ in range(timed_iters):
         for p in model.parameters():
             if p.grad is not None:
                 p.grad = None
@@ -313,7 +313,7 @@ def _block_registry(
     ]
 
 
-def run_scenario(
+def run_block(
     *,
     block_name: str,
     block_desc: str,
@@ -325,13 +325,10 @@ def run_scenario(
     n_layers: int,
     dtype: torch.dtype,
     device: torch.device,
+    timed_iters: int,
 ) -> None:
-    """Run all four configurations on one (block, n_layers) combo and print the table."""
-    print(
-        f"\n=== {block_name}, n_layers={n_layers}, d_model={d_model}, d_ff={d_ff}, "
-        f"batch={batch}, seq={seq}, dtype={dtype} ==="
-    )
-    print(f"    {block_desc}")
+    """Run all four configurations for one (block, n_layers) combo and print the table."""
+    print(f"\n  [{block_name}] {block_desc}")
 
     torch.manual_seed(0)
     model = Stack(lambda: factory(d_model, d_ff), n_layers).to(device)
@@ -345,11 +342,13 @@ def run_scenario(
 
     results: List[Result] = []
     for name, method in runners:
-        results.append(_benchmark_one(name, method, model, x))
+        results.append(_benchmark_one(name, method, model, x, timed_iters))
 
     restore = _force_python_fallback()
     try:
-        results.append(_benchmark_one("ODC (python fallback)", Stack.forward_odc, model, x))
+        results.append(
+            _benchmark_one("ODC (python fallback)", Stack.forward_odc, model, x, timed_iters)
+        )
     finally:
         restore()
 
@@ -366,6 +365,12 @@ def main() -> int:
     parser.add_argument("--seq", type=int, default=2048)
     parser.add_argument("--n-layers", type=int, default=4, help="Multi-layer stack depth.")
     parser.add_argument("--dtype", choices=["fp32", "bf16", "fp16"], default="bf16")
+    parser.add_argument(
+        "--iters",
+        type=int,
+        default=10,
+        help="Number of timed iterations per configuration (after warmup).",
+    )
     parser.add_argument(
         "--only",
         nargs="+",
@@ -410,9 +415,14 @@ def main() -> int:
     else:
         layer_counts = sorted(set(args.layers))
 
-    for block_name, block_desc, factory in blocks:
-        for n_layers in layer_counts:
-            run_scenario(
+    for n_layers in layer_counts:
+        print(
+            f"\n========== n_layers={n_layers}  "
+            f"(d_model={args.d_model}, d_ff={args.d_ff}, "
+            f"batch={args.batch}, seq={args.seq}, dtype={dtype}) =========="
+        )
+        for block_name, block_desc, factory in blocks:
+            run_block(
                 block_name=block_name,
                 block_desc=block_desc,
                 factory=factory,
@@ -423,6 +433,7 @@ def main() -> int:
                 n_layers=n_layers,
                 dtype=dtype,
                 device=device,
+                timed_iters=args.iters,
             )
 
     return 0
