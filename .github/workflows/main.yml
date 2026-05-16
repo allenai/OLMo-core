@@ -205,6 +205,18 @@ jobs:
             run: |
               pytest -v --color=yes -m gpu \
                 src/integration_tests/
+
+          - name: ODC benchmark (GPU, temporary - revert before merge)
+            image: *gpu_test_image
+            gpus: 1
+            run: |
+              python src/scripts/benchmark_odc.py
+
+          - name: ODC FFN integration check (GPU, temporary - revert before merge)
+            image: *gpu_test_image
+            gpus: 1
+            run: |
+              python src/scripts/odc_ffn_integration_check.py --dtype bf16 --iters 3
     steps:
       - uses: actions/checkout@v5
         with:
