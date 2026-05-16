@@ -381,39 +381,133 @@ class StupidBackoffNgramLM:
         in the LM's loss, so we skip it — the returned overrides cover
         ``i ∈ [0, S-2]``.
         """
+        from numpy.lib.stride_tricks import sliding_window_view
+
         input_ids = np.asarray(input_ids, dtype=np.int64)
         S = int(input_ids.shape[0])
-        prefix_len = self.N_max - 1
+        EMPTY = (
+            np.zeros(0, dtype=np.int32),
+            np.zeros(0, dtype=np.int32),
+            np.zeros(0, dtype=np.float32),
+        )
+        if S <= 1:
+            return EMPTY
 
-        positions = []
-        token_ids = []
-        log_scores = []
+        # Translate the full input_ids dolma2→kenlm once. Out-of-vocab dolma2
+        # ids map to kenlm id 0 (kUNK) by the dolma2_to_kenlm table init;
+        # kUNK has no rows in any v2-filtered order, so any history that
+        # contains one will silently miss in searchsorted.
+        ctx_kenlm_full = self.dolma2_to_kenlm[input_ids].astype(np.uint32, copy=False)
 
-        for i in range(S - 1):
-            ctx_start = max(0, i + 1 - prefix_len)
-            ctx_dolma2 = input_ids[ctx_start : i + 1]
-            ctx_kenlm = self.dolma2_to_kenlm[ctx_dolma2]
-            override = self._override_for_history(ctx_kenlm)
-            if not override:
+        # Per-order: batched binary search across all queries with enough left
+        # context, then bulk-gather (continuation, count) rows for the hits.
+        # Concatenate across orders at the end and resolve the
+        # "highest-order-wins" semantic with a single lexsort + uniqueness pass.
+        per_order: list[tuple[np.ndarray, np.ndarray, np.ndarray, int]] = []
+
+        for n in range(2, self.N_max + 1):
+            plen = n - 1
+            order_data = self.orders.get(n)
+            if order_data is None or order_data["n_hist"] == 0:
                 continue
-            n_o = len(override)
-            positions.append(np.full(n_o, i, dtype=np.int32))
-            tk = np.empty(n_o, dtype=np.int32)
-            sc = np.empty(n_o, dtype=np.float32)
-            for j, (did, log_score) in enumerate(override.items()):
-                tk[j] = did
-                sc[j] = log_score
-            token_ids.append(tk)
-            log_scores.append(sc)
+            # Positions with enough left context: i in [plen-1, S-2].
+            # For position i, the history is ctx_kenlm_full[i+1-plen : i+1].
+            # That's window index (i+1-plen) into sliding_window_view of width plen.
+            n_queries = S - plen
+            if n_queries <= 0:
+                continue
+            windows = sliding_window_view(ctx_kenlm_full, plen)  # (S-plen+1, plen)
+            # Take the first n_queries windows — last position covered is S-2.
+            queries = np.ascontiguousarray(windows[:n_queries])  # (n_queries, plen)
+            position_for_query = np.arange(plen - 1, plen - 1 + n_queries, dtype=np.int64)
 
-        if not positions:
-            return (
-                np.zeros(0, dtype=np.int32),
-                np.zeros(0, dtype=np.int32),
-                np.zeros(0, dtype=np.float32),
+            struct = order_data["histories_struct"]
+            if struct is None:
+                continue
+            query_struct = queries.view(struct.dtype).reshape(-1)
+            idx = np.searchsorted(struct, query_struct)
+            # Clamp to a valid lookup index for the equality check (a query
+            # past the end gets idx == struct.shape[0]).
+            clamped = np.minimum(idx, struct.shape[0] - 1)
+            matches = (idx < struct.shape[0]) & (struct[clamped] == query_struct)
+            if not matches.any():
+                continue
+            hit_positions = position_for_query[matches]
+            hit_row_indices = idx[matches]
+            n_hits = int(hit_positions.shape[0])
+
+            offsets_arr = order_data["offsets"]
+            lo = np.asarray(offsets_arr[hit_row_indices], dtype=np.int64)
+            hi = np.asarray(offsets_arr[hit_row_indices + 1], dtype=np.int64)
+            lengths = hi - lo
+            total = int(lengths.sum())
+            if total == 0:
+                continue
+            h_totals = np.asarray(
+                order_data["history_totals"][hit_row_indices], dtype=np.uint64
             )
+
+            # Build flat indices into the order's continuations / counts arrays.
+            # flat_row[k] = which hit (and thus which row + position) entry k
+            # belongs to; within_row[k] = offset within that row's (continuation,
+            # count) slice; flat_arr_idx[k] = the global index to read from.
+            flat_row = np.repeat(np.arange(n_hits, dtype=np.int64), lengths)
+            row_start_in_flat = np.cumsum(lengths) - lengths  # (n_hits,)
+            within_row = np.arange(total, dtype=np.int64) - row_start_in_flat[flat_row]
+            flat_arr_idx = lo[flat_row] + within_row  # (total,)
+
+            flat_conts_kenlm = np.asarray(
+                order_data["continuations"][flat_arr_idx], dtype=np.uint32
+            )
+            flat_counts = np.asarray(
+                order_data["counts"][flat_arr_idx], dtype=np.uint64
+            )
+
+            # Translate kenlm→dolma2 and drop sentinel / zero-count rows.
+            flat_did = self.kenlm_to_dolma2[flat_conts_kenlm].astype(np.int64, copy=False)
+            valid_mask = (flat_did < self.vocab_size) & (flat_counts > 0)
+            if not valid_mask.any():
+                continue
+            flat_row_v = flat_row[valid_mask]
+            flat_did_v = flat_did[valid_mask]
+            flat_counts_v = flat_counts[valid_mask]
+            flat_h_total = h_totals[flat_row_v].astype(np.float64)
+            log_discount = (self.N_max - n) * self.log_alpha
+            flat_log_score = (
+                np.log(flat_counts_v.astype(np.float64))
+                - np.log(flat_h_total)
+                + log_discount
+            )
+            flat_positions = hit_positions[flat_row_v].astype(np.int64)
+
+            per_order.append((flat_positions, flat_did_v, flat_log_score, n))
+
+        if not per_order:
+            return EMPTY
+
+        # Concatenate per-order outputs with a parallel order-id column, then
+        # resolve "highest-order-wins" by sorting (position asc, did asc,
+        # order desc) and taking the first entry per (position, did).
+        all_pos = np.concatenate([p for p, _, _, _ in per_order])
+        all_did = np.concatenate([d for _, d, _, _ in per_order])
+        all_score = np.concatenate([s for _, _, s, _ in per_order])
+        all_order = np.concatenate(
+            [np.full(len(p), n, dtype=np.int8) for p, _, _, n in per_order]
+        )
+
+        # Negate order so the sort puts the highest order first within each
+        # (position, did) group.
+        sort_idx = np.lexsort((-all_order, all_did, all_pos))
+        pos_s = all_pos[sort_idx]
+        did_s = all_did[sort_idx]
+        score_s = all_score[sort_idx]
+
+        is_first = np.empty(pos_s.shape[0], dtype=bool)
+        is_first[0] = True
+        is_first[1:] = (pos_s[1:] != pos_s[:-1]) | (did_s[1:] != did_s[:-1])
+
         return (
-            np.concatenate(positions),
-            np.concatenate(token_ids),
-            np.concatenate(log_scores),
+            pos_s[is_first].astype(np.int32, copy=False),
+            did_s[is_first].astype(np.int32, copy=False),
+            score_s[is_first].astype(np.float32, copy=False),
         )
