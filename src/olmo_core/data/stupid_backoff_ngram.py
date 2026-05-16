@@ -87,6 +87,7 @@ class StupidBackoffNgramLM:
         dolma2_vocab_size: int,
         N_max: int = 5,
         alpha: float = 0.4,
+        mirror_to_shm: bool = True,
     ):
         p = Path(table_dir)
         if (p / "counts_index").is_dir():
@@ -168,20 +169,27 @@ class StupidBackoffNgramLM:
                 dolma2_to_kenlm[did] = np.uint32(kid)
         self.dolma2_to_kenlm = dolma2_to_kenlm
 
-        # Mmap the per-order index files. Mirror each file from Weka to
-        # /dev/shm on first open per-node (flock-protected; cooperative
-        # across workers) so binary searches don't pay Weka I/O latency
-        # for every probe. With 16+ dataloader workers per rank doing
-        # random-access lookups, naive Weka mmap thrashes hard — the same
-        # mirroring trick the KN-smoothed ngram_soft_target reader uses
-        # (see _mirror_to_shm in that module). For 1e-4 the index is
-        # ~25 GiB total; sits comfortably in the 100 GiB --shared-memory
-        # the launcher sets.
+        # Mmap the per-order index files. When ``mirror_to_shm=True``
+        # (the default; required for training-time use with 16+ dataloader
+        # workers per rank doing concurrent random-access lookups), mirror
+        # each file from Weka to /dev/shm on first open per-node
+        # (flock-protected; cooperative across workers). The same trick
+        # the KN-smoothed ngram_soft_target reader uses for its
+        # forward_index_topk.bin (see _mirror_to_shm in that module).
+        # For 1e-4 the index is ~25 GiB total; sits comfortably in the
+        # 100 GiB --shared-memory the launcher sets. For 1e-2 the index
+        # is ~1.2 TB which doesn't fit in /dev/shm at all — single-process
+        # standalone-eval callers should pass ``mirror_to_shm=False`` and
+        # accept Weka I/O latency (page-cache makes the upper tree levels
+        # fast enough single-process; the thrashing only matters with
+        # many concurrent workers).
         from olmo_core.data.ngram_soft_target import _mirror_to_shm
 
         def _open_mmap(name: str, dtype) -> np.memmap:
-            local = _mirror_to_shm(str(index_dir / name))
-            return np.memmap(local, dtype=dtype, mode="r")
+            path = str(index_dir / name)
+            if mirror_to_shm:
+                path = _mirror_to_shm(path)
+            return np.memmap(path, dtype=dtype, mode="r")
 
         self.orders: Dict[int, dict] = {}
         for n_str, info in self.meta["per_order"].items():
