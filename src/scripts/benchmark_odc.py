@@ -167,6 +167,26 @@ class RMSNormBlock(BenchBlock):
         return self.linear(h) + x
 
 
+class FP32SoftmaxBlock(BenchBlock):
+    """
+    fp32 softmax pattern (attention softmax / routing softmax in mixed precision).
+    Inner: bf16 -> upcast -> softmax in fp32. The fp32 softmax output is what's
+    discarded. Note that softmax saves its OUTPUT for backward, so discarding it
+    forces a recompute of the full softmax in backward.
+    """
+
+    def __init__(self, d_model: int, dtype: torch.dtype, device: torch.device):
+        super().__init__()
+        self.proj = nn.Linear(d_model, d_model, bias=False, dtype=dtype, device=device)
+        self.dtype = dtype
+
+    def _inner(self, x: torch.Tensor) -> torch.Tensor:
+        return x.float().softmax(dim=-1)
+
+    def _outer(self, h: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        return self.proj(h.to(self.dtype))
+
+
 class Stack(nn.Module):
     """Stacks ``n_layers`` copies of a block factory and exposes the three variants."""
 
@@ -310,6 +330,11 @@ def _block_registry(
             "RMSNorm + Linear + residual; cheap recompute, small fat-output savings",
             lambda d_model, d_ff: RMSNormBlock(d_model, dtype, device),
         ),
+        (
+            "fp32_softmax",
+            "softmax in fp32 (attention/routing pattern); 2x size if base dtype is bf16/fp16",
+            lambda d_model, d_ff: FP32SoftmaxBlock(d_model, dtype, device),
+        ),
     ]
 
 
@@ -364,7 +389,15 @@ def main() -> int:
     parser.add_argument("--batch", type=int, default=2)
     parser.add_argument("--seq", type=int, default=2048)
     parser.add_argument("--n-layers", type=int, default=4, help="Multi-layer stack depth.")
-    parser.add_argument("--dtype", choices=["fp32", "bf16", "fp16"], default="bf16")
+    parser.add_argument(
+        "--dtype",
+        nargs="+",
+        choices=["fp32", "bf16", "fp16"],
+        default=["bf16"],
+        help="One or more dtypes to sweep. Each is run as a separate top-level "
+        "group so you can compare precision-boundary effects (e.g. fp32_cast / "
+        "fp32_softmax discard tensor doubles when base dtype is bf16/fp16).",
+    )
     parser.add_argument(
         "--iters",
         type=int,
@@ -391,7 +424,8 @@ def main() -> int:
         print("CUDA is required for memory and timing measurements. Skipping.", file=sys.stderr)
         return 0
 
-    dtype = {"fp32": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}[args.dtype]
+    dtype_map = {"fp32": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}
+    dtypes = [dtype_map[d] for d in args.dtype]
     device = torch.device("cuda")
 
     print(f"PyTorch {torch.__version__}  /  device {torch.cuda.get_device_name(device)}")
@@ -401,40 +435,42 @@ def main() -> int:
     del _warm
     odc_module._get_share_storage()
 
-    blocks = _block_registry(dtype, device)
-    if args.only is not None:
-        wanted = set(args.only)
-        unknown = wanted - {name for name, _, _ in blocks}
-        if unknown:
-            print(f"unknown block name(s): {sorted(unknown)}", file=sys.stderr)
-            return 2
-        blocks = [b for b in blocks if b[0] in wanted]
-
     if args.layers is None:
         layer_counts = sorted({1, args.n_layers})
     else:
         layer_counts = sorted(set(args.layers))
 
-    for n_layers in layer_counts:
-        print(
-            f"\n========== n_layers={n_layers}  "
-            f"(d_model={args.d_model}, d_ff={args.d_ff}, "
-            f"batch={args.batch}, seq={args.seq}, dtype={dtype}) =========="
-        )
-        for block_name, block_desc, factory in blocks:
-            run_block(
-                block_name=block_name,
-                block_desc=block_desc,
-                factory=factory,
-                d_model=args.d_model,
-                d_ff=args.d_ff,
-                batch=args.batch,
-                seq=args.seq,
-                n_layers=n_layers,
-                dtype=dtype,
-                device=device,
-                timed_iters=args.iters,
+    for dtype in dtypes:
+        blocks = _block_registry(dtype, device)
+        if args.only is not None:
+            wanted = set(args.only)
+            unknown = wanted - {name for name, _, _ in blocks}
+            if unknown:
+                print(f"unknown block name(s): {sorted(unknown)}", file=sys.stderr)
+                return 2
+            blocks = [b for b in blocks if b[0] in wanted]
+
+        print(f"\n############### dtype = {dtype} ###############")
+        for n_layers in layer_counts:
+            print(
+                f"\n========== n_layers={n_layers}  "
+                f"(d_model={args.d_model}, d_ff={args.d_ff}, "
+                f"batch={args.batch}, seq={args.seq}, dtype={dtype}) =========="
             )
+            for block_name, block_desc, factory in blocks:
+                run_block(
+                    block_name=block_name,
+                    block_desc=block_desc,
+                    factory=factory,
+                    d_model=args.d_model,
+                    d_ff=args.d_ff,
+                    batch=args.batch,
+                    seq=args.seq,
+                    n_layers=n_layers,
+                    dtype=dtype,
+                    device=device,
+                    timed_iters=args.iters,
+                )
 
     return 0
 
