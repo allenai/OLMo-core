@@ -86,7 +86,12 @@ def prepare_training_environment(
     *,
     seed: Optional[int] = None,
     backend: Optional[str] = "cpu:gloo,cuda:nccl",
-    timeout: timedelta = timedelta(minutes=15),
+    # Bumped from 15min default — SamplingDocumentSource's first-run
+    # offset-enumeration over hundreds of .npy files can exceed 15 min
+    # on rank 0 while other ranks wait on the barrier, causing a gloo
+    # timeout. 90 min comfortably covers the worst observed case
+    # (~30-60 min for a multi-GB baseline corpus).
+    timeout: timedelta = timedelta(minutes=90),
     log_filter_type: Optional[LogFilterType] = None,
     shared_filesystem: Optional[bool] = None,
 ):
