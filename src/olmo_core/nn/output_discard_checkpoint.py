@@ -69,19 +69,25 @@ def _get_share_storage() -> Optional[Callable[[torch.Tensor, torch.Tensor], None
 def _fallback_share_storage(dst: torch.Tensor, src: torch.Tensor):
     """
     Python fallback for environments where the C++ extension cannot be built.
+
+    Unlike the C++ path -- which mutates ``dst``'s ``StorageImpl`` ``data_ptr``
+    in place -- we cannot rebind a Python ``Storage``'s data pointer from
+    user-space without going through ``Tensor.set_()``, which would swap
+    ``dst``'s ``StorageImpl`` for a new one and leave any autograd-saved views
+    of ``dst`` pointing at the old (empty) storage. Instead we resize ``dst``'s
+    existing storage in place and copy ``src``'s bytes into it. This preserves
+    ``StorageImpl`` identity (so saved views see the refilled data) at the
+    cost of an extra allocation + copy during recompute.
     """
     global _share_storage_fallback_warned
 
     old_version = dst._version
     with torch.no_grad():
-        dst.set_(
-            src.untyped_storage(),
-            src.storage_offset(),
-            src.size(),
-            src.stride(),
-        )
+        dst_storage = dst.untyped_storage()
+        src_storage = src.untyped_storage()
+        dst_storage.resize_(src_storage.nbytes())
+        dst_storage.copy_(src_storage)
 
-    # Keep version counter stable to mirror Megatron's low-level behavior.
     if hasattr(torch._C, "_autograd") and hasattr(
         torch._C._autograd, "_unsafe_set_version_counter"
     ):

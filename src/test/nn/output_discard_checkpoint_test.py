@@ -80,6 +80,46 @@ def test_output_discard_checkpoint_allows_backward_through_linear_chain():
         torch.testing.assert_close(p_ckpt.grad, p_ref.grad, atol=1e-6, rtol=1e-6)
 
 
+def test_output_discard_checkpoint_3d_linear_downstream():
+    """
+    Regression test: when the downstream consumer is a Linear with a 3D input,
+    autograd saves a 2D-reshape view of the discarded tensor (the saved op is
+    ``MmBackward`` under an ``UnsafeViewBackward``). The Python fallback must
+    refill storage in a way that view sees -- i.e. mutate the existing
+    ``StorageImpl`` in place rather than swap a new one in.
+    """
+    torch.manual_seed(3)
+
+    submodule_ref = torch.nn.Sequential(
+        torch.nn.Linear(64, 256, bias=False),
+        torch.nn.SiLU(),
+    )
+    next_layer_ref = torch.nn.Linear(256, 64, bias=False)
+
+    submodule_ckpt = copy.deepcopy(submodule_ref)
+    next_layer_ckpt = copy.deepcopy(next_layer_ref)
+
+    x_ref = torch.randn(2, 8, 64, requires_grad=True)  # 3D input
+    x_ckpt = x_ref.detach().clone().requires_grad_(True)
+
+    z_ref = next_layer_ref(submodule_ref(x_ref))
+    z_ref.square().mean().backward()
+
+    ckpt = OutputDiscardCheckpoint()
+    h_ckpt = ckpt.checkpoint(submodule_ckpt, x_ckpt)
+    z_ckpt = next_layer_ckpt(h_ckpt)
+    ckpt.discard_output_and_register_recompute(z_ckpt)
+    assert h_ckpt.untyped_storage().nbytes() == 0
+    z_ckpt.square().mean().backward()
+
+    assert h_ckpt.untyped_storage().nbytes() > 0
+    torch.testing.assert_close(x_ckpt.grad, x_ref.grad, atol=1e-6, rtol=1e-6)
+    for p_ref, p_ckpt in zip(submodule_ref.parameters(), submodule_ckpt.parameters()):
+        torch.testing.assert_close(p_ckpt.grad, p_ref.grad, atol=1e-6, rtol=1e-6)
+    for p_ref, p_ckpt in zip(next_layer_ref.parameters(), next_layer_ckpt.parameters()):
+        torch.testing.assert_close(p_ckpt.grad, p_ref.grad, atol=1e-6, rtol=1e-6)
+
+
 def test_output_discard_checkpoint_python_fallback(monkeypatch):
     """
     Force the Python fallback for share_storage and verify the checkpoint still
