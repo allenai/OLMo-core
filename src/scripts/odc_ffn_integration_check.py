@@ -10,18 +10,24 @@ The OLMo FFN forward is:
 
 The fat intermediate (``activation(w1(x)) * w3(x)``, shape ``[B, S, hidden_size]``)
 gets saved-for-backward by ``w2``. This script wraps that intermediate with
-:class:`OutputDiscardCheckpoint` and verifies:
+:class:`OutputDiscardCheckpoint` and verifies, at multiple stack depths
+(``N = 1`` and ``N = --n-layers`` by default):
 
 1. Output matches baseline within tolerance.
 2. Input gradient and every parameter gradient match baseline within tolerance.
-3. Peak GPU memory is lower than baseline (CUDA only).
+3. Peak GPU memory delta vs. baseline (CUDA only).
+
+The multi-layer case exercises per-block ``OutputDiscardCheckpoint`` instances
+and verifies the recompute hooks fire in the correct order during a chained
+backward pass.
 
 Run manually -- not picked up by CI:
 
 .. code-block:: bash
 
     python src/scripts/odc_ffn_integration_check.py
-    python src/scripts/odc_ffn_integration_check.py --dtype bf16 --iters 5
+    python src/scripts/odc_ffn_integration_check.py --dtype bf16 --n-layers 8
+    python src/scripts/odc_ffn_integration_check.py --layers 1 2 4 --iters 5
 
 Exits non-zero on any parity failure.
 """
@@ -58,28 +64,38 @@ class ODCFeedForward(FeedForward):
         return self.w2(self._gated(x))
 
 
-def _make_ffns(
+class FFNStack(torch.nn.Module):
+    """Chains ``n_layers`` FFN-style modules. Used for both baseline and ODC variants."""
+
+    def __init__(self, cls, *, n_layers: int, **ffn_kwargs):
+        super().__init__()
+        self.blocks = torch.nn.ModuleList([cls(**ffn_kwargs) for _ in range(n_layers)])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for b in self.blocks:
+            x = b(x)
+        return x
+
+
+def _make_stacks(
     *,
+    n_layers: int,
     d_model: int,
     hidden_size: int,
     dtype: torch.dtype,
     device: torch.device,
-) -> Tuple[FeedForward, ODCFeedForward]:
+) -> Tuple[FFNStack, FFNStack]:
+    """Build a baseline ``FFNStack`` and an ODC ``FFNStack`` with identical weights."""
+    kwargs = dict(
+        d_model=d_model,
+        hidden_size=hidden_size,
+        bias=False,
+        dtype=dtype,
+        init_device=str(device),
+    )
     torch.manual_seed(0)
-    baseline = FeedForward(
-        d_model=d_model,
-        hidden_size=hidden_size,
-        bias=False,
-        dtype=dtype,
-        init_device=str(device),
-    )
-    odc = ODCFeedForward(
-        d_model=d_model,
-        hidden_size=hidden_size,
-        bias=False,
-        dtype=dtype,
-        init_device=str(device),
-    )
+    baseline = FFNStack(FeedForward, n_layers=n_layers, **kwargs)
+    odc = FFNStack(ODCFeedForward, n_layers=n_layers, **kwargs)
     odc.load_state_dict(copy.deepcopy(baseline.state_dict()))
     return baseline, odc
 
@@ -126,6 +142,7 @@ def _close(a: torch.Tensor, b: torch.Tensor, atol: float, rtol: float) -> Tuple[
 
 def run_one(
     *,
+    n_layers: int,
     d_model: int,
     hidden_size: int,
     batch: int,
@@ -135,8 +152,9 @@ def run_one(
     device: torch.device,
 ) -> int:
     """
-    Run ``iters`` forward+backward passes through baseline and ODC FFNs,
-    asserting parity each iter. Returns 0 on success, 1 on any failure.
+    Run ``iters`` forward+backward passes through a baseline and ODC
+    ``FFNStack`` of depth ``n_layers``, asserting parity each iter. Returns 0
+    on success, 1 on any failure.
     """
     atol, rtol = {
         torch.float32: (1e-5, 1e-5),
@@ -144,7 +162,14 @@ def run_one(
         torch.float16: (5e-3, 5e-3),
     }[dtype]
 
-    baseline, odc = _make_ffns(d_model=d_model, hidden_size=hidden_size, dtype=dtype, device=device)
+    print(f"\n--- n_layers={n_layers} ---")
+    baseline, odc = _make_stacks(
+        n_layers=n_layers,
+        d_model=d_model,
+        hidden_size=hidden_size,
+        dtype=dtype,
+        device=device,
+    )
 
     failures = 0
     for it in range(iters):
@@ -194,6 +219,15 @@ def main() -> int:
     parser.add_argument("--batch", type=int, default=2)
     parser.add_argument("--seq", type=int, default=512)
     parser.add_argument("--iters", type=int, default=3)
+    parser.add_argument("--n-layers", type=int, default=4, help="Multi-layer stack depth.")
+    parser.add_argument(
+        "--layers",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Stack depths to run. Default: [1, --n-layers]. "
+        "Override with explicit depths, e.g. --layers 1 2 8.",
+    )
     parser.add_argument("--dtype", choices=["fp32", "bf16", "fp16"], default="fp32")
     parser.add_argument("--device", choices=["cuda", "cpu", "auto"], default="auto")
     args = parser.parse_args()
@@ -209,25 +243,34 @@ def main() -> int:
 
     dtype = {"fp32": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}[args.dtype]
 
+    if args.layers is None:
+        layer_counts = sorted({1, args.n_layers})
+    else:
+        layer_counts = sorted(set(args.layers))
+
     print(
         f"OLMo FFN + ODC integration check\n"
         f"  device={device}  dtype={dtype}\n"
         f"  d_model={args.d_model}  hidden_size={args.hidden_size}  "
         f"batch={args.batch}  seq={args.seq}  iters={args.iters}\n"
+        f"  layer counts: {layer_counts}"
     )
 
-    rc = run_one(
-        d_model=args.d_model,
-        hidden_size=args.hidden_size,
-        batch=args.batch,
-        seq=args.seq,
-        iters=args.iters,
-        dtype=dtype,
-        device=device,
-    )
+    total_failures = 0
+    for n_layers in layer_counts:
+        total_failures += run_one(
+            n_layers=n_layers,
+            d_model=args.d_model,
+            hidden_size=args.hidden_size,
+            batch=args.batch,
+            seq=args.seq,
+            iters=args.iters,
+            dtype=dtype,
+            device=device,
+        )
     print()
-    print("RESULT: PASS" if rc == 0 else "RESULT: FAIL")
-    return rc
+    print("RESULT: PASS" if total_failures == 0 else "RESULT: FAIL")
+    return 1 if total_failures else 0
 
 
 if __name__ == "__main__":
