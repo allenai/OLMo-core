@@ -231,7 +231,14 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         tokenizer=tokenizer,
         instance_sources=instance_sources,
         data_loader=ComposableDataLoaderConfig(  # noqa: F405
-            num_workers=16, instance_filter_config=InstanceFilterConfig()  # noqa: F405
+            # Fewer workers than the KN-smoothed PoE ladder (which uses 16):
+            # SB index is 25 small files vs KN's one ~10 GB file, so each
+            # worker holds 25× more mmap views into /dev/shm. With 8
+            # ranks × 16 workers = 128 worker processes per node, the
+            # 1e-4 SB-PoE v3 run OOM'd the host. Vectorized
+            # compute_overrides_for_sequence is ~5-50ms per instance, so
+            # 4 workers / rank (32 total per node) easily keeps the GPUs fed.
+            num_workers=4, instance_filter_config=InstanceFilterConfig()  # noqa: F405
         ),
     )
     return ladder
