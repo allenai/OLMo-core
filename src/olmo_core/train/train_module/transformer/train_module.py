@@ -121,6 +121,10 @@ class TransformerTrainModule(TrainModule):
         poe_ngram_table_dir: Optional[str] = None,
         poe_ngram_K: int = 16,
         poe_ngram_N_max: int = 5,
+        poe_sb_table_dir: Optional[str] = None,
+        poe_sb_alpha: float = 0.4,
+        poe_sb_N_max: int = 5,
+        poe_sb_dolma2_vocab_size: int = 100278,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -227,18 +231,31 @@ class TransformerTrainModule(TrainModule):
                 raise OLMoConfigurationError(
                     "PoE training is not yet supported with TP or CP"
                 )
-            if poe_ngram_table_dir is None:
+            if poe_ngram_table_dir is None and poe_sb_table_dir is None:
                 raise OLMoConfigurationError(
-                    "poe_lambda requires poe_ngram_table_dir to be set so that "
-                    "the eval path can apply the same ngram bias as the train path"
+                    "poe_lambda requires either poe_ngram_table_dir (KN-smoothed) "
+                    "or poe_sb_table_dir (stupid-backoff) to be set so the eval "
+                    "path can apply the same ngram bias as the train path"
+                )
+            if poe_ngram_table_dir is not None and poe_sb_table_dir is not None:
+                raise OLMoConfigurationError(
+                    "poe_ngram_table_dir and poe_sb_table_dir are mutually exclusive "
+                    "— pick one of the two PoE ngram backends"
                 )
         self.poe_ngram_table_dir = poe_ngram_table_dir
         self.poe_ngram_K = int(poe_ngram_K)
         self.poe_ngram_N_max = int(poe_ngram_N_max)
+        self.poe_sb_table_dir = poe_sb_table_dir
+        self.poe_sb_alpha = float(poe_sb_alpha)
+        self.poe_sb_N_max = int(poe_sb_N_max)
+        self.poe_sb_dolma2_vocab_size = int(poe_sb_dolma2_vocab_size)
         # Lazy: instantiated on first eval_batch call (per process), so we
         # don't open the mmap on the main coordinator rank that may never
         # actually run an eval.
         self._poe_eval_ngram_source = None
+        # SB-side lazy state: reader (CPU) + unigram_floor on the model device.
+        self._poe_sb_reader = None
+        self._poe_sb_unigram_floor_dev: Optional[torch.Tensor] = None
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
         self.autocast_precision = autocast_precision
@@ -473,6 +490,16 @@ class TransformerTrainModule(TrainModule):
             and "soft_target_log_probs" in batch
             and "soft_target_token_ids" in batch
         )
+        # SB variant of the PoE bias. Activates when the batch carries the
+        # ragged sb_override_* fields (emitted by NgramStupidBackoffInstanceSource).
+        # Mutually exclusive with the KN-smoothed poe_active path — the
+        # init-time validator guarantees only one of poe_ngram_table_dir /
+        # poe_sb_table_dir can be set, but we still gate the train-step
+        # branch on which fields the batch actually carries.
+        poe_sb_active = (
+            self.poe_lambda is not None
+            and "sb_override_batch_idx" in batch
+        )
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -493,6 +520,25 @@ class TransformerTrainModule(TrainModule):
                 soft_target_token_ids = micro_batch.pop("soft_target_token_ids", None)
                 soft_target_probs = micro_batch.pop("soft_target_probs", None)
                 soft_target_log_probs = micro_batch.pop("soft_target_log_probs", None)
+                # Pop the SB ragged-override tensors too; same reason — don't
+                # leak them into model.forward(**kwargs).
+                sb_override_batch_idx = micro_batch.pop("sb_override_batch_idx", None)
+                sb_override_position = micro_batch.pop("sb_override_position", None)
+                sb_override_token_id = micro_batch.pop("sb_override_token_id", None)
+                sb_override_log_score = micro_batch.pop("sb_override_log_score", None)
+                if sb_override_batch_idx is not None:
+                    sb_override_batch_idx = sb_override_batch_idx.to(
+                        self.device, non_blocking=True
+                    )
+                    sb_override_position = sb_override_position.to(
+                        self.device, non_blocking=True
+                    )
+                    sb_override_token_id = sb_override_token_id.to(
+                        self.device, non_blocking=True
+                    )
+                    sb_override_log_score = sb_override_log_score.to(
+                        self.device, non_blocking=True
+                    )
                 if soft_target_token_ids is not None:
                     soft_target_token_ids = soft_target_token_ids.to(
                         self.device, non_blocking=True
@@ -596,6 +642,72 @@ class TransformerTrainModule(TrainModule):
                         assert z_loss is not None
                         z_batch_loss += get_local_tensor(z_loss.detach())
 
+                    combined_loss.backward()
+                    del combined_loss, poe_loss
+                    if z_loss_with_grad is not None:
+                        del z_loss_with_grad
+                    if z_loss is not None:
+                        del z_loss
+                elif poe_sb_active and sb_override_batch_idx is not None:
+                    # Stupid-backoff PoE path. Same structure as the
+                    # KN-smoothed branch above: materialize logits via
+                    # model_forward(..., return_logits=True), apply the SB
+                    # bias via _compute_poe_loss_sb (which uses a fresh
+                    # clone of the logits so the original tensor stays
+                    # intact for downstream readers like z_loss), then
+                    # recompute z_loss from the un-biased logits for the
+                    # regularizer term.
+                    assert self.poe_lambda is not None
+                    output = self.model_forward(
+                        input_ids,
+                        labels=labels,
+                        ignore_index=self.label_ignore_index,
+                        loss_reduction="sum",
+                        z_loss_multiplier=self.z_loss_multiplier,
+                        loss_div_factor=batch_num_tokens_for_loss,
+                        return_logits=True,
+                        **model_kwargs,
+                    )
+                    logits = output.logits
+                    z_loss = output.z_loss
+                    assert logits is not None, (
+                        "SB-PoE path requires LMHead loss_implementation='default' "
+                        "so full logits are returned"
+                    )
+                    poe_loss = self._compute_poe_loss_sb(
+                        logits=logits,
+                        sb_override_batch_idx=sb_override_batch_idx,
+                        sb_override_position=sb_override_position,
+                        sb_override_token_id=sb_override_token_id,
+                        sb_override_log_score=sb_override_log_score,
+                        labels=labels,
+                        loss_div_factor=batch_num_tokens_for_loss,
+                    )
+                    if self.z_loss_multiplier is not None:
+                        logits_local_f32 = get_local_tensor(logits).float()
+                        z_log_sum_exp = torch.logsumexp(logits_local_f32, dim=-1)
+                        z_labels_dev = labels.to(
+                            z_log_sum_exp.device, non_blocking=True
+                        )
+                        z_mask = (z_labels_dev != self.label_ignore_index).to(
+                            z_log_sum_exp.dtype
+                        )
+                        z_loss_with_grad = (
+                            self.z_loss_multiplier
+                            * (z_log_sum_exp.pow(2) * z_mask).sum()
+                            / batch_num_tokens_for_loss
+                        )
+                        del logits_local_f32, z_log_sum_exp, z_mask
+                    else:
+                        z_loss_with_grad = None
+                    del logits
+                    combined_loss = poe_loss
+                    if z_loss_with_grad is not None:
+                        combined_loss = combined_loss + z_loss_with_grad
+                    ce_batch_loss += get_local_tensor(poe_loss.detach())
+                    if z_batch_loss is not None:
+                        assert z_loss is not None
+                        z_batch_loss += get_local_tensor(z_loss.detach())
                     combined_loss.backward()
                     del combined_loss, poe_loss
                     if z_loss_with_grad is not None:
@@ -816,11 +928,18 @@ class TransformerTrainModule(TrainModule):
                 "PoE eval requires LMHead loss_implementation='default' so logits "
                 "are returned"
             )
-            biased_logits, biased_ce_loss = self._apply_poe_eval_bias(
-                logits=output.logits,
-                input_ids=input_ids,
-                labels=labels,
-            )
+            if self.poe_sb_table_dir is not None:
+                biased_logits, biased_ce_loss = self._apply_poe_eval_bias_sb(
+                    logits=output.logits,
+                    input_ids=input_ids,
+                    labels=labels,
+                )
+            else:
+                biased_logits, biased_ce_loss = self._apply_poe_eval_bias(
+                    logits=output.logits,
+                    input_ids=input_ids,
+                    labels=labels,
+                )
             return output._replace(logits=biased_logits, ce_loss=biased_ce_loss)
 
         with self._eval_batch_context():
@@ -856,6 +975,42 @@ class TransformerTrainModule(TrainModule):
                 output_log_probs=True,
             )
         return self._poe_eval_ngram_source
+
+    def _get_poe_sb_reader(self):
+        """Lazy-instantiate the StupidBackoffNgramLM reader.
+
+        Parallels :meth:`_get_poe_eval_ngram_source` but for the SB index:
+        each process opens its own mmap; OS page cache shares pages with
+        the training-time dataloader workers built by
+        :class:`olmo_core.data.composable.NgramStupidBackoffInstanceSource`.
+        """
+        if self._poe_sb_reader is None:
+            assert self.poe_sb_table_dir is not None
+            from olmo_core.data.stupid_backoff_ngram import StupidBackoffNgramLM
+
+            self._poe_sb_reader = StupidBackoffNgramLM(
+                table_dir=self.poe_sb_table_dir,
+                dolma2_vocab_size=self.poe_sb_dolma2_vocab_size,
+                N_max=self.poe_sb_N_max,
+                alpha=self.poe_sb_alpha,
+            )
+        return self._poe_sb_reader
+
+    def _get_poe_sb_unigram_floor_dev(self, *, dtype: torch.dtype) -> torch.Tensor:
+        """Lazy: pull the SB unigram floor onto the model device once.
+
+        The floor is constant across batches and is the only V-sized piece
+        of the SB bias we need on-device. Cached as a non-parameter tensor.
+        """
+        if (
+            self._poe_sb_unigram_floor_dev is None
+            or self._poe_sb_unigram_floor_dev.dtype != dtype
+            or self._poe_sb_unigram_floor_dev.device != self.device
+        ):
+            reader = self._get_poe_sb_reader()
+            floor_cpu = torch.from_numpy(reader.unigram_floor).to(dtype=dtype)
+            self._poe_sb_unigram_floor_dev = floor_cpu.to(self.device, non_blocking=True)
+        return self._poe_sb_unigram_floor_dev
 
     def _apply_poe_eval_bias(
         self,
@@ -962,6 +1117,81 @@ class TransformerTrainModule(TrainModule):
         if labels is not None:
             log_sum_exp = torch.logsumexp(biased_logits_f32, dim=-1)
             # Replace ignored labels with 0 for safe gather; mask after.
+            safe_labels = labels.clone()
+            safe_labels[safe_labels == self.label_ignore_index] = 0
+            label_logits = biased_logits_f32.gather(
+                -1, safe_labels.unsqueeze(-1).to(biased_logits_f32.device)
+            ).squeeze(-1)
+            ce_loss = -(label_logits - log_sum_exp)
+            ce_loss = torch.where(
+                labels.to(ce_loss.device) == self.label_ignore_index,
+                torch.zeros_like(ce_loss),
+                ce_loss,
+            )
+        else:
+            ce_loss = None
+
+        return biased_logits_f32, ce_loss
+
+    def _apply_poe_eval_bias_sb(
+        self,
+        *,
+        logits: torch.Tensor,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor],
+    ) -> tuple:
+        """Stupid-backoff analog of :meth:`_apply_poe_eval_bias`.
+
+        Eval-callback path. Computes per-instance SB overrides
+        synchronously on CPU via
+        :func:`olmo_core.data.sb_bias.compute_sb_overrides_for_batch`
+        (mirroring what the dataloader does at train time), then applies
+        the SB bias on an fp32 clone of the eval-time logits via
+        :func:`olmo_core.data.sb_bias.apply_sb_bias_inplace` and computes
+        per-position CE at the hard labels.
+        """
+        from olmo_core.data.sb_bias import (
+            apply_sb_bias_inplace,
+            compute_sb_overrides_for_batch,
+        )
+
+        assert self.poe_lambda is not None
+        assert self.poe_sb_table_dir is not None
+
+        local_logits = get_local_tensor(logits)
+        biased_logits_f32 = local_logits.float().clone()
+        unigram_floor = self._get_poe_sb_unigram_floor_dev(
+            dtype=biased_logits_f32.dtype
+        )
+
+        # Synchronous CPU lookup of per-instance overrides.
+        reader = self._get_poe_sb_reader()
+        overrides_cpu = compute_sb_overrides_for_batch(input_ids, reader)
+        # Move to logits device (the helper expects on-device tensors).
+        bidx = overrides_cpu["sb_override_batch_idx"].to(
+            biased_logits_f32.device, non_blocking=True
+        )
+        pos = overrides_cpu["sb_override_position"].to(
+            biased_logits_f32.device, non_blocking=True
+        )
+        tok = overrides_cpu["sb_override_token_id"].to(
+            biased_logits_f32.device, non_blocking=True
+        )
+        sc = overrides_cpu["sb_override_log_score"].to(
+            biased_logits_f32.device, non_blocking=True
+        )
+        apply_sb_bias_inplace(
+            biased_logits_f32,
+            unigram_floor,
+            bidx,
+            pos,
+            tok,
+            sc,
+            float(self.poe_lambda),
+        )
+
+        if labels is not None:
+            log_sum_exp = torch.logsumexp(biased_logits_f32, dim=-1)
             safe_labels = labels.clone()
             safe_labels[safe_labels == self.label_ignore_index] = 0
             label_logits = biased_logits_f32.gather(
@@ -1375,6 +1605,65 @@ class TransformerTrainModule(TrainModule):
         per_pos_loss = per_pos_loss * mask
         # Sum → scalar; divide by the same denominator hard CE uses.
         return per_pos_loss.sum() / loss_div_factor
+
+    def _compute_poe_loss_sb(
+        self,
+        *,
+        logits: torch.Tensor,
+        sb_override_batch_idx: torch.Tensor,
+        sb_override_position: torch.Tensor,
+        sb_override_token_id: torch.Tensor,
+        sb_override_log_score: torch.Tensor,
+        labels: torch.Tensor,
+        loss_div_factor: torch.Tensor,
+    ) -> torch.Tensor:
+        """Stupid-backoff analog of :meth:`_compute_poe_loss`.
+
+        Unlike the KN-smoothed-top-K path, the SB bias touches *every* w in
+        the vocab (the unigram floor as a baseline + sparse overrides for
+        observed higher-order (h_k, w) pairs), so we don't have a clean
+        gather + logsumexp trick for the joint normalizer Z. Instead we
+        materialize the biased logits explicitly via
+        :func:`olmo_core.data.sb_bias.apply_sb_bias_inplace` on an fp32
+        clone of the LM logits, then call standard cross-entropy.
+
+        The clone is required because the original logits tensor is shared
+        with the rest of the forward pass (e.g. ``output.z_loss`` was
+        already computed from it inside the LMHead); in-place modification
+        would corrupt those readers. Gradient flow goes from the CE through
+        the clone (and its broadcast-add + scatter-add ops) back to the
+        original logits tensor — autograd handles this correctly because
+        every op we apply is differentiable.
+        """
+        from olmo_core.data.sb_bias import apply_sb_bias_inplace
+
+        local_logits = get_local_tensor(logits)
+        # Clone-then-modify so the original LM logits stay intact for any
+        # downstream consumer (e.g. z_loss recomputed by the caller).
+        biased_logits_f32 = local_logits.float().clone()
+        unigram_floor = self._get_poe_sb_unigram_floor_dev(
+            dtype=biased_logits_f32.dtype
+        )
+        assert self.poe_lambda is not None
+        apply_sb_bias_inplace(
+            biased_logits_f32,
+            unigram_floor,
+            sb_override_batch_idx,
+            sb_override_position,
+            sb_override_token_id,
+            sb_override_log_score,
+            float(self.poe_lambda),
+        )
+        labels_dev = labels.to(biased_logits_f32.device, non_blocking=True)
+        flat_logits = biased_logits_f32.flatten(0, 1)  # (B*S, V)
+        flat_labels = labels_dev.flatten()             # (B*S,)
+        ce_sum = F.cross_entropy(
+            flat_logits,
+            flat_labels,
+            ignore_index=self.label_ignore_index,
+            reduction="sum",
+        )
+        return ce_sum / loss_div_factor
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:

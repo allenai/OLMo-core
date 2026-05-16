@@ -359,6 +359,24 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     poe_ngram_K: int = 16
     poe_ngram_N_max: int = 5
 
+    # Stupid-backoff variant of the PoE bias. When ``poe_sb_table_dir`` is
+    # set (mutually exclusive with ``poe_ngram_table_dir``), the train step
+    # consumes per-position ragged overrides emitted by
+    # :class:`olmo_core.data.composable.NgramStupidBackoffInstanceSource`
+    # (``sb_override_*`` keys on the batch) and adds the SB bias on top of
+    # LM logits via :func:`olmo_core.data.sb_bias.apply_sb_bias_inplace`:
+    # a length-V unigram floor broadcast-added everywhere, plus sparse
+    # per-position scatter overrides for higher-order observed (h_k, w).
+    # ``poe_lambda`` is shared with the KN-smoothed path.
+    #
+    # ``poe_sb_dolma2_vocab_size`` defaults to dolma2's V=100278. The SB
+    # reader needs to know V to size its unigram floor independently of
+    # the (smaller) kenlm vocab size encoded in the index.
+    poe_sb_table_dir: Optional[str] = None
+    poe_sb_alpha: float = 0.4
+    poe_sb_N_max: int = 5
+    poe_sb_dolma2_vocab_size: int = 100278
+
     # Checkpoint settings.
 
     state_dict_save_opts: Optional[Dict[str, Any]] = None
