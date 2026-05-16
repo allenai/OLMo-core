@@ -105,6 +105,21 @@ class Fp32CastBlock(BenchBlock):
     def _outer(self, h: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         return self.linear(h).to(self.dtype)
 
+    def forward_odc(self, x: torch.Tensor) -> torch.Tensor:
+        # When x is already fp32, ``x.float()`` is a no-op alias of x. Discarding
+        # the "output" would resize the input tensor's storage to 0 and break
+        # backward. The cast pattern is degenerate in this case; fall through
+        # to baseline so the benchmark row truthfully reports "no ODC benefit".
+        if x.dtype == torch.float32:
+            return self.forward_baseline(x)
+        return super().forward_odc(x)
+
+    def forward_torch_ckpt(self, x: torch.Tensor) -> torch.Tensor:
+        # Same degeneracy: nothing useful for torch.utils.checkpoint either.
+        if x.dtype == torch.float32:
+            return self.forward_baseline(x)
+        return super().forward_torch_ckpt(x)
+
 
 class UpProjBlock(BenchBlock):
     """Fat linear up-projection (no activation inside) followed by a down-projection."""
