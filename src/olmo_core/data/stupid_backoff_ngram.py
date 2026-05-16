@@ -168,7 +168,21 @@ class StupidBackoffNgramLM:
                 dolma2_to_kenlm[did] = np.uint32(kid)
         self.dolma2_to_kenlm = dolma2_to_kenlm
 
-        # Mmap the per-order index files.
+        # Mmap the per-order index files. Mirror each file from Weka to
+        # /dev/shm on first open per-node (flock-protected; cooperative
+        # across workers) so binary searches don't pay Weka I/O latency
+        # for every probe. With 16+ dataloader workers per rank doing
+        # random-access lookups, naive Weka mmap thrashes hard — the same
+        # mirroring trick the KN-smoothed ngram_soft_target reader uses
+        # (see _mirror_to_shm in that module). For 1e-4 the index is
+        # ~25 GiB total; sits comfortably in the 100 GiB --shared-memory
+        # the launcher sets.
+        from olmo_core.data.ngram_soft_target import _mirror_to_shm
+
+        def _open_mmap(name: str, dtype) -> np.memmap:
+            local = _mirror_to_shm(str(index_dir / name))
+            return np.memmap(local, dtype=dtype, mode="r")
+
         self.orders: Dict[int, dict] = {}
         for n_str, info in self.meta["per_order"].items():
             n = int(n_str)
@@ -176,31 +190,18 @@ class StupidBackoffNgramLM:
             plen = n - 1
             order_data: dict = {
                 "n_hist": n_hist,
-                "offsets": np.memmap(
-                    index_dir / f"order{n}.offsets.bin",
-                    dtype=np.uint64, mode="r",
-                ),
-                "continuations": np.memmap(
-                    index_dir / f"order{n}.continuations.bin",
-                    dtype=np.uint32, mode="r",
-                ),
-                "counts": np.memmap(
-                    index_dir / f"order{n}.counts.bin",
-                    dtype=np.uint64, mode="r",
-                ),
-                "history_totals": np.memmap(
-                    index_dir / f"order{n}.history_totals.bin",
-                    dtype=np.uint64, mode="r",
-                ),
+                "offsets": _open_mmap(f"order{n}.offsets.bin", np.uint64),
+                "continuations": _open_mmap(f"order{n}.continuations.bin", np.uint32),
+                "counts": _open_mmap(f"order{n}.counts.bin", np.uint64),
+                "history_totals": _open_mmap(f"order{n}.history_totals.bin", np.uint64),
             }
             if plen == 0:
                 order_data["histories"] = None
                 order_data["histories_struct"] = None
             else:
-                hist = np.memmap(
-                    index_dir / f"order{n}.histories.bin",
-                    dtype=np.uint32, mode="r",
-                ).reshape(n_hist, plen)
+                hist = _open_mmap(f"order{n}.histories.bin", np.uint32).reshape(
+                    n_hist, plen
+                )
                 struct_dtype = np.dtype([("h", np.uint32, plen)])
                 order_data["histories"] = hist
                 order_data["histories_struct"] = hist.view(struct_dtype).reshape(-1)
