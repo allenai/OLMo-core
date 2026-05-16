@@ -8,6 +8,8 @@ import torch
 from torch.utils.checkpoint import detach_variable
 from torch.utils.cpp_extension import load_inline
 
+from ..doc_utils import beta_feature
+
 __all__ = ["OutputDiscardCheckpoint"]
 
 
@@ -196,6 +198,7 @@ class _OutputDiscardCheckpointFunction(torch.autograd.Function):
         return (None, None) + tuple(grads)
 
 
+@beta_feature
 class OutputDiscardCheckpoint:
     """
     A Megatron-style output-discard checkpoint utility.
