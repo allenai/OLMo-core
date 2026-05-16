@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `OutputDiscardCheckpoint`, an activation-recompute primitive for cases where the output of a checkpointed region dominates memory rather than its intermediates (e.g. precision casts, FFN up-projections). Forward runs under `no_grad`, the output's storage can be freed after downstream consumption, and a backward hook recomputes and rebinds the freed storage in place via a C++ `share_storage` extension (with a Python fallback for environments without a C++ toolchain).
 - Added `HFConverterCallback`, which can be used to convert models to huggingface format at the end of the training run.
 - Trainer now records checkpoint save and load durations as `train/checkpoint_save_duration_s` and `train/checkpoint_load_duration_s` metrics.
 - Added `PowerLR`, a power-law learning rate scheduler with linear warmup, power-decay phase (`lr = initial_lr * (current / warmup) ** b` for negative `b`, making the LR independent of the training horizon), and an optional linear decay tail. Registered as `"power_lr"`.
