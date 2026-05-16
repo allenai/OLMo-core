@@ -56,6 +56,13 @@ class DataCollator:
         all_soft_target_token_ids = []
         all_soft_target_probs = []
         all_soft_target_log_probs = []
+        # Stupid-backoff arm: ragged per-instance overrides, concatenated
+        # flat across the batch with an extra batch-index column. See
+        # NgramStupidBackoffInstanceSource for the shape contract.
+        all_sb_override_batch_idx = []
+        all_sb_override_position = []
+        all_sb_override_token_id = []
+        all_sb_override_log_score = []
         all_indices = []
         all_metadata = []
         all_instance_mask = []
@@ -65,7 +72,7 @@ class DataCollator:
             (len(x["doc_lens"]) if isinstance(x, dict) and "doc_lens" in x else 0 for x in items)
         )
 
-        for x in items:
+        for batch_idx, x in enumerate(items):
             input_ids = x["input_ids"] if isinstance(x, dict) else x
             if not isinstance(input_ids, torch.Tensor):
                 input_ids = torch.tensor(input_ids)
@@ -202,6 +209,35 @@ class DataCollator:
                     )
                 )
 
+            # Stupid-backoff arm: ragged per-instance arrays. Concatenate
+            # flat across the batch and emit a parallel batch_idx so the
+            # train step can scatter into logits[batch_idx, position,
+            # token_id] in one fused op.
+            sb_position = (
+                x.get("sb_override_position") if isinstance(x, dict) else None
+            )
+            sb_token_id = (
+                x.get("sb_override_token_id") if isinstance(x, dict) else None
+            )
+            sb_log_score = (
+                x.get("sb_override_log_score") if isinstance(x, dict) else None
+            )
+            if sb_position is not None:
+                pos_t = torch.as_tensor(sb_position, dtype=torch.long)
+                tok_t = torch.as_tensor(sb_token_id, dtype=torch.long)
+                sc_t = torch.as_tensor(sb_log_score, dtype=torch.float32)
+                assert pos_t.shape == tok_t.shape == sc_t.shape, (
+                    f"sb_override_* arrays must have matching shape; got "
+                    f"position={pos_t.shape} token_id={tok_t.shape} "
+                    f"log_score={sc_t.shape}"
+                )
+                all_sb_override_batch_idx.append(
+                    torch.full_like(pos_t, batch_idx, dtype=torch.long)
+                )
+                all_sb_override_position.append(pos_t)
+                all_sb_override_token_id.append(tok_t)
+                all_sb_override_log_score.append(sc_t)
+
             # Indices.
             index = x.get("index") if isinstance(x, dict) else None
             if index is not None:
@@ -253,6 +289,13 @@ class DataCollator:
             out["soft_target_probs"] = torch.stack(all_soft_target_probs)
         if all_soft_target_log_probs:
             out["soft_target_log_probs"] = torch.stack(all_soft_target_log_probs)
+        if all_sb_override_batch_idx:
+            # Empty cat is fine if all instances had no overrides; otherwise
+            # concatenate to flat (total_overrides,) tensors.
+            out["sb_override_batch_idx"] = torch.cat(all_sb_override_batch_idx)
+            out["sb_override_position"] = torch.cat(all_sb_override_position)
+            out["sb_override_token_id"] = torch.cat(all_sb_override_token_id)
+            out["sb_override_log_score"] = torch.cat(all_sb_override_log_score)
         if all_indices:
             out["index"] = torch.stack(all_indices)
         if all_instance_mask:
