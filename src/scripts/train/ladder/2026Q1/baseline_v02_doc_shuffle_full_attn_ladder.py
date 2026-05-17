@@ -64,9 +64,15 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                             # Read doc boundaries from .csv.gz sidecars (all baseline
                             # paths have them) instead of mmap-scanning the .npy
                             # files for EOS — the scan is what made rank-0 startup
-                            # take hours and force the 360-min distributed-init
-                            # timeout. With sidecars, startup is minutes.
+                            # take hours.
                             prefer_metadata_files=True,
+                            # Keep all source paths in a single NumpyDocumentSource so
+                            # get_document_offsets can fan out sidecar reads across
+                            # files with a thread pool (only kicks in when there are
+                            # multiple paths). Default source_group_size=1 splits into
+                            # 950 separate sources, which would force ConcatenatedDocumentSource
+                            # to iterate them serially and defeat the parallel fast path.
+                            source_group_size=-1,
                         ),
                     ],
                     factor=1.0,

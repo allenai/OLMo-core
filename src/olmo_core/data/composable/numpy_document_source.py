@@ -582,6 +582,16 @@ class NumpyDocumentSource(DocumentSource):
         # for EOS — much faster for large corpora where rank-0 startup would
         # otherwise be hours. Defaults to None (= existing auto behavior).
         use_array_if_local = False if self.prefer_metadata_files else None
+
+        # When prefer_metadata_files is set AND there are multiple source paths,
+        # read sidecars in parallel with a thread pool. The serial generator
+        # otherwise takes hours of rank-0 startup on large corpora (~950 files /
+        # ~200M docs). We eagerly materialize per-file index lists (~16B per
+        # doc → a few GB total) and then yield in source-path order.
+        if self.prefer_metadata_files and len(self.source_paths) > 1:
+            yield from self._get_document_offsets_parallel(use_array_if_local)
+            return
+
         start_offset = 0
         for source_path, source_size in zip(self.source_paths, self.source_sizes):
             last_doc_end = 0
@@ -615,6 +625,63 @@ class NumpyDocumentSource(DocumentSource):
             if last_doc_end != source_size:
                 yield last_doc_end + start_offset, source_size + start_offset
 
+            start_offset += source_size
+
+    def _get_document_offsets_parallel(
+        self, use_array_if_local: Optional[bool]
+    ) -> Iterable[tuple[int, int]]:
+        """Parallel sidecar-read fast path for prefer_metadata_files=True with
+        many source paths. Eagerly reads each file's indices via a thread pool,
+        then yields in source-path order so the offset accounting is preserved."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        max_doc_len = self.max_document_length
+        long_doc_strategy = self.long_doc_strategy
+        eos = self.eos_token_id
+        bos = self.bos_token_id
+        dtype = self.dtype
+
+        def _read_one(path: str) -> list[tuple[int, int]]:
+            if max_doc_len is None:
+                it = iter_document_indices(
+                    path,
+                    eos_token_id=eos,
+                    bos_token_id=bos,
+                    dtype=dtype,
+                    use_array_if_local=use_array_if_local,
+                )
+            else:
+                it = iter_document_indices_with_max_sequence_length(
+                    path,
+                    max_doc_len,
+                    eos_token_id=eos,
+                    bos_token_id=bos,
+                    dtype=dtype,
+                    long_doc_strategy=long_doc_strategy,
+                    use_array_if_local=use_array_if_local,
+                )
+            return list(it)
+
+        n_paths = len(self.source_paths)
+        max_workers = min(64, n_paths)
+        log.info(
+            f"Reading doc-offset sidecars in parallel across {n_paths} files "
+            f"with {max_workers} threads..."
+        )
+        with ThreadPoolExecutor(max_workers=max_workers) as exe:
+            # exe.map preserves input order, so the result list is per source-path-index.
+            per_file_indices = list(exe.map(_read_one, self.source_paths))
+        log.info(f"Done reading sidecars; assembling {sum(len(ix) for ix in per_file_indices):,d} doc offsets")
+
+        start_offset = 0
+        for source_size, indices in zip(self.source_sizes, per_file_indices):
+            last_doc_end = 0
+            for doc_start, doc_end in indices:
+                assert doc_start == last_doc_end
+                yield doc_start + start_offset, doc_end + start_offset
+                last_doc_end = doc_end
+            if last_doc_end != source_size:
+                yield last_doc_end + start_offset, source_size + start_offset
             start_offset += source_size
 
     def children(self):
