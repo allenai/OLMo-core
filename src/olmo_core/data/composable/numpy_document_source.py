@@ -53,6 +53,17 @@ class NumpyDocumentSourceConfigBase(DocumentSourceConfig):
     """
     How to handle long documents when ``max_document_length`` is set.
     """
+    prefer_metadata_files: bool = False
+    """
+    If ``True``, look up document boundaries from the ``.csv.gz`` sidecar
+    metadata next to each ``.npy`` source rather than mmap-scanning the
+    token array for EOS positions. For large corpora (100M+ docs) the
+    mmap scan can take hours of rank-0 startup; reading the sidecars is
+    typically an order of magnitude faster. Default ``False`` preserves
+    existing behavior — when the source data is local and ``eos_token_id``
+    + ``dtype`` are known, the mmap scan is used and any sidecars are
+    ignored.
+    """
 
     def __post_init__(self):
         if self.source_group_size < -1 or self.source_group_size == 0:
@@ -218,6 +229,7 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
             label=label,
             max_document_length=self.max_document_length,
             long_doc_strategy=self.long_doc_strategy,
+            prefer_metadata_files=self.prefer_metadata_files,
         )
 
         if self.source_group_size > 0:
@@ -337,6 +349,7 @@ class NumpyDocumentSource(DocumentSource):
         label: Optional[str] = None,
         max_document_length: Optional[int] = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
+        prefer_metadata_files: bool = False,
         _source_sizes: Optional[Sequence[int]] = None,
         _label_mask_sizes: Optional[Sequence[int]] = None,
     ):
@@ -360,6 +373,7 @@ class NumpyDocumentSource(DocumentSource):
         self._tokenizer = tokenizer
         self._max_document_length = max_document_length
         self._long_doc_strategy = long_doc_strategy
+        self._prefer_metadata_files = prefer_metadata_files
 
         source_sizes: Sequence[int]
         if _source_sizes is not None:
@@ -443,6 +457,10 @@ class NumpyDocumentSource(DocumentSource):
     def long_doc_strategy(self) -> LongDocStrategy:
         return self._long_doc_strategy
 
+    @property
+    def prefer_metadata_files(self) -> bool:
+        return self._prefer_metadata_files
+
     @ft.cached_property
     def fingerprint(self) -> str:
         sha256_hash = hashlib.sha256()
@@ -500,6 +518,9 @@ class NumpyDocumentSource(DocumentSource):
                 tokenizer=self.tokenizer,
                 label_mask_paths=label_mask_paths,
                 label=self.label,
+                max_document_length=self.max_document_length,
+                long_doc_strategy=self.long_doc_strategy,
+                prefer_metadata_files=self.prefer_metadata_files,
                 _source_sizes=source_sizes,
                 _label_mask_sizes=label_mask_sizes,
             )
@@ -556,6 +577,11 @@ class NumpyDocumentSource(DocumentSource):
         return out
 
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:
+        # When prefer_metadata_files is set, force the iter helpers to read
+        # the ``.csv.gz`` sidecars rather than mmap-scanning the token array
+        # for EOS — much faster for large corpora where rank-0 startup would
+        # otherwise be hours. Defaults to None (= existing auto behavior).
+        use_array_if_local = False if self.prefer_metadata_files else None
         start_offset = 0
         for source_path, source_size in zip(self.source_paths, self.source_sizes):
             last_doc_end = 0
@@ -565,6 +591,7 @@ class NumpyDocumentSource(DocumentSource):
                     eos_token_id=self.eos_token_id,
                     bos_token_id=self.bos_token_id,
                     dtype=self.dtype,
+                    use_array_if_local=use_array_if_local,
                 )
             else:
                 indices = iter_document_indices_with_max_sequence_length(
@@ -574,6 +601,7 @@ class NumpyDocumentSource(DocumentSource):
                     bos_token_id=self.bos_token_id,
                     dtype=self.dtype,
                     long_doc_strategy=self.long_doc_strategy,
+                    use_array_if_local=use_array_if_local,
                 )
 
             for doc_start, doc_end in indices:

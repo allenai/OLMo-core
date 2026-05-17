@@ -61,6 +61,12 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                         NumpyDocumentSourceConfig(
                             source_paths=DOLMA2_BASELINE_PATHS,
                             tokenizer=tokenizer,
+                            # Read doc boundaries from .csv.gz sidecars (all baseline
+                            # paths have them) instead of mmap-scanning the .npy
+                            # files for EOS — the scan is what made rank-0 startup
+                            # take hours and force the 360-min distributed-init
+                            # timeout. With sidecars, startup is minutes.
+                            prefer_metadata_files=True,
                         ),
                     ],
                     factor=1.0,
