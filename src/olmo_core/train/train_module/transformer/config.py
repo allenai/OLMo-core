@@ -376,6 +376,7 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     poe_sb_alpha: float = 0.4
     poe_sb_N_max: int = 5
     poe_sb_dolma2_vocab_size: int = 100278
+    poe_sb_max_order2_continuations: Optional[int] = None
 
     # Checkpoint settings.
 
