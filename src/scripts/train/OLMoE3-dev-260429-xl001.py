@@ -141,7 +141,7 @@ LR_ALPHA = 0.53
 
 # stage 1 - 8M - 
 MAX_DURATION = int(200e9)
-MICRO_BSZ = 1
+MICRO_BSZ = 2
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 8
 # NO LR_REF_BSZ=4M
 
@@ -197,7 +197,7 @@ else:
 USE_COMPILE=True
 USE_NO_SYNC_EP=True
 # USE_AC=False
-PER_LAYER_RECOMPUTE=False
+PER_LAYER_RECOMPUTE=True
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 GRAD_REDUCE_IN_FP32=False
@@ -205,7 +205,7 @@ UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
 USE_FP8=True
-ROWWISE_A2A_NBLOCKS=256
+ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
@@ -269,7 +269,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             # ep_no_sync_capacity_factor=1.125,
             # ep_no_sync_capacity_factor=1.1875,
             # ep_no_sync_capacity_factor=1.21875,
-            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8) if USE_ROWWISE_A2A else None,
+            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=not PER_LAYER_RECOMPUTE) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,

@@ -112,15 +112,15 @@ SAVE_INTERVAL = 500
 
 NUM_EXPERTS = 16
 TOP_K = 4
-D_MODEL=2 * 1024
-D_ATTN=2 * 1024
+D_MODEL=3 * 1024
+D_ATTN=3 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 2 * 1024
+MOE_HIDDEN_SIZE = 3 * 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 1 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -130,7 +130,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 # DP_DIM=2
 EP_DIM=2
-PP_DIM=1
+PP_DIM=2
 
 # ref
 REF_NUM_NODES=8
@@ -203,7 +203,8 @@ GRAD_REDUCE_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-USE_FP8=False
+USE_FP8=True
+USE_FP8_FUSED_AUTOGRAD=True
 ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
@@ -267,7 +268,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             # ep_no_sync_capacity_factor=1.125,
             # ep_no_sync_capacity_factor=1.1875,
             # ep_no_sync_capacity_factor=1.21875,
-            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8) if USE_ROWWISE_A2A else None,
+            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd=USE_FP8_FUSED_AUTOGRAD) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,

@@ -108,19 +108,20 @@ if sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 1000
+SAVE_INTERVAL = 5
 
 NUM_EXPERTS = 128
 TOP_K = 4
-D_MODEL=4 * 1024
-D_ATTN=5 * 1024
+D_MODEL=4096
+D_ATTN=4096 + 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
+# NUM_KV_HEAD= NUM_HEAD // 8
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 5 * 1024
-NUM_SHARED_EXPERTS = 0  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+MOE_HIDDEN_SIZE = 4096
+NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -130,7 +131,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 # DP_DIM=2
 EP_DIM=8
-PP_DIM=4
+PP_DIM=1
 
 # ref
 REF_NUM_NODES=8
@@ -138,23 +139,19 @@ TAG=f'p1'
 
 LR_ALPHA = 0.53
 
-# stage 1 - 3M - 
-# MAX_DURATION = int(25e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 3
-# NO LR_REF_BSZ=6M
+# stage 1 - 8M - 
+MAX_DURATION = int(200e9)
+MICRO_BSZ = 2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 1
+# NO LR_REF_BSZ=4M
 
-# stage 2 - 6M - 
-MAX_DURATION = int(100e9)
-MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
-# NO LR_REF_BSZ=6M
+# stage 2 - 2M - 
+# MAX_DURATION = int(75e9)
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
+# NO LR_REF_BSZ=4M
 
-# stage 3 - 9M - 
-MAX_DURATION = int(300e9)
-MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 9
-# NO LR_REF_BSZ=6M
+
 
 if IN_EVAL_MODE:
     MICRO_BSZ = 2
@@ -179,13 +176,13 @@ SCHED_FINAL_FRACTION = 0.1
 LR= 3e-4  # the LR is set for stable stage
 LR= LR / SCHED_MID_FRACTION # transform LR to peak at fast warmup
 
-LR=LR * (GLOBAL_BATCH_SIZE / (6 * 1024 * 1024))**LR_ALPHA # lr is for X Million token
+LR=LR * (GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))**LR_ALPHA # lr is for X Million token
 
 EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=32
+NUM_LAYERS=8
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -212,7 +209,8 @@ ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blo
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = True
+PRODUCTION_RUN = False
+
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -271,7 +269,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             # ep_no_sync_capacity_factor=1.125,
             # ep_no_sync_capacity_factor=1.1875,
             # ep_no_sync_capacity_factor=1.21875,
-            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
+            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=not PER_LAYER_RECOMPUTE) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,
@@ -343,7 +341,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE=2048
+    WINDOW_SIZE=256
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -375,10 +373,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
-        1: deepcopy(dense_block_config),
-        
-        # also make last layer dense
-        # NUM_LAYERS-1: deepcopy(dense_block_config),
+        # 1: deepcopy(dense_block_config),
     }
     
     return config
@@ -449,15 +444,11 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             # schedule=PipelineScheduleType.custom_1F1B,
-            # schedule=PipelineScheduleType.custom_1F1B_V,  # V placement for comparison against interleaved 1F1B
             schedule=PipelineScheduleType.custom_interleaved_1F1B,
+            # schedule=PipelineScheduleType.custom_1F1B_V,
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
             p2p_use_separate_group=True,
-            p2p_backend="nccl",
-            # p2p_nccl_min_ctas=1,
-            # p2p_nccl_max_ctas=2,
-            # forward_pull_ahead_extra_activations=[1, 0, 1, 1],
-            split_points=SPLIT_POINTS,
+            split_points=SPLIT_POINTS
         ) if PP_DIM > 1 else None,
 
         float8_config=None,
@@ -515,14 +506,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=2,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
-            checkpoints_to_eval=[
-                # "/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step83000",
-                # "/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step85000",
-            ]
+            # checkpoints_to_eval=[
+            #     "/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step83000",
+            #     "/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step85000",
+            # ]
         )
         .with_callback(
             "checkpointer",
@@ -530,8 +521,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=False,
-                pre_train_checkpoint=PRODUCTION_RUN,
-                # pre_train_checkpoint=False,
+                # pre_train_checkpoint=PRODUCTION_RUN,
+                pre_train_checkpoint=False,
             ),
         )
         .with_callback(
@@ -547,10 +538,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
+            NvidiaProfilerCallback(enabled=USE_NV_PROFILE, # NOTE: change this
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=3531,
-                                   end=3535
+                                   start=1021,
+                                   end=1026
             )
         )
         .with_callback(

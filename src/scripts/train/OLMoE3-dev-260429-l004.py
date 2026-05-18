@@ -108,18 +108,18 @@ if sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 1000
+SAVE_INTERVAL = 500
 
-NUM_EXPERTS = 128
+NUM_EXPERTS = 64
 TOP_K = 4
-D_MODEL=4 * 1024
-D_ATTN=5 * 1024
+D_MODEL=3 * 1024 - 256
+D_ATTN=4 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 5 * 1024
-NUM_SHARED_EXPERTS = 0  # Number of shared experts in the shared MLP
+MOE_HIDDEN_SIZE = 4 * 1024 - 256
+NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
@@ -130,7 +130,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 # DP_DIM=2
 EP_DIM=8
-PP_DIM=4
+PP_DIM=8
 
 # ref
 REF_NUM_NODES=8
@@ -138,23 +138,19 @@ TAG=f'p1'
 
 LR_ALPHA = 0.53
 
-# stage 1 - 3M - 
-# MAX_DURATION = int(25e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 3
-# NO LR_REF_BSZ=6M
-
-# stage 2 - 6M - 
+# stage 1 - xM - 
 MAX_DURATION = int(100e9)
-MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
-# NO LR_REF_BSZ=6M
+MICRO_BSZ = 2
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
+# NO LR_REF_BSZ=4M
 
-# stage 3 - 9M - 
-MAX_DURATION = int(300e9)
-MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 9
-# NO LR_REF_BSZ=6M
+# stage 2 - 2M - 
+# MAX_DURATION = int(75e9)
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
+# NO LR_REF_BSZ=4M
+
+
 
 if IN_EVAL_MODE:
     MICRO_BSZ = 2
@@ -179,13 +175,13 @@ SCHED_FINAL_FRACTION = 0.1
 LR= 3e-4  # the LR is set for stable stage
 LR= LR / SCHED_MID_FRACTION # transform LR to peak at fast warmup
 
-LR=LR * (GLOBAL_BATCH_SIZE / (6 * 1024 * 1024))**LR_ALPHA # lr is for X Million token
+LR=LR * (GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))**LR_ALPHA # lr is for X Million token
 
 EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=32
+NUM_LAYERS=48
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -200,7 +196,7 @@ else:
 USE_COMPILE=True
 USE_NO_SYNC_EP=True
 # USE_AC=False
-PER_LAYER_RECOMPUTE=True
+PER_LAYER_RECOMPUTE=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 GRAD_REDUCE_IN_FP32=False
@@ -212,7 +208,7 @@ ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blo
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = True
+PRODUCTION_RUN = False
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -271,7 +267,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             # ep_no_sync_capacity_factor=1.125,
             # ep_no_sync_capacity_factor=1.1875,
             # ep_no_sync_capacity_factor=1.21875,
-            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
+            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,
@@ -449,8 +445,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             # schedule=PipelineScheduleType.custom_1F1B,
-            # schedule=PipelineScheduleType.custom_1F1B_V,  # V placement for comparison against interleaved 1F1B
-            schedule=PipelineScheduleType.custom_interleaved_1F1B,
+            schedule=PipelineScheduleType.custom_1F1B_V,  # V placement for comparison against interleaved 1F1B
+            # schedule=PipelineScheduleType.custom_interleaved_1F1B,
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
             p2p_use_separate_group=True,
             p2p_backend="nccl",
@@ -549,8 +545,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=3531,
-                                   end=3535
+                                   start=12020,
+                                   end=12024
             )
         )
         .with_callback(

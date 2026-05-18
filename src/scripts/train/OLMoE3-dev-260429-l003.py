@@ -6,7 +6,7 @@ import os
 
 # Keep this before any olmo_core imports: several modules import nvtx at import
 # time, and NVTX_DISABLE only works if it is set before nvtx is imported.
-USE_NV_PROFILE = True
+USE_NV_PROFILE = False
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
@@ -140,8 +140,8 @@ LR_ALPHA = 0.53
 
 # stage 1 - xM - 
 MAX_DURATION = int(100e9)
-MICRO_BSZ = 1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 2
+MICRO_BSZ = 3
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
 # NO LR_REF_BSZ=4M
 
 # stage 2 - 2M - 
@@ -445,8 +445,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             # schedule=PipelineScheduleType.custom_1F1B,
-            # schedule=PipelineScheduleType.custom_1F1B_V,  # V placement for comparison against interleaved 1F1B
-            schedule=PipelineScheduleType.custom_interleaved_1F1B,
+            schedule=PipelineScheduleType.custom_1F1B_V,  # V placement for comparison against interleaved 1F1B
+            # schedule=PipelineScheduleType.custom_interleaved_1F1B,
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
             p2p_use_separate_group=True,
             p2p_backend="nccl",
