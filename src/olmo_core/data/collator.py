@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Sequence, Union
+from typing import Any, Dict, Optional, Sequence, Union
 
 import torch
 import torch.nn.functional as F
@@ -24,11 +24,20 @@ class PaddingDirection(StrEnum):
 class DataCollator:
     """
     The default data collator used by :class:`~olmo_core.data.data_loader.TextDataLoaderBase` subclasses.
+
+    :param pad_token_id: The token ID to use for padding.
+    :param pad_direction: The direction to pad instances.
+    :param label_ignore_index: The index to use for ignored labels.
+    :param vocab_size: If set, validate that all token IDs in the collated batch are
+        in ``[0, vocab_size)``. This catches out-of-range IDs early with a clear error
+        message, which is especially useful when using ``torch.compile`` where the
+        resulting CUDA error would otherwise be opaque.
     """
 
     pad_token_id: int
     pad_direction: PaddingDirection = PaddingDirection.right
     label_ignore_index: int = -100
+    vocab_size: Optional[int] = None
 
     def __call__(
         self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
@@ -137,6 +146,18 @@ class DataCollator:
                 all_metadata.append(metadata)
 
         out: Dict[str, Any] = {"input_ids": torch.stack(all_input_ids)}
+
+        if self.vocab_size is not None:
+            input_ids_batch = out["input_ids"]
+            invalid = (input_ids_batch < 0) | (input_ids_batch >= self.vocab_size)
+            if invalid.any():
+                bad_ids = input_ids_batch[invalid].unique().tolist()
+                positions = invalid.nonzero(as_tuple=False).tolist()
+                raise ValueError(
+                    f"Token IDs {bad_ids} outside valid range [0, {self.vocab_size}). "
+                    f"Found at (batch_idx, pos): {positions[:10]}"
+                )
+
         if all_attention_mask:
             out["attention_mask"] = torch.stack(all_attention_mask)
         if all_attention_bias:

@@ -67,9 +67,7 @@ def parallelize_model(
         assert world_mesh is not None
         cp_mesh = get_cp_mesh(world_mesh)
         for m in model_parts:
-            m.apply_cp(
-                cp_mesh, load_balancer=cp_config.load_balancer, head_stride=cp_config.head_stride
-            )
+            m.apply_cp(cp_mesh, ring=cp_config.ring, uly=cp_config.uly)
         log.info(f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}")
 
     # Maybe apply tensor.
@@ -147,12 +145,13 @@ def parallelize_model(
 
     # Materialize and init parameters.
     log.info("Initializing model weights...")
-    for m in model_parts:
+    for model_part_idx, m in enumerate(model_parts):
         m.init_weights(
             max_seq_len=max_sequence_length,
             max_local_microbatch_size=rank_microbatch_size,
             device=device,
             world_mesh=world_mesh,
+            model_part_idx=model_part_idx,
         )
     # debug1 = model_parts[0].blocks['1'].router.weight.view(32, 2048)
     # debug2 = model_parts[0].blocks['1'].attention.w_q.weight

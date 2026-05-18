@@ -33,10 +33,31 @@ FULL_TASKS_SMALL_COMPUTE = [
     "minerva_math_precalculus_gold_bpb_0shot",
     "codex_humaneval_gold_bpb_3shot",
     "codex_mbpp_gold_bpb_3shot",
-    # MT MBPP tasks
-    "mt_mbpp_rust_gold_bpb_3shot",
-    "mt_mbpp_java_gold_bpb_3shot",
+    # Generative QA BPB
+    "coqa_bpb_0shot",
+    "drop_bpb_5shot",
+    "jeopardy_bpb_5shot",
+    "lambada_bpb_0shot",
+    "naturalqs_bpb_5shot",
+    "squad_bpb_5shot",
+    # MT MBPP tasks (all 17 languages)
+    "mt_mbpp_bash_gold_bpb_3shot",
+    "mt_mbpp_c_gold_bpb_3shot",
     "mt_mbpp_cpp_gold_bpb_3shot",
+    "mt_mbpp_csharp_gold_bpb_3shot",
+    "mt_mbpp_go_gold_bpb_3shot",
+    "mt_mbpp_haskell_gold_bpb_3shot",
+    "mt_mbpp_java_gold_bpb_3shot",
+    "mt_mbpp_javascript_gold_bpb_3shot",
+    "mt_mbpp_matlab_gold_bpb_3shot",
+    "mt_mbpp_php_gold_bpb_3shot",
+    "mt_mbpp_python_gold_bpb_3shot",
+    "mt_mbpp_r_gold_bpb_3shot",
+    "mt_mbpp_ruby_gold_bpb_3shot",
+    "mt_mbpp_rust_gold_bpb_3shot",
+    "mt_mbpp_scala_gold_bpb_3shot",
+    "mt_mbpp_swift_gold_bpb_3shot",
+    "mt_mbpp_typescript_gold_bpb_3shot",
     # Sanity check for MCQA ability
     "copycolors_10way_fast",
     # Basic Skills
@@ -46,6 +67,13 @@ FULL_TASKS_SMALL_COMPUTE = [
     "basic_skills_logical_reasoning_rc_5shot",
     "basic_skills_pattern_rc_5shot",
     "basic_skills_string_operations_rc_5shot",
+    # Science/Medical RC
+    "lab_bench_dbqa_rc_3shot",
+    "lab_bench_protocolqa_rc_3shot",
+    "medmcqa_rc_5shot",
+    "medqa_en_rc_5shot",
+    "qasper_yesno_rc_5shot",
+    "sciriff_yesno_rc_5shot",
 ]
 
 # For training runs where we expect the model to acquire MC

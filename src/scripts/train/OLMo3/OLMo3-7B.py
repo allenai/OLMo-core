@@ -17,7 +17,6 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
-from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
@@ -33,11 +32,9 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo3_7B(
+    return TransformerConfig.olmo3_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        attn_backend=AttentionBackendName.flash_2,
     )
-    return config
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:

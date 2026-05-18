@@ -140,6 +140,42 @@ def test_collate_with_label_mask(pad_direction):
         ).all()
 
 
+def test_collate_vocab_size_valid():
+    collator = DataCollator(pad_token_id=0, vocab_size=10)
+    inputs = [torch.tensor([0, 1, 2, 9]), torch.tensor([3, 4, 5])]
+    batch = collator(inputs)
+    assert batch["input_ids"].shape == (2, 4)
+
+
+def test_collate_vocab_size_equal_raises():
+    collator = DataCollator(pad_token_id=0, vocab_size=10)
+    inputs = [torch.tensor([0, 1, 10])]
+    with pytest.raises(ValueError, match="Token IDs \\[10\\] outside valid range \\[0, 10\\)"):
+        collator(inputs)
+
+
+def test_collate_vocab_size_negative_raises():
+    collator = DataCollator(pad_token_id=0, vocab_size=10)
+    inputs = [torch.tensor([-1, 0, 1])]
+    with pytest.raises(ValueError, match="Token IDs \\[-1\\] outside valid range \\[0, 10\\)"):
+        collator(inputs)
+
+
+def test_collate_vocab_size_none_skips_validation():
+    collator = DataCollator(pad_token_id=0)
+    # Out-of-range IDs should not raise when vocab_size is None.
+    inputs = [torch.tensor([999999, -1, 0])]
+    batch = collator(inputs)
+    assert batch["input_ids"].shape == (1, 3)
+
+
+def test_collate_vocab_size_error_includes_positions():
+    collator = DataCollator(pad_token_id=0, vocab_size=10)
+    inputs = [torch.tensor([0, 50, 1]), torch.tensor([100, 0, 0])]
+    with pytest.raises(ValueError, match=r"\(batch_idx, pos\).*\[0, 1\].*\[1, 0\]"):
+        collator(inputs)
+
+
 def test_collate_with_document_lengths():
     collator = DataCollator(pad_token_id=100)
     eos_token_id = 50279

@@ -59,7 +59,7 @@ RUN unset GROUPED_GEMM_CUTLASS && pip install --no-build-isolation --no-cache-di
 
 # Install flash-attn 2
 ARG FLASH_ATTN_VERSION=2.8.2
-RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+RUN FLASH_ATTN_CUDA_ARCHS="90;100" pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install flash-attn 3.
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
@@ -70,7 +70,7 @@ RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github
     git checkout ${FLASH_ATTN_3_SHA} && \
     git submodule update --init --depth 1 && \
     cd hopper && \
-    FLASH_ATTENTION_DISABLE_FP16=TRUE MAX_JOBS=${FA3_MAX_JOBS} python setup.py install && \
+    FLASH_ATTENTION_DISABLE_FP16=TRUE FLASH_ATTENTION_DISABLE_SM80=TRUE MAX_JOBS=${FA3_MAX_JOBS} python setup.py install && \
     cd /app/build && \
     rm -rf flash-attention
 
@@ -102,6 +102,11 @@ RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLAS
 # Install liger-kernel.
 ARG LIGER_KERNEL_VERSION=0.6.4
 RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
+
+# Optionally install Quack kernels.
+ARG QUACK_VERSION=""
+RUN if [ -n "${QUACK_VERSION}" ]; then \
+    pip install --no-build-isolation --no-cache-dir quack-kernels==${QUACK_VERSION}; fi
 
 # Install direct dependencies, but not source code.
 COPY pyproject.toml .
@@ -196,13 +201,12 @@ RUN chmod 0644 /etc/profile.d/99-container-env.sh && \
   grep -q '99-container-env.sh' /etc/bash.bashrc || \
   printf '\n# Load container env for interactive shells\n[ -r /etc/profile.d/99-container-env.sh ] && . /etc/profile.d/99-container-env.sh\n' >> /etc/bash.bashrc
 
-
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core
 
 
 # additional tools
-RUN pip install nvitop nvtx matplotlib pybind11 tensorboard 
+RUN pip install nvitop nvtx matplotlib pybind11 tensorboard
 
 # nsys
 # the latest version has problems with nvtx; pinning to 2025.5.1 
@@ -214,7 +218,7 @@ RUN set -eux; \
     echo "deb [trusted=yes] https://developer.download.nvidia.com/devtools/repos/ubuntu${UBUNTU_SHORT}/${ARCH}/ /" \
       > /etc/apt/sources.list.d/nvidia-devtools.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends nsight-systems-cli-2025.5.1; \ 
+    apt-get install -y --no-install-recommends nsight-systems-cli-2025.5.1; \
     rm -rf /var/lib/apt/lists/*
 
 # install beaker

@@ -7,7 +7,6 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, build_config, main
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
@@ -29,23 +28,17 @@ GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_7B(vocab_size=common.tokenizer.padded_vocab_size())
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[4096, 4096, 4096, -1],
-    )
-    config.block.attention.use_flash = True
-
-    # RoPE scaling
     OLD_SEQUENCE_LENGTH = 4096
-    assert config.block.attention.rope is not None
-    config.block.attention.rope.scaling = YaRNRoPEScalingConfig(
-        old_context_len=OLD_SEQUENCE_LENGTH, factor=SEQUENCE_LENGTH / OLD_SEQUENCE_LENGTH
+    # We retrofit Olmo2-7B using the Olmo3-7B architecture.
+    config = TransformerConfig.olmo3_7B(
+        vocab_size=common.tokenizer.padded_vocab_size()
+    ).with_rope_scaling(
+        YaRNRoPEScalingConfig(
+            factor=SEQUENCE_LENGTH / OLD_SEQUENCE_LENGTH,
+            old_context_len=OLD_SEQUENCE_LENGTH,
+        ),
+        full_attn_layers_only=False,
     )
-
-    # We cannot use headwise QK norm or GQA, because those can't be retrofit.
-
     return config
 
 

@@ -65,8 +65,9 @@ class NoOpOptimizer(SkipStepOptimizer):
                 state["step"] += step_factor
 
 
+@OptimConfig.register("noop")
 @dataclass
-class NoOpConfig(OptimConfig):
+class NoOpConfig(OptimConfig[NoOpOptimizer]):
     """
     Configuration class for building a :class:`NoOpOptimizer`.
 

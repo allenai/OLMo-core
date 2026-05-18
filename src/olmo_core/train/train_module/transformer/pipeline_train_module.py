@@ -2,7 +2,7 @@ import contextlib
 import logging
 import math
 from dataclasses import replace
-from functools import cached_property, partial
+from functools import cached_property, lru_cache, partial
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 import torch
@@ -41,7 +41,13 @@ from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
+from olmo_core.utils import (
+    gc_cuda,
+    get_default_device,
+    log_once,
+    move_to_device,
+    warn_once,
+)
 
 from ...common import MetricMergeStrategy, ReduceType
 from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
@@ -151,6 +157,12 @@ class TransformerPipelineTrainModule(TrainModule):
         self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
         self.pp_final_stage_rank = self._pp_config.final_stage_rank()
         pp_p2p_group = pp_config.build_p2p_process_group(self.world_mesh)
+
+        # Capture num_flops_per_token from the full unsplit model before split_model deepcopies
+        # and drops layers. Under PP each rank only holds its pipeline stage's layers, so querying
+        # model_parts would undercount. When the model is on meta device (the common case for PP)
+        # this reference has no memory cost.
+        self._full_model_num_flops_per_token = model.num_flops_per_token
 
         # Split model into pipeline stages.
         stages, model_parts = pp_config.split_model(
@@ -605,8 +617,20 @@ class TransformerPipelineTrainModule(TrainModule):
 
         return ce_batch_loss, z_batch_loss
 
-    def num_flops_per_token(self, seq_len: int) -> int:
-        return self.model_parts[0].num_flops_per_token(seq_len) # each model part will use the config to calculate flops for the whole model before PP split, so any model part will do
+    @lru_cache
+    def num_flops_per_token(self, seq_len: int) -> Optional[int]:
+        try:
+            return self._full_model_num_flops_per_token(seq_len)
+        except NotImplementedError as ex:
+            warn_once(f"Unable to estimate num flops per token: {ex}")
+            return None
+
+    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
+        if global_num_tokens is None:
+            return None
+        flops_per_token = self.num_flops_per_token(seq_len=batch["input_ids"].shape[1])
+        return flops_per_token * global_num_tokens if flops_per_token is not None else None
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:

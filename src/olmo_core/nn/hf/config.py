@@ -1,18 +1,25 @@
+import logging
+from typing import Any, Dict, List, Optional
+
 from transformers import Olmo2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
+from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
 from olmo_core.nn.rope import RoPEScalingConfig
 from olmo_core.nn.transformer.block import (
     MoEReorderedNormTransformerBlock,
     ReorderedNormTransformerBlock,
+    TransformerBlock,
 )
 from olmo_core.nn.transformer.model import (
     MoETransformer,
     NormalizedTransformer,
     Transformer,
 )
+
+log = logging.getLogger(__name__)
 
 try:
     from transformers import FlexOlmoConfig  # type: ignore
@@ -97,15 +104,17 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         raise NotImplementedError(
             f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
         )
-    if first_block.attention.rope is None:
-        raise NotImplementedError(
-            f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
-        )
-
     if first_block.attention.backend is None:
         raise ValueError("Attention backend is not set.")
 
-    rope_scaling = _get_and_validate_rope_scaling_config(blocks)
+    has_rope = first_block.attention.rope is not None
+
+    if has_rope:
+        rope_scaling = _get_and_validate_rope_scaling_config(blocks)
+        rope_theta = first_block.attention.rope.theta
+    else:
+        rope_scaling = None
+        rope_theta = None
 
     # Extract common configuration parameters
     common_config_args = {
@@ -118,7 +127,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         "hidden_act": "silu",
         "max_position_embeddings": -1,
         "attention_bias": first_block.attention.w_out.bias is not None,
-        "rope_theta": first_block.attention.rope.theta,
+        "rope_theta": rope_theta,
         "rope_scaling": rope_scaling,
         "pad_token_id": None,
         "bos_token_id": None,
@@ -196,7 +205,7 @@ def _get_and_validate_rope_scaling_config(blocks) -> dict | None:
     sliding_with_scaling = [
         (idx, block)
         for idx, block in sliding_window_layers
-        if block.attention.rope.scaling is not None
+        if block.attention.rope is not None and block.attention.rope.scaling is not None
     ]
     if sliding_with_scaling:
         sliding_indices = [idx for idx, _ in sliding_with_scaling]
@@ -210,7 +219,7 @@ def _get_and_validate_rope_scaling_config(blocks) -> dict | None:
     full_layers_with_scaling = [
         (idx, block)
         for idx, block in full_attention_layers
-        if block.attention.rope.scaling is not None
+        if block.attention.rope is not None and block.attention.rope.scaling is not None
     ]
     if not full_layers_with_scaling:
         return None
@@ -235,3 +244,168 @@ def _get_and_validate_rope_scaling_config(blocks) -> dict | None:
             )
 
     return first_config_dict
+
+
+# ---------------------------------------------------------------------------
+# Hybrid model helpers
+# ---------------------------------------------------------------------------
+
+
+@beta_feature
+def is_olmo_hybrid_model(model: Transformer) -> bool:
+    """Return ``True`` if the model has both :class:`GatedDeltaNet` and :class:`Attention` layers."""
+    has_gdn = False
+    has_attn = False
+    for block in model.blocks.values():
+        if isinstance(block.attention, GatedDeltaNet):
+            has_gdn = True
+        elif isinstance(block.attention, Attention):
+            has_attn = True
+        if has_gdn and has_attn:
+            return True
+    return False
+
+
+@beta_feature
+def get_hybrid_layer_types(model: Transformer) -> List[str]:
+    """
+    Return a per-layer type list for a hybrid model.
+
+    Each entry is ``"linear_attention"`` (GDN) or ``"full_attention"`` (standard attention),
+    matching the HF ``olmo_hybrid`` config format.
+    """
+    layer_types: List[str] = []
+    for idx, block in model.blocks.items():
+        if isinstance(block.attention, GatedDeltaNet):
+            layer_types.append("linear_attention")
+        elif isinstance(block.attention, Attention):
+            layer_types.append("full_attention")
+        else:
+            raise ValueError(f"Unknown sequence mixer type at layer {idx}: {type(block.attention)}")
+    return layer_types
+
+
+def _get_hybrid_rope_scaling(model: Transformer, layer_types: List[str]) -> Optional[dict]:
+    """
+    Extract the RoPE scaling config from attention blocks.  GDN layers are skipped
+    because they don't use RoPE.
+    """
+    attn_blocks = [
+        (int(idx), block)
+        for idx, block in model.blocks.items()
+        if layer_types[int(idx)] == "full_attention"
+    ]
+
+    layers_with_scaling = [
+        (idx, block)
+        for idx, block in attn_blocks
+        if block.attention.rope is not None and block.attention.rope.scaling is not None
+    ]
+    if not layers_with_scaling:
+        return None
+
+    first_config = layers_with_scaling[0][1].attention.rope.scaling.to_hf_config()
+    for idx, block in layers_with_scaling[1:]:
+        cfg = block.attention.rope.scaling.to_hf_config()
+        if cfg != first_config:
+            raise NotImplementedError(
+                f"Inconsistent RoPE scaling configs. First: {first_config}, Layer {idx}: {cfg}"
+            )
+    return first_config
+
+
+@beta_feature
+def get_hybrid_hf_config(
+    model: Transformer,
+    layer_types: List[str],
+    max_seq_len: int = 65536,
+) -> Dict[str, Any]:
+    """
+    Build the ``config.json`` dict for a HF ``olmo_hybrid`` model.
+
+    Returns a plain dict (not :class:`PretrainedConfig`) to avoid a hard dependency
+    on a specific ``transformers`` version.
+
+    :param model: The OLMo-core hybrid transformer model.
+    :param layer_types: Per-layer type list from :func:`get_hybrid_layer_types`.
+    :param max_seq_len: Maximum sequence length for ``max_position_embeddings``.
+    """
+    blocks = list(model.blocks.values())
+
+    attn_block: Optional[TransformerBlock] = None
+    gdn_block: Optional[TransformerBlock] = None
+    for lt, block in zip(layer_types, blocks):
+        if lt == "full_attention" and attn_block is None:
+            attn_block = block
+        elif lt == "linear_attention" and gdn_block is None:
+            gdn_block = block
+
+    if attn_block is None:
+        raise ValueError("Hybrid model must have at least one attention layer")
+    if gdn_block is None:
+        raise ValueError("Hybrid model must have at least one GDN layer")
+
+    attn: Attention = attn_block.attention
+    gdn: GatedDeltaNet = gdn_block.attention
+
+    # RoPE (from attention blocks only)
+    rope_parameters: Optional[dict] = None
+    if attn.rope is not None:
+        rope_theta = float(attn.rope.theta)
+        rope_scaling = _get_hybrid_rope_scaling(model, layer_types)
+        rope_parameters = {"rope_theta": rope_theta}
+        if rope_scaling:
+            rope_parameters.update(rope_scaling)
+        else:
+            rope_parameters["rope_type"] = "default"
+        log.info(f"RoPE: {rope_parameters}")
+    else:
+        log.info("No RoPE configured")
+
+    # Warn if GDN blocks are post-norm but HF expects pre-norm.
+    if isinstance(gdn_block, ReorderedNormTransformerBlock):
+        log.warning(
+            "GDN block uses post-norm (ReorderedNormTransformerBlock) but HF olmo_hybrid "
+            "expects pre-norm for linear_attention layers. The conversion will proceed, but "
+            "outputs may not match exactly."
+        )
+
+    config: Dict[str, Any] = {
+        "model_type": "olmo_hybrid",
+        "architectures": ["OlmoHybridForCausalLM"],
+        # Standard transformer fields
+        "vocab_size": model.vocab_size,
+        "hidden_size": model.d_model,
+        "intermediate_size": attn_block.feed_forward.hidden_size,
+        "num_hidden_layers": len(blocks),
+        "num_attention_heads": attn.n_heads,
+        "num_key_value_heads": attn.n_kv_heads,
+        "hidden_act": "silu",
+        "max_position_embeddings": max_seq_len,
+        "initializer_range": 0.02,
+        "use_cache": True,
+        "attention_bias": attn.w_out.bias is not None,
+        "attention_dropout": 0.0,
+        "rms_norm_eps": attn_block.feed_forward_norm.eps,  # todo: revisit
+        "tie_word_embeddings": False,
+        # Hybrid layer configuration
+        "layer_types": layer_types,
+        # GDN (linear attention) parameters
+        "linear_num_key_heads": gdn.n_heads,
+        "linear_num_value_heads": gdn.n_v_heads,
+        "linear_key_head_dim": gdn.head_k_dim,
+        "linear_value_head_dim": gdn.head_v_dim,
+        "linear_conv_kernel_dim": gdn.conv_size,
+        "linear_allow_neg_eigval": gdn.allow_neg_eigval,
+        # Token IDs (updated later after tokenizer is saved)
+        "pad_token_id": None,
+        "bos_token_id": None,
+        "eos_token_id": None,
+    }
+
+    if rope_parameters is not None:
+        config["rope_parameters"] = rope_parameters
+    else:
+        config["rope_theta"] = None
+
+    return config

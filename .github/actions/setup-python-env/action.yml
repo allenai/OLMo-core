@@ -1,0 +1,55 @@
+name: Set up a Python environment
+description: Set up a Python virtual environment with caching
+inputs:
+  python-version:
+    description: The Python version to use
+    required: true
+  cache-prefix:
+    description: Update this to invalidate the cache
+    required: true
+    default: v0
+  torch-version:
+    description: The PyTorch version to install
+    required: false
+    default: '2.10.0'
+  torch-backend:
+    description: The torch backend to install for
+    required: false
+    default: 'cpu'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
+        echo "UV_SYSTEM_PYTHON=1" >> $GITHUB_ENV
+        echo "UV_BREAK_SYSTEM_PACKAGES=1" >> $GITHUB_ENV
+
+    - name: Setup Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+
+    - uses: actions/cache@v4
+      id: virtualenv-cache
+      with:
+        path: /tmp/.uv-cache
+        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.torch-version }}-${{ inputs.torch-backend }}-${{ hashFiles('*requirements.txt', '*pyproject.toml') }}
+        restore-keys: |
+          ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.torch-version }}-${{ inputs.torch-backend }}
+
+    - shell: bash
+      run: |
+        uv pip install setuptools build wheel
+        uv pip install torch==${{ inputs.torch-version }} --torch-backend=${{ inputs.torch-backend }}
+        uv pip install -e .[all]
+
+    - shell: bash
+      run: |
+        # Show environment info.
+        echo "✓ Installed $(python --version) virtual environment to $(which python)"
+        echo "========= Python packages ==========="
+        uv pip freeze

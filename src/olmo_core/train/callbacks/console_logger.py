@@ -41,10 +41,12 @@ class ConsoleLoggerCallback(Callback):
             "train/block */token drop rate",
             "train/block */symm buffer util",
             "system/*",
+            "gpu_memory/*",
             "optim/total grad norm",
             "optim/step skipped",
             "optim/LR*",
             "throughput/*",
+            "checkpoint/*",
         ]
     )
     """
@@ -82,11 +84,9 @@ class ConsoleLoggerCallback(Callback):
             eta_str = format_timedelta(eta).replace(", ", "")
             if self.trainer.hard_stop:
                 eta_str = f"{eta_str}(hard stop)"
-            return (
-                f"[step={step}/{self.trainer.max_steps},epoch={self.trainer.epoch},eta={eta_str}]"
-            )
+            return f"[step={step}/{self.trainer.max_steps or '???'},epoch={self.trainer.epoch},eta={eta_str}]"
         else:
-            return f"[step={step}/{self.trainer.max_steps},epoch={self.trainer.epoch}]"
+            return f"[step={step}/{self.trainer.max_steps or '???'},epoch={self.trainer.epoch}]"
 
     def _should_log_metrics(self, step: int) -> bool:
         metrics_log_interval = self.metrics_log_interval or self.log_interval

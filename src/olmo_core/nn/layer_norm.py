@@ -5,11 +5,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..config import Config, DType, StrEnum
+from ..config import DType, StrEnum
 from ..exceptions import OLMoConfigurationError
+from .config import ModuleConfig
 from .functional import l2_normalize
 
-__all__ = ["LayerNormType", "LayerNormConfig", "LayerNorm", "RMSNorm", "FusedRMSNorm", "L2Norm"]
+__all__ = [
+    "LayerNormType",
+    "LayerNormConfig",
+    "LayerNorm",
+    "RMSNorm",
+    "QwenRMSNorm",
+    "CuTeRMSNorm",
+    "FusedRMSNorm",
+    "L2Norm",
+]
 
 
 class LayerNormType(StrEnum):
@@ -25,6 +35,14 @@ class LayerNormType(StrEnum):
     """
     ➡️ :class:`RMSNorm`
     """
+    qwen_rms = "qwen_rms"
+    """
+    ➡️ :class:`QwenRMSNorm`
+    """
+    cute_rms = "cute_rms"
+    """
+    ➡️ :class:`CuTeRMSNorm`
+    """
     fused_rms = "fused_rms"
     """
     ➡️ :class:`FusedRMSNorm`
@@ -36,7 +54,7 @@ class LayerNormType(StrEnum):
 
 
 @dataclass
-class LayerNormConfig(Config):
+class LayerNormConfig(ModuleConfig):
     """
     A config for conveniently building any one of the different layer norm classes.
 
@@ -89,6 +107,10 @@ class LayerNormConfig(Config):
                 return LayerNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.rms:
                 return RMSNorm(size=size, init_device=init_device, **kwargs)
+            elif self.name == LayerNormType.qwen_rms:
+                return QwenRMSNorm(size=size, init_device=init_device, **kwargs)
+            elif self.name == LayerNormType.cute_rms:
+                return CuTeRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.fused_rms:
                 return FusedRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.l2_norm:
@@ -212,6 +234,80 @@ class RMSNorm(LayerNorm):
                     x = self.weight.type_as(x) * x
 
             return x.to(og_dtype)
+
+
+class QwenRMSNorm(RMSNorm):
+    """
+    RMSNorm variant matching HuggingFace's ``Qwen3RMSNorm`` rounding order: the input is
+    cast back to its original dtype before being multiplied by the affine weight, so the
+    weight multiply happens in the input dtype rather than fp32.
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        with torch.autocast(enabled=False, device_type=x.device.type):
+            og_dtype = x.dtype
+
+            if self.full_precision:
+                x = x.float()
+
+            variance = x.pow(2).mean(-1, keepdim=True)
+            x = x * torch.rsqrt(variance + self.eps)
+            x = x.to(og_dtype)
+
+            if self.weight is not None:
+                x = x * self.weight.type_as(x)
+            if self.bias is not None:
+                x = x + self.bias.type_as(x)
+
+            return x
+
+
+class CuTeRMSNorm(RMSNorm):
+    """
+    A CuTe-based implementation from the QuACK library.
+
+    .. warning::
+        This requires `quack <https://github.com/Dao-AILab/quack>`_ to be installed.
+
+    """
+
+    def __init__(
+        self,
+        *,
+        size: int,
+        eps: float = 1e-5,
+        elementwise_affine: bool = True,
+        bias: bool = True,
+        full_precision: bool = True,
+        init_device: str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ):
+        from quack import rmsnorm as rms_norm_fn  # type: ignore
+
+        if not full_precision:
+            # the CUTE kernel always casts to full precision internally
+            raise NotImplementedError(
+                f"Currently only 'full_precision=True' is supported with '{self.__class__.__name__}'"
+            )
+
+        super().__init__(
+            size=size,
+            eps=eps,
+            elementwise_affine=elementwise_affine,
+            bias=bias,
+            full_precision=full_precision,
+            dtype=dtype,
+            init_device=init_device,
+        )
+        self._rms_norm_fn = rms_norm_fn
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self._rms_norm_fn(
+            x,
+            weight=None if self.weight is None else self.weight.type_as(x),
+            bias=None if self.bias is None else self.bias.type_as(x),
+            eps=self.eps,
+        ).to(x.dtype)
 
 
 class FusedRMSNorm(RMSNorm):

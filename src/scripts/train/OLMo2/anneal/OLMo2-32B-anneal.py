@@ -402,7 +402,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
     if cmd == "dry_run":
         pass
     elif cmd == "launch":
-        config.launch.launch(follow=True)
+        config.launch.launch()
     elif cmd == "train":
         train(checkpoint, config)
         teardown_training_environment()

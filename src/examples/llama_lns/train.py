@@ -23,7 +23,11 @@ from olmo_core.data import (
 )
 from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
+from olmo_core.nn.transformer import (
+    TransformerBlockConfig,
+    TransformerBlockType,
+    TransformerConfig,
+)
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,
@@ -87,6 +91,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     # Select the LayerNorm-Scaled transformer block implementation.
+    assert isinstance(model_config.block, TransformerBlockConfig)
     model_config.block.name = TransformerBlockType.default_scaled
 
     dataset_config = NumpyFSLDatasetConfig(

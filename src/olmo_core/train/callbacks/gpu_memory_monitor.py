@@ -50,14 +50,14 @@ class GPUMemoryMonitorCallback(Callback):
         max_active = cuda_info["active_bytes.all.peak"]
         max_active_gib = self._to_gib(max_active)
         max_active_pct = self._to_pct(max_active)
-        self.trainer.record_metric("system/GPU active mem (GiB)", max_active_gib)
-        self.trainer.record_metric("system/GPU active mem (%)", max_active_pct)
+        self.trainer.record_metric("gpu_memory/GPU active mem (GiB)", max_active_gib)
+        self.trainer.record_metric("gpu_memory/GPU active mem (%)", max_active_pct)
 
         max_reserved = cuda_info["reserved_bytes.all.peak"]
         max_reserved_gib = self._to_gib(max_reserved)
         max_reserved_pct = self._to_pct(max_reserved)
-        self.trainer.record_metric("system/GPU reserved mem (GiB)", max_reserved_gib)
-        self.trainer.record_metric("system/GPU reserved mem (%)", max_reserved_pct)
+        self.trainer.record_metric("gpu_memory/GPU reserved mem (GiB)", max_reserved_gib)
+        self.trainer.record_metric("gpu_memory/GPU reserved mem (%)", max_reserved_pct)
 
         num_retries = cuda_info["num_alloc_retries"]
         if num_retries > self._num_alloc_retries:

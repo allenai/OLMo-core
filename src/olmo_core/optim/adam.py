@@ -6,8 +6,9 @@ import torch
 from .config import OptimConfig
 
 
+@OptimConfig.register("adam")
 @dataclass
-class AdamConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[torch.optim.AdamW]"
+class AdamConfig(OptimConfig[torch.optim.Adam]):
     """
     Configuration class for building an :class:`torch.optim.Adam` optimizer.
     """

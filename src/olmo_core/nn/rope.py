@@ -9,6 +9,7 @@ import torch.nn as nn
 from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
+from .config import ModuleConfig
 
 __all__ = [
     "RoPEType",
@@ -290,7 +291,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
 
 
 @dataclass
-class RoPEConfig(Config):
+class RoPEConfig(ModuleConfig):
     """
     A config for conveniently building any of the different RoPE classes.
 
@@ -308,6 +309,9 @@ class RoPEConfig(Config):
     full_precision: bool = True
     """Whether to always apply RoPE in full precision regardless of the input data type."""
 
+    no_global_rope: bool = False
+    """Whether to disable RoPE on global (non-SWA) attention layers."""
+
     scaling: Optional[RoPEScalingConfig] = None
     """The scaling config to apply to RoPE."""
 
@@ -323,6 +327,7 @@ class RoPEConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        kwargs.pop("no_global_rope")
         kwargs.update(head_size=head_size, cache=cache)
 
         try:
@@ -473,6 +478,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
@@ -485,11 +491,17 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         :param head_first: If the head dim comes before the sequence dim.
         :param start_pos: The absolute position of the first query token (eg for decoding
             where the first query token is just the most recently decoded token).
+        :param cu_doc_lens: Cumulative document lengths for intra-document RoPE in packed
+            inputs. When supplied, each document's tokens receive positions starting from 0
+            (matching per-document forwards). Mutually exclusive with ``start_pos``.
 
         :returns: The query and key matrices after RoPE has been applied.
         """
         if freqs_cis is not None:
             raise RuntimeError(f"'freqs_cis' is invalid for {self.__class__.__name__}")
+
+        if cu_doc_lens is not None and start_pos is not None:
+            raise RuntimeError("'cu_doc_lens' and 'start_pos' are mutually exclusive")
 
         if head_first:
             q_len = q.size(2)
@@ -507,9 +519,6 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             seq_len_needed = (start_pos + k_len) if start_pos is not None else k_len
             if pos_sin is None or pos_cos is None:
                 pos_sin, pos_cos = self._get_rotary_embedding(seq_len_needed, q_.device)
-            q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
-            k_abs_start = start_pos if start_pos is not None else 0
-
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
 
             if pos_sin.size(-2) < seq_len_needed or pos_cos.size(-2) < seq_len_needed:
@@ -518,19 +527,36 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                     f"have {pos_sin.size(-2)}."
                 )
 
-            if head_first:
-                sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
-                cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
-                sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
-                cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
+            def _broadcast(t: torch.Tensor) -> torch.Tensor:
+                return t[None, None, :, :] if head_first else t[None, :, None, :]
 
-                q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
-                k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
+            if cu_doc_lens is not None:
+                if q_len != k_len:
+                    raise RuntimeError(
+                        "'cu_doc_lens' requires q_len == k_len (no kv-cache packed mode)"
+                    )
+                B = q_.size(0)
+                flat_idx = torch.arange(B * k_len, device=q_.device, dtype=cu_doc_lens.dtype)
+                doc_id = torch.bucketize(flat_idx, cu_doc_lens[1:], right=True)
+                pos_idx = (flat_idx - cu_doc_lens[doc_id]).view(B, k_len)
+                sin_sel = pos_sin.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
+                cos_sel = pos_cos.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
+                if head_first:
+                    sin_qk = sin_sel.unsqueeze(1)
+                    cos_qk = cos_sel.unsqueeze(1)
+                else:
+                    sin_qk = sin_sel.unsqueeze(2)
+                    cos_qk = cos_sel.unsqueeze(2)
+                q_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, q_)
+                k_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, k_)
             else:
-                sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
-                cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
-                sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
-                cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
+                q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
+                k_abs_start = start_pos if start_pos is not None else 0
+
+                sin_q = _broadcast(pos_sin[q_abs_start : q_abs_start + q_len, :])
+                cos_q = _broadcast(pos_cos[q_abs_start : q_abs_start + q_len, :])
+                sin_k = _broadcast(pos_sin[k_abs_start : k_abs_start + k_len, :])
+                cos_k = _broadcast(pos_cos[k_abs_start : k_abs_start + k_len, :])
 
                 q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
                 k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)

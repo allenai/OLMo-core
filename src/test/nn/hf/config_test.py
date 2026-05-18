@@ -2,7 +2,7 @@ import pytest
 from transformers import Olmo2Config
 
 from olmo_core.nn.hf.config import get_hf_config
-from olmo_core.nn.transformer.config import TransformerConfig
+from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 
 try:
     from transformers import FlexOlmoConfig  # type: ignore
@@ -42,6 +42,7 @@ def test_get_hf_config_moe():
     hf_config = get_hf_config(model)
     assert isinstance(hf_config, FlexOlmoConfig)
     assert hf_config.hidden_size == model_config.d_model
+    assert isinstance(model_config.block, TransformerBlockConfig)
     assert model_config.block.feed_forward_moe is not None
     assert hf_config.intermediate_size == model_config.block.feed_forward_moe.hidden_size
     assert hf_config.num_hidden_layers == model_config.n_layers

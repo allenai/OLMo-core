@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import google.auth
-from beaker import Beaker, Job, Node, Priority
+from beaker import Beaker, BeakerJob, BeakerJobPriority, BeakerNode
 from google.cloud.compute_v1.services.instances.client import InstancesClient
 
 from olmo_core.exceptions import BeakerInsufficientResourcesError
@@ -64,15 +64,13 @@ def get_hosts_metadata_from_gcp(
     }
 
 
-def node_is_occupied(beaker: Beaker, node: Node, beaker_priority: Priority) -> Tuple[Node, bool]:
-    jobs = beaker.job.list(node=node)
+def node_is_occupied(
+    beaker: Beaker, node: BeakerNode, beaker_priority: BeakerJobPriority
+) -> Tuple[BeakerNode, bool]:
+    jobs = beaker.job.list(scheduled_on_node=node)
     for job in jobs:
         if (
-            job.is_running
-            and job.execution is not None
-            and (resources := job.execution.spec.resources) is not None
-            and resources.gpu_count is not None
-            and resources.gpu_count > 0
+            job.assignment_details.resource_assignment.assigned_slots_count > 0
             and not _is_job_preemptible(job, beaker_priority)
         ):
             return node, True
@@ -80,58 +78,55 @@ def node_is_occupied(beaker: Beaker, node: Node, beaker_priority: Priority) -> T
 
 
 def get_occupied_beaker_hosts(
-    hosts_metadata: dict[str, HostMetadata], beaker_cluster: str, beaker_priority: Priority
+    hosts_metadata: dict[str, HostMetadata], beaker_cluster: str, beaker_priority: BeakerJobPriority
 ) -> set[str]:
-    from olmo_core.internal.common import get_beaker_client
+    from .beaker import get_beaker_client
 
-    beaker = get_beaker_client()
-    assert beaker is not None
+    with get_beaker_client() as beaker:
+        occupied_hosts = set()
 
-    occupied_hosts = set()
+        cluster = beaker.cluster.get(beaker_cluster)
+        nodes = beaker.node.list(cluster=cluster)
+        missing_metadata_count = 0
 
-    cluster = beaker.cluster.get(beaker_cluster)
-    nodes = beaker.cluster.nodes(cluster)
-    missing_metadata_count = 0
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = []
+            for node in sorted(nodes, key=lambda node: node.hostname):
+                host = node.hostname
+                assert (
+                    host not in occupied_hosts
+                ), f"Host {host} is somehow already in occupied hosts"
+                if host not in hosts_metadata:
+                    log.warning(f"No metadata found for beaker host {host}")
+                    missing_metadata_count += 1
+                    continue
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = []
-        for node in sorted(nodes, key=lambda node: node.hostname):
-            host = node.hostname
-            assert host not in occupied_hosts, f"Host {host} is somehow already in occupied hosts"
-            if host not in hosts_metadata:
-                log.warning(f"No metadata found for beaker host {host}")
-                missing_metadata_count += 1
-                continue
+                if node.cordon_details.HasField("cordoned"):
+                    # Treat cordoned node as occupied since it might be uncordoned later.
+                    occupied_hosts.add(host)
+                    continue
 
-            if node.cordoned is not None:
-                # Treat cordoned node as occupied since it might be uncordoned later.
-                occupied_hosts.add(host)
-                continue
+                futures.append(executor.submit(node_is_occupied, beaker, node, beaker_priority))
 
-            futures.append(executor.submit(node_is_occupied, beaker, node, beaker_priority))
+            for future in concurrent.futures.as_completed(futures):
+                node, is_occupied = future.result()
+                if is_occupied:
+                    occupied_hosts.add(node.hostname)
 
-        for future in concurrent.futures.as_completed(futures):
-            node, is_occupied = future.result()
-            if is_occupied:
-                occupied_hosts.add(node.hostname)
+        if missing_metadata_count > 1:
+            log.warning(
+                f"Could not find metadata for {missing_metadata_count} hosts; "
+                "these hosts will be ignored when selecting hosts."
+            )
 
-    if missing_metadata_count > 1:
-        log.warning(
-            f"Could not find metadata for {missing_metadata_count} hosts; "
-            "these hosts will be ignored when selecting hosts."
-        )
-
-    return occupied_hosts
+        return occupied_hosts
 
 
-def _is_job_preemptible(job: Job, desired_priority: Priority) -> bool:
-    if not job.is_preemptible:
+def _is_job_preemptible(job: BeakerJob, desired_priority: BeakerJobPriority) -> bool:
+    if not job.system_details.preemptible:
         return False
-
-    assert job.priority is not None
-    # Priorities are sorted highest to lowest by default
-    sorted_priorities = list(Priority)
-    return sorted_priorities.index(desired_priority) < sorted_priorities.index(job.priority)
+    else:
+        return job.system_details.priority < desired_priority
 
 
 def get_hostname_constraints(
@@ -222,7 +217,7 @@ def get_beaker_hostname_constraints(
     gcp_zone: str,
     *,
     beaker_cluster: str,
-    beaker_priority: Priority,
+    beaker_priority: BeakerJobPriority,
     gcp_credentials_path: Optional[Path] = None,
     hosts_metadata: Optional[dict[str, HostMetadata]] = None,
 ) -> list[list[str]]:
@@ -231,7 +226,7 @@ def get_beaker_hostname_constraints(
             "Only Augusta is supported. Making this work for other clusters probably would be a bad idea..."
         )
 
-    if beaker_priority != Priority.urgent:
+    if beaker_priority != BeakerJobPriority.urgent:
         log.warning(
             "Host selection depends on the cluster having nodes with jobs running at lower priority. "
             "It is relatively unlikely to work on non-urgent priorities."
@@ -277,8 +272,8 @@ def main():
     # Beaker-related settings
     parser.add_argument(
         "--priority",
-        type=Priority,
-        default=Priority.normal,
+        choices=["low", "normal", "high", "urgent"],
+        default="normal",
         help="Desired beaker job priority.",
     )
     parser.add_argument(
@@ -315,7 +310,7 @@ def main():
             args.task_count,
             args.zone,
             beaker_cluster=args.cluster,
-            beaker_priority=args.priority,
+            beaker_priority=getattr(BeakerJobPriority, args.priority),
             gcp_credentials_path=args.credentials_path,
             hosts_metadata=hosts_metadata,
         )

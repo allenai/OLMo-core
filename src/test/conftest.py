@@ -16,7 +16,7 @@ def bucket_name() -> str:
 
 @pytest.fixture
 def gcs_bucket_name() -> str:
-    return "olmo-core-testing"
+    return "ai2-olmo-testing"
 
 
 @pytest.fixture

@@ -56,6 +56,18 @@ class Callback(Stateful):
         """
         del state_dict
 
+    def block_ephemeral_checkpoints(self):
+        """Register this callback as blocking ephemeral checkpoint saves.
+        Ephemeral saves are blocked as long as at least one callback is registered."""
+        name = self.trainer.get_callback_name(self)
+        self.trainer._blocking_ephemeral_checkpoints.add(name)
+
+    def unblock_ephemeral_checkpoints(self):
+        """Unregister this callback from blocking ephemeral checkpoint saves."""
+        name = self.trainer.get_callback_name(self)
+        if name in self.trainer._blocking_ephemeral_checkpoints:
+            self.trainer._blocking_ephemeral_checkpoints.remove(name)
+
     def post_attach(self):
         """
         Called right after the callback is attached to the :class:`~olmo_core.train.Trainer`.
@@ -119,6 +131,14 @@ class Callback(Stateful):
         :param path: The path/URL to the checkpoint.
         """
         del path
+
+    def pre_log_metrics(self, step: int, metrics: Dict[str, float]):
+        """
+        Called when metrics have been gathered for a given step (possibly a previous step),
+        but right before :meth:`log_metrics()`. This can used to modify, add, or remove metrics
+        by updating the ``metrics`` dict in-place.
+        """
+        del step, metrics
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
         """

@@ -8,7 +8,6 @@ import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
-from abc import ABCMeta, abstractmethod
 
 from olmo_core.config import Config, DType
 from olmo_core.distributed.parallel import (
@@ -22,7 +21,11 @@ from olmo_core.distributed.parallel import (
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
-from olmo_core.nn.attention import RingAttentionLoadBalancerType
+from olmo_core.nn.attention.ring import (
+    RingAttentionLoadBalancerType,
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from olmo_core.nn.transformer import (
     Transformer,
     TransformerActivationCheckpointingMode,
@@ -30,6 +33,8 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
+from olmo_core.train.train_module.config import TrainModuleConfig
+
 from .pipeline.pipeline_schedule import CustomPipelineStage
 
 if TYPE_CHECKING:
@@ -219,32 +224,43 @@ class TransformerContextParallelConfig(ContextParallelConfig):
     Transformer-specific context parallel config.
     """
 
-    load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
-    """
-    The type of load balancer to use for ring attention.
-    """
+    ring: RingContextParallelStyle | None = None
+    uly: UlyssesContextParallelStyle | None = None
 
-    head_stride: int = 1
-    """
-    The stride of the head dimension to process for each iteration of ring attention. A value of 1
-    means each iteration will process one k and one v head. A value of 2 will process two k and two
-    v heads, etc. A larger stride will reduce the number of communication ops.
-    """
+    def __post_init__(self):
+        if self.ring is not None and self.uly is not None:
+            raise NotImplementedError(
+                "Only one of ring or ulysses can be specified. While not technically "
+                "mutually exclusive, a combined context parallel style is not yet supported."
+            )
+        elif self.ring is None and self.uly is None:
+            raise OLMoConfigurationError("One of ring or uly must be specified")
 
     @classmethod
     def zig_zag(cls, degree: int, head_stride: int = 1) -> "TransformerContextParallelConfig":
         return cls(
             degree=degree,
-            load_balancer=RingAttentionLoadBalancerType.zig_zag,
-            head_stride=head_stride,
+            ring=RingContextParallelStyle(
+                load_balancer=RingAttentionLoadBalancerType.zig_zag,
+                head_stride=head_stride,
+            ),
         )
 
     @classmethod
     def llama3(cls, degree: int, head_stride: int = 1) -> "TransformerContextParallelConfig":
         return cls(
             degree=degree,
-            load_balancer=RingAttentionLoadBalancerType.llama3,
-            head_stride=head_stride,
+            ring=RingContextParallelStyle(
+                load_balancer=RingAttentionLoadBalancerType.llama3,
+                head_stride=head_stride,
+            ),
+        )
+
+    @classmethod
+    def ulysses(cls, degree: int) -> "TransformerContextParallelConfig":
+        return cls(
+            degree=degree,
+            uly=UlyssesContextParallelStyle(),
         )
 
 
@@ -301,9 +317,6 @@ class TransformerActivationCheckpointingConfig(Config):
             raise OLMoConfigurationError(
                 "'modules' is required for 'selected_modules' activation checkpointing"
             )
-
-from .. import TrainModuleConfig
-
 
 @dataclass
 class TransformerTrainModuleConfig(TrainModuleConfig):

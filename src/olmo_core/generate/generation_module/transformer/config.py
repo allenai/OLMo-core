@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -47,7 +47,7 @@ class TransformerGenerationModuleConfig(Config):
 
     def build(
         self,
-        checkpoint_dir: PathOrStr,
+        checkpoint_dir: PathOrStr | List[PathOrStr],
         transformer_config: Optional[TransformerConfig] = None,
         device: Optional[torch.device] = None,
         process_group: Optional[dist.ProcessGroup] = None,
@@ -83,8 +83,8 @@ class TransformerGenerationModuleConfig(Config):
             )
         log_or_print(log, f"TransformerGenerationModuleConfig: {config_dict}")
 
-        return TransformerGenerationModule.from_checkpoint(
-            checkpoint_dir=checkpoint_dir,
+        return TransformerGenerationModule.from_checkpoints(
+            checkpoint_dirs=[checkpoint_dir] if isinstance(checkpoint_dir, PathOrStr) else checkpoint_dir,  # type: ignore  # mypy bug with Union isinstance
             transformer_config=transformer_config,
             device=device,
             process_group=process_group,

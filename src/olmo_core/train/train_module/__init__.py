@@ -1,3 +1,4 @@
+from .config import TrainModuleConfig
 from .train_module import (
     BasicTrainModule,
     EvalBatchSizeUnit,
@@ -23,6 +24,7 @@ from .transformer import (
 )
 
 __all__ = [
+    "TrainModuleConfig",
     "TrainModule",
     "TrainModuleConfig",
     "EvalBatchSpec",

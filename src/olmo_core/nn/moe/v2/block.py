@@ -35,7 +35,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_or_init_stream
 
-from ...attention import AttentionConfig, RingAttentionLoadBalancerType
+from ...attention.base import SequenceMixerConfig
 from ...buffer_cache import BufferCache
 from ...functional import l2_normalize
 from ...layer_norm import LayerNormConfig
@@ -173,7 +173,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     def num_params(self, d_model: int) -> int:
         block_params = 0
 
-        block_params += self.attention.num_params(d_model)
+        block_params += self.sequence_mixer.num_params(d_model)
         if self.attention_norm is not None:
             block_params += self.attention_norm.num_params(d_model)
         if self.shared_experts is not None:
@@ -197,7 +197,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     def num_active_params(self, d_model: int) -> int:
         block_params = 0
 
-        block_params += self.attention.num_params(d_model)
+        block_params += self.sequence_mixer.num_params(d_model)
         if self.attention_norm is not None:
             block_params += self.attention_norm.num_params(d_model)
         if self.shared_experts is not None:
@@ -224,7 +224,15 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
         flops = 0
 
         # attention
-        flops += self.attention.flops_per_seq(d_model, seqlen)
+        if hasattr(self.sequence_mixer, "flops_per_seq"):
+            flops += self.sequence_mixer.flops_per_seq(d_model, seqlen)  # type: ignore[attr-defined]
+        else:
+            flops += self.sequence_mixer.build(
+                d_model,
+                layer_idx=0,
+                n_layers=1,
+                init_device="meta",
+            ).num_flops_per_token(seqlen) * seqlen
 
         # router
         # (seq_len * d_model) * (d_model * num_total_experts)
@@ -263,7 +271,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         d_model: int,
         block_idx: int,
         n_layers: int,
-        attention: AttentionConfig,
+        sequence_mixer: SequenceMixerConfig,
         attention_norm: LayerNormConfig,
         routed_experts_router: Optional[MoERouterConfigV2],
         shared_experts_router: Optional[MoERouterConfigV2],
@@ -322,7 +330,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.use_peri_norm = use_peri_norm
 
         ######## START: Attention ########
-        self.attention = attention.build(
+        self.attention = sequence_mixer.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm = attention_norm.build(d_model, init_device=init_device)
@@ -914,11 +922,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     ):
         raise NotImplementedError("TP is not supported in MoEFusedV1TransformerBlock")
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        raise NotImplementedError("CP is not supported in MoEFusedV1TransformerBlock")
-        self.attention.apply_cp(cp_mesh, load_balancer)
-        self.shared_experts.apply_cp(cp_mesh)
-        self.routed_experts.apply_cp(cp_mesh)
+    def apply_cp(self, cp_mesh: DeviceMesh, ring=None, uly=None):
+        del cp_mesh, ring, uly
+        raise NotImplementedError("CP is not supported in MoEFusedV2TransformerBlock")
 
     def apply_fsdp(
         self,
