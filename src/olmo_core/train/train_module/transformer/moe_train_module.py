@@ -56,7 +56,7 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer, MoEFusedV2OptimizerC
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 from typing import List, Optional, TypeVar, cast
-from olmo_core.nn.transformer import MoETransformer, Transformer
+from olmo_core.nn.transformer import MoEFusedV2TransformerConfig, MoETransformer, Transformer
 from collections import OrderedDict
 from ...common import ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
@@ -165,6 +165,12 @@ class MoEV2TransformerTrainModule(TrainModule):
         super().__init__()
         from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
         assert isinstance(model, MoEFusedV2Transformer), "MoEV2TransformerTrainModule only supports MoEFusedV2Transformer model"
+        if not isinstance(model.config, MoEFusedV2TransformerConfig):
+            raise OLMoConfigurationError(
+                "MoEV2TransformerTrainModule requires a global MoEFusedV2TransformerConfig "
+                "on model.config for FLOP accounting. Build the model from its config, or "
+                "attach the global config before constructing the train module."
+            )
         
         ######################### Validate arguments. [BEGIN] #########################
         if rank_microbatch_size % max_sequence_length != 0:
@@ -242,9 +248,10 @@ class MoEV2TransformerTrainModule(TrainModule):
         self._ep_config = ep_config
         self._pp_config = pp_config
 
-        # Capture FLOP accounting from the full unsplit model. Under PP,
-        # model_parts[0] only holds this rank's stage.
-        self._full_model_num_flops_per_token = model.num_flops_per_token
+        # Keep the global model config as the source of truth for FLOP accounting.
+        # The local modules may be PP/EP/TP sharded, or may never have existed as
+        # a full unsharded model in future init flows.
+        self._global_model_config = cast(MoEFusedV2TransformerConfig, model.config)
 
         # Parallelize model.
         self.model_parts = self.parallelize_and_init_model(
@@ -1370,7 +1377,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     @lru_cache
     def num_flops_per_token(self, seq_len: int) -> int:
-        return self._full_model_num_flops_per_token(seq_len)
+        return int(self._global_model_config.num_flops_per_token(seq_len))
 
     def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
         global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
