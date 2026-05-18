@@ -22,11 +22,16 @@ from typing import Callable
 
 __all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
 
-from transformer_engine.pytorch.permutation import (
-    moe_permute,
-    moe_sort_chunks_by_index,
-    moe_unpermute,
-)
+try:
+    from transformer_engine.pytorch.permutation import (
+        moe_permute,
+        moe_sort_chunks_by_index,
+        moe_unpermute,
+    )
+except Exception:  # pragma: no cover - import guard
+    moe_permute = None  # type: ignore[assignment]
+    moe_sort_chunks_by_index = None  # type: ignore[assignment]
+    moe_unpermute = None  # type: ignore[assignment]
 
 
 # disable compile for permute

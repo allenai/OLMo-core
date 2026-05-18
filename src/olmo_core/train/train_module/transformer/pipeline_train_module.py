@@ -220,6 +220,13 @@ class TransformerPipelineTrainModule(TrainModule):
         ]
 
     @property
+    def model(self) -> Transformer:
+        raise RuntimeError(
+            f"{type(self).__name__}.model is not available for pipeline-parallel "
+            "modules. Use model_parts instead."
+        )
+
+    @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
         return get_dp_process_group(self.world_mesh)
 

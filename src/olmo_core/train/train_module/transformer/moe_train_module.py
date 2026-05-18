@@ -242,6 +242,10 @@ class MoEV2TransformerTrainModule(TrainModule):
         self._ep_config = ep_config
         self._pp_config = pp_config
 
+        # Capture FLOP accounting from the full unsplit model. Under PP,
+        # model_parts[0] only holds this rank's stage.
+        self._full_model_num_flops_per_token = model.num_flops_per_token
+
         # Parallelize model.
         self.model_parts = self.parallelize_and_init_model(
                     model,
@@ -313,6 +317,15 @@ class MoEV2TransformerTrainModule(TrainModule):
                 f"{self.__class__.__name__} was built with eval_only=True and has no optimizer"
             )
         return self.optim
+
+    @property
+    def model(self) -> Transformer:
+        if self.pp_enabled or len(self.model_parts) != 1:
+            raise RuntimeError(
+                f"{type(self).__name__}.model is only valid without pipeline parallelism; "
+                f"got {len(self.model_parts)} model parts. Use model_parts instead."
+            )
+        return self.model_parts[0]
 
     def _cast_to_fwd_bwd_precision(self, model: Union[MoEFusedV2Transformer, List[MoEFusedV2Transformer]]) -> None:
         """
@@ -1357,8 +1370,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     @lru_cache
     def num_flops_per_token(self, seq_len: int) -> int:
-        # NOTE: it uses the config to calculate the FLOPs for the whole model, so it should be fine to just use the first model part.
-        return self.model_parts[0].num_flops_per_token(seq_len)
+        return self._full_model_num_flops_per_token(seq_len)
 
     def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
         global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)

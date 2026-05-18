@@ -74,7 +74,7 @@ def _build_block(
         d_model=d_model,
         block_idx=0,
         n_layers=1,
-        attention=AttentionConfig(
+        sequence_mixer=AttentionConfig(
             name=AttentionType.default,
             n_heads=2,
             n_kv_heads=2,

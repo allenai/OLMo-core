@@ -50,7 +50,7 @@ def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
         lm_head=LMHeadConfig(bias=False, dtype=DType.float32),
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
-            attention=AttentionConfig(
+            sequence_mixer=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=2,
                 n_kv_heads=2,

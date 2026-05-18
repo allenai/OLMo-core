@@ -52,19 +52,14 @@ def cross_entropy_loss(
 
 _fused_linear_cross_entropy_loss: Optional[Callable] = None
 
-# try:
-#     from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
-#         LigerFusedLinearCrossEntropyFunction,
-#     )
+try:
+    from .custom_fused_linear_cross_entropy import LigerFusedLinearCrossEntropyFunction
 
-#     _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
-# except ImportError:
-#     pass
-# except Exception:
-#     log.exception("Error importing liger-kernel")
-
-from .custom_fused_linear_cross_entropy import LigerFusedLinearCrossEntropyFunction
-_fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
+    _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
+except ImportError:
+    pass
+except Exception:
+    log.exception("Error importing fused linear cross entropy")
 
 
 @torch._dynamo.disable()
@@ -168,4 +163,3 @@ def cce_loss(
     elif reduction == "none":
         pass
     return ce_loss, z_loss * z_loss_multiplier if compute_z_loss else None
-

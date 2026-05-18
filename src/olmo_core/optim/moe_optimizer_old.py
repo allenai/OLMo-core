@@ -5,7 +5,9 @@ import torch
 import torch.nn as nn
 
 from typing import (
+    TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
     Generic,
     Iterable,
@@ -16,7 +18,6 @@ from typing import (
     Type,
     TypeVar,
     Union,
-    Callable,
     overload,
     cast,
 )
@@ -32,7 +33,6 @@ from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
     hook_with_zero_step,
     hook_with_zero_step_interleaved,
 )
-from ..train.train_module import TrainModule
 from olmo_core.utils import get_default_device, move_to_device
 from collections import OrderedDict
 from fnmatch import fnmatch
@@ -47,6 +47,9 @@ from ..exceptions import OLMoConfigurationError
 from torch.distributed.tensor import DTensor, Shard
 from torch.distributed.device_mesh import DeviceMesh
 log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from ..train.train_module import TrainModule
 
 # Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
@@ -211,7 +214,7 @@ class MoEFusedV2OptimizerConfig(Config):
                         ep_param_ids.add(id(p))
         return ep_param_ids
 
-    def build(self, model_parts: List, train_module: TrainModule, strict: bool = True, param_filter=None) -> "MoEFusedV2Optimizer":
+    def build(self, model_parts: List, train_module: "TrainModule", strict: bool = True, param_filter=None) -> "MoEFusedV2Optimizer":
         """
         Build the optimizer.
 

@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 from torch.distributed.optim import ZeroRedundancyOptimizer
 from typing import (
+    TYPE_CHECKING,
     Any,
     Dict,
     Generic,
@@ -39,7 +40,8 @@ from .config import LR_FIELD, INITIAL_LR_FIELD
 from ..utils import get_default_device, move_to_device
 Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
-from ..train.train_module import TrainModule
+if TYPE_CHECKING:
+    from ..train.train_module import TrainModule
 
 from .config import OptimConfig, OptimGroupOverride 
 
@@ -53,7 +55,7 @@ class ZeroOptimConfig(OptimConfig):
         return ZeroRedundancyOptimizer
     
 
-    def build(self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None):
+    def build(self, model: nn.Module, train_module: "TrainModule", strict: bool = True, param_filter=None):
         """
         Build the optimizer.
 
@@ -121,4 +123,3 @@ class ZeroOptimConfig(OptimConfig):
         optim.register_load_state_dict_post_hook(reset_fixed_fields)
 
         return cast(Opt, optim)
-    

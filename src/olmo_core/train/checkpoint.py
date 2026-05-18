@@ -166,6 +166,19 @@ class Checkpointer:
 
         # Save model and optim state.
         train_module_dir = f"{dir}/model_and_optim"
+        if hasattr(train_module, "save_state_dict_direct"):
+            train_module.save_state_dict_direct(  # type: ignore
+                train_module_dir,
+                process_group=self.process_group,
+                save_overwrite=self.save_overwrite,
+                thread_count=self.save_thread_count,
+                throttle_uploads=self.throttle_uploads,
+            )
+            self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
+            future: Future[None] = Future()
+            future.set_result(None)
+            return future
+
         future = async_save_state_dict(
             train_module_dir,
             train_module.state_dict_to_save(),

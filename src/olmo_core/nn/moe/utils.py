@@ -18,9 +18,20 @@ from olmo_core.kernels.moe_permute_drop import moe_permute_drop_fwd
 from olmo_core.kernels.moe_unpermute_bwd import moe_unpermute_bwd as moe_unpermute_bwd_cuda
 from olmo_core.utils import get_or_init_stream
 
-import transformer_engine_torch as tex
-from transformer_engine.pytorch.constants import TE_DType
-from transformer_engine.pytorch.permutation import moe_permute, moe_sort_chunks_by_index, moe_unpermute
+try:
+    import transformer_engine_torch as tex
+    from transformer_engine.pytorch.constants import TE_DType
+    from transformer_engine.pytorch.permutation import (
+        moe_permute,
+        moe_sort_chunks_by_index,
+        moe_unpermute,
+    )
+except Exception:  # pragma: no cover - import guard
+    tex = None  # type: ignore[assignment]
+    TE_DType = None  # type: ignore[assignment]
+    moe_permute = None  # type: ignore[assignment]
+    moe_sort_chunks_by_index = None  # type: ignore[assignment]
+    moe_unpermute = None  # type: ignore[assignment]
 
 
 # LAST_STREAM_ID = None
