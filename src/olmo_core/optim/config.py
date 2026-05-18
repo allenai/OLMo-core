@@ -11,6 +11,7 @@ from typing import (
     List,
     Optional,
     Set,
+    TYPE_CHECKING,
     Tuple,
     Type,
     TypeVar,
@@ -27,7 +28,8 @@ from ..config import Config, Registrable
 from ..exceptions import OLMoConfigurationError
 from ..utils import get_default_device, move_to_device
 
-from ..train.train_module import TrainModule
+if TYPE_CHECKING:
+    from ..train.train_module import TrainModule
 
 __all__ = [
     "OptimConfig",
@@ -170,7 +172,13 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def build(self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None) -> Opt:
+    def build(
+        self,
+        model: nn.Module,
+        train_module: "TrainModule",
+        strict: bool = True,
+        param_filter=None,
+    ) -> Opt:
         """
         Build the optimizer. This default implementation is suitable for standard, point-wise
         optimizers such as AdamW, Lion, etc.

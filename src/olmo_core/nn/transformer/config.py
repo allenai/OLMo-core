@@ -237,6 +237,9 @@ class TransformerBlockConfig(ModuleConfig):
             raise OLMoConfigurationError(
                 "TransformerBlockConfig requires 'sequence_mixer' to be set."
             )
+        self.attention = (
+            self.sequence_mixer if isinstance(self.sequence_mixer, AttentionConfig) else None
+        )
 
     def build(
         self,

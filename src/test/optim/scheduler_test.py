@@ -16,6 +16,7 @@ from olmo_core.optim import (
 )
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
+    ComposableSchedulerMonkeyPatchDecay,
     ComposableSchedulerStage,
     ComposableSchedulerStageType,
     OverrideDecay,
@@ -393,6 +394,45 @@ def test_composable_scheduler_override_decay_validation():
         OLMoConfigurationError, match="exactly one of 'end_lr' or 'end_lr_fraction'"
     ):
         OverrideDecay(start=100, duration=100)
+
+
+def test_composable_scheduler_accepts_legacy_monkey_patch_decay_name():
+    scheduler = ComposableScheduler(
+        stages=[
+            ComposableSchedulerStage(
+                duration=100,
+                shape=ComposableSchedulerStageType.linear,
+                end_lr_fraction=1.0,
+            )
+        ],
+        monkey_patch_decay=ComposableSchedulerMonkeyPatchDecay(
+            start=50,
+            duration=50,
+            end_lr=0.0,
+        ),
+    )
+
+    assert scheduler.override_decay is not None
+    assert scheduler.get_lr(1.0, 75, 100) == pytest.approx(0.5)
+
+
+def test_composable_scheduler_rejects_both_override_decay_names():
+    with pytest.raises(OLMoConfigurationError, match="at most one"):
+        ComposableScheduler(
+            stages=[
+                ComposableSchedulerStage(
+                    duration=100,
+                    shape=ComposableSchedulerStageType.linear,
+                    end_lr_fraction=1.0,
+                )
+            ],
+            override_decay=OverrideDecay(start=50, duration=50, end_lr=0.0),
+            monkey_patch_decay=ComposableSchedulerMonkeyPatchDecay(
+                start=50,
+                duration=50,
+                end_lr=0.0,
+            ),
+        )
 
 
 class TestWSDSScheduler:

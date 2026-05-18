@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import math
-from typing import Optional, Tuple, Type, Union
+from typing import TYPE_CHECKING, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -33,7 +33,6 @@ from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
     hook_with_zero_step,
     hook_with_zero_step_interleaved,
 )
-from ..train.train_module import TrainModule
 from olmo_core.utils import get_default_device, move_to_device
 from collections import OrderedDict
 from fnmatch import fnmatch
@@ -55,6 +54,9 @@ import nvtx
 from olmo_core.nn.fp8_weight import FP8WeightStore
 
 log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from ..train.train_module import TrainModule
 
 MUON_DEFAULT_NS_COEFFICIENTS = (3.4445, -4.7750, 2.0315)
 MUON_DEFAULT_EPS = 1e-7
@@ -406,7 +408,13 @@ class MoEFusedV2OptimizerConfig(Config):
                                 ep_param_ids.add(id(p))
         return ep_param_ids
 
-    def build(self, model_parts: List, train_module: TrainModule, strict: bool = True, param_filter=None) -> "MoEFusedV2Optimizer":
+    def build(
+        self,
+        model_parts: List,
+        train_module: "TrainModule",
+        strict: bool = True,
+        param_filter=None,
+    ) -> "MoEFusedV2Optimizer":
         """
         Build the optimizer.
 
