@@ -128,6 +128,7 @@ class TransformerTrainModule(TrainModule):
         poe_sb_N_max: int = 5,
         poe_sb_dolma2_vocab_size: int = 100278,
         poe_sb_max_order2_continuations: Optional[int] = None,
+        poe_sb_max_order_continuations: Optional[Dict[int, int]] = None,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -253,6 +254,7 @@ class TransformerTrainModule(TrainModule):
         self.poe_sb_N_max = int(poe_sb_N_max)
         self.poe_sb_dolma2_vocab_size = int(poe_sb_dolma2_vocab_size)
         self.poe_sb_max_order2_continuations = poe_sb_max_order2_continuations
+        self.poe_sb_max_order_continuations = poe_sb_max_order_continuations
         # Lazy: instantiated on first eval_batch call (per process), so we
         # don't open the mmap on the main coordinator rank that may never
         # actually run an eval.
@@ -1053,6 +1055,7 @@ class TransformerTrainModule(TrainModule):
                 N_max=self.poe_sb_N_max,
                 alpha=self.poe_sb_alpha,
                 max_order2_continuations=self.poe_sb_max_order2_continuations,
+                max_order_continuations=self.poe_sb_max_order_continuations,
             )
         return self._poe_sb_reader
 

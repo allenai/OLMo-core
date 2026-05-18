@@ -105,11 +105,13 @@ class StupidBackoffNgramLM:
         order present in the index (currently 5).
     :param alpha: Stupid-backoff discount factor per Brants et al 2007.
         Default 0.4. Lower means more weight on shorter histories.
-    :param max_order2_continuations: Optional hard cap on the number of
-        order-2 continuations emitted per matched history. When set, the reader
-        keeps the highest-count continuations for each one-token history and
-        lets omitted tokens fall through to the unigram floor. Orders 3+ remain
-        exact.
+    :param max_order_continuations: Optional hard caps by ngram order on the
+        number of continuations emitted per matched history. When set for an
+        order, the reader keeps the highest-count continuations for that
+        history and lets omitted tokens fall through to the next lower order,
+        or to the unigram floor if no lower order emits them.
+    :param max_order2_continuations: Backward-compatible shortcut for
+        ``max_order_continuations={2: value}``.
     """
 
     def __init__(
@@ -120,14 +122,30 @@ class StupidBackoffNgramLM:
         N_max: int = 5,
         alpha: float = 0.4,
         max_order2_continuations: Optional[int] = None,
+        max_order_continuations: Optional[Dict[int, int]] = None,
         mirror_to_shm: bool = True,
     ):
+        caps: Dict[int, int] = {}
+        if max_order_continuations:
+            caps.update({int(order): int(cap) for order, cap in max_order_continuations.items()})
+        if max_order2_continuations is not None:
+            caps[2] = int(max_order2_continuations)
         if max_order2_continuations is not None and max_order2_continuations <= 0:
             raise ValueError(
                 "max_order2_continuations must be positive when set; "
                 f"got {max_order2_continuations}"
             )
-        self.max_order2_continuations = max_order2_continuations
+        for order, cap in caps.items():
+            if order < 2:
+                raise ValueError(f"continuation cap order must be >= 2; got {order}")
+            if order > N_max:
+                raise ValueError(
+                    f"continuation cap order {order} exceeds N_max={N_max}"
+                )
+            if cap <= 0:
+                raise ValueError(f"continuation cap for order {order} must be positive; got {cap}")
+        self.max_order_continuations = caps
+        self.max_order2_continuations = caps.get(2)
         p = Path(table_dir)
         if (p / "counts_index").is_dir():
             index_dir = p / "counts_index"
@@ -146,7 +164,7 @@ class StupidBackoffNgramLM:
         _sb_log(
             f"reader init start table_dir={table_dir} index_dir={index_dir} "
             f"mirror_to_shm={mirror_to_shm} "
-            f"max_order2_continuations={max_order2_continuations}"
+            f"max_order_continuations={self.max_order_continuations or None}"
         )
 
         t_phase = time.perf_counter()
@@ -364,8 +382,9 @@ class StupidBackoffNgramLM:
                 continue
             conts_kenlm = np.asarray(order["continuations"][lo:hi], dtype=np.uint32)
             cnts = np.asarray(order["counts"][lo:hi], dtype=np.uint64)
-            if n == 2 and self.max_order2_continuations is not None:
-                k = int(self.max_order2_continuations)
+            order_cap = self.max_order_continuations.get(n)
+            if order_cap is not None:
+                k = int(order_cap)
                 if cnts.shape[0] > k:
                     keep = np.argpartition(cnts, -k)[-k:]
                     conts_kenlm = conts_kenlm[keep]
@@ -546,8 +565,9 @@ class StupidBackoffNgramLM:
             # belongs to; within_row[k] = offset within that row's (continuation,
             # count) slice; flat_arr_idx[k] = the global index to read from.
             total_raw = total
-            if n == 2 and self.max_order2_continuations is not None:
-                k = int(self.max_order2_continuations)
+            order_cap = self.max_order_continuations.get(n)
+            if order_cap is not None:
+                k = int(order_cap)
                 selected_idx: list[np.ndarray] = []
                 selected_row: list[np.ndarray] = []
                 # The same one-token history often appears many times in a
@@ -615,11 +635,12 @@ class StupidBackoffNgramLM:
             flat_positions = hit_positions[flat_row_v].astype(np.int64)
 
             per_order.append((flat_positions, flat_did_v, flat_log_score, n))
-            if n == 2 and self.max_order2_continuations is not None:
+            order_cap = self.max_order_continuations.get(n)
+            if order_cap is not None:
                 order_summaries.append(
                     f"n{n}:hist_hits={n_hits:,},raw={total_raw:,},"
                     f"kept={total:,},overrides={n_valid:,},"
-                    f"cap={int(self.max_order2_continuations):,}"
+                    f"cap={int(order_cap):,}"
                 )
             else:
                 order_summaries.append(f"n{n}:hist_hits={n_hits:,},overrides={n_valid:,}")

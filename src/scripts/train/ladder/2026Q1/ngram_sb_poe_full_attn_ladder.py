@@ -85,6 +85,24 @@ DEFAULT_DOLMA2_VOCAB_SIZE = 100278
 DEFAULT_SB_MAX_ORDER2_CONTINUATIONS = None
 
 
+def _parse_order_caps(raw_caps: list[str] | None) -> dict[int, int] | None:
+    if not raw_caps:
+        return None
+    caps: dict[int, int] = {}
+    for raw in raw_caps:
+        if "=" not in raw:
+            raise ValueError(f"expected order cap as ORDER=CAP, got {raw!r}")
+        order_s, cap_s = raw.split("=", 1)
+        order = int(order_s)
+        cap = int(cap_s)
+        if order < 2:
+            raise ValueError(f"order cap must target order >= 2, got {order}")
+        if cap <= 0:
+            raise ValueError(f"order cap must be positive, got {cap}")
+        caps[order] = cap
+    return caps
+
+
 @dataclasses.dataclass(kw_only=True)
 class _WSDSChinchillaSmoke(WSDSChinchillaRunConfigurator):
     """Smoke variant of WSDS Chinchilla, copied from the KN-smoothed
@@ -117,6 +135,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_alpha: float = DEFAULT_SB_ALPHA
     sb_n_max: int = DEFAULT_SB_N_MAX
     sb_max_order2_continuations: int | None = DEFAULT_SB_MAX_ORDER2_CONTINUATIONS
+    sb_max_order_continuations: dict[int, int] | None = None
     dolma2_vocab_size: int = DEFAULT_DOLMA2_VOCAB_SIZE
     smoke_1gpu: bool = False
 
@@ -171,6 +190,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_N_max=self.sb_n_max,
             poe_sb_dolma2_vocab_size=self.dolma2_vocab_size,
             poe_sb_max_order2_continuations=self.sb_max_order2_continuations,
+            poe_sb_max_order_continuations=self.sb_max_order_continuations,
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -183,6 +203,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
+    sb_order_caps = _parse_order_caps(getattr(args, "sb_max_order_continuations", None))
 
     base_source = ConcatAndChunkInstanceSourceConfig(  # noqa: F405
         sources=[
@@ -202,6 +223,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         max_order2_continuations=getattr(
             args, "sb_max_order2_continuations", DEFAULT_SB_MAX_ORDER2_CONTINUATIONS
         ),
+        max_order_continuations=sb_order_caps,
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -228,6 +250,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 "sb_max_order2_continuations",
                 DEFAULT_SB_MAX_ORDER2_CONTINUATIONS,
             ),
+            sb_max_order_continuations=sb_order_caps,
             dolma2_vocab_size=int(tokenizer.vocab_size),
             smoke_1gpu=smoke_1gpu,
         ),
@@ -293,6 +316,17 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "Optional hard cap on order-2 continuations per one-token history. "
             "Keeps the highest-count continuations and lets omitted tokens fall "
             "through to the unigram floor. Orders 3+ remain exact."
+        ),
+    )
+    parser.add_argument(
+        "--sb-max-order-continuations",
+        action="append",
+        default=None,
+        metavar="ORDER=CAP",
+        help=(
+            "Optional hard cap for any SB order, repeatable, for example "
+            "'--sb-max-order-continuations 2=128 --sb-max-order-continuations 3=128'. "
+            "The legacy --sb-max-order2-continuations flag still sets the order-2 cap."
         ),
     )
     parser.add_argument(

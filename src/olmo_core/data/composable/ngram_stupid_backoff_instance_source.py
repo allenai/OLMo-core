@@ -41,7 +41,7 @@ import hashlib
 import os
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 import numpy as np
 
@@ -66,9 +66,10 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         order present in the index (currently 5).
     :param alpha: Stupid-backoff discount factor per Brants et al 2007.
         Default 0.4.
-    :param max_order2_continuations: Optional hard cap on order-2
-        continuations per one-token history. Orders 3+ remain exact; omitted
-        order-2 continuations fall through to the unigram floor.
+    :param max_order_continuations: Optional hard caps by ngram order on
+        continuations per matched history. Kept continuations are selected by
+        raw count; omitted continuations fall through to lower orders or the
+        unigram floor.
     """
 
     DISPLAY_ICON = "\U000f0d77"  # nf-md-graphql (same as the KN-smoothed source)
@@ -82,6 +83,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         N_max: int = 5,
         alpha: float = 0.4,
         max_order2_continuations: Optional[int] = None,
+        max_order_continuations: Optional[Dict[int, int]] = None,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -97,6 +99,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         self._N_max = int(N_max)
         self._alpha = float(alpha)
         self._max_order2_continuations = max_order2_continuations
+        self._max_order_continuations = max_order_continuations
         # Lazy per-process init: don't mmap in the main process so the
         # source pickles cleanly to spawn workers; first lookup populates.
         self._reader = None
@@ -132,6 +135,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 N_max=self._N_max,
                 alpha=self._alpha,
                 max_order2_continuations=self._max_order2_continuations,
+                max_order_continuations=self._max_order_continuations,
             )
         return self._reader
 
@@ -147,6 +151,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 f"N_max={self._N_max},"
                 f"alpha={self._alpha},"
                 f"max_order2_continuations={self._max_order2_continuations},"
+                f"max_order_continuations={self._max_order_continuations},"
             ).encode()
         )
         return sha.hexdigest()
@@ -195,6 +200,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
     N_max: int = 5
     alpha: float = 0.4
     max_order2_continuations: Optional[int] = None
+    max_order_continuations: Optional[Dict[int, int]] = None
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> NgramStupidBackoffInstanceSource:
@@ -206,6 +212,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
             N_max=self.N_max,
             alpha=self.alpha,
             max_order2_continuations=self.max_order2_continuations,
+            max_order_continuations=self.max_order_continuations,
             work_dir=work_dir,
             label=self.label,
         )
