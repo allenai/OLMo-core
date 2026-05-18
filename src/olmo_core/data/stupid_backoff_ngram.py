@@ -60,10 +60,37 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import numpy as np
+
+
+def _sb_log(message: str) -> None:
+    """Print a flush-safe SB debug line with enough process context for Beaker logs."""
+    rank = os.environ.get("RANK", "?")
+    local_rank = os.environ.get("LOCAL_RANK", "?")
+    print(
+        f"[SB pid={os.getpid()} rank={rank} local_rank={local_rank}] {message}",
+        flush=True,
+    )
+
+
+def _sb_debug_enabled() -> bool:
+    return os.environ.get("OLMO_SB_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _history_struct_dtype(plen: int) -> np.dtype:
+    """Structured dtype whose ordering matches numeric lexicographic rows.
+
+    A single subarray field, e.g. ``[("h", uint32, plen)]``, does not sort the
+    same way as the row-wise uint32 histories written by build_counts_index.py
+    once token ids exceed one byte. One field per history token makes NumPy's
+    structured-array ``searchsorted`` compare h0, then h1, and so on.
+    """
+    return np.dtype([(f"h{i}", np.uint32) for i in range(plen)])
 
 
 class StupidBackoffNgramLM:
@@ -103,7 +130,13 @@ class StupidBackoffNgramLM:
             )
         self.index_dir = index_dir
         self.pilot_dir = pilot_dir
+        t_init = time.perf_counter()
+        _sb_log(
+            f"reader init start table_dir={table_dir} index_dir={index_dir} "
+            f"mirror_to_shm={mirror_to_shm}"
+        )
 
+        t_phase = time.perf_counter()
         with open(index_dir / "meta.json") as f:
             self.meta = json.load(f)
         if int(self.meta.get("format_version", 0)) != 2:
@@ -124,8 +157,14 @@ class StupidBackoffNgramLM:
         self.log_alpha = math.log(self.alpha)
         self.vocab_size = int(dolma2_vocab_size)  # V_dolma2, NOT V_kenlm
         V = self.vocab_size
+        _sb_log(
+            f"meta loaded in {time.perf_counter() - t_phase:.2f}s "
+            f"kenlm_vocab={kenlm_vocab_size:,} total_tokens={total:,} "
+            f"N_max={self.N_max} alpha={self.alpha}"
+        )
 
         # Build kenlm ↔ dolma2 id translation tables from pilot.counts.vocab.
+        t_phase = time.perf_counter()
         vocab_path = pilot_dir / "pilot.counts.vocab"
         if not vocab_path.is_file():
             vocab_path = Path(self.meta.get("source_vocab_path", str(vocab_path)))
@@ -168,6 +207,10 @@ class StupidBackoffNgramLM:
             if did < V:
                 dolma2_to_kenlm[did] = np.uint32(kid)
         self.dolma2_to_kenlm = dolma2_to_kenlm
+        _sb_log(
+            f"vocab translation built in {time.perf_counter() - t_phase:.2f}s "
+            f"unparseable_entries={n_unparseable:,}"
+        )
 
         # Mmap the per-order index files. When ``mirror_to_shm=True``
         # (the default; required for training-time use with 16+ dataloader
@@ -192,10 +235,17 @@ class StupidBackoffNgramLM:
             return np.memmap(path, dtype=dtype, mode="r")
 
         self.orders: Dict[int, dict] = {}
+        t_phase = time.perf_counter()
+        total_hist = 0
+        total_pairs = 0
         for n_str, info in self.meta["per_order"].items():
             n = int(n_str)
             n_hist = int(info["n_hist"])
+            n_pairs = int(info["n_pairs"])
+            total_hist += n_hist
+            total_pairs += n_pairs
             plen = n - 1
+            t_order = time.perf_counter()
             order_data: dict = {
                 "n_hist": n_hist,
                 "offsets": _open_mmap(f"order{n}.offsets.bin", np.uint64),
@@ -210,12 +260,21 @@ class StupidBackoffNgramLM:
                 hist = _open_mmap(f"order{n}.histories.bin", np.uint32).reshape(
                     n_hist, plen
                 )
-                struct_dtype = np.dtype([("h", np.uint32, plen)])
+                struct_dtype = _history_struct_dtype(plen)
                 order_data["histories"] = hist
                 order_data["histories_struct"] = hist.view(struct_dtype).reshape(-1)
             self.orders[n] = order_data
+            _sb_log(
+                f"order{n} mmap ready in {time.perf_counter() - t_order:.2f}s "
+                f"n_hist={n_hist:,} n_pairs={n_pairs:,}"
+            )
+        _sb_log(
+            f"all mmaps ready in {time.perf_counter() - t_phase:.2f}s "
+            f"total_hist={total_hist:,} total_pairs={total_pairs:,}"
+        )
 
         # Build the unigram floor in dolma2 vocab space (Laplace +1).
+        t_phase = time.perf_counter()
         log_denom = math.log(total + V)
         unobserved_log_p = -log_denom  # log(1 / (total + V))
         discount = (self.N_max - 1) * self.log_alpha
@@ -238,6 +297,11 @@ class StupidBackoffNgramLM:
 
         self.kenlm_vocab_size = kenlm_vocab_size
         self.total_corpus_tokens = total
+        self._override_debug_calls = 0
+        _sb_log(
+            f"unigram floor ready in {time.perf_counter() - t_phase:.2f}s; "
+            f"reader init total {time.perf_counter() - t_init:.2f}s"
+        )
 
     # ----- low-level helpers ----------------------------------------------
 
@@ -392,6 +456,8 @@ class StupidBackoffNgramLM:
         """
         from numpy.lib.stride_tricks import sliding_window_view
 
+        t0 = time.perf_counter()
+        order_summaries: list[str] = []
         input_ids = np.asarray(input_ids, dtype=np.int64)
         S = int(input_ids.shape[0])
         EMPTY = (
@@ -477,6 +543,7 @@ class StupidBackoffNgramLM:
             valid_mask = (flat_did < self.vocab_size) & (flat_counts > 0)
             if not valid_mask.any():
                 continue
+            n_valid = int(valid_mask.sum())
             flat_row_v = flat_row[valid_mask]
             flat_did_v = flat_did[valid_mask]
             flat_counts_v = flat_counts[valid_mask]
@@ -490,8 +557,10 @@ class StupidBackoffNgramLM:
             flat_positions = hit_positions[flat_row_v].astype(np.int64)
 
             per_order.append((flat_positions, flat_did_v, flat_log_score, n))
+            order_summaries.append(f"n{n}:hist_hits={n_hits:,},overrides={n_valid:,}")
 
         if not per_order:
+            self._maybe_log_override_call(t0, S, 0, order_summaries)
             return EMPTY
 
         # Concatenate per-order outputs with a parallel order-id column, then
@@ -515,8 +584,31 @@ class StupidBackoffNgramLM:
         is_first[0] = True
         is_first[1:] = (pos_s[1:] != pos_s[:-1]) | (did_s[1:] != did_s[:-1])
 
-        return (
+        result = (
             pos_s[is_first].astype(np.int32, copy=False),
             did_s[is_first].astype(np.int32, copy=False),
             score_s[is_first].astype(np.float32, copy=False),
         )
+        self._maybe_log_override_call(t0, S, int(result[0].shape[0]), order_summaries)
+        return result
+
+    def _maybe_log_override_call(
+        self,
+        t0: float,
+        sequence_length: int,
+        n_overrides: int,
+        order_summaries: list[str],
+    ) -> None:
+        self._override_debug_calls += 1
+        elapsed = time.perf_counter() - t0
+        if (
+            self._override_debug_calls <= 3
+            or elapsed >= 1.0
+            or _sb_debug_enabled()
+        ):
+            summary = "; ".join(order_summaries) if order_summaries else "no higher-order hits"
+            _sb_log(
+                f"compute_overrides call={self._override_debug_calls} "
+                f"S={sequence_length:,} overrides={n_overrides:,} "
+                f"elapsed={elapsed:.3f}s {summary}"
+            )

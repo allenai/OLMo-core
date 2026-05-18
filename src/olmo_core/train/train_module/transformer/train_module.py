@@ -1,5 +1,7 @@
 import contextlib
 import logging
+import os
+import time
 from dataclasses import replace
 from functools import cached_property, lru_cache
 from typing import Any, Dict, Generator, Literal, Optional, Tuple, Union
@@ -508,6 +510,23 @@ class TransformerTrainModule(TrainModule):
             )
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
+        if poe_sb_active:
+            sb_split_logs = getattr(self, "_sb_split_debug_logs", 0)
+            if sb_split_logs < 3:
+                total_overrides = int(batch["sb_override_batch_idx"].numel())
+                per_mb_overrides = [
+                    int(mb["sb_override_batch_idx"].numel()) for mb in micro_batches
+                ]
+                print(
+                    f"[SB train pid={os.getpid()} rank={dist.get_rank() if dist.is_initialized() else '?'}] "
+                    f"split batch_size={batch['input_ids'].shape[0]} "
+                    f"num_micro_batches={num_micro_batches} "
+                    f"total_overrides={total_overrides:,} "
+                    f"per_microbatch_overrides={per_mb_overrides[:8]}"
+                    f"{'...' if len(per_mb_overrides) > 8 else ''}",
+                    flush=True,
+                )
+                self._sb_split_debug_logs = sb_split_logs + 1
 
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
@@ -526,6 +545,11 @@ class TransformerTrainModule(TrainModule):
                 sb_override_position = micro_batch.pop("sb_override_position", None)
                 sb_override_token_id = micro_batch.pop("sb_override_token_id", None)
                 sb_override_log_score = micro_batch.pop("sb_override_log_score", None)
+                sb_train_log = (
+                    poe_sb_active
+                    and getattr(self, "_sb_train_debug_logs", 0) < 6
+                )
+                t_sb_transfer = time.perf_counter() if sb_train_log else None
                 if sb_override_batch_idx is not None:
                     sb_override_batch_idx = sb_override_batch_idx.to(
                         self.device, non_blocking=True
@@ -538,6 +562,19 @@ class TransformerTrainModule(TrainModule):
                     )
                     sb_override_log_score = sb_override_log_score.to(
                         self.device, non_blocking=True
+                    )
+                if sb_train_log and t_sb_transfer is not None:
+                    n_overrides = (
+                        int(sb_override_batch_idx.numel())
+                        if sb_override_batch_idx is not None
+                        else 0
+                    )
+                    print(
+                        f"[SB train pid={os.getpid()} rank={dist.get_rank() if dist.is_initialized() else '?'}] "
+                        f"microbatch={micro_batch_idx + 1}/{num_micro_batches} "
+                        f"override_transfer_dispatched={time.perf_counter() - t_sb_transfer:.4f}s "
+                        f"overrides={n_overrides:,}",
+                        flush=True,
                     )
                 if soft_target_token_ids is not None:
                     soft_target_token_ids = soft_target_token_ids.to(
@@ -658,6 +695,7 @@ class TransformerTrainModule(TrainModule):
                     # recompute z_loss from the un-biased logits for the
                     # regularizer term.
                     assert self.poe_lambda is not None
+                    t_forward = time.perf_counter() if sb_train_log else None
                     output = self.model_forward(
                         input_ids,
                         labels=labels,
@@ -670,10 +708,18 @@ class TransformerTrainModule(TrainModule):
                     )
                     logits = output.logits
                     z_loss = output.z_loss
+                    if sb_train_log and t_forward is not None:
+                        print(
+                            f"[SB train pid={os.getpid()} rank={dist.get_rank() if dist.is_initialized() else '?'}] "
+                            f"microbatch={micro_batch_idx + 1}/{num_micro_batches} "
+                            f"model_forward_dispatched={time.perf_counter() - t_forward:.4f}s",
+                            flush=True,
+                        )
                     assert logits is not None, (
                         "SB-PoE path requires LMHead loss_implementation='default' "
                         "so full logits are returned"
                     )
+                    t_loss = time.perf_counter() if sb_train_log else None
                     poe_loss = self._compute_poe_loss_sb(
                         logits=logits,
                         sb_override_batch_idx=sb_override_batch_idx,
@@ -683,6 +729,13 @@ class TransformerTrainModule(TrainModule):
                         labels=labels,
                         loss_div_factor=batch_num_tokens_for_loss,
                     )
+                    if sb_train_log and t_loss is not None:
+                        print(
+                            f"[SB train pid={os.getpid()} rank={dist.get_rank() if dist.is_initialized() else '?'}] "
+                            f"microbatch={micro_batch_idx + 1}/{num_micro_batches} "
+                            f"sb_loss_dispatched={time.perf_counter() - t_loss:.4f}s",
+                            flush=True,
+                        )
                     if self.z_loss_multiplier is not None:
                         logits_local_f32 = get_local_tensor(logits).float()
                         z_log_sum_exp = torch.logsumexp(logits_local_f32, dim=-1)
@@ -714,6 +767,10 @@ class TransformerTrainModule(TrainModule):
                         del z_loss_with_grad
                     if z_loss is not None:
                         del z_loss
+                    if sb_train_log:
+                        self._sb_train_debug_logs = (
+                            getattr(self, "_sb_train_debug_logs", 0) + 1
+                        )
                 elif soft_ce_active and (
                     (self.soft_ce_truncation == "renormalize" and soft_target_probs is not None)
                     or (self.soft_ce_truncation == "uniform_residual" and soft_target_log_probs is not None)

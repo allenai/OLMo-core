@@ -16,6 +16,7 @@ from olmo_core.data.utils import (
     melt_batch,
     pack_documents_into_instances,
     segment_documents_into_instances,
+    split_batch,
     write_document_indices,
 )
 
@@ -94,6 +95,62 @@ def test_melt_batch():
     assert new_batch["input_ids"].shape == (6, 4)
     assert new_batch["index"].tolist() == [0, 0, 0, 1, 1, 1]
     assert new_batch["metadata"] == [{"path": "x"}] * 3 + [{"path": "y"}] * 3
+
+
+def test_split_batch_keeps_sb_overrides_by_instance():
+    batch = {
+        "input_ids": torch.arange(12).reshape(4, 3),
+        "index": torch.tensor([10, 11, 12, 13]),
+        "metadata": [{"i": 0}, {"i": 1}, {"i": 2}, {"i": 3}],
+        "sb_override_batch_idx": torch.tensor([0, 0, 2, 3, 3], dtype=torch.long),
+        "sb_override_position": torch.tensor([0, 1, 0, 0, 2], dtype=torch.long),
+        "sb_override_token_id": torch.tensor([100, 101, 200, 300, 301], dtype=torch.long),
+        "sb_override_log_score": torch.tensor([-1.0, -2.0, -3.0, -4.0, -5.0]),
+    }
+
+    micro_batches = split_batch(batch, 2)
+
+    assert len(micro_batches) == 2
+    assert micro_batches[0]["input_ids"].tolist() == [[0, 1, 2], [3, 4, 5]]
+    assert micro_batches[0]["index"].tolist() == [10, 11]
+    assert micro_batches[0]["metadata"] == [{"i": 0}, {"i": 1}]
+    assert micro_batches[0]["sb_override_batch_idx"].tolist() == [0, 0]
+    assert micro_batches[0]["sb_override_position"].tolist() == [0, 1]
+    assert micro_batches[0]["sb_override_token_id"].tolist() == [100, 101]
+    assert micro_batches[0]["sb_override_log_score"].tolist() == [-1.0, -2.0]
+
+    assert micro_batches[1]["input_ids"].tolist() == [[6, 7, 8], [9, 10, 11]]
+    assert micro_batches[1]["index"].tolist() == [12, 13]
+    assert micro_batches[1]["metadata"] == [{"i": 2}, {"i": 3}]
+    assert micro_batches[1]["sb_override_batch_idx"].tolist() == [0, 1, 1]
+    assert micro_batches[1]["sb_override_position"].tolist() == [0, 0, 2]
+    assert micro_batches[1]["sb_override_token_id"].tolist() == [200, 300, 301]
+    assert micro_batches[1]["sb_override_log_score"].tolist() == [-3.0, -4.0, -5.0]
+
+
+def test_split_batch_sb_overrides_can_be_empty_for_a_microbatch():
+    batch = {
+        "input_ids": torch.arange(12).reshape(4, 3),
+        "sb_override_batch_idx": torch.tensor([0, 3], dtype=torch.long),
+        "sb_override_position": torch.tensor([1, 2], dtype=torch.long),
+        "sb_override_token_id": torch.tensor([100, 300], dtype=torch.long),
+        "sb_override_log_score": torch.tensor([-1.0, -3.0]),
+    }
+
+    micro_batches = split_batch(batch, 1)
+
+    assert [mb["sb_override_batch_idx"].tolist() for mb in micro_batches] == [
+        [0],
+        [],
+        [],
+        [0],
+    ]
+    assert [mb["sb_override_token_id"].tolist() for mb in micro_batches] == [
+        [100],
+        [],
+        [],
+        [300],
+    ]
 
 
 def test_get_document_lengths():

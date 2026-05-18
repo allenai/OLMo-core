@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import functools as ft
 import hashlib
+import os
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -91,6 +93,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         # Lazy per-process init: don't mmap in the main process so the
         # source pickles cleanly to spawn workers; first lookup populates.
         self._reader = None
+        self._getitem_debug_calls = 0
 
     @property
     def source(self) -> InstanceSource:
@@ -144,12 +147,24 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
 
     def __getitem__(self, idx: int) -> Instance:
         idx = self.validate_index(idx)
+        t0 = time.perf_counter()
         inst = self._source[idx]
+        t_source = time.perf_counter()
 
         input_ids = np.asarray(inst["input_ids"], dtype=np.int64)
         positions, token_ids, log_scores = self._get_reader().compute_overrides_for_sequence(
             input_ids
         )
+        elapsed = time.perf_counter() - t0
+        self._getitem_debug_calls += 1
+        if self._getitem_debug_calls <= 4 or elapsed >= 1.0:
+            print(
+                f"[SB source pid={os.getpid()}] __getitem__ call={self._getitem_debug_calls} "
+                f"idx={idx} S={input_ids.shape[0]:,} overrides={positions.shape[0]:,} "
+                f"source={t_source - t0:.3f}s sb={time.perf_counter() - t_source:.3f}s "
+                f"total={elapsed:.3f}s",
+                flush=True,
+            )
 
         out = dict(inst)
         out["sb_override_position"] = positions  # (n_overrides,) int32

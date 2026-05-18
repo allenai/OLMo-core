@@ -51,8 +51,25 @@ def split_batch(batch: Dict[str, Any], num_microbatch_instances: int) -> List[Di
     if batch_size <= num_microbatch_instances:
         return [batch]
     else:
+        sb_keys = {
+            "sb_override_batch_idx",
+            "sb_override_position",
+            "sb_override_token_id",
+            "sb_override_log_score",
+        }
+        has_sb_overrides = "sb_override_batch_idx" in batch
+        if has_sb_overrides and not sb_keys.issubset(batch.keys()):
+            missing = ", ".join(sorted(sb_keys - set(batch.keys())))
+            raise RuntimeError(f"SB override batch is missing required key(s): {missing}")
+
         micro_batches = {}
         for key, value in batch.items():
+            if has_sb_overrides and key in sb_keys:
+                # The SB override tensors are ragged, flattened across the
+                # whole batch, and keyed by sb_override_batch_idx. Splitting
+                # them every N override rows would both scramble semantics and
+                # create huge tuples of tiny tensor views on real batches.
+                continue
             if isinstance(value, torch.Tensor):
                 micro_batches[key] = value.split(num_microbatch_instances, dim=0)
             elif isinstance(value, list):
@@ -65,10 +82,45 @@ def split_batch(batch: Dict[str, Any], num_microbatch_instances: int) -> List[Di
                 ]
             else:
                 raise RuntimeError(f"unexpected item in batch: '{key}={value}'")
-        return [
+        out = [
             {key: value[i] for key, value in micro_batches.items()}
             for i in range(len(micro_batches["input_ids"]))
         ]
+
+        if has_sb_overrides:
+            bidx = batch["sb_override_batch_idx"]
+            pos = batch["sb_override_position"]
+            tok = batch["sb_override_token_id"]
+            score = batch["sb_override_log_score"]
+            if not (
+                isinstance(bidx, torch.Tensor)
+                and isinstance(pos, torch.Tensor)
+                and isinstance(tok, torch.Tensor)
+                and isinstance(score, torch.Tensor)
+            ):
+                raise RuntimeError("SB override fields must be tensors after collation")
+            if not (bidx.shape == pos.shape == tok.shape == score.shape):
+                raise RuntimeError(
+                    "SB override fields must have matching flat shapes; got "
+                    f"batch_idx={tuple(bidx.shape)}, position={tuple(pos.shape)}, "
+                    f"token_id={tuple(tok.shape)}, log_score={tuple(score.shape)}"
+                )
+            if bidx.numel() > 0 and (int(bidx.min()) < 0 or int(bidx.max()) >= batch_size):
+                raise RuntimeError(
+                    "SB override batch indices must be within the collated batch; got "
+                    f"min={int(bidx.min())}, max={int(bidx.max())}, batch_size={batch_size}"
+                )
+
+            for i, micro_batch in enumerate(out):
+                start = i * num_microbatch_instances
+                end = min(start + num_microbatch_instances, batch_size)
+                mask = (bidx >= start) & (bidx < end)
+                micro_batch["sb_override_batch_idx"] = bidx[mask] - start
+                micro_batch["sb_override_position"] = pos[mask]
+                micro_batch["sb_override_token_id"] = tok[mask]
+                micro_batch["sb_override_log_score"] = score[mask]
+
+        return out
 
 
 def melt_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[str, Any]:
