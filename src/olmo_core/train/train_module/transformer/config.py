@@ -369,13 +369,14 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     # per-position scatter overrides for higher-order observed (h_k, w).
     # ``poe_lambda`` is shared with the KN-smoothed path.
     #
-    # ``poe_sb_dolma2_vocab_size`` defaults to dolma2's V=100278. The SB
-    # reader needs to know V to size its unigram floor independently of
-    # the (smaller) kenlm vocab size encoded in the index.
+    # ``poe_sb_dolma2_vocab_size`` defaults to dolma2's padded model vocab
+    # size, not the raw tokenizer vocab size. The SB reader needs to know the
+    # model-logit V to size its unigram floor independently of the smaller
+    # kenlm vocab size encoded in the index.
     poe_sb_table_dir: Optional[str] = None
     poe_sb_alpha: float = 0.4
     poe_sb_N_max: int = 5
-    poe_sb_dolma2_vocab_size: int = 100278
+    poe_sb_dolma2_vocab_size: int = 100352
     poe_sb_max_order2_continuations: Optional[int] = None
     poe_sb_max_order_continuations: Optional[Dict[int, int]] = None
 

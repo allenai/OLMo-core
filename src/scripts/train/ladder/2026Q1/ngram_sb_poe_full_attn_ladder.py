@@ -81,7 +81,7 @@ DEFAULT_SB_TABLE_DIR = (
 DEFAULT_SB_N_MAX = 5
 DEFAULT_SB_ALPHA = 0.4         # Brants et al 2007.
 DEFAULT_POE_LAMBDA = 0.1       # Same default as the KN-smoothed PoE 190M sweep winner.
-DEFAULT_DOLMA2_VOCAB_SIZE = 100278
+DEFAULT_DOLMA2_VOCAB_SIZE = 100352
 DEFAULT_SB_MAX_ORDER2_CONTINUATIONS = None
 
 
@@ -217,7 +217,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     wrapped_source = NgramStupidBackoffInstanceSourceConfig(  # noqa: F405
         source=base_source,
         table_dir=getattr(args, "sb_table_dir", DEFAULT_SB_TABLE_DIR),
-        dolma2_vocab_size=int(tokenizer.vocab_size),
+        dolma2_vocab_size=int(tokenizer.padded_vocab_size()),
         N_max=getattr(args, "sb_n_max", DEFAULT_SB_N_MAX),
         alpha=getattr(args, "sb_alpha", DEFAULT_SB_ALPHA),
         max_order2_continuations=getattr(
@@ -251,7 +251,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 DEFAULT_SB_MAX_ORDER2_CONTINUATIONS,
             ),
             sb_max_order_continuations=sb_order_caps,
-            dolma2_vocab_size=int(tokenizer.vocab_size),
+            dolma2_vocab_size=int(tokenizer.padded_vocab_size()),
             smoke_1gpu=smoke_1gpu,
         ),
         run_configurator=(
