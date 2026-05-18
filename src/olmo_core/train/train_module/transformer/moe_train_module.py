@@ -2,7 +2,7 @@ import contextlib
 import logging
 import os
 from dataclasses import replace
-from functools import cached_property
+from functools import cached_property, lru_cache
 from typing import Any, Dict, Generator, Optional, Tuple, Union, Iterable, Sequence
 
 from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
@@ -1355,9 +1355,17 @@ class MoEV2TransformerTrainModule(TrainModule):
         with self._model_forward_context():
             return self.model_parts[0](input_ids, labels=labels, **kwargs)
 
+    @lru_cache
     def num_flops_per_token(self, seq_len: int) -> int:
         # NOTE: it uses the config to calculate the FLOPs for the whole model, so it should be fine to just use the first model part.
         return self.model_parts[0].num_flops_per_token(seq_len)
+
+    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
+        if global_num_tokens is None:
+            return None
+        flops_per_token = self.num_flops_per_token(seq_len=batch["input_ids"].shape[1])
+        return flops_per_token * global_num_tokens
 
     @contextlib.contextmanager
     def _train_microbatch_context(
