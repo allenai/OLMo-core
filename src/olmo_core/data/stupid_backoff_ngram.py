@@ -105,6 +105,11 @@ class StupidBackoffNgramLM:
         order present in the index (currently 5).
     :param alpha: Stupid-backoff discount factor per Brants et al 2007.
         Default 0.4. Lower means more weight on shorter histories.
+    :param max_order2_continuations: Optional hard cap on the number of
+        order-2 continuations emitted per matched history. When set, the reader
+        keeps the highest-count continuations for each one-token history and
+        lets omitted tokens fall through to the unigram floor. Orders 3+ remain
+        exact.
     """
 
     def __init__(
@@ -114,8 +119,15 @@ class StupidBackoffNgramLM:
         dolma2_vocab_size: int,
         N_max: int = 5,
         alpha: float = 0.4,
+        max_order2_continuations: Optional[int] = None,
         mirror_to_shm: bool = True,
     ):
+        if max_order2_continuations is not None and max_order2_continuations <= 0:
+            raise ValueError(
+                "max_order2_continuations must be positive when set; "
+                f"got {max_order2_continuations}"
+            )
+        self.max_order2_continuations = max_order2_continuations
         p = Path(table_dir)
         if (p / "counts_index").is_dir():
             index_dir = p / "counts_index"
@@ -133,7 +145,8 @@ class StupidBackoffNgramLM:
         t_init = time.perf_counter()
         _sb_log(
             f"reader init start table_dir={table_dir} index_dir={index_dir} "
-            f"mirror_to_shm={mirror_to_shm}"
+            f"mirror_to_shm={mirror_to_shm} "
+            f"max_order2_continuations={max_order2_continuations}"
         )
 
         t_phase = time.perf_counter()
@@ -351,6 +364,12 @@ class StupidBackoffNgramLM:
                 continue
             conts_kenlm = np.asarray(order["continuations"][lo:hi], dtype=np.uint32)
             cnts = np.asarray(order["counts"][lo:hi], dtype=np.uint64)
+            if n == 2 and self.max_order2_continuations is not None:
+                k = int(self.max_order2_continuations)
+                if cnts.shape[0] > k:
+                    keep = np.argpartition(cnts, -k)[-k:]
+                    conts_kenlm = conts_kenlm[keep]
+                    cnts = cnts[keep]
             h_total = int(order["history_totals"][row_idx])
             log_h_total = math.log(h_total) if h_total > 0 else float("-inf")
             log_discount = (self.N_max - n) * self.log_alpha
@@ -526,10 +545,49 @@ class StupidBackoffNgramLM:
             # flat_row[k] = which hit (and thus which row + position) entry k
             # belongs to; within_row[k] = offset within that row's (continuation,
             # count) slice; flat_arr_idx[k] = the global index to read from.
-            flat_row = np.repeat(np.arange(n_hits, dtype=np.int64), lengths)
-            row_start_in_flat = np.cumsum(lengths) - lengths  # (n_hits,)
-            within_row = np.arange(total, dtype=np.int64) - row_start_in_flat[flat_row]
-            flat_arr_idx = lo[flat_row] + within_row  # (total,)
+            total_raw = total
+            if n == 2 and self.max_order2_continuations is not None:
+                k = int(self.max_order2_continuations)
+                selected_idx: list[np.ndarray] = []
+                selected_row: list[np.ndarray] = []
+                # The same one-token history often appears many times in a
+                # sequence. Cache the selected global continuation indices per
+                # history row so repeated contexts don't re-partition the same
+                # large count slice.
+                selected_by_history_row: dict[int, np.ndarray] = {}
+                for hit_i, (row_idx, start, end) in enumerate(zip(hit_row_indices, lo, hi)):
+                    row_idx_i = int(row_idx)
+                    arr_idx = selected_by_history_row.get(row_idx_i)
+                    if arr_idx is None:
+                        row_len = int(end - start)
+                        if row_len <= k:
+                            arr_idx = np.arange(int(start), int(end), dtype=np.int64)
+                        else:
+                            row_counts = np.asarray(
+                                order_data["counts"][int(start) : int(end)],
+                                dtype=np.uint64,
+                            )
+                            keep = np.argpartition(row_counts, -k)[-k:].astype(
+                                np.int64, copy=False
+                            )
+                            arr_idx = int(start) + keep
+                        selected_by_history_row[row_idx_i] = arr_idx
+                    if arr_idx.size == 0:
+                        continue
+                    selected_idx.append(arr_idx)
+                    selected_row.append(
+                        np.full(arr_idx.size, hit_i, dtype=np.int64)
+                    )
+                if not selected_idx:
+                    continue
+                flat_arr_idx = np.concatenate(selected_idx)
+                flat_row = np.concatenate(selected_row)
+                total = int(flat_arr_idx.shape[0])
+            else:
+                flat_row = np.repeat(np.arange(n_hits, dtype=np.int64), lengths)
+                row_start_in_flat = np.cumsum(lengths) - lengths  # (n_hits,)
+                within_row = np.arange(total, dtype=np.int64) - row_start_in_flat[flat_row]
+                flat_arr_idx = lo[flat_row] + within_row  # (total,)
 
             flat_conts_kenlm = np.asarray(
                 order_data["continuations"][flat_arr_idx], dtype=np.uint32
@@ -557,7 +615,14 @@ class StupidBackoffNgramLM:
             flat_positions = hit_positions[flat_row_v].astype(np.int64)
 
             per_order.append((flat_positions, flat_did_v, flat_log_score, n))
-            order_summaries.append(f"n{n}:hist_hits={n_hits:,},overrides={n_valid:,}")
+            if n == 2 and self.max_order2_continuations is not None:
+                order_summaries.append(
+                    f"n{n}:hist_hits={n_hits:,},raw={total_raw:,},"
+                    f"kept={total:,},overrides={n_valid:,},"
+                    f"cap={int(self.max_order2_continuations):,}"
+                )
+            else:
+                order_summaries.append(f"n{n}:hist_hits={n_hits:,},overrides={n_valid:,}")
 
         if not per_order:
             self._maybe_log_override_call(t0, S, 0, order_summaries)

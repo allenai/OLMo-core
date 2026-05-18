@@ -82,6 +82,7 @@ DEFAULT_SB_N_MAX = 5
 DEFAULT_SB_ALPHA = 0.4         # Brants et al 2007.
 DEFAULT_POE_LAMBDA = 0.1       # Same default as the KN-smoothed PoE 190M sweep winner.
 DEFAULT_DOLMA2_VOCAB_SIZE = 100278
+DEFAULT_SB_MAX_ORDER2_CONTINUATIONS = None
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -115,6 +116,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_table_dir: str = DEFAULT_SB_TABLE_DIR
     sb_alpha: float = DEFAULT_SB_ALPHA
     sb_n_max: int = DEFAULT_SB_N_MAX
+    sb_max_order2_continuations: int | None = DEFAULT_SB_MAX_ORDER2_CONTINUATIONS
     dolma2_vocab_size: int = DEFAULT_DOLMA2_VOCAB_SIZE
     smoke_1gpu: bool = False
 
@@ -168,6 +170,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_alpha=self.sb_alpha,
             poe_sb_N_max=self.sb_n_max,
             poe_sb_dolma2_vocab_size=self.dolma2_vocab_size,
+            poe_sb_max_order2_continuations=self.sb_max_order2_continuations,
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -196,6 +199,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         dolma2_vocab_size=int(tokenizer.vocab_size),
         N_max=getattr(args, "sb_n_max", DEFAULT_SB_N_MAX),
         alpha=getattr(args, "sb_alpha", DEFAULT_SB_ALPHA),
+        max_order2_continuations=getattr(
+            args, "sb_max_order2_continuations", DEFAULT_SB_MAX_ORDER2_CONTINUATIONS
+        ),
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -217,6 +223,11 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sb_table_dir=getattr(args, "sb_table_dir", DEFAULT_SB_TABLE_DIR),
             sb_alpha=getattr(args, "sb_alpha", DEFAULT_SB_ALPHA),
             sb_n_max=getattr(args, "sb_n_max", DEFAULT_SB_N_MAX),
+            sb_max_order2_continuations=getattr(
+                args,
+                "sb_max_order2_continuations",
+                DEFAULT_SB_MAX_ORDER2_CONTINUATIONS,
+            ),
             dolma2_vocab_size=int(tokenizer.vocab_size),
             smoke_1gpu=smoke_1gpu,
         ),
@@ -273,6 +284,16 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_SB_N_MAX,
         help="Highest ngram order to consult. Must equal the order the counts_index was built with.",
+    )
+    parser.add_argument(
+        "--sb-max-order2-continuations",
+        type=int,
+        default=DEFAULT_SB_MAX_ORDER2_CONTINUATIONS,
+        help=(
+            "Optional hard cap on order-2 continuations per one-token history. "
+            "Keeps the highest-count continuations and lets omitted tokens fall "
+            "through to the unigram floor. Orders 3+ remain exact."
+        ),
     )
     parser.add_argument(
         "--smoke-1gpu",

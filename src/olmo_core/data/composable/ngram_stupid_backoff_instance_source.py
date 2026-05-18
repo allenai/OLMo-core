@@ -25,7 +25,9 @@ This is the parallel of :class:`NgramSoftTargetInstanceSource`, which
 emits fixed-K dense per-position outputs from the KN-smoothed top-K
 forward index. The SB analog has variable-K per position, which is
 the whole point of switching to stupid backoff — no truncation, no
-top-K cap.
+top-K cap by default. For training experiments that need a hard runtime
+bound, the source can cap only the order-2 continuation set and leave
+orders 3+ exact.
 
 The reader (:class:`olmo_core.data.stupid_backoff_ngram.StupidBackoffNgramLM`)
 is lazily constructed on first ``__getitem__`` call, so the source
@@ -64,6 +66,9 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         order present in the index (currently 5).
     :param alpha: Stupid-backoff discount factor per Brants et al 2007.
         Default 0.4.
+    :param max_order2_continuations: Optional hard cap on order-2
+        continuations per one-token history. Orders 3+ remain exact; omitted
+        order-2 continuations fall through to the unigram floor.
     """
 
     DISPLAY_ICON = "\U000f0d77"  # nf-md-graphql (same as the KN-smoothed source)
@@ -76,6 +81,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         dolma2_vocab_size: int,
         N_max: int = 5,
         alpha: float = 0.4,
+        max_order2_continuations: Optional[int] = None,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -90,6 +96,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         self._dolma2_vocab_size = int(dolma2_vocab_size)
         self._N_max = int(N_max)
         self._alpha = float(alpha)
+        self._max_order2_continuations = max_order2_continuations
         # Lazy per-process init: don't mmap in the main process so the
         # source pickles cleanly to spawn workers; first lookup populates.
         self._reader = None
@@ -124,6 +131,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 dolma2_vocab_size=self._dolma2_vocab_size,
                 N_max=self._N_max,
                 alpha=self._alpha,
+                max_order2_continuations=self._max_order2_continuations,
             )
         return self._reader
 
@@ -138,6 +146,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 f"dolma2_vocab_size={self._dolma2_vocab_size},"
                 f"N_max={self._N_max},"
                 f"alpha={self._alpha},"
+                f"max_order2_continuations={self._max_order2_continuations},"
             ).encode()
         )
         return sha.hexdigest()
@@ -185,6 +194,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
     dolma2_vocab_size: int
     N_max: int = 5
     alpha: float = 0.4
+    max_order2_continuations: Optional[int] = None
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> NgramStupidBackoffInstanceSource:
@@ -195,6 +205,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
             dolma2_vocab_size=self.dolma2_vocab_size,
             N_max=self.N_max,
             alpha=self.alpha,
+            max_order2_continuations=self.max_order2_continuations,
             work_dir=work_dir,
             label=self.label,
         )
