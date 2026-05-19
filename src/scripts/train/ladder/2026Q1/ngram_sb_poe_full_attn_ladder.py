@@ -297,6 +297,12 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 trainer_config,
                 callbacks=callbacks,
                 load_path=load_path,
+                load_trainer_state=(
+                    False if getattr(args, "eval_only", False) else trainer_config.load_trainer_state
+                ),
+                load_optim_state=(
+                    False if getattr(args, "eval_only", False) else trainer_config.load_optim_state
+                ),
                 load_strategy=LoadStrategy.always
                 if load_path is not None
                 else trainer_config.load_strategy,
