@@ -224,12 +224,3 @@ class SpeedMonitorCallback(Callback):
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
             self.trainer.record_metric("throughput/device/TFLOPs_per_GPU", tflops_per_gpu)
-            if (
-                self.trainer.global_train_tokens_seen is not None
-                and (num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len))
-                is not None
-            ):
-                self.trainer.record_metric(
-                    "throughput/total flops",
-                    self.trainer.global_train_tokens_seen * num_flops_per_token,
-                )

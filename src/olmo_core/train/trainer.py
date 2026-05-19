@@ -9,6 +9,7 @@ from collections import OrderedDict, defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
+from numbers import Real
 from pathlib import Path
 from typing import (
     Any,
@@ -84,6 +85,15 @@ log = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
+
+
+def _metric_value_to_tensor(value: Union[float, torch.Tensor]) -> torch.Tensor:
+    if not isinstance(value, torch.Tensor):
+        if isinstance(value, Real):
+            return torch.tensor(value, dtype=torch.float64)
+        return torch.tensor(value)
+
+    return get_local_tensor(value.detach()).float()
 
 
 class TrainerStateDict(TypedDict):
@@ -841,8 +851,8 @@ class Trainer:
                         self.train_module.max_sequence_length
                     )
                     self.record_metric(
-                        "throughput/total flops",
-                        self.global_train_tokens_seen * num_flops_per_token,
+                        "throughput/total petaflops",
+                        self.global_train_tokens_seen * num_flops_per_token / 1e15,
                     )
 
                 for callback in evaluator_callbacks:
@@ -1394,10 +1404,7 @@ class Trainer:
         if namespace is not None:
             name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
 
-        if not isinstance(value, torch.Tensor):
-            value = torch.tensor(value)
-        else:
-            value = get_local_tensor(value.detach()).float()
+        value = _metric_value_to_tensor(value)
 
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
@@ -1739,19 +1746,20 @@ class Trainer:
         metrics_to_reduce = move_metrics(self._metrics, self.bookkeeping_device)
         self._metrics.clear()
 
-        if self._metrics_consistent is None:
-            self._metrics_consistent = check_metrics_consistent(
-                self._metrics_reduce_type,
-                process_group=self.bookkeeping_pg,
+        metrics_consistent = check_metrics_consistent(
+            metrics_to_reduce,
+            self._metrics_reduce_type,
+            process_group=self.bookkeeping_pg,
+        )
+        if not metrics_consistent and self._metrics_consistent is not False:
+            msg = (
+                "Detected inconsistent metrics between ranks. This is expected in some cases "
+                "(like with pipeline parallelism)."
             )
-            if not self._metrics_consistent:
-                msg = (
-                    "Detected inconsistent metrics between ranks. This is expected in some cases "
-                    "(like with pipeline parallelism)."
-                )
-                if not self.async_bookkeeping:
-                    msg += " This may result in slower training speeds since you don't have async bookkeeping enabled."
-                log.warning(msg)
+            if not self.async_bookkeeping:
+                msg += " This may result in slower training speeds since you don't have async bookkeeping enabled."
+            log.warning(msg)
+        self._metrics_consistent = metrics_consistent
 
         self.run_bookkeeping_op(
             reduce_metrics,
@@ -1759,7 +1767,7 @@ class Trainer:
             self._metrics_reduce_type,
             self.bookkeeping_device,
             process_group=self.bookkeeping_pg,
-            metrics_consistent=self._metrics_consistent,
+            metrics_consistent=metrics_consistent,
             cb=self._check_and_pass_on_metrics,
         )
 
