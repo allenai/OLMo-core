@@ -278,12 +278,18 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ),
     )
     load_path = getattr(args, "load_path", None)
-    if load_path is not None or getattr(args, "eval_only", False):
+    if (
+        load_path is not None
+        or getattr(args, "eval_only", False)
+        or getattr(args, "lm_eval_only", False)
+    ):
         original_configure_trainer = ladder._configure_trainer
 
         def _configure_trainer_with_eval_options(self, size_spec, for_benchmarking=False):
             trainer_config = original_configure_trainer(size_spec, for_benchmarking=for_benchmarking)
             callbacks = dict(trainer_config.callbacks)
+            if getattr(args, "lm_eval_only", False):
+                callbacks.pop("downstream_evaluator", None)
             if getattr(args, "eval_only", False):
                 for callback_name in ("lm_evaluator", "downstream_evaluator"):
                     callback = callbacks.get(callback_name)
@@ -386,6 +392,14 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         help=(
             "Run startup LM + downstream evals from the loaded checkpoint and then cancel "
             "before training. Intended for checkpoint-based eval-path smoke tests."
+        ),
+    )
+    parser.add_argument(
+        "--lm-eval-only",
+        action="store_true",
+        help=(
+            "Disable downstream in-loop evals while keeping LM perplexity evals. "
+            "Useful when downstream eval is too slow for SB PoE training runs."
         ),
     )
 
