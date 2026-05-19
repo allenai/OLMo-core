@@ -497,8 +497,14 @@ class TransformerPipelineTrainModule(TrainModule):
 
         return x
 
-    def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
-        del batch, labels
+    def eval_batch(
+        self,
+        batch: Dict[str, Any],
+        labels: Optional[torch.Tensor] = None,
+        *,
+        compute_ce_loss: bool = True,
+    ) -> Any:
+        del batch, labels, compute_ce_loss
         raise RuntimeError(f"{self.__class__.__name__} does not support inference")
 
     def optim_step(self):

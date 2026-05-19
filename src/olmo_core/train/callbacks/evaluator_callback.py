@@ -144,7 +144,11 @@ class EvaluatorCallback(Callback):
                 with torch.no_grad():
                     # Run forward pass, get logits and un-reduced CE loss.
                     labels = get_labels(batch)
-                    output = self.trainer.train_module.eval_batch(batch, labels=labels)
+                    output = self.trainer.train_module.eval_batch(
+                        batch,
+                        labels=labels,
+                        compute_ce_loss=not isinstance(evaluator, DownstreamEvaluator),
+                    )
                     assert isinstance(output, LMOutputWithLoss)
                     logits, _, ce_loss, _ = output
 

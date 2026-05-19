@@ -942,7 +942,11 @@ class TransformerTrainModule(TrainModule):
             )
 
     def eval_batch(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+        self,
+        batch: Dict[str, Any],
+        labels: Optional[torch.Tensor] = None,
+        *,
+        compute_ce_loss: bool = True,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         # CP and TP are supported for PPL evals (LMEvaluator) since they only need per-token
         # CE loss. Downstream evals that require full logits will fail naturally if attempted
@@ -994,12 +998,14 @@ class TransformerTrainModule(TrainModule):
                     logits=output.logits,
                     input_ids=input_ids,
                     labels=labels,
+                    compute_ce_loss=compute_ce_loss,
                 )
             else:
                 biased_logits, biased_ce_loss = self._apply_poe_eval_bias(
                     logits=output.logits,
                     input_ids=input_ids,
                     labels=labels,
+                    compute_ce_loss=compute_ce_loss,
                 )
             return output._replace(logits=biased_logits, ce_loss=biased_ce_loss)
 
@@ -1081,6 +1087,7 @@ class TransformerTrainModule(TrainModule):
         logits: torch.Tensor,
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor],
+        compute_ce_loss: bool = True,
     ) -> tuple:
         """Apply the PoE ngram bias to eval-time logits and recompute CE.
 
@@ -1177,7 +1184,7 @@ class TransformerTrainModule(TrainModule):
         )
 
         # Per-position CE on the biased logits at the hard label.
-        if labels is not None:
+        if labels is not None and compute_ce_loss:
             log_sum_exp = torch.logsumexp(biased_logits_f32, dim=-1)
             # Replace ignored labels with 0 for safe gather; mask after.
             safe_labels = labels.clone()
@@ -1202,6 +1209,7 @@ class TransformerTrainModule(TrainModule):
         logits: torch.Tensor,
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor],
+        compute_ce_loss: bool = True,
     ) -> tuple:
         """Stupid-backoff analog of :meth:`_apply_poe_eval_bias`.
 
@@ -1253,7 +1261,7 @@ class TransformerTrainModule(TrainModule):
             float(self.poe_lambda),
         )
 
-        if labels is not None:
+        if labels is not None and compute_ce_loss:
             log_sum_exp = torch.logsumexp(biased_logits_f32, dim=-1)
             safe_labels = labels.clone()
             safe_labels[safe_labels == self.label_ignore_index] = 0

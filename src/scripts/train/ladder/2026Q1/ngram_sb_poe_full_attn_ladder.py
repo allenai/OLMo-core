@@ -37,6 +37,7 @@ matches the baseline / KN-smoothed PoE ladders exactly.
 import argparse
 import dataclasses
 import logging
+from types import MethodType
 
 import olmo_core.io as io
 from olmo_core.config import DType
@@ -52,6 +53,7 @@ from olmo_core.model_ladder import (
     TransformerSize,
     WSDSChinchillaRunConfigurator,
 )
+from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -275,6 +277,32 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             num_workers=4, instance_filter_config=InstanceFilterConfig()  # noqa: F405
         ),
     )
+    load_path = getattr(args, "load_path", None)
+    if load_path is not None or getattr(args, "eval_only", False):
+        original_configure_trainer = ladder._configure_trainer
+
+        def _configure_trainer_with_eval_options(self, size_spec, for_benchmarking=False):
+            trainer_config = original_configure_trainer(size_spec, for_benchmarking=for_benchmarking)
+            callbacks = dict(trainer_config.callbacks)
+            if getattr(args, "eval_only", False):
+                for callback_name in ("lm_evaluator", "downstream_evaluator"):
+                    callback = callbacks.get(callback_name)
+                    if callback is not None:
+                        callbacks[callback_name] = dataclasses.replace(
+                            callback,
+                            eval_on_startup=True,
+                            cancel_after_first_eval=True,
+                        )
+            return dataclasses.replace(
+                trainer_config,
+                callbacks=callbacks,
+                load_path=load_path,
+                load_strategy=LoadStrategy.always
+                if load_path is not None
+                else trainer_config.load_strategy,
+            )
+
+        ladder._configure_trainer = MethodType(_configure_trainer_with_eval_options, ladder)
     return ladder
 
 
@@ -335,6 +363,23 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         help=(
             "Run on a single GPU for fast end-to-end smoke testing. "
             "Pair with --chinchilla-multiple ~0.001."
+        ),
+    )
+    parser.add_argument(
+        "--load-path",
+        type=str,
+        default=None,
+        help=(
+            "Optional checkpoint path or checkpoint folder to load before running. "
+            "Useful with --eval-only to benchmark eval from an existing smoke checkpoint."
+        ),
+    )
+    parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        help=(
+            "Run startup LM + downstream evals from the loaded checkpoint and then cancel "
+            "before training. Intended for checkpoint-based eval-path smoke tests."
         ),
     )
 

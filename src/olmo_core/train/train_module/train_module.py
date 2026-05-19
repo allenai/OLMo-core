@@ -173,7 +173,13 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def eval_batch(self, batch: Dict[str, Any], labels: Optional[Any] = None) -> Any:
+    def eval_batch(
+        self,
+        batch: Dict[str, Any],
+        labels: Optional[Any] = None,
+        *,
+        compute_ce_loss: bool = True,
+    ) -> Any:
         """
         Run a forward pass on a eval batch.
         """
@@ -372,13 +378,19 @@ class BasicTrainModule(TrainModule):
         # Record loss metrics.
         self.record_ce_loss(ce_batch_loss, ReduceType.mean)
 
-    def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
+    def eval_batch(
+        self,
+        batch: Dict[str, Any],
+        labels: Optional[torch.Tensor] = None,
+        *,
+        compute_ce_loss: bool = True,
+    ) -> Any:
         self.model.eval()
         batch = move_to_device(batch, self.trainer.device)
         with torch.no_grad():
             logits = self.model_forward(batch)
         loss: Optional[torch.Tensor] = None
-        if labels is not None:
+        if labels is not None and compute_ce_loss:
             loss, _ = self.loss_fn(
                 logits,
                 labels,
