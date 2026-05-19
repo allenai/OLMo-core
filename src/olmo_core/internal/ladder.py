@@ -12,6 +12,7 @@ from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.launch.beaker import (
+    BeakerEnvVar,
     BeakerLaunchConfig,
     OLMoCoreBeakerImage,
     is_running_in_beaker_batch_job,
@@ -197,6 +198,16 @@ def parse_args(
                 "of 10GiB isn't enough when the soft-target wrapper mirrors "
                 "ngram tables into tmpfs at startup. Pass through to "
                 "BeakerLaunchConfig.shared_memory."
+            ),
+        )
+        parser.add_argument(
+            "--env-var",
+            action="append",
+            default=None,
+            metavar="NAME=VALUE",
+            help=(
+                "Environment variable to set inside the Beaker task. Repeatable, "
+                "for example '--env-var FOO=1 --env-var BAR=baz'."
             ),
         )
 
@@ -469,6 +480,13 @@ def configure_launcher(
     launch_config.allow_dirty = args.allow_dirty
     if getattr(args, "shared_memory", None) is not None:
         launch_config.shared_memory = args.shared_memory
+    for raw_env_var in getattr(args, "env_var", None) or []:
+        if "=" not in raw_env_var:
+            raise ValueError(f"expected --env-var as NAME=VALUE, got {raw_env_var!r}")
+        env_name, env_value = raw_env_var.split("=", 1)
+        if not env_name:
+            raise ValueError(f"expected non-empty environment variable name in {raw_env_var!r}")
+        launch_config.env_vars.append(BeakerEnvVar(name=env_name, value=env_value))
     return launch_config
 
 
