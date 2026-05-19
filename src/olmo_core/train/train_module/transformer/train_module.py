@@ -262,6 +262,7 @@ class TransformerTrainModule(TrainModule):
         # SB-side lazy state: reader (CPU) + unigram_floor on the model device.
         self._poe_sb_reader = None
         self._poe_sb_unigram_floor_dev: Optional[torch.Tensor] = None
+        self._poe_sb_eval_bias_calls = 0
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
         self.autocast_precision = autocast_precision
@@ -1081,6 +1082,51 @@ class TransformerTrainModule(TrainModule):
             self._poe_sb_unigram_floor_dev = floor_cpu.to(self.device, non_blocking=True)
         return self._poe_sb_unigram_floor_dev
 
+    @staticmethod
+    def _env_flag(name: str) -> bool:
+        value = os.environ.get(name, "")
+        return value.lower() not in ("", "0", "false", "no", "off")
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except ValueError:
+            return default
+
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except ValueError:
+            return default
+
+    def _sb_eval_should_log_timing(self, *, call_idx: int, total_s: float) -> bool:
+        if not self._env_flag("OLMO_SB_EVAL_TIMING"):
+            return False
+        if dist.is_available() and dist.is_initialized() and dist.get_rank() != 0:
+            return False
+
+        first_n = self._env_int("OLMO_SB_EVAL_TIMING_FIRST_N", 3)
+        every_n = self._env_int("OLMO_SB_EVAL_TIMING_EVERY_N", 100)
+        slow_s = self._env_float("OLMO_SB_EVAL_TIMING_SLOW_S", 1.0)
+        return (
+            call_idx < first_n
+            or (every_n > 0 and (call_idx + 1) % every_n == 0)
+            or total_s >= slow_s
+        )
+
+    @staticmethod
+    def _sync_for_timing(device: torch.device) -> None:
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+
     def _apply_poe_eval_bias(
         self,
         *,
@@ -1230,14 +1276,25 @@ class TransformerTrainModule(TrainModule):
         assert self.poe_sb_table_dir is not None
 
         local_logits = get_local_tensor(logits)
+        B, S, V = local_logits.shape
+        timing = self._env_flag("OLMO_SB_EVAL_TIMING")
+        call_idx = self._poe_sb_eval_bias_calls
+        self._poe_sb_eval_bias_calls += 1
+        if timing:
+            self._sync_for_timing(local_logits.device)
+        t0 = time.perf_counter()
         biased_logits_f32 = local_logits.float().clone()
         unigram_floor = self._get_poe_sb_unigram_floor_dev(
             dtype=biased_logits_f32.dtype
         )
+        if timing:
+            self._sync_for_timing(biased_logits_f32.device)
+        t_clone = time.perf_counter()
 
         # Synchronous CPU lookup of per-instance overrides.
         reader = self._get_poe_sb_reader()
         overrides_cpu = compute_sb_overrides_for_batch(input_ids, reader)
+        t_lookup = time.perf_counter()
         # Move to logits device (the helper expects on-device tensors).
         bidx = overrides_cpu["sb_override_batch_idx"].to(
             biased_logits_f32.device, non_blocking=True
@@ -1251,6 +1308,9 @@ class TransformerTrainModule(TrainModule):
         sc = overrides_cpu["sb_override_log_score"].to(
             biased_logits_f32.device, non_blocking=True
         )
+        if timing:
+            self._sync_for_timing(biased_logits_f32.device)
+        t_copy = time.perf_counter()
         apply_sb_bias_inplace(
             biased_logits_f32,
             unigram_floor,
@@ -1260,6 +1320,9 @@ class TransformerTrainModule(TrainModule):
             sc,
             float(self.poe_lambda),
         )
+        if timing:
+            self._sync_for_timing(biased_logits_f32.device)
+        t_apply = time.perf_counter()
 
         if labels is not None and compute_ce_loss:
             log_sum_exp = torch.logsumexp(biased_logits_f32, dim=-1)
@@ -1276,6 +1339,33 @@ class TransformerTrainModule(TrainModule):
             )
         else:
             ce_loss = None
+        if timing:
+            self._sync_for_timing(biased_logits_f32.device)
+        t_ce = time.perf_counter()
+
+        total_s = t_ce - t0
+        if self._sb_eval_should_log_timing(call_idx=call_idx, total_s=total_s):
+            override_count = int(overrides_cpu["sb_override_token_id"].numel())
+            tokens = B * S
+            log.info(
+                "[SB eval timing call=%d shape=(%d,%d,%d) overrides=%d "
+                "overrides_per_token=%.2f compute_ce=%s total=%.3fs "
+                "clone_floor=%.3fs lookup_cpu=%.3fs copy_to_gpu=%.3fs "
+                "apply_bias=%.3fs ce=%.3fs]",
+                call_idx + 1,
+                B,
+                S,
+                V,
+                override_count,
+                override_count / max(tokens, 1),
+                compute_ce_loss,
+                total_s,
+                t_clone - t0,
+                t_lookup - t_clone,
+                t_copy - t_lookup,
+                t_apply - t_copy,
+                t_ce - t_apply,
+            )
 
         return biased_logits_f32, ce_loss
 
