@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
@@ -28,6 +28,11 @@ class WandBCallback(Callback):
     .. note::
         This callback logs metrics from every single step to W&B, regardless of the value
         of :data:`Trainer.metrics_collect_interval <olmo_core.train.Trainer.metrics_collect_interval>`.
+    """
+
+    priority: ClassVar[int] = 3
+    """
+    Initialize before checkpointing, since pre-train checkpoint saves may flush metrics.
     """
 
     enabled: bool = True
@@ -149,11 +154,6 @@ class WandBCallback(Callback):
                 allow_multiple=False,
                 distributed=False,
             )
-
-    def post_train(self):
-        if self.enabled and get_rank() == 0 and self.run is not None:
-            log.info("Finalizing successful W&B run...")
-            self.finalize(exit_code=0)
 
     def on_error(self, exc: BaseException):
         del exc
