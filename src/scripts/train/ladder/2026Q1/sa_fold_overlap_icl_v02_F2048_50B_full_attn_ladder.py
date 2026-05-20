@@ -1,0 +1,97 @@
+"""SA fold-overlap F=2048 ICL (in-context, special tokens, variant 2) ladder on v02.
+
+Variant 2 of the fold-overlap data-gen plan (notes/new_data_gen_plan.md):
+walks the flat tokenized stream in fold_size chunks via a random
+permutation, follows ISA → SA[r±k] adjacency to find a non-dup neighbor,
+and emits each pair as
+
+    anchor[0:F] + <o> + adjacent[L:F] + </o>
+
+with DOC_SEP → EOS substitution inside chunks. Vanilla causal attention.
+The <o> (100274) / </o> (100275) brackets are dolma2's existing overlap
+markers (reused by build_icl_overlap.py). They tell the model "what
+follows <o> is the divergent continuation of an SA-adjacent string that
+shared the prefix with the anchor up to this point", with </o> marking
+the end of the adjacent emit.
+
+Same LCP-skipping content layout as the mask sibling
+(``sa_fold_overlap_mask_v02_50B_full_attn_ladder.py``) but with special
+tokens instead of tree-attention mask + posid magic. Comparing the two
+isolates whether the model can learn the fork structure from token
+hints alone vs. needing the geometric attention encoding.
+
+Data: 50B tokens (no cycling at 190M / 2xC = 7.6B).
+"""
+import argparse
+import logging
+
+import olmo_core.io as io
+from olmo_core.data import TokenizerConfig
+from olmo_core.data.composable import *
+from olmo_core.internal.common import get_gpu_type, get_root_dir
+from olmo_core.internal.ladder import main
+from olmo_core.internal.smoke import (
+    Olmo3SmokeConfigurator,
+    WSDSChinchillaSmoke,
+    add_smoke_args,
+)
+from olmo_core.model_ladder import (
+    ModelLadder,
+    TransformerSize,
+    WSDSChinchillaRunConfigurator,
+)
+
+log = logging.getLogger(__name__)
+
+PATHS = [
+    "/weka/oe-training-default/ai2-llm/suffix-arrays/preprocessed/dolma2-0625-v02/sa-fold-overlap-icl-F2048-50B/allenai/dolma2-tokenizer/*.npy",
+]
+
+
+def configure_ladder(args: argparse.Namespace) -> ModelLadder:
+    tokenizer = TokenizerConfig.dolma2()
+    instance_sources: list[InstanceSourceConfig] = [
+        ConcatAndChunkInstanceSourceConfig(
+            sources=[
+                NumpyDocumentSourceConfig(
+                    source_paths=PATHS,
+                    tokenizer=tokenizer,
+                ),
+            ],
+            sequence_length=args.sequence_length,
+        ),
+    ]
+
+    smoke_1gpu = getattr(args, "smoke_1gpu", False)
+    ladder = ModelLadder(
+        name=args.name,
+        dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
+        sizes=[s for s in TransformerSize if s.approx_num_params <= 1e9],
+        max_devices=1 if smoke_1gpu else args.max_gpus,
+        device_type=get_gpu_type(args.cluster),
+        model_configurator=Olmo3SmokeConfigurator(
+            model_construction_kwargs={"sliding_window": None},
+            rank_microbatch_size=None
+            if args.rank_mbz is None
+            else args.rank_mbz * args.sequence_length,
+            smoke_1gpu=smoke_1gpu,
+        ),
+        run_configurator=(
+            WSDSChinchillaSmoke(chinchilla_multiple=args.chinchilla_multiple)
+            if smoke_1gpu
+            else WSDSChinchillaRunConfigurator(
+                chinchilla_multiple=args.chinchilla_multiple
+            )
+        ),
+        sequence_length=args.sequence_length,
+        tokenizer=tokenizer,
+        instance_sources=instance_sources,
+        data_loader=ComposableDataLoaderConfig(
+            num_workers=8, instance_filter_config=InstanceFilterConfig()
+        ),
+    )
+    return ladder
+
+
+if __name__ == "__main__":
+    main(configure_ladder, add_additional_args=add_smoke_args)
