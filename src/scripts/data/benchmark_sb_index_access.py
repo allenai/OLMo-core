@@ -11,19 +11,27 @@ Example::
         --table-dir /weka/oe-training-default/ai2-llm/ngram-tables/pilots/pilot-2026-04-23-fraction1e-4-n5-counts \
         --index-access mmap --index-access pread \
         --cap 2=128 --cap 3=128 --cap 4=128 --cap 5=128 \
-        --num-sequences 16 --sequence-length 8192 --mirror-to-shm
+        --num-sequences 32 --sequence-length 8192 --mirror-to-shm \
+        --workers 1 --workers 2 --workers 4 --workers 8
 """
 
 from __future__ import annotations
 
 import argparse
+import multiprocessing as mp
+import os
 import statistics
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from olmo_core.data.stupid_backoff_ngram import StupidBackoffNgramLM
+
+
+_WORKER_READER: StupidBackoffNgramLM | None = None
+_WORKER_SEQUENCES: np.ndarray | None = None
 
 
 def _parse_caps(values: list[str] | None) -> dict[int, int] | None:
@@ -86,6 +94,75 @@ def _summarize(values: list[float]) -> str:
     )
 
 
+def _worker_init(reader_kwargs: dict[str, Any], sequences: np.ndarray) -> None:
+    global _WORKER_READER, _WORKER_SEQUENCES
+    _WORKER_READER = StupidBackoffNgramLM(**reader_kwargs)
+    _WORKER_SEQUENCES = sequences
+
+
+def _worker_compute(idx: int) -> tuple[float, int]:
+    assert _WORKER_READER is not None
+    assert _WORKER_SEQUENCES is not None
+    seq = _WORKER_SEQUENCES[idx]
+    t0 = time.perf_counter()
+    pos, _tok, _score = _WORKER_READER.compute_overrides_for_sequence(seq)
+    return time.perf_counter() - t0, int(pos.shape[0])
+
+
+def _run_backend(
+    *,
+    backend: str,
+    workers: int,
+    args,
+    caps: dict[int, int] | None,
+    sequences: np.ndarray,
+) -> None:
+    reader_kwargs = dict(
+        table_dir=args.table_dir,
+        dolma2_vocab_size=args.dolma2_vocab_size,
+        N_max=args.N_max,
+        alpha=args.alpha,
+        max_order_continuations=caps,
+        mirror_to_shm=args.mirror_to_shm,
+        index_access=backend,
+    )
+    t0 = time.perf_counter()
+    if workers == 1:
+        reader = StupidBackoffNgramLM(**reader_kwargs)
+        init_s = time.perf_counter() - t0
+        times: list[float] = []
+        rows: list[int] = []
+        for seq in sequences:
+            t_seq = time.perf_counter()
+            pos, _tok, _score = reader.compute_overrides_for_sequence(seq)
+            times.append(time.perf_counter() - t_seq)
+            rows.append(int(pos.shape[0]))
+    else:
+        # Beaker runs Linux, so fork keeps the sampled sequences copy-on-write
+        # instead of pickling multi-MB arrays into every task.
+        ctx = mp.get_context("fork")
+        with ctx.Pool(
+            processes=workers,
+            initializer=_worker_init,
+            initargs=(reader_kwargs, sequences),
+        ) as pool:
+            results = list(pool.imap(_worker_compute, range(sequences.shape[0]), chunksize=1))
+        init_s = float("nan")
+        times = [t for t, _ in results]
+        rows = [r for _, r in results]
+
+    wall_s = time.perf_counter() - t0
+    throughput = sequences.shape[0] / wall_s if wall_s > 0 else float("inf")
+    print(
+        f"backend={backend} workers={workers} init={init_s:.3f}s wall={wall_s:.3f}s "
+        f"throughput={throughput:.3f} seq/s "
+        f"times=({_summarize(times)}) "
+        f"overrides_mean={statistics.fmean(rows):,.0f} "
+        f"overrides_min={min(rows):,} overrides_max={max(rows):,}",
+        flush=True,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--table-dir", required=True)
@@ -105,41 +182,49 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--input-ids-npy", type=Path, default=None)
     parser.add_argument("--mirror-to-shm", action="store_true")
+    parser.add_argument(
+        "--workers",
+        action="append",
+        type=int,
+        default=None,
+        help=(
+            "Worker process counts to test. Repeat to run a scaling sweep. "
+            "workers=1 runs in-process; workers>1 uses multiprocessing fork."
+        ),
+    )
     args = parser.parse_args()
 
     backends = args.index_access or ["mmap", "pread"]
+    worker_counts = args.workers or [1]
     caps = _parse_caps(args.cap)
     sequences = None
     for backend in backends:
-        t0 = time.perf_counter()
-        reader = StupidBackoffNgramLM(
-            args.table_dir,
-            dolma2_vocab_size=args.dolma2_vocab_size,
-            N_max=args.N_max,
-            alpha=args.alpha,
-            max_order_continuations=caps,
-            mirror_to_shm=args.mirror_to_shm,
-            index_access=backend,
-        )
-        init_s = time.perf_counter() - t0
         if sequences is None:
+            reader = StupidBackoffNgramLM(
+                args.table_dir,
+                dolma2_vocab_size=args.dolma2_vocab_size,
+                N_max=args.N_max,
+                alpha=args.alpha,
+                max_order_continuations=caps,
+                mirror_to_shm=args.mirror_to_shm,
+                index_access=backend,
+            )
             sequences = _load_or_sample_sequences(args, reader)
-
-        times: list[float] = []
-        rows: list[int] = []
-        for seq in sequences:
-            t_seq = time.perf_counter()
-            pos, _tok, _score = reader.compute_overrides_for_sequence(seq)
-            times.append(time.perf_counter() - t_seq)
-            rows.append(int(pos.shape[0]))
-
-        print(
-            f"backend={backend} init={init_s:.3f}s "
-            f"times=({_summarize(times)}) "
-            f"overrides_mean={statistics.fmean(rows):,.0f} "
-            f"overrides_min={min(rows):,} overrides_max={max(rows):,}",
-            flush=True,
-        )
+        for workers in worker_counts:
+            if workers <= 0:
+                raise ValueError(f"--workers must be positive; got {workers}")
+            print(
+                f"run_start backend={backend} workers={workers} "
+                f"pid={os.getpid()} sequences={sequences.shape[0]}",
+                flush=True,
+            )
+            _run_backend(
+                backend=backend,
+                workers=workers,
+                args=args,
+                caps=caps,
+                sequences=sequences,
+            )
 
 
 if __name__ == "__main__":
