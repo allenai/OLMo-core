@@ -143,6 +143,11 @@ def build_launch_config(
             secret="SLACK_WEBHOOK_URL",
             required=False,
         ),
+        BeakerEnvSecret(
+            name="HF_TOKEN",
+            secret="HF_TOKEN",
+            required=False,
+        ),
     ]
 
     env_vars: List[BeakerEnvVar] = []
