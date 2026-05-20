@@ -55,6 +55,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             token_paths=[f"{SA_FOLD_MASK_BASE}/*-tokens.npy"],
             pos_ids_paths=[f"{SA_FOLD_MASK_BASE}/*-pos_ids.npy"],
             vis_limit_paths=[f"{SA_FOLD_MASK_BASE}/*-vis_limit.npy"],
+            label_mask_paths=[f"{SA_FOLD_MASK_BASE}/*-label_mask.npy"],
             sequence_length=args.sequence_length,
             # dolma2 tokens are stored as uint32 (vocab ~100K exceeds uint16 range).
             token_dtype=NumpyDatasetDType.uint32,

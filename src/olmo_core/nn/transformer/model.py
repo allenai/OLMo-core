@@ -408,6 +408,10 @@ class Transformer(nn.Module):
 
         # Construct tree-structured attention mask from vis_limit if provided.
         vis_limit: Optional[torch.Tensor] = kwargs.pop("vis_limit", None)
+        # label_mask is forwarded by the train module (already used by
+        # get_labels). We also peek at it here to relax the fallback EOS
+        # invariant for positions whose prediction is discarded.
+        label_mask_for_assert: Optional[torch.Tensor] = kwargs.get("label_mask", None)
         if vis_limit is not None:
             vis_limit = move_to_device(vis_limit, self.device)
             B_vl, S_vl = vis_limit.shape
@@ -428,6 +432,9 @@ class Transformer(nn.Module):
             #   - q at an interior LCP=0 branch boundary: with max_suffix_len
             #     == seq_len, the closing branch ended at a document boundary
             #     and its terminal token is EOS.
+            #   - q at an artificial fold-start position whose label is masked
+            #     (data-gen flagged it via label_mask); the rescue's output is
+            #     discarded by get_labels, so the EOS invariant doesn't apply.
             # Fall back to self-attention in those rows. Input-space self (not
             # label-space): the query mixes in the value-projection of the
             # token at its own position (EOS at interior boundaries).
@@ -439,19 +446,33 @@ class Transformer(nn.Module):
             if self.vis_limit_eos_token_id is not None:
                 # Verify the "self at an interior boundary is EOS" invariant
                 # that the fallback relies on (excluding q=S-1, whose label is
-                # ignore_index regardless of token identity).
+                # ignore_index regardless of token identity, and any q whose
+                # corresponding label is masked by the data-supplied
+                # label_mask).
                 fallback_rows = empty_rows.squeeze(-1).clone()  # (B, S)
                 fallback_rows[:, -1] = False
+                if label_mask_for_assert is not None:
+                    # label_mask is indexed by input position p; the
+                    # prediction at query q corresponds to label at input
+                    # position q+1. Shift left, pad False at the last
+                    # column (q=S-1 is already excluded above).
+                    lm = move_to_device(
+                        label_mask_for_assert.to(torch.bool), self.device
+                    )
+                    prediction_used = torch.cat(
+                        [lm[:, 1:], torch.zeros_like(lm[:, :1])], dim=1
+                    )
+                    fallback_rows = fallback_rows & prediction_used
                 if fallback_rows.any():
                     bad = fallback_rows & (input_ids != self.vis_limit_eos_token_id)
                     if bad.any():
                         bad_positions = bad.nonzero()
                         raise AssertionError(
                             "vis_limit self-attention fallback fired at an interior "
-                            "position whose input token is not EOS "
-                            f"(eos_token_id={self.vis_limit_eos_token_id}). This "
-                            "violates the max_suffix_len == seq_len invariant that "
-                            "guarantees every non-exhausting suffix ends in EOS. "
+                            "position whose input token is not EOS and whose label "
+                            f"is not masked (eos_token_id={self.vis_limit_eos_token_id}). "
+                            "This violates the max_suffix_len == seq_len invariant "
+                            "that guarantees every non-exhausting suffix ends in EOS. "
                             f"First offender at (batch, pos) = "
                             f"{tuple(bad_positions[0].tolist())}, "
                             f"input_id = {input_ids[tuple(bad_positions[0].tolist())].item()}."
