@@ -60,3 +60,6 @@ site/
 /scratch/
 core
 /dataset-cache/
+# gantry-launch artifacts in cwd (lockfile + .gantry/ written by entrypoint.sh
+# under RESULTS_DIR; ends up here when launching from olmo-core/)
+/train/
