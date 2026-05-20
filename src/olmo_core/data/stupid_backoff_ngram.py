@@ -93,6 +93,97 @@ def _history_struct_dtype(plen: int) -> np.dtype:
     return np.dtype([(f"h{i}", np.uint32) for i in range(plen)])
 
 
+class PReadArray:
+    """Small 1-D ndarray-like wrapper backed by explicit ``os.pread`` calls.
+
+    This is intentionally narrower than ``np.memmap``. It supports the access
+    shapes used by the SB reader for offsets, continuations, counts, and
+    history totals while leaving the history table itself mmap-backed so
+    NumPy's vectorized ``searchsorted`` path remains available.
+    """
+
+    def __init__(self, path: str, dtype):
+        self.path = str(path)
+        self.dtype = np.dtype(dtype)
+        self.itemsize = int(self.dtype.itemsize)
+        self.n_items = os.path.getsize(self.path) // self.itemsize
+        self.shape = (self.n_items,)
+        self.ndim = 1
+        self._fd = os.open(self.path, os.O_RDONLY)
+
+    def __len__(self) -> int:
+        return self.n_items
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            return self._read_slice(key)
+        if np.isscalar(key):
+            return self._read_scalar(int(key))
+        idx = np.asarray(key, dtype=np.int64)
+        return self._read_indices(idx)
+
+    def __array__(self, dtype=None):
+        out = self._read_slice(slice(None))
+        if dtype is not None:
+            return out.astype(dtype, copy=False)
+        return out
+
+    def _read_scalar(self, idx: int):
+        if idx < 0:
+            idx += self.n_items
+        if idx < 0 or idx >= self.n_items:
+            raise IndexError(idx)
+        data = os.pread(self._fd, self.itemsize, idx * self.itemsize)
+        if len(data) != self.itemsize:
+            raise OSError(f"short pread from {self.path} at item {idx}")
+        return np.frombuffer(data, dtype=self.dtype, count=1)[0]
+
+    def _read_slice(self, key: slice) -> np.ndarray:
+        start, stop, step = key.indices(self.n_items)
+        if step != 1:
+            return self._read_slice(slice(start, stop, 1))[::step]
+        if stop <= start:
+            return np.zeros(0, dtype=self.dtype)
+        n = stop - start
+        data = os.pread(self._fd, n * self.itemsize, start * self.itemsize)
+        if len(data) != n * self.itemsize:
+            raise OSError(
+                f"short pread from {self.path}: wanted {n * self.itemsize} bytes, "
+                f"got {len(data)}"
+            )
+        return np.frombuffer(data, dtype=self.dtype, count=n).copy()
+
+    def _read_indices(self, idx: np.ndarray) -> np.ndarray:
+        original_shape = idx.shape
+        flat = idx.reshape(-1)
+        if flat.size == 0:
+            return np.zeros(original_shape, dtype=self.dtype)
+        flat = flat.copy()
+        flat[flat < 0] += self.n_items
+        if (flat < 0).any() or (flat >= self.n_items).any():
+            raise IndexError("pread array index out of range")
+        if flat.size == 1:
+            return np.asarray([self._read_scalar(int(flat[0]))], dtype=self.dtype).reshape(
+                original_shape
+            )
+        if np.all(flat[1:] == flat[:-1] + 1):
+            return self._read_slice(slice(int(flat[0]), int(flat[-1]) + 1)).reshape(
+                original_shape
+            )
+
+        unique, inverse = np.unique(flat, return_inverse=True)
+        values = np.empty(unique.shape[0], dtype=self.dtype)
+        run_start = 0
+        while run_start < unique.shape[0]:
+            run_end = run_start + 1
+            while run_end < unique.shape[0] and unique[run_end] == unique[run_end - 1] + 1:
+                run_end += 1
+            chunk = self._read_slice(slice(int(unique[run_start]), int(unique[run_end - 1]) + 1))
+            values[run_start:run_end] = chunk
+            run_start = run_end
+        return values[inverse].reshape(original_shape)
+
+
 class StupidBackoffNgramLM:
     """Reader for a stupid-backoff ``counts_index/`` directory.
 
@@ -112,6 +203,10 @@ class StupidBackoffNgramLM:
         or to the unigram floor if no lower order emits them.
     :param max_order2_continuations: Backward-compatible shortcut for
         ``max_order_continuations={2: value}``.
+    :param index_access: ``"mmap"`` keeps the current memmap-backed access
+        path. ``"pread"`` uses explicit ``os.pread`` calls for the large
+        1-D offsets / continuation / count arrays while keeping histories
+        mmap-backed for vectorized binary search.
     """
 
     def __init__(
@@ -124,7 +219,11 @@ class StupidBackoffNgramLM:
         max_order2_continuations: Optional[int] = None,
         max_order_continuations: Optional[Dict[int, int]] = None,
         mirror_to_shm: bool = True,
+        index_access: str = "mmap",
     ):
+        if index_access not in {"mmap", "pread"}:
+            raise ValueError(f"index_access must be 'mmap' or 'pread'; got {index_access!r}")
+        self.index_access = index_access
         caps: Dict[int, int] = {}
         if max_order_continuations:
             caps.update({int(order): int(cap) for order, cap in max_order_continuations.items()})
@@ -164,6 +263,7 @@ class StupidBackoffNgramLM:
         _sb_log(
             f"reader init start table_dir={table_dir} index_dir={index_dir} "
             f"mirror_to_shm={mirror_to_shm} "
+            f"index_access={self.index_access} "
             f"max_order_continuations={self.max_order_continuations or None}"
         )
 
@@ -265,6 +365,14 @@ class StupidBackoffNgramLM:
                 path = _mirror_to_shm(path)
             return np.memmap(path, dtype=dtype, mode="r")
 
+        def _open_1d(name: str, dtype):
+            path = str(index_dir / name)
+            if mirror_to_shm:
+                path = _mirror_to_shm(path)
+            if self.index_access == "pread":
+                return PReadArray(path, dtype)
+            return np.memmap(path, dtype=dtype, mode="r")
+
         self.orders: Dict[int, dict] = {}
         t_phase = time.perf_counter()
         total_hist = 0
@@ -279,10 +387,10 @@ class StupidBackoffNgramLM:
             t_order = time.perf_counter()
             order_data: dict = {
                 "n_hist": n_hist,
-                "offsets": _open_mmap(f"order{n}.offsets.bin", np.uint64),
-                "continuations": _open_mmap(f"order{n}.continuations.bin", np.uint32),
-                "counts": _open_mmap(f"order{n}.counts.bin", np.uint64),
-                "history_totals": _open_mmap(f"order{n}.history_totals.bin", np.uint64),
+                "offsets": _open_1d(f"order{n}.offsets.bin", np.uint64),
+                "continuations": _open_1d(f"order{n}.continuations.bin", np.uint32),
+                "counts": _open_1d(f"order{n}.counts.bin", np.uint64),
+                "history_totals": _open_1d(f"order{n}.history_totals.bin", np.uint64),
             }
             if plen == 0:
                 order_data["histories"] = None

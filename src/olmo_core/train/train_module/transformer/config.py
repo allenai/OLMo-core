@@ -379,6 +379,7 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     poe_sb_dolma2_vocab_size: int = 100352
     poe_sb_max_order2_continuations: Optional[int] = None
     poe_sb_max_order_continuations: Optional[Dict[int, int]] = None
+    poe_sb_index_access: str = "mmap"
 
     # Checkpoint settings.
 

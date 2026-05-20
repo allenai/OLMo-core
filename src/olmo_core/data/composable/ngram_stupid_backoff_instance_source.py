@@ -70,6 +70,8 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         continuations per matched history. Kept continuations are selected by
         raw count; omitted continuations fall through to lower orders or the
         unigram floor.
+    :param index_access: ``"mmap"`` for the current memmap-backed SB reader,
+        or ``"pread"`` to use explicit reads for large 1-D index arrays.
     """
 
     DISPLAY_ICON = "\U000f0d77"  # nf-md-graphql (same as the KN-smoothed source)
@@ -84,6 +86,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         alpha: float = 0.4,
         max_order2_continuations: Optional[int] = None,
         max_order_continuations: Optional[Dict[int, int]] = None,
+        index_access: str = "mmap",
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -100,6 +103,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         self._alpha = float(alpha)
         self._max_order2_continuations = max_order2_continuations
         self._max_order_continuations = max_order_continuations
+        self._index_access = index_access
         # Lazy per-process init: don't mmap in the main process so the
         # source pickles cleanly to spawn workers; first lookup populates.
         self._reader = None
@@ -136,6 +140,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 alpha=self._alpha,
                 max_order2_continuations=self._max_order2_continuations,
                 max_order_continuations=self._max_order_continuations,
+                index_access=self._index_access,
             )
         return self._reader
 
@@ -152,6 +157,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 f"alpha={self._alpha},"
                 f"max_order2_continuations={self._max_order2_continuations},"
                 f"max_order_continuations={self._max_order_continuations},"
+                f"index_access={self._index_access},"
             ).encode()
         )
         return sha.hexdigest()
@@ -201,6 +207,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
     alpha: float = 0.4
     max_order2_continuations: Optional[int] = None
     max_order_continuations: Optional[Dict[int, int]] = None
+    index_access: str = "mmap"
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> NgramStupidBackoffInstanceSource:
@@ -213,6 +220,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
             alpha=self.alpha,
             max_order2_continuations=self.max_order2_continuations,
             max_order_continuations=self.max_order_continuations,
+            index_access=self.index_access,
             work_dir=work_dir,
             label=self.label,
         )

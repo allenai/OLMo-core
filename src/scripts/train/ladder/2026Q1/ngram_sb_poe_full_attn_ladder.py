@@ -138,6 +138,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_n_max: int = DEFAULT_SB_N_MAX
     sb_max_order2_continuations: int | None = DEFAULT_SB_MAX_ORDER2_CONTINUATIONS
     sb_max_order_continuations: dict[int, int] | None = None
+    sb_index_access: str = "mmap"
     dolma2_vocab_size: int = DEFAULT_DOLMA2_VOCAB_SIZE
     smoke_1gpu: bool = False
 
@@ -193,6 +194,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_dolma2_vocab_size=self.dolma2_vocab_size,
             poe_sb_max_order2_continuations=self.sb_max_order2_continuations,
             poe_sb_max_order_continuations=self.sb_max_order_continuations,
+            poe_sb_index_access=self.sb_index_access,
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -226,6 +228,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             args, "sb_max_order2_continuations", DEFAULT_SB_MAX_ORDER2_CONTINUATIONS
         ),
         max_order_continuations=sb_order_caps,
+        index_access=getattr(args, "sb_index_access", "mmap"),
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -253,6 +256,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 DEFAULT_SB_MAX_ORDER2_CONTINUATIONS,
             ),
             sb_max_order_continuations=sb_order_caps,
+            sb_index_access=getattr(args, "sb_index_access", "mmap"),
             dolma2_vocab_size=int(tokenizer.padded_vocab_size()),
             smoke_1gpu=smoke_1gpu,
         ),
@@ -367,6 +371,17 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "Optional hard cap for any SB order, repeatable, for example "
             "'--sb-max-order-continuations 2=128 --sb-max-order-continuations 3=128'. "
             "The legacy --sb-max-order2-continuations flag still sets the order-2 cap."
+        ),
+    )
+    parser.add_argument(
+        "--sb-index-access",
+        choices=("mmap", "pread"),
+        default="mmap",
+        help=(
+            "SB counts-index access backend. 'mmap' is the existing memmap path. "
+            "'pread' keeps histories mmap-backed for vectorized search, but uses "
+            "explicit os.pread calls for offsets, continuation, count, and "
+            "history-total arrays."
         ),
     )
     parser.add_argument(
