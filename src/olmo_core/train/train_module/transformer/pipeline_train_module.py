@@ -110,6 +110,7 @@ class TransformerPipelineTrainModule(TrainModule):
         rank_microbatch_size: int,
         max_sequence_length: int,
         pp_config: TransformerPipelineParallelConfig,
+        eval_rank_microbatch_size: Optional[int] = None,
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
@@ -134,6 +135,14 @@ class TransformerPipelineTrainModule(TrainModule):
             raise OLMoConfigurationError(
                 f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
                 f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
+            )
+        if (
+            eval_rank_microbatch_size is not None
+            and eval_rank_microbatch_size % max_sequence_length != 0
+        ):
+            raise OLMoConfigurationError(
+                f"'eval_rank_microbatch_size' ({eval_rank_microbatch_size:,d} tokens) must be "
+                f"divisible by 'max_sequence_length' ({max_sequence_length:,d} tokens)"
             )
 
         # Build world mesh.
@@ -188,6 +197,7 @@ class TransformerPipelineTrainModule(TrainModule):
         self.label_ignore_index = label_ignore_index
         self.z_loss_multiplier = z_loss_multiplier
         self.rank_microbatch_size = rank_microbatch_size
+        self.eval_rank_microbatch_size = eval_rank_microbatch_size
         self.max_sequence_length = max_sequence_length
         self.autocast_precision = autocast_precision
         self.max_grad_norm = max_grad_norm
@@ -213,9 +223,11 @@ class TransformerPipelineTrainModule(TrainModule):
     @property
     def eval_batch_spec(self) -> EvalBatchSpec:
         # Determine the number of micro-batches.
-        rank_batch_size = self.trainer.global_batch_size // get_world_size(
-            self.trainer.dp_process_group
-        )
+        rank_batch_size = self.eval_rank_microbatch_size
+        if rank_batch_size is None:
+            rank_batch_size = self.trainer.global_batch_size // get_world_size(
+                self.trainer.dp_process_group
+            )
         rank_batch_size_instances = rank_batch_size // self.max_sequence_length
         return EvalBatchSpec(
             rank_batch_size=rank_batch_size_instances,

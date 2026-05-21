@@ -108,6 +108,7 @@ class TransformerTrainModule(TrainModule):
         optim: OptimConfig,
         rank_microbatch_size: int,
         max_sequence_length: int,
+        eval_rank_microbatch_size: Optional[int] = None,
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
@@ -148,6 +149,14 @@ class TransformerTrainModule(TrainModule):
             raise OLMoConfigurationError(
                 f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
                 f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
+            )
+        if (
+            eval_rank_microbatch_size is not None
+            and eval_rank_microbatch_size % max_sequence_length != 0
+        ):
+            raise OLMoConfigurationError(
+                f"'eval_rank_microbatch_size' ({eval_rank_microbatch_size:,d} tokens) must be "
+                f"divisible by 'max_sequence_length' ({max_sequence_length:,d} tokens)"
             )
 
         # Build world mesh.
@@ -274,6 +283,7 @@ class TransformerTrainModule(TrainModule):
         self._poe_sb_unigram_floor_dev: Optional[torch.Tensor] = None
         self._poe_sb_eval_bias_calls = 0
         self.rank_microbatch_size = rank_microbatch_size
+        self.eval_rank_microbatch_size = eval_rank_microbatch_size or rank_microbatch_size
         self.max_sequence_length = max_sequence_length
         self.autocast_precision = autocast_precision
         self.max_grad_norm = max_grad_norm
@@ -297,7 +307,7 @@ class TransformerTrainModule(TrainModule):
     @property
     def eval_batch_spec(self) -> EvalBatchSpec:
         return EvalBatchSpec(
-            self.rank_microbatch_size,
+            self.eval_rank_microbatch_size,
             max_sequence_length=self.max_sequence_length,
             #  fixed_sequence_length=self.tp_enabled,
         )

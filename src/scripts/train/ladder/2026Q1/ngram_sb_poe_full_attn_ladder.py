@@ -199,6 +199,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_index_access: str = "mmap"
     sb_lookup_threads: int = DEFAULT_SB_LOOKUP_THREADS
     sb_eval_lookup_threads: int | None = None
+    eval_rank_microbatch_size: int | None = None
     dolma2_vocab_size: int = DEFAULT_DOLMA2_VOCAB_SIZE
     smoke_1gpu: bool = False
 
@@ -242,6 +243,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
 
         train_module_config = TransformerTrainModuleConfig(
             rank_microbatch_size=rank_microbatch_size,
+            eval_rank_microbatch_size=self.eval_rank_microbatch_size,
             max_sequence_length=sequence_length,
             optim=optim_config,
             compile_model=True,
@@ -320,6 +322,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             rank_microbatch_size=None
             if args.rank_mbz is None
             else args.rank_mbz * args.sequence_length,
+            eval_rank_microbatch_size=None
+            if getattr(args, "eval_rank_mbz", None) is None
+            else args.eval_rank_mbz * args.sequence_length,
             poe_lambda=getattr(args, "poe_lambda", DEFAULT_POE_LAMBDA),
             sb_table_dir=getattr(args, "sb_table_dir", DEFAULT_SB_TABLE_DIR),
             sb_alpha=getattr(args, "sb_alpha", DEFAULT_SB_ALPHA),
@@ -553,8 +558,18 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         type=int,
         default=16384,
         help=(
-            "Global target batch size in tokens for --smoke-1gpu. Increase this "
-            "for eval-only smoke benchmarks that need larger eval batches."
+            "Global target batch size in tokens for --smoke-1gpu training. "
+            "Use --eval-rank-mbz to change LM eval batch size separately."
+        ),
+    )
+    parser.add_argument(
+        "--eval-rank-mbz",
+        type=int,
+        default=None,
+        help=(
+            "Eval microbatch size in full sequences per data-parallel rank. "
+            "Defaults to --rank-mbz. Larger values reduce LM eval batches but "
+            "increase per-GPU eval memory."
         ),
     )
     parser.add_argument(

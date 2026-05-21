@@ -294,6 +294,7 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     # Optimizer settings.
 
     optim: OptimConfig
+    eval_rank_microbatch_size: Optional[int] = None
     max_grad_norm: Optional[float] = None
     scheduler: Optional[Scheduler] = None
 
