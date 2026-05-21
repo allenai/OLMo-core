@@ -315,6 +315,13 @@ class RoPEConfig(ModuleConfig):
     scaling: Optional[RoPEScalingConfig] = None
     """The scaling config to apply to RoPE."""
 
+    partial_rotary_factor: float = 1.0
+    """
+    Fraction of each head dimension to apply RoPE to. When less than 1.0, only the leading
+    ``int(head_size * partial_rotary_factor)`` dimensions are rotated; the rest pass through
+    unchanged. Used by Qwen3.5 (default 0.25).
+    """
+
     def build(
         self,
         head_size: int,
@@ -370,14 +377,16 @@ class RotaryEmbeddingBase(nn.Module):
         full_precision: bool = True,
         cache: Optional[BufferCache] = None,
         scaling: Optional[RoPEScalingConfig] = None,
+        partial_rotary_factor: float = 1.0,
     ):
         super().__init__()
         self.dim = head_size
+        self.rotary_dim = int(head_size * partial_rotary_factor)
         self.theta = theta
         self.full_precision = full_precision
         self.scaling = scaling
         self._cache = (cache or BufferCache()).with_namespace(
-            f"RoPE_theta={self.theta}_scaling={repr(self.scaling)}"
+            f"RoPE_theta={self.theta}_partial={partial_rotary_factor}_scaling={repr(self.scaling)}"
         )
 
     @abstractmethod
@@ -439,11 +448,11 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
         with torch.autocast(device.type, enabled=False):
             if self.scaling is None:
-                inv_freq = compute_inv_freqs(self.theta, self.dim, device)
+                inv_freq = compute_inv_freqs(self.theta, self.rotary_dim, device)
                 attention_rescale_factor = 1.0
             else:
                 inv_freq, attention_rescale_factor = self.scaling.compute_scaled_inv_freq(
-                    theta=self.theta, dim=self.dim, device=device
+                    theta=self.theta, dim=self.rotary_dim, device=device
                 )
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)
@@ -467,7 +476,12 @@ class RotaryEmbedding(RotaryEmbeddingBase):
     def _apply_rotary_pos_emb(
         self, pos_sin: torch.Tensor, pos_cos: torch.Tensor, t: torch.Tensor
     ) -> torch.Tensor:
-        return ((t * pos_cos) + (self._rotate_half(t) * pos_sin)).to(t.dtype)
+        rotary_dim = pos_sin.shape[-1]
+        if rotary_dim == t.shape[-1]:
+            return ((t * pos_cos) + (self._rotate_half(t) * pos_sin)).to(t.dtype)
+        t_rot, t_pass = t[..., :rotary_dim], t[..., rotary_dim:]
+        t_rot = ((t_rot * pos_cos) + (self._rotate_half(t_rot) * pos_sin)).to(t.dtype)
+        return torch.cat([t_rot, t_pass], dim=-1)
 
     def forward(
         self,
