@@ -380,6 +380,7 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     poe_sb_dolma2_vocab_size: int = 100352
     poe_sb_max_order2_continuations: Optional[int] = None
     poe_sb_max_order_continuations: Optional[Dict[int, int]] = None
+    poe_sb_min_order_counts: Optional[Dict[int, int]] = None
     poe_sb_index_access: str = "mmap"
     poe_sb_lookup_threads: int = 1
     poe_sb_eval_lookup_threads: Optional[int] = None

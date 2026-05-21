@@ -70,6 +70,9 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         continuations per matched history. Kept continuations are selected by
         raw count; omitted continuations fall through to lower orders or the
         unigram floor.
+    :param min_order_counts: Optional minimum raw-count thresholds by ngram
+        order. Continuations below the threshold are omitted and fall through
+        to lower orders or the unigram floor.
     :param index_access: ``"mmap"`` for the current memmap-backed SB reader,
         or ``"pread"`` to use explicit reads for large 1-D index arrays.
     :param lookup_threads: Number of in-process threads used by each reader
@@ -88,6 +91,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         alpha: float = 0.4,
         max_order2_continuations: Optional[int] = None,
         max_order_continuations: Optional[Dict[int, int]] = None,
+        min_order_counts: Optional[Dict[int, int]] = None,
         index_access: str = "mmap",
         lookup_threads: int = 1,
         work_dir: PathOrStr,
@@ -106,6 +110,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         self._alpha = float(alpha)
         self._max_order2_continuations = max_order2_continuations
         self._max_order_continuations = max_order_continuations
+        self._min_order_counts = min_order_counts
         self._index_access = index_access
         self._lookup_threads = int(lookup_threads)
         # Lazy per-process init: don't mmap in the main process so the
@@ -152,6 +157,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 alpha=self._alpha,
                 max_order2_continuations=self._max_order2_continuations,
                 max_order_continuations=self._max_order_continuations,
+                min_order_counts=self._min_order_counts,
                 index_access=self._index_access,
                 lookup_threads=self._lookup_threads,
             )
@@ -170,6 +176,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 f"alpha={self._alpha},"
                 f"max_order2_continuations={self._max_order2_continuations},"
                 f"max_order_continuations={self._max_order_continuations},"
+                f"min_order_counts={self._min_order_counts},"
                 f"index_access={self._index_access},"
                 f"lookup_threads={self._lookup_threads},"
             ).encode()
@@ -221,6 +228,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
     alpha: float = 0.4
     max_order2_continuations: Optional[int] = None
     max_order_continuations: Optional[Dict[int, int]] = None
+    min_order_counts: Optional[Dict[int, int]] = None
     index_access: str = "mmap"
     lookup_threads: int = 1
     label: Optional[str] = None
@@ -235,6 +243,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
             alpha=self.alpha,
             max_order2_continuations=self.max_order2_continuations,
             max_order_continuations=self.max_order_continuations,
+            min_order_counts=self.min_order_counts,
             index_access=self.index_access,
             lookup_threads=self.lookup_threads,
             work_dir=work_dir,

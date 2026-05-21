@@ -197,6 +197,11 @@ class StupidBackoffNgramLM:
         order present in the index (currently 5).
     :param alpha: Stupid-backoff discount factor per Brants et al 2007.
         Default 0.4. Lower means more weight on shorter histories.
+    :param min_order_counts: Optional minimum raw-count thresholds by ngram
+        order. When set for an order, continuations with counts below the
+        threshold are omitted and may fall through to a lower order or the
+        unigram floor. This is a post-hoc pruning approximation of rebuilding
+        the counts index with low-count records removed.
     :param max_order_continuations: Optional hard caps by ngram order on the
         number of continuations emitted per matched history. When set for an
         order, the reader keeps the highest-count continuations for that
@@ -223,6 +228,7 @@ class StupidBackoffNgramLM:
         alpha: float = 0.4,
         max_order2_continuations: Optional[int] = None,
         max_order_continuations: Optional[Dict[int, int]] = None,
+        min_order_counts: Optional[Dict[int, int]] = None,
         mirror_to_shm: bool = True,
         index_access: str = "mmap",
         lookup_threads: int = 1,
@@ -253,6 +259,19 @@ class StupidBackoffNgramLM:
                 raise ValueError(f"continuation cap for order {order} must be positive; got {cap}")
         self.max_order_continuations = caps
         self.max_order2_continuations = caps.get(2)
+        min_counts: Dict[int, int] = {}
+        if min_order_counts:
+            min_counts.update({int(order): int(count) for order, count in min_order_counts.items()})
+        for order, min_count in min_counts.items():
+            if order < 2:
+                raise ValueError(f"minimum-count order must be >= 2; got {order}")
+            if order > N_max:
+                raise ValueError(f"minimum-count order {order} exceeds N_max={N_max}")
+            if min_count <= 0:
+                raise ValueError(
+                    f"minimum count for order {order} must be positive; got {min_count}"
+                )
+        self.min_order_counts = min_counts
         p = Path(table_dir)
         if (p / "counts_index").is_dir():
             index_dir = p / "counts_index"
@@ -273,7 +292,8 @@ class StupidBackoffNgramLM:
             f"mirror_to_shm={mirror_to_shm} "
             f"index_access={self.index_access} "
             f"lookup_threads={self.lookup_threads} "
-            f"max_order_continuations={self.max_order_continuations or None}"
+            f"max_order_continuations={self.max_order_continuations or None} "
+            f"min_order_counts={self.min_order_counts or None}"
         )
 
         t_phase = time.perf_counter()
@@ -499,6 +519,13 @@ class StupidBackoffNgramLM:
                 continue
             conts_kenlm = np.asarray(order["continuations"][lo:hi], dtype=np.uint32)
             cnts = np.asarray(order["counts"][lo:hi], dtype=np.uint64)
+            min_count = self.min_order_counts.get(n)
+            if min_count is not None:
+                keep_min_count = cnts >= np.uint64(min_count)
+                if not keep_min_count.any():
+                    continue
+                conts_kenlm = conts_kenlm[keep_min_count]
+                cnts = cnts[keep_min_count]
             order_cap = self.max_order_continuations.get(n)
             if order_cap is not None:
                 k = int(order_cap)
@@ -805,9 +832,13 @@ class StupidBackoffNgramLM:
                 order_data["counts"][flat_arr_idx], dtype=np.uint64
             )
 
-            # Translate kenlm→dolma2 and drop sentinel / zero-count rows.
+            # Translate kenlm→dolma2 and drop sentinel / zero-count /
+            # below-threshold rows.
             flat_did = self.kenlm_to_dolma2[flat_conts_kenlm].astype(np.int64, copy=False)
             valid_mask = (flat_did < self.vocab_size) & (flat_counts > 0)
+            min_count = self.min_order_counts.get(n)
+            if min_count is not None:
+                valid_mask &= flat_counts >= np.uint64(min_count)
             if not valid_mask.any():
                 continue
             n_valid = int(valid_mask.sum())
@@ -825,14 +856,21 @@ class StupidBackoffNgramLM:
 
             per_order.append((flat_positions, flat_did_v, flat_log_score, n))
             order_cap = self.max_order_continuations.get(n)
+            min_count = self.min_order_counts.get(n)
+            min_count_summary = (
+                f",min_count={int(min_count):,}" if min_count is not None else ""
+            )
             if order_cap is not None:
                 order_summaries.append(
                     f"n{n}:hist_hits={n_hits:,},raw={total_raw:,},"
                     f"kept={total:,},overrides={n_valid:,},"
-                    f"cap={int(order_cap):,}"
+                    f"cap={int(order_cap):,}{min_count_summary}"
                 )
             else:
-                order_summaries.append(f"n{n}:hist_hits={n_hits:,},overrides={n_valid:,}")
+                order_summaries.append(
+                    f"n{n}:hist_hits={n_hits:,},overrides={n_valid:,}"
+                    f"{min_count_summary}"
+                )
 
         if not per_order:
             if log_timing:

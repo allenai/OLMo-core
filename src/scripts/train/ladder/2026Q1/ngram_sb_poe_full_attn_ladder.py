@@ -111,6 +111,24 @@ def _parse_order_caps(raw_caps: list[str] | None) -> dict[int, int] | None:
     return caps
 
 
+def _parse_order_int_map(raw_values: list[str] | None, *, label: str) -> dict[int, int] | None:
+    if not raw_values:
+        return None
+    values: dict[int, int] = {}
+    for raw in raw_values:
+        if "=" not in raw:
+            raise ValueError(f"expected {label} as ORDER=VALUE, got {raw!r}")
+        order_s, value_s = raw.split("=", 1)
+        order = int(order_s)
+        value = int(value_s)
+        if order < 2:
+            raise ValueError(f"{label} must target order >= 2, got {order}")
+        if value <= 0:
+            raise ValueError(f"{label} must be positive, got {value}")
+        values[order] = value
+    return values
+
+
 class HeadInstanceSource(InstanceSource):  # noqa: F405
     """Cheap first-N wrapper for smoke tests.
 
@@ -196,6 +214,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_n_max: int = DEFAULT_SB_N_MAX
     sb_max_order2_continuations: int | None = DEFAULT_SB_MAX_ORDER2_CONTINUATIONS
     sb_max_order_continuations: dict[int, int] | None = None
+    sb_min_order_counts: dict[int, int] | None = None
     sb_index_access: str = "mmap"
     sb_lookup_threads: int = DEFAULT_SB_LOOKUP_THREADS
     sb_eval_lookup_threads: int | None = None
@@ -256,6 +275,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_dolma2_vocab_size=self.dolma2_vocab_size,
             poe_sb_max_order2_continuations=self.sb_max_order2_continuations,
             poe_sb_max_order_continuations=self.sb_max_order_continuations,
+            poe_sb_min_order_counts=self.sb_min_order_counts,
             poe_sb_index_access=self.sb_index_access,
             poe_sb_lookup_threads=self.sb_lookup_threads,
             poe_sb_eval_lookup_threads=self.sb_eval_lookup_threads,
@@ -275,6 +295,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
     tokenizer = TokenizerConfig.dolma2()
     sb_order_caps = _parse_order_caps(getattr(args, "sb_max_order_continuations", None))
+    sb_min_order_counts = _parse_order_int_map(
+        getattr(args, "sb_min_order_count", None),
+        label="minimum order count",
+    )
 
     base_source = ConcatAndChunkInstanceSourceConfig(  # noqa: F405
         sources=[
@@ -303,6 +327,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             args, "sb_max_order2_continuations", DEFAULT_SB_MAX_ORDER2_CONTINUATIONS
         ),
         max_order_continuations=sb_order_caps,
+        min_order_counts=sb_min_order_counts,
         index_access=getattr(args, "sb_index_access", "mmap"),
         lookup_threads=getattr(args, "sb_lookup_threads", DEFAULT_SB_LOOKUP_THREADS),
     )
@@ -335,6 +360,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 DEFAULT_SB_MAX_ORDER2_CONTINUATIONS,
             ),
             sb_max_order_continuations=sb_order_caps,
+            sb_min_order_counts=sb_min_order_counts,
             sb_index_access=getattr(args, "sb_index_access", "mmap"),
             sb_lookup_threads=getattr(
                 args,
@@ -488,6 +514,19 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "Optional hard cap for any SB order, repeatable, for example "
             "'--sb-max-order-continuations 2=128 --sb-max-order-continuations 3=128'. "
             "The legacy --sb-max-order2-continuations flag still sets the order-2 cap."
+        ),
+    )
+    parser.add_argument(
+        "--sb-min-order-count",
+        action="append",
+        default=None,
+        metavar="ORDER=COUNT",
+        help=(
+            "Optional minimum raw-count threshold for any SB order, repeatable, "
+            "for example '--sb-min-order-count 2=5 --sb-min-order-count 3=2'. "
+            "Continuations below the threshold are omitted and fall through to "
+            "lower orders or the unigram floor. This is a post-hoc pruning "
+            "approximation for threshold sweeps before rebuilding counts."
         ),
     )
     parser.add_argument(
