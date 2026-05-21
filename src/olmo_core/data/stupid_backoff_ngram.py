@@ -782,31 +782,45 @@ class StupidBackoffNgramLM:
             # count) slice; flat_arr_idx[k] = the global index to read from.
             total_raw = total
             order_cap = self.max_order_continuations.get(n)
-            if order_cap is not None:
-                k = int(order_cap)
+            min_count = self.min_order_counts.get(n)
+            if order_cap is not None or min_count is not None:
+                k = int(order_cap) if order_cap is not None else None
                 selected_idx: list[np.ndarray] = []
                 selected_row: list[np.ndarray] = []
                 # The same one-token history often appears many times in a
                 # sequence. Cache the selected global continuation indices per
-                # history row so repeated contexts don't re-partition the same
-                # large count slice.
+                # history row so repeated contexts don't re-filter or
+                # re-partition the same large count slice.
                 selected_by_history_row: dict[int, np.ndarray] = {}
                 for hit_i, (row_idx, start, end) in enumerate(zip(hit_row_indices, lo, hi)):
                     row_idx_i = int(row_idx)
                     arr_idx = selected_by_history_row.get(row_idx_i)
                     if arr_idx is None:
                         row_len = int(end - start)
-                        if row_len <= k:
+                        if min_count is None and k is not None and row_len <= k:
                             arr_idx = np.arange(int(start), int(end), dtype=np.int64)
                         else:
                             row_counts = np.asarray(
                                 order_data["counts"][int(start) : int(end)],
                                 dtype=np.uint64,
                             )
-                            keep = np.argpartition(row_counts, -k)[-k:].astype(
-                                np.int64, copy=False
-                            )
-                            arr_idx = int(start) + keep
+                            if min_count is not None:
+                                keep = np.flatnonzero(row_counts >= np.uint64(min_count))
+                                if keep.size == 0:
+                                    arr_idx = np.empty(0, dtype=np.int64)
+                                else:
+                                    kept_counts = row_counts[keep]
+                                    if k is not None and keep.size > k:
+                                        top = np.argpartition(kept_counts, -k)[-k:]
+                                        keep = keep[top]
+                                    arr_idx = int(start) + keep.astype(np.int64, copy=False)
+                            elif k is not None:
+                                keep = np.argpartition(row_counts, -k)[-k:].astype(
+                                    np.int64, copy=False
+                                )
+                                arr_idx = int(start) + keep
+                            else:
+                                arr_idx = np.arange(int(start), int(end), dtype=np.int64)
                         selected_by_history_row[row_idx_i] = arr_idx
                     if arr_idx.size == 0:
                         continue
@@ -832,13 +846,12 @@ class StupidBackoffNgramLM:
                 order_data["counts"][flat_arr_idx], dtype=np.uint64
             )
 
-            # Translate kenlm→dolma2 and drop sentinel / zero-count /
-            # below-threshold rows.
+            # Translate kenlm→dolma2 and drop sentinel / zero-count rows. The
+            # raw-count threshold, when set, has already been applied before
+            # flattening so pathological low-order rows don't create giant
+            # temporary arrays.
             flat_did = self.kenlm_to_dolma2[flat_conts_kenlm].astype(np.int64, copy=False)
             valid_mask = (flat_did < self.vocab_size) & (flat_counts > 0)
-            min_count = self.min_order_counts.get(n)
-            if min_count is not None:
-                valid_mask &= flat_counts >= np.uint64(min_count)
             if not valid_mask.any():
                 continue
             n_valid = int(valid_mask.sum())
