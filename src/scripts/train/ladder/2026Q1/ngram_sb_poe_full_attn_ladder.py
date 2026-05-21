@@ -166,6 +166,8 @@ class _WSDSChinchillaSmoke(WSDSChinchillaRunConfigurator):
     """Smoke variant of WSDS Chinchilla, copied from the KN-smoothed
     ladder so a 1-GPU smoke completes in minutes rather than hours."""
 
+    target_batch_size: int = 16384
+
     def __post_init__(self):
         from olmo_core.exceptions import OLMoConfigurationError
 
@@ -180,7 +182,7 @@ class _WSDSChinchillaSmoke(WSDSChinchillaRunConfigurator):
         return 16384, [self.chinchilla_multiple]
 
     def configure_target_batch_size(self, num_params: int) -> int:
-        return 16384
+        return self.target_batch_size
 
 
 @dataclasses.dataclass(kw_only=True, eq=True)
@@ -332,7 +334,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             smoke_1gpu=smoke_1gpu,
         ),
         run_configurator=(
-            _WSDSChinchillaSmoke(chinchilla_multiple=args.chinchilla_multiple)
+            _WSDSChinchillaSmoke(
+                chinchilla_multiple=args.chinchilla_multiple,
+                target_batch_size=getattr(args, "smoke_target_batch_size", 16384),
+            )
             if smoke_1gpu
             else WSDSChinchillaRunConfigurator(
                 chinchilla_multiple=args.chinchilla_multiple
@@ -523,6 +528,15 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "Limit the training source to the first N sequence instances. "
             "Use only for smoke tests; it avoids writing a full pretraining "
             "epoch order file before a short run."
+        ),
+    )
+    parser.add_argument(
+        "--smoke-target-batch-size",
+        type=int,
+        default=16384,
+        help=(
+            "Global target batch size in tokens for --smoke-1gpu. Increase this "
+            "for eval-only smoke benchmarks that need larger eval batches."
         ),
     )
     parser.add_argument(
