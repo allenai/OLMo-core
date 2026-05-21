@@ -114,6 +114,84 @@ def apply_sb_bias_inplace(
     logits.view(-1).scatter_add_(0, flat_idx, delta)
 
 
+def compute_sparse_sb_ce_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    unigram_floor: torch.Tensor,
+    sb_override_batch_idx: torch.Tensor,
+    sb_override_position: torch.Tensor,
+    sb_override_token_id: torch.Tensor,
+    sb_override_log_score: torch.Tensor,
+    poe_lambda: float,
+    label_ignore_index: int,
+) -> torch.Tensor:
+    """Compute exact per-token CE for SB PoE without materializing biased logits.
+
+    This is equivalent to calling :func:`apply_sb_bias_inplace` on an fp32
+    logits clone and then computing ``-(label_logit - logsumexp(logits))``.
+    It keeps the dense unigram-floor normalization and applies the observed
+    higher-order SB continuations as sparse partition-function corrections.
+    """
+    if logits.ndim != 3:
+        raise ValueError(
+            f"expected logits with shape (B, S, V), got {tuple(logits.shape)}"
+        )
+    B, S, V = logits.shape
+    if unigram_floor.shape != (V,):
+        raise ValueError(
+            f"unigram_floor shape {tuple(unigram_floor.shape)} doesn't match logits V={V}"
+        )
+
+    logits_f32 = logits.float()
+    unigram_floor = unigram_floor.to(device=logits_f32.device, dtype=logits_f32.dtype)
+    floor_bias = float(poe_lambda) * unigram_floor
+    base_logits = logits_f32 + floor_bias.view(1, 1, V)
+    log_sum_exp_base = torch.logsumexp(base_logits, dim=-1)
+
+    safe_labels = labels.to(logits_f32.device, non_blocking=True)
+    safe_labels = safe_labels.masked_fill(safe_labels == label_ignore_index, 0)
+    label_logits = base_logits.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1)
+
+    tok = sb_override_token_id.to(device=logits_f32.device, dtype=torch.long)
+    if tok.numel() > 0:
+        bidx = sb_override_batch_idx.to(device=logits_f32.device, dtype=torch.long)
+        pos = sb_override_position.to(device=logits_f32.device, dtype=torch.long)
+        sc = sb_override_log_score.to(device=logits_f32.device, dtype=logits_f32.dtype)
+
+        flat_pos = bidx * S + pos
+        override_delta = float(poe_lambda) * (sc - unigram_floor[tok])
+        override_base_logits = base_logits[bidx, pos, tok]
+        z_delta_flat = torch.zeros(B * S, device=logits_f32.device, dtype=logits_f32.dtype)
+        z_delta_flat.index_add_(
+            0,
+            flat_pos,
+            torch.exp(override_base_logits) * torch.expm1(override_delta),
+        )
+        log_sum_exp = log_sum_exp_base + torch.log1p(
+            z_delta_flat.view(B, S) * torch.exp(-log_sum_exp_base)
+        )
+
+        flat_labels = safe_labels.reshape(-1)
+        label_match = tok == flat_labels[flat_pos]
+        if label_match.any():
+            label_delta_flat = torch.zeros(
+                B * S, device=logits_f32.device, dtype=logits_f32.dtype
+            )
+            label_delta_flat.index_add_(
+                0, flat_pos[label_match], override_delta[label_match]
+            )
+            label_logits = label_logits + label_delta_flat.view(B, S)
+    else:
+        log_sum_exp = log_sum_exp_base
+
+    ce_loss = -(label_logits - log_sum_exp)
+    return torch.where(
+        labels.to(ce_loss.device, non_blocking=True) == label_ignore_index,
+        torch.zeros_like(ce_loss),
+        ce_loss,
+    )
+
+
 def compute_sb_overrides_for_batch(
     input_ids: torch.Tensor,
     reader,  # StupidBackoffNgramLM

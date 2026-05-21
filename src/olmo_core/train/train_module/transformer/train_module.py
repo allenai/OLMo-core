@@ -1265,17 +1265,16 @@ class TransformerTrainModule(TrainModule):
     ) -> tuple:
         """Stupid-backoff analog of :meth:`_apply_poe_eval_bias`.
 
-        Eval-callback path. Computes per-instance SB overrides
-        synchronously on CPU via
-        :func:`olmo_core.data.sb_bias.compute_sb_overrides_for_batch`
-        (mirroring what the dataloader does at train time), then applies
-        the SB bias on an fp32 clone of the eval-time logits via
-        :func:`olmo_core.data.sb_bias.apply_sb_bias_inplace` and computes
-        per-position CE at the hard labels.
+        Eval-callback path. Computes per-instance SB overrides synchronously on
+        CPU via :func:`olmo_core.data.sb_bias.compute_sb_overrides_for_batch`,
+        mirroring what the dataloader does at train time. LM eval then computes
+        exact CE from a dense unigram-floor normalization plus sparse
+        higher-order corrections. Downstream evals still get a materialized
+        biased-logits tensor because they may need full logits.
         """
         from olmo_core.data.sb_bias import (
-            apply_sb_bias_inplace,
             compute_sb_overrides_for_batch,
+            compute_sparse_sb_ce_loss,
         )
 
         assert self.poe_lambda is not None
@@ -1289,12 +1288,12 @@ class TransformerTrainModule(TrainModule):
         if timing:
             self._sync_for_timing(local_logits.device)
         t0 = time.perf_counter()
-        biased_logits_f32 = local_logits.float().clone()
+        local_logits_f32 = local_logits.float()
         unigram_floor = self._get_poe_sb_unigram_floor_dev(
-            dtype=biased_logits_f32.dtype
+            dtype=local_logits_f32.dtype
         )
         if timing:
-            self._sync_for_timing(biased_logits_f32.device)
+            self._sync_for_timing(local_logits_f32.device)
         t_clone = time.perf_counter()
 
         # Synchronous CPU lookup of per-instance overrides.
@@ -1303,50 +1302,53 @@ class TransformerTrainModule(TrainModule):
         t_lookup = time.perf_counter()
         # Move to logits device (the helper expects on-device tensors).
         bidx = overrides_cpu["sb_override_batch_idx"].to(
-            biased_logits_f32.device, non_blocking=True
+            local_logits_f32.device, non_blocking=True
         )
         pos = overrides_cpu["sb_override_position"].to(
-            biased_logits_f32.device, non_blocking=True
+            local_logits_f32.device, non_blocking=True
         )
         tok = overrides_cpu["sb_override_token_id"].to(
-            biased_logits_f32.device, non_blocking=True
+            local_logits_f32.device, non_blocking=True
         )
         sc = overrides_cpu["sb_override_log_score"].to(
-            biased_logits_f32.device, non_blocking=True
+            local_logits_f32.device, non_blocking=True
         )
         if timing:
-            self._sync_for_timing(biased_logits_f32.device)
+            self._sync_for_timing(local_logits_f32.device)
         t_copy = time.perf_counter()
-        apply_sb_bias_inplace(
-            biased_logits_f32,
-            unigram_floor,
-            bidx,
-            pos,
-            tok,
-            sc,
-            float(self.poe_lambda),
-        )
-        if timing:
-            self._sync_for_timing(biased_logits_f32.device)
-        t_apply = time.perf_counter()
-
         if labels is not None and compute_ce_loss:
-            log_sum_exp = torch.logsumexp(biased_logits_f32, dim=-1)
-            safe_labels = labels.clone()
-            safe_labels[safe_labels == self.label_ignore_index] = 0
-            label_logits = biased_logits_f32.gather(
-                -1, safe_labels.unsqueeze(-1).to(biased_logits_f32.device)
-            ).squeeze(-1)
-            ce_loss = -(label_logits - log_sum_exp)
-            ce_loss = torch.where(
-                labels.to(ce_loss.device) == self.label_ignore_index,
-                torch.zeros_like(ce_loss),
-                ce_loss,
+            ce_loss = compute_sparse_sb_ce_loss(
+                local_logits_f32,
+                labels,
+                unigram_floor,
+                bidx,
+                pos,
+                tok,
+                sc,
+                float(self.poe_lambda),
+                self.label_ignore_index,
             )
+            biased_logits_f32 = None
+            t_apply = t_copy
         else:
+            from olmo_core.data.sb_bias import apply_sb_bias_inplace
+
+            biased_logits_f32 = local_logits_f32.clone()
+            apply_sb_bias_inplace(
+                biased_logits_f32,
+                unigram_floor,
+                bidx,
+                pos,
+                tok,
+                sc,
+                float(self.poe_lambda),
+            )
+            if timing:
+                self._sync_for_timing(biased_logits_f32.device)
+            t_apply = time.perf_counter()
             ce_loss = None
         if timing:
-            self._sync_for_timing(biased_logits_f32.device)
+            self._sync_for_timing(local_logits_f32.device)
         t_ce = time.perf_counter()
 
         total_s = t_ce - t0
