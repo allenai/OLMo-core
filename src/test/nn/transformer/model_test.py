@@ -55,7 +55,7 @@ from olmo_core.testing import (
     requires_multi_gpu,
     run_distributed_test,
 )
-from olmo_core.testing.utils import FLA_MARKS, has_fla
+from olmo_core.testing.utils import FLA_MARKS, has_fla, requires_fla
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
@@ -743,16 +743,16 @@ def test_qwen3_5_param_count(config_builder):
     assert model.num_params == num_actual_params
 
 
-@pytest.mark.skipif(not has_fla, reason="flash-linear-attention (fla) not available")
+@requires_fla
 def test_qwen3_5_forward():
+    device = torch.device("cuda")
     config = TransformerConfig.qwen3_5_0_8B(
         vocab_size=1000,
         n_layers=4,
         attn_backend=AttentionBackendName.torch,
     )
-    model = config.build(init_device="cpu")
-    model.eval()
-    input_ids = torch.randint(0, 1000, (2, 16))
+    model = config.build(init_device="cpu").eval().to(device)
+    input_ids = torch.randint(0, 1000, (2, 16), device=device)
     with torch.no_grad():
         logits = model(input_ids)
     assert logits.shape == (2, 16, 1000)

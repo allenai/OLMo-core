@@ -421,12 +421,25 @@ def _get_qwen3_5_text_config(config: PretrainedConfig) -> PretrainedConfig:
     return config
 
 
+def _get_hf_state_value(hf_state: Dict[str, Any], *keys: str) -> Any:
+    """
+    Return the first matching value from *keys*, raising if none are present.
+    """
+    for key in keys:
+        if key in hf_state:
+            return hf_state[key]
+    raise KeyError(keys[0])
+
+
 def _normalize_qwen3_5_hf_state(hf_state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize HF state dict keys to ``model.layers.*`` / shared text-model keys.
 
     Handles multimodal checkpoints that nest the text decoder under prefixes like
     ``model.language_model.``.
+
+    Also aliases legacy GDN key names (``o_proj`` / ``o_norm``) to the names used by
+    recent Hugging Face checkpoints (``out_proj`` / ``norm``).
     """
     normalized: Dict[str, Any] = {}
     text_suffixes = (
@@ -455,6 +468,10 @@ def _normalize_qwen3_5_hf_state(hf_state: Dict[str, Any]) -> Dict[str, Any]:
         if not any(s in model_key for s in text_suffixes) and model_key != "lm_head.weight":
             continue
         normalized[model_key] = value
+        if "linear_attn.out_proj." in model_key:
+            normalized[model_key.replace("out_proj", "o_proj")] = value
+        if "linear_attn.norm.weight" in model_key:
+            normalized[model_key.replace("linear_attn.norm", "linear_attn.o_norm")] = value
 
     return normalized
 
@@ -477,7 +494,11 @@ def _convert_qwen3_5_gdn_layer(
     state[f"{olmo_prefix}attention.w_g.weight"] = hf_state[f"{prefix}linear_attn.in_proj_z.weight"]
     state[f"{olmo_prefix}attention.w_a.weight"] = hf_state[f"{prefix}linear_attn.in_proj_a.weight"]
     state[f"{olmo_prefix}attention.w_b.weight"] = hf_state[f"{prefix}linear_attn.in_proj_b.weight"]
-    state[f"{olmo_prefix}attention.w_out.weight"] = hf_state[f"{prefix}linear_attn.o_proj.weight"]
+    state[f"{olmo_prefix}attention.w_out.weight"] = _get_hf_state_value(
+        hf_state,
+        f"{prefix}linear_attn.o_proj.weight",
+        f"{prefix}linear_attn.out_proj.weight",
+    )
 
     conv_weight = hf_state[f"{prefix}linear_attn.conv1d.weight"]
     state[f"{olmo_prefix}attention.q_conv1d.weight"] = conv_weight[:key_dim]
@@ -486,7 +507,11 @@ def _convert_qwen3_5_gdn_layer(
         2 * key_dim : 2 * key_dim + value_dim
     ]
 
-    state[f"{olmo_prefix}attention.o_norm.weight"] = hf_state[f"{prefix}linear_attn.o_norm.weight"]
+    state[f"{olmo_prefix}attention.o_norm.weight"] = _get_hf_state_value(
+        hf_state,
+        f"{prefix}linear_attn.o_norm.weight",
+        f"{prefix}linear_attn.norm.weight",
+    )
     state[f"{olmo_prefix}attention.A_log"] = hf_state[f"{prefix}linear_attn.A_log"]
     state[f"{olmo_prefix}attention.dt_bias"] = hf_state[f"{prefix}linear_attn.dt_bias"]
 
@@ -501,6 +526,22 @@ def _convert_qwen3_5_gdn_layer(
     return state
 
 
+def _split_qwen3_5_q_proj(
+    q_proj: torch.Tensor, n_heads: int, head_dim: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Split fused HF ``q_proj`` weights into separate OLMo ``w_q`` and ``w_g`` weights.
+
+    Hugging Face interleaves query and gate projections per head as
+    ``[q_0, g_0, q_1, g_1, ...]``, while OLMo stores them as ``[q_0, q_1, ..., g_0, g_1, ...]``.
+    """
+    hidden_size = q_proj.shape[1]
+    q_gate = q_proj.view(n_heads, 2, head_dim, hidden_size)
+    w_q = q_gate[:, 0].reshape(n_heads * head_dim, hidden_size)
+    w_g = q_gate[:, 1].reshape(n_heads * head_dim, hidden_size)
+    return w_q, w_g
+
+
 def _convert_qwen3_5_attn_layer(
     hf_state: Dict[str, Any],
     layer_idx: int,
@@ -512,9 +553,9 @@ def _convert_qwen3_5_attn_layer(
     state: Dict[str, Any] = {}
 
     q_proj = hf_state[f"{prefix}self_attn.q_proj.weight"]
-    q_size = n_heads * head_dim
-    state[f"{olmo_prefix}attention.w_q.weight"] = q_proj[:q_size]
-    state[f"{olmo_prefix}attention.w_g.weight"] = q_proj[q_size:]
+    w_q, w_g = _split_qwen3_5_q_proj(q_proj, n_heads, head_dim)
+    state[f"{olmo_prefix}attention.w_q.weight"] = w_q
+    state[f"{olmo_prefix}attention.w_g.weight"] = w_g
 
     state[f"{olmo_prefix}attention.w_k.weight"] = hf_state[f"{prefix}self_attn.k_proj.weight"]
     state[f"{olmo_prefix}attention.w_v.weight"] = hf_state[f"{prefix}self_attn.v_proj.weight"]
@@ -565,6 +606,8 @@ def convert_qwen3_5_state_from_hf(
         olmo_state["lm_head.norm.weight"] = hf_state["model.norm.weight"]
     if "lm_head.weight" in hf_state:
         olmo_state["lm_head.w_out.weight"] = hf_state["lm_head.weight"]
+    elif getattr(text_config, "tie_word_embeddings", False) and "model.embed_tokens.weight" in hf_state:
+        olmo_state["lm_head.w_out.weight"] = hf_state["model.embed_tokens.weight"]
 
     for layer_idx in range(n_layers):
         if layer_types[layer_idx] == "linear_attention":
@@ -685,11 +728,11 @@ HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
     "attention.w_a.weight": "linear_attn.a_proj.weight",
     "attention.w_b.weight": "linear_attn.b_proj.weight",
     "attention.w_g.weight": "linear_attn.g_proj.weight",
-    "attention.w_out.weight": "linear_attn.o_proj.weight",
+    "attention.w_out.weight": "linear_attn.out_proj.weight",
     "attention.q_conv1d.weight": "linear_attn.q_conv1d.weight",
     "attention.k_conv1d.weight": "linear_attn.k_conv1d.weight",
     "attention.v_conv1d.weight": "linear_attn.v_conv1d.weight",
-    "attention.o_norm.weight": "linear_attn.o_norm.weight",
+    "attention.o_norm.weight": "linear_attn.norm.weight",
     "attention.A_log": "linear_attn.A_log",
     "attention.dt_bias": "linear_attn.dt_bias",
     "attention_norm.weight": "input_layernorm.weight",
