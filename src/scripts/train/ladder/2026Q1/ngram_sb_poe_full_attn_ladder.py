@@ -198,6 +198,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_max_order_continuations: dict[int, int] | None = None
     sb_index_access: str = "mmap"
     sb_lookup_threads: int = DEFAULT_SB_LOOKUP_THREADS
+    sb_eval_lookup_threads: int | None = None
     dolma2_vocab_size: int = DEFAULT_DOLMA2_VOCAB_SIZE
     smoke_1gpu: bool = False
 
@@ -255,6 +256,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_max_order_continuations=self.sb_max_order_continuations,
             poe_sb_index_access=self.sb_index_access,
             poe_sb_lookup_threads=self.sb_lookup_threads,
+            poe_sb_eval_lookup_threads=self.sb_eval_lookup_threads,
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -329,7 +331,12 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             ),
             sb_max_order_continuations=sb_order_caps,
             sb_index_access=getattr(args, "sb_index_access", "mmap"),
-            sb_lookup_threads=getattr(args, "sb_lookup_threads", DEFAULT_SB_LOOKUP_THREADS),
+            sb_lookup_threads=getattr(
+                args,
+                "sb_lookup_threads",
+                DEFAULT_SB_LOOKUP_THREADS,
+            ),
+            sb_eval_lookup_threads=getattr(args, "sb_eval_lookup_threads", None),
             dolma2_vocab_size=int(tokenizer.padded_vocab_size()),
             smoke_1gpu=smoke_1gpu,
         ),
@@ -497,7 +504,18 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "In-process threads per SB reader for splitting one long sequence "
             "lookup into chunks. This complements --data-loader-workers: "
             "workers prepare future batches, while lookup threads reduce the "
-            "latency of one batch and also apply to eval-time SB lookup."
+            "latency of one training-data batch. Eval uses the same value "
+            "unless --sb-eval-lookup-threads is set."
+        ),
+    )
+    parser.add_argument(
+        "--sb-eval-lookup-threads",
+        type=int,
+        default=None,
+        help=(
+            "Eval-only SB lookup thread count. Use this to keep dataloader "
+            "workers at a lower thread count while letting inline LM eval use "
+            "more threads for high-override batches."
         ),
     )
     parser.add_argument(
