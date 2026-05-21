@@ -6,6 +6,7 @@ import torch
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import DTensor, Shard
 
+from olmo_core.config import Config
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
@@ -17,6 +18,26 @@ from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.testing import requires_gpu, run_distributed_test
 from olmo_core.testing.utils import requires_fla, requires_multi_gpu
 from olmo_core.utils import get_default_device, seed_all
+
+
+def test_gated_delta_net_config_decodes_legacy_fla_module_path():
+    data = GatedDeltaNetConfig(n_heads=8, n_v_heads=16).as_config_dict()
+    data[Config.CLASS_NAME_FIELD] = "olmo_core.nn.fla.GatedDeltaNetConfig"
+
+    config = GatedDeltaNetConfig.from_dict(data)
+
+    assert config == GatedDeltaNetConfig(n_heads=8, n_v_heads=16)
+
+
+def test_gated_delta_net_config_decodes_legacy_n_kv_heads():
+    data = GatedDeltaNetConfig(n_heads=8).as_config_dict()
+    data[Config.CLASS_NAME_FIELD] = "olmo_core.nn.fla.GatedDeltaNetConfig"
+    data["n_kv_heads"] = 16
+
+    config = GatedDeltaNetConfig.from_dict(data)
+
+    assert config.n_v_heads == 16
+    assert "n_kv_heads" not in config.as_config_dict()
 
 
 @requires_fla

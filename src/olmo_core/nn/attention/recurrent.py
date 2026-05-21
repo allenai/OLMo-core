@@ -1,5 +1,5 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 import torch
@@ -62,6 +62,7 @@ class GatedDeltaNet(SequenceMixer):
         d_model: int,
         n_heads: int,
         n_v_heads: int | None = None,
+        n_kv_heads: int | None = None,
         head_dim: int | None = None,
         expand_v: float = 2.0,
         allow_neg_eigval: bool = True,
@@ -74,6 +75,13 @@ class GatedDeltaNet(SequenceMixer):
         super().__init__()
         assert has_fla()
         from fla.modules import FusedRMSNormGated
+
+        if n_kv_heads is not None:
+            if n_v_heads is not None and n_v_heads != n_kv_heads:
+                raise ValueError(
+                    f"'n_v_heads' ({n_v_heads}) and legacy 'n_kv_heads' ({n_kv_heads}) disagree"
+                )
+            n_v_heads = n_kv_heads
 
         self.d_model = d_model
         self.n_heads = n_heads
@@ -345,6 +353,10 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
     capacity to compress long-range context. Increasing ``n_v_heads`` directly
     increases this fixed state size.
     """
+    n_kv_heads: Optional[int] = field(default=None, repr=False, compare=False)
+    """
+    Deprecated name for :data:`n_v_heads`, kept for older serialized configs.
+    """
     head_dim: Optional[int] = None
     """
     The dimension of each head. If ``None``, defaults to ``d_model // n_heads``.
@@ -375,6 +387,16 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
     """
     The default data type to use for parameters.
     """
+
+    def __post_init__(self, type: Optional[str] = None):
+        del type
+        if self.n_kv_heads is not None:
+            if self.n_v_heads is not None and self.n_v_heads != self.n_kv_heads:
+                raise ValueError(
+                    f"'n_v_heads' ({self.n_v_heads}) and legacy 'n_kv_heads' ({self.n_kv_heads}) disagree"
+                )
+            self.n_v_heads = self.n_kv_heads
+            self.n_kv_heads = None
 
     def num_params(self, d_model: int) -> int:
         """
