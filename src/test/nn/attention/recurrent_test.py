@@ -1,4 +1,5 @@
 from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
+from importlib import import_module
 from typing import Any, Dict
 
 import pytest
@@ -27,6 +28,40 @@ def test_gated_delta_net_config_decodes_legacy_fla_module_path():
     config = GatedDeltaNetConfig.from_dict(data)
 
     assert config == GatedDeltaNetConfig(n_heads=8, n_v_heads=16)
+
+
+def test_gated_delta_net_config_decodes_legacy_fla_layer_module_path():
+    legacy_module = import_module("olmo_core.nn.fla.layer")
+    assert legacy_module.GatedDeltaNetConfig is GatedDeltaNetConfig
+
+    data = GatedDeltaNetConfig(n_heads=8, n_v_heads=16).as_config_dict()
+    data[Config.CLASS_NAME_FIELD] = "olmo_core.nn.fla.layer.GatedDeltaNetConfig"
+
+    config = GatedDeltaNetConfig.from_dict(data)
+
+    assert config == GatedDeltaNetConfig(n_heads=8, n_v_heads=16)
+
+
+def test_gated_delta_net_config_decodes_legacy_fla_config():
+    data = {
+        Config.CLASS_NAME_FIELD: "olmo_core.nn.fla.layer.FLAConfig",
+        "name": "GatedDeltaNet",
+        "n_heads": 8,
+        "fla_layer_kwargs": {
+            "head_dim": 64,
+            "num_v_heads": 16,
+            "allow_neg_eigval": True,
+        },
+    }
+
+    config = GatedDeltaNetConfig.from_dict(data)
+
+    assert isinstance(config, GatedDeltaNetConfig)
+    assert config.n_heads == 8
+    assert config.n_v_heads == 16
+    assert config.head_dim == 64
+    assert config.allow_neg_eigval is True
+    assert config.fla_layer_kwargs == {}
 
 
 def test_gated_delta_net_config_decodes_legacy_n_kv_heads():
