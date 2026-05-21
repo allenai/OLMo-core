@@ -85,6 +85,8 @@ DEFAULT_SB_ALPHA = 0.4         # Brants et al 2007.
 DEFAULT_POE_LAMBDA = 0.1       # Same default as the KN-smoothed PoE 190M sweep winner.
 DEFAULT_DOLMA2_VOCAB_SIZE = 100352
 DEFAULT_SB_MAX_ORDER2_CONTINUATIONS = None
+DEFAULT_DATA_LOADER_WORKERS = 4
+DEFAULT_DATA_LOADER_PREFETCH_FACTOR = None
 
 
 def _parse_order_caps(raw_caps: list[str] | None) -> dict[int, int] | None:
@@ -271,14 +273,17 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         tokenizer=tokenizer,
         instance_sources=instance_sources,
         data_loader=ComposableDataLoaderConfig(  # noqa: F405
-            # Fewer workers than the KN-smoothed PoE ladder (which uses 16):
-            # SB index is 25 small files vs KN's one ~10 GB file, so each
-            # worker holds 25× more mmap views into /dev/shm. With 8
-            # ranks × 16 workers = 128 worker processes per node, the
-            # 1e-4 SB-PoE v3 run OOM'd the host. Vectorized
-            # compute_overrides_for_sequence is ~5-50ms per instance, so
-            # 4 workers / rank (32 total per node) easily keeps the GPUs fed.
-            num_workers=4, instance_filter_config=InstanceFilterConfig()  # noqa: F405
+            # SB override construction is CPU/data-loader heavy. The default
+            # stays conservative for provenance, but the CLI exposes worker and
+            # prefetch controls so throughput sweeps can raise workers without
+            # also letting every worker queue multiple million-row examples.
+            num_workers=getattr(args, "data_loader_workers", DEFAULT_DATA_LOADER_WORKERS),
+            prefetch_factor=getattr(
+                args,
+                "data_loader_prefetch_factor",
+                DEFAULT_DATA_LOADER_PREFETCH_FACTOR,
+            ),
+            instance_filter_config=InstanceFilterConfig(),  # noqa: F405
         ),
     )
     load_path = getattr(args, "load_path", None)
@@ -382,6 +387,26 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "'pread' keeps histories mmap-backed for vectorized search, but uses "
             "explicit os.pread calls for offsets, continuation, count, and "
             "history-total arrays."
+        ),
+    )
+    parser.add_argument(
+        "--data-loader-workers",
+        type=int,
+        default=DEFAULT_DATA_LOADER_WORKERS,
+        help=(
+            "Number of PyTorch data-loader worker processes per rank. SB PoE "
+            "override construction is CPU-heavy; worker sweeps on the 1e-4 "
+            "index showed useful scaling well above the old default of 4."
+        ),
+    )
+    parser.add_argument(
+        "--data-loader-prefetch-factor",
+        type=int,
+        default=DEFAULT_DATA_LOADER_PREFETCH_FACTOR,
+        help=(
+            "Number of batches prefetched per data-loader worker. Use 1 for "
+            "high-worker SB PoE tests to limit queued million-row override "
+            "arrays. Leave unset for PyTorch's default behavior."
         ),
     )
     parser.add_argument(
