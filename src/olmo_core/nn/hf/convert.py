@@ -482,7 +482,8 @@ def convert_state_to_hf(
 # ---------------------------------------------------------------------------
 
 #: GDN layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.linear_attn.*``.
-#: These layers use pre-norm in HF (input_layernorm before the sequence mixer).
+#: These layers use post-norm in HF (layernorm after the sequence mixer and after the MLP),
+#: matching :data:`HYBRID_ATTN_LAYER_KEY_MAP`.
 HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
     "attention.w_q.weight": "linear_attn.q_proj.weight",
     "attention.w_k.weight": "linear_attn.k_proj.weight",
@@ -497,8 +498,8 @@ HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
     "attention.o_norm.weight": "linear_attn.o_norm.weight",
     "attention.A_log": "linear_attn.A_log",
     "attention.dt_bias": "linear_attn.dt_bias",
-    "attention_norm.weight": "input_layernorm.weight",
-    "feed_forward_norm.weight": "post_attention_layernorm.weight",
+    "attention_norm.weight": "post_attention_layernorm.weight",
+    "feed_forward_norm.weight": "post_feedforward_layernorm.weight",
     "feed_forward.w1.weight": "mlp.gate_proj.weight",
     "feed_forward.w2.weight": "mlp.down_proj.weight",
     "feed_forward.w3.weight": "mlp.up_proj.weight",

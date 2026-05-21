@@ -362,14 +362,6 @@ def get_hybrid_hf_config(
     else:
         log.info("No RoPE configured")
 
-    # Warn if GDN blocks are post-norm but HF expects pre-norm.
-    if isinstance(gdn_block, ReorderedNormTransformerBlock):
-        log.warning(
-            "GDN block uses post-norm (ReorderedNormTransformerBlock) but HF olmo_hybrid "
-            "expects pre-norm for linear_attention layers. The conversion will proceed, but "
-            "outputs may not match exactly."
-        )
-
     config: Dict[str, Any] = {
         "model_type": "olmo_hybrid",
         "architectures": ["OlmoHybridForCausalLM"],
@@ -397,6 +389,8 @@ def get_hybrid_hf_config(
         "linear_value_head_dim": gdn.head_v_dim,
         "linear_conv_kernel_dim": gdn.conv_size,
         "linear_allow_neg_eigval": gdn.allow_neg_eigval,
+        # OLMo-core's GatedDeltaNet hardcodes ``use_qk_l2norm_in_kernel=True``; HF defaults to False.
+        "linear_use_qk_l2norm": True,
         # Token IDs (updated later after tokenizer is saved)
         "pad_token_id": None,
         "bos_token_id": None,
