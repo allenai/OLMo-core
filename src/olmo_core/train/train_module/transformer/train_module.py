@@ -1298,7 +1298,11 @@ class TransformerTrainModule(TrainModule):
 
         # Synchronous CPU lookup of per-instance overrides.
         reader = self._get_poe_sb_reader()
-        overrides_cpu = compute_sb_overrides_for_batch(input_ids, reader)
+        overrides_cpu = compute_sb_overrides_for_batch(
+            input_ids,
+            reader,
+            batch_threads=self.poe_sb_lookup_threads,
+        )
         t_lookup = time.perf_counter()
         # Move to logits device (the helper expects on-device tensors).
         bidx = overrides_cpu["sb_override_batch_idx"].to(

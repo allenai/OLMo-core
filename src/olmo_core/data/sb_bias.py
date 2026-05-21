@@ -195,6 +195,8 @@ def compute_sparse_sb_ce_loss(
 def compute_sb_overrides_for_batch(
     input_ids: torch.Tensor,
     reader,  # StupidBackoffNgramLM
+    *,
+    batch_threads: int = 1,
 ) -> Dict[str, torch.Tensor]:
     """Compute the per-batch flat SB-override tensors synchronously.
 
@@ -209,9 +211,31 @@ def compute_sb_overrides_for_batch(
     """
     B = int(input_ids.shape[0])
     cpu_input_ids = input_ids.detach().to("cpu").numpy()
+
+    def compute_one(b: int) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
+        if batch_threads > 1 and hasattr(reader, "_compute_overrides_for_sequence_serial"):
+            pos_np, tok_np, sc_np = reader._compute_overrides_for_sequence_serial(  # noqa: SLF001
+                cpu_input_ids[b],
+                log_timing=False,
+            )
+        else:
+            pos_np, tok_np, sc_np = reader.compute_overrides_for_sequence(cpu_input_ids[b])
+        return b, pos_np, tok_np, sc_np
+
+    if batch_threads > 1 and B > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        max_workers = min(B, int(batch_threads))
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="sb-eval-row",
+        ) as pool:
+            parts = list(pool.map(compute_one, range(B)))
+    else:
+        parts = [compute_one(b) for b in range(B)]
+
     all_bidx, all_pos, all_tok, all_score = [], [], [], []
-    for b in range(B):
-        pos_np, tok_np, sc_np = reader.compute_overrides_for_sequence(cpu_input_ids[b])
+    for b, pos_np, tok_np, sc_np in parts:
         if pos_np.size == 0:
             continue
         all_bidx.append(np.full(pos_np.size, b, dtype=np.int64))
