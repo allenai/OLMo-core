@@ -37,6 +37,7 @@ matches the baseline / KN-smoothed PoE ladders exactly.
 import argparse
 import dataclasses
 import logging
+import os
 from types import MethodType
 from typing import Any
 
@@ -54,7 +55,7 @@ from olmo_core.model_ladder import (
     TransformerSize,
     WSDSChinchillaRunConfigurator,
 )
-from olmo_core.train.common import LoadStrategy
+from olmo_core.train.common import Duration, LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -263,6 +264,9 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
 
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
+    if getattr(args, "sb_eval_timing", False):
+        os.environ["OLMO_SB_EVAL_TIMING"] = "1"
+
     tokenizer = TokenizerConfig.dolma2()
     sb_order_caps = _parse_order_caps(getattr(args, "sb_max_order_continuations", None))
 
@@ -356,6 +360,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         load_path is not None
         or getattr(args, "eval_only", False)
         or getattr(args, "lm_eval_only", False)
+        or getattr(args, "disable_evals", False)
+        or getattr(args, "final_eval_only", False)
+        or getattr(args, "eval_max_batches", None) is not None
     ):
         original_configure_trainer = ladder._configure_trainer
 
@@ -364,6 +371,29 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             callbacks = dict(trainer_config.callbacks)
             if getattr(args, "lm_eval_only", False):
                 callbacks.pop("downstream_evaluator", None)
+            if getattr(args, "disable_evals", False):
+                callbacks.pop("lm_evaluator", None)
+                callbacks.pop("downstream_evaluator", None)
+            else:
+                if getattr(args, "final_eval_only", False):
+                    for callback_name in ("lm_evaluator", "downstream_evaluator"):
+                        callback = callbacks.get(callback_name)
+                        if callback is not None:
+                            callbacks[callback_name] = dataclasses.replace(
+                                callback,
+                                eval_interval=None,
+                                fixed_steps=None,
+                                eval_on_finish=True,
+                            )
+                eval_max_batches = getattr(args, "eval_max_batches", None)
+                if eval_max_batches is not None:
+                    for callback_name in ("lm_evaluator", "downstream_evaluator"):
+                        callback = callbacks.get(callback_name)
+                        if callback is not None:
+                            callbacks[callback_name] = dataclasses.replace(
+                                callback,
+                                eval_duration=Duration.steps(int(eval_max_batches)),
+                            )
             if getattr(args, "eval_only", False):
                 for callback_name in ("lm_evaluator", "downstream_evaluator"):
                     callback = callbacks.get(callback_name)
@@ -527,6 +557,33 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "Disable downstream in-loop evals while keeping LM perplexity evals. "
             "Useful when downstream eval is too slow for SB PoE training runs."
         ),
+    )
+    parser.add_argument(
+        "--disable-evals",
+        action="store_true",
+        help="Disable all in-loop eval callbacks. Useful for isolating train throughput.",
+    )
+    parser.add_argument(
+        "--final-eval-only",
+        action="store_true",
+        help=(
+            "Disable fixed-step evals and run evals only at training finish. "
+            "Useful for short smoke runs where checkpoint fixed steps would duplicate eval."
+        ),
+    )
+    parser.add_argument(
+        "--eval-max-batches",
+        type=int,
+        default=None,
+        help=(
+            "Limit each evaluator to this many batches. Useful for eval throughput "
+            "benchmarks from a checkpoint."
+        ),
+    )
+    parser.add_argument(
+        "--sb-eval-timing",
+        action="store_true",
+        help="Enable per-call SB eval timing logs via OLMO_SB_EVAL_TIMING=1.",
     )
 
 
