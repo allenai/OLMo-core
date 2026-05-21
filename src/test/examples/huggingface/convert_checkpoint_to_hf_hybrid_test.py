@@ -16,6 +16,7 @@ from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
 from olmo_core.nn.attention.flash_linear_attn_api import has_fla
 from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedDeltaNetConfig
 from olmo_core.nn.hf import convert_checkpoint_to_hf
+from olmo_core.nn.hf.convert_checkpoint import _normalize_legacy_fla_transformer_config
 from olmo_core.nn.hf.config import get_hybrid_hf_config, get_hybrid_layer_types
 from olmo_core.nn.hf.convert import (
     HYBRID_ATTN_LAYER_KEY_MAP,
@@ -86,6 +87,29 @@ def hybrid_model(hybrid_model_config: TransformerConfig) -> Transformer:
 
 
 @pytest.fixture
+def legacy_fla_hybrid_model_config_dict(
+    hybrid_model_config: TransformerConfig,
+) -> dict:
+    config = hybrid_model_config.as_config_dict()
+    assert isinstance(config["block"], dict)
+    attn_block = config["block"]["attn"]
+    config["block"] = attn_block
+    config.pop("block_pattern")
+    config["block"]["name"] = "fla_hybrid"
+    config["block"]["fla_hybrid_attention_indices"] = [3]
+    config["block"]["fla"] = {
+        "_CLASS_": "olmo_core.nn.fla.layer.FLAConfig",
+        "name": "GatedDeltaNet",
+        "dtype": "float32",
+        "fla_layer_kwargs": {
+            "head_dim": hybrid_model_config.d_model // 12,
+            "allow_neg_eigval": True,
+        },
+    }
+    return config
+
+
+@pytest.fixture
 def olmo_core_model_path(
     tmp_path: Path, hybrid_model_config: TransformerConfig, hybrid_model: Transformer
 ) -> Iterator[Path]:
@@ -94,6 +118,34 @@ def olmo_core_model_path(
     save_model_and_optim_state(model_path / "model_and_optim", hybrid_model)
     yield model_path
     shutil.rmtree(model_path, ignore_errors=True)
+
+
+def test_normalize_legacy_fla_hybrid_config(
+    legacy_fla_hybrid_model_config_dict: dict,
+):
+    normalized, key_mapping = _normalize_legacy_fla_transformer_config(
+        legacy_fla_hybrid_model_config_dict
+    )
+
+    assert normalized["block_pattern"] == ["gdn", "gdn", "gdn", "attn"]
+    assert set(normalized["block"]) == {"gdn", "attn"}
+    assert normalized["block"]["gdn"]["name"] == "default"
+    assert normalized["block"]["gdn"]["sequence_mixer"]["n_heads"] == 12
+    assert normalized["block"]["attn"]["name"] == "reordered_norm"
+
+    model_config = TransformerConfig.from_dict(normalized)
+    assert model_config.block_pattern == ["gdn", "gdn", "gdn", "attn"]
+    assert isinstance(model_config.block, dict)
+    assert isinstance(model_config.block["gdn"].sequence_mixer, GatedDeltaNetConfig)
+    assert model_config.block["gdn"].sequence_mixer.n_heads == 12
+    assert model_config.block["gdn"].sequence_mixer.head_dim == model_config.d_model // 12
+
+    assert (
+        key_mapping["blocks.0.attention.w_q.weight"]
+        == "blocks.0.fla.inner.q_proj.weight"
+    )
+    assert key_mapping["blocks.0.attention_norm.weight"] == "blocks.0.fla_norm.weight"
+    assert "blocks.3.attention.w_q.weight" not in key_mapping
 
 
 @requires_fla

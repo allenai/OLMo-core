@@ -38,6 +38,12 @@ class FLAConfig(GatedDeltaNetConfig):
             raise OLMoConfigurationError(
                 f"Legacy FLA layer '{self.name}' cannot be converted to GatedDeltaNetConfig"
             )
+        if self.fla_layer_kwargs.get("use_gate", True) is not True:
+            raise OLMoConfigurationError("Legacy FLAConfig with use_gate=False is not supported")
+        if self.fla_layer_kwargs.get("use_short_conv", True) is not True:
+            raise OLMoConfigurationError(
+                "Legacy FLAConfig with use_short_conv=False is not supported"
+            )
 
         for old_key, new_key in {
             "num_heads": "n_heads",

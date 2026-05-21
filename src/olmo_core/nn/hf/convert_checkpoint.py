@@ -13,6 +13,7 @@ rather than using ``save_pretrained()``.
 import json
 import logging
 import re
+from copy import deepcopy
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -41,6 +42,139 @@ from .config import is_olmo_hybrid_model
 from .convert import get_converter_to_hf
 
 log = logging.getLogger(__name__)
+
+
+def _clean_legacy_fla_block_fields(block: dict[str, Any]) -> dict[str, Any]:
+    block = deepcopy(block)
+    for key in ("fla", "fla_hybrid_attention_indices", "fla_hybrid_strip_fla_feed_forward"):
+        block.pop(key, None)
+    return block
+
+
+def _get_legacy_attention_config(block: dict[str, Any]) -> dict[str, Any]:
+    attention_config = block.get("sequence_mixer") or block.get("attention")
+    if not isinstance(attention_config, dict):
+        raise ValueError("Legacy FLA block is missing an attention/sequence_mixer config")
+    return attention_config
+
+
+def _get_legacy_attention_indices(
+    indices: list[int] | None, n_layers: int, *, pure_fla: bool
+) -> set[int]:
+    if pure_fla:
+        return set()
+
+    if indices is None:
+        # Historical fla_hybrid default: even layers used attention.
+        return {idx for idx in range(n_layers) if idx % 2 == 0}
+
+    normalized = {idx if idx >= 0 else n_layers + idx for idx in indices}
+    invalid = {idx for idx in normalized if idx < 0 or idx >= n_layers}
+    if invalid:
+        raise ValueError(f"Invalid legacy FLA attention layer indices: {sorted(invalid)}")
+    return normalized
+
+
+def _normalize_legacy_fla_transformer_config(
+    transformer_config_dict: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """
+    Rewrite legacy ``TransformerBlockType.fla(_hybrid)`` configs to current named blocks.
+
+    Old checkpoints used training-only ``block.fla`` and ``fla_hybrid_attention_indices`` fields.
+    Current configs represent the same architecture with a dict of named blocks plus
+    ``block_pattern``. We normalize before dataclass decoding so the main config API stays clean.
+    """
+    config = deepcopy(transformer_config_dict)
+    block = config.get("block")
+    if not isinstance(block, dict):
+        return config, {}
+
+    block_name = block.get("name")
+    if block_name not in {"fla", "fla_hybrid"} and "fla" not in block:
+        return config, {}
+
+    if config.get("block_overrides") is not None:
+        raise ValueError("Legacy FLA configs with block_overrides are not supported")
+
+    fla_config = block.get("fla")
+    if not isinstance(fla_config, dict):
+        raise ValueError("Legacy FLA block is missing 'fla' config")
+
+    strip_fla_feed_forward = block.get("fla_hybrid_strip_fla_feed_forward", False)
+    if strip_fla_feed_forward:
+        raise ValueError(
+            "Legacy FLA configs with fla_hybrid_strip_fla_feed_forward=True are not supported"
+        )
+
+    n_layers = config["n_layers"]
+    attention_indices = _get_legacy_attention_indices(
+        block.get("fla_hybrid_attention_indices"),
+        n_layers,
+        pure_fla=block_name == "fla",
+    )
+    legacy_fla_layer_indices = [idx for idx in range(n_layers) if idx not in attention_indices]
+
+    attention_config = _get_legacy_attention_config(block)
+    fla_layer_kwargs = fla_config.get("fla_layer_kwargs") or {}
+    if "n_heads" not in fla_config and "num_heads" not in fla_layer_kwargs:
+        if "n_heads" not in attention_config:
+            raise ValueError("Legacy FLA config is missing n_heads and attention.n_heads")
+        fla_config = deepcopy(fla_config)
+        fla_config["n_heads"] = attention_config["n_heads"]
+
+    gdn_block = _clean_legacy_fla_block_fields(block)
+    gdn_block["name"] = "default"
+    gdn_block["sequence_mixer"] = fla_config
+    gdn_block.pop("attention", None)
+
+    if block_name == "fla":
+        config["block"] = gdn_block
+        config.pop("block_pattern", None)
+    else:
+        attn_block = _clean_legacy_fla_block_fields(block)
+        attn_block["name"] = "reordered_norm"
+
+        config["block"] = {
+            "gdn": gdn_block,
+            "attn": attn_block,
+        }
+        config["block_pattern"] = [
+            "attn" if idx in attention_indices else "gdn" for idx in range(n_layers)
+        ]
+
+    key_mapping = _legacy_fla_key_mapping(legacy_fla_layer_indices)
+    return config, key_mapping
+
+
+def _legacy_fla_key_mapping(layer_indices: list[int]) -> dict[str, str]:
+    key_mapping: dict[str, str] = {}
+    for idx in layer_indices:
+        current_prefix = f"blocks.{idx}.attention"
+        legacy_prefix = f"blocks.{idx}.fla.inner"
+        for current_name, legacy_name in {
+            "w_q.weight": "q_proj.weight",
+            "w_k.weight": "k_proj.weight",
+            "w_v.weight": "v_proj.weight",
+            "w_a.weight": "a_proj.weight",
+            "w_b.weight": "b_proj.weight",
+            "w_g.weight": "g_proj.weight",
+            "w_out.weight": "o_proj.weight",
+            "A_log": "A_log",
+            "dt_bias": "dt_bias",
+            "q_conv1d.weight": "q_conv1d.weight",
+            "q_conv1d.bias": "q_conv1d.bias",
+            "k_conv1d.weight": "k_conv1d.weight",
+            "k_conv1d.bias": "k_conv1d.bias",
+            "v_conv1d.weight": "v_conv1d.weight",
+            "v_conv1d.bias": "v_conv1d.bias",
+            "o_norm.weight": "o_norm.weight",
+        }.items():
+            key_mapping[f"{current_prefix}.{current_name}"] = f"{legacy_prefix}.{legacy_name}"
+
+        key_mapping[f"blocks.{idx}.attention_norm.weight"] = f"blocks.{idx}.fla_norm.weight"
+
+    return key_mapping
 
 
 def convert_checkpoint_to_hf(
@@ -86,6 +220,9 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    transformer_config_dict, key_mapping = _normalize_legacy_fla_transformer_config(
+        transformer_config_dict
+    )
     model_config = TransformerConfig.from_dict(transformer_config_dict)
     rich.print(model_config)
 
@@ -206,6 +343,7 @@ def convert_checkpoint_to_hf(
                 model_and_optim_dir,
                 model,
                 work_dir=work_dir,
+                key_mapping=key_mapping or None,
             )
             log.info(f"Saving checkpoint to '{output_path}'")
             state_dict_options = dist_cp_sd.StateDictOptions(
