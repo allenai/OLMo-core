@@ -38,6 +38,7 @@ import argparse
 import dataclasses
 import logging
 from types import MethodType
+from typing import Any
 
 import olmo_core.io as io
 from olmo_core.config import DType
@@ -85,8 +86,10 @@ DEFAULT_SB_ALPHA = 0.4         # Brants et al 2007.
 DEFAULT_POE_LAMBDA = 0.1       # Same default as the KN-smoothed PoE 190M sweep winner.
 DEFAULT_DOLMA2_VOCAB_SIZE = 100352
 DEFAULT_SB_MAX_ORDER2_CONTINUATIONS = None
+DEFAULT_SB_LOOKUP_THREADS = 1
 DEFAULT_DATA_LOADER_WORKERS = 4
 DEFAULT_DATA_LOADER_PREFETCH_FACTOR = None
+DEFAULT_SMOKE_SOURCE_INSTANCES = None
 
 
 def _parse_order_caps(raw_caps: list[str] | None) -> dict[int, int] | None:
@@ -105,6 +108,56 @@ def _parse_order_caps(raw_caps: list[str] | None) -> dict[int, int] | None:
             raise ValueError(f"order cap must be positive, got {cap}")
         caps[order] = cap
     return caps
+
+
+class HeadInstanceSource(InstanceSource):  # noqa: F405
+    """Cheap first-N wrapper for smoke tests.
+
+    This avoids building a full-source global order file when a smoke run only
+    needs a small number of batches.
+    """
+
+    def __init__(self, source: InstanceSource, max_instances: int, *, work_dir):  # noqa: F405
+        super().__init__(
+            work_dir=work_dir,
+            sequence_length=source.sequence_length,
+            max_sequence_length=source.max_sequence_length,
+            label=source.label,
+        )
+        self.source = source
+        self.max_instances = min(int(max_instances), len(source))
+        if self.max_instances <= 0:
+            raise ValueError(f"max_instances must be positive, got {max_instances}")
+
+    @property
+    def num_instances(self) -> int:
+        return self.max_instances
+
+    @property
+    def fingerprint(self) -> str:
+        return f"head-{self.max_instances}-{self.source.fingerprint}"
+
+    def __len__(self) -> int:
+        return self.max_instances
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        return self.source[self.validate_index(idx)]
+
+    def children(self):
+        return [self.source]
+
+
+@dataclasses.dataclass
+class HeadInstanceSourceConfig(InstanceSourceConfig):  # noqa: F405
+    source: InstanceSourceConfig  # noqa: F405
+    max_instances: int
+
+    def build(self, work_dir) -> HeadInstanceSource:
+        return HeadInstanceSource(
+            self.source.build(work_dir),
+            self.max_instances,
+            work_dir=work_dir,
+        )
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -141,6 +194,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_max_order2_continuations: int | None = DEFAULT_SB_MAX_ORDER2_CONTINUATIONS
     sb_max_order_continuations: dict[int, int] | None = None
     sb_index_access: str = "mmap"
+    sb_lookup_threads: int = DEFAULT_SB_LOOKUP_THREADS
     dolma2_vocab_size: int = DEFAULT_DOLMA2_VOCAB_SIZE
     smoke_1gpu: bool = False
 
@@ -197,6 +251,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_max_order2_continuations=self.sb_max_order2_continuations,
             poe_sb_max_order_continuations=self.sb_max_order_continuations,
             poe_sb_index_access=self.sb_index_access,
+            poe_sb_lookup_threads=self.sb_lookup_threads,
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -220,6 +275,14 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ],
         sequence_length=args.sequence_length,
     )
+    smoke_source_instances = getattr(
+        args, "smoke_source_instances", DEFAULT_SMOKE_SOURCE_INSTANCES
+    )
+    if smoke_source_instances is not None:
+        base_source = HeadInstanceSourceConfig(
+            source=base_source,
+            max_instances=int(smoke_source_instances),
+        )
     wrapped_source = NgramStupidBackoffInstanceSourceConfig(  # noqa: F405
         source=base_source,
         table_dir=getattr(args, "sb_table_dir", DEFAULT_SB_TABLE_DIR),
@@ -231,6 +294,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ),
         max_order_continuations=sb_order_caps,
         index_access=getattr(args, "sb_index_access", "mmap"),
+        lookup_threads=getattr(args, "sb_lookup_threads", DEFAULT_SB_LOOKUP_THREADS),
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -259,6 +323,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             ),
             sb_max_order_continuations=sb_order_caps,
             sb_index_access=getattr(args, "sb_index_access", "mmap"),
+            sb_lookup_threads=getattr(args, "sb_lookup_threads", DEFAULT_SB_LOOKUP_THREADS),
             dolma2_vocab_size=int(tokenizer.padded_vocab_size()),
             smoke_1gpu=smoke_1gpu,
         ),
@@ -390,6 +455,17 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--sb-lookup-threads",
+        type=int,
+        default=DEFAULT_SB_LOOKUP_THREADS,
+        help=(
+            "In-process threads per SB reader for splitting one long sequence "
+            "lookup into chunks. This complements --data-loader-workers: "
+            "workers prepare future batches, while lookup threads reduce the "
+            "latency of one batch and also apply to eval-time SB lookup."
+        ),
+    )
+    parser.add_argument(
         "--data-loader-workers",
         type=int,
         default=DEFAULT_DATA_LOADER_WORKERS,
@@ -407,6 +483,16 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "Number of batches prefetched per data-loader worker. Use 1 for "
             "high-worker SB PoE tests to limit queued million-row override "
             "arrays. Leave unset for PyTorch's default behavior."
+        ),
+    )
+    parser.add_argument(
+        "--smoke-source-instances",
+        type=int,
+        default=DEFAULT_SMOKE_SOURCE_INSTANCES,
+        help=(
+            "Limit the training source to the first N sequence instances. "
+            "Use only for smoke tests; it avoids writing a full pretraining "
+            "epoch order file before a short run."
         ),
     )
     parser.add_argument(

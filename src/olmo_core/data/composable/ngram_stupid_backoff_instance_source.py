@@ -72,6 +72,8 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         unigram floor.
     :param index_access: ``"mmap"`` for the current memmap-backed SB reader,
         or ``"pread"`` to use explicit reads for large 1-D index arrays.
+    :param lookup_threads: Number of in-process threads used by each reader
+        to split one sequence lookup into chunks.
     """
 
     DISPLAY_ICON = "\U000f0d77"  # nf-md-graphql (same as the KN-smoothed source)
@@ -87,6 +89,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         max_order2_continuations: Optional[int] = None,
         max_order_continuations: Optional[Dict[int, int]] = None,
         index_access: str = "mmap",
+        lookup_threads: int = 1,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -104,10 +107,19 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         self._max_order2_continuations = max_order2_continuations
         self._max_order_continuations = max_order_continuations
         self._index_access = index_access
+        self._lookup_threads = int(lookup_threads)
         # Lazy per-process init: don't mmap in the main process so the
         # source pickles cleanly to spawn workers; first lookup populates.
         self._reader = None
         self._getitem_debug_calls = 0
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        # The reader owns mmap handles and, optionally, a ThreadPoolExecutor.
+        # Data-loader workers should lazily open their own reader after
+        # unpickling instead of serializing process-local runtime state.
+        state["_reader"] = None
+        return state
 
     @property
     def source(self) -> InstanceSource:
@@ -141,6 +153,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 max_order2_continuations=self._max_order2_continuations,
                 max_order_continuations=self._max_order_continuations,
                 index_access=self._index_access,
+                lookup_threads=self._lookup_threads,
             )
         return self._reader
 
@@ -158,6 +171,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 f"max_order2_continuations={self._max_order2_continuations},"
                 f"max_order_continuations={self._max_order_continuations},"
                 f"index_access={self._index_access},"
+                f"lookup_threads={self._lookup_threads},"
             ).encode()
         )
         return sha.hexdigest()
@@ -208,6 +222,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
     max_order2_continuations: Optional[int] = None
     max_order_continuations: Optional[Dict[int, int]] = None
     index_access: str = "mmap"
+    lookup_threads: int = 1
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> NgramStupidBackoffInstanceSource:
@@ -221,6 +236,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
             max_order2_continuations=self.max_order2_continuations,
             max_order_continuations=self.max_order_continuations,
             index_access=self.index_access,
+            lookup_threads=self.lookup_threads,
             work_dir=work_dir,
             label=self.label,
         )

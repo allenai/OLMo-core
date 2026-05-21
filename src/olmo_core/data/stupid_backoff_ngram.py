@@ -62,6 +62,7 @@ import json
 import math
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -207,6 +208,10 @@ class StupidBackoffNgramLM:
         path. ``"pread"`` uses explicit ``os.pread`` calls for the large
         1-D offsets / continuation / count arrays while keeping histories
         mmap-backed for vectorized binary search.
+    :param lookup_threads: Number of in-process threads used to split one
+        long sequence into independent SB-override chunks. This is separate
+        from PyTorch data-loader workers: workers prepare future batches,
+        while lookup threads parallelize one sequence lookup.
     """
 
     def __init__(
@@ -220,10 +225,13 @@ class StupidBackoffNgramLM:
         max_order_continuations: Optional[Dict[int, int]] = None,
         mirror_to_shm: bool = True,
         index_access: str = "mmap",
+        lookup_threads: int = 1,
     ):
         if index_access not in {"mmap", "pread"}:
             raise ValueError(f"index_access must be 'mmap' or 'pread'; got {index_access!r}")
         self.index_access = index_access
+        self.lookup_threads = max(1, int(lookup_threads))
+        self._lookup_pool: Optional[ThreadPoolExecutor] = None
         caps: Dict[int, int] = {}
         if max_order_continuations:
             caps.update({int(order): int(cap) for order, cap in max_order_continuations.items()})
@@ -264,6 +272,7 @@ class StupidBackoffNgramLM:
             f"reader init start table_dir={table_dir} index_dir={index_dir} "
             f"mirror_to_shm={mirror_to_shm} "
             f"index_access={self.index_access} "
+            f"lookup_threads={self.lookup_threads} "
             f"max_order_continuations={self.max_order_continuations or None}"
         )
 
@@ -573,6 +582,78 @@ class StupidBackoffNgramLM:
     def compute_overrides_for_sequence(
         self, input_ids: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Build ragged SB overrides for one sequence, optionally using
+        in-process chunk parallelism."""
+        input_ids = np.asarray(input_ids, dtype=np.int64)
+        S = int(input_ids.shape[0])
+        if self.lookup_threads <= 1 or S <= 1:
+            return self._compute_overrides_for_sequence_serial(input_ids)
+
+        n_positions = S - 1
+        n_chunks = min(self.lookup_threads, n_positions)
+        if n_chunks <= 1:
+            return self._compute_overrides_for_sequence_serial(input_ids)
+
+        t0 = time.perf_counter()
+        bounds = np.linspace(0, n_positions, n_chunks + 1, dtype=np.int64)
+        prefix_len = self.N_max - 1
+
+        def compute_chunk(chunk_idx: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+            start_pos = int(bounds[chunk_idx])
+            end_pos = int(bounds[chunk_idx + 1])
+            token_start = max(0, start_pos - prefix_len)
+            token_end = end_pos + 1
+            pos, tok, score = self._compute_overrides_for_sequence_serial(
+                input_ids[token_start:token_end],
+                log_timing=False,
+            )
+            if pos.size == 0:
+                return pos, tok, score
+            global_pos = pos.astype(np.int64, copy=False) + token_start
+            keep = (global_pos >= start_pos) & (global_pos < end_pos)
+            if not keep.any():
+                return (
+                    np.zeros(0, dtype=np.int32),
+                    np.zeros(0, dtype=np.int32),
+                    np.zeros(0, dtype=np.float32),
+                )
+            return (
+                global_pos[keep].astype(np.int32, copy=False),
+                tok[keep],
+                score[keep],
+            )
+
+        if self._lookup_pool is None:
+            self._lookup_pool = ThreadPoolExecutor(
+                max_workers=self.lookup_threads,
+                thread_name_prefix="sb-lookup",
+            )
+
+        parts = list(self._lookup_pool.map(compute_chunk, range(n_chunks)))
+        non_empty = [part for part in parts if part[0].size > 0]
+        if not non_empty:
+            result = (
+                np.zeros(0, dtype=np.int32),
+                np.zeros(0, dtype=np.int32),
+                np.zeros(0, dtype=np.float32),
+            )
+        else:
+            result = (
+                np.concatenate([part[0] for part in non_empty]).astype(np.int32, copy=False),
+                np.concatenate([part[1] for part in non_empty]).astype(np.int32, copy=False),
+                np.concatenate([part[2] for part in non_empty]).astype(np.float32, copy=False),
+            )
+        self._maybe_log_override_call(
+            t0,
+            S,
+            int(result[0].shape[0]),
+            [f"thread_chunks={n_chunks}", f"lookup_threads={self.lookup_threads}"],
+        )
+        return result
+
+    def _compute_overrides_for_sequence_serial(
+        self, input_ids: np.ndarray, *, log_timing: bool = True
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build the ragged per-position SB overrides for one training
         instance.
 
@@ -754,7 +835,8 @@ class StupidBackoffNgramLM:
                 order_summaries.append(f"n{n}:hist_hits={n_hits:,},overrides={n_valid:,}")
 
         if not per_order:
-            self._maybe_log_override_call(t0, S, 0, order_summaries)
+            if log_timing:
+                self._maybe_log_override_call(t0, S, 0, order_summaries)
             return EMPTY
 
         # Concatenate per-order outputs with a parallel order-id column, then
@@ -783,7 +865,8 @@ class StupidBackoffNgramLM:
             did_s[is_first].astype(np.int32, copy=False),
             score_s[is_first].astype(np.float32, copy=False),
         )
-        self._maybe_log_override_call(t0, S, int(result[0].shape[0]), order_summaries)
+        if log_timing:
+            self._maybe_log_override_call(t0, S, int(result[0].shape[0]), order_summaries)
         return result
 
     def _maybe_log_override_call(

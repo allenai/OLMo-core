@@ -130,6 +130,7 @@ class TransformerTrainModule(TrainModule):
         poe_sb_max_order2_continuations: Optional[int] = None,
         poe_sb_max_order_continuations: Optional[Dict[int, int]] = None,
         poe_sb_index_access: str = "mmap",
+        poe_sb_lookup_threads: int = 1,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -257,6 +258,7 @@ class TransformerTrainModule(TrainModule):
         self.poe_sb_max_order2_continuations = poe_sb_max_order2_continuations
         self.poe_sb_max_order_continuations = poe_sb_max_order_continuations
         self.poe_sb_index_access = poe_sb_index_access
+        self.poe_sb_lookup_threads = int(poe_sb_lookup_threads)
         # Lazy: instantiated on first eval_batch call (per process), so we
         # don't open the mmap on the main coordinator rank that may never
         # actually run an eval.
@@ -1066,6 +1068,7 @@ class TransformerTrainModule(TrainModule):
                 max_order2_continuations=self.poe_sb_max_order2_continuations,
                 max_order_continuations=self.poe_sb_max_order_continuations,
                 index_access=self.poe_sb_index_access,
+                lookup_threads=self.poe_sb_lookup_threads,
             )
         return self._poe_sb_reader
 

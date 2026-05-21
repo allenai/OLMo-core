@@ -380,6 +380,7 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     poe_sb_max_order2_continuations: Optional[int] = None
     poe_sb_max_order_continuations: Optional[Dict[int, int]] = None
     poe_sb_index_access: str = "mmap"
+    poe_sb_lookup_threads: int = 1
 
     # Checkpoint settings.
 

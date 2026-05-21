@@ -112,6 +112,7 @@ def _worker_compute(idx: int) -> tuple[float, int]:
 def _run_backend(
     *,
     backend: str,
+    lookup_threads: int,
     workers: int,
     args,
     caps: dict[int, int] | None,
@@ -125,6 +126,7 @@ def _run_backend(
         max_order_continuations=caps,
         mirror_to_shm=args.mirror_to_shm,
         index_access=backend,
+        lookup_threads=lookup_threads,
     )
     t0 = time.perf_counter()
     if workers == 1:
@@ -155,6 +157,7 @@ def _run_backend(
     throughput = sequences.shape[0] / wall_s if wall_s > 0 else float("inf")
     print(
         f"backend={backend} workers={workers} init={init_s:.3f}s wall={wall_s:.3f}s "
+        f"lookup_threads={lookup_threads} "
         f"throughput={throughput:.3f} seq/s "
         f"times=({_summarize(times)}) "
         f"overrides_mean={statistics.fmean(rows):,.0f} "
@@ -183,6 +186,16 @@ def main() -> None:
     parser.add_argument("--input-ids-npy", type=Path, default=None)
     parser.add_argument("--mirror-to-shm", action="store_true")
     parser.add_argument(
+        "--lookup-threads",
+        action="append",
+        type=int,
+        default=None,
+        help=(
+            "In-process SB lookup thread counts per reader. Repeat to sweep "
+            "within-sequence parallelism separately from process workers."
+        ),
+    )
+    parser.add_argument(
         "--workers",
         action="append",
         type=int,
@@ -196,6 +209,7 @@ def main() -> None:
 
     backends = args.index_access or ["mmap", "pread"]
     worker_counts = args.workers or [1]
+    lookup_thread_counts = args.lookup_threads or [1]
     caps = _parse_caps(args.cap)
     sequences = None
     for backend in backends:
@@ -208,23 +222,29 @@ def main() -> None:
                 max_order_continuations=caps,
                 mirror_to_shm=args.mirror_to_shm,
                 index_access=backend,
+                lookup_threads=1,
             )
             sequences = _load_or_sample_sequences(args, reader)
-        for workers in worker_counts:
-            if workers <= 0:
-                raise ValueError(f"--workers must be positive; got {workers}")
-            print(
-                f"run_start backend={backend} workers={workers} "
-                f"pid={os.getpid()} sequences={sequences.shape[0]}",
-                flush=True,
-            )
-            _run_backend(
-                backend=backend,
-                workers=workers,
-                args=args,
-                caps=caps,
-                sequences=sequences,
-            )
+        for lookup_threads in lookup_thread_counts:
+            if lookup_threads <= 0:
+                raise ValueError(f"--lookup-threads must be positive; got {lookup_threads}")
+            for workers in worker_counts:
+                if workers <= 0:
+                    raise ValueError(f"--workers must be positive; got {workers}")
+                print(
+                    f"run_start backend={backend} workers={workers} "
+                    f"lookup_threads={lookup_threads} "
+                    f"pid={os.getpid()} sequences={sequences.shape[0]}",
+                    flush=True,
+                )
+                _run_backend(
+                    backend=backend,
+                    lookup_threads=lookup_threads,
+                    workers=workers,
+                    args=args,
+                    caps=caps,
+                    sequences=sequences,
+                )
 
 
 if __name__ == "__main__":
