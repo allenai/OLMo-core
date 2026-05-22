@@ -314,6 +314,8 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     :class:`TransformerTrainModuleConfig`."""
 
     poe_lambda: float = DEFAULT_POE_LAMBDA
+    learn_poe_lambda: bool = False
+    poe_lambda_lr: float | None = None
     sb_table_dir: str = DEFAULT_SB_TABLE_DIR
     sb_alpha: float = DEFAULT_SB_ALPHA
     sb_n_max: int = DEFAULT_SB_N_MAX
@@ -374,6 +376,8 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             dp_config=dp_config,
             z_loss_multiplier=1e-5,
             poe_lambda=self.poe_lambda,
+            poe_lambda_learnable=self.learn_poe_lambda,
+            poe_lambda_lr=self.poe_lambda_lr,
             poe_sb_table_dir=self.sb_table_dir,
             poe_sb_alpha=self.sb_alpha,
             poe_sb_N_max=self.sb_n_max,
@@ -480,6 +484,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             if getattr(args, "eval_rank_mbz", None) is None
             else args.eval_rank_mbz * args.sequence_length,
             poe_lambda=getattr(args, "poe_lambda", DEFAULT_POE_LAMBDA),
+            learn_poe_lambda=getattr(args, "learn_poe_lambda", False),
+            poe_lambda_lr=getattr(args, "poe_lambda_lr", None),
             sb_table_dir=getattr(args, "sb_table_dir", DEFAULT_SB_TABLE_DIR),
             sb_alpha=getattr(args, "sb_alpha", DEFAULT_SB_ALPHA),
             sb_n_max=getattr(args, "sb_n_max", DEFAULT_SB_N_MAX),
@@ -610,7 +616,27 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         "--poe-lambda",
         type=float,
         default=DEFAULT_POE_LAMBDA,
-        help="Constant ngram mixing weight in the PoE joint log-prob.",
+        help=(
+            "Ngram mixing weight in the PoE joint log-prob, or the initialization "
+            "when --learn-poe-lambda is set."
+        ),
+    )
+    parser.add_argument(
+        "--learn-poe-lambda",
+        action="store_true",
+        help=(
+            "Learn a positive SB PoE mixing weight initialized from --poe-lambda. "
+            "The train module optimizes log(lambda), so the effective lambda stays positive."
+        ),
+    )
+    parser.add_argument(
+        "--poe-lambda-lr",
+        type=float,
+        default=None,
+        help=(
+            "Optional learning-rate override for learned lambda. If unset, lambda uses "
+            "the model LR schedule in a zero-weight-decay optimizer group."
+        ),
     )
     parser.add_argument(
         "--sb-alpha",

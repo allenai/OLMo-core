@@ -41,7 +41,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import Transformer
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
-from olmo_core.optim import OptimConfig, SkipStepOptimizer
+from olmo_core.optim import OptimConfig, OptimGroupOverride, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import (
     gc_cuda,
@@ -121,6 +121,8 @@ class TransformerTrainModule(TrainModule):
         soft_ce_alpha_ramp_fraction: float = 0.5,
         soft_ce_truncation: str = "renormalize",
         poe_lambda: Optional[float] = None,
+        poe_lambda_learnable: bool = False,
+        poe_lambda_lr: Optional[float] = None,
         poe_ngram_table_dir: Optional[str] = None,
         poe_ngram_K: int = 16,
         poe_ngram_N_max: int = 5,
@@ -219,6 +221,9 @@ class TransformerTrainModule(TrainModule):
             )
         self.soft_ce_truncation = soft_ce_truncation
         self.poe_lambda = poe_lambda
+        self.poe_lambda_learnable = bool(poe_lambda_learnable)
+        self.poe_lambda_lr = poe_lambda_lr
+        self._poe_lambda_log_name = "poe_lambda_log"
         if self.soft_ce_alpha_start is not None and self.poe_lambda is not None:
             raise OLMoConfigurationError(
                 "soft_ce_alpha_start and poe_lambda are mutually exclusive — "
@@ -259,6 +264,17 @@ class TransformerTrainModule(TrainModule):
                     "poe_ngram_table_dir and poe_sb_table_dir are mutually exclusive "
                     "— pick one of the two PoE ngram backends"
                 )
+            if self.poe_lambda_learnable and poe_sb_table_dir is None:
+                raise OLMoConfigurationError(
+                    "poe_lambda_learnable is currently implemented only for the "
+                    "stupid-backoff PoE backend (poe_sb_table_dir)."
+                )
+        elif self.poe_lambda_learnable:
+            raise OLMoConfigurationError("poe_lambda_learnable requires poe_lambda to be set")
+        if self.poe_lambda_lr is not None and not self.poe_lambda_learnable:
+            raise OLMoConfigurationError("poe_lambda_lr is only valid when poe_lambda_learnable=True")
+        if self.poe_lambda_lr is not None and self.poe_lambda_lr <= 0:
+            raise OLMoConfigurationError(f"poe_lambda_lr must be positive, got {self.poe_lambda_lr}")
         self.poe_ngram_table_dir = poe_ngram_table_dir
         self.poe_ngram_K = int(poe_ngram_K)
         self.poe_ngram_N_max = int(poe_ngram_N_max)
@@ -298,9 +314,52 @@ class TransformerTrainModule(TrainModule):
         )
         self.load_key_mapping = load_key_mapping
 
+        if self.poe_lambda_learnable:
+            assert self.poe_lambda is not None
+            log_lambda = torch.log(
+                torch.tensor(float(self.poe_lambda), dtype=torch.float32, device=self.device)
+            )
+            self.model.register_parameter(self._poe_lambda_log_name, nn.Parameter(log_lambda))
+            poe_lambda_opts: Dict[str, Any] = {"weight_decay": 0.0}
+            if self.poe_lambda_lr is not None:
+                poe_lambda_opts["lr"] = self.poe_lambda_lr
+                poe_lambda_opts["initial_lr"] = self.poe_lambda_lr
+            group_overrides = list(optim.group_overrides or [])
+            group_overrides.append(
+                OptimGroupOverride(params=[self._poe_lambda_log_name], opts=poe_lambda_opts)
+            )
+            optim = replace(optim, group_overrides=group_overrides)
+
         # Build optimizer(s).
         log.info("Building optimizer...")
         self.optim: Optimizer = optim.build(self.model, strict=True)
+
+    def _effective_poe_lambda(self, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+        assert self.poe_lambda is not None
+        if self.poe_lambda_learnable:
+            lambda_log = self._poe_lambda_log_param()
+            return torch.exp(lambda_log).to(dtype=dtype)
+        return torch.tensor(float(self.poe_lambda), device=self.device, dtype=dtype)
+
+    def _effective_poe_lambda_for_logging(self) -> Union[float, torch.Tensor]:
+        if self.poe_lambda_learnable:
+            return self._effective_poe_lambda().detach()
+        assert self.poe_lambda is not None
+        return float(self.poe_lambda)
+
+    def _poe_lambda_log_param(self) -> nn.Parameter:
+        param = getattr(self.model, self._poe_lambda_log_name)
+        assert isinstance(param, nn.Parameter)
+        return param
+
+    def _sync_poe_lambda_grad(self) -> None:
+        if not self.poe_lambda_learnable or not is_distributed():
+            return
+        grad = self._poe_lambda_log_param().grad
+        if grad is None:
+            return
+        dist.all_reduce(grad, op=dist.ReduceOp.SUM, group=self.dp_process_group)
+        grad.div_(get_world_size(self.dp_process_group))
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -949,7 +1008,7 @@ class TransformerTrainModule(TrainModule):
         if self.poe_lambda is not None:
             self.record_metric(
                 "poe lambda",
-                self.poe_lambda,
+                self._effective_poe_lambda_for_logging(),
                 namespace="train",
             )
 
@@ -1344,7 +1403,7 @@ class TransformerTrainModule(TrainModule):
                 pos,
                 tok,
                 sc,
-                float(self.poe_lambda),
+                float(self._effective_poe_lambda().detach().cpu()),
                 self.label_ignore_index,
             )
             biased_logits_f32 = None
@@ -1360,7 +1419,7 @@ class TransformerTrainModule(TrainModule):
                 pos,
                 tok,
                 sc,
-                float(self.poe_lambda),
+                float(self._effective_poe_lambda().detach().cpu()),
             )
             if timing:
                 self._sync_for_timing(biased_logits_f32.device)
@@ -1397,6 +1456,8 @@ class TransformerTrainModule(TrainModule):
         return biased_logits_f32, ce_loss
 
     def optim_step(self):
+        self._sync_poe_lambda_grad()
+
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
             grad_norm = self._clip_grad_norm(self.max_grad_norm)
@@ -1840,7 +1901,7 @@ class TransformerTrainModule(TrainModule):
             sb_override_position,
             sb_override_token_id,
             sb_override_log_score,
-            float(self.poe_lambda),
+            self._effective_poe_lambda(dtype=torch.float32),
         )
         labels_dev = labels.to(biased_logits_f32.device, non_blocking=True)
         flat_logits = biased_logits_f32.flatten(0, 1)  # (B*S, V)

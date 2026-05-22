@@ -356,6 +356,13 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     # is set; otherwise the bare-model eval would not match the deployed
     # PoE inference distribution.
     poe_lambda: Optional[float] = None
+    # If true, treat ``poe_lambda`` as the positive initialization for a
+    # learned scalar. We optimize log(lambda) so the effective mixing weight
+    # cannot go negative.
+    poe_lambda_learnable: bool = False
+    # Optional optimizer LR override for the learned scalar. If unset, it uses
+    # the model LR schedule through its own zero-weight-decay parameter group.
+    poe_lambda_lr: Optional[float] = None
     poe_ngram_table_dir: Optional[str] = None
     poe_ngram_K: int = 16
     poe_ngram_N_max: int = 5

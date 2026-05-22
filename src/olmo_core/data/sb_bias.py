@@ -49,10 +49,20 @@ via broadcasting + scatter_add_ on the existing logits tensor in place.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import numpy as np
 import torch
+
+ScalarLike = Union[float, torch.Tensor]
+
+
+def _lambda_tensor(
+    poe_lambda: ScalarLike, *, device: torch.device, dtype: torch.dtype
+) -> torch.Tensor:
+    if isinstance(poe_lambda, torch.Tensor):
+        return poe_lambda.to(device=device, dtype=dtype)
+    return torch.tensor(float(poe_lambda), device=device, dtype=dtype)
 
 
 def apply_sb_bias_inplace(
@@ -62,7 +72,7 @@ def apply_sb_bias_inplace(
     sb_override_position: torch.Tensor,
     sb_override_token_id: torch.Tensor,
     sb_override_log_score: torch.Tensor,
-    poe_lambda: float,
+    poe_lambda: ScalarLike,
 ) -> None:
     """Add the stupid-backoff PoE bias to LM logits *in place*.
 
@@ -80,7 +90,8 @@ def apply_sb_bias_inplace(
         natural-log SB score for that (b, t, w).
     :param poe_lambda: scalar λ. If 0, returns immediately.
     """
-    if poe_lambda == 0.0:
+    lambda_f32 = _lambda_tensor(poe_lambda, device=logits.device, dtype=torch.float32)
+    if not lambda_f32.requires_grad and float(lambda_f32) == 0.0:
         return
     if not logits.is_contiguous():
         raise ValueError(
@@ -94,8 +105,10 @@ def apply_sb_bias_inplace(
         )
 
     # 1. Broadcast the unigram floor onto every (b, t) position.
-    #    `logits.add_(unigram_floor, alpha=λ)` does logits += λ · floor with V-broadcast.
-    logits.add_(unigram_floor.to(dtype=logits.dtype), alpha=float(poe_lambda))
+    logits.add_(
+        lambda_f32.to(dtype=logits.dtype)
+        * unigram_floor.to(device=logits.device, dtype=logits.dtype)
+    )
 
     if sb_override_batch_idx.numel() == 0:
         return
@@ -108,8 +121,12 @@ def apply_sb_bias_inplace(
     pos = sb_override_position.to(device=logits.device, dtype=torch.long)
     tok = sb_override_token_id.to(device=logits.device, dtype=torch.long)
     sc = sb_override_log_score.to(device=logits.device, dtype=torch.float32)
-    floor_at_tok = unigram_floor.index_select(0, tok).to(dtype=torch.float32)
-    delta = (float(poe_lambda) * (sc - floor_at_tok)).to(dtype=logits.dtype)
+    floor_at_tok = (
+        unigram_floor.to(device=logits.device)
+        .index_select(0, tok)
+        .to(dtype=torch.float32)
+    )
+    delta = (lambda_f32 * (sc - floor_at_tok)).to(dtype=logits.dtype)
     flat_idx = bidx * (S * V) + pos * V + tok
     logits.view(-1).scatter_add_(0, flat_idx, delta)
 
@@ -122,7 +139,7 @@ def compute_sparse_sb_ce_loss(
     sb_override_position: torch.Tensor,
     sb_override_token_id: torch.Tensor,
     sb_override_log_score: torch.Tensor,
-    poe_lambda: float,
+    poe_lambda: ScalarLike,
     label_ignore_index: int,
 ) -> torch.Tensor:
     """Compute exact per-token CE for SB PoE without materializing biased logits.
@@ -144,7 +161,8 @@ def compute_sparse_sb_ce_loss(
 
     logits_f32 = logits.float()
     unigram_floor = unigram_floor.to(device=logits_f32.device, dtype=logits_f32.dtype)
-    floor_bias = float(poe_lambda) * unigram_floor
+    lambda_f32 = _lambda_tensor(poe_lambda, device=logits_f32.device, dtype=logits_f32.dtype)
+    floor_bias = lambda_f32 * unigram_floor
     base_logits = logits_f32 + floor_bias.view(1, 1, V)
     log_sum_exp_base = torch.logsumexp(base_logits, dim=-1)
 
@@ -159,7 +177,7 @@ def compute_sparse_sb_ce_loss(
         sc = sb_override_log_score.to(device=logits_f32.device, dtype=logits_f32.dtype)
 
         flat_pos = bidx * S + pos
-        override_delta = float(poe_lambda) * (sc - unigram_floor[tok])
+        override_delta = lambda_f32 * (sc - unigram_floor[tok])
         override_base_logits = base_logits[bidx, pos, tok]
         z_delta_flat = torch.zeros(B * S, device=logits_f32.device, dtype=logits_f32.dtype)
         z_delta_flat.index_add_(
