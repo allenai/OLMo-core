@@ -36,10 +36,15 @@ matches the baseline / KN-smoothed PoE ladders exactly.
 
 import argparse
 import dataclasses
+import json
 import logging
+import math
 import os
+from pathlib import Path
 from types import MethodType
 from typing import Any
+
+import numpy as np
 
 import olmo_core.io as io
 from olmo_core.config import DType
@@ -127,6 +132,106 @@ def _parse_order_int_map(raw_values: list[str] | None, *, label: str) -> dict[in
             raise ValueError(f"{label} must be positive, got {value}")
         values[order] = value
     return values
+
+
+def _parse_order_float_map(raw_values: list[str] | None, *, label: str) -> dict[int, float] | None:
+    if not raw_values:
+        return None
+    values: dict[int, float] = {}
+    for raw in raw_values:
+        if "=" not in raw:
+            raise ValueError(f"expected {label} as ORDER=VALUE, got {raw!r}")
+        order_s, value_s = raw.split("=", 1)
+        order = int(order_s)
+        value = float(value_s)
+        if order < 2:
+            raise ValueError(f"{label} must target order >= 2, got {order}")
+        if value <= 0:
+            raise ValueError(f"{label} must be positive, got {value}")
+        values[order] = value
+    return values
+
+
+def _resolve_counts_index_dir(table_dir: str) -> Path:
+    path = Path(table_dir)
+    if (path / "counts_index").is_dir():
+        return path / "counts_index"
+    if (path / "meta.json").is_file():
+        return path
+    raise ValueError(
+        f"SB table dir must be a pilot dir containing counts_index/ or a counts_index/ dir: {table_dir}"
+    )
+
+
+def _mean_count_for_order(index_dir: Path, order: int, n_pairs: int, *, chunk_entries: int) -> float:
+    counts = np.memmap(index_dir / f"order{order}.counts.bin", dtype=np.uint64, mode="r")
+    total = 0
+    for start in range(0, n_pairs, chunk_entries):
+        end = min(start + chunk_entries, n_pairs)
+        chunk = np.asarray(counts[start:end], dtype=np.uint64)
+        total += int(chunk.sum(dtype=np.uint64))
+    return total / n_pairs
+
+
+def _median_count_for_order(index_dir: Path, order: int, n_pairs: int, *, max_samples: int) -> float:
+    counts = np.memmap(index_dir / f"order{order}.counts.bin", dtype=np.uint64, mode="r")
+    if n_pairs <= max_samples:
+        sample = np.asarray(counts[:], dtype=np.uint64)
+    else:
+        stride = max(1, math.ceil(n_pairs / max_samples))
+        sample = np.asarray(counts[::stride], dtype=np.uint64)
+    return float(np.median(sample))
+
+
+def _derive_min_order_counts_from_ratios(
+    table_dir: str,
+    ratios: dict[int, float] | None,
+    *,
+    stat: str,
+    chunk_entries: int,
+    median_samples: int,
+) -> dict[int, int] | None:
+    if not ratios:
+        return None
+    if stat not in {"mean", "median"}:
+        raise ValueError(f"stat must be 'mean' or 'median', got {stat!r}")
+    if chunk_entries <= 0:
+        raise ValueError("--sb-min-order-count-ratio-chunk-entries must be positive")
+    if median_samples <= 0:
+        raise ValueError("--sb-min-order-count-ratio-median-samples must be positive")
+
+    index_dir = _resolve_counts_index_dir(table_dir)
+    with open(index_dir / "meta.json") as f:
+        meta = json.load(f)
+
+    derived: dict[int, int] = {}
+    for order, ratio in sorted(ratios.items()):
+        info = meta["per_order"].get(str(order))
+        if info is None:
+            raise ValueError(f"order {order} is not present in {index_dir / 'meta.json'}")
+        n_pairs = int(info["n_pairs"])
+        if n_pairs <= 0:
+            raise ValueError(f"order {order} has no continuation rows")
+        if stat == "mean":
+            base = _mean_count_for_order(index_dir, order, n_pairs, chunk_entries=chunk_entries)
+        else:
+            base = _median_count_for_order(
+                index_dir,
+                order,
+                n_pairs,
+                max_samples=median_samples,
+            )
+        threshold = max(1, int(math.ceil(base * ratio)))
+        derived[order] = threshold
+        log.info(
+            "Derived SB min-count threshold order=%s stat=%s base=%.4f ratio=%.4f threshold=%s",
+            order,
+            stat,
+            base,
+            ratio,
+            threshold,
+        )
+    return derived
 
 
 class HeadInstanceSource(InstanceSource):  # noqa: F405
@@ -295,10 +400,34 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
     tokenizer = TokenizerConfig.dolma2()
     sb_order_caps = _parse_order_caps(getattr(args, "sb_max_order_continuations", None))
+    sb_min_order_count_ratios = _parse_order_float_map(
+        getattr(args, "sb_min_order_count_ratio", None),
+        label="minimum order count ratio",
+    )
+    sb_ratio_counts = _derive_min_order_counts_from_ratios(
+        getattr(args, "sb_table_dir", DEFAULT_SB_TABLE_DIR),
+        sb_min_order_count_ratios,
+        stat=getattr(args, "sb_min_order_count_ratio_stat", "mean"),
+        chunk_entries=getattr(args, "sb_min_order_count_ratio_chunk_entries", 10_000_000),
+        median_samples=getattr(args, "sb_min_order_count_ratio_median_samples", 2_000_000),
+    )
     sb_min_order_counts = _parse_order_int_map(
         getattr(args, "sb_min_order_count", None),
         label="minimum order count",
     )
+    if sb_ratio_counts:
+        merged_counts = dict(sb_ratio_counts)
+        if sb_min_order_counts:
+            overlap = sorted(set(merged_counts).intersection(sb_min_order_counts))
+            if overlap:
+                log.info(
+                    "Explicit --sb-min-order-count overrides ratio-derived thresholds for orders %s",
+                    overlap,
+                )
+            merged_counts.update(sb_min_order_counts)
+        sb_min_order_counts = merged_counts
+    if sb_min_order_counts:
+        log.info("Using SB minimum raw-count thresholds by order: %s", sb_min_order_counts)
 
     base_source = ConcatAndChunkInstanceSourceConfig(  # noqa: F405
         sources=[
@@ -527,6 +656,45 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "Continuations below the threshold are omitted and fall through to "
             "lower orders or the unigram floor. This is a post-hoc pruning "
             "approximation for threshold sweeps before rebuilding counts."
+        ),
+    )
+    parser.add_argument(
+        "--sb-min-order-count-ratio",
+        action="append",
+        default=None,
+        metavar="ORDER=RATIO",
+        help=(
+            "Derive a minimum raw-count threshold from the selected order's "
+            "count statistic, repeatable, for example "
+            "'--sb-min-order-count-ratio 2=3 --sb-min-order-count-ratio 3=4'. "
+            "The concrete threshold is ceil(RATIO * statistic). This makes "
+            "pruning scale with the n-gram fitting sample size instead of "
+            "hard-coding one absolute count for every index."
+        ),
+    )
+    parser.add_argument(
+        "--sb-min-order-count-ratio-stat",
+        choices=("mean", "median"),
+        default="mean",
+        help=(
+            "Statistic used by --sb-min-order-count-ratio. 'mean' is an exact "
+            "sequential scan over counts. 'median' uses an evenly-spaced sample "
+            "when an order has more rows than --sb-min-order-count-ratio-median-samples."
+        ),
+    )
+    parser.add_argument(
+        "--sb-min-order-count-ratio-chunk-entries",
+        type=int,
+        default=10_000_000,
+        help="Count entries to read per chunk when computing exact per-order means.",
+    )
+    parser.add_argument(
+        "--sb-min-order-count-ratio-median-samples",
+        type=int,
+        default=2_000_000,
+        help=(
+            "Maximum evenly-spaced count samples used for median-derived "
+            "thresholds. Ignored for mean-derived thresholds."
         ),
     )
     parser.add_argument(
