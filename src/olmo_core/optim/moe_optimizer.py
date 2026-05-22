@@ -1715,7 +1715,9 @@ class MoEFusedV2Optimizer:
 
                 del model_grad
                 
-                # further divide by ep_mp world size if it's ep_mp sharded
+                # MultiGroupDDP has already averaged EP params over EP-DP. Expert
+                # compute saw tokens from all EP-MP ranks, so divide by EP-MP here
+                # to make optimizer-consumed expert grads scale as 1 / dense DP.
                 if self.moe_mesh is not None and param_group['pg'] == 'ep_dp':
                     ep_mp_world_process_group = self.ep_mp_mesh.get_group()
                     ep_mp_world_size = dist.get_world_size(ep_mp_world_process_group)

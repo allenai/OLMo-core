@@ -454,6 +454,8 @@ class MultiGroupDistributedDataParallel(Module):
         bucket = self._grad_buckets[bucket_idx]
         world_size = bucket.process_group.size()
 
+        # Average over the bucket's replica group. Expert buckets use EP-DP here;
+        # the optimizer applies the remaining EP-MP factor when building main_grad.
         if bucket.storage_dtype == bucket.comm_dtype:
             tensor_for_reduce = bucket.flat_storage
             tensor_for_reduce.div_(world_size)
