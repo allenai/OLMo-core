@@ -608,82 +608,98 @@ class StupidBackoffNgramLM:
         for b in range(B):
             row = input_ids[b]
             mask_row = score_mask[b]
+            score_positions = np.nonzero(mask_row)[0].astype(np.int64, copy=False)
+            if score_positions.size == 0:
+                continue
             z_delta_sum = np.zeros(S - 1, dtype=np.float64)
             gold_override_score = np.zeros(S - 1, dtype=np.float64)
-            pos, tok, score = self.compute_overrides_for_sequence(row)
+            pos, tok, score = self.compute_overrides_for_sequence(
+                row, score_positions=score_positions
+            )
             if pos.size > 0:
-                tok = tok.astype(np.int64, copy=False)
-                score = score.astype(np.float64, copy=False)
-                floor_at_tok = self.unigram_floor[tok]
-                delta = np.exp(score) - np.exp(floor_at_tok)
-                for t, did, log_score, z_delta in zip(
-                    pos.tolist(),
-                    tok.tolist(),
-                    score.tolist(),
-                    delta.tolist(),
-                ):
-                    if t >= S - 1:
-                        continue
-                    z_delta_sum[t] += z_delta
-                    if int(row[t + 1]) == int(did):
-                        gold_override_score[t] = log_score
-                        hit[b, t] = True
-            for t in np.nonzero(mask_row)[0].tolist():
-                gold = int(row[t + 1])
-                log_z = self.log_Z_unigram + math.log1p(
-                    z_delta_sum[t] * math.exp(-self.log_Z_unigram)
-                )
-                if hit[b, t]:
-                    out[b, t] = gold_override_score[t]
-                else:
-                    out[b, t] = float(self.unigram_floor[gold])
-                out[b, t] -= log_z
+                pos_i = pos.astype(np.int64, copy=False)
+                tok_i = tok.astype(np.int64, copy=False)
+                score_f = score.astype(np.float64, copy=False)
+                valid = (pos_i >= 0) & (pos_i < S - 1)
+                if valid.any():
+                    valid_idx = np.flatnonzero(valid)
+                    valid[valid_idx] = mask_row[pos_i[valid_idx]]
+                if valid.any():
+                    pos_v = pos_i[valid]
+                    tok_v = tok_i[valid]
+                    score_v = score_f[valid]
+                    floor_at_tok = self.unigram_floor[tok_v]
+                    delta = np.exp(score_v) - np.exp(floor_at_tok)
+                    z_delta_sum += np.bincount(
+                        pos_v, weights=delta, minlength=S - 1
+                    )[: S - 1]
+                    gold_matches = tok_v == row[pos_v + 1]
+                    if gold_matches.any():
+                        gold_pos = pos_v[gold_matches]
+                        gold_override_score[gold_pos] = score_v[gold_matches]
+                        hit[b, gold_pos] = True
+            gold = row[score_positions + 1]
+            log_z = self.log_Z_unigram + np.log1p(
+                z_delta_sum[score_positions] * math.exp(-self.log_Z_unigram)
+            )
+            gold_score = self.unigram_floor[gold]
+            gold_score = np.where(
+                hit[b, score_positions],
+                gold_override_score[score_positions],
+                gold_score,
+            )
+            out[b, score_positions] = gold_score - log_z
         return out, hit
 
     # ----- training-time entry point --------------------------------------
 
     def compute_overrides_for_sequence(
-        self, input_ids: np.ndarray
+        self, input_ids: np.ndarray, score_positions: np.ndarray | None = None
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build ragged SB overrides for one sequence, optionally using
         in-process chunk parallelism."""
         input_ids = np.asarray(input_ids, dtype=np.int64)
         S = int(input_ids.shape[0])
         if self.lookup_threads <= 1 or S <= 1:
-            return self._compute_overrides_for_sequence_serial(input_ids)
-
-        n_positions = S - 1
-        n_chunks = min(self.lookup_threads, n_positions)
-        if n_chunks <= 1:
-            return self._compute_overrides_for_sequence_serial(input_ids)
-
-        t0 = time.perf_counter()
-        bounds = np.linspace(0, n_positions, n_chunks + 1, dtype=np.int64)
-        prefix_len = self.N_max - 1
-
-        def compute_chunk(chunk_idx: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-            start_pos = int(bounds[chunk_idx])
-            end_pos = int(bounds[chunk_idx + 1])
-            token_start = max(0, start_pos - prefix_len)
-            token_end = end_pos + 1
-            pos, tok, score = self._compute_overrides_for_sequence_serial(
-                input_ids[token_start:token_end],
-                log_timing=False,
+            return self._compute_overrides_for_sequence_serial(
+                input_ids, score_positions=score_positions
             )
-            if pos.size == 0:
-                return pos, tok, score
-            global_pos = pos.astype(np.int64, copy=False) + token_start
-            keep = (global_pos >= start_pos) & (global_pos < end_pos)
-            if not keep.any():
+
+        if score_positions is None:
+            positions = np.arange(S - 1, dtype=np.int64)
+        else:
+            positions = np.asarray(score_positions, dtype=np.int64)
+            positions = positions[(positions >= 0) & (positions < S - 1)]
+            if positions.size == 0:
                 return (
                     np.zeros(0, dtype=np.int32),
                     np.zeros(0, dtype=np.int32),
                     np.zeros(0, dtype=np.float32),
                 )
-            return (
-                global_pos[keep].astype(np.int32, copy=False),
-                tok[keep],
-                score[keep],
+            positions = np.unique(positions)
+
+        n_positions = int(positions.shape[0])
+        n_chunks = min(self.lookup_threads, n_positions)
+        if n_chunks <= 1:
+            return self._compute_overrides_for_sequence_serial(
+                input_ids, score_positions=positions
+            )
+
+        t0 = time.perf_counter()
+        chunks = np.array_split(positions, n_chunks)
+
+        def compute_chunk(chunk_idx: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+            chunk_positions = chunks[chunk_idx]
+            if chunk_positions.size == 0:
+                return (
+                    np.zeros(0, dtype=np.int32),
+                    np.zeros(0, dtype=np.int32),
+                    np.zeros(0, dtype=np.float32),
+                )
+            return self._compute_overrides_for_sequence_serial(
+                input_ids,
+                score_positions=chunk_positions,
+                log_timing=False,
             )
 
         if self._lookup_pool is None:
@@ -710,12 +726,20 @@ class StupidBackoffNgramLM:
             t0,
             S,
             int(result[0].shape[0]),
-            [f"thread_chunks={n_chunks}", f"lookup_threads={self.lookup_threads}"],
+            [
+                f"score_positions={n_positions:,}",
+                f"thread_chunks={n_chunks}",
+                f"lookup_threads={self.lookup_threads}",
+            ],
         )
         return result
 
     def _compute_overrides_for_sequence_serial(
-        self, input_ids: np.ndarray, *, log_timing: bool = True
+        self,
+        input_ids: np.ndarray,
+        *,
+        score_positions: np.ndarray | None = None,
+        log_timing: bool = True,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build the ragged per-position SB overrides for one training
         instance.
@@ -757,6 +781,16 @@ class StupidBackoffNgramLM:
         )
         if S <= 1:
             return EMPTY
+        if score_positions is None:
+            requested_positions = None
+        else:
+            requested_positions = np.asarray(score_positions, dtype=np.int64)
+            requested_positions = requested_positions[
+                (requested_positions >= 0) & (requested_positions < S - 1)
+            ]
+            if requested_positions.size == 0:
+                return EMPTY
+            requested_positions = np.unique(requested_positions)
 
         # Translate the full input_ids dolma2→kenlm once. Out-of-vocab dolma2
         # ids map to kenlm id 0 (kUNK) by the dolma2_to_kenlm table init;
@@ -778,13 +812,22 @@ class StupidBackoffNgramLM:
             # Positions with enough left context: i in [plen-1, S-2].
             # For position i, the history is ctx_kenlm_full[i+1-plen : i+1].
             # That's window index (i+1-plen) into sliding_window_view of width plen.
-            n_queries = S - plen
-            if n_queries <= 0:
-                continue
             windows = sliding_window_view(ctx_kenlm_full, plen)  # (S-plen+1, plen)
-            # Take the first n_queries windows — last position covered is S-2.
-            queries = np.ascontiguousarray(windows[:n_queries])  # (n_queries, plen)
-            position_for_query = np.arange(plen - 1, plen - 1 + n_queries, dtype=np.int64)
+            if requested_positions is None:
+                n_queries = S - plen
+                if n_queries <= 0:
+                    continue
+                # Take the first n_queries windows — last position covered is S-2.
+                queries = np.ascontiguousarray(windows[:n_queries])  # (n_queries, plen)
+                position_for_query = np.arange(
+                    plen - 1, plen - 1 + n_queries, dtype=np.int64
+                )
+            else:
+                position_for_query = requested_positions[requested_positions >= plen - 1]
+                if position_for_query.size == 0:
+                    continue
+                window_indices = position_for_query - (plen - 1)
+                queries = np.ascontiguousarray(windows[window_indices])
 
             struct = order_data["histories_struct"]
             if struct is None:
