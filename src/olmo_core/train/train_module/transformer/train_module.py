@@ -1011,6 +1011,12 @@ class TransformerTrainModule(TrainModule):
                 self._effective_poe_lambda_for_logging(),
                 namespace="train",
             )
+            if self.poe_lambda_learnable:
+                self.record_metric(
+                    "poe lambda log",
+                    self._poe_lambda_log_param().detach(),
+                    namespace="train",
+                )
 
         # And additional metrics.
         for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
@@ -1457,6 +1463,25 @@ class TransformerTrainModule(TrainModule):
 
     def optim_step(self):
         self._sync_poe_lambda_grad()
+        if self.poe_lambda_learnable:
+            lambda_log = self._poe_lambda_log_param()
+            lambda_log_grad = lambda_log.grad
+            self.trainer.record_metric(
+                "poe lambda log grad",
+                (
+                    torch.zeros((), device=lambda_log.device, dtype=lambda_log.dtype)
+                    if lambda_log_grad is None
+                    else lambda_log_grad.detach()
+                ),
+                reduce_type=None,
+                namespace="optim",
+            )
+            self.trainer.record_metric(
+                "poe lambda grad is none",
+                float(lambda_log_grad is None),
+                reduce_type=None,
+                namespace="optim",
+            )
 
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
@@ -1467,6 +1492,19 @@ class TransformerTrainModule(TrainModule):
             )
             if isinstance(self.optim, SkipStepOptimizer):
                 self.optim.latest_grad_norm = grad_norm
+            if self.poe_lambda_learnable:
+                lambda_log = self._poe_lambda_log_param()
+                lambda_log_grad = lambda_log.grad
+                self.trainer.record_metric(
+                    "poe lambda log grad clipped",
+                    (
+                        torch.zeros((), device=lambda_log.device, dtype=lambda_log.dtype)
+                        if lambda_log_grad is None
+                        else lambda_log_grad.detach()
+                    ),
+                    reduce_type=None,
+                    namespace="optim",
+                )
 
         # Maybe adjust learning rate.
         if self.scheduler is not None:
