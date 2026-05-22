@@ -606,7 +606,10 @@ def convert_qwen3_5_state_from_hf(
         olmo_state["lm_head.norm.weight"] = hf_state["model.norm.weight"]
     if "lm_head.weight" in hf_state:
         olmo_state["lm_head.w_out.weight"] = hf_state["lm_head.weight"]
-    elif getattr(text_config, "tie_word_embeddings", False) and "model.embed_tokens.weight" in hf_state:
+    elif (
+        getattr(text_config, "tie_word_embeddings", False)
+        and "model.embed_tokens.weight" in hf_state
+    ):
         olmo_state["lm_head.w_out.weight"] = hf_state["model.embed_tokens.weight"]
 
     for layer_idx in range(n_layers):

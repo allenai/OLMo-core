@@ -55,7 +55,7 @@ from olmo_core.testing import (
     requires_multi_gpu,
     run_distributed_test,
 )
-from olmo_core.testing.utils import FLA_MARKS, has_fla, requires_fla
+from olmo_core.testing.utils import FLA_MARKS, has_fla, requires_fla, requires_gpu
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
@@ -743,6 +743,7 @@ def test_qwen3_5_param_count(config_builder):
     assert model.num_params == num_actual_params
 
 
+@requires_gpu
 @requires_fla
 def test_qwen3_5_forward():
     device = torch.device("cuda")
