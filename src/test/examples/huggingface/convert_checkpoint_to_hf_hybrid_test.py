@@ -330,6 +330,7 @@ def test_convert_checkpoint_to_hf_produces_valid_output(
     assert config["architectures"] == ["OlmoHybridForCausalLM"]
     assert config["num_hidden_layers"] == 4
     assert config["hidden_size"] == hybrid_model_config.d_model
+    assert config["vocab_size"] == hybrid_model_config.vocab_size
     assert config["layer_types"] == [
         "linear_attention",
         "linear_attention",
@@ -345,6 +346,8 @@ def test_convert_checkpoint_to_hf_produces_valid_output(
     assert "model.embed_tokens.weight" in hf_state
     assert "model.norm.weight" in hf_state
     assert "lm_head.weight" in hf_state
+    assert hf_state["model.embed_tokens.weight"].shape[0] == hybrid_model_config.vocab_size
+    assert hf_state["lm_head.weight"].shape[0] == hybrid_model_config.vocab_size
 
     # GDN layer 0 should have linear_attn keys.
     assert "model.layers.0.linear_attn.q_proj.weight" in hf_state
@@ -392,17 +395,14 @@ def test_convert_checkpoint_to_hf_weights_match_original(
     hf_state = load_file(output_dir / "model.safetensors")
 
     # Spot-check: shared keys.
-    # Embeddings and lm_head are truncated from padded_vocab_size to vocab_size during conversion,
-    # so only compare the first vocab_size rows.
-    vocab_size = hf_state["model.embed_tokens.weight"].shape[0]
     assert torch.equal(
         hf_state["model.embed_tokens.weight"],
-        original_state["embeddings.weight"][:vocab_size],
+        original_state["embeddings.weight"],
     )
     assert torch.equal(hf_state["model.norm.weight"], original_state["lm_head.norm.weight"])
     assert torch.equal(
         hf_state["lm_head.weight"],
-        original_state["lm_head.w_out.weight"][:vocab_size],
+        original_state["lm_head.w_out.weight"],
     )
 
     # Spot-check: GDN layer 0.

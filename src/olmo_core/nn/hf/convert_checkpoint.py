@@ -359,12 +359,15 @@ def convert_checkpoint_to_hf(
 
         if hybrid:
             log.info("Detected hybrid model (GDN + attention layers)")
+            # Hybrid checkpoints are trained with the model's padded vocab size. Keep
+            # those extra embedding/lm_head rows so converted base checkpoints match
+            # downstream SFT checkpoints and published HF hybrid weights exactly.
             save_hf_hybrid_model(
                 output_path,
                 model_state_dict,
                 model,
                 dtype=dtype,
-                vocab_size=vocab_size,
+                vocab_size=model.vocab_size,
                 max_sequence_length=max_sequence_length or 65536,
             )
         else:
