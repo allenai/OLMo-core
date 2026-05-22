@@ -294,6 +294,9 @@ class GatedDeltaNet(SequenceMixer):
         - Gated RMS normalization
         """
         del seq_len
+        # BUG: This currently counts mostly forward FLOPs. OLMo throughput accounting
+        # uses training FLOPs (2 ops * 3 for forward+backward), so GDN MFU/TFLOPs
+        # are undercounted until this is updated.
         # Linear projection FLOPs (2 ops per multiply-add)
         linear_flops = 2 * sum(
             m.weight.numel()
