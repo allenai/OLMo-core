@@ -589,19 +589,55 @@ class StupidBackoffNgramLM:
         assert score_mask.shape == (B, S - 1), score_mask.shape
         out = np.zeros((B, S - 1), dtype=np.float64)
         hit = np.zeros((B, S - 1), dtype=bool)
-        prefix_len = self.N_max - 1
+        if self.lookup_threads <= 1:
+            prefix_len = self.N_max - 1
+            for b in range(B):
+                row = input_ids[b]
+                mask_row = score_mask[b]
+                for t in range(S - 1):
+                    if not mask_row[t]:
+                        continue
+                    ctx_start = max(0, t + 1 - prefix_len)
+                    ctx = row[ctx_start : t + 1]
+                    gold = int(row[t + 1])
+                    logp, h = self._per_position_logp_gold(ctx, gold)
+                    out[b, t] = logp
+                    hit[b, t] = h
+            return out, hit
+
         for b in range(B):
             row = input_ids[b]
             mask_row = score_mask[b]
-            for t in range(S - 1):
-                if not mask_row[t]:
-                    continue
-                ctx_start = max(0, t + 1 - prefix_len)
-                ctx = row[ctx_start : t + 1]
+            z_delta_sum = np.zeros(S - 1, dtype=np.float64)
+            gold_override_score = np.zeros(S - 1, dtype=np.float64)
+            pos, tok, score = self.compute_overrides_for_sequence(row)
+            if pos.size > 0:
+                tok = tok.astype(np.int64, copy=False)
+                score = score.astype(np.float64, copy=False)
+                floor_at_tok = self.unigram_floor[tok]
+                delta = np.exp(score) - np.exp(floor_at_tok)
+                for t, did, log_score, z_delta in zip(
+                    pos.tolist(),
+                    tok.tolist(),
+                    score.tolist(),
+                    delta.tolist(),
+                ):
+                    if t >= S - 1:
+                        continue
+                    z_delta_sum[t] += z_delta
+                    if int(row[t + 1]) == int(did):
+                        gold_override_score[t] = log_score
+                        hit[b, t] = True
+            for t in np.nonzero(mask_row)[0].tolist():
                 gold = int(row[t + 1])
-                logp, h = self._per_position_logp_gold(ctx, gold)
-                out[b, t] = logp
-                hit[b, t] = h
+                log_z = self.log_Z_unigram + math.log1p(
+                    z_delta_sum[t] * math.exp(-self.log_Z_unigram)
+                )
+                if hit[b, t]:
+                    out[b, t] = gold_override_score[t]
+                else:
+                    out[b, t] = float(self.unigram_floor[gold])
+                out[b, t] -= log_z
         return out, hit
 
     # ----- training-time entry point --------------------------------------
