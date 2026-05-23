@@ -345,14 +345,21 @@ class TransformerTrainModule(TrainModule):
         assert self.poe_lambda is not None
         if self.poe_lambda_learnable:
             lambda_log = self._poe_lambda_log_param()
-            return torch.exp(lambda_log).to(dtype=dtype)
+            return torch.exp(lambda_log).squeeze().to(dtype=dtype)
         return torch.tensor(float(self.poe_lambda), device=self.device, dtype=dtype)
 
     def _effective_poe_lambda_for_logging(self) -> Union[float, torch.Tensor]:
         if self.poe_lambda_learnable:
-            return self._effective_poe_lambda().detach()
+            return self._effective_poe_lambda().detach().squeeze()
         assert self.poe_lambda is not None
         return float(self.poe_lambda)
+
+    def _poe_lambda_log_for_logging(self) -> torch.Tensor:
+        return self._poe_lambda_log_param().detach().squeeze()
+
+    @staticmethod
+    def _scalar_metric_tensor(value: torch.Tensor) -> torch.Tensor:
+        return value.detach().squeeze()
 
     def _poe_lambda_log_param(self) -> nn.Parameter:
         param = getattr(self.model, self._poe_lambda_log_name)
@@ -1021,7 +1028,7 @@ class TransformerTrainModule(TrainModule):
             if self.poe_lambda_learnable:
                 self.record_metric(
                     "poe lambda log",
-                    self._poe_lambda_log_param().detach(),
+                    self._poe_lambda_log_for_logging(),
                     namespace="train",
                 )
 
@@ -1478,7 +1485,7 @@ class TransformerTrainModule(TrainModule):
                 (
                     torch.zeros((), device=lambda_log.device, dtype=lambda_log.dtype)
                     if lambda_log_grad is None
-                    else lambda_log_grad.detach()
+                    else self._scalar_metric_tensor(lambda_log_grad)
                 ),
                 reduce_type=None,
                 namespace="optim",
@@ -1507,7 +1514,7 @@ class TransformerTrainModule(TrainModule):
                     (
                         torch.zeros((), device=lambda_log.device, dtype=lambda_log.dtype)
                         if lambda_log_grad is None
-                        else lambda_log_grad.detach()
+                        else self._scalar_metric_tensor(lambda_log_grad)
                     ),
                     reduce_type=None,
                     namespace="optim",
