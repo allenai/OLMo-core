@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import math
 import os
 import time
 from dataclasses import replace
@@ -219,6 +220,13 @@ class TransformerTrainModule(TrainModule):
             ep_config=ep_config,
             ac_config=ac_config,
         )
+        # `parallelize_model()` materializes and initializes parameters. Since
+        # the learned PoE scalar is registered before parallelization so FSDP
+        # can own it, restore its user-requested initialization after that
+        # model-wide init pass and before the optimizer captures parameters.
+        if poe_lambda_learnable and poe_lambda is not None:
+            with torch.no_grad():
+                self._poe_lambda_log_param().fill_(math.log(float(poe_lambda)))
         self._model_mode: Optional[Literal["train", "eval"]] = None
 
         self._dp_config = dp_config
