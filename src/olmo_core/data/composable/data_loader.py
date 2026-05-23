@@ -511,6 +511,17 @@ class ComposableDataLoader(TextDataLoaderBase):
                 if (s_log_probs := instance.get("soft_target_log_probs")) is not None:
                     out["soft_target_log_probs"] = torch.as_tensor(s_log_probs)
 
+                # Ragged stupid-backoff override fields. These must reach the
+                # collator so it can concatenate them across the batch and add
+                # the parallel sb_override_batch_idx vector used by the train
+                # step scatter.
+                if (sb_pos := instance.get("sb_override_position")) is not None:
+                    out["sb_override_position"] = torch.as_tensor(sb_pos)
+                if (sb_tok := instance.get("sb_override_token_id")) is not None:
+                    out["sb_override_token_id"] = torch.as_tensor(sb_tok)
+                if (sb_score := instance.get("sb_override_log_score")) is not None:
+                    out["sb_override_log_score"] = torch.as_tensor(sb_score)
+
                 if self.generate_doc_lengths:
                     out["doc_lens"] = get_document_lengths(
                         input_ids,

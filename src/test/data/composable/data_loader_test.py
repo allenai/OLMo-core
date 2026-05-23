@@ -8,8 +8,31 @@ from olmo_core.data.composable.concat_and_chunk_instance_source import (
     ConcatAndChunkInstanceSource,
 )
 from olmo_core.data.composable.data_loader import ComposableDataLoader
+from olmo_core.data.composable.instance_source import InstanceSource
 from olmo_core.data.composable.token_source import InMemoryTokenSource
 from olmo_core.data.tokenizer import TokenizerConfig
+
+
+class _SBOverrideInstanceSource(InstanceSource):
+    @property
+    def fingerprint(self) -> str:
+        return "sb-override-test"
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, idx: int):
+        self.validate_index(idx)
+        offset = idx * 10
+        return {
+            "input_ids": [offset, offset + 1, offset + 2, offset + 3],
+            "sb_override_position": [1, 2],
+            "sb_override_token_id": [offset + 5, offset + 6],
+            "sb_override_log_score": [0.1, 0.2],
+        }
+
+    def children(self):
+        return []
 
 
 @pytest.mark.parametrize("num_workers", [0, 2])
@@ -51,6 +74,26 @@ def test_data_loader(tmp_path: Path, num_workers: int):
     assert len(list(data_loader)) == 0
 
     data_loader.reset()
+
+
+def test_data_loader_preserves_sb_override_fields(tmp_path: Path):
+    tokenizer = TokenizerConfig(vocab_size=32000, eos_token_id=0, pad_token_id=-1)
+    data_loader = ComposableDataLoader(
+        _SBOverrideInstanceSource(work_dir=tmp_path, sequence_length=4),
+        collator=DataCollator(pad_token_id=tokenizer.pad_token_id),
+        tokenizer=tokenizer,
+        work_dir=tmp_path,
+        global_batch_size=8,
+        num_workers=0,
+        num_threads=0,
+    )
+
+    batch = data_loader.get_mock_batch()
+    assert batch["input_ids"].shape == (2, 4)
+    assert batch["sb_override_batch_idx"].tolist() == [0, 0, 1, 1]
+    assert batch["sb_override_position"].tolist() == [1, 2, 1, 2]
+    assert batch["sb_override_token_id"].shape == (4,)
+    assert batch["sb_override_log_score"].shape == (4,)
 
 
 def test_data_loader_save_and_restore(tmp_path: Path):

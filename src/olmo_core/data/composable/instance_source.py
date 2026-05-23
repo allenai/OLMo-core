@@ -40,6 +40,12 @@ class Instance(TypedDict):
     """Optional per-position top-K soft-target token IDs of shape ``(S, K)``."""
     soft_target_probs: NotRequired[Sequence[Sequence[float]]]
     """Optional per-position top-K soft-target probabilities of shape ``(S, K)``, summing to 1 along the K axis."""
+    sb_override_position: NotRequired[Sequence[int]]
+    """Optional stupid-backoff override positions for sparse PoE bias."""
+    sb_override_token_id: NotRequired[Sequence[int]]
+    """Optional stupid-backoff override token IDs for sparse PoE bias."""
+    sb_override_log_score: NotRequired[Sequence[float]]
+    """Optional stupid-backoff override log scores for sparse PoE bias."""
 
 
 class InstanceSource(SourceABC):
