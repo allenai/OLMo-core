@@ -385,19 +385,6 @@ class TransformerTrainModule(TrainModule):
         assert isinstance(param, nn.Parameter)
         return param
 
-    def _sync_poe_lambda_grad(self) -> None:
-        if not self.poe_lambda_learnable or not is_distributed():
-            return
-        grad = self._poe_lambda_log_param().grad
-        if grad is None:
-            return
-        dp_world_size = get_world_size(self.dp_process_group)
-        if dp_world_size <= 1:
-            return
-        local_grad = get_local_tensor(grad)
-        dist.all_reduce(local_grad, op=dist.ReduceOp.SUM, group=self.dp_process_group)
-        local_grad.div_(dp_world_size)
-
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
         return None if self.world_mesh is None else get_dp_process_group(self.world_mesh)
@@ -1508,7 +1495,6 @@ class TransformerTrainModule(TrainModule):
         return biased_logits_f32, ce_loss
 
     def optim_step(self):
-        self._sync_poe_lambda_grad()
         if self.poe_lambda_learnable:
             lambda_log = self._poe_lambda_log_param()
             lambda_log_grad = lambda_log.grad
