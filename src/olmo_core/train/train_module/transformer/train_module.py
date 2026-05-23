@@ -189,6 +189,18 @@ class TransformerTrainModule(TrainModule):
                 "Activation checkpointing with 'budget' mode requires compilation to be enabled"
             )
 
+        # Register learned PoE lambda before parallelization. FSDP walks the
+        # module tree during ``parallelize_model()``, so parameters added after
+        # that point are not managed like ordinary model parameters.
+        self._poe_lambda_log_name = "poe_lambda_log"
+        if poe_lambda_learnable and poe_lambda is not None:
+            if poe_lambda <= 0:
+                raise OLMoConfigurationError(f"poe_lambda must be positive, got {poe_lambda}")
+            log_lambda = torch.log(
+                torch.tensor(float(poe_lambda), dtype=torch.float32, device=self.device)
+            )
+            model.register_parameter(self._poe_lambda_log_name, nn.Parameter(log_lambda))
+
         # Parallelize model.
         self.model = parallelize_model(
             model,
@@ -223,7 +235,6 @@ class TransformerTrainModule(TrainModule):
         self.poe_lambda = poe_lambda
         self.poe_lambda_learnable = bool(poe_lambda_learnable)
         self.poe_lambda_lr = poe_lambda_lr
-        self._poe_lambda_log_name = "poe_lambda_log"
         if self.soft_ce_alpha_start is not None and self.poe_lambda is not None:
             raise OLMoConfigurationError(
                 "soft_ce_alpha_start and poe_lambda are mutually exclusive — "
@@ -316,10 +327,6 @@ class TransformerTrainModule(TrainModule):
 
         if self.poe_lambda_learnable:
             assert self.poe_lambda is not None
-            log_lambda = torch.log(
-                torch.tensor(float(self.poe_lambda), dtype=torch.float32, device=self.device)
-            )
-            self.model.register_parameter(self._poe_lambda_log_name, nn.Parameter(log_lambda))
             poe_lambda_opts: Dict[str, Any] = {"weight_decay": 0.0}
             if self.poe_lambda_lr is not None:
                 poe_lambda_opts["lr"] = self.poe_lambda_lr
