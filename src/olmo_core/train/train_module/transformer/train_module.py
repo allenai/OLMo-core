@@ -370,7 +370,10 @@ class TransformerTrainModule(TrainModule):
 
     @staticmethod
     def _scalar_metric_tensor(value: torch.Tensor) -> torch.Tensor:
-        return get_local_tensor(value.detach()).squeeze()
+        local_value = get_local_tensor(value.detach())
+        if local_value.numel() == 0:
+            return torch.zeros((), device=local_value.device, dtype=local_value.dtype)
+        return local_value.reshape(-1)[0]
 
     def _poe_lambda_log_param(self) -> nn.Parameter:
         lm_head = getattr(self.model, "lm_head", None)

@@ -132,3 +132,11 @@ def test_train_module_sb_loss_allows_learned_lambda_gradient():
     assert lambda_grad is not None
     assert torch.isfinite(lambda_grad)
     assert lambda_grad.abs() > 0
+
+
+def test_scalar_metric_tensor_handles_empty_local_shard():
+    empty = torch.empty(0, dtype=torch.float32)
+    scalar = TransformerTrainModule._scalar_metric_tensor(empty)
+
+    assert scalar.shape == ()
+    torch.testing.assert_close(scalar, torch.tensor(0.0))
