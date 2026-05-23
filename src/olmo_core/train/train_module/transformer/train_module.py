@@ -197,7 +197,7 @@ class TransformerTrainModule(TrainModule):
             if poe_lambda <= 0:
                 raise OLMoConfigurationError(f"poe_lambda must be positive, got {poe_lambda}")
             log_lambda = torch.log(
-                torch.tensor(float(poe_lambda), dtype=torch.float32, device=self.device)
+                torch.tensor([float(poe_lambda)], dtype=torch.float32, device=self.device)
             )
             model.register_parameter(self._poe_lambda_log_name, nn.Parameter(log_lambda))
 
