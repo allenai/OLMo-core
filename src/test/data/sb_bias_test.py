@@ -1,7 +1,9 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from olmo_core.data.sb_bias import apply_sb_bias_inplace, compute_sparse_sb_ce_loss
+from olmo_core.train.train_module.transformer.train_module import TransformerTrainModule
 
 
 def test_sparse_sb_ce_matches_materialized_bias():
@@ -89,3 +91,44 @@ def test_apply_sb_bias_allows_lambda_gradient():
     assert poe_lambda.grad is not None
     assert torch.isfinite(poe_lambda.grad)
     assert poe_lambda.grad.abs() > 0
+
+
+def test_train_module_sb_loss_allows_learned_lambda_gradient():
+    torch.manual_seed(9012)
+    B, S, V = 2, 3, 7
+    logits = torch.randn(B, S, V, dtype=torch.float32, requires_grad=True)
+    labels = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.long)
+    unigram_floor = torch.log_softmax(torch.randn(V, dtype=torch.float32), dim=0)
+    bidx = torch.tensor([0, 1], dtype=torch.long)
+    pos = torch.tensor([1, 2], dtype=torch.long)
+    tok = torch.tensor([2, 6], dtype=torch.long)
+    sb_log_score = unigram_floor[tok] + torch.tensor([0.4, -0.8], dtype=torch.float32)
+
+    module = object.__new__(TransformerTrainModule)
+    module.model = nn.Module()
+    module._poe_lambda_log_name = "poe_lambda_log"
+    module.model.register_parameter(
+        module._poe_lambda_log_name,
+        nn.Parameter(torch.log(torch.tensor(0.3, dtype=torch.float32))),
+    )
+    module.poe_lambda = 0.3
+    module.poe_lambda_learnable = True
+    module.label_ignore_index = -100
+    module._get_poe_sb_unigram_floor_dev = lambda dtype: unigram_floor.to(dtype=dtype)
+
+    loss = TransformerTrainModule._compute_poe_loss_sb(
+        module,
+        logits=logits,
+        sb_override_batch_idx=bidx,
+        sb_override_position=pos,
+        sb_override_token_id=tok,
+        sb_override_log_score=sb_log_score,
+        labels=labels,
+        loss_div_factor=torch.tensor(B * S, dtype=torch.float32),
+    )
+    loss.backward()
+
+    lambda_grad = module._poe_lambda_log_param().grad
+    assert lambda_grad is not None
+    assert torch.isfinite(lambda_grad)
+    assert lambda_grad.abs() > 0
