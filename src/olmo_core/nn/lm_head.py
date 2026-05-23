@@ -243,7 +243,11 @@ class LMHead(nn.Module):
         if labels is None:
             if return_logits is False:
                 raise RuntimeError("'return_logits=False' is only valid when 'labels' is provided")
-            return self.w_out(h)
+            logits = self.w_out(h)
+            poe_lambda_log = getattr(self, "poe_lambda_log", None)
+            if poe_lambda_log is not None:
+                logits = logits + poe_lambda_log.to(dtype=logits.dtype).view(1, 1, 1) * 0.0
+            return logits
 
         logits: Optional[torch.Tensor]
         loss: torch.Tensor
@@ -252,6 +256,9 @@ class LMHead(nn.Module):
         if self.loss_implementation == LMLossImplementation.default:
             logits = self.w_out(h)
             assert logits is not None
+            poe_lambda_log = getattr(self, "poe_lambda_log", None)
+            if poe_lambda_log is not None:
+                logits = logits + poe_lambda_log.to(dtype=logits.dtype).view(1, 1, 1) * 0.0
             ce_loss, z_loss = cross_entropy_loss(
                 get_local_tensor(logits).view(-1, self.vocab_size),
                 get_local_tensor(labels).contiguous().view(-1),
@@ -489,6 +496,9 @@ class NormalizedLMHead(LMHead):
 
         sz = self.sz * (self.sz_init_value / self.sz_init_scaling)
         logits = sz * self.w_out(x)
+        poe_lambda_log = getattr(self, "poe_lambda_log", None)
+        if poe_lambda_log is not None:
+            logits = logits + poe_lambda_log.to(dtype=logits.dtype).view(1, 1, 1) * 0.0
         if labels is None:
             if return_logits is False:
                 raise RuntimeError("'return_logits=False' is only valid when 'labels' is provided")

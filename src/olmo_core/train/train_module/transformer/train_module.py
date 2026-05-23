@@ -189,17 +189,20 @@ class TransformerTrainModule(TrainModule):
                 "Activation checkpointing with 'budget' mode requires compilation to be enabled"
             )
 
-        # Register learned PoE lambda before parallelization. FSDP walks the
-        # module tree during ``parallelize_model()``, so parameters added after
-        # that point are not managed like ordinary model parameters.
+        # Register learned PoE lambda before parallelization. Put it on the
+        # LM head, which is used in the model forward, so FSDP manages it as
+        # an ordinary trainable model parameter.
         self._poe_lambda_log_name = "poe_lambda_log"
+        self._poe_lambda_log_param_name = f"lm_head.{self._poe_lambda_log_name}"
         if poe_lambda_learnable and poe_lambda is not None:
             if poe_lambda <= 0:
                 raise OLMoConfigurationError(f"poe_lambda must be positive, got {poe_lambda}")
+            if model.lm_head is None:
+                raise OLMoConfigurationError("poe_lambda_learnable requires a model LM head")
             log_lambda = torch.log(
                 torch.tensor([float(poe_lambda)], dtype=torch.float32, device=self.device)
             )
-            model.register_parameter(self._poe_lambda_log_name, nn.Parameter(log_lambda))
+            model.lm_head.register_parameter(self._poe_lambda_log_name, nn.Parameter(log_lambda))
 
         # Parallelize model.
         self.model = parallelize_model(
@@ -333,7 +336,7 @@ class TransformerTrainModule(TrainModule):
                 poe_lambda_opts["initial_lr"] = self.poe_lambda_lr
             group_overrides = list(optim.group_overrides or [])
             group_overrides.append(
-                OptimGroupOverride(params=[self._poe_lambda_log_name], opts=poe_lambda_opts)
+                OptimGroupOverride(params=[self._poe_lambda_log_param_name], opts=poe_lambda_opts)
             )
             optim = replace(optim, group_overrides=group_overrides)
 
@@ -362,7 +365,12 @@ class TransformerTrainModule(TrainModule):
         return value.detach().squeeze()
 
     def _poe_lambda_log_param(self) -> nn.Parameter:
-        param = getattr(self.model, self._poe_lambda_log_name)
+        lm_head = getattr(self.model, "lm_head", None)
+        param = (
+            getattr(lm_head, self._poe_lambda_log_name)
+            if lm_head is not None and hasattr(lm_head, self._poe_lambda_log_name)
+            else getattr(self.model, self._poe_lambda_log_name)
+        )
         assert isinstance(param, nn.Parameter)
         return param
 
@@ -602,6 +610,15 @@ class TransformerTrainModule(TrainModule):
             self.poe_lambda is not None
             and "sb_override_batch_idx" in batch
         )
+        if (
+            self.poe_lambda is not None
+            and self.poe_sb_table_dir is not None
+            and not poe_sb_active
+        ):
+            raise RuntimeError(
+                "SB PoE training is configured but the batch has no sb_override_* fields. "
+                "This would silently train the baseline LM instead of the intended PoE model."
+            )
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
