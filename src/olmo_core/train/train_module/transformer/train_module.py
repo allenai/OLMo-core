@@ -362,7 +362,7 @@ class TransformerTrainModule(TrainModule):
 
     @staticmethod
     def _scalar_metric_tensor(value: torch.Tensor) -> torch.Tensor:
-        return value.detach().squeeze()
+        return get_local_tensor(value.detach()).squeeze()
 
     def _poe_lambda_log_param(self) -> nn.Parameter:
         lm_head = getattr(self.model, "lm_head", None)
@@ -380,8 +380,12 @@ class TransformerTrainModule(TrainModule):
         grad = self._poe_lambda_log_param().grad
         if grad is None:
             return
-        dist.all_reduce(grad, op=dist.ReduceOp.SUM, group=self.dp_process_group)
-        grad.div_(get_world_size(self.dp_process_group))
+        dp_world_size = get_world_size(self.dp_process_group)
+        if dp_world_size <= 1:
+            return
+        local_grad = get_local_tensor(grad)
+        dist.all_reduce(local_grad, op=dist.ReduceOp.SUM, group=self.dp_process_group)
+        local_grad.div_(dp_world_size)
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
