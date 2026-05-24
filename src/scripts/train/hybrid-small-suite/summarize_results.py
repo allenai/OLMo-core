@@ -61,8 +61,16 @@ KEY_TASK_GROUPS = [
 # Flat list for non-grouped uses
 KEY_TASKS = [t for _, tasks in KEY_TASK_GROUPS for t in tasks]
 
+# Tasks where lower scores are better. Everything else is higher-is-better.
+LOWER_IS_BETTER = {
+    "c4_100k:ppl",
+    "olmobase:easy:code:bpb",
+    "codex_humaneval:bpb:olmo3base",
+    "mbpp:bpb:olmo3base",
+}
+
 # Model name -> (scale, stage) for sorting
-SCALE_ORDER = {"275M": 0, "275m": 0, "810M": 1, "810m": 1, "1B": 2, "1b": 2, "1.4B": 3, "1.4b": 3}
+SCALE_ORDER = {"275M": 0, "275m": 0, "810M": 1, "810m": 1, "1B": 2, "1b": 2, "1.4B": 3, "1.4b": 3, "7B": 4, "7b": 4}
 STAGE_ORDER = {"pretrain": 0, "midtrain": 1, "long-context": 2, "baseline": 3}
 
 
@@ -78,6 +86,8 @@ def parse_model_info(model_name: str) -> tuple[str, str, str]:
         scale = "1.4B"
     elif "-1b" in name:
         scale = "1B"
+    elif "7b" in name:
+        scale = "7B"
     else:
         scale = "?"
 
@@ -88,7 +98,7 @@ def parse_model_info(model_name: str) -> tuple[str, str, str]:
         stage = "midtrain"
     elif "cx100" in name:
         stage = "pretrain"
-    elif "olmo-2" in name:
+    elif "olmo-2" in name or "olmo-3" in name or "olmo-hybrid" in name:
         stage = "baseline"
     else:
         stage = "?"
@@ -106,14 +116,18 @@ def get_model_short_name(model_path: str) -> str:
     return model_path.split("/")[-2]
 
 
-def collect_results() -> dict[str, dict[str, float]]:
+def collect_results(group: str | None = None) -> dict[str, dict[str, float]]:
     """Collect all results keyed by model short name -> task -> score."""
     model_tasks = defaultdict(dict)
-    files = glob.glob(str(RESULTS_DIR / "**" / "metrics.json"), recursive=True)
+    search_dir = RESULTS_DIR / group if group else RESULTS_DIR
+    files = glob.glob(str(search_dir / "**" / "metrics.json"), recursive=True)
 
     for f in files:
         with open(f) as fh:
             m = json.load(fh)
+        # Skip results that belong to a different experiment group
+        if group and m.get("experiment_group", "") != group:
+            continue
         model_path = m.get("config", {}).get("provider", {}).get("model", "?")
         basename = get_model_short_name(model_path)
         summary = m.get("summary", {})
@@ -193,21 +207,29 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
     header1 = " " * task_width
     # row 2: stage labels
     header2 = f"{'Task':<{task_width}}"
+
+    # First pass: build header2 and track column positions per scale group
+    scale_start_pos: dict[str, int] = {}  # scale -> starting char position in header2
+    scale_end_pos: dict[str, int] = {}
     for i, m in enumerate(models):
         scale = parse_model_info(m)[0]
         stage = stage_names[m]
-        # For row1, only print scale at start of each group
-        idxs = scales[scale]
-        if i == idxs[0]:
-            # span = number of cols in this scale group
-            span = len(idxs)
-            span_width = span * (col_width + 2) + (len(vsep) if any(needs_vsep(j) for j in idxs[:-1]) else 0)
-            label1 = scale[:span_width]
-            header1 += f"  {label1:<{span_width - 2}}"
+        if scale not in scale_start_pos:
+            scale_start_pos[scale] = len(header2)
         header2 += f"  {stage:>{col_width}}"
+        scale_end_pos[scale] = len(header2)
         if needs_vsep(i):
-            header1 += vsep
             header2 += vsep
+
+    # Second pass: build header1 with scale labels positioned correctly
+    header1_chars = [" "] * len(header2)
+    for scale, start in scale_start_pos.items():
+        end = scale_end_pos[scale]
+        mid = (start + end) // 2 - len(scale) // 2
+        for ci, ch in enumerate(scale):
+            if mid + ci < len(header1_chars):
+                header1_chars[mid + ci] = ch
+    header1 = "".join(header1_chars).rstrip()
 
     sep_line = "-" * _plain_width(header2)
     print(header1)
@@ -233,8 +255,7 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
 
             # Global best (green)
             if valid:
-                sample = next(iter(valid.values()))
-                lower_is_better = sample > 1
+                lower_is_better = task in LOWER_IS_BETTER
                 best_global = min(valid, key=valid.__getitem__) if lower_is_better else max(valid, key=valid.__getitem__)
             else:
                 best_global = None
@@ -310,9 +331,10 @@ def main():
     parser.add_argument("--csv", action="store_true", help="Output as CSV")
     parser.add_argument("--no-color", action="store_true", help="Disable color output")
     parser.add_argument("--all-tasks", action="store_true", help="Show all tasks, not just key ones")
+    parser.add_argument("--group", type=str, default=None, help="Only summarize results from this group subdirectory")
     args = parser.parse_args()
 
-    results = collect_results()
+    results = collect_results(group=args.group)
     print(f"Loaded results for {len(results)} models\n")
 
     if args.all_tasks:

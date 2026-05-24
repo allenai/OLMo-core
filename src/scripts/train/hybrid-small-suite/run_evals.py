@@ -3,12 +3,12 @@
 import argparse
 import subprocess
 
-GROUP = "yashasbls-hybrid-small-downstream-evals"
+GROUP = "yashasbls-hybrid-small-evals-v2"
 CLUSTER = "ai2/jupiter"
 PRIORITY = "urgent"
 NUM_GPUS = 1
 WORKSPACE = "ai2/linear-rnns"
-BUDGET = "ai2/oe-omai"
+BUDGET = "ai2/oe-other"
 
 pretraining_hf_checkpoints = {
     "275m": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-275M-Cx100/step161186-hf/",
@@ -45,15 +45,15 @@ DOWNSTREAM_TASKS = [
     # Math — 8 GPUs (10h single-GPU)
     ("olmobase:math", 8),
     # GenQA — 4 GPUs (3.5-7.5h single-GPU)
-    # ("olmobase:gen", 4),
-    # # MC Non-STEM — 4 GPUs (2-5h single-GPU)
-    # ("olmobase:mcqa_non_stem", 4),
-    # # MC STEM — 1 GPU (~1h)
-    # ("olmobase:mcqa_stem", 1),
-    # # Code — 1 GPU (~10min)
-    # ("olmobase:easy:code:bpb", 1),
-    # # LBPP, BBH, MMLU Pro, DM Math — not yet in olmo-eval-internal
-    # ("olmobase:easy:qa:rc", 1)
+    ("olmobase:gen", 4),
+    # MC Non-STEM — 4 GPUs (2-5h single-GPU)
+    ("olmobase:mcqa_non_stem", 4),
+    # MC STEM — 1 GPU (~1h)
+    ("olmobase:mcqa_stem", 1),
+    # Code — 1 GPU (~10min)
+    ("olmobase:easy:code:bpb", 1),
+    # LBPP, BBH, MMLU Pro, DM Math — not yet in olmo-eval-internal
+    ("olmobase:easy:qa:rc", 1)
 ]
 
 LC_TASKS = [
@@ -70,7 +70,7 @@ SAFETY_TASKS: list[tuple[str, int]] = [
 ]
 
 
-def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS) -> list[str]:
+def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS, is_lc: bool = False) -> list[str]:
     # Derive a clean name: last two path components joined with underscore, slashes removed
     parts = model_path.rstrip("/").split("/")
     model_short = "_".join(parts[-2:]).lower()
@@ -84,14 +84,14 @@ def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS) -
     cmd += ["-n", exp_name]
     cmd += ["-o", f"provider.num_instances={num_gpus}"]
     cmd += ["-o", "provider.kwargs.enforce_eager=true"]
-    cmd += ["-o", 'provider.kwargs.compilation_config={"custom_ops":["-rms_norm"]}']
+    cmd += ["-o", "provider.kwargs.mamba_ssm_cache_dtype=float32"]
     cmd += ["-o", "provider.add_bos_token=false"]
-    cmd += ["-o", "provider.prompt_logprobs=1"]
-    cmd += ["-o", "provider.logprob_temperature=1.0"]
-    cmd += ["-o", "provider.completion_use_prompt_token_ids=true"]
-    cmd += ["-o", "provider.completion_client_side_stop_trim=true"]
-    cmd += ["-o", "provider.completion_sentencepiece_cleanup=true"]
-    cmd += ["-o", "provider.dependencies=[transformers @ git+https://github.com/yashassamaga/transformers.git@olmo-3.5-hybrid]"]
+    cmd += ["-o", "provider.kind=vllm"]
+    cmd += ["-o", "provider.package=wheel"]
+    cmd += ["-o", "provider.dependencies=[transformers @ git+https://github.com/yashassamaga/transformers.git@hybrid-small-suite]"]
+    cmd += ["-o", "provider.kwargs.attention_backend=FLASH_ATTN"]
+    if is_lc:
+        cmd += ["-o", "provider.max_model_len=65536"]
     cmd += ["-m", model_path]
     for task in tasks:
         cmd += ["-t", task]
@@ -104,7 +104,10 @@ def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS) -
     # cmd += ["--store"]
     cmd += ["--inspect"]
     # cmd += ["--gcp-credentials"]
+    cmd += ["--image", "yashasbls/olmo-eval-vllm-g79d31a3f9-tch2100cu128-2026-05-23"]
     cmd += ["--secret-env", "yashasbls_HF_TOKEN:HF_TOKEN"]
+    # cmd += ["--env", "VLLM_PYTHON=/opt/vllm-venv/bin/python"]
+    cmd += ["--env", "VLLM_ALLOW_LONG_MAX_MODEL_LEN=1"]
     cmd += ["--no-follow"]
     cmd += ["-y"]
     return cmd
@@ -144,6 +147,7 @@ def main():
         "pplx": PPLX_TASKS,
     }
     tasks = []
+    lc_task_names = {t[0] for t in LC_TASKS}
     for et in args.eval_type:
         tasks.extend(eval_type_map[et])
 
@@ -151,7 +155,7 @@ def main():
         # Custom model: run all tasks against this single model
         for task_name, task_gpus in tasks:
             gpus = num_gpus if num_gpus != NUM_GPUS else task_gpus
-            cmd = build_command(args.model, [task_name], gpus)
+            cmd = build_command(args.model, [task_name], gpus, is_lc=task_name in lc_task_names)
             print(f"\n=== custom | {task_name} | {gpus} GPUs ===")
             print(" ".join(cmd))
             if not args.dry_run:
@@ -163,7 +167,7 @@ def main():
                 model_path = checkpoints[size]
                 for task_name, task_gpus in tasks:
                     gpus = num_gpus if num_gpus != NUM_GPUS else task_gpus
-                    cmd = build_command(model_path, [task_name], gpus)
+                    cmd = build_command(model_path, [task_name], gpus, is_lc=task_name in lc_task_names)
                     print(f"\n=== {stage}/{size} | {task_name} | {gpus} GPUs ===")
                     print(" ".join(cmd))
                     if not args.dry_run:

@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -161,8 +162,13 @@ def main():
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR, help="Base output directory (results will be organized by group)")
     parser.add_argument("--completed-only", action="store_true", help="Skip experiments still running")
     parser.add_argument("--no-download", action="store_true", help="Only list, don't download")
-    parser.add_argument("--workers", type=int, default=32, help="Parallel download workers")
+    parser.add_argument("--workers", type=int, default=128, help="Parallel download workers")
+    parser.add_argument("--since", type=str, default=None, help="Only include experiments created on or after this date (YYYY-MM-DD)")
     args = parser.parse_args()
+
+    since_dt = None
+    if args.since:
+        since_dt = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
     group_dir = args.output / sanitize_group_name(args.group)
     group_dir.mkdir(parents=True, exist_ok=True)
@@ -178,6 +184,23 @@ def main():
 
     print(f"Fetching all experiments from Beaker workspace: {args.workspace}")
     all_experiments = get_workspace_experiments(args.workspace)
+
+    # Apply date cutoff early to skip old experiments
+    if since_dt:
+        filtered = []
+        for e in all_experiments:
+            created = e.get("created") or e.get("created_at") or ""
+            if created:
+                try:
+                    exp_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    if exp_dt < since_dt:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            filtered.append(e)
+        print(f"Date filter (since {args.since}): {len(all_experiments)} -> {len(filtered)} experiments")
+        all_experiments = filtered
+
     experiments = [e for e in all_experiments if is_olmo_eval_experiment(e)]
     print(f"Found {len(experiments)} olmo-eval experiments (out of {len(all_experiments)} total)")
 
