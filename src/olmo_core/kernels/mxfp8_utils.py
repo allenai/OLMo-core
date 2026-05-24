@@ -130,9 +130,10 @@ def to_blocked(input_matrix: torch.Tensor) -> torch.Tensor:
 
 if triton is not None:
     _MXFP8_Q_AUTOTUNE_CONFIGS = [
-        # Keep a broader set while we characterize B200 codegen. Two-chunk Q is
-        # the default for the routed up/gate save path, so wide 2H activations do
-        # not depend on one perfect full-width specialization.
+        # Keep a broad search space because model shapes change often. If a
+        # profile shows a weak choice for a specific training shape, prefer
+        # fixing the autotune key/policy over globally pinning this generic
+        # quantizer.
         triton.Config({"BLOCK_M": 8, "BLOCK_N": 256}, num_warps=4, num_stages=1),
         triton.Config({"BLOCK_M": 8, "BLOCK_N": 512}, num_warps=4, num_stages=1),
         triton.Config({"BLOCK_M": 8, "BLOCK_N": 1024}, num_warps=4, num_stages=1),

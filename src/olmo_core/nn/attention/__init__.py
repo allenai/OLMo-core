@@ -2,7 +2,7 @@ import logging
 import math
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -24,6 +24,7 @@ from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
+from ..mxfp8_linear import MXFP8Linear
 from ..output_discard_checkpoint import OutputDiscardCheckpoint
 from ..rope import (
     ComplexRotaryEmbedding,
@@ -71,6 +72,7 @@ __all__ = [
     "TEAttentionBackend",
     "AttentionConfig",
     "Attention",
+    "FusedAttentionV2",
     "FusedAttention",
     "NormalizedAttention",
     "RingAttentionLoadBalancerType",
@@ -175,6 +177,10 @@ class AttentionType(StrEnum):
     """
     ➡️ :class:`FusedAttention`
     """
+    fused_v2 = "fused_v2"
+    """
+    ➡️ :class:`FusedAttentionV2`
+    """
     normalized = "normalized"
     """
     ➡️ :class:`NormalizedAttention`
@@ -213,6 +219,19 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
     d_attn: Optional[int] = None
+    mxfp8_projections: Optional[bool] = None
+    """
+    Backward-compatible shorthand for using MXFP8Linear for both of
+    FusedAttentionV2's packed QKV and output projections.
+    """
+    mxfp8_qkv_projection: Optional[bool] = None
+    """
+    Use MXFP8Linear for FusedAttentionV2's packed QKV projection.
+    """
+    mxfp8_out_projection: Optional[bool] = None
+    """
+    Use MXFP8Linear for FusedAttentionV2's output projection.
+    """
     use_recompute_qkv_prep: bool = False
     """
     Whether to use OutputDiscardCheckpoint on the QKV preparation path so backward can
@@ -329,6 +348,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                         "'window_size' is not supported with fused attention"
                     )
                 return FusedAttention(**kwargs)
+            elif self.name == "fused_v2":
+                return FusedAttentionV2(**kwargs)
             elif self.name == "normalized":
                 if "window_size" in kwargs:
                     raise OLMoConfigurationError(
@@ -938,6 +959,362 @@ class Attention(SequenceMixer):
         attn_flops = 12 * self.n_heads * self.head_dim * effective_seq_len
 
         return param_flops + attn_flops
+
+
+class FusedAttentionV2(Attention):
+    """
+    A packed-projection variant of :class:`Attention`.
+
+    This keeps the regular attention backend contract by unpacking Q/K/V after a
+    single packed projection, so it can support features such as GQA, QK norm,
+    gating, RoPE, sliding window attention, and KV caching without requiring a
+    packed-QKV attention kernel.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        head_dim: Optional[int] = None,
+        bias: bool = True,
+        gate: Optional[GateConfig] = None,
+        rope: Optional[RoPEConfig] = None,
+        clip_qkv: Optional[float] = None,
+        qk_norm: Optional[LayerNormConfig] = None,
+        dropout: float = 0.0,
+        softmax_scale: Optional[float] = None,
+        use_flash: Optional[bool] = None,
+        backend: Optional[AttentionBackendName] = None,
+        window_size: Optional[int] = None,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+        use_head_qk_norm: bool = False,
+        d_attn: Optional[int] = None,
+        mxfp8_projections: bool = False,
+        mxfp8_qkv_projection: Optional[bool] = None,
+        mxfp8_out_projection: Optional[bool] = None,
+        use_recompute_qkv_prep: bool = False,
+    ):
+        nn.Module.__init__(self)
+
+        if d_attn is None:
+            d_attn = d_model
+
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads or n_heads
+        self.d_model = d_model
+        self.n_rep = self.n_heads // self.n_kv_heads
+        if head_dim is not None:
+            self.head_dim = head_dim
+        else:
+            self.head_dim = d_attn // n_heads
+
+        self.q_dim = n_heads * self.head_dim
+        self.kv_dim = self.n_kv_heads * self.head_dim
+        qkv_dim = self.q_dim + 2 * self.kv_dim
+        if mxfp8_qkv_projection is None:
+            mxfp8_qkv_projection = mxfp8_projections
+        if mxfp8_out_projection is None:
+            mxfp8_out_projection = mxfp8_projections
+        self.mxfp8_projections = bool(mxfp8_qkv_projection or mxfp8_out_projection)
+        self.mxfp8_qkv_projection = bool(mxfp8_qkv_projection)
+        self.mxfp8_out_projection = bool(mxfp8_out_projection)
+        if self.mxfp8_qkv_projection:
+            self._validate_mxfp8_projection_shape("w_qkv", d_model, qkv_dim)
+            self.w_qkv = MXFP8Linear(
+                d_model,
+                qkv_dim,
+                bias=bias,
+                dtype=dtype,
+                device=init_device,
+                save_wgrad_input="mxfp8",
+            )
+        else:
+            self.w_qkv = nn.Linear(
+                d_model,
+                qkv_dim,
+                bias=bias,
+                dtype=dtype,
+                device=init_device,
+            )
+
+        if self.mxfp8_out_projection:
+            self._validate_mxfp8_projection_shape("w_out", self.q_dim, d_model)
+            self.w_out = MXFP8Linear(
+                self.q_dim,
+                d_model,
+                bias=bias,
+                dtype=dtype,
+                device=init_device,
+                save_wgrad_input="bf16",
+            )
+        else:
+            self.w_out = nn.Linear(
+                self.q_dim, d_model, bias=bias, dtype=dtype, device=init_device
+            )
+
+        self.gate = gate
+        self.w_g: Optional[nn.Linear] = None
+        if gate is not None:
+            if gate.granularity == GateGranularity.headwise:
+                self.w_g = nn.Linear(
+                    d_model, self.n_heads, bias=bias, dtype=dtype, device=init_device
+                )
+            elif gate.granularity == GateGranularity.elementwise:
+                self.w_g = nn.Linear(
+                    d_model,
+                    self.q_dim,
+                    bias=bias,
+                    dtype=dtype,
+                    device=init_device,
+                )
+
+        self.clip_qkv = clip_qkv
+        self.use_head_qk_norm = use_head_qk_norm
+        self.use_recompute_qkv_prep = use_recompute_qkv_prep
+
+        self.q_norm: Optional[LayerNorm] = None
+        self.k_norm: Optional[LayerNorm] = None
+        if qk_norm is not None:
+            if use_head_qk_norm:
+                self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+                self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+            else:
+                self.q_norm = qk_norm.build(size=self.q_dim, init_device=init_device)
+                self.k_norm = qk_norm.build(size=self.kv_dim, init_device=init_device)
+
+        self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
+        if rope is not None:
+            if rope.name == "fused":
+                raise OLMoConfigurationError(
+                    f"fused RoPE is not compatible with {self.__class__.__name__}"
+                )
+            rope_class = rope.build(self.head_dim, cache=cache)
+            assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
+            self.rope = rope_class
+
+        if backend is not None:
+            backend = AttentionBackendName(backend)
+
+        if use_flash:
+            if backend is not None and backend != AttentionBackendName.flash_2:
+                raise OLMoConfigurationError(
+                    f"'use_flash' is only compatible with 'flash_2' backend (got '{backend}')"
+                )
+            elif backend is None:
+                warnings.warn(
+                    "'use_flash' is deprecated, use 'backend=flash_2' instead", DeprecationWarning
+                )
+                backend = AttentionBackendName.flash_2
+
+        self.window_size = window_size
+        window_size_tuple: Tuple[int, int] = (-1, -1)
+        if window_size is not None:
+            if window_size <= 0:
+                raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
+
+            if backend is None and flash_attn_api.has_flash_attn_2():
+                backend = AttentionBackendName.flash_2
+
+            window_size_tuple = (window_size - 1, 0)
+
+        if backend is None:
+            backend = AttentionBackendName.torch
+
+        if not torch.cuda.is_available() and backend != AttentionBackendName.torch:
+            warnings.warn(
+                f"Backend is set to {backend}, but GPUs are not available. Defaulting to torch."
+            )
+            backend = AttentionBackendName.torch
+
+        backend.assert_supported()
+        log.info(f"Using attention backend '{backend}'")
+        self.backend = backend.build(
+            head_dim=self.head_dim,
+            n_heads=n_heads,
+            n_kv_heads=self.n_kv_heads,
+            scale=softmax_scale,
+            dropout_p=dropout,
+            window_size=window_size_tuple,
+            cache=cache,
+        )
+        self.kv_cache_manager: Optional[KVCacheManager] = None
+
+    @staticmethod
+    def _validate_mxfp8_projection_shape(name: str, in_features: int, out_features: int) -> None:
+        if in_features % 32 != 0 or out_features % 32 != 0:
+            raise OLMoConfigurationError(
+                f"MXFP8 FusedAttentionV2 projection '{name}' requires in/out features "
+                f"to be divisible by 32, got in_features={in_features}, "
+                f"out_features={out_features}"
+            )
+
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, object]]:
+        for module_name in ("w_qkv", "w_out"):
+            module = getattr(self, module_name)
+            named_weight_stores = getattr(module, "named_fp8_weight_stores", None)
+            if named_weight_stores is None:
+                continue
+            for name, weight in named_weight_stores():
+                yield f"{module_name}.{name}", weight
+
+    def named_mxfp8_attention_weights(self) -> Iterator[tuple[str, object]]:
+        yield from self.named_fp8_weight_stores()
+
+    def zero_mxfp8_attention_weight_grads(self, set_to_none: bool = True) -> None:
+        for module in (self.w_qkv, self.w_out):
+            zero_grads = getattr(module, "zero_mxfp8_weight_grads", None)
+            if zero_grads is not None:
+                zero_grads(set_to_none=set_to_none)
+
+    def set_mxfp8_attention_weight_main_grads_to_none(self) -> None:
+        for module in (self.w_qkv, self.w_out):
+            set_main_grads_to_none = getattr(module, "set_mxfp8_weight_main_grads_to_none", None)
+            if set_main_grads_to_none is not None:
+                set_main_grads_to_none()
+
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        super().zero_grad(set_to_none=set_to_none)
+        self.zero_mxfp8_attention_weight_grads(set_to_none=set_to_none)
+
+    def disable_mxfp8_attention_anchor_grads(self) -> None:
+        for module in (self.w_qkv, self.w_out):
+            disable_grads = getattr(module, "disable_mxfp8_anchor_grads", None)
+            if disable_grads is not None:
+                disable_grads()
+
+    def release_mxfp8_attention_anchor_storage(self) -> None:
+        for module in (self.w_qkv, self.w_out):
+            release_storage = getattr(module, "release_mxfp8_anchor_storage", None)
+            if release_storage is not None:
+                release_storage()
+
+    @torch.no_grad()
+    def refresh_mxfp8_attention_cache(self) -> None:
+        for module in (self.w_qkv, self.w_out):
+            refresh_cache = getattr(module, "refresh_mxfp8_cache", None)
+            if refresh_cache is not None:
+                refresh_cache()
+
+    def invalidate_mxfp8_attention_cache(self) -> None:
+        for module in (self.w_qkv, self.w_out):
+            invalidate_cache = getattr(module, "invalidate_mxfp8_cache", None)
+            if invalidate_cache is not None:
+                invalidate_cache()
+
+    def _prepare_qkv(
+        self,
+        x: torch.Tensor,
+        *,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+        start_pos: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        B, T, _ = x.shape
+
+        qkv = self.w_qkv(x)
+
+        if self.clip_qkv is not None:
+            qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+
+        q, k, v = qkv.split((self.q_dim, self.kv_dim, self.kv_dim), dim=-1)
+
+        if not self.use_head_qk_norm:
+            if self.q_norm is not None:
+                q = self.q_norm(q)
+            if self.k_norm is not None:
+                k = self.k_norm(k)
+
+        # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
+        # using tensor parallelism.
+        # shape: (batch_size, seq_len, n_heads (local), head_dim)
+        q = q.view(B, T, -1, self.head_dim)
+        # shape: (batch_size, seq_len, n_kv_heads (local), head_dim)
+        k = k.view(B, T, -1, self.head_dim)
+        # shape: (batch_size, seq_len, n_kv_heads (local), head_dim)
+        v = v.view(B, T, -1, self.head_dim)
+
+        if self.use_head_qk_norm:
+            if self.q_norm is not None:
+                q = self.q_norm(q)
+            if self.k_norm is not None:
+                k = self.k_norm(k)
+
+        if self.rope is not None:
+            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+                raise RuntimeError(
+                    "RoPE buffers must be passed through to attention after being properly "
+                    "sharded by the context parallel load balancer"
+                )
+
+            q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
+
+        return q, k, v
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
+
+        raise NotImplementedError("TP is not implemented yet for FusedAttentionV2")
+
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        if init_method == InitMethod.fan_in:
+            std = self.w_qkv.in_features**-0.5
+        elif init_method == InitMethod.normalized:
+            std = d_model**-0.5
+
+        init_linear(self.w_qkv, std=std, generator=generator)
+
+        if self.w_g is not None:
+            if init_method == InitMethod.fan_in:
+                g_std = self.w_g.in_features**-0.5
+            else:
+                g_std = std
+            init_linear(self.w_g, std=g_std, generator=generator)
+
+        if init_method == InitMethod.fan_in:
+            std = self.w_out.in_features**-0.5
+        elif init_method == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif init_method == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+        elif init_method == InitMethod.normalized:
+            std = std / (2 * num_blocks) ** 0.5
+
+        init_linear(self.w_out, std=std, generator=generator)
+
+    def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
+        self.backend.assert_supports_kv_cache()
+
+        self.kv_cache_manager = KVCacheManager(
+            batch_size=batch_size,
+            max_seq_len=max_seq_len,
+            num_kv_heads=self.n_kv_heads,
+            head_dim=self.head_dim,
+            device=self.w_qkv.weight.device,
+        )
 
 
 @beta_feature

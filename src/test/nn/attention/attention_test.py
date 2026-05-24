@@ -18,6 +18,7 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    FusedAttentionV2,
     GateConfig,
     GateGranularity,
     NormalizedAttention,
@@ -32,6 +33,7 @@ from olmo_core.nn.attention.ring import (
     UlyssesContextParallelStyle,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
+from olmo_core.nn.mxfp8_linear import MXFP8Linear
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
     BACKENDS,
@@ -357,6 +359,104 @@ def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
         y2 = fused_att(x2)
 
     torch.testing.assert_close(y1, y2)
+
+
+def _copy_attention_weights_to_fused_v2(attention: Attention, fused_att: FusedAttentionV2):
+    with torch.no_grad():
+        fused_att.w_out.load_state_dict(attention.w_out.state_dict())
+        fused_att.w_qkv.weight.copy_(
+            torch.cat([attention.w_q.weight, attention.w_k.weight, attention.w_v.weight])
+        )
+        if attention.w_q.bias is not None:
+            assert attention.w_k.bias is not None
+            assert attention.w_v.bias is not None
+            assert fused_att.w_qkv.bias is not None
+            fused_att.w_qkv.bias.copy_(
+                torch.cat([attention.w_q.bias, attention.w_k.bias, attention.w_v.bias])
+            )
+        if attention.w_g is not None:
+            assert fused_att.w_g is not None
+            fused_att.w_g.load_state_dict(attention.w_g.state_dict())
+        if attention.q_norm is not None:
+            assert fused_att.q_norm is not None
+            fused_att.q_norm.load_state_dict(attention.q_norm.state_dict())
+        if attention.k_norm is not None:
+            assert fused_att.k_norm is not None
+            fused_att.k_norm.load_state_dict(attention.k_norm.state_dict())
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({}, id="MHA"),
+        pytest.param({"n_kv_heads": 2, "d_attn": 192}, id="GQA-d-attn"),
+        pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
+        pytest.param(
+            {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True},
+            id="head-qk-norm",
+        ),
+        pytest.param(
+            {"gate": GateConfig(granularity=GateGranularity.headwise)},
+            id="headwise-gate",
+        ),
+        pytest.param({"rope": RoPEConfig(), "window_size": 8}, id="rope-SWA"),
+    ],
+)
+def test_fused_attention_v2_against_attention(kwargs: Dict[str, Any]):
+    seed_all(0)
+
+    d_model = 128
+    seq_len = 16
+    batch_size = 2
+    base_kwargs: Dict[str, Any] = dict(
+        d_model=d_model,
+        n_heads=8,
+        backend=AttentionBackendName.torch,
+        init_device="cpu",
+        **kwargs,
+    )
+
+    attention = Attention(**base_kwargs)
+    fused_att = FusedAttentionV2(**base_kwargs)
+
+    _copy_attention_weights_to_fused_v2(attention, fused_att)
+
+    x = torch.randn(batch_size, seq_len, d_model)
+
+    y1 = attention(x)
+    y2 = fused_att(x)
+
+    torch.testing.assert_close(y1, y2)
+
+
+@requires_gpu
+@requires_flash_attn_2
+def test_fused_attention_v2_against_attention_flash_2():
+    seed_all(0)
+
+    d_model = 128
+    seq_len = 16
+    batch_size = 2
+    base_kwargs: Dict[str, Any] = dict(
+        d_model=d_model,
+        n_heads=8,
+        n_kv_heads=2,
+        d_attn=192,
+        backend=AttentionBackendName.flash_2,
+        init_device="cuda",
+    )
+
+    attention = Attention(**base_kwargs)
+    fused_att = FusedAttentionV2(**base_kwargs)
+    _copy_attention_weights_to_fused_v2(attention, fused_att)
+
+    x = torch.randn(batch_size, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        y1 = attention(x)
+        y2 = fused_att(x)
+
+    torch.testing.assert_close(y1, y2, rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_gpu
@@ -839,6 +939,19 @@ def test_attention_leftpad_shift_equivalence(use_rope):
     [
         AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=1, bias=True),
         AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=1, bias=False),
+        AttentionConfig(name=AttentionType.fused_v2, n_heads=8, n_kv_heads=1, bias=True),
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.fused_v2,
+                n_heads=8,
+                n_kv_heads=2,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+                gate=GateConfig(granularity=GateGranularity.headwise),
+                d_attn=240,
+            ),
+            id="fused-v2-GQA-qk-norm-gate-d-attn",
+        ),
         AttentionConfig(
             name=AttentionType.default, n_heads=8, bias=False, qk_norm=LayerNormConfig()
         ),
@@ -896,6 +1009,150 @@ def test_attention_builder_config(attn_config: AttentionConfig):
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in attn.parameters())
     assert attn_config.num_params(d_model) == n_params
+
+
+def test_attention_builder_config_fused_v2_mxfp8_projections():
+    d_model = 256
+    attn_config = AttentionConfig(
+        name=AttentionType.fused_v2,
+        n_heads=8,
+        n_kv_heads=2,
+        head_dim=32,
+        mxfp8_projections=True,
+    )
+
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=1)
+
+    assert isinstance(attn, FusedAttentionV2)
+    assert isinstance(attn.w_qkv, MXFP8Linear)
+    assert isinstance(attn.w_out, MXFP8Linear)
+    n_params = sum(p.numel() for p in attn.parameters())
+    assert attn_config.num_params(d_model) == n_params
+
+
+def test_attention_builder_config_fused_v2_mxfp8_qkv_only():
+    d_model = 256
+    attn_config = AttentionConfig(
+        name=AttentionType.fused_v2,
+        n_heads=8,
+        n_kv_heads=2,
+        head_dim=32,
+        mxfp8_qkv_projection=True,
+        mxfp8_out_projection=False,
+    )
+
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=1)
+
+    assert isinstance(attn, FusedAttentionV2)
+    assert isinstance(attn.w_qkv, MXFP8Linear)
+    assert isinstance(attn.w_out, torch.nn.Linear)
+    assert not isinstance(attn.w_out, MXFP8Linear)
+    assert set(dict(attn.named_fp8_weight_stores())) == {"w_qkv.weight"}
+    n_params = sum(p.numel() for p in attn.parameters())
+    assert attn_config.num_params(d_model) == n_params
+
+
+@requires_gpu
+def test_fused_attention_v2_mxfp8_projections_backward():
+    seed_all(1732)
+    attn = FusedAttentionV2(
+        d_model=256,
+        n_heads=8,
+        n_kv_heads=2,
+        head_dim=32,
+        backend=AttentionBackendName.torch,
+        init_device="cuda",
+        dtype=torch.bfloat16,
+        mxfp8_projections=True,
+    )
+    x = torch.randn(4, 16, 256, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+
+    out = attn(x)
+    out.float().sum().backward()
+
+    assert out.shape == x.shape
+    assert isinstance(attn.w_qkv, MXFP8Linear)
+    assert isinstance(attn.w_out, MXFP8Linear)
+    assert x.grad is not None
+    stores = dict(attn.named_fp8_weight_stores())
+    assert attn.w_qkv.weight.grad is None
+    assert attn.w_out.weight.grad is None
+    assert stores["w_qkv.weight"].grad_bf16 is not None
+    assert stores["w_out.weight"].grad_bf16 is not None
+
+
+@requires_gpu
+def test_fused_attention_v2_mxfp8_qkv_projection_only_backward():
+    seed_all(2607)
+    attn = FusedAttentionV2(
+        d_model=256,
+        n_heads=8,
+        n_kv_heads=2,
+        head_dim=32,
+        backend=AttentionBackendName.torch,
+        init_device="cuda",
+        dtype=torch.bfloat16,
+        mxfp8_qkv_projection=True,
+        mxfp8_out_projection=False,
+    )
+    x = torch.randn(4, 16, 256, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+
+    out = attn(x)
+    out.float().sum().backward()
+
+    assert out.shape == x.shape
+    assert isinstance(attn.w_qkv, MXFP8Linear)
+    assert isinstance(attn.w_out, torch.nn.Linear)
+    assert not isinstance(attn.w_out, MXFP8Linear)
+    stores = dict(attn.named_fp8_weight_stores())
+    assert set(stores) == {"w_qkv.weight"}
+    assert attn.w_qkv.weight.grad is None
+    assert stores["w_qkv.weight"].grad_bf16 is not None
+    assert attn.w_out.weight.grad is not None
+    assert x.grad is not None
+
+
+@requires_gpu
+def test_fused_attention_v2_mxfp8_accumulates_store_grads_after_anchor_release():
+    seed_all(9126)
+    attn = FusedAttentionV2(
+        d_model=256,
+        n_heads=8,
+        n_kv_heads=2,
+        head_dim=32,
+        backend=AttentionBackendName.torch,
+        init_device="cuda",
+        dtype=torch.bfloat16,
+        mxfp8_projections=True,
+    )
+    attn.refresh_mxfp8_attention_cache()
+    attn.release_mxfp8_attention_anchor_storage()
+    x = torch.randn(4, 16, 256, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+
+    out = attn(x)
+    out.float().sum().backward()
+
+    stores = dict(attn.named_fp8_weight_stores())
+    assert set(stores) == {"w_qkv.weight", "w_out.weight"}
+    assert attn.w_qkv.weight.grad is None
+    assert attn.w_out.weight.grad is None
+    assert stores["w_qkv.weight"].grad_bf16 is not None
+    assert stores["w_qkv.weight"].grad_bf16.shape == attn.w_qkv.weight.shape
+    assert stores["w_out.weight"].grad_bf16 is not None
+    assert stores["w_out.weight"].grad_bf16.shape == attn.w_out.weight.shape
+    assert x.grad is not None
+
+
+def test_fused_attention_v2_mxfp8_requires_aligned_projection_dims():
+    with pytest.raises(OLMoConfigurationError, match="divisible by 32"):
+        FusedAttentionV2(
+            d_model=160,
+            n_heads=8,
+            n_kv_heads=1,
+            backend=AttentionBackendName.torch,
+            mxfp8_projections=True,
+        )
+
 
 @pytest.mark.parametrize(
     "attn_config",

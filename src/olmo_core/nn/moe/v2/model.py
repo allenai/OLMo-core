@@ -272,10 +272,16 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
     def named_fp8_weight_stores(self) -> Iterator[tuple[str, object]]:
         for block_key, block in self.blocks.items():
-            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
-                continue
-            for name, weight in block.named_fp8_weight_stores():
-                yield f"blocks.{block_key}.{name}", weight
+            named_block_fp8_weight_stores = getattr(block, "named_fp8_weight_stores", None)
+            if named_block_fp8_weight_stores is not None:
+                for name, weight in named_block_fp8_weight_stores():
+                    yield f"blocks.{block_key}.{name}", weight
+
+            attention = getattr(block, "attention", None)
+            named_attention_fp8_weight_stores = getattr(attention, "named_fp8_weight_stores", None)
+            if named_attention_fp8_weight_stores is not None:
+                for name, weight in named_attention_fp8_weight_stores():
+                    yield f"blocks.{block_key}.attention.{name}", weight
 
     def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, object]]:
         yield from self.named_fp8_weight_stores()
