@@ -219,6 +219,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
     smoke_1gpu = getattr(args, "smoke_1gpu", False)
     max_devices = 1 if smoke_1gpu else args.max_gpus
+    model_construction_kwargs = {"sliding_window": None}
+    if getattr(args, "attn_backend", None) is not None:
+        model_construction_kwargs["attn_backend"] = args.attn_backend
+
     ladder = ModelLadder(
         name=args.name,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
@@ -226,7 +230,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         max_devices=max_devices,
         device_type=get_gpu_type(args.cluster),
         model_configurator=NgramPoEConfigurator(
-            model_construction_kwargs={"sliding_window": None},
+            model_construction_kwargs=model_construction_kwargs,
             rank_microbatch_size=None
             if args.rank_mbz is None
             else args.rank_mbz * args.sequence_length,
@@ -285,6 +289,15 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         type=float,
         default=None,
         help="Optional optimizer learning rate override for learned PoE lambda.",
+    )
+    parser.add_argument(
+        "--attn-backend",
+        choices=("torch", "flash_2", "flash_3", "flash_4", "te"),
+        default=None,
+        help=(
+            "Override the automatically selected attention backend. Useful for "
+            "working around backend-specific kernel compile failures."
+        ),
     )
     parser.add_argument(
         "--soft-target-k",

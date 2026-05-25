@@ -88,6 +88,10 @@ DOLMA2_BASELINE_PATHS = [
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
+    model_construction_kwargs = {"sliding_window": None}
+    if getattr(args, "attn_backend", None) is not None:
+        model_construction_kwargs["attn_backend"] = args.attn_backend
+
     instance_sources: list[InstanceSourceConfig] = [
         ConcatAndChunkInstanceSourceConfig(
             sources=[
@@ -113,7 +117,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         **ladder_kwargs,
         device_type=get_gpu_type(args.cluster),
         model_configurator=_BaselineSmokeConfigurator(
-            model_construction_kwargs={"sliding_window": None},
+            model_construction_kwargs=model_construction_kwargs,
             rank_microbatch_size=None
             if args.rank_mbz is None
             else args.rank_mbz * args.sequence_length,
@@ -158,6 +162,15 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "Override the ModelLadder.seed (default 42). Used to spread "
             "a multi-seed baseline cohort (baseline-v02-seed1/2/3 "
             "convention). Pass a different int per launch."
+        ),
+    )
+    parser.add_argument(
+        "--attn-backend",
+        choices=("torch", "flash_2", "flash_3", "flash_4", "te"),
+        default=None,
+        help=(
+            "Override the automatically selected attention backend. Useful for "
+            "working around backend-specific kernel compile failures."
         ),
     )
 
