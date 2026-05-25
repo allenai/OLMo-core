@@ -124,6 +124,8 @@ class NgramPoEConfigurator(Olmo3ModelConfigurator):
     """
 
     poe_lambda: float = DEFAULT_POE_LAMBDA
+    learn_poe_lambda: bool = False
+    poe_lambda_lr: float | None = None
     ngram_table_dir: str = DEFAULT_NGRAM_TABLE_DIR
     soft_target_k: int = DEFAULT_SOFT_TARGET_K
     soft_target_n_max: int = DEFAULT_SOFT_TARGET_N_MAX
@@ -175,6 +177,8 @@ class NgramPoEConfigurator(Olmo3ModelConfigurator):
             dp_config=dp_config,
             z_loss_multiplier=1e-5,
             poe_lambda=self.poe_lambda,
+            poe_lambda_learnable=self.learn_poe_lambda,
+            poe_lambda_lr=self.poe_lambda_lr,
             poe_ngram_table_dir=self.ngram_table_dir,
             poe_ngram_K=self.soft_target_k,
             poe_ngram_N_max=self.soft_target_n_max,
@@ -227,6 +231,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             if args.rank_mbz is None
             else args.rank_mbz * args.sequence_length,
             poe_lambda=getattr(args, "poe_lambda", DEFAULT_POE_LAMBDA),
+            learn_poe_lambda=getattr(args, "learn_poe_lambda", False),
+            poe_lambda_lr=getattr(args, "poe_lambda_lr", None),
             ngram_table_dir=getattr(args, "ngram_table_dir", DEFAULT_NGRAM_TABLE_DIR),
             soft_target_k=getattr(args, "soft_target_k", DEFAULT_SOFT_TARGET_K),
             soft_target_n_max=getattr(args, "soft_target_n_max", DEFAULT_SOFT_TARGET_N_MAX),
@@ -264,7 +270,21 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         "--poe-lambda",
         type=float,
         default=DEFAULT_POE_LAMBDA,
-        help="Constant ngram mixing weight in the PoE joint log-prob.",
+        help=(
+            "Initial ngram mixing weight in the PoE joint log-prob. Constant "
+            "unless --learn-poe-lambda is set."
+        ),
+    )
+    parser.add_argument(
+        "--learn-poe-lambda",
+        action="store_true",
+        help="Make the positive PoE mixing weight learnable, initialized from --poe-lambda.",
+    )
+    parser.add_argument(
+        "--poe-lambda-lr",
+        type=float,
+        default=None,
+        help="Optional optimizer learning rate override for learned PoE lambda.",
     )
     parser.add_argument(
         "--soft-target-k",

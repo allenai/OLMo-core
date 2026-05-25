@@ -286,11 +286,6 @@ class TransformerTrainModule(TrainModule):
                     "poe_ngram_table_dir and poe_sb_table_dir are mutually exclusive "
                     "— pick one of the two PoE ngram backends"
                 )
-            if self.poe_lambda_learnable and poe_sb_table_dir is None:
-                raise OLMoConfigurationError(
-                    "poe_lambda_learnable is currently implemented only for the "
-                    "stupid-backoff PoE backend (poe_sb_table_dir)."
-                )
         elif self.poe_lambda_learnable:
             raise OLMoConfigurationError("poe_lambda_learnable requires poe_lambda to be set")
         if self.poe_lambda_lr is not None and not self.poe_lambda_learnable:
@@ -364,6 +359,14 @@ class TransformerTrainModule(TrainModule):
             return self._effective_poe_lambda().detach().squeeze()
         assert self.poe_lambda is not None
         return float(self.poe_lambda)
+
+    def _poe_lambda_tensor(self, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+        """Return PoE lambda as a tensor, with compatibility for bound test stubs."""
+        if hasattr(self, "_effective_poe_lambda"):
+            return self._effective_poe_lambda(dtype=dtype)
+        assert self.poe_lambda is not None
+        device = getattr(self, "device", torch.device("cpu"))
+        return torch.tensor(float(self.poe_lambda), device=device, dtype=dtype)
 
     def _poe_lambda_log_for_logging(self) -> torch.Tensor:
         return self._poe_lambda_log_param().detach().squeeze()
@@ -1347,9 +1350,13 @@ class TransformerTrainModule(TrainModule):
             soft_target_log_probs - log_residual,
             torch.zeros_like(soft_target_log_probs),
         )
+        if hasattr(self, "_effective_poe_lambda"):
+            poe_lambda = self._effective_poe_lambda(dtype=torch.float32).to(local_logits.device)
+        else:
+            poe_lambda = torch.tensor(float(self.poe_lambda), device=local_logits.device, dtype=torch.float32)
         biased_logits_f32 = local_logits.float().clone()
         biased_logits_f32.scatter_add_(
-            -1, soft_target_token_ids, float(self.poe_lambda) * scatter_bias
+            -1, soft_target_token_ids, poe_lambda * scatter_bias
         )
 
         # Per-position CE on the biased logits at the hard label.
@@ -1890,14 +1897,18 @@ class TransformerTrainModule(TrainModule):
             finite_mask, soft_target_log_probs_f32,
             torch.full_like(soft_target_log_probs_f32, float("-inf")),
         )
-        gathered_joint = gathered_lm_log_probs + float(self.poe_lambda) * ngram_log_p_safe
+        if hasattr(self, "_effective_poe_lambda"):
+            poe_lambda = self._effective_poe_lambda(dtype=torch.float32).to(logits_f32.device)
+        else:
+            poe_lambda = torch.tensor(float(self.poe_lambda), device=logits_f32.device, dtype=torch.float32)
+        gathered_joint = gathered_lm_log_probs + poe_lambda * ngram_log_p_safe
 
         # Compute the joint normalizer Z without materializing (B, S, V):
         #   Z = sum_joint_topk + exp(λ · log_residual) · (1 − sum_lm_topk)
         sum_lm_topk = torch.exp(gathered_lm_log_probs).sum(dim=-1)  # (B, S)
         sum_joint_topk = torch.exp(gathered_joint).sum(dim=-1)      # (B, S)
         non_topk_lm_mass = (1.0 - sum_lm_topk).clamp_min(0.0)
-        non_topk_contrib = torch.exp(float(self.poe_lambda) * log_residual) * non_topk_lm_mass
+        non_topk_contrib = torch.exp(poe_lambda * log_residual) * non_topk_lm_mass
         Z = sum_joint_topk + non_topk_contrib
         log_Z = torch.log(Z.clamp_min(torch.finfo(Z.dtype).tiny))    # (B, S)
 
@@ -1916,7 +1927,7 @@ class TransformerTrainModule(TrainModule):
         # Bias at the gold position: stored log-prob if gold ∈ top-K, else log_residual.
         topk_match_bias = (match.to(soft_target_log_probs_f32.dtype) * ngram_log_p_safe).sum(dim=-1)
         match_bias = torch.where(any_match, topk_match_bias, log_residual)
-        label_joint_log_probs = label_lm_log_probs + float(self.poe_lambda) * match_bias - log_Z
+        label_joint_log_probs = label_lm_log_probs + poe_lambda * match_bias - log_Z
 
         # NLL per position, masked at ignored labels.
         per_pos_loss = -label_joint_log_probs
