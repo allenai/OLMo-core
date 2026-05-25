@@ -9,6 +9,7 @@ from collections import OrderedDict, defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
+from numbers import Real
 from pathlib import Path
 from typing import (
     Any,
@@ -84,6 +85,15 @@ log = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
+
+
+def _metric_value_to_tensor(value: Union[float, torch.Tensor]) -> torch.Tensor:
+    if not isinstance(value, torch.Tensor):
+        if isinstance(value, Real):
+            return torch.tensor(value, dtype=torch.float64)
+        return torch.tensor(value)
+
+    return get_local_tensor(value.detach()).float()
 
 
 class TrainerStateDict(TypedDict):
@@ -842,12 +852,12 @@ class Trainer:
                         self.train_module.max_sequence_length
                     )
                     self.record_metric(
-                        "throughput/total flops",
-                        self.global_train_tokens_seen * num_flops_per_token,
+                        "throughput/total petaflops",
+                        self.global_train_tokens_seen * num_flops_per_token / 1e15,
                     )
 
                 for callback in evaluator_callbacks:
-                    callback._perform_eval()
+                    callback.perform_eval()
 
                 self._log_metrics()
         except BaseException as exc:
@@ -1168,12 +1178,20 @@ class Trainer:
         self._log_metrics()
         self._join_bookkeeping_ops()
 
-        self.checkpointer.save(
-            path,
-            self.train_module,
-            cast(Dict[str, Any], self.state_dict()),
-            ephemeral=ephemeral,
-        )
+        checkpoint_memory = self._start_checkpoint_cuda_memory_log(path)
+        try:
+            self.checkpointer.save(
+                path,
+                self.train_module,
+                cast(Dict[str, Any], self.state_dict()),
+                ephemeral=ephemeral,
+            )
+        except BaseException:
+            self._finish_checkpoint_cuda_memory_log(
+                path, checkpoint_memory, status="failed", reduce_across_ranks=False
+            )
+            raise
+        self._finish_checkpoint_cuda_memory_log(path, checkpoint_memory, status="finished")
         self.record_metric(
             "checkpoint/save_duration_s",
             time.perf_counter() - save_start,
@@ -1206,11 +1224,24 @@ class Trainer:
         self._log_metrics()
         self._join_bookkeeping_ops()
 
-        fut = self.checkpointer.save_async(
-            path,
-            self.train_module,
-            cast(Dict[str, Any], self.state_dict()),
-            ephemeral=ephemeral,
+        checkpoint_memory = self._start_checkpoint_cuda_memory_log(path)
+        try:
+            fut = self.checkpointer.save_async(
+                path,
+                self.train_module,
+                cast(Dict[str, Any], self.state_dict()),
+                ephemeral=ephemeral,
+            )
+        except BaseException:
+            self._finish_checkpoint_cuda_memory_log(
+                path,
+                checkpoint_memory,
+                status="async staging failed",
+                reduce_across_ranks=False,
+            )
+            raise
+        self._finish_checkpoint_cuda_memory_log(
+            path, checkpoint_memory, status="async staging finished"
         )
 
         def callback(future: Future):
@@ -1227,6 +1258,128 @@ class Trainer:
         fut.add_done_callback(callback)
 
         return path, fut
+
+    def _start_checkpoint_cuda_memory_log(self, path: PathOrStr) -> Optional[Dict[str, float]]:
+        if not torch.cuda.is_available():
+            return None
+
+        stats = self._get_checkpoint_cuda_memory_stats()
+        max_stats = self._reduce_checkpoint_cuda_memory_stats(
+            stats, ("allocated", "reserved", "device_used")
+        )
+
+        if get_rank() == 0:
+            log.info(
+                "Checkpoint CUDA memory before save for '%s': "
+                "rank0 allocated=%s reserved=%s device_used=%s; "
+                "max allocated=%s reserved=%s device_used=%s",
+                path,
+                self._format_bytes_as_gib(stats["allocated"]),
+                self._format_bytes_as_gib(stats["reserved"]),
+                self._format_bytes_as_gib(stats["device_used"]),
+                self._format_bytes_as_gib(max_stats["allocated"]),
+                self._format_bytes_as_gib(max_stats["reserved"]),
+                self._format_bytes_as_gib(max_stats["device_used"]),
+            )
+
+        # Isolate checkpoint-save peaks from the training step that led into the save.
+        torch.cuda.reset_peak_memory_stats(torch.cuda.current_device())
+        return stats
+
+    def _finish_checkpoint_cuda_memory_log(
+        self,
+        path: PathOrStr,
+        before_stats: Optional[Dict[str, float]],
+        *,
+        status: str,
+        reduce_across_ranks: bool = True,
+    ):
+        if before_stats is None or not torch.cuda.is_available():
+            return
+
+        stats = self._get_checkpoint_cuda_memory_stats()
+        stats["alloc_retries_delta"] = max(
+            0.0, stats["num_alloc_retries"] - before_stats["num_alloc_retries"]
+        )
+        stats["ooms_delta"] = max(0.0, stats["num_ooms"] - before_stats["num_ooms"])
+
+        keys = (
+            "allocated",
+            "reserved",
+            "device_used",
+            "peak_allocated",
+            "peak_reserved",
+            "alloc_retries_delta",
+            "ooms_delta",
+        )
+        max_stats = (
+            self._reduce_checkpoint_cuda_memory_stats(stats, keys)
+            if reduce_across_ranks
+            else stats
+        )
+        rank = get_rank()
+        local_scope = f"rank{rank}"
+        max_scope = "max" if reduce_across_ranks else local_scope
+
+        if rank == 0 or not reduce_across_ranks:
+            log.info(
+                "Checkpoint CUDA memory after save for '%s' (%s): "
+                "%s current allocated=%s reserved=%s device_used=%s peak_allocated=%s peak_reserved=%s "
+                "alloc_retries_delta=%d ooms_delta=%d; "
+                "%s current allocated=%s reserved=%s device_used=%s peak_allocated=%s peak_reserved=%s "
+                "alloc_retries_delta=%d ooms_delta=%d",
+                path,
+                status,
+                local_scope,
+                self._format_bytes_as_gib(stats["allocated"]),
+                self._format_bytes_as_gib(stats["reserved"]),
+                self._format_bytes_as_gib(stats["device_used"]),
+                self._format_bytes_as_gib(stats["peak_allocated"]),
+                self._format_bytes_as_gib(stats["peak_reserved"]),
+                int(stats["alloc_retries_delta"]),
+                int(stats["ooms_delta"]),
+                max_scope,
+                self._format_bytes_as_gib(max_stats["allocated"]),
+                self._format_bytes_as_gib(max_stats["reserved"]),
+                self._format_bytes_as_gib(max_stats["device_used"]),
+                self._format_bytes_as_gib(max_stats["peak_allocated"]),
+                self._format_bytes_as_gib(max_stats["peak_reserved"]),
+                int(max_stats["alloc_retries_delta"]),
+                int(max_stats["ooms_delta"]),
+            )
+
+    def _get_checkpoint_cuda_memory_stats(self) -> Dict[str, float]:
+        device = torch.device("cuda", torch.cuda.current_device())
+        cuda_info = torch.cuda.memory_stats(device)
+        free, total = torch.cuda.mem_get_info(device)
+        return {
+            "allocated": float(torch.cuda.memory_allocated(device)),
+            "reserved": float(torch.cuda.memory_reserved(device)),
+            "device_used": float(total - free),
+            "peak_allocated": float(torch.cuda.max_memory_allocated(device)),
+            "peak_reserved": float(torch.cuda.max_memory_reserved(device)),
+            "num_alloc_retries": float(cuda_info["num_alloc_retries"]),
+            "num_ooms": float(cuda_info["num_ooms"]),
+        }
+
+    def _reduce_checkpoint_cuda_memory_stats(
+        self, stats: Dict[str, float], keys: Tuple[str, ...]
+    ) -> Dict[str, float]:
+        if not is_distributed():
+            return {key: stats[key] for key in keys}
+
+        device = torch.device("cuda", torch.cuda.current_device())
+        with cuda_sync_debug_mode(0):
+            values = torch.tensor(
+                [stats[key] for key in keys], device=device, dtype=torch.float64
+            )
+            dist.all_reduce(values, op=dist.ReduceOp.MAX)
+            values = values.cpu().tolist()
+        return {key: float(value) for key, value in zip(keys, values)}
+
+    @staticmethod
+    def _format_bytes_as_gib(num_bytes: float) -> str:
+        return f"{num_bytes / 1024**3:.1f}GiB"
 
     def record_metric(
         self,
@@ -1252,10 +1405,7 @@ class Trainer:
         if namespace is not None:
             name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
 
-        if not isinstance(value, torch.Tensor):
-            value = torch.tensor(value)
-        else:
-            value = get_local_tensor(value.detach()).float()
+        value = _metric_value_to_tensor(value)
 
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
@@ -1597,19 +1747,20 @@ class Trainer:
         metrics_to_reduce = move_metrics(self._metrics, self.bookkeeping_device)
         self._metrics.clear()
 
-        if self._metrics_consistent is None:
-            self._metrics_consistent = check_metrics_consistent(
-                self._metrics_reduce_type,
-                process_group=self.bookkeeping_pg,
+        metrics_consistent = check_metrics_consistent(
+            metrics_to_reduce,
+            self._metrics_reduce_type,
+            process_group=self.bookkeeping_pg,
+        )
+        if not metrics_consistent and self._metrics_consistent is not False:
+            msg = (
+                "Detected inconsistent metrics between ranks. This is expected in some cases "
+                "(like with pipeline parallelism)."
             )
-            if not self._metrics_consistent:
-                msg = (
-                    "Detected inconsistent metrics between ranks. This is expected in some cases "
-                    "(like with pipeline parallelism)."
-                )
-                if not self.async_bookkeeping:
-                    msg += " This may result in slower training speeds since you don't have async bookkeeping enabled."
-                log.warning(msg)
+            if not self.async_bookkeeping:
+                msg += " This may result in slower training speeds since you don't have async bookkeeping enabled."
+            log.warning(msg)
+        self._metrics_consistent = metrics_consistent
 
         self.run_bookkeeping_op(
             reduce_metrics,
@@ -1617,7 +1768,7 @@ class Trainer:
             self._metrics_reduce_type,
             self.bookkeeping_device,
             process_group=self.bookkeeping_pg,
-            metrics_consistent=self._metrics_consistent,
+            metrics_consistent=metrics_consistent,
             cb=self._check_and_pass_on_metrics,
         )
 

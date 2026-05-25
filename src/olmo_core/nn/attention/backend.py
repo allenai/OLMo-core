@@ -77,7 +77,7 @@ class AttentionBackendName(StrEnum):
     def get_class(self) -> Type["AttentionBackend"]:
         if self == self.torch:
             return TorchAttentionBackend
-        elif self in self.flash_2:
+        elif self == self.flash_2:
             return FlashAttention2Backend
         elif self == self.flash_3:
             return FlashAttention3Backend
@@ -899,6 +899,7 @@ class FlashAttention4Backend(AttentionBackend):
     def assert_supports_kv_cache(cls):
         pass
 
+    @torch.compiler.disable(reason="FA4/CUTLASS Python wrapper is not Dynamo-traceable")
     def forward(
         self,
         qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
@@ -1039,7 +1040,11 @@ class TEAttentionBackend(AttentionBackend):
         pass
 
     @classmethod
-    def assert_supports_cp(cls):
+    def assert_supports_ring_cp(cls):
+        pass
+
+    @classmethod
+    def assert_supports_ulysses_cp(cls):
         pass
 
     @classmethod

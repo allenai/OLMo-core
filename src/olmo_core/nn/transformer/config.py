@@ -21,7 +21,7 @@ from ..attention import (
 )
 from ..buffer_cache import BufferCache
 from ..config import ModelConfig, ModuleConfig
-from ..feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
+from ..feed_forward import ActivationFunction, DenseMoEFeedForwardConfig, FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
@@ -175,6 +175,12 @@ class TransformerBlockConfig(ModuleConfig):
     """
     The feed forward layer norm config.
     """
+    layer_norm: InitVar[Optional[LayerNormConfig]] = None
+    """
+    .. deprecated::
+        Use :data:`attention_norm` and :data:`feed_forward_norm` instead. When provided,
+        this value is copied to both split norm fields.
+    """
     feed_forward: Optional[FeedForwardConfig] = None
     """
     The feed-forward config, required for non-MoE blocks.
@@ -200,8 +206,14 @@ class TransformerBlockConfig(ModuleConfig):
     A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
     """
 
-    def __post_init__(self, attention: Optional[AttentionConfig] = None):
-        # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
+    def __post_init__(
+        self,
+        attention: Optional[AttentionConfig] = None,
+        layer_norm: Optional[LayerNormConfig] = None,
+    ):
+        # Handle backwards compatibility: old configs used `attention` instead of
+        # `sequence_mixer`, and main-branch dense configs used one `layer_norm`
+        # for both split norms.
         if attention is not None:
             if self.sequence_mixer is not UNSET:
                 raise OLMoConfigurationError(
@@ -209,10 +221,22 @@ class TransformerBlockConfig(ModuleConfig):
                     "Use 'sequence_mixer' only (the 'attention' field is deprecated)."
                 )
             self.sequence_mixer = attention
+        if layer_norm is not None:
+            if self.attention_norm is not None or self.feed_forward_norm is not None:
+                raise OLMoConfigurationError(
+                    "Cannot specify both 'layer_norm' and split norm fields in "
+                    "TransformerBlockConfig. Use 'attention_norm' and "
+                    "'feed_forward_norm' for new configs."
+                )
+            self.attention_norm = layer_norm
+            self.feed_forward_norm = layer_norm
         if self.sequence_mixer is UNSET:
             raise OLMoConfigurationError(
                 "TransformerBlockConfig requires 'sequence_mixer' to be set."
             )
+        self.attention = (
+            self.sequence_mixer if isinstance(self.sequence_mixer, AttentionConfig) else None
+        )
 
     def build(
         self,
@@ -318,7 +342,15 @@ class TransformerBlockConfig(ModuleConfig):
         flops = 0
 
         # attention
-        flops += self.attention.flops_per_seq(d_model, seqlen)
+        if hasattr(self.sequence_mixer, "flops_per_seq"):
+            flops += self.sequence_mixer.flops_per_seq(d_model, seqlen)  # type: ignore[attr-defined]
+        else:
+            flops += self.sequence_mixer.build(
+                d_model,
+                layer_idx=0,
+                n_layers=1,
+                init_device="meta",
+            ).num_flops_per_token(seqlen) * seqlen
 
         # feed forward
         if self.feed_forward is not None:
@@ -541,11 +573,7 @@ class TransformerConfig(ModelConfig):
         flops = []
 
         # calculate flops for each block (each block might have different config)
-        for block_idx in range(self.n_layers):
-            block_config = self.block
-            if self.block_overrides is not None and block_idx in self.block_overrides:
-                block_config = self.block_overrides[block_idx]
-
+        for block_config in self.resolved_block_configs:
             flops.append(block_config.flops_per_token(self.d_model, seq_len))
 
         flops.append(num_floating_point_operations_for_logits(self, seq_len) / seq_len)
@@ -1932,6 +1960,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
                 embedding_norm=self.embedding_norm,
                 embedding_init_std=self.embedding_init_std,
                 embed_scale=self.embed_scale,
+                block_pattern=self.block_pattern,
             )
         else:
             raise NotImplementedError(self.name)
@@ -1957,9 +1986,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         return model
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        raise RuntimeError(
-            "num_flops_per_token disabled in config. Use num_flops_per_token from model instead."
-        )
+        return super().num_flops_per_token(seq_len)
 
 
 def validate_block_resolution_config(

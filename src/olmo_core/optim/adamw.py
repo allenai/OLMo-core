@@ -1,4 +1,3 @@
-import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Type, Union
 
@@ -8,9 +7,14 @@ from ..config import DType
 from ..distributed.utils import get_local_tensor
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
+import logging
+from torch.distributed.optim import ZeroRedundancyOptimizer
+from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
+    hook_with_zero_step,
+    hook_with_zero_step_interleaved,
+)
 
 log = logging.getLogger(__name__)
-
 
 def adamw_step(
     p: torch.Tensor,
@@ -236,7 +240,6 @@ class SkipStepAdamW(SkipStepOptimizer):
                 step_increment_bugfix=self.stepfix,
             )
 
-
 @OptimConfig.register("adamw")
 @dataclass
 class AdamWConfig(OptimConfig[torch.optim.AdamW]):
@@ -268,6 +271,31 @@ class SkipStepAdamWConfig(OptimConfig[SkipStepAdamW]):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     dtype: Optional[DType] = None
+    foreach: bool = True
+    """
+    Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
+    Faster than the non-foreach version.
+    """
+
+    step_increment_bugfix: bool = True
+    """
+    Whether or not to fix the step-incrementing bug discovered in SkipStepAdamW.
+
+    If this flag is set to False, the step will not be incremented, which
+    gives the optimizer an effective lr that is 2.2x higher than the specified lr,
+    and no bias correction is applied.
+    """
+
+    rolling_interval_length: int = 128
+    """
+    The length of the rolling interval to use for computing the mean and standard deviation of the loss.
+    """
+
+    sigma_factor: int = 6
+    """
+    The number of standard deviations above the mean loss to skip a step.
+    """
+
     foreach: bool = True
     """
     Whether to use multi-tensor (*foreach*) kernels for the AdamW update.

@@ -57,7 +57,6 @@ dev = [
     "sphinx-inline-tabs",
     "twine>=1.11.0",
     "wheel",
-    "matplotlib",
     "nvtx"
 ]
 beaker = ["beaker-py>=2.5.4,<3.0", "beaker-gantry>=3.4.3,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
@@ -67,7 +66,7 @@ eval = ["ai2-olmo-eval==0.9.0"]
 fa4 = ["flash-attn-4>=4.0.0b4 ; sys_platform == 'linux'"]
 fla = ["flash-linear-attention==0.4.1"]
 torchao = ["torchao==0.15.0"]
-transformers = ["transformers"]
+transformers = ["transformers>=5.0"]
 wandb = ["wandb"]
 all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fa4,fla,torchao,transformers,wandb]"]
 

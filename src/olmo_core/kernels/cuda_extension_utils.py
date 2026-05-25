@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -41,6 +42,13 @@ def cuda_arch_tag() -> str:
         return "cpu"
     major, minor = torch.cuda.get_device_capability(torch.cuda.current_device())
     return f"sm{major}{minor}"
+
+
+def torch_extension_abi_tag() -> str:
+    torch_version = re.sub(r"[^0-9A-Za-z]+", "_", torch.__version__).strip("_")
+    cxx11_abi = int(getattr(torch._C, "_GLIBCXX_USE_CXX11_ABI", False))
+    cuda_version = re.sub(r"[^0-9A-Za-z]+", "_", str(torch.version.cuda or "cpu")).strip("_")
+    return f"torch{torch_version}_cu{cuda_version}_cxxabi{cxx11_abi}"
 
 
 def _lock_file_is_open_by_another_process(lock_path: Path) -> Optional[bool]:
@@ -150,6 +158,9 @@ def load_cuda_extension(
     sources: Sequence[PathLikeStr],
     extra_cflags: Optional[Sequence[str]] = None,
     extra_cuda_cflags: Optional[Sequence[str]] = None,
+    extra_include_paths: Optional[Sequence[PathLikeStr]] = None,
+    extra_ldflags: Optional[Sequence[str]] = None,
+    with_cuda: Optional[bool] = None,
     verbose_env_names: Sequence[str] = (),
     force_rebuild_env_names: Sequence[str] = (),
     stale_lock_timeout_env_names: Sequence[str] = ("OLMO_MOE_EXT_STALE_LOCK_TIMEOUT_SEC",),
@@ -158,7 +169,10 @@ def load_cuda_extension(
 ):
     from torch.utils.cpp_extension import _get_build_directory, load
 
-    ext_name = f"{base_name}_{cuda_arch_tag()}" if with_arch_suffix else base_name
+    ext_name_parts = [base_name, torch_extension_abi_tag()]
+    if with_arch_suffix:
+        ext_name_parts.append(cuda_arch_tag())
+    ext_name = "_".join(ext_name_parts)
     build_directory = _get_build_directory(ext_name, verbose=False)
 
     stale_lock_timeout_s = max(
@@ -181,8 +195,11 @@ def load_cuda_extension(
                 sources=[str(path) for path in sources],
                 extra_cflags=list(extra_cflags or []),
                 extra_cuda_cflags=list(extra_cuda_cflags or []),
+                extra_include_paths=[str(path) for path in (extra_include_paths or [])],
+                extra_ldflags=list(extra_ldflags or []),
                 build_directory=build_directory,
                 verbose=verbose,
+                with_cuda=with_cuda,
             )
         except Exception as e:
             is_last_attempt = attempt + 1 >= max_retries

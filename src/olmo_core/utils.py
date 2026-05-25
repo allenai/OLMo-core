@@ -14,7 +14,7 @@ from functools import lru_cache
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar, Union, cast
 
 import rich
 import torch
@@ -30,6 +30,7 @@ from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError, OLMoThrea
 
 OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
 LOG_FILTER_TYPE_ENV_VAR = "LOG_FILTER_TYPE"
+RICH_LOGGING_ENV_VAR = "OLMO_RICH_LOGGING"
 
 
 _log_extra_fields: Dict[str, Any] = {}
@@ -312,12 +313,20 @@ def setup_logging(
     logging.setLogRecordFactory(log_record_factory)
 
     handler: logging.Handler
-    # NOTE: Beaker supports rich logging now.
-    if (
-        os.environ.get("OLMO_RICH_LOGGING") is None
-        and os.environ.get("BEAKER_EXPERIMENT_ID") is None
-        and (os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive" or not sys.stdout.isatty())
-    ):
+    rich_logging_env = os.environ.get(RICH_LOGGING_ENV_VAR)
+    if rich_logging_env is not None:
+        use_rich_logging = rich_logging_env.lower() not in ("0", "false", "no", "off")
+    else:
+        # NOTE: Beaker supports rich logging now.
+        use_rich_logging = not (
+            os.environ.get("BEAKER_EXPERIMENT_ID") is None
+            and (
+                os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive"
+                or not sys.stdout.isatty()
+            )
+        )
+
+    if not use_rich_logging:
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter(
             "%(asctime)s\t%(hostname)s:%(local_rank)s\t%(name)s:%(lineno)s\t%(levelname)s\t%(message)s"
@@ -467,6 +476,88 @@ def set_env_variables():
     set_env_var("TOKENIZERS_PARALLELISM", "false")
 
 
+def patch_torch_stream_custom_ops():
+    """
+    Patch PyTorch stream custom ops that are incomplete in some builds.
+
+    PyTorch 2.11's ``streams::sync_dealloc`` op can be inserted by AOTAutograd when compiling
+    models that use side streams. Without a fake implementation, Inductor fails while tracing.
+    In compiled pipeline-parallel backward graphs the generated stream ops can also execute after
+    PyTorch has cleared its weakref side table for graph-created stream/event objects. In that case
+    we fall back to stable per-process stream/event objects keyed by the generated integer index.
+    """
+    try:
+        from torch._dynamo.variables import streams
+    except (AttributeError, ImportError):
+        return
+
+    sync_dealloc = getattr(streams, "sync_dealloc", None)
+    if sync_dealloc is not None and getattr(sync_dealloc, "_abstract_fn", None) is None:
+        try:
+            @sync_dealloc.register_fake
+            def _(
+                wait_event_index: int,
+                src_stream_index: int,
+                to_dealloc: torch.Tensor,
+            ) -> None:
+                del wait_event_index, src_stream_index, to_dealloc
+                return None
+        except RuntimeError as e:
+            if "already" not in str(e).lower() and "override" not in str(e).lower():
+                raise
+
+    if getattr(streams, "_olmo_stream_lookup_patch", False):
+        return
+
+    original_get_event_by_index = streams._get_event_by_index
+    original_get_stream_by_index = streams._get_stream_by_index
+    fallback_events: Dict[Tuple[int, int], torch.Event] = {}
+    fallback_streams: Dict[Tuple[int, int], torch.Stream] = {}
+
+    def _is_missing_external_object_error(exc: AssertionError) -> bool:
+        message = str(exc)
+        return "Index not registered" in message or "no longer alive" in message
+
+    def _current_device_key(index: int) -> Tuple[int, int]:
+        try:
+            device_index = torch.accelerator.current_device_index()
+        except RuntimeError:
+            device_index = -1
+        return int(device_index), int(index)
+
+    def _get_event_by_index(index: int) -> torch.Event:
+        try:
+            return original_get_event_by_index(index)
+        except AssertionError as e:
+            if not _is_missing_external_object_error(e):
+                raise
+            key = _current_device_key(index)
+            event = fallback_events.get(key)
+            if event is None:
+                event = torch.Event()
+                fallback_events[key] = event
+            return event
+
+    def _get_stream_by_index(index: int) -> torch.Stream:
+        try:
+            return original_get_stream_by_index(index)
+        except AssertionError as e:
+            if not _is_missing_external_object_error(e):
+                raise
+            if int(index) == 0:
+                return torch.accelerator.current_stream()
+            key = _current_device_key(index)
+            stream = fallback_streams.get(key)
+            if stream is None:
+                stream = torch.Stream()
+                fallback_streams[key] = stream
+            return stream
+
+    streams._get_event_by_index = _get_event_by_index
+    streams._get_stream_by_index = _get_stream_by_index
+    streams._olmo_stream_lookup_patch = True
+
+
 def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     """
     Prepare the environment for a script/CLI.
@@ -501,6 +592,7 @@ def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     install_excepthook()
     filter_warnings()
     set_env_variables()
+    patch_torch_stream_custom_ops()
     add_cached_path_clients()
 
 

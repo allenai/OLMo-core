@@ -38,7 +38,7 @@ class ConsoleLoggerCallback(Callback):
             "train/load balancing loss",
             "train/router Z loss",
             "train/block */load imbalance",
-            "train/block */token drop rate",  # TODO: will this be present in all cases?
+            "train/block */token drop rate",
             "train/block */symm buffer util",
             "system/*",
             "gpu_memory/*",

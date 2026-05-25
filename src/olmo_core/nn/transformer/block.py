@@ -255,7 +255,8 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         n_layers: int,
         sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
-        layer_norm: LayerNormConfig,
+        attention_norm: LayerNormConfig,
+        feed_forward_norm: LayerNormConfig,
         dropout: float = 0.0,
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
@@ -268,8 +269,8 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
             n_layers=n_layers,
             sequence_mixer=sequence_mixer,
             feed_forward=feed_forward,
-            attention_norm=layer_norm,
-            feed_forward_norm=layer_norm,
+            attention_norm=attention_norm,
+            feed_forward_norm=feed_forward_norm,
             dropout=dropout,
             attention_residual_alpha=attention_residual_alpha,
             feed_forward_residual_alpha=feed_forward_residual_alpha,
@@ -756,6 +757,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         n_layers: int,
         feed_forward_norm: LayerNormConfig,
         attention_norm: LayerNormConfig,
+        sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
         **kwargs,
@@ -763,9 +765,9 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         super().__init__(
             d_model=d_model,
             n_layers=n_layers,
-            # layer_norm=layer_norm, # note: split into attention and feed_forward norms
             feed_forward_norm=feed_forward_norm,
             attention_norm=attention_norm,
+            sequence_mixer=sequence_mixer,
             init_device=init_device,
             **kwargs,
         )
@@ -1247,3 +1249,4 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             else:
                 xx = self.dense_forward_rc(x, **kwargs)
             return xx
+

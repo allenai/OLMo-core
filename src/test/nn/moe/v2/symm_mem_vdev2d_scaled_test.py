@@ -30,8 +30,18 @@ def _patch_reduce_identity(monkeypatch):
 def test_rowwise_combine_get_scaled_masks_invalid_routes(monkeypatch):
     _patch_reduce_identity(monkeypatch)
 
-    def _fake_gather(expert_out, out, src_ranks, src_rows, group_name, *, nblocks=0):
-        del expert_out, group_name, nblocks
+    def _fake_gather(
+        expert_out,
+        out,
+        src_ranks,
+        src_rows,
+        group_name,
+        *,
+        nblocks=0,
+        pre_barrier=True,
+        post_barrier=False,
+    ):
+        del expert_out, group_name, nblocks, pre_barrier, post_barrier
         if out.shape[1] == 16:
             out.fill_(1.0)
             invalid = (src_ranks.reshape(-1) < 0) | (src_rows.reshape(-1) < 0)
@@ -76,8 +86,18 @@ def test_rowwise_combine_get_scaled_masks_invalid_routes(monkeypatch):
 def test_rowwise_combine_get_scaled_weighted(monkeypatch):
     _patch_reduce_identity(monkeypatch)
 
-    def _fake_gather(expert_out, out, src_ranks, src_rows, group_name, *, nblocks=0):
-        del expert_out, src_ranks, src_rows, group_name, nblocks
+    def _fake_gather(
+        expert_out,
+        out,
+        src_ranks,
+        src_rows,
+        group_name,
+        *,
+        nblocks=0,
+        pre_barrier=True,
+        post_barrier=False,
+    ):
+        del expert_out, src_ranks, src_rows, group_name, nblocks, pre_barrier, post_barrier
         if out.shape[1] == 16:
             out.fill_(1.0)
         else:
@@ -132,8 +152,18 @@ def test_rowwise_combine_get_scaled_reuses_gather_output_buffers(monkeypatch):
 
     observed_ptrs = {}
 
-    def _fake_gather(expert_out, out, src_ranks, src_rows, group_name, *, nblocks=0):
-        del expert_out, src_ranks, src_rows, group_name, nblocks
+    def _fake_gather(
+        expert_out,
+        out,
+        src_ranks,
+        src_rows,
+        group_name,
+        *,
+        nblocks=0,
+        pre_barrier=True,
+        post_barrier=False,
+    ):
+        del expert_out, src_ranks, src_rows, group_name, nblocks, pre_barrier, post_barrier
         if out.shape[1] == 512:
             observed_ptrs["q"] = out.data_ptr()
             out.copy_(
@@ -187,3 +217,86 @@ def test_rowwise_combine_get_scaled_reuses_gather_output_buffers(monkeypatch):
     )
     torch.testing.assert_close(gathered_scales_out, torch.ones_like(gathered_scales_out))
     torch.testing.assert_close(out, torch.full((1, 512), 4.0, dtype=torch.float32))
+
+
+def test_rowwise_combine_get_scaled_applies_outer_barriers_once(monkeypatch):
+    _patch_reduce_identity(monkeypatch)
+    calls = []
+
+    def _fake_gather(
+        expert_out,
+        out,
+        src_ranks,
+        src_rows,
+        group_name,
+        *,
+        nblocks=0,
+        pre_barrier=True,
+        post_barrier=False,
+    ):
+        del expert_out, src_ranks, src_rows, group_name, nblocks
+        calls.append((out.shape[1], pre_barrier, post_barrier))
+        out.fill_(1.0)
+
+    monkeypatch.setattr(symm_mod, "rowwise_gather_get", _fake_gather)
+
+    src_ranks = torch.tensor([[0, 1]], dtype=torch.long)
+    src_rows = torch.tensor([[0, 1]], dtype=torch.long)
+    out = torch.empty((1, 512), dtype=torch.float32)
+    expert_out_q = torch.empty((4, 512), dtype=torch.float32)
+    expert_out_scales = torch.ones((4, 16), dtype=torch.float32)
+
+    symm_mod.rowwise_combine_get_scaled(
+        expert_out_q,
+        expert_out_scales,
+        out,
+        src_ranks,
+        src_rows,
+        "dummy_group",
+        pre_barrier=True,
+        post_barrier=True,
+    )
+
+    assert calls == [(512, True, False), (16, False, True)]
+
+
+def test_rowwise_dispatch_put_scaled_applies_outer_barriers_once(monkeypatch):
+    qdata = torch.empty((1, 512), dtype=torch.float32)
+    scales = torch.empty((1, 16), dtype=torch.float32)
+
+    def _fake_quantize(input_hp, *, block_size=32):
+        del input_hp, block_size
+        return qdata, scales
+
+    calls = []
+
+    def _fake_put(
+        input,
+        out,
+        dst_ranks,
+        dst_rows,
+        group_name,
+        *,
+        probs=None,
+        nblocks=0,
+        pre_barrier=False,
+        post_barrier=True,
+    ):
+        del out, dst_ranks, dst_rows, group_name, probs, nblocks
+        calls.append((input.shape[1], pre_barrier, post_barrier))
+
+    monkeypatch.setattr(symm_mod, "quantize_rows_to_mxfp8", _fake_quantize)
+    monkeypatch.setattr(symm_mod, "rowwise_dispatch_put", _fake_put)
+
+    symm_mod.rowwise_dispatch_put_scaled(
+        torch.empty((1, 512), dtype=torch.float32),
+        torch.empty((1, 512), dtype=torch.float32),
+        torch.empty((1, 16), dtype=torch.float32),
+        torch.tensor([[0]], dtype=torch.long),
+        torch.tensor([[0]], dtype=torch.long),
+        "dummy_group",
+        pre_barrier=True,
+        post_barrier=True,
+    )
+
+    assert calls == [(512, True, False), (16, False, True)]

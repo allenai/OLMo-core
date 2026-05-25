@@ -305,25 +305,20 @@ class Transformer(nn.Module):
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
-            # TODO: this may have been messed up in merging main
             from ..moe.v2.block import MoEFusedV2TransformerBlock
-
             att = cast(SequenceMixer, block.attention)
 
-            if isinstance(block, MoEFusedV2TransformerBlock):
-                block = cast(MoEFusedV2TransformerBlock, block)
-                # v2 MoE blocks.
-                att = cast(Union[Attention, FusedAttention], block.attention)
+            # Sequence-mixer weights.
+            self.init_method.init_attention(
+                att,
+                d_model=self.d_model,
+                block_idx=block.block_idx,
+                num_blocks=self.n_layers,
+                std=self.init_std,
+                generator=generator,
+            )
 
-                # Attention weights.
-                self.init_method.init_attention(
-                    att,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=self.n_layers,
-                    std=self.init_std,
-                    generator=generator,
-                )
+            if isinstance(block, MoEFusedV2TransformerBlock):
                 # MoE weights.
                 self.init_method.init_moe_v2(
                     block,
@@ -333,21 +328,8 @@ class Transformer(nn.Module):
                     std=self.init_std,
                     generator=generator,
                 )
-
             else:
-                att = cast(Union[Attention, FusedAttention], block.attention)
-
-                # Attention weights.
-                self.init_method.init_attention(
-                    att,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=self.n_layers,
-                    std=self.init_std,
-                    generator=generator,
-                )
-
-                # Feed-forward weights (dense blocks).
+                # Feed-forward weights.
                 if hasattr(block, "feed_forward"):
                     self.init_method.init_feed_forward(
                         block.feed_forward,
@@ -962,6 +944,9 @@ class Transformer(nn.Module):
         Returns the idealized number of flops per token for the given sequence length. Purposefully
         does not account for wasted flops due to padding, recomputation, etc.
         """
+        if self.config is not None:
+            return int(self.config.num_flops_per_token(seq_len))
+
         flops_per_token = 0
         blocks = cast(List[TransformerBlockBase], list(self.blocks.values()))
         for block in blocks:

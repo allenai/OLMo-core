@@ -119,7 +119,6 @@ class Checkpointer:
             # Save model and optim state.
             train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
             if hasattr(train_module, "save_state_dict_direct"):
-                # MoE V2 train module manages its own save flow.
                 train_module.save_state_dict_direct(  # type: ignore
                     train_module_dir,
                     process_group=self.process_group,
@@ -133,7 +132,6 @@ class Checkpointer:
                     train_module.state_dict_to_save(),
                     process_group=self.process_group,
                     thread_count=self.save_thread_count,
-                    #  process_count=self.save_process_count,
                     throttle_uploads=self.throttle_uploads,
                     enable_plan_caching=True,
                     # NOTE: we've already checked and cleared the directory at this point so we can skip
@@ -157,6 +155,11 @@ class Checkpointer:
             raise OLMoConfigurationError(
                 "a checkpointer process group is required for async checkpointing!"
             )
+        if hasattr(train_module, "save_state_dict_direct"):
+            raise OLMoConfigurationError(
+                f"{type(train_module).__name__} does not support async checkpointing. "
+                "Set save_async=False for this train module."
+            )
 
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -168,22 +171,6 @@ class Checkpointer:
 
         # Save model and optim state.
         train_module_dir = f"{dir}/model_and_optim"
-        if hasattr(train_module, "save_state_dict_direct"):
-            # MoE V2 train module manages its own save flow and only supports a sync save.
-            # Run it synchronously and return an already-completed future so callers can rely
-            # on the same future-based contract.
-            train_module.save_state_dict_direct(  # type: ignore
-                train_module_dir,
-                process_group=self.process_group,
-                save_overwrite=self.save_overwrite,
-                thread_count=self.save_thread_count,
-                throttle_uploads=self.throttle_uploads,
-            )
-            self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
-            future: Future[None] = Future()
-            future.set_result(None)
-            return future
-
         future = async_save_state_dict(
             train_module_dir,
             train_module.state_dict_to_save(),
@@ -543,13 +530,12 @@ class Checkpointer:
         yield tmp_dir
 
         self._teardown_tmp_dir(dir, tmp_dir)
-
-
+        
 class UpcycleCheckpointer(Checkpointer):
     """
     Checkpointer that is used for MoE upcycling.
     It overrides the save() and load() methods to skip saving and loading extra state other than the model.
-
+    
     The save() method should be called by a standalone script that performs upcycling, not by the trainer.
     The load() method should be called by the trainer (from a CheckpointerCallback).
     """
@@ -560,6 +546,7 @@ class UpcycleCheckpointer(Checkpointer):
         """
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
+
             # Save model and optim state.
             train_module_dir = f"{dir}/upcycling" if is_url(dir) else wd / "upcycling"
             save_state_dict(
@@ -601,11 +588,11 @@ class UpcycleCheckpointer(Checkpointer):
                 else:
                     raise
 
-        model_module_dir = broadcast_object(model_module_dir)
+        model_module_dir = scatter_object(model_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(model_module_dir)
 
-        model_module = train_module.model
+        model_module=train_module.model
 
         # model_state_dict = train_module.state_dict_to_load(metadata, optim=False)
         model_state_dict = model_module.state_dict()
@@ -617,19 +604,19 @@ class UpcycleCheckpointer(Checkpointer):
             work_dir=self.work_dir,
             thread_count=self.load_thread_count,
         )
-        model_module.load_state_dict(model_state_dict)  # don't need this line?
+        model_module.load_state_dict(model_state_dict) # don't need this line?
 
         return trainer_state
 
 
 class CompactablityCheckpointer(Checkpointer):
+    
     def load(
         self,
         dir: PathOrStr,
         train_module: TrainModule,
         *,
         load_trainer_state: Optional[bool] = None,
-        load_optim_state: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
@@ -667,7 +654,7 @@ class CompactablityCheckpointer(Checkpointer):
                 else:
                     raise
 
-        train_module_dir = broadcast_object(train_module_dir)
+        train_module_dir = scatter_object(train_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 

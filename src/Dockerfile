@@ -43,16 +43,19 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
-ARG TORCH_VERSION=2.10.0
+ARG TORCH_VERSION=2.11.0
 ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
+ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
+
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21
+# ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
-RUN TORCH_CUDA_ARCH_LIST="9.0 10.0" GROUPED_GEMM_CUTLASS="1" pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
+RUN unset GROUPED_GEMM_CUTLASS && pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
 # Install flash-attn 2
 ARG FLASH_ATTN_VERSION=2.8.2
@@ -82,8 +85,14 @@ RUN cd /opt/conda/lib/python${PYTHON_VERSION}/site-packages/ && \
     touch flash_attn_3/__init__.py && \
     rm -rf flash_attn_3-*
 
+# Install flash-attn 4.
+ARG FLASH_ATTN_4_VERSION=4.0.0b12
+RUN python -c "import torch; print('torch=='+torch.__version__)" > /tmp/torch-constraint.txt && \
+    python -m pip install --no-cache-dir -c /tmp/torch-constraint.txt "flash-attn-4==${FLASH_ATTN_4_VERSION}" && \
+    rm -f /tmp/torch-constraint.txt
+
 # Install transformer-engine.
-ARG TE_VERSION=2.9
+ARG TE_VERSION=2.14
 RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
@@ -171,19 +180,33 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda
 
+# Keep these for non-interactive processes (docker run / docker exec / VS Code server)
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
 ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:$PATH
+
+# One canonical env script (login shells) + source it for interactive non-login bash shells (VS Code terminal)
+RUN set -eux; \
+  cat > /etc/profile.d/99-container-env.sh <<'EOF'
+# Container-wide env for login shells (SSH, su -) and (via bash.bashrc below) interactive shells.
+export PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:${PATH}
+export LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+export UV_SYSTEM_PYTHON=1
+export UV_BREAK_SYSTEM_PACKAGES=1
+EOF
+RUN chmod 0644 /etc/profile.d/99-container-env.sh && \
+  grep -q '99-container-env.sh' /etc/bash.bashrc || \
+  printf '\n# Load container env for interactive shells\n[ -r /etc/profile.d/99-container-env.sh ] && . /etc/profile.d/99-container-env.sh\n' >> /etc/bash.bashrc
 
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core
 
 
 # additional tools
-RUN pip install nvitop nvtx matplotlib pybind11 tensorboard 
+RUN pip install nvitop nvtx matplotlib pybind11 tensorboard
 
 # nsys
 # the latest version has problems with nvtx; pinning to 2025.5.1 
@@ -195,7 +218,7 @@ RUN set -eux; \
     echo "deb [trusted=yes] https://developer.download.nvidia.com/devtools/repos/ubuntu${UBUNTU_SHORT}/${ARCH}/ /" \
       > /etc/apt/sources.list.d/nvidia-devtools.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends nsight-systems-cli-2025.5.1; \ 
+    apt-get install -y --no-install-recommends nsight-systems-cli-2025.5.1; \
     rm -rf /var/lib/apt/lists/*
 
 # install beaker

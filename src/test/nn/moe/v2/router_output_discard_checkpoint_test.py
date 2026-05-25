@@ -2,9 +2,14 @@ import copy
 
 import torch
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint, noop_context_fn
 
 from olmo_core.distributed.utils import get_local_tensor
+from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.loss import MoELoadBalancingLossGranularity
+from olmo_core.nn.moe.v2.checkpointing import is_checkpoint_recomputing
 from olmo_core.nn.moe.v2.router import MoERouterV2
+from olmo_core.ops import attach_auxiliary_loss
 
 
 def test_router_uses_bf16_saved_input_and_matches_reference_grads():
@@ -58,3 +63,64 @@ def test_router_uses_bf16_saved_input_and_matches_reference_grads():
     assert x_shape_saved_dtypes, "Expected router input-shaped tensor to be saved for backward."
     assert torch.bfloat16 in x_shape_saved_dtypes
     assert torch.float32 not in x_shape_saved_dtypes
+
+
+class _RouterAuxModule(torch.nn.Module):
+    def __init__(self, router: MoERouterV2):
+        super().__init__()
+        self.router = router
+        self.recompute_flags: list[bool] = []
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        _, _, _, aux_loss_info = self.router(x, False)
+        recomputing = is_checkpoint_recomputing()
+        self.recompute_flags.append(recomputing)
+        aux_loss = self.router.compute_aux_loss(
+            *aux_loss_info,
+            accumulate_metrics=not recomputing,
+        )
+        assert aux_loss is not None
+        return attach_auxiliary_loss(x.sin(), aux_loss)
+
+
+def _build_aux_router() -> MoERouterV2:
+    return MoERouterV2(
+        d_model=4,
+        num_experts=3,
+        top_k=1,
+        init_device="cpu",
+        dtype=torch.float32,
+        lb_loss_weight=0.7,
+        z_loss_weight=0.2,
+        lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+        gating_function=MoERouterGatingFunction.softmax,
+    )
+
+
+def test_router_aux_metrics_not_double_counted_with_noop_checkpoint_context():
+    torch.manual_seed(123)
+
+    router = _build_aux_router()
+    router_ref = copy.deepcopy(router)
+
+    x = torch.randn(2, 5, 4, requires_grad=True)
+    x_ref = x.detach().clone().requires_grad_(True)
+
+    module = _RouterAuxModule(router)
+    out = checkpoint(
+        module,
+        x,
+        use_reentrant=False,
+        context_fn=noop_context_fn,
+        preserve_rng_state=False,
+    )
+    out.square().mean().backward()
+
+    ref_module = _RouterAuxModule(router_ref)
+    ref_module(x_ref).square().mean().backward()
+
+    assert module.recompute_flags == [False, True]
+    assert ref_module.recompute_flags == [False]
+    torch.testing.assert_close(router.load_balancing_loss, router_ref.load_balancing_loss)
+    torch.testing.assert_close(router.z_loss, router_ref.z_loss)
+    torch.testing.assert_close(router.weight.grad, router_ref.weight.grad)

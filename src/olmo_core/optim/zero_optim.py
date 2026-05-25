@@ -1,45 +1,61 @@
-import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeVar, cast
+from typing import Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
 import torch.optim.optimizer
+
+from ..config import DType
+from .config import OptimConfig
+from .skip_step_optimizer import SkipStepOptimizer
+import logging
 from torch.distributed.optim import ZeroRedundancyOptimizer
-
-from ..utils import move_to_device
-from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig
-
-if TYPE_CHECKING:
-    # See note in ``olmo_core.optim.config`` — eager import causes a circular import
-    # via ``train.train_module.transformer.config``. Used only as a type annotation;
-    # ``train_module.dp_process_group`` is accessed via duck typing at runtime.
-    from ..train.train_module import TrainModule
+from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
+    hook_with_zero_step,
+    hook_with_zero_step_interleaved,
+)
 
 log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # ZeRO-1 sharded Skip-Step AdamW
 # --------------------------------------------------------------------------- #
-
+from torch.distributed.optim import ZeroRedundancyOptimizer
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Generic,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+    cast,
+)
+from .config import LR_FIELD, INITIAL_LR_FIELD
+from ..utils import get_default_device, move_to_device
 Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
+if TYPE_CHECKING:
+    from ..train.train_module import TrainModule
+
+from .config import OptimConfig, OptimGroupOverride 
 
 @dataclass
-class ZeroOptimConfig(OptimConfig[Opt]):
+class ZeroOptimConfig(OptimConfig):
+
     inner_optimizer: Optional[OptimConfig] = None
 
     @classmethod
     def optimizer(cls):
         return ZeroRedundancyOptimizer
 
-    def build(
-        self,
-        model: nn.Module,
-        train_module: "TrainModule",
-        strict: bool = True,
-        param_filter=None,
-    ):
+
+    def build(self, model: nn.Module, train_module: "TrainModule", strict: bool = True, param_filter=None):
         """
         Build the optimizer.
 
@@ -52,15 +68,13 @@ class ZeroOptimConfig(OptimConfig[Opt]):
         kwargs.pop("fixed_fields")
 
         assert self.inner_optimizer is not None
-        inner_optimizer = self.inner_optimizer.build(  # noqa: F841  # TODO: is this a bug?
-            model, train_module, strict=strict, param_filter=param_filter
-        )
+        inner_optimizer = self.inner_optimizer.build(model, train_module, strict=strict, param_filter=param_filter)  # noqa: F841
 
         optim: torch.optim.Optimizer = self.optimizer()(
-            self.build_groups(model, strict=strict),
+            self.build_groups(model, strict=strict), 
             optimizer_class=torch.optim.AdamW,
             process_group=train_module.dp_process_group,
-            **kwargs,
+            **kwargs
         )
 
         # Set 'lr' and 'initial_lr' in each group if needed.

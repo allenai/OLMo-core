@@ -70,6 +70,9 @@ class EvalBatchSpec:
             )
 
 
+from .config import TrainModuleConfig  # noqa: F401  (re-export)
+
+
 class TrainModule(Stateful, metaclass=ABCMeta):
     """
     A :class:`TrainModule` is an abstraction around a :class:`~torch.nn.Module` and

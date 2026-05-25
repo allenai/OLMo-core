@@ -52,12 +52,6 @@ class MultiGroupDistributedDataParallel(Module):
     ):
         super().__init__()
 
-        _use_python_reducer = torch._dynamo.utils.get_optimize_ddp_mode() == "python_reducer"
-        if not _use_python_reducer:
-            assert (
-                False
-            ), 'Only python_reducer is supported. Please set torch._dynamo.config.optimize_ddp = "python_reducer"'
-
         if process_group is None:
             if _get_default_group is None:
                 self.process_group = None
@@ -196,9 +190,8 @@ class MultiGroupDistributedDataParallel(Module):
                     p.register_post_accumulate_grad_hook(self._fp32_post_grad_acc_hook)
                 )
 
-        # Register the AccumulateGrad post hooks if optimize_ddp is
-        # True. The hooks will be deregistered if compiled_autograd is not
-        # enabled.
+        # Register the AccumulateGrad post hooks that drive this wrapper's
+        # own bucket readiness/all-reduce path.
         self._accum_grad_hooks: list[RemovableHandle] = []
 
         self._param_grad_ready: OrderedDict[torch.nn.Parameter, bool] = OrderedDict()
@@ -534,6 +527,7 @@ class MultiGroupDistributedDataParallel(Module):
         for bucket_idx in range(len(self._bucket_ready_count)):
             self._bucket_ready_count[bucket_idx] = 0
         self._forwards_since_finalize = 0
+        self._sync_module_logical_grads_from_anchor()
 
     def init_sync(self):
         for process_group, parameters in self.process_group_to_params.items():
@@ -605,6 +599,28 @@ class MultiGroupDistributedDataParallel(Module):
         super().train(mode)
         return self
 
+    def _zero_module_logical_grads(self, set_to_none: bool) -> None:
+        zero_logical_grads = getattr(self.module, "zero_fp8_weight_store_grads", None)
+        if zero_logical_grads is None:
+            zero_logical_grads = getattr(self.module, "zero_mxfp8_expert_weight_grads", None)
+        if zero_logical_grads is not None:
+            zero_logical_grads(set_to_none=set_to_none)
+
+    def _sync_module_logical_grads_from_anchor(self) -> None:
+        sync_logical_grads = getattr(
+            self.module,
+            "sync_fp8_weight_store_grads_from_anchor",
+            None,
+        )
+        if sync_logical_grads is None:
+            sync_logical_grads = getattr(
+                self.module,
+                "sync_mxfp8_expert_weight_grads_from_anchor",
+                None,
+            )
+        if sync_logical_grads is not None:
+            sync_logical_grads()
+
     def zero_grad(self, set_to_none: bool = True):
         if not set_to_none:
             # Fast path for bucket-view mode: zero bucket storage once and keep view bindings.
@@ -619,6 +635,7 @@ class MultiGroupDistributedDataParallel(Module):
                         if param.requires_grad:
                             param.grad = None
             self._forwards_since_finalize = 0
+            self._zero_module_logical_grads(set_to_none=False)
             return
 
         super().zero_grad(set_to_none=True)
@@ -630,6 +647,7 @@ class MultiGroupDistributedDataParallel(Module):
 
         self._forwards_since_finalize = 0
         self._grad_views_need_rebind = True
+        self._zero_module_logical_grads(set_to_none=True)
 
     def set_main_grads_to_none(self):
         if hasattr(self.module, "set_main_grads_to_none"):
@@ -640,6 +658,19 @@ class MultiGroupDistributedDataParallel(Module):
                     continue
                 if hasattr(param, "_main_grad_fp32"):
                     param._main_grad_fp32 = None  # type: ignore[attr-defined]
+            set_logical_main_grads_to_none = getattr(
+                self.module,
+                "set_fp8_weight_store_main_grads_to_none",
+                None,
+            )
+            if set_logical_main_grads_to_none is None:
+                set_logical_main_grads_to_none = getattr(
+                    self.module,
+                    "set_mxfp8_expert_weight_main_grads_to_none",
+                    None,
+                )
+            if set_logical_main_grads_to_none is not None:
+                set_logical_main_grads_to_none()
         self._grad_views_need_rebind = True
         self._forwards_since_finalize = 0
 

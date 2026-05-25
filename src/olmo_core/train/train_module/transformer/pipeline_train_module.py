@@ -157,6 +157,7 @@ class TransformerPipelineTrainModule(TrainModule):
         self.pp_prev_rank = (self.pp_group_rank - 1) % self.pp_group_size
         self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
         self.pp_final_stage_rank = self._pp_config.final_stage_rank()
+        pp_p2p_group = pp_config.build_p2p_process_group(self.world_mesh)
 
         # Capture num_flops_per_token from the full unsplit model before split_model deepcopies
         # and drops layers. Under PP each rank only holds its pipeline stage's layers, so querying
@@ -170,6 +171,7 @@ class TransformerPipelineTrainModule(TrainModule):
             pp_mesh=self.pp_mesh,
             device=self.device,
             use_ddp=(self.dp_world_size > 1 and dp_config is not None and dp_config.name == "ddp"),
+            p2p_group=pp_p2p_group,
         )
         self._pp_stages = stages
         log.info(
@@ -329,6 +331,7 @@ class TransformerPipelineTrainModule(TrainModule):
             pp_mesh=pp_mesh,
             schedule_name=self._pp_config.schedule,
             num_microbatches=num_microbatches,
+            forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
         )
 
     def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:

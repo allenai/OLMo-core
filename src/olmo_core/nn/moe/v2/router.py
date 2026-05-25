@@ -163,9 +163,10 @@ class MoERouterV2(nn.Module):
         else:
             self.register_buffer("score_bias", None)
 
-        # NOTE: we don't use buffers for t hese because we don't want FSDP to manage them, and we
-        # don't use a BufferCache because `torch.compile()` doesn't handle that well when we're modifying
-        # values in the cache.
+        # NOTE: historical FSDP/composable-DDP workaround. These mutable metric
+        # tensors are hidden so wrappers do not register/manage/move/reduce them
+        # as buffers. MultiGroupDDP may no longer require all of this, but
+        # torch.compile() still dislikes BufferCache-style mutation here.
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=init_device)
         )

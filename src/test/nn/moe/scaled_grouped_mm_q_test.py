@@ -2,16 +2,16 @@ import torch
 import torch.nn.functional as F
 
 import olmo_core.kernels.scaled_grouped_mm as scaled_grouped_mm_module
+from olmo_core.kernels.mxfp8_utils import dequantize_rows_from_mxfp8, quantize_rows_to_mxfp8
 from olmo_core.kernels.mxfp8_utils import (
-    dequantize_rows_from_mxfp8,
     quantize_grouped_2d_to_mxfp8_blocked,
+    quantize_grouped_2d_to_mxfp8_blocked_fused,
     quantize_grouped_weight_3d_to_mxfp8_blocked,
-    quantize_rows_to_mxfp8,
 )
+from olmo_core.kernels.scaled_grouped_mm import scaled_grouped_mm_q, scaled_grouped_mm_q_fp8_weight
 from olmo_core.kernels.scaled_grouped_mm import (
     ScaledGroupedMMPrequantizedRHS,
     prequantize_scaled_grouped_mm_rhs,
-    scaled_grouped_mm_q,
 )
 
 
@@ -35,6 +35,47 @@ def _stub_forward(
 ) -> torch.Tensor:
     del use_fast_accum, prequantized_lhs, prequantized_rhs
     return F.grouped_mm(mat_a, mat_b, offs=offs)
+
+
+def _stub_forward_prequantized_rhs(
+    mat_a: torch.Tensor,
+    prequantized_rhs: ScaledGroupedMMPrequantizedRHS,
+    offs: torch.Tensor,
+    *,
+    use_fast_accum: bool,
+    prequantized_lhs=None,
+) -> torch.Tensor:
+    del offs, use_fast_accum, prequantized_lhs
+    return torch.zeros(
+        (mat_a.shape[0], prequantized_rhs.mat_b_shape[-1]),
+        dtype=mat_a.dtype,
+        device=mat_a.device,
+    )
+
+
+def _fake_prequantized_rhs(
+    shape: tuple[int, int, int],
+    *,
+    device: torch.device | str = "cpu",
+) -> ScaledGroupedMMPrequantizedRHS:
+    return ScaledGroupedMMPrequantizedRHS(
+        mat_b_q=torch.empty(shape, dtype=torch.float8_e4m3fn, device=device),
+        scale_b=torch.empty((1,), dtype=torch.float8_e8m0fnu, device=device),
+        mat_b_shape=shape,
+        mat_b_version=-1,
+    )
+
+
+class _WgradSink:
+    def __init__(self):
+        self.grad_bf16 = None
+
+    def accumulate_wgrad(self, grad: torch.Tensor) -> None:
+        grad_bf16 = grad.detach().to(torch.bfloat16)
+        if self.grad_bf16 is None:
+            self.grad_bf16 = grad_bf16.clone()
+        else:
+            self.grad_bf16.add_(grad_bf16)
 
 
 def test_mxfp8_row_quant_dequant_roundtrip():
@@ -110,6 +151,219 @@ def test_scaled_grouped_mm_q_backward_matches_grouped_mm_reference(monkeypatch):
     torch.testing.assert_close(grad_b, grad_b_ref)
 
 
+def test_scaled_grouped_mm_q_fp8_weight_returns_grad_to_anchor(monkeypatch):
+    monkeypatch.setattr(
+        scaled_grouped_mm_module,
+        "_forward_scaled_grouped_mm_mxfp8_prequantized_rhs",
+        _stub_forward_prequantized_rhs,
+    )
+
+    a, b, offs = _build_inputs()
+    a = a.detach()
+    b = b.detach().requires_grad_(True)
+    rhs = _fake_prequantized_rhs(tuple(b.shape))
+    rhs_t = _fake_prequantized_rhs(tuple(b.transpose(-2, -1).shape))
+
+    out = scaled_grouped_mm_q_fp8_weight(
+        a,
+        b,
+        offs=offs,
+        prequantized_rhs=rhs,
+        prequantized_rhs_for_dgrad=rhs_t,
+    )
+    grad_out = torch.ones_like(out)
+    (grad_b,) = torch.autograd.grad(out, (b,), grad_outputs=grad_out)
+
+    grad_b_ref = F.grouped_mm(grad_out.transpose(-2, -1), a, offs=offs).transpose(-2, -1)
+    torch.testing.assert_close(grad_b, grad_b_ref)
+
+
+def test_scaled_grouped_mm_q_fp8_weight_accumulates_wgrad_sink(monkeypatch):
+    monkeypatch.setattr(
+        scaled_grouped_mm_module,
+        "_forward_scaled_grouped_mm_mxfp8_prequantized_rhs",
+        _stub_forward_prequantized_rhs,
+    )
+
+    a, b, offs = _build_inputs()
+    a = a.detach()
+    b = b.detach().requires_grad_(True)
+    rhs = _fake_prequantized_rhs(tuple(b.shape))
+    rhs_t = _fake_prequantized_rhs(tuple(b.transpose(-2, -1).shape))
+    sink = _WgradSink()
+
+    out = scaled_grouped_mm_q_fp8_weight(
+        a,
+        b,
+        offs=offs,
+        prequantized_rhs=rhs,
+        prequantized_rhs_for_dgrad=rhs_t,
+        wgrad_sink=sink,
+    )
+    grad_out = torch.ones_like(out)
+    (grad_b,) = torch.autograd.grad(out, (b,), grad_outputs=grad_out)
+
+    assert sink.grad_bf16 is not None
+    torch.testing.assert_close(sink.grad_bf16, grad_b.to(torch.bfloat16))
+
+
+def test_scaled_grouped_mm_q_fp8_weight_uses_prequantized_lhs_for_wgrad(monkeypatch):
+    monkeypatch.setattr(
+        scaled_grouped_mm_module,
+        "_forward_scaled_grouped_mm_mxfp8_prequantized_rhs",
+        _stub_forward_prequantized_rhs,
+    )
+
+    torch.manual_seed(123)
+    offs = torch.tensor([3, 5, 9], dtype=torch.int32)
+    mat_a_real = torch.randn(int(offs[-1].item()), 512, dtype=torch.float32)
+    mat_a_placeholder = torch.zeros_like(mat_a_real)
+    anchor = torch.randn(offs.numel(), 512, 512, dtype=torch.float32, requires_grad=True)
+    mat_a_q, mat_a_s = quantize_rows_to_mxfp8(mat_a_real, block_size=32)
+    preq_lhs = scaled_grouped_mm_module.ScaledGroupedMMPrequantizedLHS(
+        mat_a_q=mat_a_q,
+        scale_a=mat_a_s,
+        mat_a_shape=tuple(mat_a_placeholder.shape),
+        scales_are_blocked=False,
+    )
+    rhs = _fake_prequantized_rhs(tuple(anchor.shape))
+    rhs_t = _fake_prequantized_rhs(tuple(anchor.transpose(-2, -1).shape))
+    sink = _WgradSink()
+
+    captured = {}
+
+    def _fake_grouped_mm(mat_a: torch.Tensor, mat_b: torch.Tensor, *, offs: torch.Tensor):
+        if mat_b.ndim == 2 and tuple(mat_b.shape) == tuple(mat_a_placeholder.shape):
+            captured["lhs_for_wgrad"] = mat_b.clone()
+            return torch.zeros((offs.numel(), mat_a.shape[0], mat_b.shape[-1]), dtype=mat_a.dtype)
+        return torch.zeros((mat_a.shape[0], mat_b.shape[-1]), dtype=mat_a.dtype)
+
+    monkeypatch.setattr(F, "grouped_mm", _fake_grouped_mm)
+
+    out = scaled_grouped_mm_q_fp8_weight(
+        mat_a_placeholder,
+        anchor,
+        offs=offs,
+        prequantized_lhs=preq_lhs,
+        prequantized_rhs=rhs,
+        prequantized_rhs_for_dgrad=rhs_t,
+        wgrad_sink=sink,
+    )
+    (grad_anchor,) = torch.autograd.grad(out.sum(), (anchor,))
+
+    assert grad_anchor is not None
+    assert "lhs_for_wgrad" in captured
+    mat_a_expected = dequantize_rows_from_mxfp8(
+        mat_a_q,
+        mat_a_s,
+        block_size=32,
+        out_dtype=out.dtype,
+    )
+    torch.testing.assert_close(captured["lhs_for_wgrad"], mat_a_expected)
+
+
+def test_scaled_grouped_mm_q_fp8_weight_accumulates_sink_for_detached_anchor(monkeypatch):
+    if not torch.cuda.is_available():
+        return
+
+    monkeypatch.setattr(
+        scaled_grouped_mm_module,
+        "_forward_scaled_grouped_mm_mxfp8_prequantized_rhs",
+        _stub_forward_prequantized_rhs,
+    )
+
+    a, b, offs = _build_inputs()
+    a = a.cuda().detach().requires_grad_(True)
+    anchor = b.cuda().detach()
+    offs = offs.cuda()
+    rhs = _fake_prequantized_rhs(tuple(anchor.shape), device=anchor.device)
+    rhs_t = _fake_prequantized_rhs(tuple(anchor.transpose(-2, -1).shape), device=anchor.device)
+    sink = _WgradSink()
+
+    out = scaled_grouped_mm_q_fp8_weight(
+        a,
+        anchor,
+        offs=offs,
+        prequantized_rhs=rhs,
+        prequantized_rhs_for_dgrad=rhs_t,
+        wgrad_sink=sink,
+    )
+    grad_out = torch.ones_like(out)
+    (grad_a,) = torch.autograd.grad(out, (a,), grad_outputs=grad_out)
+
+    assert grad_a is not None
+    assert sink.grad_bf16 is not None
+    grad_anchor_ref = F.grouped_mm(grad_out.transpose(-2, -1), a, offs=offs).transpose(-2, -1)
+    torch.testing.assert_close(sink.grad_bf16, grad_anchor_ref.to(torch.bfloat16))
+
+
+def test_scaled_grouped_mm_q_fp8_weight_transposes_wgrad_sink(monkeypatch):
+    monkeypatch.setattr(
+        scaled_grouped_mm_module,
+        "_forward_scaled_grouped_mm_mxfp8_prequantized_rhs",
+        _stub_forward_prequantized_rhs,
+    )
+
+    a, b, offs = _build_inputs()
+    a = a.detach()
+    anchor = b.detach().transpose(-2, -1).contiguous().requires_grad_(True)
+    rhs = _fake_prequantized_rhs(tuple(anchor.shape))
+    rhs_t = _fake_prequantized_rhs(tuple(anchor.transpose(-2, -1).shape))
+    sink = _WgradSink()
+
+    out = scaled_grouped_mm_q_fp8_weight(
+        a,
+        anchor,
+        offs=offs,
+        prequantized_rhs=rhs,
+        prequantized_rhs_for_dgrad=rhs_t,
+        wgrad_sink=sink,
+        wgrad_sink_transpose_last2=True,
+    )
+    grad_out = torch.ones_like(out)
+    (grad_anchor,) = torch.autograd.grad(out, (anchor,), grad_outputs=grad_out)
+
+    assert sink.grad_bf16 is not None
+    torch.testing.assert_close(
+        sink.grad_bf16,
+        grad_anchor.transpose(-2, -1).contiguous().to(torch.bfloat16),
+    )
+
+
+def test_scaled_grouped_mm_q_fp8_weight_squeezes_wgrad_sink(monkeypatch):
+    monkeypatch.setattr(
+        scaled_grouped_mm_module,
+        "_forward_scaled_grouped_mm_mxfp8_prequantized_rhs",
+        _stub_forward_prequantized_rhs,
+    )
+
+    torch.manual_seed(123)
+    offs = torch.tensor([4], dtype=torch.int32)
+    a = torch.randn(4, 512, dtype=torch.float32)
+    anchor = torch.randn(1, 512, 512, dtype=torch.float32, requires_grad=True)
+    rhs = _fake_prequantized_rhs(tuple(anchor.shape))
+    rhs_t = _fake_prequantized_rhs(tuple(anchor.transpose(-2, -1).shape))
+    sink = _WgradSink()
+
+    out = scaled_grouped_mm_q_fp8_weight(
+        a,
+        anchor,
+        offs=offs,
+        prequantized_rhs=rhs,
+        prequantized_rhs_for_dgrad=rhs_t,
+        wgrad_sink=sink,
+        wgrad_sink_squeeze_first_dim=True,
+    )
+    grad_out = torch.ones_like(out)
+    (grad_anchor,) = torch.autograd.grad(out, (anchor,), grad_outputs=grad_out)
+
+    assert sink.grad_bf16 is not None
+    torch.testing.assert_close(
+        sink.grad_bf16,
+        grad_anchor.squeeze(0).contiguous().to(torch.bfloat16),
+    )
+
+
 def test_scaled_grouped_mm_q_input_grad_out_alias(monkeypatch):
     monkeypatch.setattr(scaled_grouped_mm_module, "_forward_scaled_grouped_mm_mxfp8", _stub_forward)
 
@@ -180,6 +434,22 @@ def test_quantize_grouped_2d_to_mxfp8_blocked_keeps_capacity_shape():
     assert scales_blocked.dtype == torch.float8_e8m0fnu
     assert scales_blocked.shape[1] == x.shape[1] // 32
     assert scales_blocked.shape[0] >= x.shape[0]
+
+
+def test_quantize_grouped_2d_to_mxfp8_blocked_fused_matches_two_stage_cuda():
+    if not torch.cuda.is_available():
+        return
+    x = torch.randn(64, 512, device="cuda", dtype=torch.bfloat16)
+    # Active rows are 41, but input has capacity 64.
+    offs = torch.tensor([11, 17, 41], device="cuda", dtype=torch.int32)
+
+    q_ref, scales_ref = quantize_grouped_2d_to_mxfp8_blocked(x, offs)
+    q_fused, scales_fused = quantize_grouped_2d_to_mxfp8_blocked_fused(x, offs)
+
+    assert q_fused.shape == q_ref.shape
+    assert scales_fused.shape == scales_ref.shape
+    assert torch.equal(q_fused.view(torch.uint8), q_ref.view(torch.uint8))
+    assert torch.equal(scales_fused.view(torch.uint8), scales_ref.view(torch.uint8))
 
 
 def test_quantize_grouped_weight_3d_to_mxfp8_blocked_returns_col_major_layout():
@@ -286,9 +556,7 @@ def test_scaled_grouped_mm_q_uses_prequantized_rhs(monkeypatch):
     def _forbidden_rhs_quant(_mat_b, *, block_size: int = 32):
         del block_size
         called["rhs_quant"] += 1
-        raise AssertionError(
-            "RHS quantization should be bypassed when prequantized_rhs is provided"
-        )
+        raise AssertionError("RHS quantization should be bypassed when prequantized_rhs is provided")
 
     monkeypatch.setattr(
         scaled_grouped_mm_module,
@@ -375,7 +643,61 @@ def test_scaled_grouped_mm_q_backward_uses_prequantized_lhs_when_mat_a_not_saved
     assert grad_b is not None
 
     assert "lhs_for_grad_b" in captured
-    mat_a_expected = dequantize_rows_from_mxfp8(
-        mat_a_q, mat_a_s, block_size=32, out_dtype=out.dtype
+    mat_a_expected = dequantize_rows_from_mxfp8(mat_a_q, mat_a_s, block_size=32, out_dtype=out.dtype)
+    torch.testing.assert_close(captured["lhs_for_grad_b"], mat_a_expected)
+
+
+def test_scaled_grouped_mm_q_backward_reconstructs_full_prequantized_lhs_capacity(monkeypatch):
+    torch.manual_seed(123)
+    offs = torch.tensor([3, 5, 9], dtype=torch.int32)
+    capacity_rows = 12
+    mat_a_real = torch.randn(capacity_rows, 512, dtype=torch.float32)
+    mat_a_bad = torch.zeros_like(mat_a_real)
+    mat_b = torch.randn(offs.numel(), 512, 512, dtype=torch.float32, requires_grad=True)
+    mat_a_q, mat_a_s = quantize_rows_to_mxfp8(mat_a_real, block_size=32)
+    preq_lhs = scaled_grouped_mm_module.ScaledGroupedMMPrequantizedLHS(
+        mat_a_q=mat_a_q,
+        scale_a=mat_a_s,
+        mat_a_shape=tuple(mat_a_bad.shape),
+        scales_are_blocked=False,
     )
+
+    def _stub_forward(
+        mat_a: torch.Tensor,
+        mat_b: torch.Tensor,
+        offs: torch.Tensor,
+        *,
+        use_fast_accum: bool,
+        prequantized_lhs=None,
+        prequantized_rhs=None,
+    ) -> torch.Tensor:
+        del use_fast_accum, prequantized_lhs, prequantized_rhs
+        return F.grouped_mm(mat_a, mat_b, offs=offs)
+
+    monkeypatch.setattr(scaled_grouped_mm_module, "_forward_scaled_grouped_mm_mxfp8", _stub_forward)
+
+    captured = {}
+
+    def _fake_grouped_mm(mat_a: torch.Tensor, mat_b: torch.Tensor, *, offs: torch.Tensor):
+        # Backward grad_b path: mat_b is reconstructed lhs (rank-2 [capacity, K]).
+        if mat_b.ndim == 2 and tuple(mat_b.shape) == tuple(mat_a_bad.shape):
+            captured["lhs_for_grad_b"] = mat_b.clone()
+            return torch.zeros((offs.numel(), mat_a.shape[0], mat_b.shape[-1]), dtype=mat_a.dtype)
+        return torch.zeros((mat_a.shape[0], mat_b.shape[-1]), dtype=mat_a.dtype)
+
+    monkeypatch.setattr(F, "grouped_mm", _fake_grouped_mm)
+
+    out = scaled_grouped_mm_q(
+        mat_a_bad,
+        mat_b,
+        offs=offs,
+        prequantized_lhs=preq_lhs,
+    )
+    loss = out.sum()
+    (grad_b,) = torch.autograd.grad(loss, (mat_b,))
+    assert grad_b is not None
+
+    assert "lhs_for_grad_b" in captured
+    assert captured["lhs_for_grad_b"].shape[0] == capacity_rows
+    mat_a_expected = dequantize_rows_from_mxfp8(mat_a_q, mat_a_s, block_size=32, out_dtype=out.dtype)
     torch.testing.assert_close(captured["lhs_for_grad_b"], mat_a_expected)

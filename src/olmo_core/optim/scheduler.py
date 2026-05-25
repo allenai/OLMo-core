@@ -1,7 +1,7 @@
 import logging
 import warnings
 from abc import ABCMeta, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from math import cos, pi, sqrt
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
@@ -227,7 +227,6 @@ class WSD(Scheduler):
             return _linear_decay(initial_lr, t_max - current, decay, self.decay_min_lr)
 
         return initial_lr
-
 
 @Scheduler.register("power_lr")
 @dataclass
@@ -597,11 +596,14 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
         else:
             decay = self.decay
 
+        # linear decay starts after the cosine schedule is *COMPLETE*
         if current >= t_max - decay:
-            final_cosine_lr = super().get_lr(initial_lr, t_max - decay, t_max)
+            # final_cosine_lr = super().get_lr(initial_lr, t_max - decay, t_max)
+            final_cosine_lr = initial_lr * self.alpha_f
             return _linear_decay(final_cosine_lr, t_max - current, decay, self.decay_min_lr)
 
-        return super().get_lr(initial_lr, current, t_max)
+        # return super().get_lr(initial_lr, current, t_max)
+        return super().get_lr(initial_lr, current, t_max - decay)
 
 
 class ComposableSchedulerStageType(StrEnum):
@@ -687,6 +689,9 @@ class OverrideDecay(Config):
             raise OLMoConfigurationError("'end_lr_fraction' must be >= 0 for override decay.")
 
 
+ComposableSchedulerMonkeyPatchDecay = OverrideDecay
+
+
 @Scheduler.register("composable")
 @dataclass
 class ComposableScheduler(Scheduler):
@@ -704,11 +709,19 @@ class ComposableScheduler(Scheduler):
 
     stages: List[ComposableSchedulerStage] = field(default_factory=list)
     override_decay: Optional[OverrideDecay] = None
+    monkey_patch_decay: InitVar[Optional[OverrideDecay]] = None
 
     _warned_t_max_ignored: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self, *args):
-        del args
+        monkey_patch_decay = args[-1] if args else None
+        if monkey_patch_decay is not None:
+            if self.override_decay is not None:
+                raise OLMoConfigurationError(
+                    "Specify at most one of 'override_decay' or 'monkey_patch_decay'."
+                )
+            self.override_decay = monkey_patch_decay
+
         if len(self.stages) == 0:
             raise OLMoConfigurationError("'stages' must be specified and non-empty.")
 
