@@ -34,6 +34,7 @@ from ..rope import (
 )
 from ..utils import get_tp_wrappers
 from . import flash_attn_api
+from .flash_attn_api import dispatch_flash_attn, dispatch_ring_flash_attn
 from .backend import (
     AttentionBackend,
     AttentionBackendName,
@@ -86,6 +87,24 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """
+    Expand k/v heads from ``n_kv_heads`` to ``n_kv_heads * n_rep`` along dim=2 by repeating
+    each head ``n_rep`` times. Used to enable GQA with PyTorch's SDPA (which expects q/k/v to
+    have matching head counts).
+
+    Input shape: ``(batch, seq_len, n_kv_heads, head_dim)``
+    Output shape: ``(batch, seq_len, n_kv_heads * n_rep, head_dim)``
+    """
+    if n_rep == 1:
+        return hidden_states
+    batch, slen, n_kv_heads, head_dim = hidden_states.shape
+    hidden_states = hidden_states[:, :, :, None, :].expand(
+        batch, slen, n_kv_heads, n_rep, head_dim
+    )
+    return hidden_states.reshape(batch, slen, n_kv_heads * n_rep, head_dim)
 
 
 class GateGranularity(StrEnum):
@@ -1008,6 +1027,7 @@ class NormalizedAttention(Attention):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         start_pos: Optional[int] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
 
