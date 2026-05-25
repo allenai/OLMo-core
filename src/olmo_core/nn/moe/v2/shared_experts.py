@@ -82,7 +82,7 @@ class SharedExperts(nn.Module):
         self.hidden_size = hidden_size
         self.num_experts = num_experts
 
-        assert bias == False, "Shared experts do not support bias for now."
+        assert not bias, "Shared experts do not support bias for now."
 
         E, D, H = num_experts, d_model, hidden_size
 
@@ -162,7 +162,7 @@ class SharedExperts(nn.Module):
         Split the forward pass into two parts for better overlap in EP.
         """
         self._raise_if_fp8_anchor_storage_released()
-        E, H = self.num_experts, self.hidden_size
+        E = self.num_experts
         B, S, D = xshape
         # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
 

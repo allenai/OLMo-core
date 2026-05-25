@@ -1,4 +1,6 @@
 import logging
+import os
+import re
 from collections import Counter
 from dataclasses import dataclass
 from functools import cached_property
@@ -6,9 +8,11 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from matplotlib.patches import Rectangle
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
 
@@ -287,13 +291,6 @@ class PipelineParallelConfig(Config):
             return stage_v_pairs[pp_rank]
         else:
             raise NotImplementedError(style)
-
-
-import os
-import re
-
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
 
 
 def _parse_cell(op: Any):

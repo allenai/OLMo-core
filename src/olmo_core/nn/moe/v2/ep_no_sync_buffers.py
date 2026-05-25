@@ -319,7 +319,7 @@ class _NoSyncSymmLeasePool:
             if slot_idx in self._in_use_slots:
                 continue
             self._ensure_slot(slot_idx, specs)
-        bytes_per_slot = self._specs_bytes(specs)
+        # bytes_per_slot = self._specs_bytes(specs)
         # self._debug_print(
         #     f"prewarm requested_slots={num_slots} slots={len(self._slots)} "
         #     f"free={len(self._free_slots)} in_use={len(self._in_use_slots)} "

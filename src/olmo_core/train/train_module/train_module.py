@@ -19,6 +19,7 @@ from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
 from olmo_core.utils import move_to_device
 
 from ..common import MetricMergeStrategy, ReduceType, get_inputs_for_loss
+from .config import TrainModuleConfig  # noqa: F401  (re-export)
 
 if TYPE_CHECKING:
     from ..trainer import Trainer
@@ -68,9 +69,6 @@ class EvalBatchSpec:
             raise OLMoConfigurationError(
                 "'max_sequence_length' must be specified when 'fixed_sequence_length=True'"
             )
-
-
-from .config import TrainModuleConfig  # noqa: F401  (re-export)
 
 
 class TrainModule(Stateful, metaclass=ABCMeta):

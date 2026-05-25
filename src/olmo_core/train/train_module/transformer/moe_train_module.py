@@ -23,7 +23,7 @@ import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed import ProcessGroup
 from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
-from torch.distributed.checkpoint.metadata import Metadata
+from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadata
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import FSDPModule
 from torch.distributed.pipelining import PipelineStage
@@ -97,9 +97,6 @@ def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
 
 class FlatSavePlanner(DefaultSavePlanner):
     pass
-
-
-from torch.distributed.checkpoint.metadata import TensorStorageMetadata
 
 
 class MoEV2TransformerTrainModule(TrainModule):
@@ -1445,10 +1442,10 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
+        # NOTE: autocast_precision is deleted; ExitStack kept for future re-introduction.
+        with contextlib.ExitStack():
             # if self.autocast_precision is not None:
             #     stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
-            # NOTE: autocast_precision is deleted
             yield
 
     def _clip_grad_norm(

@@ -1,23 +1,20 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeVar, cast
 
 import torch
 import torch.nn as nn
 import torch.optim.optimizer
 from torch.distributed.optim import ZeroRedundancyOptimizer
 
-from .config import OptimConfig
+from ..utils import move_to_device
+from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig
 
 log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # ZeRO-1 sharded Skip-Step AdamW
 # --------------------------------------------------------------------------- #
-from typing import TYPE_CHECKING, Any, Dict, List, TypeVar, cast
-
-from ..utils import move_to_device
-from .config import INITIAL_LR_FIELD, LR_FIELD
 
 Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 

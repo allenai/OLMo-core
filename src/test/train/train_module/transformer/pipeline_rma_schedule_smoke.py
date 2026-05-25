@@ -79,10 +79,10 @@ def main() -> None:
     if rank == 0:
         input_ids = torch.arange(16, device=device, dtype=torch.long).view(4, 4)
         print(f"[rank {rank}] starting schedule step", flush=True)
-        outputs = schedule.step(input_ids)
+        schedule.step(input_ids)
     else:
         print(f"[rank {rank}] starting schedule step", flush=True)
-        outputs = schedule.step()
+        schedule.step()
     print(f"[rank {rank}] schedule step complete", flush=True)
 
     for stage in stages:

@@ -453,7 +453,7 @@ class RoutedExperts(nn.Module):
         self.d_model = d_model
         self.hidden_size = hidden_size
         self.num_experts = num_experts
-        assert bias == False, "Routed experts do not support bias for now."
+        assert not bias, "Routed experts do not support bias for now."
         self.w_up_gate = nn.Parameter(
             torch.empty(
                 num_experts, 2 * hidden_size, d_model, dtype=dtype.as_pt(), device=init_device

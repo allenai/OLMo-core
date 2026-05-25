@@ -32,6 +32,7 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelWrappingStrategy,
 )
 from olmo_core.optim import OptimConfig
+from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train.train_module.config import TrainModuleConfig
 
@@ -410,9 +411,6 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
     def __post_init__(self):
         if self.pp_config is None:
             raise OLMoConfigurationError("'pp_config' is required")
-
-
-from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
 
 
 @dataclass

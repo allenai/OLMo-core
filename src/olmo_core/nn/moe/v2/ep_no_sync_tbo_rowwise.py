@@ -165,7 +165,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
     assert (
-        use_torch_grouped_mm() == True
+        use_torch_grouped_mm()
     ), "EP no-sync implementation requires torch.grouped_mm support"
     assert (
         not requires_host_side_split_sizes()

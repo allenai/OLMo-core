@@ -602,11 +602,11 @@ class CustomScheduleInterleaved1F1B:
                 and next_action.need_reload
                 and self.use_gpu_activation_offload
             ):
-                debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
+                # debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
                 _ = self.gpu_activation_offloader.async_reload(
                     f"{next_action.stage_index}F{next_action.microbatch_index}"
                 )  # in saving, using "F" group for both F and B
-                debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
+                # debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
 
             keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]] = []
             if action is not None:
@@ -637,9 +637,9 @@ class CustomScheduleInterleaved1F1B:
                             )
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
-                            debug_mem_before_offload = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_before_offload = torch.cuda.memory_allocated() / (1024**3)
                             _ = self.gpu_activation_offloader.async_offload(offload_group)
-                            debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
                     # self._maybe_compute_loss(stage, output, target_mbs, mb_index)
                     self._maybe_local_forward_handoff(stage, mb_index, stage_index_to_stage)
                     keyed_ops.extend(
@@ -681,11 +681,11 @@ class CustomScheduleInterleaved1F1B:
                         #     stage.scale_grads(grad_scale_factor)
 
                         if action.need_reload and self.use_gpu_activation_offload:
-                            debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
                             self.gpu_activation_offloader.manual_release_group(
                                 f"{action.stage_index}F{action.microbatch_index}"
                             )
-                            debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
                         self._maybe_local_backward_handoff(stage, mb_index, stage_index_to_stage)
                         keyed_ops.extend(
                             (
@@ -849,7 +849,7 @@ class CustomScheduleInterleaved1F1B:
         # cooldown_ops should encompass the remaining backwards
         cooldown_ops = microbatch_ops - fwd_bwd_ops
         # total ops encompass both forward and backward ops
-        total_ops = warmup_ops + fwd_bwd_ops + cooldown_ops
+        # total_ops = warmup_ops + fwd_bwd_ops + cooldown_ops
         # warmup_ops + fwd_bwd_ops * 2 + cooldown_ops == microbatch_ops * 2
 
         # Calculates the stage index based on step and pp_group_size
@@ -1038,11 +1038,11 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                 and next_action.need_reload
                 and self.use_gpu_activation_offload
             ):
-                debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
+                # debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
                 _ = self.gpu_activation_offloader.async_reload(
                     f"{next_action.stage_index}F{next_action.microbatch_index}"
                 )  # in saving, using "F" group for both F and B
-                debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
+                # debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
 
             keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]] = []
             if action is not None:
@@ -1073,9 +1073,9 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                             )
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
-                            debug_mem_before_offload = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_before_offload = torch.cuda.memory_allocated() / (1024**3)
                             _ = self.gpu_activation_offloader.async_offload(offload_group)
-                            debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
                     # self._maybe_compute_loss(stage, output, target_mbs, mb_index)
                     self._maybe_local_forward_handoff(stage, mb_index, stage_index_to_stage)
                     keyed_ops.extend(
@@ -1117,11 +1117,11 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                         #     stage.scale_grads(grad_scale_factor)
 
                         if action.need_reload and self.use_gpu_activation_offload:
-                            debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
                             self.gpu_activation_offloader.manual_release_group(
                                 f"{action.stage_index}F{action.microbatch_index}"
                             )
-                            debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
+                            # debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
                         self._maybe_local_backward_handoff(stage, mb_index, stage_index_to_stage)
                         keyed_ops.extend(
                             (

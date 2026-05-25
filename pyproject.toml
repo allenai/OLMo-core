@@ -144,6 +144,9 @@ exclude = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]
+# Training scripts intentionally set env vars (e.g. NVTX_DISABLE) before
+# importing olmo_core, so module-level imports follow setup code.
+"src/scripts/train/*.py" = ["E402"]
 
 [tool.pyright]
 reportPrivateImportUsage = false

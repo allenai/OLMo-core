@@ -34,7 +34,6 @@ from ..rope import (
 )
 from ..utils import get_tp_wrappers
 from . import flash_attn_api
-from .flash_attn_api import dispatch_flash_attn, dispatch_ring_flash_attn
 from .backend import (
     AttentionBackend,
     AttentionBackendName,
@@ -44,6 +43,7 @@ from .backend import (
     TEAttentionBackend,
     TorchAttentionBackend,
 )
+from .flash_attn_api import dispatch_flash_attn, dispatch_ring_flash_attn
 from .ring import (
     RingAttentionLlama3LoadBalancer,
     RingAttentionLoadBalancer,
@@ -101,9 +101,7 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     if n_rep == 1:
         return hidden_states
     batch, slen, n_kv_heads, head_dim = hidden_states.shape
-    hidden_states = hidden_states[:, :, :, None, :].expand(
-        batch, slen, n_kv_heads, n_rep, head_dim
-    )
+    hidden_states = hidden_states[:, :, :, None, :].expand(batch, slen, n_kv_heads, n_rep, head_dim)
     return hidden_states.reshape(batch, slen, n_kv_heads * n_rep, head_dim)
 
 

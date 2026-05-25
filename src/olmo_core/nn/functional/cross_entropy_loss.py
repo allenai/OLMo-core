@@ -124,7 +124,9 @@ def fused_linear_cross_entropy_loss(
 HAS_CCE = False
 try:
     from cut_cross_entropy import linear_cross_entropy
-    from cut_cross_entropy.utils import compute_z_loss as cce_compute_z_loss  # noqa: F401
+    from cut_cross_entropy.utils import (  # noqa: F401
+        compute_z_loss as cce_compute_z_loss,
+    )
 
     HAS_CCE = True
 except ImportError:

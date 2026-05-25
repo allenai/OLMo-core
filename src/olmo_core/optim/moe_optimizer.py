@@ -2485,11 +2485,6 @@ class MoEFusedV2Optimizer:
         raise NotImplementedError()
 
 
-from typing import List, Optional
-
-import torch
-
-
 @torch._dynamo.disable()
 def coalesced_all_gather_flat(
     input_tensors: List[torch.Tensor],

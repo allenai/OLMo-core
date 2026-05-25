@@ -17,7 +17,12 @@ import torch
 import torch.distributed as dist
 from torch.distributed._composable.replicate import replicate
 from torch.distributed.device_mesh import DeviceMesh
-from torch.utils.checkpoint import checkpoint
+from torch.utils.checkpoint import (
+    CheckpointPolicy,
+    SelectiveCheckpointContext,
+    checkpoint,
+    noop_context_fn,
+)
 
 import olmo_core.nn.transformer
 from olmo_core.distributed.parallel import get_pp_mesh
@@ -54,8 +59,6 @@ if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 log = logging.getLogger(__name__)
 
-from torch.utils.checkpoint import CheckpointPolicy, noop_context_fn
-
 # aten = torch.ops.aten
 # c10d = torch.ops.c10d
 
@@ -71,7 +74,6 @@ try:
     should_save_ops.append(torch.ops.flash_attn._flash_attn_forward.default)
 except (AttributeError, RuntimeError):  # pragma: no cover - flash_attn unavailable
     pass
-from torch.utils.checkpoint import SelectiveCheckpointContext
 
 
 def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):
@@ -732,12 +734,12 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         :param device: The device the local copy of the model will be trained on.
         """
         device = device or self.device
-        params = list(self.parameters())
+        # params = list(self.parameters())
         # TODO(dtype): materialization currently relies on the same broad bf16
         # cast as apply_dp(); replace with an explicit precision policy.
         self.to(torch.bfloat16)
         self.to_empty(device=device)
-        new_params = list(self.parameters())
+        # new_params = list(self.parameters())
         for name, module in self.named_modules():
             if hasattr(module, "reset_parameters"):  # TODO: what's the point of this
                 module.reset_parameters()  # type: ignore
@@ -849,9 +851,9 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             )
         # get one next int from the generator
         # if everything goes right, all ranks should have the same next int
-        valid_test = (
-            torch.randint(0, 1000000, (1,), generator=generator, device=device).cpu().item()
-        )  # attach debugger to check
+        # valid_test = (
+        #     torch.randint(0, 1000000, (1,), generator=generator, device=device).cpu().item()
+        # )  # attach debugger to check
 
         # call lazy_init to make sure params has the _mp_param and _fp_param fields
         # replicate.state(self).lazy_init()

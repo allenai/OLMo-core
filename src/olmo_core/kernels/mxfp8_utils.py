@@ -1092,10 +1092,12 @@ def _quantize_to_mxfp8_triton(
     else:
         scales_u8 = torch.empty((rows, cols // block_size), device=x.device, dtype=torch.uint8)
 
-    grid = lambda meta: (
-        triton.cdiv(rows, meta["BLOCK_M"]),
-        triton.cdiv(cols, meta["BLOCK_N"]),
-    )
+    def grid(meta):
+        return (
+            triton.cdiv(rows, meta["BLOCK_M"]),
+            triton.cdiv(cols, meta["BLOCK_N"]),
+        )
+
     _triton_mxfp8_quantize_dim0[grid](
         x,
         x.stride(0),
@@ -1610,10 +1612,12 @@ def dequantize_from_mxfp8(
         scales_contig = scales if scales.is_contiguous() else scales.contiguous()
         scales_u8 = scales_contig.view(torch.uint8)
         out_contig = out_tensor if out_tensor.is_contiguous() else out_tensor.contiguous()
-        grid = lambda meta: (
-            triton.cdiv(m, meta["BLOCK_M"]),
-            triton.cdiv(k, meta["BLOCK_N"]),
-        )
+        def grid(meta):
+            return (
+                triton.cdiv(m, meta["BLOCK_M"]),
+                triton.cdiv(k, meta["BLOCK_N"]),
+            )
+
         _triton_mxfp8_dequantize_dim0[grid](
             q_contig,
             q_contig.stride(0),
