@@ -1271,7 +1271,7 @@ class MoEFusedV2Optimizer:
     @torch.no_grad()
     @nvtx.annotate("MoEFusedV2Optimizer.step")
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
-        dbg_mem_before_cp1 = torch.cuda.memory_allocated() / 1024**3
+        # dbg_mem_before_cp1 = torch.cuda.memory_allocated() / 1024**3
         if getattr(self, "_use_reduce_scatter_grads", True):
             # Precondition: DDP model did not all-reduce grads, grads on dp ranks different now
             # the optimizer has sharded main param + states in fp32

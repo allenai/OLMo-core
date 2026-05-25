@@ -492,8 +492,9 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                     symm_mem.rendezvous(tensor, group=first_block.ep_pg)
                 self._ep_no_sync_dummy_symm_tensors.append(tensor)
 
-    def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
-        raise OLMoConfigurationError("Do not use `apply_ep`, use `apply_epdp` instead.")
+    # NOTE: shadowed by the real `apply_ep` defined below; kept commented for reference.
+    # def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+    #     raise OLMoConfigurationError("Do not use `apply_ep`, use `apply_epdp` instead.")
 
     def apply_compile(self):
         super().apply_compile()
