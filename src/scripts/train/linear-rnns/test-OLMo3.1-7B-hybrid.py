@@ -201,7 +201,7 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
         include_instance_filter=INSTANCE_FILTER,
-        beaker_workspace="ai2/akshita_default",  # TODO: change to cluster workspace
+        beaker_workspace="ai2/holmes-testing",
         use_hostname_constraints=True,
         num_execution_units=1,
     )
