@@ -1,4 +1,5 @@
 from .config import (
+    MoEV2TransformerTrainModuleConfig,
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerContextParallelConfig,
@@ -9,17 +10,15 @@ from .config import (
     TransformerPipelineTrainModuleConfig,
     TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
-    MoEV2TransformerTrainModuleConfig,
 )
-from .pipeline_train_module import TransformerPipelineTrainModule
-from .train_module import TransformerTrainModule
 from .moe_train_module import MoEV2TransformerTrainModule
-from .pipeline.pipeline_schedule import (
+from .pipeline.pipeline_schedule import (  # CustomSchedule1F1B,
     CustomPipelineStage,
-    # CustomSchedule1F1B,
     CustomSchedule1F1BV,
     CustomScheduleInterleaved1F1B,
 )
+from .pipeline_train_module import TransformerPipelineTrainModule
+from .train_module import TransformerTrainModule
 
 __all__ = [
     "TransformerTrainModule",
@@ -39,5 +38,5 @@ __all__ = [
     "CustomSchedule1F1BV",
     "CustomScheduleInterleaved1F1B",
     "MoEV2TransformerTrainModule",
-    "MoEV2TransformerTrainModuleConfig"
+    "MoEV2TransformerTrainModuleConfig",
 ]

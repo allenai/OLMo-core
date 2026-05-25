@@ -1,11 +1,13 @@
 import math
 from typing import TYPE_CHECKING, Optional, Union, cast
+
 import torch
 import torch.nn as nn
 from torch.distributed.tensor import DTensor
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import distribute_like, get_local_tensor
+
 
 def kaiming_fan_in_uniform_(
     tensor: torch.Tensor,
@@ -269,6 +271,7 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
     def init_moe_v2(
         self,
         b,
@@ -281,6 +284,7 @@ class InitMethod(StrEnum):
         ep_generator: Optional[torch.Generator] = None,
     ):
         from ..moe.v2.block import MoEFusedV2TransformerBlock
+
         b = cast(MoEFusedV2TransformerBlock, b)
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
@@ -323,7 +327,7 @@ class InitMethod(StrEnum):
                 std=std,
                 a=-3 * std,
                 b=3 * std,
-                generator=ep_generator, # might be sharded, use ep_generator
+                generator=ep_generator,  # might be sharded, use ep_generator
             )
             # _apply_init(
             #     kaiming_fan_in_uniform_,
@@ -338,7 +342,7 @@ class InitMethod(StrEnum):
                 std=std,
                 a=-3 * std,
                 b=3 * std,
-                generator=ep_generator, # might be sharded, use ep_generator
+                generator=ep_generator,  # might be sharded, use ep_generator
             )
             # assert b.routed_experts_router is not None
             # _apply_init(
@@ -362,7 +366,7 @@ class InitMethod(StrEnum):
             # _apply_init(
             #     kaiming_fan_in_uniform_,
             #     b.shared_experts.w_up_gate,
-            #     in_features=b.shared_experts.d_model, 
+            #     in_features=b.shared_experts.d_model,
             #     generator=generator,
             # )
             _apply_init(
@@ -377,6 +381,6 @@ class InitMethod(StrEnum):
             # _apply_init(
             #     kaiming_fan_in_uniform_,
             #     b.shared_experts.w_down,
-            #     in_features=b.shared_experts.hidden_size, 
+            #     in_features=b.shared_experts.hidden_size,
             #     generator=generator,
             # )

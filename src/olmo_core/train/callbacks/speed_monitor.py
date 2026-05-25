@@ -9,8 +9,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.utils import get_world_size
 
 from ..common import ReduceType
-from ..train_module import TransformerTrainModule
-from ..train_module import TransformerPipelineTrainModule
+from ..train_module import TransformerPipelineTrainModule, TransformerTrainModule
 from .callback import Callback
 
 log = logging.getLogger(__name__)
@@ -69,7 +68,7 @@ class SpeedMonitorCallback(Callback):
             return self.num_flops_per_token
         elif isinstance(self.trainer.train_module, TransformerTrainModule):
             return self.trainer.train_module.num_flops_per_token(seq_len)
-        else: # pipeline module
+        else:  # pipeline module
             return self.trainer.train_module.num_flops_per_token(seq_len)
 
     def pre_train(self):
@@ -79,7 +78,9 @@ class SpeedMonitorCallback(Callback):
             self._parallel_degree = get_world_size() // get_world_size(
                 self.trainer.dp_process_group
             )
-        from olmo_core.train.train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
+        from olmo_core.train.train_module.transformer.moe_train_module import (
+            MoEV2TransformerTrainModule,
+        )
 
         if self.num_params is None and isinstance(
             self.trainer.train_module, TransformerTrainModule
@@ -98,9 +99,11 @@ class SpeedMonitorCallback(Callback):
             device_name = torch.cuda.get_device_name(self.trainer.device)
 
             tm = self.trainer.train_module
-            using_half_precision = tm.autocast_precision == torch.bfloat16 or (
-                tm.dp_config is not None and tm.dp_config.param_dtype == DType.bfloat16
-            ) or isinstance(tm, MoEV2TransformerTrainModule) # MoE models use bfloat16 for expert weights and activations
+            using_half_precision = (
+                tm.autocast_precision == torch.bfloat16
+                or (tm.dp_config is not None and tm.dp_config.param_dtype == DType.bfloat16)
+                or isinstance(tm, MoEV2TransformerTrainModule)
+            )  # MoE models use bfloat16 for expert weights and activations
             if using_half_precision:
                 dense_correction = 0.5  # listed specs are one-half lower without sparsity
                 if "H100" in device_name:

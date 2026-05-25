@@ -3,18 +3,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from olmo_core.train.train_module.transformer.pipeline.helpers import generate_stage_to_rank_mapping
 from olmo_core.distributed.parallel.pipeline_parallel import (
     get_pipeline_activation_stats,
     get_pipeline_tick_exchange_stats,
 )
+from olmo_core.train.train_module.transformer.pipeline.helpers import (
+    generate_stage_to_rank_mapping,
+)
 from olmo_core.train.train_module.transformer.pipeline.pipeline_schedule import (
-    CustomScheduleInterleaved1F1B,
     CustomSchedule1F1BV,
+    CustomScheduleInterleaved1F1B,
     PipelineActionType,
     pad_to_max_length,
 )
-from olmo_core.train.train_module.transformer.pipeline.pipeline_stage import CustomPipelineStage
+from olmo_core.train.train_module.transformer.pipeline.pipeline_stage import (
+    CustomPipelineStage,
+)
 
 
 def _build_1f1b_v_schedule(
@@ -61,7 +65,9 @@ def _fake_stage(stage_index: int, mapping: dict[int, int]) -> CustomPipelineStag
     return stage
 
 
-def _activation_residency_peaks(schedule: CustomSchedule1F1BV) -> tuple[dict[int, int], dict[int, int]]:
+def _activation_residency_peaks(
+    schedule: CustomSchedule1F1BV,
+) -> tuple[dict[int, int], dict[int, int]]:
     held_by_rank = defaultdict(int)
     held_by_stage = defaultdict(int)
     peak_by_rank = defaultdict(int)
@@ -117,9 +123,7 @@ def test_interleaved_1f1b_p2p_overlap_ignores_backward_continuation_slots():
     schedule = _build_interleaved_1f1b_schedule(8, 64)
     rank_1_actions = schedule.pipeline_order[1]
 
-    action_names = [
-        str(action) if action is not None else ".." for action in rank_1_actions
-    ]
+    action_names = [str(action) if action is not None else ".." for action in rank_1_actions]
     assert action_names[42:46] == ["1F15", "9B3", "9B_3", "9F8"]
 
     overlap_steps = []
@@ -226,9 +230,7 @@ def test_1f1b_v_pp5_m8_uses_generic_generator():
 
 def test_1f1b_v_pp5_m8_generic_symbols_flow_through_action_adapter():
     symbols = CustomSchedule1F1BV._generate_1f1bv_symbol_table(5, 8)
-    actions = pad_to_max_length(
-        CustomSchedule1F1BV._convert_1f1bv_symbols_to_actions(symbols, 5)
-    )
+    actions = pad_to_max_length(CustomSchedule1F1BV._convert_1f1bv_symbols_to_actions(symbols, 5))
 
     assert set(actions) == set(range(5))
     expected = {(stage_index, mb_index) for stage_index in range(10) for mb_index in range(8)}
@@ -262,9 +264,7 @@ def test_1f1b_v_symbolic_generator_scales_to_large_supported_case():
 
 
 @pytest.mark.parametrize("pp_size,n_microbatches", [(4, 16), (8, 32)])
-def test_1f1b_v_schedule_limits_early_stage_activation_residency(
-    pp_size: int, n_microbatches: int
-):
+def test_1f1b_v_schedule_limits_early_stage_activation_residency(pp_size: int, n_microbatches: int):
     schedule = _build_1f1b_v_schedule(pp_size, n_microbatches)
     peak_by_rank, peak_by_stage = _activation_residency_peaks(schedule)
 

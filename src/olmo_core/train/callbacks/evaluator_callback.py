@@ -30,7 +30,12 @@ from olmo_core.utils import (
 )
 
 from ..common import Duration, MetricMergeStrategy
-from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule, MoEV2TransformerTrainModule
+from ..train_module import (
+    EvalBatchSizeUnit,
+    EvalBatchSpec,
+    MoEV2TransformerTrainModule,
+    TransformerTrainModule,
+)
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
@@ -91,7 +96,10 @@ class EvaluatorCallback(Callback):
     """
 
     def post_attach(self):
-        if not (isinstance(self.trainer.train_module, TransformerTrainModule) or isinstance(self.trainer.train_module, MoEV2TransformerTrainModule)):
+        if not (
+            isinstance(self.trainer.train_module, TransformerTrainModule)
+            or isinstance(self.trainer.train_module, MoEV2TransformerTrainModule)
+        ):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' or '{MoEV2TransformerTrainModule.__name__}' train module"
             )
@@ -150,9 +158,11 @@ class EvaluatorCallback(Callback):
 
                     # output is None if using PP and does not have last stage on this rank
                     # TODO: sometimes we don't need the loss, optimize this later
-                    output: Optional[LMOutputWithLoss] = self.trainer.train_module.eval_batch(batch, labels=labels)
+                    output: Optional[LMOutputWithLoss] = self.trainer.train_module.eval_batch(
+                        batch, labels=labels
+                    )
                     if output is None:
-                        logits = None 
+                        logits = None
                         ce_loss = None
                     else:
                         logits, _, ce_loss, _ = output
@@ -482,6 +492,7 @@ class DownstreamEvaluator(Evaluator):
         # for key in ['input_ids', 'continuation']:
         #     val = batch[key]
         #     batch[f'{key}_str'] = self.tokenizer.decode_batch(val.cpu().tolist())
+
 
 @dataclass
 class DownstreamEvaluatorCallbackConfig(CallbackConfig):

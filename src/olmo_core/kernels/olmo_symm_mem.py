@@ -9,7 +9,6 @@ import torch.distributed.distributed_c10d as c10d
 
 from .symm_mem_vdev2d import _load_cuda_extension
 
-
 _BOOTSTRAP_GLOBAL_RANKS: tuple[int, ...] | None = None
 _REGISTERED_GROUPS: set[str] = set()
 
@@ -75,7 +74,9 @@ def init(group: dist.ProcessGroup, *, device: torch.device | str | int | None = 
     _BOOTSTRAP_GLOBAL_RANKS = global_ranks
 
 
-def register_group(group: dist.ProcessGroup, *, device: torch.device | str | int | None = None) -> None:
+def register_group(
+    group: dist.ProcessGroup, *, device: torch.device | str | int | None = None
+) -> None:
     init(group, device=device)
     assert _BOOTSTRAP_GLOBAL_RANKS is not None
 

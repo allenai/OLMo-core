@@ -21,7 +21,9 @@ def main() -> None:
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     if world_size != 2:
-        raise RuntimeError(f"pipeline_rma_transport_smoke.py expects exactly 2 ranks, got {world_size}")
+        raise RuntimeError(
+            f"pipeline_rma_transport_smoke.py expects exactly 2 ranks, got {world_size}"
+        )
 
     local_rank = int(os.environ.get("LOCAL_RANK", rank))
     torch.cuda.set_device(local_rank)

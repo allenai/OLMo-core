@@ -228,6 +228,7 @@ class WSD(Scheduler):
 
         return initial_lr
 
+
 @Scheduler.register("power_lr")
 @dataclass
 class PowerLR(Scheduler):

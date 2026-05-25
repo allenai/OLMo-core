@@ -47,9 +47,7 @@ def test_ep_no_sync_activation_debug_is_disabled_by_default(monkeypatch):
         "ep_no_sync_saved_activations_dumped_block_3": False,
     }
 
-    monkeypatch.delenv(
-        activation_debug.EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENV_VAR, raising=False
-    )
+    monkeypatch.delenv(activation_debug.EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENV_VAR, raising=False)
     monkeypatch.setattr(
         activation_debug,
         "_get_train_global_arg",

@@ -59,7 +59,9 @@ def test_olmo_mxfp8_tensor_can_be_backward_gradient_object():
 
         @staticmethod
         def backward(ctx, grad_out):  # type: ignore[override]
-            hp_grad = torch.ones(ctx.shape, dtype=ctx.dtype, device=ctx.device) * grad_out.to(ctx.dtype)
+            hp_grad = torch.ones(ctx.shape, dtype=ctx.dtype, device=ctx.device) * grad_out.to(
+                ctx.dtype
+            )
             return OlmoMXFP8Tensor.from_hp(hp_grad, prefer_triton=False)
 
     x = torch.randn(4, 64, dtype=torch.bfloat16, requires_grad=True)

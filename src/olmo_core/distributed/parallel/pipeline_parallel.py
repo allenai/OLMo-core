@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+import logging
 from collections import Counter
+from dataclasses import dataclass
 from functools import cached_property
 from itertools import product
 from pathlib import Path
@@ -11,13 +12,12 @@ import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
 
-
 from olmo_core.config import Config, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.lm_head import LMOutputWithLoss
 
-import logging
 logger = logging.getLogger(__name__)
+
 
 class PipelineSplitStyle(StrEnum):
     loop = "loop"
@@ -203,7 +203,9 @@ class PipelineParallelConfig(Config):
     def build_p2p_process_group(self, device_mesh: DeviceMesh) -> Optional[dist.ProcessGroup]:
         self._validate_p2p_nccl_ctas()
         if self.p2p_backend == PipelineP2PBackend.nccl_device:
-            raise OLMoConfigurationError("p2p_backend='nccl_device' is reserved but not implemented yet")
+            raise OLMoConfigurationError(
+                "p2p_backend='nccl_device' is reserved but not implemented yet"
+            )
 
         if not self.uses_separate_p2p_group():
             if self.p2p_nccl_min_ctas is not None or self.p2p_nccl_max_ctas is not None:
@@ -286,10 +288,14 @@ class PipelineParallelConfig(Config):
         else:
             raise NotImplementedError(style)
 
+
 import os
 import re
+
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+
+
 def _parse_cell(op: Any):
     """Return (kind, mb) where kind in {'F','B','idle'} and mb is Optional[int]."""
     if op is None:
@@ -297,23 +303,24 @@ def _parse_cell(op: Any):
     if isinstance(op, tuple):
         # allow e.g. ('F', 7) or ('B', 3)
         stage_id, k, mb = op
-        return (str(k).upper() if k in ('F','B') else 'idle', int(mb))
+        return (str(k).upper() if k in ("F", "B") else "idle", int(mb))
     s = str(op).strip()
     if s.lower() == "idle":
         return "idle", None
     # accept 'F7', 'B12', '1F7', 'stage3B4', etc.
-    m = re.search(r'([FBfb])\s*([0-9]+)', s)
+    m = re.search(r"([FBfb])\s*([0-9]+)", s)
     if m:
         return m.group(1).upper(), int(m.group(2))
     return "idle", None
 
 
-def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
-                           title: str = "Pipeline schedule",
-                           figsize_per_cell: float = 0.35,
-                           outpath: Optional[str] = None,
-                           microbatch_index_offset: int = 0):
-
+def draw_pipeline_timeline(
+    pp_order: Dict[int, List[Any]],
+    title: str = "Pipeline schedule",
+    figsize_per_cell: float = 0.35,
+    outpath: Optional[str] = None,
+    microbatch_index_offset: int = 0,
+):
     ranks = sorted(pp_order.keys())
     assert ranks == list(range(len(ranks))), "pp_order keys should be 0..N-1"
     num_ranks = len(ranks)
@@ -347,23 +354,23 @@ def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
             else:
                 w += 1
         total_w.append(w)
-    
+
     # assert all rows have the same total width
     if not all(w == total_w[0] for w in total_w):
         assert False, f"Not all rows have the same total width: {total_w}"
     total_w = total_w[0]
-        # ---- figure sizing
+    # ---- figure sizing
     width = max(8, total_w * figsize_per_cell)
     height = max(2.5, num_ranks * 0.55 * 2 + 1.4)
     fig, ax = plt.subplots(figsize=(width, height), constrained_layout=True)
     ax.set_title(title, fontsize=14, pad=10)
 
     # colors
-    C_FWD   = "#3B64C3"
+    C_FWD = "#3B64C3"
     C_FWD_2 = "#A5B2E7"
     C_BWD_2 = "#B9D992"
-    C_BWD   = "#355113"
-    C_IDLE  = "#9E9E9E"
+    C_BWD = "#355113"
+    C_IDLE = "#9E9E9E"
 
     def format_action(stage_id: int, kind: Any, mb: Optional[int]) -> str:
         if mb is None:
@@ -381,50 +388,56 @@ def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
     x_offset = 0
     for iy, r in enumerate(ranks):
         y = num_ranks - 1 - iy
-        y = y * 2 
+        y = y * 2
         x_offset = 0
         for t, op in enumerate(pp_order[r]):
             # x0 = x_edges[t]
             # w_col = col_w[t]
 
-            if op is None: # idle
+            if op is None:  # idle
                 stage_id, kind, mb, need_offload, need_reload = None, None, None, False, False
             else:
                 stage_id, kind, mb, need_offload, need_reload = op
 
-            text_color = 'white'
+            text_color = "white"
             if kind is None:
                 color, width_rect, txt = C_IDLE, 1, ""
             elif kind.name == "FULL_BACKWARD_CONT":
-                continue # skip drawing the continuation cell
+                continue  # skip drawing the continuation cell
             elif kind.name == "FORWARD":
                 color, width_rect, txt = C_FWD, 1, format_action(stage_id, kind, mb)
                 # text_color = 'white'
                 assert stage_id is not None
                 if stage_id >= num_ranks:
                     color = C_FWD_2
-                    text_color = 'black'
+                    text_color = "black"
             elif kind.name == "FULL_BACKWARD":
                 color, width_rect, txt = C_BWD, 2, format_action(stage_id, kind, mb)
                 # text_color = 'white'
                 assert stage_id is not None
                 if stage_id >= num_ranks:
                     color = C_BWD_2
-                    text_color = 'black'
+                    text_color = "black"
             else:
                 raise AssertionError(f"Unexpected kind: {kind}")
 
             # forward/idle occupy the left-half when the column was doubled
-            rect = Rectangle((x_offset, y), width_rect, 1, facecolor=color, edgecolor="black", linewidth=0.3)
+            rect = Rectangle(
+                (x_offset, y), width_rect, 1, facecolor=color, edgecolor="black", linewidth=0.3
+            )
             ax.add_patch(rect)
 
             if txt:
+                ax.text(
+                    x_offset + width_rect / 2,
+                    y + 0.5,
+                    txt,
+                    va="center",
+                    ha="center",
+                    fontsize=8,
+                    color=text_color,
+                )
 
-                ax.text(x_offset + width_rect/2, y + 0.5, txt,
-                        va="center", ha="center",
-                        fontsize=8,
-                        color=text_color)
-                
             x_offset += width_rect
     total_w = x_offset
     # ---- axes / grid
@@ -440,19 +453,23 @@ def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
     # minor vertical grid at every unit (this also shows the midline when a column is doubled)
     ax.set_xticks(range(total_w + 1), minor=True)
     ax.set_yticks(range(num_ranks * 2), minor=True)
-    ax.grid(which='minor', linestyle=':', linewidth=0.3, color="#666666", alpha=0.5)
-    ax.tick_params(axis='both', which='major', labelsize=9)
+    ax.grid(which="minor", linestyle=":", linewidth=0.3, color="#666666", alpha=0.5)
+    ax.tick_params(axis="both", which="major", labelsize=9)
 
     # ---- legend OUTSIDE the axes (no overlap)
-    fwd_patch  = Rectangle((0,0),1,1, facecolor=C_FWD,  edgecolor='black', linewidth=0.3)
-    bwd_patch  = Rectangle((0,0),1,1, facecolor=C_BWD,  edgecolor='black', linewidth=0.3)
-    idle_patch = Rectangle((0,0),1,1, facecolor=C_IDLE, edgecolor='black', linewidth=0.3)
-    ax.legend([fwd_patch, bwd_patch, idle_patch],
-              ["Forward", "Backward", "Idle"],
-              loc="upper left", bbox_to_anchor=(1.01, 1.0),
-              borderaxespad=0., frameon=False)
+    fwd_patch = Rectangle((0, 0), 1, 1, facecolor=C_FWD, edgecolor="black", linewidth=0.3)
+    bwd_patch = Rectangle((0, 0), 1, 1, facecolor=C_BWD, edgecolor="black", linewidth=0.3)
+    idle_patch = Rectangle((0, 0), 1, 1, facecolor=C_IDLE, edgecolor="black", linewidth=0.3)
+    ax.legend(
+        [fwd_patch, bwd_patch, idle_patch],
+        ["Forward", "Backward", "Idle"],
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.0),
+        borderaxespad=0.0,
+        frameon=False,
+    )
 
-    ax.set_aspect('equal')
+    ax.set_aspect("equal")
     for s in ax.spines.values():
         s.set_visible(False)
 
@@ -684,17 +701,16 @@ def debug_save_pp_schedule(
     microbatch_index_offset: int = 0,
     text_filename: Optional[str] = None,
 ) -> None:
-
     pp_order = schedule.pipeline_order
     # pipeline_order example:
-    '''
+    """
     {
         0: [0F0, 0F1, 0F2, 0F3, ...],
         1: [None, 1F0, 1F1, 1F2, ...],
         2: [None, None, 2F0, 2F1, ...],
         3: [None, None, None, 3F0, ...],
     }
-    '''
+    """
     import matplotlib.pyplot as plt
 
     # make sure the output directory exists
@@ -752,8 +768,6 @@ class PipelineSchedule:
         self.pp_mesh = pp_mesh
         self.loss_fn = loss_fn
 
-
-
         if schedule_name == PipelineScheduleType.custom_1F1B:
             # Custom 1F1B schedule
             # from olmo_core.train.train_module.transformer.pipeline_schedule import (
@@ -766,20 +780,20 @@ class PipelineSchedule:
             from olmo_core.train.train_module.transformer.pipeline.pipeline_schedule import (
                 CustomScheduleInterleaved1F1B,
             )
+
             schedule_class = CustomScheduleInterleaved1F1B
         elif schedule_name == PipelineScheduleType.custom_1F1B_V:
             # Custom 1F1B-V schedule
             from olmo_core.train.train_module.transformer.pipeline.pipeline_schedule import (
                 CustomSchedule1F1BV,
             )
+
             schedule_class = CustomSchedule1F1BV
         else:
             raise RuntimeError(f"Unsupported schedule_name: {schedule_name}")
 
-
         if num_microbatches is None:
             num_microbatches = pp_mesh.size()
-
 
         schedule_impl = schedule_class(
             stages,  # type: ignore[arg-type]
@@ -791,13 +805,10 @@ class PipelineSchedule:
                 else forward_pull_ahead_extra_activations
             ),
         )
-        
 
-        if (
-            torch.distributed.get_rank() == 0
-            and os.environ.get("OLMO_PP_SCHEDULE_PLOT", "1").lower()
-            not in {"0", "false", "no"}
-        ):
+        if torch.distributed.get_rank() == 0 and os.environ.get(
+            "OLMO_PP_SCHEDULE_PLOT", "1"
+        ).lower() not in {"0", "false", "no"}:
             plot_dir = os.environ.get("OLMO_PP_SCHEDULE_PLOT_DIR", _default_pp_schedule_plot_dir())
             source = getattr(schedule_impl, "pipeline_order_source", "unknown")
             stem = "_".join(
@@ -819,9 +830,10 @@ class PipelineSchedule:
                 "[PipelineSchedule] Saved pipeline schedule artifacts to "
                 f"{plot_filename} and {text_filename}"
             )
-        
-        print(f'[PipelineSchedule] Using {schedule_name} with {num_microbatches} microbatches') # TODO: no need to print on every rank
 
+        print(
+            f"[PipelineSchedule] Using {schedule_name} with {num_microbatches} microbatches"
+        )  # TODO: no need to print on every rank
 
         self.schedule_impl = schedule_impl
         self.num_microbatches = num_microbatches
@@ -855,12 +867,12 @@ class PipelineSchedule:
         """
 
         if self.has_last_stage:
-            pass # keep target as is
+            pass  # keep target as is
         else:
             target = None
 
         if not self.has_first_stage:
-            args = () # If there is no first stage, we need to provide an empty tuple for single_1F1B
+            args = ()  # If there is no first stage, we need to provide an empty tuple for single_1F1B
         else:
             args = (input_ids,)
 
@@ -868,13 +880,17 @@ class PipelineSchedule:
         old_num_microbatches = None
         if forward_only:
             old_num_microbatches = self.schedule_impl._n_microbatches
-            self.schedule_impl.reset_n_microbatches(input_ids.size(0) // 1) # one seq per microbatch
+            self.schedule_impl.reset_n_microbatches(
+                input_ids.size(0) // 1
+            )  # one seq per microbatch
 
         self.schedule_impl.prepare_step(
             global_batch_size=input_ids.size(0),
             seqlen=input_ids.size(1),
         )
-        step_output = self.schedule_impl.step(*args, target=target, forward_only=forward_only, **kwargs)
+        step_output = self.schedule_impl.step(
+            *args, target=target, forward_only=forward_only, **kwargs
+        )
 
         self.schedule_impl.clear_step_info()
 

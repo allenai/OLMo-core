@@ -64,7 +64,10 @@ def _alloc_two_independent_subgroups() -> None:
 
 def _rowwise_dispatch_combine_roundtrip() -> None:
     from olmo_core.kernels import olmo_symm_mem
-    from olmo_core.kernels.symm_mem_vdev2d import rowwise_combine_get, rowwise_dispatch_put
+    from olmo_core.kernels.symm_mem_vdev2d import (
+        rowwise_combine_get,
+        rowwise_dispatch_put,
+    )
 
     os.environ["OLMO_USE_OWN_SYMM_MEM"] = "1"
     group = dist.group.WORLD
@@ -125,7 +128,10 @@ def _rowwise_dispatch_combine_roundtrip() -> None:
 
 def _rowwise_dispatch_combine_subgroup_only() -> None:
     from olmo_core.kernels import olmo_symm_mem
-    from olmo_core.kernels.symm_mem_vdev2d import rowwise_combine_get, rowwise_dispatch_put
+    from olmo_core.kernels.symm_mem_vdev2d import (
+        rowwise_combine_get,
+        rowwise_dispatch_put,
+    )
 
     os.environ["OLMO_USE_OWN_SYMM_MEM"] = "1"
     rank = dist.get_rank()

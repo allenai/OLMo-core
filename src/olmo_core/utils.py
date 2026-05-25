@@ -14,7 +14,18 @@ from functools import lru_cache
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import rich
 import torch
@@ -494,6 +505,7 @@ def patch_torch_stream_custom_ops():
     sync_dealloc = getattr(streams, "sync_dealloc", None)
     if sync_dealloc is not None and getattr(sync_dealloc, "_abstract_fn", None) is None:
         try:
+
             @sync_dealloc.register_fake
             def _(
                 wait_event_index: int,
@@ -502,6 +514,7 @@ def patch_torch_stream_custom_ops():
             ) -> None:
                 del wait_event_index, src_stream_index, to_dealloc
                 return None
+
         except RuntimeError as e:
             if "already" not in str(e).lower() and "override" not in str(e).lower():
                 raise

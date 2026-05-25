@@ -530,12 +530,13 @@ class Checkpointer:
         yield tmp_dir
 
         self._teardown_tmp_dir(dir, tmp_dir)
-        
+
+
 class UpcycleCheckpointer(Checkpointer):
     """
     Checkpointer that is used for MoE upcycling.
     It overrides the save() and load() methods to skip saving and loading extra state other than the model.
-    
+
     The save() method should be called by a standalone script that performs upcycling, not by the trainer.
     The load() method should be called by the trainer (from a CheckpointerCallback).
     """
@@ -546,7 +547,6 @@ class UpcycleCheckpointer(Checkpointer):
         """
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
-
             # Save model and optim state.
             train_module_dir = f"{dir}/upcycling" if is_url(dir) else wd / "upcycling"
             save_state_dict(
@@ -588,11 +588,11 @@ class UpcycleCheckpointer(Checkpointer):
                 else:
                     raise
 
-        model_module_dir = scatter_object(model_module_dir)
+        model_module_dir = broadcast_object(model_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(model_module_dir)
 
-        model_module=train_module.model
+        model_module = train_module.model
 
         # model_state_dict = train_module.state_dict_to_load(metadata, optim=False)
         model_state_dict = model_module.state_dict()
@@ -604,13 +604,12 @@ class UpcycleCheckpointer(Checkpointer):
             work_dir=self.work_dir,
             thread_count=self.load_thread_count,
         )
-        model_module.load_state_dict(model_state_dict) # don't need this line?
+        model_module.load_state_dict(model_state_dict)  # don't need this line?
 
         return trainer_state
 
 
 class CompactablityCheckpointer(Checkpointer):
-    
     def load(
         self,
         dir: PathOrStr,
@@ -654,7 +653,7 @@ class CompactablityCheckpointer(Checkpointer):
                 else:
                     raise
 
-        train_module_dir = scatter_object(train_module_dir)
+        train_module_dir = broadcast_object(train_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 

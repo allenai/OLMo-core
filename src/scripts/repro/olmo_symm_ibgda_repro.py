@@ -67,7 +67,9 @@ def _resolve_peer(rank: int, world_size: int, peer_mode: str, peer_stride: int |
     return (rank + world_size // 2) % world_size
 
 
-def _resolve_inverse_peer(rank: int, world_size: int, peer_mode: str, peer_stride: int | None) -> int:
+def _resolve_inverse_peer(
+    rank: int, world_size: int, peer_mode: str, peer_stride: int | None
+) -> int:
     if peer_stride is not None:
         return (rank - peer_stride) % world_size
     if peer_mode == "self":
@@ -166,7 +168,9 @@ def main() -> int:
 
     olmo_symm_mem.register_group(group, device=device)
 
-    source_seed = torch.arange(args.rows * args.dim, device=device, dtype=torch.float32).reshape(args.rows, args.dim)
+    source_seed = torch.arange(args.rows * args.dim, device=device, dtype=torch.float32).reshape(
+        args.rows, args.dim
+    )
     source_seed = source_seed.mul_(0.001).add_(rank * 1000.0)
     source_seed = source_seed.to(dtype=dtype)
 
@@ -181,7 +185,9 @@ def main() -> int:
 
     try:
         if args.op == "dispatch":
-            symm_out = olmo_symm_mem.empty((args.rows, args.dim), dtype=dtype, device=device, group=group)
+            symm_out = olmo_symm_mem.empty(
+                (args.rows, args.dim), dtype=dtype, device=device, group=group
+            )
             olmo_symm_mem.rendezvous(symm_out, group=group)
             symm_out.zero_()
             source = _alloc_tensor(
@@ -194,7 +200,9 @@ def main() -> int:
             )
             source.copy_(source_seed)
         else:
-            expert_out = olmo_symm_mem.empty((args.rows, args.dim), dtype=dtype, device=device, group=group)
+            expert_out = olmo_symm_mem.empty(
+                (args.rows, args.dim), dtype=dtype, device=device, group=group
+            )
             olmo_symm_mem.rendezvous(expert_out, group=group)
             expert_out.copy_(source_seed)
             combine_out = _alloc_tensor(
@@ -245,7 +253,9 @@ def main() -> int:
                     nblocks=args.nblocks,
                 )
                 result = symm_out
-                expected_src_rank = _resolve_inverse_peer(rank, world_size, args.peer_mode, args.peer_stride)
+                expected_src_rank = _resolve_inverse_peer(
+                    rank, world_size, args.peer_mode, args.peer_stride
+                )
             torch.cuda.synchronize()
             dist.barrier(device_ids=[local_rank])
             expected = (

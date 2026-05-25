@@ -11,6 +11,8 @@ from .cuda_extension_utils import load_cuda_extension
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ATTEMPTED = False
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
+
+
 def _load_cuda_extension():
     global _CUDA_EXTENSION
     global _CUDA_EXTENSION_ATTEMPTED

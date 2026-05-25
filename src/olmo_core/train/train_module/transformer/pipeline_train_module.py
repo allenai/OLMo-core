@@ -221,9 +221,7 @@ class TransformerPipelineTrainModule(TrainModule):
         self.optimizers: List[Optimizer] = []
         if not self.eval_only:
             log.info("Building optimizer(s)...")
-            self.optimizers = [
-                optim.build(model, self, strict=False) for model in self.model_parts
-            ]
+            self.optimizers = [optim.build(model, self, strict=False) for model in self.model_parts]
         else:
             log.info("Skipping optimizer build because eval_only=True")
 

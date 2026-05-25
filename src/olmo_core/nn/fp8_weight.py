@@ -96,7 +96,9 @@ class FP8WeightStore:
     @property
     def data(self) -> torch.Tensor:
         if self.anchor_param is None:
-            raise RuntimeError(f"FP8 weight store '{self.logical_name}' has no anchor tensor to expose as data")
+            raise RuntimeError(
+                f"FP8 weight store '{self.logical_name}' has no anchor tensor to expose as data"
+            )
         return self.anchor_param.data
 
     @property
@@ -254,7 +256,9 @@ class FP8WeightStore:
     def require_cache(self, name: str) -> ScaledGroupedMMPrequantizedRHS:
         cache = self.cache_values.get(name)
         if cache is None:
-            raise RuntimeError(f"FP8 weight store '{self.logical_name}' cache '{name}' is not initialized")
+            raise RuntimeError(
+                f"FP8 weight store '{self.logical_name}' cache '{name}' is not initialized"
+            )
         return cache
 
     def require_prequantized_rhs(self) -> ScaledGroupedMMPrequantizedRHS:

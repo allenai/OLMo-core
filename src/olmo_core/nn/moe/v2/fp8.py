@@ -177,9 +177,7 @@ def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
 @torch.no_grad()
 def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
     block_cfg = block.rowwise_fp8
-    routed_cfg = (
-        block.routed_experts.rowwise_fp8 if block.routed_experts is not None else None
-    )
+    routed_cfg = block.routed_experts.rowwise_fp8 if block.routed_experts is not None else None
     shared_enabled = _rowwise_fp8_enabled(block_cfg)
     routed_enabled = _rowwise_fp8_enabled(routed_cfg)
     if not shared_enabled and not routed_enabled:

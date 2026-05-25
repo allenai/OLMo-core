@@ -37,6 +37,7 @@ def test_generate_pipeline_split_points():
     )
     assert pp_config.get_split_points(4) == [1, 2, 3]
 
+
 def test_custom_pipeline_schedule_split_styles():
     pp_config = TransformerPipelineParallelConfig(
         degree=4, schedule=PipelineScheduleType.custom_interleaved_1F1B

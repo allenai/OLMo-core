@@ -1,31 +1,26 @@
-
-
-import torch
-import torch.distributed as dist
-from collections import Counter, defaultdict
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union, NamedTuple
-from enum import Enum
-from torch.fx.node import Argument
+import logging
 import os
 import re
+from collections import Counter, defaultdict
+from enum import Enum
+from typing import Any, List, Mapping, NamedTuple, Optional, Sequence, Union
+
 import nvtx
-import logging
-import time
-from .pipeline_stage import CustomPipelineStage
-from .p2p_transport import NCCLRMAPipelineP2PTransport
-from .helpers import (
-    generate_stage_to_rank_mapping,
-)
-from .gpu_activation_offload import GPUActivationOffloader
+import torch
+import torch.distributed as dist
+
 from olmo_core.nn.lm_head import LMOutputWithLoss
+
+from .gpu_activation_offload import GPUActivationOffloader
+from .helpers import generate_stage_to_rank_mapping
+from .p2p_transport import NCCLRMAPipelineP2PTransport
+from .pipeline_stage import CustomPipelineStage
 
 logger = logging.getLogger(__name__)
 
 
 # Helper to parse an action string like 1F0 into a tuple of (stage_index, computation_type, microbatch_index)
-_action_regex = re.compile(
-    r"(\d+)(F|I|B|W|SEND_F|RECV_F|SEND_B|RECV_B)(\d*)"
-)
+_action_regex = re.compile(r"(\d+)(F|I|B|W|SEND_F|RECV_F|SEND_B|RECV_B)(\d*)")
 
 
 class PipelineActionType(Enum):
@@ -88,6 +83,7 @@ RECV_B = PipelineActionType.RECV_B
 FULL_BACKWARD = PipelineActionType.FULL_BACKWARD
 FULL_BACKWARD_CONT = PipelineActionType.FULL_BACKWARD_CONT
 
+
 class PipelineAction(NamedTuple):
     stage_index: int
     computation_type: PipelineActionType
@@ -138,7 +134,7 @@ class PipelineAction(NamedTuple):
         )
 
 
-class CustomScheduleInterleaved1F1B():
+class CustomScheduleInterleaved1F1B:
     placement_style = "loop"
     enable_activation_offload_schedule = True
     enable_p2p_overlap = True
@@ -149,12 +145,11 @@ class CustomScheduleInterleaved1F1B():
 
     @staticmethod
     def _action_advances_p2p_overlap(action: Optional[PipelineAction]) -> bool:
-        return (
-            action is not None
-            and action.computation_type
-            in (PipelineActionType.FORWARD, PipelineActionType.FULL_BACKWARD)
+        return action is not None and action.computation_type in (
+            PipelineActionType.FORWARD,
+            PipelineActionType.FULL_BACKWARD,
         )
-        
+
     def reset_n_microbatches(self, n_microbatches: int):
         self._n_microbatches = n_microbatches
         self.number_of_rounds = max(1, n_microbatches // self.pp_group_size)
@@ -176,10 +171,8 @@ class CustomScheduleInterleaved1F1B():
         kwargs_chunk_spec: Optional[dict[str, Any]] = None,
         output_merge_spec: Optional[Union[dict[str, Any], tuple[Any]]] = None,
         forward_pull_ahead_extra_activations: int | Sequence[int] | Mapping[int, int] = 0,
-
     ):
         self.pp_group_size = stages[0].group_size
-
 
         # Chunking specification for positional inputs. (default: `None`)
         self._args_chunk_spec = args_chunk_spec
@@ -188,7 +181,6 @@ class CustomScheduleInterleaved1F1B():
         self._output_merge_spec = output_merge_spec
         self.forward_pull_ahead_extra_activations = forward_pull_ahead_extra_activations
 
-
         logger.info("Using %s", self.__class__.__name__)
 
         # Self attributes
@@ -196,9 +188,7 @@ class CustomScheduleInterleaved1F1B():
         self._num_stages = stages[0].num_stages
         self.pp_group_size = stages[0].group_size
         self.rank = stages[0].group_rank
-        self.uses_separate_p2p_group = any(
-            stage.p2p_group is not stage.group for stage in stages
-        )
+        self.uses_separate_p2p_group = any(stage.p2p_group is not stage.group for stage in stages)
         self.p2p_backend = getattr(stages[0], "p2p_backend", "nccl")
         if any(getattr(stage, "p2p_backend", "nccl") != self.p2p_backend for stage in stages):
             raise RuntimeError("All local pipeline stages must use the same P2P backend")
@@ -228,7 +218,6 @@ class CustomScheduleInterleaved1F1B():
         # has_loss: bool = self._loss_fn is not None
         # self._should_compute_loss = lambda stage: stage.is_last and has_loss
 
-
         self.n_local_stages = 2
         assert len(stages) == 2, "Interleaved 1F1B requires exactly 2 stages per rank."
         self.rank = stages[0].group_rank
@@ -240,9 +229,8 @@ class CustomScheduleInterleaved1F1B():
         #         f"multiple of the number of rounds ({self.number_of_rounds}), "
         #         f"but got {n_microbatches}."
         #     )
-        
-        self.reset_n_microbatches(n_microbatches)
 
+        self.reset_n_microbatches(n_microbatches)
 
         self.stage_index_to_group_rank = generate_stage_to_rank_mapping(
             self.pp_group_size, self._num_stages, style=self.placement_style
@@ -250,8 +238,10 @@ class CustomScheduleInterleaved1F1B():
         for stage in self._stages:
             stage.stage_index_to_group_rank = self.stage_index_to_group_rank
 
-        target_pp_group_rank =  (self.pp_group_size - 1) - self.rank # rank in the pp group
-        target_global_rank = torch.distributed.get_global_rank(stages[0].group, target_pp_group_rank) # global rank
+        target_pp_group_rank = (self.pp_group_size - 1) - self.rank  # rank in the pp group
+        target_global_rank = torch.distributed.get_global_rank(
+            stages[0].group, target_pp_group_rank
+        )  # global rank
         self.gpu_activation_offloader = GPUActivationOffloader(
             target_device=torch.device(f"cuda:{target_global_rank}"),
         )
@@ -272,7 +262,6 @@ class CustomScheduleInterleaved1F1B():
             self.pipeline_order = configure_offload(self.pipeline_order)
 
     def _initialize_stages(self, args_mb: tuple[Any, ...], kwargs_mb):
-
         # init the first collective in the PP group
         # if the P2P API is the first collective call in the ``group``
         # passed to ``dist.P2POp``, all ranks of the ``group`` must participate in
@@ -287,9 +276,9 @@ class CustomScheduleInterleaved1F1B():
 
         self._stages_initialized = True
 
-
-
-    def step(self, *args, target: Optional[torch.Tensor] =None, forward_only: bool = False, **kwargs) -> List[List[Optional[LMOutputWithLoss]]]:
+    def step(
+        self, *args, target: Optional[torch.Tensor] = None, forward_only: bool = False, **kwargs
+    ) -> List[List[Optional[LMOutputWithLoss]]]:
         """
         Run one iteration of the pipeline schedule with *whole-batch* input.
         Will chunk the input into microbatches automatically, and go through the
@@ -316,13 +305,12 @@ class CustomScheduleInterleaved1F1B():
         # Run microbatches
         self._step_microbatches(args_split, kwargs_split, targets_split, forward_only=forward_only)
 
-        outputs: List[List[Optional[LMOutputWithLoss]]] = [stage.get_stage_outputs_as_list() for stage in self._stages]
-        
+        outputs: List[List[Optional[LMOutputWithLoss]]] = [
+            stage.get_stage_outputs_as_list() for stage in self._stages
+        ]
 
         return outputs
 
-
-    
     def _split_inputs(
         self,
         args,
@@ -348,7 +336,9 @@ class CustomScheduleInterleaved1F1B():
             if len(args) == 1:
                 input_ids = args[0]
                 if not isinstance(input_ids, torch.Tensor) or input_ids.dim() == 0:
-                    raise TypeError("args must be empty or a tuple containing one non-scalar tensor")
+                    raise TypeError(
+                        "args must be empty or a tuple containing one non-scalar tensor"
+                    )
                 if input_ids.size(0) < self._n_microbatches:
                     raise ValueError(
                         f"input batch size {input_ids.size(0)} is smaller than num_microbatches={self._n_microbatches}"
@@ -369,7 +359,9 @@ class CustomScheduleInterleaved1F1B():
             }
             unexpected_keys = set(kwargs) - supported_keys
             if unexpected_keys:
-                raise ValueError(f"Unsupported kwargs for pipeline splitting: {sorted(unexpected_keys)}")
+                raise ValueError(
+                    f"Unsupported kwargs for pipeline splitting: {sorted(unexpected_keys)}"
+                )
 
             for key, value in kwargs.items():
                 if key == "labels":
@@ -460,15 +452,12 @@ class CustomScheduleInterleaved1F1B():
         target_mbs: Optional[list] = None,
         forward_only: bool = False,
     ):
-        
         if not self._stages_initialized:
             self._initialize_stages(arg_mbs[0], kwarg_mbs[0])
 
         # the microbatch shape might change between training and eval, so ned to re-prepare the meta info
         for stage in self._stages:
-            stage._prepare_forward_backward_meta(
-                self._n_microbatches, arg_mbs[0], kwarg_mbs[0]
-            )
+            stage._prepare_forward_backward_meta(self._n_microbatches, arg_mbs[0], kwarg_mbs[0])
         if self.p2p_transport is not None:
             payload_meta: Optional[torch.Tensor] = None
             for stage in self._stages:
@@ -518,9 +507,7 @@ class CustomScheduleInterleaved1F1B():
                 wait_p2p_key(key)
 
         def wait_p2p_key(key: tuple[str, int, int, int]) -> None:
-            for handle, _op, _op_kind, _launch_overlap_step in pending_p2p.pop(
-                key, []
-            ):
+            for handle, _op, _op_kind, _launch_overlap_step in pending_p2p.pop(key, []):
                 handle.wait()
 
         def wait_p2p_ops(op_kinds: set[str] | frozenset[str]) -> None:
@@ -571,9 +558,7 @@ class CustomScheduleInterleaved1F1B():
                 if not forward_only and not stage.is_last and not stage.has_local_backward_src():
                     wait_p2p_key(("B", action.stage_index + 1, action.stage_index, mb_index))
 
-        def launch_p2p_ops(
-            keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]]
-        ) -> None:
+        def launch_p2p_ops(keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]]) -> None:
             if not keyed_ops:
                 return
             with nvtx.annotate("P2P", color="blue"):
@@ -606,10 +591,21 @@ class CustomScheduleInterleaved1F1B():
             prune_completed_p2p()
 
             # do a 1-step lookahead prefetch if needed
-            next_action = self.pipeline_order[self.rank][time_step + 1] if time_step + 1 < len(self.pipeline_order[self.rank]) else None
-            if next_action is not None and next_action.computation_type == PipelineActionType.FULL_BACKWARD and next_action.need_reload and self.use_gpu_activation_offload:
+            next_action = (
+                self.pipeline_order[self.rank][time_step + 1]
+                if time_step + 1 < len(self.pipeline_order[self.rank])
+                else None
+            )
+            if (
+                next_action is not None
+                and next_action.computation_type == PipelineActionType.FULL_BACKWARD
+                and next_action.need_reload
+                and self.use_gpu_activation_offload
+            ):
                 debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
-                _ = self.gpu_activation_offloader.async_reload(f"{next_action.stage_index}F{next_action.microbatch_index}") # in saving, using "F" group for both F and B
+                _ = self.gpu_activation_offloader.async_reload(
+                    f"{next_action.stage_index}F{next_action.microbatch_index}"
+                )  # in saving, using "F" group for both F and B
                 debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
 
             keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]] = []
@@ -618,25 +614,26 @@ class CustomScheduleInterleaved1F1B():
                 computation_type = action.computation_type
                 mb_index = action.microbatch_index
                 stage_index = action.stage_index
-                assert mb_index is not None, (
-                    "All currently supported action types require valid microbatch_index"
-                )
+                assert (
+                    mb_index is not None
+                ), "All currently supported action types require valid microbatch_index"
                 if computation_type == PipelineActionType.FORWARD:
                     # perform forward computation
                     stage = stage_index_to_stage[stage_index]
                     offload_group = f"{action.stage_index}F{mb_index}"
                     forward_counter[stage_index] += 1
-                    last_forward = (
-                        forward_counter[stage_index] == self._n_microbatches
-                    )
-                    with nvtx.annotate(f"{action.stage_index}F{mb_index}", color='green'):
+                    last_forward = forward_counter[stage_index] == self._n_microbatches
+                    with nvtx.annotate(f"{action.stage_index}F{mb_index}", color="green"):
                         # use this context manager to capture all saved tensors in this block, it does not transfer anything at this point
                         with self.gpu_activation_offloader.get_offload_context(
                             group=offload_group,
-                            enable=action.need_offload and self.use_gpu_activation_offload
+                            enable=action.need_offload and self.use_gpu_activation_offload,
                         ):
                             stage.forward_one_chunk(
-                                mb_index, arg_mbs[mb_index], kwarg_mbs[mb_index], last_forward=last_forward
+                                mb_index,
+                                arg_mbs[mb_index],
+                                kwarg_mbs[mb_index],
+                                last_forward=last_forward,
                             )
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
@@ -662,22 +659,22 @@ class CustomScheduleInterleaved1F1B():
                     else:
                         # make sure the reload is done
                         if action.need_reload and self.use_gpu_activation_offload:
-                            self.gpu_activation_offloader.wait_reload(f"{action.stage_index}F{action.microbatch_index}") # in saving, using "F" group for both F and B
+                            self.gpu_activation_offloader.wait_reload(
+                                f"{action.stage_index}F{action.microbatch_index}"
+                            )  # in saving, using "F" group for both F and B
 
                         # perform backward computation
                         stage = stage_index_to_stage[stage_index]
 
                         backward_counter[stage_index] += 1
-                        last_backward = (
-                            backward_counter[stage_index] == self._n_microbatches
-                        )
+                        last_backward = backward_counter[stage_index] == self._n_microbatches
                         # grad_scale_factor = (
                         #     self._n_microbatches if self.scale_grads else 1
                         # )
-                        with nvtx.annotate(f"{action.stage_index}B{mb_index}", color='red'):
+                        with nvtx.annotate(f"{action.stage_index}B{mb_index}", color="red"):
                             stage.backward_one_chunk(
                                 mb_index,
-                                loss=None, # loss is retrieved inside the stage
+                                loss=None,  # loss is retrieved inside the stage
                                 last_backward=last_backward,
                             )
                         # if last_backward:
@@ -685,7 +682,9 @@ class CustomScheduleInterleaved1F1B():
 
                         if action.need_reload and self.use_gpu_activation_offload:
                             debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
-                            self.gpu_activation_offloader.manual_release_group(f"{action.stage_index}F{action.microbatch_index}")
+                            self.gpu_activation_offloader.manual_release_group(
+                                f"{action.stage_index}F{action.microbatch_index}"
+                            )
                             debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
                         self._maybe_local_backward_handoff(stage, mb_index, stage_index_to_stage)
                         keyed_ops.extend(
@@ -719,15 +718,15 @@ class CustomScheduleInterleaved1F1B():
                 if time_step < len(prev_rank_ops):
                     prev_rank_action = prev_rank_ops[time_step]
                 else:
-                    prev_rank_action = None # no action from previous rank at this time step
+                    prev_rank_action = None  # no action from previous rank at this time step
 
-                if prev_rank_action is not None: # previous rank has an action at this time step
+                if prev_rank_action is not None:  # previous rank has an action at this time step
                     computation_type = prev_rank_action.computation_type
                     mb_index = prev_rank_action.microbatch_index
                     stage_index = prev_rank_action.stage_index
-                    assert mb_index is not None, (
-                        "All currently supported action types require valid microbatch_index"
-                    )
+                    assert (
+                        mb_index is not None
+                    ), "All currently supported action types require valid microbatch_index"
                     # Only handle sends for the forward from a previous rank
                     if computation_type == PipelineActionType.FORWARD:
                         # If not the last stage, then receive fwd activations
@@ -747,9 +746,7 @@ class CustomScheduleInterleaved1F1B():
                     elif computation_type == PipelineActionType.FULL_BACKWARD_CONT:
                         pass
                     else:
-                        raise ValueError(
-                            f"Unknown computation type {computation_type}"
-                        )
+                        raise ValueError(f"Unknown computation type {computation_type}")
 
             # Now look at the next ranks for this current timestep and determine whether
             # this current rank needs to do any recv communication (for backward gradients)
@@ -759,22 +756,22 @@ class CustomScheduleInterleaved1F1B():
                 if time_step < len(next_rank_ops):
                     next_rank_action = next_rank_ops[time_step]
                 else:
-                    next_rank_action = None # no action from next rank at this time step
+                    next_rank_action = None  # no action from next rank at this time step
 
                 if next_rank_action is not None:
                     computation_type = next_rank_action.computation_type
                     mb_index = next_rank_action.microbatch_index
                     stage_index = next_rank_action.stage_index
-                    assert mb_index is not None, (
-                        "All currently supported action types require valid microbatch_index"
-                    )
+                    assert (
+                        mb_index is not None
+                    ), "All currently supported action types require valid microbatch_index"
                     # Only handle receives for the backwards from a next rank
                     if computation_type == FORWARD:
                         # Next rank doing forward or weight update has no influence for the current rank backward recv
                         pass
                     elif computation_type == FULL_BACKWARD_CONT:
                         # If not the first stage, then receive bwd gradients
-                        # if stage_index - 1 in stage_index_to_stage:    
+                        # if stage_index - 1 in stage_index_to_stage:
                         #     stage = stage_index_to_stage[stage_index - 1]
                         #     ops.extend(stage.get_bwd_recv_ops(mb_index))
                         pass
@@ -795,9 +792,7 @@ class CustomScheduleInterleaved1F1B():
                                     for op in stage.get_bwd_recv_ops(mb_index)
                                 )
                     else:
-                        raise ValueError(
-                            f"Unknown computation type {computation_type}"
-                        )
+                        raise ValueError(f"Unknown computation type {computation_type}")
 
             launch_p2p_ops(keyed_ops)
 
@@ -810,36 +805,33 @@ class CustomScheduleInterleaved1F1B():
                     wait_all_p2p()
                 else:
                     has_blocking_op = any(
-                        op_kind not in self.p2p_overlap_ops
-                        for _key, op_kind, _op in keyed_ops
+                        op_kind not in self.p2p_overlap_ops for _key, op_kind, _op in keyed_ops
                     )
-                    if not past_first_backward: # it's only safe collect the p2p handles at N+1 step in the stable 1F1B phase. Need to collect it immediately in the warmup phase
+                    if (
+                        not past_first_backward
+                    ):  # it's only safe collect the p2p handles at N+1 step in the stable 1F1B phase. Need to collect it immediately in the warmup phase
                         wait_all_p2p()
                     elif has_blocking_op:
                         wait_all_p2p()
                     if self.max_p2p_overlap_steps is not None:
                         wait_p2p_launched_at_or_before(
-                            completed_p2p_overlap_compute_steps
-                            - self.max_p2p_overlap_steps
+                            completed_p2p_overlap_compute_steps - self.max_p2p_overlap_steps
                         )
 
             # print(f'{action}-Done')
 
-            pass # time step done
+            pass  # time step done
 
         wait_all_p2p()
 
         return
 
-
     def _calculate_single_rank_operations(self, rank) -> list[Optional[PipelineAction]]:
         def get_rank_warmup_ops(rank):
             # Warms up operations for last stage
-            warmups_ops_last_stage = (
-                self.n_local_stages - 1
-            ) * self.microbatches_per_round
+            warmups_ops_last_stage = (self.n_local_stages - 1) * self.microbatches_per_round
 
-            # warmups_ops_last_stage += 1 # fused overlap 
+            # warmups_ops_last_stage += 1 # fused overlap
 
             # Increment warmup operations by 2 for each hop away from the last stage
             multiply_factor = 2
@@ -860,7 +852,6 @@ class CustomScheduleInterleaved1F1B():
         total_ops = warmup_ops + fwd_bwd_ops + cooldown_ops
         # warmup_ops + fwd_bwd_ops * 2 + cooldown_ops == microbatch_ops * 2
 
-
         # Calculates the stage index based on step and pp_group_size
         def forward_stage_index(step):
             # Get the local index from 0 to n_local_stages-1
@@ -871,8 +862,7 @@ class CustomScheduleInterleaved1F1B():
             local_index = (
                 self.n_local_stages
                 - 1
-                - ((step - warmup_ops) // self.microbatches_per_round)
-                % self.n_local_stages
+                - ((step - warmup_ops) // self.microbatches_per_round) % self.n_local_stages
             )
             return (local_index * self.pp_group_size) + rank
 
@@ -908,15 +898,12 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
         target_mbs: Optional[list] = None,
         forward_only: bool = False,
     ):
-        
         if not self._stages_initialized:
             self._initialize_stages(arg_mbs[0], kwarg_mbs[0])
 
         # the microbatch shape might change between training and eval, so ned to re-prepare the meta info
         for stage in self._stages:
-            stage._prepare_forward_backward_meta(
-                self._n_microbatches, arg_mbs[0], kwarg_mbs[0]
-            )
+            stage._prepare_forward_backward_meta(self._n_microbatches, arg_mbs[0], kwarg_mbs[0])
         if self.p2p_transport is not None:
             payload_meta: Optional[torch.Tensor] = None
             for stage in self._stages:
@@ -978,9 +965,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
 
         def wait_p2p_key(key: tuple[str, int, int, int]) -> None:
             debug(f"wait key={key} entries={len(outstanding_p2p.get(key, []))}")
-            for handle, _op, _op_kind, _launch_overlap_step in outstanding_p2p.pop(
-                key, []
-            ):
+            for handle, _op, _op_kind, _launch_overlap_step in outstanding_p2p.pop(key, []):
                 handle.wait()
 
         def wait_all_p2p() -> None:
@@ -1042,10 +1027,21 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
             prune_completed_p2p()
 
             # do a 1-step lookahead prefetch if needed
-            next_action = self.pipeline_order[self.rank][time_step + 1] if time_step + 1 < len(self.pipeline_order[self.rank]) else None
-            if next_action is not None and next_action.computation_type == PipelineActionType.FULL_BACKWARD and next_action.need_reload and self.use_gpu_activation_offload:
+            next_action = (
+                self.pipeline_order[self.rank][time_step + 1]
+                if time_step + 1 < len(self.pipeline_order[self.rank])
+                else None
+            )
+            if (
+                next_action is not None
+                and next_action.computation_type == PipelineActionType.FULL_BACKWARD
+                and next_action.need_reload
+                and self.use_gpu_activation_offload
+            ):
                 debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
-                _ = self.gpu_activation_offloader.async_reload(f"{next_action.stage_index}F{next_action.microbatch_index}") # in saving, using "F" group for both F and B
+                _ = self.gpu_activation_offloader.async_reload(
+                    f"{next_action.stage_index}F{next_action.microbatch_index}"
+                )  # in saving, using "F" group for both F and B
                 debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
 
             keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]] = []
@@ -1054,25 +1050,26 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                 computation_type = action.computation_type
                 mb_index = action.microbatch_index
                 stage_index = action.stage_index
-                assert mb_index is not None, (
-                    "All currently supported action types require valid microbatch_index"
-                )
+                assert (
+                    mb_index is not None
+                ), "All currently supported action types require valid microbatch_index"
                 if computation_type == PipelineActionType.FORWARD:
                     # perform forward computation
                     stage = stage_index_to_stage[stage_index]
                     offload_group = f"{action.stage_index}F{mb_index}"
                     forward_counter[stage_index] += 1
-                    last_forward = (
-                        forward_counter[stage_index] == self._n_microbatches
-                    )
-                    with nvtx.annotate(f"{action.stage_index}F{mb_index}", color='green'):
+                    last_forward = forward_counter[stage_index] == self._n_microbatches
+                    with nvtx.annotate(f"{action.stage_index}F{mb_index}", color="green"):
                         # use this context manager to capture all saved tensors in this block, it does not transfer anything at this point
                         with self.gpu_activation_offloader.get_offload_context(
                             group=offload_group,
-                            enable=action.need_offload and self.use_gpu_activation_offload
+                            enable=action.need_offload and self.use_gpu_activation_offload,
                         ):
                             stage.forward_one_chunk(
-                                mb_index, arg_mbs[mb_index], kwarg_mbs[mb_index], last_forward=last_forward
+                                mb_index,
+                                arg_mbs[mb_index],
+                                kwarg_mbs[mb_index],
+                                last_forward=last_forward,
                             )
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
@@ -1098,22 +1095,22 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                     else:
                         # make sure the reload is done
                         if action.need_reload and self.use_gpu_activation_offload:
-                            self.gpu_activation_offloader.wait_reload(f"{action.stage_index}F{action.microbatch_index}") # in saving, using "F" group for both F and B
+                            self.gpu_activation_offloader.wait_reload(
+                                f"{action.stage_index}F{action.microbatch_index}"
+                            )  # in saving, using "F" group for both F and B
 
                         # perform backward computation
                         stage = stage_index_to_stage[stage_index]
 
                         backward_counter[stage_index] += 1
-                        last_backward = (
-                            backward_counter[stage_index] == self._n_microbatches
-                        )
+                        last_backward = backward_counter[stage_index] == self._n_microbatches
                         # grad_scale_factor = (
                         #     self._n_microbatches if self.scale_grads else 1
                         # )
-                        with nvtx.annotate(f"{action.stage_index}B{mb_index}", color='red'):
+                        with nvtx.annotate(f"{action.stage_index}B{mb_index}", color="red"):
                             stage.backward_one_chunk(
                                 mb_index,
-                                loss=None, # loss is retrieved inside the stage
+                                loss=None,  # loss is retrieved inside the stage
                                 last_backward=last_backward,
                             )
                         # if last_backward:
@@ -1121,7 +1118,9 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
 
                         if action.need_reload and self.use_gpu_activation_offload:
                             debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
-                            self.gpu_activation_offloader.manual_release_group(f"{action.stage_index}F{action.microbatch_index}")
+                            self.gpu_activation_offloader.manual_release_group(
+                                f"{action.stage_index}F{action.microbatch_index}"
+                            )
                             debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
                         self._maybe_local_backward_handoff(stage, mb_index, stage_index_to_stage)
                         keyed_ops.extend(
@@ -1155,15 +1154,15 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                 if time_step < len(prev_rank_ops):
                     prev_rank_action = prev_rank_ops[time_step]
                 else:
-                    prev_rank_action = None # no action from previous rank at this time step
+                    prev_rank_action = None  # no action from previous rank at this time step
 
-                if prev_rank_action is not None: # previous rank has an action at this time step
+                if prev_rank_action is not None:  # previous rank has an action at this time step
                     computation_type = prev_rank_action.computation_type
                     mb_index = prev_rank_action.microbatch_index
                     stage_index = prev_rank_action.stage_index
-                    assert mb_index is not None, (
-                        "All currently supported action types require valid microbatch_index"
-                    )
+                    assert (
+                        mb_index is not None
+                    ), "All currently supported action types require valid microbatch_index"
                     # Only handle sends for the forward from a previous rank
                     if computation_type == PipelineActionType.FORWARD:
                         # If not the last stage, then receive fwd activations
@@ -1183,9 +1182,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                     elif computation_type == PipelineActionType.FULL_BACKWARD_CONT:
                         pass
                     else:
-                        raise ValueError(
-                            f"Unknown computation type {computation_type}"
-                        )
+                        raise ValueError(f"Unknown computation type {computation_type}")
 
             # Now look at the next ranks for this current timestep and determine whether
             # this current rank needs to do any recv communication (for backward gradients)
@@ -1195,22 +1192,22 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                 if time_step < len(next_rank_ops):
                     next_rank_action = next_rank_ops[time_step]
                 else:
-                    next_rank_action = None # no action from next rank at this time step
+                    next_rank_action = None  # no action from next rank at this time step
 
                 if next_rank_action is not None:
                     computation_type = next_rank_action.computation_type
                     mb_index = next_rank_action.microbatch_index
                     stage_index = next_rank_action.stage_index
-                    assert mb_index is not None, (
-                        "All currently supported action types require valid microbatch_index"
-                    )
+                    assert (
+                        mb_index is not None
+                    ), "All currently supported action types require valid microbatch_index"
                     # Only handle receives for the backwards from a next rank
                     if computation_type == FORWARD:
                         # Next rank doing forward or weight update has no influence for the current rank backward recv
                         pass
                     elif computation_type == FULL_BACKWARD_CONT:
                         # If not the first stage, then receive bwd gradients
-                        # if stage_index - 1 in stage_index_to_stage:    
+                        # if stage_index - 1 in stage_index_to_stage:
                         #     stage = stage_index_to_stage[stage_index - 1]
                         #     ops.extend(stage.get_bwd_recv_ops(mb_index))
                         pass
@@ -1231,9 +1228,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                                     for op in stage.get_bwd_recv_ops(mb_index)
                                 )
                     else:
-                        raise ValueError(
-                            f"Unknown computation type {computation_type}"
-                        )
+                        raise ValueError(f"Unknown computation type {computation_type}")
 
             if keyed_ops:
                 keyed_ops_by_peer_and_key: dict[
@@ -1247,7 +1242,12 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                     if next_action.computation_type == PipelineActionType.FORWARD:
                         if not next_stage.is_first and not next_stage.has_local_forward_src():
                             next_action_input_keys.add(
-                                ("F", next_action.stage_index - 1, next_action.stage_index, next_mb_index)
+                                (
+                                    "F",
+                                    next_action.stage_index - 1,
+                                    next_action.stage_index,
+                                    next_mb_index,
+                                )
                             )
                     elif next_action.computation_type == PipelineActionType.FULL_BACKWARD:
                         if (
@@ -1256,7 +1256,12 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                             and not next_stage.has_local_backward_src()
                         ):
                             next_action_input_keys.add(
-                                ("B", next_action.stage_index + 1, next_action.stage_index, next_mb_index)
+                                (
+                                    "B",
+                                    next_action.stage_index + 1,
+                                    next_action.stage_index,
+                                    next_mb_index,
+                                )
                             )
 
                 for keyed_op in keyed_ops:
@@ -1304,7 +1309,9 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                             if self.p2p_backend == "nccl_rma":
                                 handles = [op.start() for _, _, op in peer_keyed_ops]
                             else:
-                                handles = dist.batch_isend_irecv([op for _, _, op in peer_keyed_ops])
+                                handles = dist.batch_isend_irecv(
+                                    [op for _, _, op in peer_keyed_ops]
+                                )
                         if len(handles) == 1 and len(peer_keyed_ops) > 1:
                             # NCCL coalescing may return a single Work that covers
                             # the whole same-key peer batch. Associate it with every
@@ -1349,23 +1356,22 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                     } - set(self.p2p_overlap_ops)
                     if blocking_ops:
                         wait_p2p_ops(blocking_ops)
-                    if not past_first_backward: # it's only safe collect the p2p handles at N+1 step in the stable 1F1B phase. Need to collect it immediately in the warmup phase
+                    if (
+                        not past_first_backward
+                    ):  # it's only safe collect the p2p handles at N+1 step in the stable 1F1B phase. Need to collect it immediately in the warmup phase
                         wait_all_p2p()
                     if self.max_p2p_overlap_steps is not None:
                         wait_p2p_launched_at_or_before(
-                            completed_p2p_overlap_compute_steps
-                            - self.max_p2p_overlap_steps
+                            completed_p2p_overlap_compute_steps - self.max_p2p_overlap_steps
                         )
 
             # print(f'{action}-Done')
 
-            pass # time step done
+            pass  # time step done
 
         wait_all_p2p()
 
         return
-
-
 
     def configure_pipeline_order(self):
         if self._num_stages != 2 * self.pp_group_size:
@@ -1386,7 +1392,9 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
     def _stage_to_rank(self, stage_index: int) -> int:
         return self.stage_index_to_group_rank[stage_index]
 
-    def _dependency_ready_time(self, producer_stage: int, consumer_stage: int, producer_time: int) -> int:
+    def _dependency_ready_time(
+        self, producer_stage: int, consumer_stage: int, producer_time: int
+    ) -> int:
         # Stage outputs are available to adjacent logical stages on the next
         # schedule slot. Inter-rank handoffs enqueue P2P in the producer slot,
         # and same-rank handoffs are direct local transfers.
@@ -1517,21 +1525,12 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
         extra_peak_mem_by_rank: Sequence[int],
     ) -> list[list[str]]:
         peak_mem = 0
-        memory = [
-            [0 for _ in range(len(symbols[0]))]
-            for _ in range(len(symbols))
-        ]
+        memory = [[0 for _ in range(len(symbols[0]))] for _ in range(len(symbols))]
         locations = [
-            [
-                {key: -1 for key in ("F", "f", "B", "b", "W", "w")}
-                for _ in range(n_microbatches + 2)
-            ]
+            [{key: -1 for key in ("F", "f", "B", "b", "W", "w")} for _ in range(n_microbatches + 2)]
             for _ in range(len(symbols))
         ]
-        counters = [
-            {key: 0 for key in ("F", "f", "B", "b", "W", "w")}
-            for _ in range(len(symbols))
-        ]
+        counters = [{key: 0 for key in ("F", "f", "B", "b", "W", "w")} for _ in range(len(symbols))]
 
         for rank in range(len(symbols)):
             current = 0
@@ -1580,12 +1579,8 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                 while position < idx and symbols[rank][position] != " ":
                     position += 1
                 if symbol in "Bb":
-                    while (
-                        position < idx
-                        and (
-                            symbols[rank][position] != " "
-                            or symbols[rank][position + 1] != " "
-                        )
+                    while position < idx and (
+                        symbols[rank][position] != " " or symbols[rank][position + 1] != " "
                     ):
                         position += 1
                 if position == idx:
@@ -1653,10 +1648,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                     counts[symbol] += 1
 
         last_non_empty = max(
-            idx
-            for row in symbols
-            for idx, symbol in enumerate(row)
-            if symbol != " "
+            idx for row in symbols for idx, symbol in enumerate(row) if symbol != " "
         )
         return [row[: last_non_empty + 1] for row in symbols]
 
@@ -1735,9 +1727,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                             f"1F1B-V W is not the continuation of B on rank={rank}, time={idx}"
                         )
                     _, stage_index, mb_index = pending_continuation
-                    actions.append(
-                        PipelineAction(stage_index, FULL_BACKWARD_CONT, mb_index)
-                    )
+                    actions.append(PipelineAction(stage_index, FULL_BACKWARD_CONT, mb_index))
                     pending_continuation = None
                 elif symbol == "b":
                     mb_index = next_microbatch["b"]
@@ -1750,9 +1740,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                             f"1F1B-V w is not the continuation of b on rank={rank}, time={idx}"
                         )
                     _, stage_index, mb_index = pending_continuation
-                    actions.append(
-                        PipelineAction(stage_index, FULL_BACKWARD_CONT, mb_index)
-                    )
+                    actions.append(PipelineAction(stage_index, FULL_BACKWARD_CONT, mb_index))
                     pending_continuation = None
                 else:
                     raise AssertionError(f"Unexpected 1F1B-V symbol {symbol!r}")
@@ -1764,7 +1752,6 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
             rows[rank] = actions
 
         return rows
-
 
     def _generate_1f1b_v_pipeline_order(self) -> dict[int, list[Optional[PipelineAction]]]:
         num_microbatches = self._n_microbatches
@@ -1873,7 +1860,12 @@ def configure_offload(rank_pipeline_order: dict[int, list[Optional[PipelineActio
 
     def find_corresponding_backward(pp_order, fwd_action) -> Optional[int]:
         for time_step, action in enumerate(pp_order):
-            if action is not None and action.stage_index == fwd_action.stage_index and action.microbatch_index == fwd_action.microbatch_index and action.computation_type == PipelineActionType.FULL_BACKWARD:
+            if (
+                action is not None
+                and action.stage_index == fwd_action.stage_index
+                and action.microbatch_index == fwd_action.microbatch_index
+                and action.computation_type == PipelineActionType.FULL_BACKWARD
+            ):
                 return time_step
         return None
 
@@ -1882,7 +1874,7 @@ def configure_offload(rank_pipeline_order: dict[int, list[Optional[PipelineActio
 
         if allowed_offloads <= 0:
             continue
-        
+
         held_activations = 0
         offloaded_activations = 0
         for time_step in range(total_steps):
@@ -1892,7 +1884,11 @@ def configure_offload(rank_pipeline_order: dict[int, list[Optional[PipelineActio
             next_action = None
             if time_step + 1 < total_steps:
                 next_action = rank_pipeline_order[rank][time_step + 1]
-            if next_action is not None and next_action.computation_type == PipelineActionType.FULL_BACKWARD and next_action.need_reload:
+            if (
+                next_action is not None
+                and next_action.computation_type == PipelineActionType.FULL_BACKWARD
+                and next_action.need_reload
+            ):
                 held_activations += 1
                 offloaded_activations -= 1
 
@@ -1901,7 +1897,10 @@ def configure_offload(rank_pipeline_order: dict[int, list[Optional[PipelineActio
                 held_activations += 1
 
             # backward pass, activation -1
-            if action is not None and action.computation_type == PipelineActionType.FULL_BACKWARD_CONT:
+            if (
+                action is not None
+                and action.computation_type == PipelineActionType.FULL_BACKWARD_CONT
+            ):
                 held_activations -= 1
 
             if offloaded_activations < allowed_offloads:
@@ -1914,10 +1913,11 @@ def configure_offload(rank_pipeline_order: dict[int, list[Optional[PipelineActio
                     if bwd_step is not None:
                         bwd_action = rank_pipeline_order[rank][bwd_step]
                         assert bwd_action is not None
-                        rank_pipeline_order[rank][bwd_step] = bwd_action._replace(need_reload=True) 
+                        rank_pipeline_order[rank][bwd_step] = bwd_action._replace(need_reload=True)
         assert held_activations == 0
         assert offloaded_activations == 0
     return rank_pipeline_order
+
 
 def pad_to_max_length(rank_pipeline_order: dict[int, list[Optional[PipelineAction]]]):
     """Pads all rank operation lists to the maximum length with None (no-op) actions."""
@@ -1926,6 +1926,7 @@ def pad_to_max_length(rank_pipeline_order: dict[int, list[Optional[PipelineActio
         if len(ops) < max_length:
             ops.extend([None] * (max_length - len(ops)))
     return rank_pipeline_order
+
 
 def _get_interleaved_1f1b_rank_ops(
     n_local_stages,
@@ -1941,7 +1942,6 @@ def _get_interleaved_1f1b_rank_ops(
     # All stages start with handling microbatch 0
     fwd_stage_mb_index: dict[int, int] = defaultdict(int)
     bwd_stage_mb_index: dict[int, int] = defaultdict(int)
-
 
     # Store the list of operations used for that rank
     # Pre-padding, rank starts with no-ops based on the warmup.
@@ -1965,15 +1965,12 @@ def _get_interleaved_1f1b_rank_ops(
             fwd_stage_mb_index[fwd_stage_index] = (
                 mb_index := fwd_stage_mb_index[fwd_stage_index]
             ) + 1
-            rank_ops.append(
-                PipelineAction(fwd_stage_index, PipelineActionType.FORWARD, mb_index)
-            )
+            rank_ops.append(PipelineAction(fwd_stage_index, PipelineActionType.FORWARD, mb_index))
             if op == warmup_ops - 1:
                 # This is the last step in the warmup phase, so we need to wait for the backward to trickle back up
                 rank_ops.extend([None] * post_warmup_ops)
         # 1F1B Phase (forward and backward)
         elif warmup_ops <= op < warmup_ops + fwd_bwd_ops:
-            
             # 1F
             fwd_stage_index = forward_stage_index(op)
             fwd_stage_mb_index[fwd_stage_index] = (
@@ -1983,19 +1980,15 @@ def _get_interleaved_1f1b_rank_ops(
                 PipelineAction(fwd_stage_index, PipelineActionType.FORWARD, fwd_mb_index)
             )
 
-
             # 1B
             bwd_stage_index = backward_stage_index(op)
             bwd_stage_mb_index[bwd_stage_index] = (
                 bwd_mb_index := bwd_stage_mb_index[bwd_stage_index]
             ) + 1
-            rank_ops.append(
-                PipelineAction(bwd_stage_index, FULL_BACKWARD, bwd_mb_index)
-            )
+            rank_ops.append(PipelineAction(bwd_stage_index, FULL_BACKWARD, bwd_mb_index))
             rank_ops.append(
                 PipelineAction(bwd_stage_index, FULL_BACKWARD_CONT, bwd_mb_index)
-            ) # Backward takes twice the time
-
+            )  # Backward takes twice the time
 
         # Cooldown phase
         else:
@@ -2008,11 +2001,9 @@ def _get_interleaved_1f1b_rank_ops(
             bwd_stage_mb_index[bwd_stage_index] = (
                 bwd_mb_index := bwd_stage_mb_index[bwd_stage_index]
             ) + 1
-            rank_ops.append(
-                PipelineAction(bwd_stage_index, FULL_BACKWARD, bwd_mb_index)
-            )
+            rank_ops.append(PipelineAction(bwd_stage_index, FULL_BACKWARD, bwd_mb_index))
             rank_ops.append(
                 PipelineAction(bwd_stage_index, FULL_BACKWARD_CONT, bwd_mb_index)
-            ) # Backward takes twice the time
+            )  # Backward takes twice the time
 
     return rank_ops

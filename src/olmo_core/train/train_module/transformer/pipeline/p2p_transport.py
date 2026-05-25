@@ -272,7 +272,9 @@ class NCCLRMAPipelineP2PTransport:
                 f"NCCL RMA P2P tensor shape {tuple(tensor.size())} does not match {self.payload_shape}"
             )
         if tensor.dtype != self.payload_dtype:
-            raise RuntimeError(f"NCCL RMA P2P tensor dtype {tensor.dtype} does not match {self.payload_dtype}")
+            raise RuntimeError(
+                f"NCCL RMA P2P tensor dtype {tensor.dtype} does not match {self.payload_dtype}"
+            )
         slot_index, send_slot = self._slot(key)
         _debug(f"make send key={key} peer={peer} slot={slot_index}")
         return RMASendOp(
@@ -289,11 +291,7 @@ class NCCLRMAPipelineP2PTransport:
         # NCCL 2.29.7 exposes only signal index/context 0, so waits consume one
         # signal from the peer-wide signal queue. Correctness depends on keeping
         # per-peer send order and wait order consistent in the pipeline schedule.
-        _debug(
-            "make recv "
-            f"key={key} peer={peer} slot={slot_index} "
-            "op_count=1"
-        )
+        _debug("make recv " f"key={key} peer={peer} slot={slot_index} " "op_count=1")
         return RMARecvOp(
             transport=self,
             key=key,

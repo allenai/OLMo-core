@@ -306,6 +306,7 @@ class Transformer(nn.Module):
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
             from ..moe.v2.block import MoEFusedV2TransformerBlock
+
             att = cast(SequenceMixer, block.attention)
 
             # Sequence-mixer weights.
@@ -954,7 +955,9 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             flops_per_token += self.lm_head.num_flops_per_token(seq_len)
         # TODO: confirm that merge from main worked correctly.
-        flops_per_token += int(num_floating_point_operations_for_logits(self.config, seq_len) / seq_len)
+        flops_per_token += int(
+            num_floating_point_operations_for_logits(self.config, seq_len) / seq_len
+        )
         return flops_per_token
 
     def post_batch(self, dry_run: bool = False):

@@ -46,9 +46,9 @@ from olmo_core.nn.transformer import (
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
-    OverrideDecay,
     ComposableSchedulerStage,
     ComposableSchedulerStageType,
+    OverrideDecay,
 )
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (

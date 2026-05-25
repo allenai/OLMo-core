@@ -6,15 +6,14 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 import torch
 
 from ...moe.utils import wait_stream_no_compile
+from .checkpointing import get_rowwise_checkpoint_state
 from .comm import (
     _DispatchRowwiseAutograd,
     _DispatchRowwiseFP8Autograd,
-    _RowwiseFP8DispatchExpertsCombineAutograd,
     _RowwiseCombineWeightedAutograd,
     _RowwiseCombineWeightedFP8Autograd,
+    _RowwiseFP8DispatchExpertsCombineAutograd,
 )
-from .checkpointing import get_rowwise_checkpoint_state
-from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
 from .ep_no_sync_buffers import (
     acquire_ep_no_sync_fp8_dispatch_out_lease,
     acquire_ep_no_sync_rowwise_lifetime_leases,
@@ -28,13 +27,14 @@ from .ep_no_sync_buffers import (
     use_ep_no_sync_rowwise_symm_combine_out,
     use_ep_no_sync_rowwise_symm_dispatch_in,
 )
-from .fp8 import (
-    shared_experts_forward1_rowwise_fp8,
-    shared_experts_forward2_rowwise_fp8,
-)
+from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
 from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
+)
+from .fp8 import (
+    shared_experts_forward1_rowwise_fp8,
+    shared_experts_forward2_rowwise_fp8,
 )
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
@@ -57,8 +57,12 @@ def combined_forward_ep_no_sync_rowwise(
     assert self.routed_experts_router is not None
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
-    assert use_torch_grouped_mm() == True, "EP no-sync implementation requires torch.grouped_mm support"
-    assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
+    assert (
+        use_torch_grouped_mm() == True
+    ), "EP no-sync implementation requires torch.grouped_mm support"
+    assert (
+        not requires_host_side_split_sizes()
+    ), "EP no-sync implementation does not support host-side split size communication"
     if self.ep_no_sync_use_2d_all_to_all:
         raise RuntimeError(
             "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
@@ -129,7 +133,10 @@ def combined_forward_ep_no_sync_rowwise(
     num_input_tokens = moe_inp.shape[0]
     top_k = self.routed_experts_router.top_k
     if activation_checkpointing is None or accumulate_routed_aux_loss_metrics is None:
-        activation_checkpointing, accumulate_routed_aux_loss_metrics = get_rowwise_checkpoint_state()
+        (
+            activation_checkpointing,
+            accumulate_routed_aux_loss_metrics,
+        ) = get_rowwise_checkpoint_state()
     use_symm_dispatch_in = (not use_rowwise_fp8) and use_ep_no_sync_rowwise_symm_dispatch_in(self)
     use_symm_combine_out = (
         (not use_rowwise_fp8)
@@ -155,7 +162,9 @@ def combined_forward_ep_no_sync_rowwise(
     lease_dispatch_out = (not use_rowwise_fp8) and lease_lifetime_buffers
     lease_combine_out = use_symm_combine_out and lease_lifetime_buffers
     lease_combine_gather = use_symm_combine_gather and lease_lifetime_buffers
-    use_fused_rowwise_fp8 = use_rowwise_fp8 and rowwise_fp8_cfg is not None and rowwise_fp8_cfg.fused_autograd
+    use_fused_rowwise_fp8 = (
+        use_rowwise_fp8 and rowwise_fp8_cfg is not None and rowwise_fp8_cfg.fused_autograd
+    )
 
     with torch.no_grad():
         requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
@@ -293,7 +302,9 @@ def combined_forward_ep_no_sync_rowwise(
                     else buffers.dispatch_out
                 ),
                 dispatch_out_is_shared=(
-                    True if leases.dispatch_out_lease is not None else buffers.dispatch_out_is_shared
+                    True
+                    if leases.dispatch_out_lease is not None
+                    else buffers.dispatch_out_is_shared
                 ),
                 combine_out=(
                     leases.combine_out_lease.tensor("combine_out")
@@ -313,9 +324,7 @@ def combined_forward_ep_no_sync_rowwise(
                 combine_gather_lease=leases.combine_gather_lease,
             )
 
-    routing_map = local_x_global_routed_expert_indices.view(
-        -1, top_k
-    ).int()
+    routing_map = local_x_global_routed_expert_indices.view(-1, top_k).int()
 
     with torch.no_grad():
         padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
@@ -351,9 +360,7 @@ def combined_forward_ep_no_sync_rowwise(
     else:
         shared_out_up, shared_out_gate = None, None
 
-    route_probs = local_x_global_routed_expert_weights.view(
-        -1, self.routed_experts_router.top_k
-    )
+    route_probs = local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k)
 
     if use_fused_rowwise_fp8:
         assert rowwise_fp8_cfg is not None
@@ -364,7 +371,9 @@ def combined_forward_ep_no_sync_rowwise(
         routed_experts = self.routed_experts
         routed_fp8_cfg = routed_experts.rowwise_fp8
         if routed_fp8_cfg is None or not routed_fp8_cfg.enabled:
-            raise RuntimeError("fused rowwise FP8 autograd requires routed expert rowwise_fp8 to be enabled")
+            raise RuntimeError(
+                "fused rowwise FP8 autograd requires routed expert rowwise_fp8 to be enabled"
+            )
         up_gate_weight = routed_experts._rowwise_fp8_up_gate_weight
         down_weight = routed_experts._rowwise_fp8_down_weight
         up_gate_prequant = up_gate_weight.require_prequantized_rhs()
@@ -521,14 +530,22 @@ def combined_forward_ep_no_sync_rowwise(
                     use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
                 )
             else:
-                shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
+                shared_out = self.shared_experts.forward2(
+                    shared_out_up, shared_out_gate, attn_res_out.shape
+                )
             if self.shared_experts_router:
                 assert local_x_global_shared_expert_weights is not None
                 _, _, E_s = local_x_global_shared_expert_weights.shape
-                mixed_shared_out = torch.bmm(
-                    local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
-                    shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                ).squeeze(1).view(B, S, D)
+                mixed_shared_out = (
+                    torch.bmm(
+                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(
+                            B * S, 1, E_s
+                        ),
+                        shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
+                    )
+                    .squeeze(1)
+                    .view(B, S, D)
+                )
             else:
                 mixed_shared_out = shared_out.squeeze(0)
     else:

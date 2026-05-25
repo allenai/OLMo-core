@@ -1313,9 +1313,7 @@ class Trainer:
             "ooms_delta",
         )
         max_stats = (
-            self._reduce_checkpoint_cuda_memory_stats(stats, keys)
-            if reduce_across_ranks
-            else stats
+            self._reduce_checkpoint_cuda_memory_stats(stats, keys) if reduce_across_ranks else stats
         )
         rank = get_rank()
         local_scope = f"rank{rank}"
@@ -1370,9 +1368,7 @@ class Trainer:
 
         device = torch.device("cuda", torch.cuda.current_device())
         with cuda_sync_debug_mode(0):
-            values = torch.tensor(
-                [stats[key] for key in keys], device=device, dtype=torch.float64
-            )
+            values = torch.tensor([stats[key] for key in keys], device=device, dtype=torch.float64)
             dist.all_reduce(values, op=dist.ReduceOp.MAX)
             values = values.cpu().tolist()
         return {key: float(value) for key, value in zip(keys, values)}

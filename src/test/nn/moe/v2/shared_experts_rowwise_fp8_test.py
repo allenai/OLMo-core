@@ -4,13 +4,13 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.config import DType
+from olmo_core.nn.fp8_weight import FP8WeightStore
 from olmo_core.nn.moe.v2.fp8 import (
     MoERowwiseFP8Config,
     shared_experts_forward1_rowwise_fp8,
     shared_experts_forward2_rowwise_fp8,
 )
 from olmo_core.nn.moe.v2.shared_experts import SharedExperts
-from olmo_core.nn.fp8_weight import FP8WeightStore
 
 
 def _stub_scaled_grouped_mm_q(
@@ -24,7 +24,13 @@ def _stub_scaled_grouped_mm_q(
     prequantized_rhs=None,
     prequantized_rhs_for_dgrad=None,
 ) -> torch.Tensor:
-    del input_grad_out, use_fast_accum, prequantized_lhs, prequantized_rhs, prequantized_rhs_for_dgrad
+    del (
+        input_grad_out,
+        use_fast_accum,
+        prequantized_lhs,
+        prequantized_rhs,
+        prequantized_rhs_for_dgrad,
+    )
     return F.grouped_mm(mat_a, mat_b, offs=offs)
 
 
@@ -173,7 +179,13 @@ def test_shared_experts_fp8_only_path_uses_generic_weight_stores(monkeypatch):
         wgrad_sink_transpose_last2: bool = False,
         wgrad_sink_squeeze_first_dim: bool = False,
     ) -> torch.Tensor:
-        del input_grad_out, use_fast_accum, prequantized_lhs, prequantized_rhs, prequantized_rhs_for_dgrad
+        del (
+            input_grad_out,
+            use_fast_accum,
+            prequantized_lhs,
+            prequantized_rhs,
+            prequantized_rhs_for_dgrad,
+        )
         seen.append(
             {
                 "anchor_shape": tuple(grad_anchor.shape),

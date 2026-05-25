@@ -4,6 +4,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import (
+    TYPE_CHECKING,
     Any,
     Dict,
     Generic,
@@ -11,7 +12,6 @@ from typing import (
     List,
     Optional,
     Set,
-    TYPE_CHECKING,
     Tuple,
     Type,
     TypeVar,
@@ -135,7 +135,7 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
         frozen_params: set = set()
         for n, p in model.named_parameters():
             if p.requires_grad:
-                if param_filter is None: # No filter applied
+                if param_filter is None:  # No filter applied
                     all_params[n] = p
                 else:
                     # Apply the parameter filter
@@ -156,7 +156,7 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
             [name for name in all_params.keys() if name not in overridden_param_names], {}
         )
         # group_overrides.append(default_override)
-        group_overrides.insert(0, default_override) # to ensure default is first
+        group_overrides.insert(0, default_override)  # to ensure default is first
 
         return [
             {"params": [all_params[param_name] for param_name in go.params], **go.opts}
@@ -186,9 +186,9 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        
+
         # not used: train_module
-        
+
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")
         kwargs.pop("compile")

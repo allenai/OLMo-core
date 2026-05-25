@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import nvtx
@@ -15,9 +15,8 @@ from ...moe.utils import (
     wait_event_no_compile,
     wait_stream_no_compile,
 )
-from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
 from .checkpointing import is_activation_checkpointing
-from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
+from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
 from .ep_no_sync_buffers import (
     _NoSyncSymmBuffers,
     compute_ep_no_sync_rank_capacity,
@@ -28,6 +27,7 @@ from .ep_no_sync_buffers import (
     use_ep_no_sync_rowwise_symm_combine_out,
     use_ep_no_sync_rowwise_symm_dispatch_in,
 )
+from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
 from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
@@ -74,7 +74,9 @@ def _tbo_tensor_desc(name: str, tensor: Optional[torch.Tensor]) -> str:
     return f"{name}=tensor"
 
 
-def _tbo_debug_print(block: "MoEFusedV2TransformerBlock", label: str, **tensors: Optional[torch.Tensor]) -> None:
+def _tbo_debug_print(
+    block: "MoEFusedV2TransformerBlock", label: str, **tensors: Optional[torch.Tensor]
+) -> None:
     if not _tbo_debug_enabled():
         return
     parts = [
@@ -162,8 +164,12 @@ def ep_no_sync_rowwise_tbo_stage_a(
     assert self.routed_experts_router is not None
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
-    assert use_torch_grouped_mm() == True, "EP no-sync implementation requires torch.grouped_mm support"
-    assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
+    assert (
+        use_torch_grouped_mm() == True
+    ), "EP no-sync implementation requires torch.grouped_mm support"
+    assert (
+        not requires_host_side_split_sizes()
+    ), "EP no-sync implementation does not support host-side split size communication"
     _check_rowwise_tbo_supported(self)
     if self.ep_no_sync_use_2d_all_to_all:
         raise RuntimeError(
@@ -216,13 +222,11 @@ def ep_no_sync_rowwise_tbo_stage_a(
     activation_checkpointing = is_activation_checkpointing()
     use_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(self)
     use_symm_combine_out = (
-        (not activation_checkpointing)
-        and use_ep_no_sync_rowwise_symm_combine_out(self)
-    )
+        not activation_checkpointing
+    ) and use_ep_no_sync_rowwise_symm_combine_out(self)
     use_symm_combine_gather = (
-        (not activation_checkpointing)
-        and use_ep_no_sync_rowwise_symm_combine_gather(self)
-    )
+        not activation_checkpointing
+    ) and use_ep_no_sync_rowwise_symm_combine_gather(self)
     lease_lifetime_buffers = torch.is_grad_enabled() and not activation_checkpointing
     with torch.no_grad():
         with nvtx.annotate("RowwiseTBO-A-ConfigCapacity", color="green"):
@@ -307,9 +311,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
     #     combine_gather=buffers.combine_gather,
     # )
 
-    routing_map = local_x_global_routed_expert_indices.view(
-        -1, top_k
-    ).int()
+    routing_map = local_x_global_routed_expert_indices.view(-1, top_k).int()
 
     with torch.no_grad():
         padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
@@ -364,7 +366,9 @@ def ep_no_sync_rowwise_tbo_stage_d_launch(
     a_state: _NoSyncRowwiseStageAState,
 ) -> _NoSyncRowwiseStageDState:
     self = block
-    comm_stream = get_or_init_stream(id=f"ep_no_sync_rowwise_comm_{a_state.group_name}", priority=-10)
+    comm_stream = get_or_init_stream(
+        id=f"ep_no_sync_rowwise_comm_{a_state.group_name}", priority=-10
+    )
     # _tbo_debug_print(self, f"D{a_state.lane_id}:wait-stream-enter", moe_inp=a_state.moe_inp)
     wait_stream_no_compile(this_stream=comm_stream, other_stream=torch.cuda.current_stream())
     # _tbo_debug_print(self, f"D{a_state.lane_id}:wait-stream-exit")
@@ -383,7 +387,9 @@ def ep_no_sync_rowwise_tbo_stage_d_launch(
         grad_out_aliases_symm_out = True
         dispatch_out = _DispatchRowwiseAutograd.apply(
             a_state.moe_inp,
-            a_state.buffers.dispatch_in if getattr(a_state, "use_symm_dispatch_in", False) else None,
+            a_state.buffers.dispatch_in
+            if getattr(a_state, "use_symm_dispatch_in", False)
+            else None,
             a_state.dst_ranks,
             a_state.dst_rows,
             a_state.buffers.dispatch_out,
@@ -454,10 +460,16 @@ def ep_no_sync_rowwise_tbo_stage_shared_launch(
         if self.shared_experts_router:
             assert local_x_global_shared_expert_weights is not None
             _, _, E_s = local_x_global_shared_expert_weights.shape
-            mixed_shared_out = torch.bmm(
-                local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
-                shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-            ).squeeze(1).view(B, S, D)
+            mixed_shared_out = (
+                torch.bmm(
+                    local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(
+                        B * S, 1, E_s
+                    ),
+                    shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
+                )
+                .squeeze(1)
+                .view(B, S, D)
+            )
         else:
             mixed_shared_out = shared_out.squeeze(0)
         # _tbo_debug_print(self, f"E{a_state.lane_id}:shared-forward-exit", mixed_shared_out=mixed_shared_out)
@@ -510,7 +522,9 @@ def ep_no_sync_rowwise_tbo_stage_c_launch(
     block = pending_ctx.block
     assert block.routed_experts_router is not None
     a_state = pending_ctx.a_state
-    comm_stream = get_or_init_stream(id=f"ep_no_sync_rowwise_comm_{a_state.group_name}", priority=-10)
+    comm_stream = get_or_init_stream(
+        id=f"ep_no_sync_rowwise_comm_{a_state.group_name}", priority=-10
+    )
     # _tbo_debug_print(block, f"C{pending_ctx.lane_id}:wait-stream-enter", global_x_rank_major=pending_ctx.global_x_rank_major)
     wait_stream_no_compile(this_stream=comm_stream, other_stream=torch.cuda.current_stream())
     # _tbo_debug_print(block, f"C{pending_ctx.lane_id}:wait-stream-exit")
@@ -536,17 +550,9 @@ def ep_no_sync_rowwise_tbo_stage_c_launch(
             pending_ctx.global_x_rank_major,
             a_state.buffers.combine_in,
             a_state.buffers.combine_out if a_state.use_symm_combine_out else None,
-            (
-                a_state.buffers.combine_out_lease
-                if a_state.use_symm_combine_out
-                else None
-            ),
+            (a_state.buffers.combine_out_lease if a_state.use_symm_combine_out else None),
             a_state.buffers.combine_gather if a_state.use_symm_combine_gather else None,
-            (
-                a_state.buffers.combine_gather_lease
-                if a_state.use_symm_combine_gather
-                else None
-            ),
+            (a_state.buffers.combine_gather_lease if a_state.use_symm_combine_gather else None),
             a_state.dst_ranks,
             a_state.dst_rows,
             route_probs,

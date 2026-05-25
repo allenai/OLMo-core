@@ -219,10 +219,7 @@ class _NoSyncSymmLeasePool:
     @classmethod
     def _format_specs(cls, specs: Tuple[_NoSyncSymmLeaseTensorSpec, ...]) -> str:
         return ", ".join(
-            (
-                f"{spec.name}:shape={spec.shape}:dtype={spec.dtype}:"
-                f"bytes={cls._spec_bytes(spec)}"
-            )
+            (f"{spec.name}:shape={spec.shape}:dtype={spec.dtype}:" f"bytes={cls._spec_bytes(spec)}")
             for spec in specs
         )
 
@@ -368,8 +365,7 @@ class _NoSyncSymmLeasePool:
         # )
         slot = self._slots[slot_idx]
         tensors = {
-            spec.name: _view_cached_symm_tensor(slot[spec.name], spec.shape)
-            for spec in specs
+            spec.name: _view_cached_symm_tensor(slot[spec.name], spec.shape) for spec in specs
         }
         return _NoSyncSymmLease(pool=self, slot_idx=slot_idx, tensors=tensors)
 
@@ -477,7 +473,9 @@ class _NoSyncSymmSharedPool:
 
         slot_cache = self._slot_caches[slot_idx]
         cached = slot_cache.get(name)
-        needs_realloc = cached is None or not _cached_symm_tensor_covers(cached, shape, dtype, device)
+        needs_realloc = cached is None or not _cached_symm_tensor_covers(
+            cached, shape, dtype, device
+        )
         # cache_state = "alloc" if needs_realloc else "cached"
         # _tbo_buffer_debug_print(
         #     f"shared_slot:{cache_state}:enter slot={slot_idx} name={name} "
@@ -635,9 +633,7 @@ class _NoSyncSymmSharedPool:
         device: torch.device,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if slot_idx < 0 or slot_idx >= self.num_slots:
-            raise ValueError(
-                f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})"
-            )
+            raise ValueError(f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})")
         if d_model % block_size != 0:
             raise RuntimeError(
                 "Rowwise FP8 requires hidden dim divisible by block_size: "
@@ -669,9 +665,7 @@ class _NoSyncSymmSharedPool:
         device: torch.device,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if slot_idx < 0 or slot_idx >= self.num_slots:
-            raise ValueError(
-                f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})"
-            )
+            raise ValueError(f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})")
         if d_model % block_size != 0:
             raise RuntimeError(
                 "Rowwise FP8 requires hidden dim divisible by block_size: "
@@ -798,14 +792,9 @@ def _rowwise_lifetime_lease_prewarm_slots(default: int = 1) -> int:
     try:
         slots = int(raw)
     except ValueError as e:
-        raise RuntimeError(
-            "OLMO_MOE_ROWWISE_LIFETIME_LEASE_SLOTS must be an integer"
-        ) from e
+        raise RuntimeError("OLMO_MOE_ROWWISE_LIFETIME_LEASE_SLOTS must be an integer") from e
     if slots < 0:
-        raise RuntimeError(
-            "OLMO_MOE_ROWWISE_LIFETIME_LEASE_SLOTS must be >= 0 "
-            f"(got {slots})"
-        )
+        raise RuntimeError("OLMO_MOE_ROWWISE_LIFETIME_LEASE_SLOTS must be >= 0 " f"(got {slots})")
     return slots
 
 
@@ -992,11 +981,7 @@ def prewarm_ep_no_sync_rowwise_dispatch_out_leases(
     block_size: int = 0,
     num_slots: Optional[int] = None,
 ) -> None:
-    num_slots = (
-        _rowwise_lifetime_lease_prewarm_slots()
-        if num_slots is None
-        else num_slots
-    )
+    num_slots = _rowwise_lifetime_lease_prewarm_slots() if num_slots is None else num_slots
     if num_slots == 0:
         return
     if use_rowwise_fp8:
@@ -1041,11 +1026,7 @@ def prewarm_ep_no_sync_rowwise_lifetime_leases(
     need_combine_gather: bool = False,
     num_slots: Optional[int] = None,
 ) -> None:
-    num_slots = (
-        _rowwise_lifetime_lease_prewarm_slots()
-        if num_slots is None
-        else num_slots
-    )
+    num_slots = _rowwise_lifetime_lease_prewarm_slots() if num_slots is None else num_slots
     if num_slots == 0:
         return
     if need_dispatch_out:
@@ -1120,14 +1101,15 @@ def get_ep_no_sync_rowwise_fp8_buffers(
         dispatch_out_scales = dispatch_out_lease.tensor("dispatch_out_scales")
     elif block._ep_no_sync_shared_pool is not None and block.ep_no_sync_share_dispatch_out:
         dispatch_out_lease = None
-        dispatch_out_q, dispatch_out_scales = (
-            block._ep_no_sync_shared_pool.get_rowwise_fp8_dispatch_out_slot(
-                slot_idx=block._ep_no_sync_shared_slot,
-                dispatch_out_cap=dispatch_out_cap,
-                d_model=d_model,
-                block_size=block_size,
-                device=device,
-            )
+        (
+            dispatch_out_q,
+            dispatch_out_scales,
+        ) = block._ep_no_sync_shared_pool.get_rowwise_fp8_dispatch_out_slot(
+            slot_idx=block._ep_no_sync_shared_slot,
+            dispatch_out_cap=dispatch_out_cap,
+            d_model=d_model,
+            block_size=block_size,
+            device=device,
         )
     else:
         dispatch_out_lease = None
@@ -1149,14 +1131,15 @@ def get_ep_no_sync_rowwise_fp8_buffers(
         # combine_in is scratch: forward does not save its contents and backward
         # overwrites it before use. Share one slot across layers instead of
         # pinning a full capacity-sized FP8 pair in every block cache.
-        combine_in_q, combine_in_scales = (
-            block._ep_no_sync_shared_pool.get_rowwise_fp8_combine_in_slot(
-                slot_idx=block._ep_no_sync_shared_slot,
-                combine_in_cap=combine_in_cap,
-                d_model=d_model,
-                block_size=block_size,
-                device=device,
-            )
+        (
+            combine_in_q,
+            combine_in_scales,
+        ) = block._ep_no_sync_shared_pool.get_rowwise_fp8_combine_in_slot(
+            slot_idx=block._ep_no_sync_shared_slot,
+            combine_in_cap=combine_in_cap,
+            d_model=d_model,
+            block_size=block_size,
+            device=device,
         )
     else:
         combine_in_q = get_or_init_ep_no_sync_symm_tensor(
@@ -1550,12 +1533,16 @@ def get_ep_no_sync_buffers(
                 need_dispatch_in=need_dispatch_in,
                 need_dispatch_meta=need_dispatch_meta,
                 include_dispatch_out=(
-                    need_dispatch_out and block.ep_no_sync_share_dispatch_out and not lease_dispatch_out
+                    need_dispatch_out
+                    and block.ep_no_sync_share_dispatch_out
+                    and not lease_dispatch_out
                 ),
                 need_combine_in=need_combine_in,
                 need_combine_meta=need_combine_meta,
                 include_combine_out=(
-                    need_combine_out and block.ep_no_sync_share_combine_out and not lease_combine_out
+                    need_combine_out
+                    and block.ep_no_sync_share_combine_out
+                    and not lease_combine_out
                 ),
                 d_model=d_model,
                 dtype=dtype,

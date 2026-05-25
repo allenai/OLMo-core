@@ -5,12 +5,12 @@ import torch
 
 from olmo_core.config import DType
 from olmo_core.kernels.scaled_grouped_mm import ScaledGroupedMMPrequantizedRHS
+from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
 from olmo_core.nn.moe.v2.fp8 import (
     MoERowwiseFP8Config,
     normalize_rowwise_fp8_config,
     refresh_rowwise_fp8_cache,
 )
-from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
 from olmo_core.nn.moe.v2.routed_experts import (
     RoutedExperts,
     _swiglu_backward_grad_up_gate_impl,
@@ -57,7 +57,9 @@ def test_rowwise_fp8_normalize_from_dict():
 
 
 def test_rowwise_fp8_allows_disabling_fp8_only_params():
-    cfg = normalize_rowwise_fp8_config({"enabled": True, "block_size": 32, "fp8_only_params": False})
+    cfg = normalize_rowwise_fp8_config(
+        {"enabled": True, "block_size": 32, "fp8_only_params": False}
+    )
     assert isinstance(cfg, MoERowwiseFP8Config)
     assert cfg.fp8_only_params is False
 
@@ -523,9 +525,14 @@ def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeyp
         mat_b_shape=tuple(module.w_down.transpose(1, 2).shape),
         mat_b_version=int(module.w_down._version),
     )
-    module._rowwise_fp8_weight_versions = (int(module.w_up_gate._version), int(module.w_down._version))
+    module._rowwise_fp8_weight_versions = (
+        int(module.w_up_gate._version),
+        int(module.w_down._version),
+    )
     module._rowwise_fp8_up_gate_weight.prequantized_rhs = module._rowwise_fp8_up_gate_prequant
-    module._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad = module._rowwise_fp8_up_gate_prequant_t
+    module._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad = (
+        module._rowwise_fp8_up_gate_prequant_t
+    )
     module._rowwise_fp8_down_weight.prequantized_rhs = module._rowwise_fp8_down_prequant
     module._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad = module._rowwise_fp8_down_prequant_t
 
@@ -559,7 +566,9 @@ def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeyp
         )
         seen["calls"] += 1
         assert prequantized_rhs is not None
-        return torch.zeros((mat_a.shape[0], grad_anchor.shape[-1]), dtype=mat_a.dtype, device=mat_a.device)
+        return torch.zeros(
+            (mat_a.shape[0], grad_anchor.shape[-1]), dtype=mat_a.dtype, device=mat_a.device
+        )
 
     def _forbid_forward_time_prequant(*args, **kwargs):
         del args, kwargs

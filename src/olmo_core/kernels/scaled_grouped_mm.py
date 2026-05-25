@@ -7,13 +7,14 @@ import nvtx
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+
+from .mxfp8_tensor import OlmoMXFP8Tensor
 from .mxfp8_utils import (
     dequantize_rows_from_mxfp8,
     grouped_scales_to_mxfp8_blocked,
     quantize_grouped_weight_3d_to_mxfp8_blocked,
     quantize_rows_to_mxfp8,
 )
-from .mxfp8_tensor import OlmoMXFP8Tensor
 
 try:
     _MXFP8_RECIPE_BLOCKWISE_1X32 = [int(F.ScalingType.BlockWise1x32)]
@@ -26,6 +27,7 @@ except AttributeError:
     # Fallback values for torch builds where enum symbols are not exposed.
     _MXFP8_RECIPE_BLOCKWISE_1X32 = [3]
     _MXFP8_SWIZZLE = [0] if torch.version.hip else [1]
+
 
 @dataclass(frozen=True)
 class ScaledGroupedMMPrequantizedLHS:
@@ -216,8 +218,7 @@ def _forward_scaled_grouped_mm_mxfp8_prequantized_rhs(
     mat_b_shape = tuple(prequantized_rhs.mat_b_shape)
     if len(mat_b_shape) != 3:
         raise ValueError(
-            "prequantized_rhs must describe rank-3 [G,K,N] RHS, "
-            f"got mat_b_shape={mat_b_shape}"
+            "prequantized_rhs must describe rank-3 [G,K,N] RHS, " f"got mat_b_shape={mat_b_shape}"
         )
 
     if offs.dtype != torch.int32:
@@ -339,8 +340,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
         # In rowwise FP8 paths we can skip saving bf16 mat_a and reconstruct it
         # from saved prequantized (q, scale) during backward to avoid dispatch DQ.
         use_saved_prequantized_lhs = (
-            prequantized_lhs is not None
-            and not prequantized_lhs.scales_are_blocked
+            prequantized_lhs is not None and not prequantized_lhs.scales_are_blocked
         )
         if use_saved_prequantized_lhs:
             mat_a_q, scale_a = _prequantized_lhs_tensors_for_backward(prequantized_lhs)
@@ -510,8 +510,7 @@ class _ScaledGroupedMMQFP8WeightFunction(torch.autograd.Function):
         )
 
         use_saved_prequantized_lhs = (
-            prequantized_lhs is not None
-            and not prequantized_lhs.scales_are_blocked
+            prequantized_lhs is not None and not prequantized_lhs.scales_are_blocked
         )
         if use_saved_prequantized_lhs:
             mat_a_q, scale_a = _prequantized_lhs_tensors_for_backward(prequantized_lhs)
@@ -595,9 +594,7 @@ class _ScaledGroupedMMQFP8WeightFunction(torch.autograd.Function):
                     ctx.input_grad_out.copy_(grad_a)
                     grad_a = ctx.input_grad_out
             else:
-                raise RuntimeError(
-                    "scaled_grouped_mm_q_fp8_weight dgrad requires CUDA cached RHS"
-                )
+                raise RuntimeError("scaled_grouped_mm_q_fp8_weight dgrad requires CUDA cached RHS")
 
         need_wgrad = ctx.needs_input_grad[1] or ctx.wgrad_sink is not None
         if need_wgrad:

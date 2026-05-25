@@ -21,7 +21,7 @@ from ..attention import (
 )
 from ..buffer_cache import BufferCache
 from ..config import ModelConfig, ModuleConfig
-from ..feed_forward import ActivationFunction, DenseMoEFeedForwardConfig, FeedForwardConfig, FeedForwardType
+from ..feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
@@ -345,12 +345,15 @@ class TransformerBlockConfig(ModuleConfig):
         if hasattr(self.sequence_mixer, "flops_per_seq"):
             flops += self.sequence_mixer.flops_per_seq(d_model, seqlen)  # type: ignore[attr-defined]
         else:
-            flops += self.sequence_mixer.build(
-                d_model,
-                layer_idx=0,
-                n_layers=1,
-                init_device="meta",
-            ).num_flops_per_token(seqlen) * seqlen
+            flops += (
+                self.sequence_mixer.build(
+                    d_model,
+                    layer_idx=0,
+                    n_layers=1,
+                    init_device="meta",
+                ).num_flops_per_token(seqlen)
+                * seqlen
+            )
 
         # feed forward
         if self.feed_forward is not None:

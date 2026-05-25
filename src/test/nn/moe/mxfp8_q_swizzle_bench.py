@@ -32,7 +32,9 @@ def _bench(label: str, fn, *, warmup: int, rep: int) -> float:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark MXFP8 Q, Q+swizzle, and fused Q+swizzle")
+    parser = argparse.ArgumentParser(
+        description="Benchmark MXFP8 Q, Q+swizzle, and fused Q+swizzle"
+    )
     parser.add_argument("--rows", type=int, default=40960)
     parser.add_argument("--cols", type=int, default=2048)
     parser.add_argument("--groups", type=int, default=8)

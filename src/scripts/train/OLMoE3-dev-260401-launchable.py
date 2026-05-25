@@ -72,9 +72,9 @@ from olmo_core.nn.transformer import (
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
-    OverrideDecay,
     ComposableSchedulerStage,
     ComposableSchedulerStageType,
+    OverrideDecay,
 )
 from olmo_core.script_utils import main
 from olmo_core.train import Duration, TrainerConfig
@@ -112,6 +112,7 @@ class ExperimentConfig(Config):
     init_seed: int = 12536
     load_path: Optional[str] = None
 
+
 # -----------------------------------------------------------------------------
 # Hyperparameters (kept identical to OLMoE3-dev-260401-test-refactor.py).
 # -----------------------------------------------------------------------------
@@ -145,7 +146,7 @@ REF_NUM_NODES = 8
 
 # stage 1 - 1M
 MAX_DURATION = int(25.5e9)
-MICRO_BSZ = 1 # 4 # temporary; for testing
+MICRO_BSZ = 1  # 4 # temporary; for testing
 GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 2 * 1
 
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * DEFAULT_SEQUENCE_LENGTH

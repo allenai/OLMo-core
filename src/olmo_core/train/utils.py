@@ -159,10 +159,7 @@ def get_metrics_reduce_type_by_step(
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[int, Dict[str, Optional[ReduceType]]]:
     metrics_reduce_type_by_step = {
-        step: {
-            metric_name: metrics_reduce_type[metric_name]
-            for metric_name in step_metrics.keys()
-        }
+        step: {metric_name: metrics_reduce_type[metric_name] for metric_name in step_metrics.keys()}
         for step, step_metrics in metrics.items()
     }
     all_ranks_metrics_reduce_type = all_gather_object(
@@ -180,10 +177,7 @@ def get_metrics_reduce_type_by_step(
     for step in all_steps:
         for rank_metrics_reduce_type in all_ranks_metrics_reduce_type:
             for metric_name, reduce_type in rank_metrics_reduce_type.get(step, {}).items():
-                if (
-                    metric_name in out[step]
-                    and out[step][metric_name] != reduce_type
-                ):
+                if metric_name in out[step] and out[step][metric_name] != reduce_type:
                     raise RuntimeError(
                         f"Conflicting reduce types for metric '{metric_name}' at step {step}: "
                         f"{out[step][metric_name]} vs {reduce_type}"
@@ -236,9 +230,7 @@ def check_metrics_consistent(
         }
         for step, step_metrics in metrics.items()
     }
-    all_ranks_metrics_to_reduce = all_gather_object(
-        metrics_to_reduce_by_step, group=process_group
-    )
+    all_ranks_metrics_to_reduce = all_gather_object(metrics_to_reduce_by_step, group=process_group)
     for rank in range(get_world_size(process_group)):
         if metrics_to_reduce_by_step != all_ranks_metrics_to_reduce[rank]:
             return False

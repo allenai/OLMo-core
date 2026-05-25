@@ -1249,4 +1249,3 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             else:
                 xx = self.dense_forward_rc(x, **kwargs)
             return xx
-

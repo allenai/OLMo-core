@@ -86,11 +86,7 @@ def validate_table(
                     raise AssertionError(f"duplicate backward continuation {key}")
                 bc_seen[key] = time
 
-    expected = {
-        (stage, mb)
-        for stage in range(num_stages)
-        for mb in range(n_microbatches)
-    }
+    expected = {(stage, mb) for stage in range(num_stages) for mb in range(n_microbatches)}
     if set(f_seen) != expected:
         raise AssertionError("missing or extra forwards")
     if set(b_seen) != expected:
@@ -133,12 +129,8 @@ def solve_with_cp_sat(
     start_b: dict[tuple[int, int], Any] = {}
     interval_f: dict[tuple[int, int], Any] = {}
     interval_b: dict[tuple[int, int], Any] = {}
-    activation_intervals_by_rank: dict[int, list[Any]] = {
-        rank: [] for rank in range(pp_size)
-    }
-    compute_intervals_by_rank: dict[int, list[Any]] = {
-        rank: [] for rank in range(pp_size)
-    }
+    activation_intervals_by_rank: dict[int, list[Any]] = {rank: [] for rank in range(pp_size)}
+    compute_intervals_by_rank: dict[int, list[Any]] = {rank: [] for rank in range(pp_size)}
 
     for stage in range(num_stages):
         rank = rank_for_stage(stage, pp_size)
