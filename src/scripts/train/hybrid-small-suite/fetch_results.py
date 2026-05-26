@@ -220,7 +220,7 @@ def main():
     # Filter to all succeeded experiments for building the full results file
     to_process = [
         e for e in experiments
-        if args.completed_only and get_job_status(e) == "succeeded"
+        if (args.completed_only and get_job_status(e) == "succeeded")
         or not args.completed_only
     ]
 
@@ -240,6 +240,8 @@ def main():
 
         olmo_group = extract_olmo_eval_group(metrics, exp)
         if olmo_group != args.group:
+            if exp_id not in prev_exp_ids:
+                tqdm.write(f"  [skip] {exp_name} group={olmo_group!r} != {args.group!r}")
             return None
 
         label = "[new] " if exp_id not in prev_exp_ids else ""

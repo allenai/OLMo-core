@@ -2,36 +2,41 @@
 
 import argparse
 import subprocess
+import time
 
-GROUP = "yashasbls-hybrid-small-evals-v2"
+GROUP = "yashasbls-hybrid-small-evals-v2-grid"
 CLUSTER = "ai2/jupiter"
 PRIORITY = "urgent"
 NUM_GPUS = 1
 WORKSPACE = "ai2/linear-rnns"
 BUDGET = "ai2/oe-other"
 
-pretraining_hf_checkpoints = {
-    "275m": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-275M-Cx100/step161186-hf/",
-    "810m": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-810M-Cx100/step269926-hf/",
-    "1.4b": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-1.4B-Cx100/step308433-hf/",
-}
+CKPT_BASE = "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls"
 
-midtraining_hf_checkpoints = {
-    "275m": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-275M-v2-lr1.6e-3/step38147-hf/",
-    "810m": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-v2-810M-lr4e-4/step23842-hf/",
-    "1.4b": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-midtraining-v2-1.4b-lr4e-4/step11921-hf/",
-}
-
-long_context_hf_checkpoints = {
-    "275m": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-long-context-v2-275m/step47684-hf/",
-    "810m": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-long-context-v2-810m/step23842-hf/",
-    "1.4b": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-long-context-v2-1.4b/step23842-hf/",
-}
-
-all_stages = {
-    "pretraining": pretraining_hf_checkpoints,
-    "midtraining": midtraining_hf_checkpoints,
-    "long_context": long_context_hf_checkpoints,
+# Each stage maps size -> list of HF checkpoint paths.
+# Single-model stages have one-element lists; grid searches have multiple.
+all_stages: dict[str, dict[str, list[str]]] = {
+    "pretraining": {
+        "275m": [f"{CKPT_BASE}/hybrid-small-275M-Cx100/step161186-hf/"],
+        "810m": [f"{CKPT_BASE}/hybrid-small-810M-Cx100/step269926-hf/"],
+        "1.4b": [f"{CKPT_BASE}/hybrid-small-1.4B-Cx100/step308433-hf/"],
+    },
+    "midtraining": {
+        "275m": [f"{CKPT_BASE}/hybrid-small-midtraining-275M-v2-lr1.6e-3/step38147-hf/"],
+        "810m": [f"{CKPT_BASE}/hybrid-small-midtraining-v2-810M-lr4e-4/step23842-hf/"],
+        "1.4b": [f"{CKPT_BASE}/hybrid-small-midtraining-v2-1.4b-lr4e-4/step11921-hf/"],
+    },
+    "long_context": {
+        "275m": [f"{CKPT_BASE}/hybrid-small-long-context-v2-275m/step47684-hf/"],
+        "810m": [f"{CKPT_BASE}/hybrid-small-long-context-v2-810m/step23842-hf/"],
+        "1.4b": [f"{CKPT_BASE}/hybrid-small-long-context-v2-1.4b/step23842-hf/"],
+    },
+    "sft_think": {
+        "275m": [
+            f"{CKPT_BASE}/hybrid-small-sft-think-275M-lr{lr}/step23206-hf/"
+            for lr in ["1e-4", "2e-4", "4e-4", "8e-4"]
+        ],
+    },
 }
 
 # (task_name, num_gpus)
@@ -65,6 +70,28 @@ LC_TASKS = [
     ("ruler_all__131072", 1),
 ]
 
+POSTTRAIN_TASKS = [
+    # Knowledge/Reasoning
+    ("mmlu", 1),                           # MMLU
+    # ("popqa", 1),                         # PopQA — not yet in olmo-eval-internal
+    # ("bbh", 1),                           # BBH — not yet in olmo-eval-internal
+    ("gpqa_diamond", 1),                   # GPQA
+    ("zebralogic:chat", 1),                # Zebra Logic
+    # Math
+    ("aime_2024:pass_at_32", 1),           # AIME'24
+    ("aime_2025:pass_at_32", 1),           # AIME'25
+    ("math500", 1),                        # MATH Ω
+    # Code (require sandbox)
+    ("humaneval_plus:chat:pass_at_1", 1),  # HE+
+    ("mbpp_plus:pass_at_1", 1),            # MBPP+
+    # ("livecode_bench", 1),               # LCB — not yet in olmo-eval-internal
+    ("deepseek_leetcode", 1),              # LCB proxy
+    # Instruction Following
+    ("ifeval_ood", 1),                     # IFEval
+    ("ifbench", 1),                        # IFBench
+    # ("arena_eval_3", 1),                  # AE3 — not yet in olmo-eval-internal
+]
+
 SAFETY_TASKS: list[tuple[str, int]] = [
     # TODO(yashasbls): ask maliam
 ]
@@ -91,11 +118,12 @@ def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS, i
     cmd += ["-o", "provider.dependencies=[transformers @ git+https://github.com/yashassamaga/transformers.git@hybrid-small-suite]"]
     cmd += ["-o", "provider.kwargs.attention_backend=FLASH_ATTN"]
     if is_lc:
-        cmd += ["-o", "provider.max_model_len=65536"]
+        cmd += ["-o", "provider.max_model_len=131072"]
     cmd += ["-m", model_path]
     for task in tasks:
         cmd += ["-t", task]
     cmd += ["--gpus", str(num_gpus)]
+    cmd += ["--retries", "3"]
     cmd += ["--priority", PRIORITY]
     cmd += ["--group", GROUP]
     cmd += ["--cluster", CLUSTER]
@@ -130,11 +158,12 @@ def main():
     parser.add_argument(
         "--eval-type",
         nargs="+",
-        choices=["test", "downstream", "lc", "safety", "pplx"],
+        choices=["test", "downstream", "lc", "safety", "pplx", "posttrain"],
         default=["test"],
     )
     parser.add_argument("--gpus", type=int, default=NUM_GPUS, help="Number of GPUs per job.")
     parser.add_argument("--model", type=str, default=None, help="Custom model path or HF name (overrides --sizes/--stages)")
+    parser.add_argument("--delay", type=int, default=0, help="Seconds to wait between launching each eval job")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     num_gpus = args.gpus
@@ -145,12 +174,14 @@ def main():
         "lc": LC_TASKS,
         "safety": SAFETY_TASKS,
         "pplx": PPLX_TASKS,
+        "posttrain": POSTTRAIN_TASKS,
     }
     tasks = []
     lc_task_names = {t[0] for t in LC_TASKS}
     for et in args.eval_type:
         tasks.extend(eval_type_map[et])
 
+    launched = 0
     if args.model:
         # Custom model: run all tasks against this single model
         for task_name, task_gpus in tasks:
@@ -159,19 +190,30 @@ def main():
             print(f"\n=== custom | {task_name} | {gpus} GPUs ===")
             print(" ".join(cmd))
             if not args.dry_run:
+                if launched > 0 and args.delay > 0:
+                    time.sleep(args.delay)
                 subprocess.run(cmd, check=True)
+                launched += 1
     else:
         for stage in args.stages:
             checkpoints = all_stages[stage]
             for size in args.sizes:
-                model_path = checkpoints[size]
-                for task_name, task_gpus in tasks:
-                    gpus = num_gpus if num_gpus != NUM_GPUS else task_gpus
-                    cmd = build_command(model_path, [task_name], gpus, is_lc=task_name in lc_task_names)
-                    print(f"\n=== {stage}/{size} | {task_name} | {gpus} GPUs ===")
-                    print(" ".join(cmd))
-                    if not args.dry_run:
-                        subprocess.run(cmd, check=True)
+                if size not in checkpoints:
+                    print(f"[skip] {stage} has no size {size}")
+                    continue
+                for model_path in checkpoints[size]:
+                    short_name = model_path.rstrip("/").split("/")[-1]
+                    for task_name, task_gpus in tasks:
+                        gpus = num_gpus if num_gpus != NUM_GPUS else task_gpus
+                        cmd = build_command(model_path, [task_name], gpus, is_lc=task_name in lc_task_names)
+                        print(f"\n=== {stage}/{size}/{short_name} | {task_name} | {gpus} GPUs ===")
+                        print(" ".join(cmd))
+                        if not args.dry_run:
+                            if launched > 0 and args.delay > 0:
+                                time.sleep(args.delay)
+                            subprocess.run(cmd, check=True)
+                            launched += 1
+                        launched += 1
 
 
 if __name__ == "__main__":

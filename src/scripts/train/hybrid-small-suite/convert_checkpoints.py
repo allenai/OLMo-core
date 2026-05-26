@@ -3,10 +3,13 @@ import sys
 from pathlib import Path
 
 CONVERT_SCRIPT = str(
-    Path(__file__).parent.parent.parent.parent
-    / "examples"
-    / "huggingface"
-    / "convert_checkpoint_to_hf.py"
+    Path(__file__).resolve().parents[4].parent
+    / "transformers"
+    / "src"
+    / "transformers"
+    / "models"
+    / "olmo_hybrid_small"
+    / "convert_olmo_hybrid_small_weights_to_hf.py"
 )
 
 # Pretraining Checkpoints
@@ -28,10 +31,18 @@ long_context_checlkpoints = {
     "1.4b": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-long-context-v2-1.4b/step23842/",
 }
 
+sft_checkpoints = {
+    "275m-lr1e-4": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-sft-think-275M-lr1e-4/step23206/",
+    "275m-lr2e-4": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-sft-think-275M-lr2e-4/step23206/",
+    "275m-lr4e-4": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-sft-think-275M-lr4e-4/step23206/",
+    "275m-lr8e-4": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-sft-think-275M-lr8e-4/step23206/",
+}
+
 all_checkpoints = {
     "pretraining": pretraining_checkpoints,
     "midtraining": midtraining_checkpoints,
     "long_context": long_context_checlkpoints,
+    "sft": sft_checkpoints,
 }
 
 
@@ -46,17 +57,19 @@ def convert_all():
     for stage, checkpoints in all_checkpoints.items():
         for size, input_path in checkpoints.items():
             output_path = get_output_path(input_path)
+            if Path(output_path).exists():
+                print(f"\n=== Skipping {stage}/{size}: {output_path} already exists ===")
+                continue
             print(f"\n=== Converting {stage}/{size}: {input_path} -> {output_path} ===")
             result = subprocess.run(
                 [
                     sys.executable,
                     CONVERT_SCRIPT,
-                    "-i", input_path,
-                    "-o", output_path,
+                    "--input_dir", input_path,
+                    "--output_dir", output_path,
                     "--dtype", "bfloat16",
-                    "--device", "cuda",
-                    "--validation-device", "cuda",
                 ],
+                env={**__import__("os").environ, "TRUST_REMOTE_CODE": "True"},
             )
             if result.returncode != 0:
                 print(f"FAILED: {stage}/{size} (exit code {result.returncode})")

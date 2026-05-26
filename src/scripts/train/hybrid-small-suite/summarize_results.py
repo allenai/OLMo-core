@@ -172,9 +172,11 @@ def _plain_width(formatted: str) -> int:
 def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color: bool = False, all_tasks: bool = False):
     """Print a formatted table with two-row headers grouped by scale."""
     sort_key = lambda m: (SCALE_ORDER.get(parse_model_info(m)[0], 99), STAGE_ORDER.get(parse_model_info(m)[1], 99))
-    baselines = sorted([m for m in results if parse_model_info(m)[1] == "baseline"], key=sort_key)
-    non_baselines = sorted([m for m in results if parse_model_info(m)[1] != "baseline"], key=sort_key)
-    models = baselines + non_baselines
+    # Put non-7B first (sorted by scale/stage), then 7B at the end
+    non_7b = sorted([m for m in results if parse_model_info(m)[0] != "7B"], key=sort_key)
+    is_7b = sorted([m for m in results if parse_model_info(m)[0] == "7B"], key=sort_key)
+    models = non_7b + is_7b
+    baselines = [m for m in models if parse_model_info(m)[1] == "baseline"]
 
     active_tasks = [t for t in tasks if any(t in results[m] for m in models)]
     if not active_tasks:
@@ -186,53 +188,78 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
         scale = parse_model_info(m)[0]
         scales.setdefault(scale, []).append(i)
 
-    stage_names = {m: parse_model_info(m)[1] for m in models}
+    stage_names = {}
+    for m in models:
+        scale, stage, _ = parse_model_info(m)
+        if scale == "7B" and stage != "baseline":
+            stage = "hybrid-" + stage
+        stage_names[m] = stage
 
     task_width = max(len(t) for t in active_tasks)
-    col_width = 10  # tight columns since header rows are separate
+    col_width = max(10, max(len(stage_names[m]) for m in models))
     vsep = " | "
+    thick_vsep = " || "
 
-    # Scale groups for vertical separators: after each scale group (and after baselines)
-    # A separator goes after baselines and after each scale boundary
-    def needs_vsep(i: int) -> bool:
+    # Scale groups for vertical separators: after each scale group
+    # Use thick separator before 7B section
+    def needs_vsep(i: int) -> str | None:
+        """Return separator type or None."""
         if i == len(models) - 1:
-            return False
-        if i == len(baselines) - 1:
-            return True
+            return None
         scale_i = parse_model_info(models[i])[0]
         scale_next = parse_model_info(models[i + 1])[0]
-        return scale_i != scale_next
+        if scale_i != scale_next:
+            if scale_next == "7B":
+                return "thick"
+            return "thin"
+        return None
 
-    # Build header row 1: scale labels, centered over their column group
-    header1 = " " * task_width
-    # row 2: stage labels
+    # Build header rows: suite, scale, arch, stage
+    header_suite = f"{'':<{task_width}}"
+    header1 = f"{'':<{task_width}}"
+    header_arch = f"{'':<{task_width}}"
     header2 = f"{'Task':<{task_width}}"
 
-    # First pass: build header2 and track column positions per scale group
-    scale_start_pos: dict[str, int] = {}  # scale -> starting char position in header2
-    scale_end_pos: dict[str, int] = {}
     for i, m in enumerate(models):
         scale = parse_model_info(m)[0]
         stage = stage_names[m]
-        if scale not in scale_start_pos:
-            scale_start_pos[scale] = len(header2)
+        name_lower = m.lower()
+        is_hybrid = "hybrid" in name_lower or m not in baselines
+        arch_label = "hybrid" if is_hybrid else "trans."
+
+        # Suite label
+        if m not in baselines:
+            suite_label = "hybrid-small"
+        elif "olmo-2" in name_lower:
+            suite_label = "OLMo-2"
+        elif "olmo-3" in name_lower:
+            suite_label = "OLMo-3"
+        elif "olmo-hybrid" in name_lower:
+            suite_label = "OLMo-3"
+        else:
+            suite_label = ""
+
+        header_suite += f"  {suite_label:>{col_width}}"
+        header1 += f"  {scale:>{col_width}}"
+        header_arch += f"  {arch_label:>{col_width}}"
         header2 += f"  {stage:>{col_width}}"
-        scale_end_pos[scale] = len(header2)
-        if needs_vsep(i):
+
+        sep_type = needs_vsep(i)
+        if sep_type == "thick":
+            header_suite += thick_vsep
+            header1 += thick_vsep
+            header_arch += thick_vsep
+            header2 += thick_vsep
+        elif sep_type == "thin":
+            header_suite += vsep
+            header1 += vsep
+            header_arch += vsep
             header2 += vsep
 
-    # Second pass: build header1 with scale labels positioned correctly
-    header1_chars = [" "] * len(header2)
-    for scale, start in scale_start_pos.items():
-        end = scale_end_pos[scale]
-        mid = (start + end) // 2 - len(scale) // 2
-        for ci, ch in enumerate(scale):
-            if mid + ci < len(header1_chars):
-                header1_chars[mid + ci] = ch
-    header1 = "".join(header1_chars).rstrip()
-
     sep_line = "-" * _plain_width(header2)
+    print(header_suite)
     print(header1)
+    print(header_arch)
     print(header2)
     print(sep_line)
 
@@ -253,13 +280,13 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
             scores = {m: results[m].get(task) for m in models}
             valid = {m: s for m, s in scores.items() if s is not None}
 
-            # Global best (green)
-            if valid:
-                lower_is_better = task in LOWER_IS_BETTER
-                best_global = min(valid, key=valid.__getitem__) if lower_is_better else max(valid, key=valid.__getitem__)
+            # Global best (green) — exclude 7B baselines from consideration
+            lower_is_better = task in LOWER_IS_BETTER
+            valid_no_7b = {m: s for m, s in valid.items() if parse_model_info(m)[0] != "7B"}
+            if valid_no_7b:
+                best_global = min(valid_no_7b, key=valid_no_7b.__getitem__) if lower_is_better else max(valid_no_7b, key=valid_no_7b.__getitem__)
             else:
                 best_global = None
-                lower_is_better = False
 
             # Per-scale best (yellow) — only among non-baseline models
             best_in_scale: dict[str, str] = {}  # scale -> best model
@@ -289,7 +316,10 @@ def print_table(results: dict[str, dict[str, float]], tasks: list[str], no_color
                         formatted = fmt_bold(plain, no_color)
                     ansi_extra = len(formatted) - len(plain)
                     row += f"  {formatted:>{col_width + ansi_extra}}"
-                if needs_vsep(i):
+                sep_type = needs_vsep(i)
+                if sep_type == "thick":
+                    row += thick_vsep
+                elif sep_type == "thin":
                     row += vsep
             print(row)
 
