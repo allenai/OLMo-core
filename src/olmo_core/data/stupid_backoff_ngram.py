@@ -217,6 +217,10 @@ class StupidBackoffNgramLM:
         long sequence into independent SB-override chunks. This is separate
         from PyTorch data-loader workers: workers prepare future batches,
         while lookup threads parallelize one sequence lookup.
+    :param topk_uniform_residual_k: Optional KN-top-K-style mode for PoE
+        experiments. When set, each position uses only the highest matching
+        history row, keeps that row's top-K continuations, and emits logit
+        deltas relative to a uniform residual over the rest of the vocab.
     """
 
     def __init__(
@@ -232,11 +236,20 @@ class StupidBackoffNgramLM:
         mirror_to_shm: bool = True,
         index_access: str = "mmap",
         lookup_threads: int = 1,
+        topk_uniform_residual_k: Optional[int] = None,
     ):
         if index_access not in {"mmap", "pread"}:
             raise ValueError(f"index_access must be 'mmap' or 'pread'; got {index_access!r}")
         self.index_access = index_access
         self.lookup_threads = max(1, int(lookup_threads))
+        if topk_uniform_residual_k is not None and topk_uniform_residual_k <= 0:
+            raise ValueError(
+                "topk_uniform_residual_k must be positive when set; "
+                f"got {topk_uniform_residual_k}"
+            )
+        self.topk_uniform_residual_k = (
+            None if topk_uniform_residual_k is None else int(topk_uniform_residual_k)
+        )
         self._lookup_pool: Optional[ThreadPoolExecutor] = None
         caps: Dict[int, int] = {}
         if max_order_continuations:
@@ -292,6 +305,7 @@ class StupidBackoffNgramLM:
             f"mirror_to_shm={mirror_to_shm} "
             f"index_access={self.index_access} "
             f"lookup_threads={self.lookup_threads} "
+            f"topk_uniform_residual_k={self.topk_uniform_residual_k} "
             f"max_order_continuations={self.max_order_continuations or None} "
             f"min_order_counts={self.min_order_counts or None}"
         )
@@ -661,6 +675,10 @@ class StupidBackoffNgramLM:
         input_ids = np.asarray(input_ids, dtype=np.int64)
         S = int(input_ids.shape[0])
         if self.lookup_threads <= 1 or S <= 1:
+            if self.topk_uniform_residual_k is not None:
+                return self._compute_topk_uniform_residual_overrides_serial(
+                    input_ids, score_positions=score_positions
+                )
             return self._compute_overrides_for_sequence_serial(
                 input_ids, score_positions=score_positions
             )
@@ -695,6 +713,12 @@ class StupidBackoffNgramLM:
                     np.zeros(0, dtype=np.int32),
                     np.zeros(0, dtype=np.int32),
                     np.zeros(0, dtype=np.float32),
+                )
+            if self.topk_uniform_residual_k is not None:
+                return self._compute_topk_uniform_residual_overrides_serial(
+                    input_ids,
+                    score_positions=chunk_positions,
+                    log_timing=False,
                 )
             return self._compute_overrides_for_sequence_serial(
                 input_ids,
@@ -732,6 +756,192 @@ class StupidBackoffNgramLM:
                 f"lookup_threads={self.lookup_threads}",
             ],
         )
+        return result
+
+    def _compute_topk_uniform_residual_overrides_serial(
+        self,
+        input_ids: np.ndarray,
+        *,
+        score_positions: np.ndarray | None = None,
+        log_timing: bool = True,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Emit top-K continuation deltas relative to a uniform residual.
+
+        This mode deliberately mirrors the KN-smoothed top-K PoE structure:
+        for each position, choose the highest matching SB history row, keep
+        the row's top-K continuations by count, and treat all other vocab
+        items as sharing the remaining row mass uniformly. The emitted score
+        is already a relative logit delta:
+
+            log(top_score) - log(uniform_residual_score)
+
+        so the train module should use a zero dense SB floor.
+        """
+        from numpy.lib.stride_tricks import sliding_window_view
+
+        assert self.topk_uniform_residual_k is not None
+        t0 = time.perf_counter()
+        order_summaries: list[str] = []
+        input_ids = np.asarray(input_ids, dtype=np.int64)
+        S = int(input_ids.shape[0])
+        EMPTY = (
+            np.zeros(0, dtype=np.int32),
+            np.zeros(0, dtype=np.int32),
+            np.zeros(0, dtype=np.float32),
+        )
+        if S <= 1:
+            return EMPTY
+        if score_positions is None:
+            requested_positions = np.arange(S - 1, dtype=np.int64)
+        else:
+            requested_positions = np.asarray(score_positions, dtype=np.int64)
+            requested_positions = requested_positions[
+                (requested_positions >= 0) & (requested_positions < S - 1)
+            ]
+            if requested_positions.size == 0:
+                return EMPTY
+            requested_positions = np.unique(requested_positions)
+
+        ctx_kenlm_full = self.dolma2_to_kenlm[input_ids].astype(np.uint32, copy=False)
+        unresolved_positions = requested_positions
+        out_pos: list[np.ndarray] = []
+        out_did: list[np.ndarray] = []
+        out_delta: list[np.ndarray] = []
+        k = int(self.topk_uniform_residual_k)
+        eps = np.finfo(np.float64).tiny
+
+        for n in range(self.N_max, 1, -1):
+            if unresolved_positions.size == 0:
+                break
+            plen = n - 1
+            order_data = self.orders.get(n)
+            if order_data is None or order_data["n_hist"] == 0:
+                continue
+            eligible = unresolved_positions[unresolved_positions >= plen - 1]
+            if eligible.size == 0:
+                continue
+            windows = sliding_window_view(ctx_kenlm_full, plen)
+            window_indices = eligible - (plen - 1)
+            queries = np.ascontiguousarray(windows[window_indices])
+
+            struct = order_data["histories_struct"]
+            if struct is None:
+                continue
+            query_struct = queries.view(struct.dtype).reshape(-1)
+            idx = np.searchsorted(struct, query_struct)
+            clamped = np.minimum(idx, struct.shape[0] - 1)
+            matches = (idx < struct.shape[0]) & (struct[clamped] == query_struct)
+            if not matches.any():
+                continue
+
+            hit_positions = eligible[matches]
+            hit_row_indices = idx[matches]
+            selected_by_history_row: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+            kept_for_order = 0
+            rows_for_order = 0
+            for pos_i, row_idx in zip(hit_positions.tolist(), hit_row_indices.tolist()):
+                row_idx_i = int(row_idx)
+                cached = selected_by_history_row.get(row_idx_i)
+                if cached is None:
+                    offsets = order_data["offsets"]
+                    lo = int(offsets[row_idx_i])
+                    hi = int(offsets[row_idx_i + 1])
+                    if hi == lo:
+                        cached = (
+                            np.zeros(0, dtype=np.int64),
+                            np.zeros(0, dtype=np.float64),
+                        )
+                    else:
+                        row_counts = np.asarray(
+                            order_data["counts"][lo:hi], dtype=np.uint64
+                        )
+                        positive = np.flatnonzero(row_counts > 0)
+                        if positive.size == 0:
+                            cached = (
+                                np.zeros(0, dtype=np.int64),
+                                np.zeros(0, dtype=np.float64),
+                            )
+                        else:
+                            if positive.size > k:
+                                top = np.argpartition(row_counts[positive], -k)[-k:]
+                                keep = positive[top]
+                            else:
+                                keep = positive
+                            arr_idx = int(lo) + keep.astype(np.int64, copy=False)
+                            conts = np.asarray(
+                                order_data["continuations"][arr_idx],
+                                dtype=np.uint32,
+                            )
+                            did = self.kenlm_to_dolma2[conts].astype(
+                                np.int64, copy=False
+                            )
+                            valid = did < self.vocab_size
+                            if not valid.any():
+                                cached = (
+                                    np.zeros(0, dtype=np.int64),
+                                    np.zeros(0, dtype=np.float64),
+                                )
+                            else:
+                                did = did[valid]
+                                counts = row_counts[keep][valid].astype(
+                                    np.float64, copy=False
+                                )
+                                h_total = float(order_data["history_totals"][row_idx_i])
+                                if h_total <= 0.0:
+                                    cached = (
+                                        np.zeros(0, dtype=np.int64),
+                                        np.zeros(0, dtype=np.float64),
+                                    )
+                                else:
+                                    log_discount = (self.N_max - n) * self.log_alpha
+                                    discount = math.exp(log_discount)
+                                    top_scores = discount * counts / h_total
+                                    residual_mass = max(
+                                        discount - float(top_scores.sum()), eps
+                                    )
+                                    residual_vocab = max(
+                                        self.vocab_size - int(did.shape[0]), 1
+                                    )
+                                    log_residual = math.log(residual_mass) - math.log(
+                                        residual_vocab
+                                    )
+                                    delta = np.log(top_scores) - log_residual
+                                    cached = (did, delta.astype(np.float64, copy=False))
+                    selected_by_history_row[row_idx_i] = cached
+                did, delta = cached
+                if did.size == 0:
+                    continue
+                out_pos.append(np.full(did.shape[0], pos_i, dtype=np.int32))
+                out_did.append(did.astype(np.int32, copy=False))
+                out_delta.append(delta.astype(np.float32, copy=False))
+                kept_for_order += int(did.shape[0])
+                rows_for_order += 1
+
+            if rows_for_order:
+                order_summaries.append(
+                    f"n{n}:hist_hits={int(hit_positions.shape[0]):,},"
+                    f"rows_used={rows_for_order:,},overrides={kept_for_order:,},"
+                    f"topk_uniform_residual_k={k}"
+                )
+            matched_set = set(int(p) for p in hit_positions.tolist())
+            if matched_set:
+                unresolved_positions = np.asarray(
+                    [p for p in unresolved_positions.tolist() if int(p) not in matched_set],
+                    dtype=np.int64,
+                )
+
+        if not out_pos:
+            if log_timing:
+                self._maybe_log_override_call(t0, S, 0, order_summaries)
+            return EMPTY
+
+        result = (
+            np.concatenate(out_pos).astype(np.int32, copy=False),
+            np.concatenate(out_did).astype(np.int32, copy=False),
+            np.concatenate(out_delta).astype(np.float32, copy=False),
+        )
+        if log_timing:
+            self._maybe_log_override_call(t0, S, int(result[0].shape[0]), order_summaries)
         return result
 
     def _compute_overrides_for_sequence_serial(

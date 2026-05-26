@@ -391,6 +391,11 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     poe_sb_index_access: str = "mmap"
     poe_sb_lookup_threads: int = 1
     poe_sb_eval_lookup_threads: Optional[int] = None
+    # Optional KN-top-K-style SB mode. When set, SB overrides are sparse
+    # relative logit deltas from the highest matching row's top-K
+    # continuations against a uniform residual, so no dense unigram floor is
+    # added.
+    poe_sb_topk_uniform_residual_k: Optional[int] = None
 
     # Checkpoint settings.
 

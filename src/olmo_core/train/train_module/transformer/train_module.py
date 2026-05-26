@@ -137,6 +137,7 @@ class TransformerTrainModule(TrainModule):
         poe_sb_index_access: str = "mmap",
         poe_sb_lookup_threads: int = 1,
         poe_sb_eval_lookup_threads: Optional[int] = None,
+        poe_sb_topk_uniform_residual_k: Optional[int] = None,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -309,6 +310,7 @@ class TransformerTrainModule(TrainModule):
             if poe_sb_eval_lookup_threads is not None
             else self.poe_sb_lookup_threads
         )
+        self.poe_sb_topk_uniform_residual_k = poe_sb_topk_uniform_residual_k
         # Lazy: instantiated on first eval_batch call (per process), so we
         # don't open the mmap on the main coordinator rank that may never
         # actually run an eval.
@@ -1189,6 +1191,7 @@ class TransformerTrainModule(TrainModule):
                 min_order_counts=self.poe_sb_min_order_counts,
                 index_access=self.poe_sb_index_access,
                 lookup_threads=self.poe_sb_eval_lookup_threads,
+                topk_uniform_residual_k=self.poe_sb_topk_uniform_residual_k,
             )
         return self._poe_sb_reader
 
@@ -1204,7 +1207,13 @@ class TransformerTrainModule(TrainModule):
             or self._poe_sb_unigram_floor_dev.device != self.device
         ):
             reader = self._get_poe_sb_reader()
-            floor_cpu = torch.from_numpy(reader.unigram_floor).to(dtype=dtype)
+            if self.poe_sb_topk_uniform_residual_k is not None:
+                floor_cpu = torch.zeros(
+                    self.poe_sb_dolma2_vocab_size,
+                    dtype=dtype,
+                )
+            else:
+                floor_cpu = torch.from_numpy(reader.unigram_floor).to(dtype=dtype)
             self._poe_sb_unigram_floor_dev = floor_cpu.to(self.device, non_blocking=True)
         return self._poe_sb_unigram_floor_dev
 

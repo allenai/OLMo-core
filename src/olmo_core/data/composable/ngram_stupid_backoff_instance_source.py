@@ -77,6 +77,9 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         or ``"pread"`` to use explicit reads for large 1-D index arrays.
     :param lookup_threads: Number of in-process threads used by each reader
         to split one sequence lookup into chunks.
+    :param topk_uniform_residual_k: Optional KN-top-K-style mode. When set,
+        the reader emits only the top-K continuations from the highest
+        matching history row as logit deltas relative to a uniform residual.
     """
 
     DISPLAY_ICON = "\U000f0d77"  # nf-md-graphql (same as the KN-smoothed source)
@@ -94,6 +97,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         min_order_counts: Optional[Dict[int, int]] = None,
         index_access: str = "mmap",
         lookup_threads: int = 1,
+        topk_uniform_residual_k: Optional[int] = None,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -113,6 +117,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         self._min_order_counts = min_order_counts
         self._index_access = index_access
         self._lookup_threads = int(lookup_threads)
+        self._topk_uniform_residual_k = topk_uniform_residual_k
         # Lazy per-process init: don't mmap in the main process so the
         # source pickles cleanly to spawn workers; first lookup populates.
         self._reader = None
@@ -160,6 +165,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 min_order_counts=self._min_order_counts,
                 index_access=self._index_access,
                 lookup_threads=self._lookup_threads,
+                topk_uniform_residual_k=self._topk_uniform_residual_k,
             )
         return self._reader
 
@@ -179,6 +185,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 f"min_order_counts={self._min_order_counts},"
                 f"index_access={self._index_access},"
                 f"lookup_threads={self._lookup_threads},"
+                f"topk_uniform_residual_k={self._topk_uniform_residual_k},"
             ).encode()
         )
         return sha.hexdigest()
@@ -231,6 +238,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
     min_order_counts: Optional[Dict[int, int]] = None
     index_access: str = "mmap"
     lookup_threads: int = 1
+    topk_uniform_residual_k: Optional[int] = None
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> NgramStupidBackoffInstanceSource:
@@ -246,6 +254,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
             min_order_counts=self.min_order_counts,
             index_access=self.index_access,
             lookup_threads=self.lookup_threads,
+            topk_uniform_residual_k=self.topk_uniform_residual_k,
             work_dir=work_dir,
             label=self.label,
         )

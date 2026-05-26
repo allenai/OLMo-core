@@ -325,6 +325,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_index_access: str = "mmap"
     sb_lookup_threads: int = DEFAULT_SB_LOOKUP_THREADS
     sb_eval_lookup_threads: int | None = None
+    sb_topk_uniform_residual_k: int | None = None
     eval_rank_microbatch_size: int | None = None
     dolma2_vocab_size: int = DEFAULT_DOLMA2_VOCAB_SIZE
     smoke_1gpu: bool = False
@@ -388,6 +389,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_index_access=self.sb_index_access,
             poe_sb_lookup_threads=self.sb_lookup_threads,
             poe_sb_eval_lookup_threads=self.sb_eval_lookup_threads,
+            poe_sb_topk_uniform_residual_k=self.sb_topk_uniform_residual_k,
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -463,6 +465,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         min_order_counts=sb_min_order_counts,
         index_access=getattr(args, "sb_index_access", "mmap"),
         lookup_threads=getattr(args, "sb_lookup_threads", DEFAULT_SB_LOOKUP_THREADS),
+        topk_uniform_residual_k=getattr(args, "sb_topk_uniform_residual_k", None),
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -503,6 +506,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 DEFAULT_SB_LOOKUP_THREADS,
             ),
             sb_eval_lookup_threads=getattr(args, "sb_eval_lookup_threads", None),
+            sb_topk_uniform_residual_k=getattr(
+                args, "sb_topk_uniform_residual_k", None
+            ),
             dolma2_vocab_size=int(tokenizer.padded_vocab_size()),
             smoke_1gpu=smoke_1gpu,
         ),
@@ -669,6 +675,17 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "Optional hard cap for any SB order, repeatable, for example "
             "'--sb-max-order-continuations 2=128 --sb-max-order-continuations 3=128'. "
             "The legacy --sb-max-order2-continuations flag still sets the order-2 cap."
+        ),
+    )
+    parser.add_argument(
+        "--sb-topk-uniform-residual-k",
+        type=int,
+        default=None,
+        help=(
+            "Use a KN-top-K-style SB PoE bias: for each position, select the "
+            "highest matching SB history row, keep its top-K continuations by "
+            "count, and emit logit deltas relative to a uniform residual over "
+            "the rest of the vocab. This bypasses the dense unigram floor."
         ),
     )
     parser.add_argument(
