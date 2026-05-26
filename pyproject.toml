@@ -168,6 +168,10 @@ no_site_packages = true
 check_untyped_defs = true
 namespace_packages = false
 disable_error_code = "has-type"
+# Training scripts are loose runnable configs (no __init__.py), and several
+# share filenames across subdirectories (e.g. ladder/ vs moe_ladder/), which
+# trips mypy's duplicate-module check. They aren't library code.
+exclude = ["^src/scripts/"]
 
 [[tool.mypy.overrides]]
 module = "tests.*"

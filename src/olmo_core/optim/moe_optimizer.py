@@ -409,10 +409,10 @@ class MoEFusedV2OptimizerConfig(Config):
                                 ep_param_ids.add(id(p))
         return ep_param_ids
 
-    def build(
+    def build(  # type: ignore[override]
         self,
         model_parts: List,
-        train_module: "TrainModule",
+        train_module: Optional["TrainModule"] = None,
         strict: bool = True,
         param_filter=None,
     ) -> "MoEFusedV2Optimizer":
@@ -427,6 +427,7 @@ class MoEFusedV2OptimizerConfig(Config):
             MoEV2TransformerTrainModule,
         )
 
+        assert train_module is not None, "MoEFusedV2OptimizerConfig.build requires a train_module"
         model_parts = cast(List[MoEFusedV2Transformer], model_parts)
         train_module = cast(MoEV2TransformerTrainModule, train_module)
 

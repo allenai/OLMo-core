@@ -175,7 +175,7 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
     def build(
         self,
         model: nn.Module,
-        train_module: "TrainModule",
+        train_module: Optional["TrainModule"] = None,
         strict: bool = True,
         param_filter=None,
     ) -> Opt:
@@ -183,11 +183,13 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
         Build the optimizer. This default implementation is suitable for standard, point-wise
         optimizers such as AdamW, Lion, etc.
 
+        :param train_module: Unused by point-wise optimizers; subclasses (Zero, MoE) that need
+            it must override this method and validate it themselves.
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
 
-        # not used: train_module
+        del train_module  # unused in base impl
 
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")

@@ -31,7 +31,11 @@ class ZeroOptimConfig(OptimConfig):
         return ZeroRedundancyOptimizer
 
     def build(
-        self, model: nn.Module, train_module: "TrainModule", strict: bool = True, param_filter=None
+        self,
+        model: nn.Module,
+        train_module: Optional["TrainModule"] = None,
+        strict: bool = True,
+        param_filter=None,
     ):
         """
         Build the optimizer.
@@ -45,6 +49,7 @@ class ZeroOptimConfig(OptimConfig):
         kwargs.pop("fixed_fields")
 
         assert self.inner_optimizer is not None
+        assert train_module is not None, "ZeroOptimConfig.build requires a train_module"
         inner_optimizer = self.inner_optimizer.build(  # noqa: F841
             model, train_module, strict=strict, param_filter=param_filter
         )
