@@ -222,6 +222,7 @@ def combined_forward_ep_no_sync_rowwise(
                 lease_dispatch_out=False,
                 need_dispatch_out=not lease_lifetime_buffers,
             )
+        assert fp8_buffers is not None
         if lease_lifetime_buffers:
             dispatch_out_lease = acquire_ep_no_sync_fp8_dispatch_out_lease(
                 self,
@@ -230,6 +231,7 @@ def combined_forward_ep_no_sync_rowwise(
                 block_size=rowwise_fp8_cfg.block_size,
                 device=moe_inp.device,
             )
+            assert dispatch_out_lease is not None
             fp8_buffers = replace(
                 fp8_buffers,
                 dispatch_out_q=dispatch_out_lease.tensor("dispatch_out_q"),
@@ -368,6 +370,7 @@ def combined_forward_ep_no_sync_rowwise(
         assert dispatch_out_scales is not None
         assert combine_in_q is not None
         assert combine_in_scales is not None
+        assert fp8_buffers is not None
         routed_experts = self.routed_experts
         routed_fp8_cfg = routed_experts.rowwise_fp8
         if routed_fp8_cfg is None or not routed_fp8_cfg.enabled:
@@ -428,6 +431,7 @@ def combined_forward_ep_no_sync_rowwise(
         assert rowwise_fp8_cfg is not None
         assert dispatch_out_q is not None
         assert dispatch_out_scales is not None
+        assert fp8_buffers is not None
         dispatch_rank_major = _DispatchRowwiseFP8Autograd.apply(
             moe_inp,
             dst_ranks,

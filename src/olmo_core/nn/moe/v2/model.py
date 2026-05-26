@@ -56,6 +56,7 @@ from .ep_no_sync_tbo_rowwise import (
 from .tbo_state import SyncedTboPendingContext
 
 if TYPE_CHECKING:
+    from olmo_core.nn.fp8_weight import FP8WeightStore
     from olmo_core.train.common import ReduceType
 log = logging.getLogger(__name__)
 
@@ -255,14 +256,14 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 continue
             block.refresh_rowwise_fp8_cache()
 
-    def named_fp8_weight_stores(self) -> Iterator[tuple[str, object]]:
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, "FP8WeightStore"]]:
         for block_key, block in self.blocks.items():
             if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
                 continue
             for name, weight in block.named_fp8_weight_stores():
                 yield f"blocks.{block_key}.{name}", weight
 
-    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, object]]:
+    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, "FP8WeightStore"]]:
         yield from self.named_fp8_weight_stores()
 
     def zero_fp8_weight_store_grads(self, set_to_none: bool = True) -> None:
@@ -469,11 +470,12 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             torch_symm_mem: Any = None
             if not olmo_symm_mem.is_enabled():
                 try:
-                    import torch.distributed._symmetric_memory as torch_symm_mem
+                    import torch.distributed._symmetric_memory as _torch_symm_mem
                 except ImportError as e:
                     raise RuntimeError(
                         "EP no-sync requires torch.distributed._symmetric_memory"
                     ) from e
+                torch_symm_mem = _torch_symm_mem
             for _ in range(pad_count):
                 if olmo_symm_mem.is_enabled():
                     tensor = olmo_symm_mem.empty(
@@ -1014,12 +1016,12 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
         if isinstance(x1_ctx, _NoSyncTboPendingContext):
             with nvtx.annotate("TBO-1", color="orange"):
-                pending_ctx = ep_no_sync_stage_c_launch(x1_ctx.block, x1_ctx)
+                pending_ctx_1d = ep_no_sync_stage_c_launch(x1_ctx.block, x1_ctx)
 
             h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
 
             with nvtx.annotate("TBO-1", color="orange"):
-                x1 = ep_no_sync_stage_tail(x1_ctx.block, pending_ctx)
+                x1 = ep_no_sync_stage_tail(x1_ctx.block, pending_ctx_1d)
 
             h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
             return h0, h1
@@ -1169,7 +1171,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         return h0
 
     def _forward_blocks(
-        self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[str, Any]
+        self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[Any, Dict[str, Any]]
     ) -> torch.Tensor:
         # Run each block.
         for block_idx, (block_key, block) in enumerate(self.blocks.items()):

@@ -234,7 +234,8 @@ class TransformerBlockConfig(ModuleConfig):
             raise OLMoConfigurationError(
                 "TransformerBlockConfig requires 'sequence_mixer' to be set."
             )
-        self.attention = (
+        # Back-compat alias: some call sites still reach for ``.attention`` on the config.
+        self.attention = (  # type: ignore[attr-defined]
             self.sequence_mixer if isinstance(self.sequence_mixer, AttentionConfig) else None
         )
 

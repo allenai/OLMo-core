@@ -322,6 +322,7 @@ def scaled_grouped_mm_q_fp8_weight_no_compile(
 
 # if env variable OLMO_USE_TORCH_GROUPED_MM is set, use its value to determine whether to use torch grouped_mm;
 env_val = os.getenv("OLMO_USE_TORCH_GROUPED_MM")
+USE_TORCH_GROUPED_MM: Optional[bool]
 if env_val is not None:
     if env_val.lower() in ("1", "true", "yes"):
         USE_TORCH_GROUPED_MM = True

@@ -5,6 +5,7 @@ import os
 from functools import cached_property, lru_cache
 from typing import (
     Any,
+    Collection,
     Dict,
     Generator,
     List,
@@ -876,7 +877,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         return model_state
 
     def _resolve_model_checkpoint_key(
-        self, param_name: str, checkpoint_keys: Sequence[str]
+        self, param_name: str, checkpoint_keys: Collection[str]
     ) -> Optional[str]:
         candidates = (
             f"{param_name}.main",
@@ -1372,7 +1373,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         with self._model_forward_context():
             return self.model_parts[0](input_ids, labels=labels, **kwargs)
 
-    @lru_cache
+    @lru_cache  # type: ignore[override]
     def num_flops_per_token(self, seq_len: int) -> int:
         return int(self._global_model_config.num_flops_per_token(seq_len))
 
@@ -1790,6 +1791,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         # allocation sequence to align with dummy padding.
         max_counts = list(local_counts)
 
+        rowwise_slots_by_part: List[Optional[int]]
         if isinstance(rowwise_lifetime_lease_slots, Sequence):
             if len(rowwise_lifetime_lease_slots) != len(typed_parts):
                 raise RuntimeError(

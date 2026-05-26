@@ -496,6 +496,7 @@ def eval_checkpoints(config: ExperimentConfig):
     # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model, eval_only=True)
+    assert isinstance(config.dataset, NumpyDatasetConfig)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader, eval_only=True)

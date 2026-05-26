@@ -390,14 +390,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         # (seq_length, head_dim) x (head_dim, seq_length) for each head.
         # mnk = seq_length * seq_length * head_dim, repeated n_heads times.
         flops += (
-            flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2
+            flops_factor * (n_heads * seq_length * seq_length * head_dim) // 2
         )  # divide by 2 for causal attention
 
         # Attention @ V:
         # Again n_heads independent GEMMs:
         # (seq_length, seq_length) x (seq_length, head_dim) for each head.
         flops += (
-            flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2
+            flops_factor * (n_heads * seq_length * seq_length * head_dim) // 2
         )  # divide by 2 for causal attention
 
         # Output projection (seq_length, d_attn) x (d_attn, d_model)
@@ -1361,7 +1361,7 @@ class MultiheadLatentAttentionConfig(AttentionConfig):
     splitting the queries into non-positional and rotary components.
     """
 
-    name: str = "mla"
+    name: AttentionType = AttentionType.mla
     # n_heads: int = 16
     # bias: Optional[bool] = None
     # dropout: Optional[float] = 0.0

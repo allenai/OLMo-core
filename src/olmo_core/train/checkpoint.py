@@ -616,11 +616,13 @@ class CompactablityCheckpointer(Checkpointer):
         train_module: TrainModule,
         *,
         load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
         created via :meth:`save()` or :meth:`save_async()`.
         """
+        del load_optim_state  # not honored by the compatibility checkpointer
         dir = normalize_path(dir)
 
         # Maybe load trainer state.

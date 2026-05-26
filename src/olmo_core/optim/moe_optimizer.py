@@ -15,7 +15,6 @@ from typing import (
     Tuple,
     Union,
     cast,
-    overload,
 )
 
 import nvtx

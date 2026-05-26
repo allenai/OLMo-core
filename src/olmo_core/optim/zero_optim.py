@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -16,7 +16,6 @@ log = logging.getLogger(__name__)
 # ZeRO-1 sharded Skip-Step AdamW
 # --------------------------------------------------------------------------- #
 
-Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
 if TYPE_CHECKING:
     from ..train.train_module import TrainModule
@@ -107,4 +106,4 @@ class ZeroOptimConfig(OptimConfig):
 
         optim.register_load_state_dict_post_hook(reset_fixed_fields)
 
-        return cast(Opt, optim)
+        return optim

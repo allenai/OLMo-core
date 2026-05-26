@@ -533,7 +533,7 @@ class TransformerTrainModule(TrainModule):
         return output
 
     def optim_step(self):
-        self._require_optimizer()
+        optim = self._require_optimizer()
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
             grad_norm = self._clip_grad_norm(self.max_grad_norm)
@@ -611,14 +611,14 @@ class TransformerTrainModule(TrainModule):
 
         # Maybe adjust learning rate.
         if self.scheduler is not None:
-            for group_idx, group in enumerate(self.optim.param_groups):
+            for group_idx, group in enumerate(optim.param_groups):
                 new_lr = self.scheduler.set_lr(group, self.trainer)
                 self.trainer.record_metric(f"LR (group {group_idx})", new_lr, namespace="optim")
 
         # Step optimizer.
-        self.optim.step()
-        if isinstance(self.optim, SkipStepOptimizer):
-            self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
+        optim.step()
+        if isinstance(optim, SkipStepOptimizer):
+            self.record_metric("step skipped", optim.step_skipped, namespace="optim")
 
         self.model.post_optim_step()
 

@@ -369,12 +369,14 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
         self,
         model: Transformer,
         device: Optional[torch.device] = None,
+        eval_only: bool = False,
     ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule"]:
         """
         Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.
 
         :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
         :param device: The device to train on.
+        :param eval_only: If ``True``, build the train module without an optimizer (eval-only).
         """
         from .pipeline_train_module import TransformerPipelineTrainModule
         from .train_module import TransformerTrainModule
@@ -391,12 +393,14 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
             return TransformerPipelineTrainModule(
                 model=model,
                 device=device,
+                eval_only=eval_only,
                 **kwargs,
             )
         else:
             return TransformerTrainModule(
                 model=model,
                 device=device,
+                eval_only=eval_only,
                 **kwargs,
             )
 

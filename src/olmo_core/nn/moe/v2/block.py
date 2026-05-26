@@ -246,6 +246,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
         # x3 for fwd+bwd
         # x2 for GEMM
         if self.routed_experts is not None:
+            assert self.routed_experts_router is not None
             flops += (
                 (3 * 3 * 2)
                 * seqlen
