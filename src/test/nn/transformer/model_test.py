@@ -20,6 +20,7 @@ from olmo_core.distributed.parallel import (
     build_world_mesh,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
@@ -679,3 +680,44 @@ def test_qwen3_builder_configs(config_builder, expected_d_model):
     num_actual_params = sum(p.numel() for p in model.parameters())
     assert config.num_params == num_actual_params
     assert model.num_params == num_actual_params
+
+
+def test_qwen3_small_sizes_tie_word_embeddings():
+    for builder in (
+        TransformerConfig.qwen3_0_6B,
+        TransformerConfig.qwen3_1_7B,
+        TransformerConfig.qwen3_4B,
+    ):
+        assert builder(vocab_size=128, n_layers=2).tie_word_embeddings
+
+    for builder in (
+        TransformerConfig.qwen3_8B,
+        TransformerConfig.qwen3_14B,
+        TransformerConfig.qwen3_32B,
+    ):
+        assert not builder(vocab_size=128, n_layers=2).tie_word_embeddings
+
+
+def test_qwen3_tie_word_embeddings_can_be_overridden():
+    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2, tie_word_embeddings=False)
+    assert not config.tie_word_embeddings
+
+
+def test_tied_word_embeddings_share_weight_after_init():
+    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2)
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"))
+
+    assert model.tie_word_embeddings
+    # The tie must survive `init_weights`, which calls `to_empty`.
+    assert model.lm_head.w_out.weight is model.embeddings.weight
+
+    # The shared weight is only counted once.
+    num_actual_params = sum(p.numel() for p in model.parameters())
+    assert config.num_params == num_actual_params
+    assert model.num_params == num_actual_params
+
+
+def test_normalized_transformer_rejects_tied_word_embeddings():
+    with pytest.raises(OLMoConfigurationError):
+        TransformerConfig.ngpt_271M(vocab_size=128, n_layers=2, tie_word_embeddings=True)

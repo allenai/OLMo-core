@@ -473,6 +473,15 @@ def convert_state_from_hf(
     if model_type == "gemma3_text":
         converted_state = _apply_gemma3_norm_transform(converted_state)
 
+    # When word embeddings are tied, HF checkpoints omit `lm_head.weight`. Reconstruct the
+    # OLMo Core LM head weight from the embeddings so the tied model loads cleanly.
+    if (
+        getattr(config, "tie_word_embeddings", False)
+        and "lm_head.w_out.weight" not in converted_state
+        and "embeddings.weight" in converted_state
+    ):
+        converted_state["lm_head.w_out.weight"] = converted_state["embeddings.weight"]
+
     return converted_state
 
 

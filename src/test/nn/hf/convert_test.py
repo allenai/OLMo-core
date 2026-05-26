@@ -118,6 +118,32 @@ def test_convert_state_from_hf_and_flatten():
         )
 
 
+def test_convert_state_from_hf_ties_word_embeddings():
+    hf_config = AutoConfig.for_model(
+        "qwen3",
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+        tie_word_embeddings=True,
+    )
+
+    # A tied HF checkpoint omits `lm_head.weight`.
+    hf_state = {
+        "model.embed_tokens.weight": torch.randn(hf_config.vocab_size, hf_config.hidden_size)
+    }
+
+    converted_state = convert_state_from_hf(hf_config, hf_state, model_type="qwen3")
+
+    assert "lm_head.w_out.weight" in converted_state
+    torch.testing.assert_close(
+        converted_state["lm_head.w_out.weight"], converted_state["embeddings.weight"]
+    )
+
+
 def test_convert_state_to_hf():
     hf_config = _get_olmo2_config()
 
