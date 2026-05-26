@@ -119,7 +119,7 @@ class MuonConfig(MatrixAwareOptimConfig):
         return [matrix_override, vector_override, embed_override, lm_head_override]
 
     def build_groups(
-        self, model: torch.nn.Module, strict: bool = True
+        self, model: torch.nn.Module, strict: bool = True, param_filter=None
     ) -> Union[Iterable[torch.Tensor], list[dict[str, Any]]]:
         """
         Build parameters groups.
@@ -128,6 +128,7 @@ class MuonConfig(MatrixAwareOptimConfig):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
+        del param_filter  # unused by Muon
         all_params: dict[str, torch.Tensor] = OrderedDict()
         frozen_params: set = set()
         for n, p in model.named_parameters():

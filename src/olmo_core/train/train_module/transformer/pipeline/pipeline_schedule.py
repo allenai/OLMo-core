@@ -344,10 +344,10 @@ class CustomScheduleInterleaved1F1B:
                         f"input batch size {input_ids.size(0)} is smaller than num_microbatches={self._n_microbatches}"
                     )
                 input_id_chunks = list(torch.tensor_split(input_ids, self._n_microbatches, dim=0))
-                args_split = [(chunk,) for chunk in input_id_chunks]
+                args_split: List[tuple] = [(chunk,) for chunk in input_id_chunks]
             else:
                 args_split = [()] * self._n_microbatches
-            kwargs_split = [{} for _ in range(self._n_microbatches)]
+            kwargs_split: List[dict] = [{} for _ in range(self._n_microbatches)]
 
             supported_keys = {
                 "loss_div_factor",

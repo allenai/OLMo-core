@@ -1097,6 +1097,7 @@ def get_ep_no_sync_rowwise_fp8_buffers(
             block_size=block_size,
             device=device,
         )
+        assert dispatch_out_lease is not None
         dispatch_out_q = dispatch_out_lease.tensor("dispatch_out_q")
         dispatch_out_scales = dispatch_out_lease.tensor("dispatch_out_scales")
     elif block._ep_no_sync_shared_pool is not None and block.ep_no_sync_share_dispatch_out:
@@ -1678,6 +1679,7 @@ def get_ep_no_sync_buffers(
                 dtype=dtype,
                 device=device,
             )
+            assert dispatch_out_lease is not None
             dispatch_out = dispatch_out_lease.tensor("dispatch_out")
             dispatch_out_is_shared = True
         elif shared_dispatch_out is not None:
@@ -1707,6 +1709,7 @@ def get_ep_no_sync_buffers(
                 dtype=dtype,
                 device=device,
             )
+            assert combine_out_lease is not None
             combine_out = combine_out_lease.tensor("combine_out")
             combine_out_is_shared = True
         elif shared_combine_out is not None:
@@ -1737,6 +1740,7 @@ def get_ep_no_sync_buffers(
                 dtype=dtype,
                 device=device,
             )
+            assert combine_gather_lease is not None
             combine_gather = combine_gather_lease.tensor("combine_gather")
         elif combine_gather_cap <= 0 or combine_gather_top_k <= 0:
             raise RuntimeError(

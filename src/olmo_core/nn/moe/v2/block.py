@@ -1024,8 +1024,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         )
 
         # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
-        self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo)
-        self._res_norm_attn = torch.compile(self._res_norm_attn)
+        self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo)  # type: ignore[method-assign]
+        self._res_norm_attn = torch.compile(self._res_norm_attn)  # type: ignore[method-assign]
 
     @property
     def ep_world_size(self) -> int:

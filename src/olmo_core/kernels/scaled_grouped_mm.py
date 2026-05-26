@@ -33,7 +33,7 @@ except AttributeError:
 class ScaledGroupedMMPrequantizedLHS:
     mat_a_q: Tensor
     scale_a: Tensor
-    mat_a_shape: Tuple[int, int]
+    mat_a_shape: Tuple[int, ...]  # logically (M, K)
     scales_are_blocked: bool = False
 
 
@@ -41,7 +41,7 @@ class ScaledGroupedMMPrequantizedLHS:
 class ScaledGroupedMMPrequantizedRHS:
     mat_b_q: Tensor
     scale_b: Tensor
-    mat_b_shape: Tuple[int, int, int]
+    mat_b_shape: Tuple[int, ...]  # logically (E, N, K)
     mat_b_version: int = -1
 
 
@@ -343,6 +343,7 @@ class _ScaledGroupedMMQFunction(torch.autograd.Function):
             prequantized_lhs is not None and not prequantized_lhs.scales_are_blocked
         )
         if use_saved_prequantized_lhs:
+            assert prequantized_lhs is not None
             mat_a_q, scale_a = _prequantized_lhs_tensors_for_backward(prequantized_lhs)
             ctx.save_for_backward(
                 mat_b,
@@ -513,6 +514,7 @@ class _ScaledGroupedMMQFP8WeightFunction(torch.autograd.Function):
             prequantized_lhs is not None and not prequantized_lhs.scales_are_blocked
         )
         if use_saved_prequantized_lhs:
+            assert prequantized_lhs is not None
             mat_a_q, scale_a = _prequantized_lhs_tensors_for_backward(prequantized_lhs)
             ctx.save_for_backward(
                 offs,

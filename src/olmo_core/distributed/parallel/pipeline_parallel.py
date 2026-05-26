@@ -355,9 +355,9 @@ def draw_pipeline_timeline(
     # assert all rows have the same total width
     if not all(w == total_w[0] for w in total_w):
         assert False, f"Not all rows have the same total width: {total_w}"
-    total_w = total_w[0]
+    row_width = total_w[0]
     # ---- figure sizing
-    width = max(8, total_w * figsize_per_cell)
+    width = max(8, row_width * figsize_per_cell)
     height = max(2.5, num_ranks * 0.55 * 2 + 1.4)
     fig, ax = plt.subplots(figsize=(width, height), constrained_layout=True)
     ax.set_title(title, fontsize=14, pad=10)
@@ -402,16 +402,16 @@ def draw_pipeline_timeline(
             elif kind.name == "FULL_BACKWARD_CONT":
                 continue  # skip drawing the continuation cell
             elif kind.name == "FORWARD":
+                assert stage_id is not None
                 color, width_rect, txt = C_FWD, 1, format_action(stage_id, kind, mb)
                 # text_color = 'white'
-                assert stage_id is not None
                 if stage_id >= num_ranks:
                     color = C_FWD_2
                     text_color = "black"
             elif kind.name == "FULL_BACKWARD":
+                assert stage_id is not None
                 color, width_rect, txt = C_BWD, 2, format_action(stage_id, kind, mb)
                 # text_color = 'white'
-                assert stage_id is not None
                 if stage_id >= num_ranks:
                     color = C_BWD_2
                     text_color = "black"
@@ -436,9 +436,9 @@ def draw_pipeline_timeline(
                 )
 
             x_offset += width_rect
-    total_w = x_offset
+    total_width = x_offset
     # ---- axes / grid
-    ax.set_xlim(0, total_w)
+    ax.set_xlim(0, total_width)
     ax.set_ylim(0, num_ranks * 2)
     ax.set_yticks([num_ranks * 2 - 1 - 0.5 - i * 2 for i in range(num_ranks)])
     ax.set_yticklabels([f"Rank {i}" for i in ranks])
@@ -446,9 +446,9 @@ def draw_pipeline_timeline(
     ax.set_ylabel("Pipeline stage")
 
     # ticks: every ~20 labels max on the stretched x-scale
-    ax.set_xticks(range(0, total_w, max(1, total_w // 20)))
+    ax.set_xticks(range(0, total_width, max(1, total_width // 20)))
     # minor vertical grid at every unit (this also shows the midline when a column is doubled)
-    ax.set_xticks(range(total_w + 1), minor=True)
+    ax.set_xticks(range(total_width + 1), minor=True)
     ax.set_yticks(range(num_ranks * 2), minor=True)
     ax.grid(which="minor", linestyle=":", linewidth=0.3, color="#666666", alpha=0.5)
     ax.tick_params(axis="both", which="major", labelsize=9)
@@ -527,7 +527,7 @@ def get_pipeline_tick_exchange_stats(pp_order: Dict[int, List[Any]]) -> dict[str
     tick after the producer. These edges are legal but can become profiler
     bubbles when runtime skew makes the producer finish late.
     """
-    action_times: dict[tuple[int, str, int], tuple[int, int]] = {}
+    action_times: dict[tuple[int, str, Optional[int]], tuple[int, int]] = {}
     max_stage = -1
     for rank, row in pp_order.items():
         for time_step, action in enumerate(row):
@@ -544,7 +544,7 @@ def get_pipeline_tick_exchange_stats(pp_order: Dict[int, List[Any]]) -> dict[str
             elif kind_name == "FULL_BACKWARD_CONT":
                 action_times[(stage_id, "B_", mb)] = (rank, time_step)
 
-    tight_edges: list[tuple[int, int, int, str, int, int, int, int]] = []
+    tight_edges: list[tuple[int, int, int, str, int, int, Optional[int], int]] = []
     # (producer_time, producer_rank, consumer_rank, kind, producer_stage,
     #  consumer_stage, microbatch, consumer_time)
     for (stage_id, kind_label, mb), (consumer_rank, consumer_time) in action_times.items():
@@ -868,6 +868,7 @@ class PipelineSchedule:
         else:
             target = None
 
+        args: tuple
         if not self.has_first_stage:
             args = ()  # If there is no first stage, we need to provide an empty tuple for single_1F1B
         else:

@@ -1137,14 +1137,6 @@ class MoEFusedV2Optimizer:
         else:
             return torch.tensor(0.0)
 
-    @overload  # make pylance happy
-    def step(self, closure: None = ...) -> None:
-        ...
-
-    @overload  # make pylance happy
-    def step(self, closure: Callable[[], float]) -> float:
-        ...
-
     def set_reduce_scatter_grads(self, enabled: bool = True):
         self._use_reduce_scatter_grads = enabled
 
@@ -1830,8 +1822,8 @@ class MoEFusedV2Optimizer:
         LAUNCH_AG_THRESHOLD = 500_000_000  # X elements
         for param_group in self.param_groups:
             # initialize for coalesced all_gather
-            input_dtensors = []
-            output_params = []
+            input_dtensors: List[torch.Tensor] = []
+            output_params: List[torch.Tensor] = []
             input_numel = 0
             fp8_entries: List[Tuple[str, FP8WeightStore, DTensor]] = []
 

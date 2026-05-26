@@ -469,8 +469,8 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         else:
             # Build up moe mesh dimensions. (PP , EP_DP, EP_MP)
-            names: List[str] = []
-            dims: List[int] = []
+            names = []
+            dims = []
 
             # Pipeline parallel first.
             if pp is not None:
@@ -1545,7 +1545,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 m.apply_pp(self.pp_mesh)
 
         else:
-            model_parts: List[MoEFusedV2Transformer] = [model]  # no PP, single part
+            model_parts = cast(List[MoEFusedV2Transformer], [model])  # no PP, single part
 
         # Maybe apply FP8 training.
         if float8_config is not None and float8_config.enabled:
@@ -1616,7 +1616,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                     len(model_parts),
                 )
 
-            ddp_model_parts = []
+            ddp_model_parts: List[Any] = []
             for m in model_parts:
                 if not m.is_moe:
                     raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")

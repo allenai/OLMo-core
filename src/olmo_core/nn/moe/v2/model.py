@@ -466,11 +466,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 f"pad_to_block_count ({pad_to_block_count}) is smaller than local EP no-sync block count ({len(ep_blocks)})"
             )
         if pad_count:
-            if olmo_symm_mem.is_enabled():
-                symm_mem = None
-            else:
+            torch_symm_mem: Any = None
+            if not olmo_symm_mem.is_enabled():
                 try:
-                    import torch.distributed._symmetric_memory as symm_mem
+                    import torch.distributed._symmetric_memory as torch_symm_mem
                 except ImportError as e:
                     raise RuntimeError(
                         "EP no-sync requires torch.distributed._symmetric_memory"
@@ -485,13 +484,13 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                     )
                     olmo_symm_mem.rendezvous(tensor, group=first_block.ep_pg)
                 else:
-                    assert symm_mem is not None
-                    tensor = symm_mem.empty(
+                    assert torch_symm_mem is not None
+                    tensor = torch_symm_mem.empty(
                         (rank_capacity, d_model),
                         dtype=dtype,
                         device=device,
                     )
-                    symm_mem.rendezvous(tensor, group=first_block.ep_pg)
+                    torch_symm_mem.rendezvous(tensor, group=first_block.ep_pg)
                 self._ep_no_sync_dummy_symm_tensors.append(tensor)
 
     # NOTE: shadowed by the real `apply_ep` defined below; kept commented for reference.
@@ -500,8 +499,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
     def apply_compile(self):
         super().apply_compile()
-        self._tbo_last_step = torch.compile(self._tbo_last_step)
-        self.forward_embed = torch.compile(self.forward_embed)
+        self._tbo_last_step = torch.compile(self._tbo_last_step)  # type: ignore[method-assign]
+        self.forward_embed = torch.compile(self.forward_embed)  # type: ignore[method-assign]
         # self._forward_blocks = torch.compile(self._forward_blocks)
 
     def apply_ddp(
@@ -1180,7 +1179,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
                 block_kwargs = per_block_kwargs.get(block_key, {})
                 combined_kwargs = {**all_block_kwargs, **block_kwargs}
-                do_not_recompute = []  # HACK
+                do_not_recompute: List[int] = []  # HACK
                 if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (
                     self.recompute_block_keys and block_key in self.recompute_block_keys
                 ):

@@ -305,7 +305,7 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
         raise NotImplementedError
 
     def build_groups(
-        self, model: torch.nn.Module, strict: bool = True
+        self, model: torch.nn.Module, strict: bool = True, param_filter=None
     ) -> Union[Iterable[torch.Tensor], list[dict[str, Any]]]:
         """
         Build parameters groups.
@@ -314,6 +314,7 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
+        del param_filter  # unused by matrix-aware optimizers
         all_params: dict[str, torch.Tensor] = OrderedDict()
         frozen_params: set = set()
         for n, p in model.named_parameters():
@@ -352,13 +353,20 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
         """
         raise NotImplementedError
 
-    def build(self, model: torch.nn.Module, strict: bool = True) -> Opt:
+    def build(
+        self,
+        model: torch.nn.Module,
+        train_module: Optional["TrainModule"] = None,
+        strict: bool = True,
+        param_filter=None,
+    ) -> Opt:
         """
         Build the optimizer.
 
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
+        del train_module, param_filter  # unused by matrix-aware optimizers
 
         kwargs = self.as_dict(exclude_private_fields=True)
         group_overrides = kwargs.pop("group_overrides")

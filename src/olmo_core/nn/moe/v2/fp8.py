@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional, Tuple
 
 import nvtx
 import torch
@@ -99,6 +99,7 @@ def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
     if not _rowwise_fp8_enabled(cfg):
         reset_shared_rowwise_fp8_cache(block)
         return
+    assert cfg is not None
     if block.shared_experts is None:
         reset_shared_rowwise_fp8_cache(block)
         return
@@ -228,6 +229,7 @@ def shared_experts_forward1_rowwise_fp8(
     cfg = block.rowwise_fp8
     fp8_only_params = cfg is not None and cfg.fp8_only_params
     up_anchor = block.shared_experts.w_up_gate.unsqueeze(0)
+    mm_impl: Callable[..., Any]
     if fp8_only_params:
         up_weight = getattr(block, "_shared_rowwise_fp8_up_gate_weight", None)
         if up_weight is None:
@@ -279,6 +281,7 @@ def shared_experts_forward_rowwise_fp8(
     cfg = block.rowwise_fp8
     fp8_only_params = cfg is not None and cfg.fp8_only_params
     up_anchor = block.shared_experts.w_up_gate.unsqueeze(0)
+    up_mm_impl: Callable[..., Any]
     if fp8_only_params:
         up_weight = getattr(block, "_shared_rowwise_fp8_up_gate_weight", None)
         if up_weight is None:
@@ -313,6 +316,7 @@ def shared_experts_forward_rowwise_fp8(
         prequantized_rhs_for_dgrad=down_prequant_t,
     )
     down_anchor = block.shared_experts.w_down
+    down_mm_impl: Callable[..., Any]
     if fp8_only_params:
         down_weight = getattr(block, "_shared_rowwise_fp8_down_weight", None)
         if down_weight is None:
@@ -361,6 +365,7 @@ def shared_experts_forward2_rowwise_fp8(
     cfg = block.rowwise_fp8
     fp8_only_params = cfg is not None and cfg.fp8_only_params
     down_anchor = block.shared_experts.w_down
+    mm_impl: Callable[..., Any]
     if fp8_only_params:
         down_weight = getattr(block, "_shared_rowwise_fp8_down_weight", None)
         if down_weight is None:

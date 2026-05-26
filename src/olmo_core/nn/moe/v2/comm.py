@@ -84,7 +84,7 @@ def _rowwise_debug_sync(label: str, device: torch.device) -> None:
 
 
 def _logical_rank2_tensor(
-    shape: Tuple[int, int], *, dtype: torch.dtype, device: torch.device
+    shape: Tuple[int, ...], *, dtype: torch.dtype, device: torch.device
 ) -> torch.Tensor:
     # FP8 rowwise comm exposes a high-precision-shaped autograd edge, but the
     # actual payload lives in q/scales. Use one scalar of storage instead of a
@@ -96,7 +96,7 @@ def _rowwise_fp8_prequantized_lhs(
     qdata: torch.Tensor,
     scales: torch.Tensor,
     *,
-    shape: Tuple[int, int],
+    shape: Tuple[int, ...],
     scales_are_blocked: bool = False,
 ) -> ScaledGroupedMMPrequantizedLHS:
     return ScaledGroupedMMPrequantizedLHS(
