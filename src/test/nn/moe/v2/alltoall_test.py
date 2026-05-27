@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 from statistics import mean
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -308,7 +308,7 @@ def main() -> None:
         else 0.0
     )
 
-    gathered = [None] * world_size
+    gathered: List[Any] = [None] * world_size
     result = {
         "rank": rank,
         "nccl_avg_ms": mean(nccl_times_ms),

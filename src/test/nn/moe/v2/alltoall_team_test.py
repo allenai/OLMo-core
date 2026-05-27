@@ -1,7 +1,7 @@
 import argparse
 import os
 from statistics import mean
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -342,7 +342,7 @@ def main() -> None:
     )
 
     dist.barrier(group=world)
-    gathered: List[Optional[Dict[str, object]]] = [None] * world_size
+    gathered: List[Optional[Dict[str, Any]]] = [None] * world_size
     result = {
         "rank": rank,
         "team_id": team_id,

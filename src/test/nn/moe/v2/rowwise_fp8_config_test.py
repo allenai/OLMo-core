@@ -71,7 +71,7 @@ def test_routed_experts_accepts_rowwise_fp8_dict():
         num_experts=4,
         bias=False,
         dtype=DType.float32,
-        rowwise_fp8={"enabled": True, "block_size": 32},
+        rowwise_fp8={"enabled": True, "block_size": 32},  # type: ignore[arg-type]
         init_device="cpu",
     )
     assert isinstance(module.rowwise_fp8, MoERowwiseFP8Config)
@@ -85,7 +85,7 @@ def test_routed_experts_zero_grad_clears_mxfp8_store_grads():
         num_experts=2,
         bias=False,
         dtype=DType.bfloat16,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
         init_device="cpu",
     )
     module._rowwise_fp8_up_gate_weight.grad_bf16 = torch.ones_like(module.w_up_gate)
@@ -116,7 +116,7 @@ def test_routed_experts_mxfp8_weight_anchors_follow_to_empty():
         num_experts=2,
         bias=False,
         dtype=DType.float32,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
         init_device="cpu",
     )
     module.to_empty(device=torch.device("cuda"))
@@ -136,7 +136,7 @@ def test_routed_experts_fp8_only_disables_anchor_grads():
         num_experts=2,
         bias=False,
         dtype=DType.bfloat16,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
         init_device="cpu",
     )
 
@@ -191,7 +191,7 @@ def test_routed_experts_refresh_does_not_read_released_anchors(monkeypatch):
         num_experts=2,
         bias=False,
         dtype=DType.bfloat16,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
         init_device="cpu",
     )
     up_rhs = ScaledGroupedMMPrequantizedRHS(
@@ -248,7 +248,7 @@ def test_routed_experts_syncs_mxfp8_store_grads_from_anchor_main_grad():
         num_experts=2,
         bias=False,
         dtype=DType.bfloat16,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
         init_device="cpu",
     )
     up_main_grad = torch.full(module.w_up_gate.shape, 3.0, dtype=torch.float32)
@@ -454,7 +454,7 @@ def test_routed_experts_refresh_marks_owned_prequant_caches_versionless(monkeypa
         num_experts=2,
         bias=False,
         dtype=DType.float32,
-        rowwise_fp8={"enabled": True, "block_size": 32},
+        rowwise_fp8={"enabled": True, "block_size": 32},  # type: ignore[arg-type]
         init_device="cuda",
     )
 
@@ -490,7 +490,7 @@ def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeyp
         num_experts=2,
         bias=False,
         dtype=DType.float32,
-        rowwise_fp8={"enabled": True, "block_size": 32},
+        rowwise_fp8={"enabled": True, "block_size": 32},  # type: ignore[arg-type]
         init_device="cpu",
     )
 

@@ -5,7 +5,7 @@ from typing import Callable, Dict, List, Tuple
 import torch
 
 from olmo_core.nn.moe.utils import (
-    build_chunk_routing_map_no_compile,
+    build_chunk_te_routing_map,
     moe_chunk_reorder_no_compile,
 )
 
@@ -94,7 +94,7 @@ def _chunk_reorder_roundtrip(
     backend: str,
     out_buffer: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    routing_map = build_chunk_routing_map_no_compile(
+    routing_map = build_chunk_te_routing_map(
         recv_splits_by_src_local,
         rows=x.shape[0],
     )
@@ -194,7 +194,7 @@ def main() -> None:
             )
 
             def run_forward() -> None:
-                routing_map = build_chunk_routing_map_no_compile(
+                routing_map = build_chunk_te_routing_map(
                     recv_splits_by_src_local,
                     rows=x_base.shape[0],
                 )

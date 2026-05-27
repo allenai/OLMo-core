@@ -32,7 +32,7 @@ def test_olmo_mxfp8_tensor_roundtrip_and_fallback_dispatch():
 
 
 def test_olmo_mxfp8_tensor_can_be_backward_gradient_object():
-    seen = {}
+    seen: dict = {}
 
     class Upstream(torch.autograd.Function):
         @staticmethod

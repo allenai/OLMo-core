@@ -1612,6 +1612,7 @@ def dequantize_from_mxfp8(
         scales_contig = scales if scales.is_contiguous() else scales.contiguous()
         scales_u8 = scales_contig.view(torch.uint8)
         out_contig = out_tensor if out_tensor.is_contiguous() else out_tensor.contiguous()
+
         def grid(meta):
             return (
                 triton.cdiv(m, meta["BLOCK_M"]),

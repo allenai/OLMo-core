@@ -56,7 +56,7 @@ def _stub_forward_prequantized_rhs(
 
 
 def _fake_prequantized_rhs(
-    shape: tuple[int, int, int],
+    shape: tuple[int, ...],
     *,
     device: torch.device | str = "cpu",
 ) -> ScaledGroupedMMPrequantizedRHS:

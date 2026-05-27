@@ -1,4 +1,5 @@
 import math
+from typing import Dict, Optional
 
 import pytest
 import torch
@@ -106,7 +107,7 @@ def run_reduce_metrics_with_rank_local_metrics():
             "train/shared": torch.tensor(2.0, device=device),
         },
     }
-    metrics_reduce_type = {
+    metrics_reduce_type: Dict[str, Optional[ReduceType]] = {
         "train/CrossEntropyLoss": ReduceType.mean,
         "train/shared": ReduceType.sum,
     }

@@ -103,6 +103,7 @@ def _run_dropless_path_matches_no_ep(*, rowwise: bool):
     y_ep = ep_block(x_ep)
     torch.testing.assert_close(y_ep, y_no_ep, atol=5e-4, rtol=5e-4)
     if rowwise:
+        assert ep_block._ep_no_sync_rowwise_drop_tokens_sum is not None
         assert ep_block._ep_no_sync_rowwise_drop_tokens_sum.item() == 0
 
     loss_no_ep = y_no_ep.square().mean() + (0.1 * y_no_ep.sum())

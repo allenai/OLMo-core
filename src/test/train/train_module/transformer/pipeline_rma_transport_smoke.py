@@ -47,7 +47,7 @@ def main() -> None:
         handle.wait()
     else:
         op = transport.make_recv_op(("F", 0, 1, 0), peer=peer)
-        handle = op.start()
+        handle = op.start()  # type: ignore[assignment]
         handle.wait()
         expected = torch.arange(32, device=device, dtype=torch.float32).view(4, 8) + 101
         _check_equal("fwd", op.recv_slot, expected)
@@ -59,7 +59,7 @@ def main() -> None:
         handle.wait()
     else:
         op = transport.make_recv_op(("B", 1, 0, 0), peer=peer)
-        handle = op.start()
+        handle = op.start()  # type: ignore[assignment]
         handle.wait()
         expected = torch.arange(32, device=device, dtype=torch.float32).view(4, 8) + 202
         _check_equal("bwd", op.recv_slot, expected)

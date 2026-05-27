@@ -916,7 +916,7 @@ def test_attention_builder_config(attn_config: AttentionConfig):
 def test_mla_attention_buidler_config(attn_config: MultiheadLatentAttentionConfig):
     d_model = 128
 
-    attn = attn_config.build(d_model)
+    attn = attn_config.build(d_model)  # type: ignore[call-arg]
 
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in attn.parameters())
@@ -950,7 +950,7 @@ def test_mla_attention(
     d_model = 128
     seq_len = 32
 
-    attn = attn_config.build(d_model, init_device=device.type)
+    attn = attn_config.build(d_model, init_device=device.type)  # type: ignore[call-arg]
 
     x1 = torch.randn(1, seq_len, d_model, dtype=dtype, device=device)
     x2 = torch.randn(1, seq_len, d_model, dtype=dtype, device=device)

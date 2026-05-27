@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 from statistics import mean
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 import torch
 import torch.distributed as dist
@@ -268,7 +268,7 @@ def main() -> None:
             }
         )
 
-    gathered = [None for _ in range(world_size)]
+    gathered: List[Any] = [None for _ in range(world_size)]
     dist.all_gather_object(gathered, results, group=group)
     if rank == 0:
         per_rank = [r for r in gathered if r is not None]

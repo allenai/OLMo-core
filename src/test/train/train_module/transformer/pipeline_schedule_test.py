@@ -1,5 +1,6 @@
 from collections import defaultdict
 from types import SimpleNamespace
+from typing import Any, Dict
 
 import pytest
 
@@ -25,13 +26,13 @@ def _build_1f1b_v_schedule(
     pp_size: int,
     n_microbatches: int,
     *,
-    forward_pull_ahead_extra_activations: int = 0,
+    forward_pull_ahead_extra_activations: Any = 0,
 ) -> CustomSchedule1F1BV:
     schedule = CustomSchedule1F1BV.__new__(CustomSchedule1F1BV)
     schedule.pp_group_size = pp_size
     schedule._num_stages = 2 * pp_size
     schedule._n_microbatches = n_microbatches
-    schedule._stages = [SimpleNamespace(stage_index_to_group_rank={}) for _ in range(2)]
+    schedule._stages = [SimpleNamespace(stage_index_to_group_rank={}) for _ in range(2)]  # type: ignore[misc]
     schedule.forward_pull_ahead_extra_activations = forward_pull_ahead_extra_activations
     schedule.configure_pipeline_order()
     return schedule
@@ -68,10 +69,10 @@ def _fake_stage(stage_index: int, mapping: dict[int, int]) -> CustomPipelineStag
 def _activation_residency_peaks(
     schedule: CustomSchedule1F1BV,
 ) -> tuple[dict[int, int], dict[int, int]]:
-    held_by_rank = defaultdict(int)
-    held_by_stage = defaultdict(int)
-    peak_by_rank = defaultdict(int)
-    peak_by_stage = defaultdict(int)
+    held_by_rank: Dict[int, int] = defaultdict(int)
+    held_by_stage: Dict[int, int] = defaultdict(int)
+    peak_by_rank: Dict[int, int] = defaultdict(int)
+    peak_by_stage: Dict[int, int] = defaultdict(int)
 
     for time_step in range(len(next(iter(schedule.pipeline_order.values())))):
         for rank, actions in schedule.pipeline_order.items():
@@ -316,17 +317,17 @@ def test_local_middle_boundary_skips_p2p_without_touching_buffers():
     assert stage_3.has_local_forward_dst()
     assert stage_3.get_fwd_send_ops(0) == []
 
-    stage_4.received_activations["keep"] = "value"
+    stage_4.received_activations["keep"] = "value"  # type: ignore[index]
     assert stage_4.has_local_forward_src()
     assert stage_4.get_fwd_recv_ops(0) == []
     assert stage_4.received_activations == {"keep": "value"}
 
-    stage_4.bwd_cache["keep"] = "value"
+    stage_4.bwd_cache["keep"] = "value"  # type: ignore[index]
     assert stage_4.has_local_backward_dst()
     assert stage_4.get_bwd_send_ops(0) == []
     assert stage_4.bwd_cache == {"keep": "value"}
 
-    stage_3.received_grads["keep"] = "value"
+    stage_3.received_grads["keep"] = "value"  # type: ignore[index]
     assert stage_3.has_local_backward_src()
     assert stage_3.get_bwd_recv_ops(0) == []
     assert stage_3.received_grads == {"keep": "value"}

@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 from statistics import mean
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 import torch
 import torch.distributed as dist
@@ -332,7 +332,7 @@ def main() -> None:
         "max_abs_diff_ref_baseline_weighted": max_abs_diff_ref_baseline_weighted,
         "max_abs_diff_ref_fused_weighted": max_abs_diff_ref_fused_weighted,
     }
-    gathered = [None] * world_size
+    gathered: List[Any] = [None] * world_size
     dist.all_gather_object(gathered, result, group=group)
 
     if rank == 0:

@@ -90,12 +90,12 @@ def test_shared_experts_rowwise_fp8_helpers_match_bf16_reference(monkeypatch):
 
     x = torch.randn(1, 8, 512, dtype=torch.float32)
     up, gate = shared_experts_forward1_rowwise_fp8(
-        fake_self,
+        fake_self,  # type: ignore[arg-type]
         x,
         use_fast_accum=True,
     )
     out_fp8 = shared_experts_forward2_rowwise_fp8(
-        fake_self,
+        fake_self,  # type: ignore[arg-type]
         up,
         gate,
         x.shape,
@@ -144,12 +144,12 @@ def test_shared_experts_rowwise_fp8_forward1_accepts_flattened_input(monkeypatch
     x = torch.randn(1, 8, 512, dtype=torch.float32)
     x_flat = x.view(-1, x.shape[-1])
     up, gate = shared_experts_forward1_rowwise_fp8(
-        fake_self,
+        fake_self,  # type: ignore[arg-type]
         x_flat,
         use_fast_accum=True,
     )
     out_fp8 = shared_experts_forward2_rowwise_fp8(
-        fake_self,
+        fake_self,  # type: ignore[arg-type]
         up,
         gate,
         x.shape,
@@ -235,12 +235,12 @@ def test_shared_experts_fp8_only_path_uses_generic_weight_stores(monkeypatch):
 
     x = torch.randn(1, 8, 512, dtype=torch.float32)
     up, gate = shared_experts_forward1_rowwise_fp8(
-        fake_self,
+        fake_self,  # type: ignore[arg-type]
         x,
         use_fast_accum=True,
     )
     out_fp8 = shared_experts_forward2_rowwise_fp8(
-        fake_self,
+        fake_self,  # type: ignore[arg-type]
         up,
         gate,
         x.shape,

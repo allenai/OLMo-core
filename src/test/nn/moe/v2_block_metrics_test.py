@@ -36,7 +36,7 @@ def test_ep_no_sync_rowwise_metrics_accumulate_add_and_reset():
         rank_capacity=8,
     )
 
-    out = {}
+    out: dict = {}
     add_ep_no_sync_rowwise_metrics(block, out, ReduceType)
 
     assert set(out) == {"token drop rate", "symm buffer util"}
@@ -62,6 +62,6 @@ def test_ep_no_sync_rowwise_metrics_ignore_zero_capacity():
         rank_capacity=0,
     )
 
-    out = {}
+    out: dict = {}
     add_ep_no_sync_rowwise_metrics(block, out, ReduceType)
     assert out == {}

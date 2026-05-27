@@ -148,7 +148,7 @@ def test_pipeline_rma_backend_requires_custom_stage_implementation():
 
     with pytest.raises(OLMoConfigurationError, match="use_custom_stage_implementation"):
         pp_config.split_model(
-            SimpleNamespace(n_layers=2),
+            SimpleNamespace(n_layers=2),  # type: ignore[arg-type]
             pp_mesh=SimpleNamespace(),
             device=torch.device("cpu"),
         )

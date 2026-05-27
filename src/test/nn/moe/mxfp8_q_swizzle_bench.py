@@ -1,7 +1,15 @@
 import argparse
+from typing import Optional
 
 import torch
 
+from olmo_core.kernels.mxfp8_utils import (
+    grouped_scales_to_mxfp8_blocked,
+    quantize_grouped_2d_to_mxfp8_blocked_fused,
+    quantize_rows_to_mxfp8,
+)
+
+_TRITON_IMPORT_ERROR: Optional[Exception]
 try:
     import triton
 except Exception as e:  # pragma: no cover
@@ -9,12 +17,6 @@ except Exception as e:  # pragma: no cover
     _TRITON_IMPORT_ERROR = e
 else:
     _TRITON_IMPORT_ERROR = None
-
-from olmo_core.kernels.mxfp8_utils import (
-    grouped_scales_to_mxfp8_blocked,
-    quantize_grouped_2d_to_mxfp8_blocked_fused,
-    quantize_rows_to_mxfp8,
-)
 
 
 def _balanced_offs(rows: int, groups: int, device: torch.device) -> torch.Tensor:
