@@ -1,19 +1,16 @@
 """
-Common :class:`torch.nn.Module` implementations.
+Vision encoder modules for multimodal (VLM) training.
 """
 
-from .vision import (
+from .config import VisionBackboneConfig, VisionBackboneType
+from .connector import (
     ImagePoolingType,
     ImageProjectorType,
-    MultimodalTransformer,
-    MultimodalTransformerConfig,
-    SiglipVisionTransformer,
-    VisionBackboneConfig,
-    VisionBackboneType,
     VisionConnector,
     VisionConnectorConfig,
-    VisionTransformer,
 )
+from .image_vit import SiglipVisionTransformer, VisionTransformer
+from .multimodal import MultimodalTransformer, MultimodalTransformerConfig
 
 __all__ = [
     "VisionBackboneType",
