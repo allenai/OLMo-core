@@ -111,7 +111,7 @@ LONG_CONTEXT_CONFIGS = {
     "810m": dict(
         lr=2e-4,
         num_nodes=1,
-        global_batch_size=4 * 1024 * 1024,
+        global_batch_size=2 * 1024 * 1024,
         rank_microbatch_size=LC_SEQUENCE_LENGTH,
         cp_degree=1,
         fused_linear_loss=False,
@@ -120,7 +120,7 @@ LONG_CONTEXT_CONFIGS = {
     "1.4b": dict(
         lr=2e-4,
         num_nodes=16,
-        global_batch_size=4 * 1024 * 1024,
+        global_batch_size=2 * 1024 * 1024,
         rank_microbatch_size=LC_SEQUENCE_LENGTH,
         cp_degree=2,
         fused_linear_loss=True,
@@ -159,7 +159,7 @@ def build_train_module_config(
             ],
         ),
         # Linear decay from starting LR to 0 over the full LC run.
-        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=1000, alpha_f=0.0),
+        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=2000, alpha_f=0.0),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
