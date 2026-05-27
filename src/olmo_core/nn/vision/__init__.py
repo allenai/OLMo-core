@@ -10,6 +10,7 @@ from .connector import (
     VisionConnectorConfig,
 )
 from .image_vit import SiglipVisionTransformer, VisionTransformer
+from .molmo2_loader import molmo2_hf_state_dict_to_multimodal_transformer
 from .multimodal import MultimodalTransformer, MultimodalTransformerConfig
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "VisionConnector",
     "MultimodalTransformerConfig",
     "MultimodalTransformer",
+    "molmo2_hf_state_dict_to_multimodal_transformer",
 ]
