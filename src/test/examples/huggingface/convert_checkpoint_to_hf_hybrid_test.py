@@ -82,7 +82,12 @@ def hybrid_model_config(tokenizer_config: TokenizerConfig) -> TransformerConfig:
 
 @pytest.fixture
 def hybrid_model(hybrid_model_config: TransformerConfig) -> Transformer:
-    return hybrid_model_config.build()
+    model = hybrid_model_config.build()
+    # Initialize weights so parameters hold real (finite) values. Without this, params are
+    # left as uninitialized `torch.empty` memory, which can contain NaNs (e.g. in `A_log`) and
+    # break the round-trip `torch.equal` checks, since `torch.equal` returns False on NaNs.
+    model.init_weights()
+    return model
 
 
 @pytest.fixture
