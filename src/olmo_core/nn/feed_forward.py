@@ -21,7 +21,9 @@ __all__ = [
     "ActivationFunction",
     "FeedForwardType",
     "FeedForwardConfig",
+    "DenseMoEFeedForwardConfig",
     "FeedForward",
+    "DenseMoEFeedForward",
     "NormalizedFeedForward",
 ]
 
@@ -65,6 +67,11 @@ class FeedForwardType(StrEnum):
     ➡️ :class:`NormalizedFeedForward`
     """
 
+    dense_moe = "dense_moe"
+    """
+    ➡️ :class:`DenseMoEFeedForward`
+    """
+
 
 @dataclass
 class FeedForwardConfig(ModuleConfig):
@@ -102,6 +109,12 @@ class FeedForwardConfig(ModuleConfig):
         if self.name == FeedForwardType.normalized:
             params += 2 * self.hidden_size
 
+        # Extra router projection (w_r) for the dense-MoE variant.
+        if self.name == FeedForwardType.dense_moe:
+            params += d_model * self.hidden_size
+            if bias:
+                params += self.hidden_size
+
         return params
 
     def build(
@@ -131,12 +144,24 @@ class FeedForwardConfig(ModuleConfig):
                         f"NormalizedFeedForward only supports 'silu' activation, got '{activation}'"
                     )
                 return NormalizedFeedForward(**kwargs)
+            elif self.name == FeedForwardType.dense_moe:
+                return DenseMoEFeedForward(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
             raise OLMoConfigurationError(
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
+
+
+@dataclass
+class DenseMoEFeedForwardConfig(FeedForwardConfig):
+    """
+    A config for building :class:`DenseMoEFeedForward` modules. Equivalent to a
+    :class:`FeedForwardConfig` with ``name`` set to :data:`FeedForwardType.dense_moe`.
+    """
+
+    name: FeedForwardType = FeedForwardType.dense_moe
 
 
 class FeedForward(nn.Module):
@@ -207,6 +232,78 @@ class FeedForward(nn.Module):
         del seq_len
         # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
         return 6 * sum(p.numel() for p in self.parameters())
+
+
+class DenseMoEFeedForward(FeedForward):
+    """
+    A "dense MoE" feed-forward variant: a standard gated MLP whose hidden activations are
+    additionally scaled by a softmax gate over a learned router projection (``w_r``). Despite
+    the name it executes **densely** — there is no expert routing or token dropping — making it
+    a cheap dense approximation of a mixture-of-experts feed-forward.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        hidden_size: int,
+        bias: bool = True,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+        activation: ActivationFunction = ActivationFunction.silu,
+    ):
+        super().__init__(
+            d_model=d_model,
+            hidden_size=hidden_size,
+            bias=bias,
+            dtype=dtype,
+            init_device=init_device,
+            activation=activation,
+        )
+        self.w_r = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Run the feed-forward on the input ``x``.
+
+        :param x: The input of shape ``(*, d_model)``.
+        """
+        router_weights = torch.softmax(self.w_r(x), dim=-1) * self.hidden_size
+        return self.w2(self.activation_fn(self.w1(x)) * self.w3(x) * router_weights)
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
+            float8_enabled=float8_enabled
+        )
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=prepare_module_input(
+                input_layouts=None if input_layout is None else (input_layout,),
+                desired_input_layouts=(Replicate(),),
+            ),
+        )
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan={
+                "w1": colwise_parallel(),
+                "w2": rowwise_parallel(
+                    output_layouts=output_layout, use_local_output=use_local_output
+                ),
+                "w3": colwise_parallel(),
+                "w_r": colwise_parallel(),
+            },
+        )
 
 
 @beta_feature

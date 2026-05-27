@@ -9,7 +9,14 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.nn.feed_forward import ActivationFunction, FeedForward
+from olmo_core.nn.feed_forward import (
+    ActivationFunction,
+    DenseMoEFeedForward,
+    DenseMoEFeedForwardConfig,
+    FeedForward,
+    FeedForwardConfig,
+    FeedForwardType,
+)
 from olmo_core.testing import BACKENDS, run_distributed_test
 from olmo_core.utils import get_default_device, record_flops, seed_all
 
@@ -117,3 +124,44 @@ def test_feed_forward_activations(activation: ActivationFunction):
 
     y.sum().backward()
     assert ff.w1.weight.grad is not None
+
+
+@pytest.mark.parametrize("bias", [True, False])
+def test_dense_moe_feed_forward_num_params(bias: bool):
+    d_model, hidden_size = 64, 256
+    config = DenseMoEFeedForwardConfig(hidden_size=hidden_size, bias=bias)
+    assert config.name == FeedForwardType.dense_moe
+
+    ff = config.build(d_model=d_model)
+    assert isinstance(ff, DenseMoEFeedForward)
+
+    actual = sum(p.numel() for p in ff.parameters())
+    assert config.num_params(d_model) == actual
+
+
+def test_dense_moe_feed_forward_forward_and_grad():
+    seed_all(0)
+    d_model, hidden_size = 64, 256
+    batch_size, seq_len = 2, 8
+
+    ff = DenseMoEFeedForwardConfig(hidden_size=hidden_size).build(d_model=d_model)
+    x = torch.randn(batch_size, seq_len, d_model)
+    y = ff(x)
+
+    assert y.shape == (batch_size, seq_len, d_model)
+    assert not torch.isnan(y).any()
+    assert not torch.isinf(y).any()
+
+    y.sum().backward()
+    # The router projection must receive gradient.
+    assert ff.w_r.weight.grad is not None
+    assert ff.w_r.weight.grad.abs().sum() > 0
+
+
+def test_dense_moe_feed_forward_config_roundtrip():
+    config = DenseMoEFeedForwardConfig(hidden_size=128, bias=False)
+    roundtripped = FeedForwardConfig.from_dict(config.as_config_dict())
+    assert roundtripped.name == FeedForwardType.dense_moe
+
+    ff = roundtripped.build(d_model=32)
+    assert isinstance(ff, DenseMoEFeedForward)
