@@ -244,10 +244,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     # six image special tokens at the same offsets our `MultimodalTokenizerConfig`
     # convention expects (base.vocab_size + i), so the resulting `image_patch_id`
     # lines up with the model's `image_patch_token_id`.
+    from huggingface_hub import snapshot_download
     from transformers import AutoTokenizer
 
+    # Resolve to a local directory path so AutoTokenizer._from_pretrained
+    # sees _is_local=True and skips the is_base_mistral() hub call that
+    # raises OfflineModeIsEnabled when HF_HUB_OFFLINE=1 is set.
+    _tok_local = snapshot_download(args.model, local_files_only=True)
     hf_tok = AutoTokenizer.from_pretrained(
-        args.model, trust_remote_code=True
+        _tok_local, trust_remote_code=True
     )
     # Some variants (e.g. Molmo2-O-7B) use <|endoftext|> as the registered
     # eos_token but <|im_end|> as the turn separator.  Add the turn separator

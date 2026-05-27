@@ -18,7 +18,7 @@ import subprocess
 import sys
 from typing import List
 
-from olmo_core.eval.cap_f1_judge import DEFAULT_JUDGE_MODEL
+from olmo_eval.evals.tasks.common.cap_f1_judge import DEFAULT_JUDGE_MODEL
 
 WEKA_MOUNT = "/weka/oe-training-default"
 OUTPUT_DIR = f"{WEKA_MOUNT}/jasonr/molmo2-pixmo-cap-eval"
@@ -107,6 +107,8 @@ def build_spec(args: argparse.Namespace, model_id: str) -> dict:
         {"name": "GANTRY_UV_ALL_EXTRAS", "value": "1"},
         {"name": "MOLMO_DATA_DIR", "value": f"{WEKA_MOUNT}/mm-olmo"},
         {"name": "HF_HOME", "value": f"{WEKA_MOUNT}/jasonr/hf-home"},
+        {"name": "HF_HUB_OFFLINE", "value": "1"},
+        {"name": "TRANSFORMERS_OFFLINE", "value": "1"},
         {"name": "OPENAI_API_KEY", "secret": args.openai_secret},
         {"name": "LOG_FILTER_TYPE", "value": "local_rank0_only"},
         {"name": "OMP_NUM_THREADS", "value": "8"},
