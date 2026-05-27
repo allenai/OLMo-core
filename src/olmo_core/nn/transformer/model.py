@@ -46,7 +46,7 @@ from ..attention import (
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
-from ..lm_head import LMHeadConfig, LMOutputWithLoss
+from ..lm_head import LMHeadConfig, LMLossImplementation, LMOutputWithLoss
 from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
@@ -634,9 +634,14 @@ class Transformer(nn.Module):
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
-        if self.tie_word_embeddings:
+        if self.tie_word_embeddings and (
+            self.lm_head is None
+            or self.lm_head.loss_implementation == LMLossImplementation.fused_linear
+        ):
             raise NotImplementedError(
-                "Tensor parallelism is not supported with tied word embeddings"
+                "Tensor parallelism with tied word embeddings requires the default loss "
+                "implementation; the fused-linear loss replicates the LM head weight, which is "
+                "incompatible with the vocab-sharded embedding."
             )
 
         if float8_enabled is None:
@@ -668,6 +673,12 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
+
+        # The embedding (RowwiseParallel) and the LM head (ColwiseParallel) both shard their
+        # weight along the vocab dimension, so re-point the head at the embedding's sharded
+        # parameter to restore the tie that `parallelize_module` broke.
+        if self.tie_word_embeddings:
+            self._tie_weights()
 
         self._tp_enabled = True
         self._tp_mesh = tp_mesh
