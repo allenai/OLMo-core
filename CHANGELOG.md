@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Added a documented `deterministic` option to `LMEvaluator` and `LMEvaluatorCallbackConfig` so callers can opt out of fixed eval ordering when desired.
+- Split `TransformerBlockConfig.layer_norm` into separate `attention_norm` and `feed_forward_norm` fields so the pre-attention and pre-feed-forward layer norms can be configured independently. The legacy `layer_norm` is retained as a deprecated `InitVar` that, when provided, is copied into both fields (and is not serialized), so existing configs continue to load and round-trip into the new fields. Setting both `layer_norm` and either split field raises `OLMoConfigurationError`.
 
 ## [v2.5.0](https://github.com/allenai/OLMo-core/releases/tag/v2.5.0) - 2026-04-01
 
