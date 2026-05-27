@@ -37,3 +37,20 @@ __all__ = [
     "PixmoCapDataset",
     "PixmoCapDatasetConfig",
 ]
+
+# Training pipeline (added in this PR)
+from .collator import MultimodalCollator, MultimodalCollatorConfig
+from .data_loader import MultimodalDataLoader, MultimodalDataLoaderConfig
+from .preprocessor import MultimodalPreprocessor, MultimodalPreprocessorConfig
+from .synthetic import SyntheticMultimodalDataset, SyntheticMultimodalDatasetConfig
+
+__all__ += [
+    "MultimodalCollator",
+    "MultimodalCollatorConfig",
+    "MultimodalDataLoader",
+    "MultimodalDataLoaderConfig",
+    "MultimodalPreprocessor",
+    "MultimodalPreprocessorConfig",
+    "SyntheticMultimodalDataset",
+    "SyntheticMultimodalDatasetConfig",
+]
