@@ -22,7 +22,11 @@ from .list_checkpointer import ListCheckpointerCallback
 from .metric_saver import MetricSaverCallback
 from .model_merger import ModelMergeCallback
 from .monkey_patcher import MonkeyPatcherCallback
-from .profiler import ProfilerCallback
+from .profiler import (
+    NvidiaProfilerCallback,
+    ProfilerCallback,
+    TorchMemoryHistoryCallback,
+)
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
@@ -46,6 +50,8 @@ __all__ = [
     "GPUMemoryMonitorCallback",
     "HFConverterCallback",
     "ProfilerCallback",
+    "NvidiaProfilerCallback",
+    "TorchMemoryHistoryCallback",
     "SlackNotifierCallback",
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",

@@ -108,6 +108,9 @@ class SpeedMonitorCallback(Callback):
                 elif "B200" in device_name:
                     # data from https://www.nvidia.com/en-us/data-center/hgx/
                     self.device_peak_flops_per_second = int(4.5e15 * dense_correction)
+                elif "RTX PRO 6000" in device_name:
+                    # https://www.nvidia.com/content/dam/en-zz/Solutions/design-visualization/quadro-product-literature/NVIDIA-RTX-Blackwell-PRO-GPU-Architecture-v1.0.pdf
+                    self.device_peak_flops_per_second = int(1008e12 * dense_correction)
                 else:  # for other GPU types, assume A100
                     # data from https://www.nvidia.com/en-us/data-center/a100/
                     self.device_peak_flops_per_second = int(624e12 * dense_correction)
@@ -213,3 +216,4 @@ class SpeedMonitorCallback(Callback):
             self._mfu_avg = mfu_avg
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
+            self.trainer.record_metric("throughput/device/TFLOPs_per_GPU", flops_ps / 1e12)

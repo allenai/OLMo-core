@@ -1,6 +1,9 @@
 import logging
+import os
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+import torch
 
 from olmo_core.distributed.parallel import (
     get_cp_mesh,
@@ -186,3 +189,104 @@ class ProfilerCallback(Callback):
         prof.export_chrome_trace(str(trace_path))
         final_path = self.trainer.persist_working_file(trace_path)
         log.info(f"Chrome trace saved to '{final_path}'")
+
+
+@dataclass
+class NvidiaProfilerCallback(Callback):
+    """
+    Wraps a window of training steps in the NVIDIA profiler (``cudaProfilerStart/Stop`` plus
+    NVTX ranges), for use with Nsight Systems. Profiling runs from step :data:`start` to
+    :data:`end` on the configured ranks.
+
+    .. note::
+        This only produces output when the job is launched under an external Nsight Systems
+        session (e.g. ``nsys profile --capture-range=cudaProfilerApi ...``); on its own it just
+        toggles a capture range with nothing recording.
+    """
+
+    start: int = 10
+    """
+    The step at which to start profiling.
+    """
+    end: int = 12
+    """
+    The step at which to stop profiling.
+    """
+    enabled: bool = True
+    """
+    Set to ``False`` to disable profiling.
+    """
+    profile_ranks: list[int] = field(default_factory=lambda: [0])
+    """
+    The ranks to profile.
+    """
+
+    _nvtx_ctx = None
+
+    def pre_load_batch(self):
+        if self.enabled and get_rank() in self.profile_ranks:
+            if self.step == self.start:
+                log.info(f"Starting NVIDIA profiler at rank={get_rank()} step={self.step}...")
+                torch.cuda.cudart().cudaProfilerStart()
+                self._nvtx_ctx = torch.autograd.profiler.emit_nvtx(record_shapes=True)
+                self._nvtx_ctx.__enter__()
+
+    def post_train_batch(self):
+        if self.enabled and get_rank() in self.profile_ranks:
+            if self.step == self.end and self._nvtx_ctx is not None:
+                log.info(f"Stopping NVIDIA profiler at rank={get_rank()} step={self.step}...")
+                self._nvtx_ctx.__exit__(None, None, None)
+                self._nvtx_ctx = None
+                torch.cuda.cudart().cudaProfilerStop()
+
+
+@dataclass
+class TorchMemoryHistoryCallback(Callback):
+    """
+    Records CUDA memory allocation history between steps :data:`start` and :data:`end` and
+    dumps a snapshot pickle (viewable at https://pytorch.org/memory_viz) on the configured ranks.
+    """
+
+    start: int = 10
+    """
+    The step at which to start recording memory history.
+    """
+    end: int = 12
+    """
+    The step at which to stop recording and dump the snapshot.
+    """
+    enabled: bool = True
+    """
+    Set to ``False`` to disable profiling.
+    """
+    profile_ranks: list[int] = field(default_factory=lambda: [0])
+    """
+    The ranks to profile.
+    """
+
+    max_entries: int = 500000
+    """
+    The maximum number of memory-history entries to record.
+    """
+
+    output_dir: str = "."
+    """
+    Directory to write the snapshot pickle(s) to.
+    """
+
+    def pre_load_batch(self):
+        if self.enabled and get_rank() in self.profile_ranks:
+            if self.step == self.start:
+                log.info(f"Starting memory profiler at rank={get_rank()} step={self.step}...")
+                torch.cuda.memory._record_memory_history(max_entries=self.max_entries)
+
+    def post_train_batch(self):
+        if self.enabled and get_rank() in self.profile_ranks:
+            if self.step == self.end:
+                log.info(f"Dumping memory profiler at rank={get_rank()} step={self.step}...")
+                os.makedirs(self.output_dir, exist_ok=True)
+                torch.cuda.memory._dump_snapshot(
+                    os.path.join(self.output_dir, f"memsnapshot.{get_rank()}.pickle")
+                )
+                torch.cuda.memory._record_memory_history(enabled=None)
+                log.info(f"Memory profiler stopped at rank={get_rank()} step={self.step}.")
