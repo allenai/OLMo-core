@@ -3,10 +3,15 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+from torch.distributed import DeviceMesh
+from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 
 from ...config import Config
 from ..lm_head import LMOutputWithLoss
-from ..transformer.config import TransformerConfig
+from ..transformer.config import (
+    TransformerConfig,
+    TransformerDataParallelWrappingStrategy,
+)
 from .config import VisionBackboneConfig
 from .connector import VisionConnectorConfig
 
@@ -100,6 +105,164 @@ class MultimodalTransformer(nn.Module):
         self.vision = cfg.vision.build(init_device=init_device)
         self.connector = cfg.connector.build(init_device=init_device)
 
+    # ------------------------------------------------------------------
+    # TrainModule interface (delegated to the wrapped LM)
+    # ------------------------------------------------------------------
+
+    def post_batch(self, dry_run: bool = False) -> None:
+        """Hook called by the train module after each batch's backward pass."""
+        self.lm.post_batch(dry_run=dry_run)
+
+    def post_optim_step(self) -> None:
+        """Hook called by the train module after each optimizer step."""
+        self.lm.post_optim_step()
+
+    def reset_auxiliary_metrics(self) -> None:
+        """Reset the LM's auxiliary metrics (MoE load-balancing etc.)."""
+        self.lm.reset_auxiliary_metrics()
+
+    def compute_auxiliary_metrics(self, reset: bool = True):
+        """Return the LM's auxiliary metrics; vision/connector contribute none."""
+        return self.lm.compute_auxiliary_metrics(reset=reset)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        """Approximate FLOPs/token. Counts the LM only — vision FLOPs depend on
+        ``n_crops × n_patches`` which the LM seq_len doesn't capture."""
+        return self.lm.num_flops_per_token(seq_len)
+
+    @property
+    def num_params(self) -> int:
+        """Total parameter count across LM, vision, and connector."""
+        return sum(p.numel() for p in self.parameters())
+
+    @property
+    def num_trainable_params(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    @property
+    def num_non_embedding_params(self) -> int:
+        """Total params excluding the LM token embedding table.
+
+        Used by speed-monitor callbacks. Vision patch-embedding and pooling
+        attention are kept (they're not "vocabulary embeddings")."""
+        return self.num_params - self.lm.embeddings.weight.numel()
+
+    # ------------------------------------------------------------------
+    # Distributed: materialize weights + apply FSDP/DDP
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def init_weights(
+        self,
+        *,
+        max_seq_len: Optional[int] = None,
+        max_local_microbatch_size: Optional[int] = None,
+        device: Optional[torch.device] = None,
+        world_mesh: Optional[DeviceMesh] = None,
+        model_part_idx: int = 0,
+    ) -> torch.Generator:
+        """Materialise parameters on ``device`` and initialise them.
+
+        Matches :meth:`~olmo_core.nn.transformer.Transformer.init_weights`'s
+        signature so the same trainer-level call site works for both. Each
+        sub-module (LM, vision, connector) is materialised separately to
+        avoid double-``to_empty`` issues under FSDP — each ``to_empty`` on a
+        FSDP-wrapped param is a collective, and overlapping/redundant calls
+        across ranks deadlock.
+        """
+        target_device = device or next(iter(self.parameters())).device
+
+        # LM handles its own materialisation + InitMethod + RoPE cache.
+        gen = self.lm.init_weights(
+            max_seq_len=max_seq_len,
+            max_local_microbatch_size=max_local_microbatch_size,
+            device=target_device,
+            world_mesh=world_mesh,
+            model_part_idx=model_part_idx,
+        )
+
+        # Materialise vision and connector separately, then init their params.
+        self.vision.to_empty(device=target_device)
+        self.vision.reset_parameters()
+        self.connector.to_empty(device=target_device)
+        self.connector.reset_parameters()
+
+        return gen
+
+    def apply_fsdp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        param_dtype: Optional[torch.dtype] = None,
+        reduce_dtype: torch.dtype = torch.float32,
+        pp_enabled: bool = False,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+    ) -> None:
+        """Apply FSDP2 (``fully_shard``) to vision, connector, LM, and the
+        composite model.
+
+        The LM is wrapped via its own :meth:`Transformer.apply_fsdp`, which
+        handles block-level sharding, the embedding table, and the LM head.
+        Vision blocks are individually sharded; the connector is sharded as
+        a single unit; the whole :class:`MultimodalTransformer` gets a final
+        outer ``fully_shard`` so cross-submodule unsharding remains cheap.
+
+        :param dp_mesh: The data-parallel device mesh.
+        :param param_dtype: Mixed-precision parameter dtype.
+        :param reduce_dtype: Gradient reduction dtype.
+        :param pp_enabled: Whether pipeline parallelism is also enabled.
+            Currently unsupported for multimodal models; passed through to
+            the LM only.
+        :param prefetch_factor: Forwarded to LM block prefetching.
+        :param wrapping_strategy: Forwarded to LM FSDP wrapping.
+        """
+        # 1. Delegate LM wrapping to Transformer.apply_fsdp.
+        self.lm.apply_fsdp(
+            dp_mesh=dp_mesh,
+            param_dtype=param_dtype,
+            reduce_dtype=reduce_dtype,
+            pp_enabled=pp_enabled,
+            prefetch_factor=prefetch_factor,
+            wrapping_strategy=wrapping_strategy,
+        )
+
+        mp_policy = MixedPrecisionPolicy(
+            param_dtype=param_dtype or self.lm.dtype, reduce_dtype=reduce_dtype
+        )
+        fsdp_kwargs = dict(mesh=dp_mesh, mp_policy=mp_policy)
+        reshard_after_forward = not pp_enabled
+
+        # 2. Each vision block gets its own FSDP unit.
+        for block in self.vision.blocks:
+            fully_shard(block, reshard_after_forward=reshard_after_forward, **fsdp_kwargs)
+
+        # 3. Connector is small enough to wrap as a single unit.
+        fully_shard(self.connector, reshard_after_forward=reshard_after_forward, **fsdp_kwargs)
+
+        # 4. Top-level wrap so the composite all-gather happens in one shot.
+        fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_kwargs)
+
+        # Match Transformer's behaviour: don't unshard the (large) text
+        # embedding table during backward, since it isn't needed there.
+        if isinstance(self.lm.embeddings, FSDPModule):
+            self.lm.embeddings.set_unshard_in_backward(False)
+
+    def apply_ddp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        param_dtype: Optional[torch.dtype] = None,
+    ) -> None:
+        """Apply DDP to the composite model.
+
+        Cheap to implement because DDP doesn't need per-submodule wrapping —
+        we just replicate the whole :class:`MultimodalTransformer`.
+        """
+        from torch.distributed._composable.replicate import replicate
+
+        if param_dtype is not None and param_dtype != self.lm.dtype:
+            self.to(dtype=param_dtype)
+        replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
+
     def _encode_images(
         self,
         images: torch.Tensor,
@@ -162,6 +325,16 @@ class MultimodalTransformer(nn.Module):
         assert (
             self.lm.embeddings is not None
         ), "MultimodalTransformer requires the LM to have an embedding table"
+
+        # The base Transformer's _prepare_inputs would move input_ids to device,
+        # but we lookup embeddings before delegating to it. Move proactively.
+        emb_device = self.lm.embeddings.weight.device
+        if input_ids.device != emb_device:
+            input_ids = input_ids.to(emb_device)
+        if images is not None and images.device != emb_device:
+            images = images.to(emb_device)
+        if pooled_patches_idx is not None and pooled_patches_idx.device != emb_device:
+            pooled_patches_idx = pooled_patches_idx.to(emb_device)
 
         # Compute LM token embeddings with any configured scale / norm.
         h = self.lm.embeddings(input_ids)
