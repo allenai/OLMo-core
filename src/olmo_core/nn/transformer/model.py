@@ -310,7 +310,9 @@ class Transformer(nn.Module):
             )
 
         # Re-establish weight tying since `to_empty` above allocates fresh storage.
-        if self.tie_word_embeddings:
+        # Pipeline-parallel stages may lack one of the tied modules, in which case there is
+        # nothing to re-tie on this stage.
+        if self.tie_word_embeddings and self.embeddings is not None and self.lm_head is not None:
             self._tie_weights()
 
         for block in self.blocks.values():
@@ -677,7 +679,7 @@ class Transformer(nn.Module):
         # The embedding (RowwiseParallel) and the LM head (ColwiseParallel) both shard their
         # weight along the vocab dimension, so re-point the head at the embedding's sharded
         # parameter to restore the tie that `parallelize_module` broke.
-        if self.tie_word_embeddings:
+        if self.tie_word_embeddings and self.embeddings is not None and self.lm_head is not None:
             self._tie_weights()
 
         self._tp_enabled = True
