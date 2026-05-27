@@ -323,6 +323,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_max_order_continuations: dict[int, int] | None = None
     sb_min_order_counts: dict[int, int] | None = None
     sb_index_access: str = "mmap"
+    sb_mirror_to_shm: bool = True
     sb_lookup_threads: int = DEFAULT_SB_LOOKUP_THREADS
     sb_eval_lookup_threads: int | None = None
     sb_topk_uniform_residual_k: int | None = None
@@ -387,6 +388,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_max_order_continuations=self.sb_max_order_continuations,
             poe_sb_min_order_counts=self.sb_min_order_counts,
             poe_sb_index_access=self.sb_index_access,
+            poe_sb_mirror_to_shm=self.sb_mirror_to_shm,
             poe_sb_lookup_threads=self.sb_lookup_threads,
             poe_sb_eval_lookup_threads=self.sb_eval_lookup_threads,
             poe_sb_topk_uniform_residual_k=self.sb_topk_uniform_residual_k,
@@ -464,6 +466,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         max_order_continuations=sb_order_caps,
         min_order_counts=sb_min_order_counts,
         index_access=getattr(args, "sb_index_access", "mmap"),
+        mirror_to_shm=getattr(args, "sb_mirror_to_shm", True),
         lookup_threads=getattr(args, "sb_lookup_threads", DEFAULT_SB_LOOKUP_THREADS),
         topk_uniform_residual_k=getattr(args, "sb_topk_uniform_residual_k", None),
     )
@@ -500,6 +503,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sb_max_order_continuations=sb_order_caps,
             sb_min_order_counts=sb_min_order_counts,
             sb_index_access=getattr(args, "sb_index_access", "mmap"),
+            sb_mirror_to_shm=getattr(args, "sb_mirror_to_shm", True),
             sb_lookup_threads=getattr(
                 args,
                 "sb_lookup_threads",
@@ -751,6 +755,17 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "history-total arrays."
         ),
     )
+    parser.add_argument(
+        "--no-sb-mirror-to-shm",
+        dest="sb_mirror_to_shm",
+        action="store_false",
+        help=(
+            "Open SB index files directly from Weka instead of first copying "
+            "them to /dev/shm. Required for larger indexes that do not fit in "
+            "the node shared-memory allocation."
+        ),
+    )
+    parser.set_defaults(sb_mirror_to_shm=True)
     parser.add_argument(
         "--sb-lookup-threads",
         type=int,

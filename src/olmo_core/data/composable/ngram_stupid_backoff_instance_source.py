@@ -75,6 +75,10 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         to lower orders or the unigram floor.
     :param index_access: ``"mmap"`` for the current memmap-backed SB reader,
         or ``"pread"`` to use explicit reads for large 1-D index arrays.
+    :param mirror_to_shm: If true, mirror index files from Weka to
+        ``/dev/shm`` before opening them. This is useful for small indexes but
+        must be disabled for larger indexes that do not fit in node shared
+        memory.
     :param lookup_threads: Number of in-process threads used by each reader
         to split one sequence lookup into chunks.
     :param topk_uniform_residual_k: Optional KN-top-K-style mode. When set,
@@ -96,6 +100,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         max_order_continuations: Optional[Dict[int, int]] = None,
         min_order_counts: Optional[Dict[int, int]] = None,
         index_access: str = "mmap",
+        mirror_to_shm: bool = True,
         lookup_threads: int = 1,
         topk_uniform_residual_k: Optional[int] = None,
         work_dir: PathOrStr,
@@ -116,6 +121,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         self._max_order_continuations = max_order_continuations
         self._min_order_counts = min_order_counts
         self._index_access = index_access
+        self._mirror_to_shm = bool(mirror_to_shm)
         self._lookup_threads = int(lookup_threads)
         self._topk_uniform_residual_k = topk_uniform_residual_k
         # Lazy per-process init: don't mmap in the main process so the
@@ -163,6 +169,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 max_order2_continuations=self._max_order2_continuations,
                 max_order_continuations=self._max_order_continuations,
                 min_order_counts=self._min_order_counts,
+                mirror_to_shm=self._mirror_to_shm,
                 index_access=self._index_access,
                 lookup_threads=self._lookup_threads,
                 topk_uniform_residual_k=self._topk_uniform_residual_k,
@@ -184,6 +191,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 f"max_order_continuations={self._max_order_continuations},"
                 f"min_order_counts={self._min_order_counts},"
                 f"index_access={self._index_access},"
+                f"mirror_to_shm={self._mirror_to_shm},"
                 f"lookup_threads={self._lookup_threads},"
                 f"topk_uniform_residual_k={self._topk_uniform_residual_k},"
             ).encode()
@@ -237,6 +245,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
     max_order_continuations: Optional[Dict[int, int]] = None
     min_order_counts: Optional[Dict[int, int]] = None
     index_access: str = "mmap"
+    mirror_to_shm: bool = True
     lookup_threads: int = 1
     topk_uniform_residual_k: Optional[int] = None
     label: Optional[str] = None
@@ -253,6 +262,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
             max_order_continuations=self.max_order_continuations,
             min_order_counts=self.min_order_counts,
             index_access=self.index_access,
+            mirror_to_shm=self.mirror_to_shm,
             lookup_threads=self.lookup_threads,
             topk_uniform_residual_k=self.topk_uniform_residual_k,
             work_dir=work_dir,

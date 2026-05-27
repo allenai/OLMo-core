@@ -135,6 +135,7 @@ class TransformerTrainModule(TrainModule):
         poe_sb_max_order_continuations: Optional[Dict[int, int]] = None,
         poe_sb_min_order_counts: Optional[Dict[int, int]] = None,
         poe_sb_index_access: str = "mmap",
+        poe_sb_mirror_to_shm: bool = True,
         poe_sb_lookup_threads: int = 1,
         poe_sb_eval_lookup_threads: Optional[int] = None,
         poe_sb_topk_uniform_residual_k: Optional[int] = None,
@@ -304,6 +305,7 @@ class TransformerTrainModule(TrainModule):
         self.poe_sb_max_order_continuations = poe_sb_max_order_continuations
         self.poe_sb_min_order_counts = poe_sb_min_order_counts
         self.poe_sb_index_access = poe_sb_index_access
+        self.poe_sb_mirror_to_shm = bool(poe_sb_mirror_to_shm)
         self.poe_sb_lookup_threads = int(poe_sb_lookup_threads)
         self.poe_sb_eval_lookup_threads = (
             int(poe_sb_eval_lookup_threads)
@@ -1189,6 +1191,7 @@ class TransformerTrainModule(TrainModule):
                 max_order2_continuations=self.poe_sb_max_order2_continuations,
                 max_order_continuations=self.poe_sb_max_order_continuations,
                 min_order_counts=self.poe_sb_min_order_counts,
+                mirror_to_shm=self.poe_sb_mirror_to_shm,
                 index_access=self.poe_sb_index_access,
                 lookup_threads=self.poe_sb_eval_lookup_threads,
                 topk_uniform_residual_k=self.poe_sb_topk_uniform_residual_k,
