@@ -61,13 +61,22 @@ dev = [
 beaker = ["beaker-py>=2.5.4,<3.0", "beaker-gantry>=3.4.3,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 dion = ["dion @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb2535239b ; sys_platform == 'linux'"]
-eval = ["ai2-olmo-eval==0.9.0"]
+eval = [
+    # olmo-eval-internal (published as olmo-eval-internal on GitHub / installed locally).
+    # Provides task definitions, scoring metrics, and the cap-F1 GPT judge used by
+    # the multimodal eval scripts.  Install with:
+    #   pip install -e /path/to/olmo-eval-internal
+    # or (from git, for Beaker):
+    #   pip install "olmo-eval-internal @ git+https://github.com/jason718/olmo-eval-internal.git@main"
+    "openai>=1.0",
+]
 fa4 = ["flash-attn-4>=4.0.0b4 ; sys_platform == 'linux'"]
 fla = ["flash-linear-attention==0.4.1"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers"]
 wandb = ["wandb"]
 all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fa4,fla,torchao,transformers,wandb]"]
+# Note: the [eval] extra does not pin ai2-olmo-eval; install olmo-eval-internal separately.
 
 [tool.uv]
 environments = [
