@@ -177,7 +177,7 @@ def load_state_dict(
     reader = RemoteFileSystemReader(
         dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
     )
-    dist_cp.load(
+    dist_cp.state_dict_loader.load(
         state_dict,
         checkpoint_id=dir,
         storage_reader=reader,
@@ -366,7 +366,7 @@ def load_model_and_optim_state(
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
-    dist_cp.load(
+    dist_cp.state_dict_loader.load(
         state_dict,
         checkpoint_id=dir,
         storage_reader=reader,
