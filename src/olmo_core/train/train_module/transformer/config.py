@@ -401,6 +401,10 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     # continuations against a uniform residual, so no dense unigram floor is
     # added.
     poe_sb_topk_uniform_residual_k: Optional[int] = None
+    # Optional true recursive-SB top-K mode. When set, SB overrides are sparse
+    # relative logit deltas after recursive backoff over the pruned index,
+    # again against a uniform residual with no dense unigram floor.
+    poe_sb_recursive_topk_uniform_residual_k: Optional[int] = None
 
     # Checkpoint settings.
 

@@ -327,6 +327,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_lookup_threads: int = DEFAULT_SB_LOOKUP_THREADS
     sb_eval_lookup_threads: int | None = None
     sb_topk_uniform_residual_k: int | None = None
+    sb_recursive_topk_uniform_residual_k: int | None = None
     eval_rank_microbatch_size: int | None = None
     dolma2_vocab_size: int = DEFAULT_DOLMA2_VOCAB_SIZE
     smoke_1gpu: bool = False
@@ -392,6 +393,9 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_lookup_threads=self.sb_lookup_threads,
             poe_sb_eval_lookup_threads=self.sb_eval_lookup_threads,
             poe_sb_topk_uniform_residual_k=self.sb_topk_uniform_residual_k,
+            poe_sb_recursive_topk_uniform_residual_k=(
+                self.sb_recursive_topk_uniform_residual_k
+            ),
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -405,6 +409,14 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     if getattr(args, "sb_eval_timing", False):
         os.environ["OLMO_SB_EVAL_TIMING"] = "1"
+    if (
+        getattr(args, "sb_topk_uniform_residual_k", None) is not None
+        and getattr(args, "sb_recursive_topk_uniform_residual_k", None) is not None
+    ):
+        raise ValueError(
+            "--sb-topk-uniform-residual-k and "
+            "--sb-recursive-topk-uniform-residual-k are mutually exclusive"
+        )
 
     tokenizer = TokenizerConfig.dolma2()
     sb_order_caps = _parse_order_caps(getattr(args, "sb_max_order_continuations", None))
@@ -469,6 +481,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         mirror_to_shm=getattr(args, "sb_mirror_to_shm", True),
         lookup_threads=getattr(args, "sb_lookup_threads", DEFAULT_SB_LOOKUP_THREADS),
         topk_uniform_residual_k=getattr(args, "sb_topk_uniform_residual_k", None),
+        recursive_topk_uniform_residual_k=getattr(
+            args, "sb_recursive_topk_uniform_residual_k", None
+        ),
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -512,6 +527,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sb_eval_lookup_threads=getattr(args, "sb_eval_lookup_threads", None),
             sb_topk_uniform_residual_k=getattr(
                 args, "sb_topk_uniform_residual_k", None
+            ),
+            sb_recursive_topk_uniform_residual_k=getattr(
+                args, "sb_recursive_topk_uniform_residual_k", None
             ),
             dolma2_vocab_size=int(tokenizer.padded_vocab_size()),
             smoke_1gpu=smoke_1gpu,
@@ -690,6 +708,18 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "highest matching SB history row, keep its top-K continuations by "
             "count, and emit logit deltas relative to a uniform residual over "
             "the rest of the vocab. This bypasses the dense unigram floor."
+        ),
+    )
+    parser.add_argument(
+        "--sb-recursive-topk-uniform-residual-k",
+        type=int,
+        default=None,
+        help=(
+            "Use a true recursive-SB top-K PoE bias: first compute recursive "
+            "stupid-backoff scores over the pruned sparse index, then keep the "
+            "top-K final scores and emit logit deltas relative to a uniform "
+            "residual over the rest of the vocab. This bypasses the dense "
+            "unigram floor."
         ),
     )
     parser.add_argument(

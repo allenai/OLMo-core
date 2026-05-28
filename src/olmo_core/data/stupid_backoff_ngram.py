@@ -221,6 +221,11 @@ class StupidBackoffNgramLM:
         experiments. When set, each position uses only the highest matching
         history row, keeps that row's top-K continuations, and emits logit
         deltas relative to a uniform residual over the rest of the vocab.
+    :param recursive_topk_uniform_residual_k: Optional true-SB top-K mode for
+        PoE experiments. When set, each position first computes recursive
+        stupid-backoff scores from the pruned sparse index, includes high
+        unigram fall-through candidates, then keeps the top-K final SB scores
+        and emits deltas relative to a uniform residual.
     """
 
     def __init__(
@@ -237,6 +242,7 @@ class StupidBackoffNgramLM:
         index_access: str = "mmap",
         lookup_threads: int = 1,
         topk_uniform_residual_k: Optional[int] = None,
+        recursive_topk_uniform_residual_k: Optional[int] = None,
     ):
         if index_access not in {"mmap", "pread"}:
             raise ValueError(f"index_access must be 'mmap' or 'pread'; got {index_access!r}")
@@ -250,6 +256,27 @@ class StupidBackoffNgramLM:
         self.topk_uniform_residual_k = (
             None if topk_uniform_residual_k is None else int(topk_uniform_residual_k)
         )
+        if (
+            recursive_topk_uniform_residual_k is not None
+            and recursive_topk_uniform_residual_k <= 0
+        ):
+            raise ValueError(
+                "recursive_topk_uniform_residual_k must be positive when set; "
+                f"got {recursive_topk_uniform_residual_k}"
+            )
+        self.recursive_topk_uniform_residual_k = (
+            None
+            if recursive_topk_uniform_residual_k is None
+            else int(recursive_topk_uniform_residual_k)
+        )
+        if (
+            self.topk_uniform_residual_k is not None
+            and self.recursive_topk_uniform_residual_k is not None
+        ):
+            raise ValueError(
+                "topk_uniform_residual_k and recursive_topk_uniform_residual_k "
+                "are mutually exclusive"
+            )
         self._lookup_pool: Optional[ThreadPoolExecutor] = None
         caps: Dict[int, int] = {}
         if max_order_continuations:
@@ -306,6 +333,7 @@ class StupidBackoffNgramLM:
             f"index_access={self.index_access} "
             f"lookup_threads={self.lookup_threads} "
             f"topk_uniform_residual_k={self.topk_uniform_residual_k} "
+            f"recursive_topk_uniform_residual_k={self.recursive_topk_uniform_residual_k} "
             f"max_order_continuations={self.max_order_continuations or None} "
             f"min_order_counts={self.min_order_counts or None}"
         )
@@ -470,6 +498,7 @@ class StupidBackoffNgramLM:
                 continue
             unigram_floor[did] = math.log(int(cnt) + 1) - log_denom + discount
         self.unigram_floor = unigram_floor
+        self._unigram_desc_ids: Optional[np.ndarray] = None
 
         # Precompute log Z_unigram (the constant base normalizer).
         max_floor = float(unigram_floor.max())
@@ -675,6 +704,10 @@ class StupidBackoffNgramLM:
         input_ids = np.asarray(input_ids, dtype=np.int64)
         S = int(input_ids.shape[0])
         if self.lookup_threads <= 1 or S <= 1:
+            if self.recursive_topk_uniform_residual_k is not None:
+                return self._compute_recursive_topk_uniform_residual_overrides_serial(
+                    input_ids, score_positions=score_positions
+                )
             if self.topk_uniform_residual_k is not None:
                 return self._compute_topk_uniform_residual_overrides_serial(
                     input_ids, score_positions=score_positions
@@ -699,6 +732,14 @@ class StupidBackoffNgramLM:
         n_positions = int(positions.shape[0])
         n_chunks = min(self.lookup_threads, n_positions)
         if n_chunks <= 1:
+            if self.recursive_topk_uniform_residual_k is not None:
+                return self._compute_recursive_topk_uniform_residual_overrides_serial(
+                    input_ids, score_positions=positions
+                )
+            if self.topk_uniform_residual_k is not None:
+                return self._compute_topk_uniform_residual_overrides_serial(
+                    input_ids, score_positions=positions
+                )
             return self._compute_overrides_for_sequence_serial(
                 input_ids, score_positions=positions
             )
@@ -713,6 +754,12 @@ class StupidBackoffNgramLM:
                     np.zeros(0, dtype=np.int32),
                     np.zeros(0, dtype=np.int32),
                     np.zeros(0, dtype=np.float32),
+                )
+            if self.recursive_topk_uniform_residual_k is not None:
+                return self._compute_recursive_topk_uniform_residual_overrides_serial(
+                    input_ids,
+                    score_positions=chunk_positions,
+                    log_timing=False,
                 )
             if self.topk_uniform_residual_k is not None:
                 return self._compute_topk_uniform_residual_overrides_serial(
@@ -942,6 +989,146 @@ class StupidBackoffNgramLM:
         )
         if log_timing:
             self._maybe_log_override_call(t0, S, int(result[0].shape[0]), order_summaries)
+        return result
+
+    def _top_unigram_fallthrough(
+        self, excluded: set[int], k: int
+    ) -> list[tuple[int, float]]:
+        """Highest unigram-floor candidates not already recursively scored."""
+        if self._unigram_desc_ids is None:
+            self._unigram_desc_ids = np.argsort(self.unigram_floor)[::-1].astype(
+                np.int64, copy=False
+            )
+        out: list[tuple[int, float]] = []
+        for did_arr in self._unigram_desc_ids:
+            did = int(did_arr)
+            if did in excluded:
+                continue
+            out.append((did, float(self.unigram_floor[did])))
+            if len(out) >= k:
+                break
+        return out
+
+    def _compute_recursive_topk_uniform_residual_overrides_serial(
+        self,
+        input_ids: np.ndarray,
+        *,
+        score_positions: np.ndarray | None = None,
+        log_timing: bool = True,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Emit true recursive-SB top-K deltas relative to a uniform residual.
+
+        Unlike :meth:`_compute_topk_uniform_residual_overrides_serial`, this
+        first applies the normal recursive stupid-backoff rule over the pruned
+        sparse index: highest observed order wins per token, and unobserved
+        tokens fall through to the unigram floor. It then keeps the top-K final
+        SB scores from that full distribution, approximating the remaining
+        mass uniformly over the rest of the vocabulary.
+        """
+        assert self.recursive_topk_uniform_residual_k is not None
+        k = int(self.recursive_topk_uniform_residual_k)
+        t0 = time.perf_counter()
+        pos, did, score = self._compute_overrides_for_sequence_serial(
+            input_ids,
+            score_positions=score_positions,
+            log_timing=False,
+        )
+        input_ids = np.asarray(input_ids, dtype=np.int64)
+        S = int(input_ids.shape[0])
+        EMPTY = (
+            np.zeros(0, dtype=np.int32),
+            np.zeros(0, dtype=np.int32),
+            np.zeros(0, dtype=np.float32),
+        )
+        if S <= 1:
+            return EMPTY
+        if score_positions is None:
+            requested_positions = np.arange(S - 1, dtype=np.int64)
+        else:
+            requested_positions = np.asarray(score_positions, dtype=np.int64)
+            requested_positions = requested_positions[
+                (requested_positions >= 0) & (requested_positions < S - 1)
+            ]
+            if requested_positions.size == 0:
+                return EMPTY
+            requested_positions = np.unique(requested_positions)
+
+        by_pos: dict[int, list[tuple[int, float]]] = {}
+        pos_i = pos.astype(np.int64, copy=False)
+        did_i = did.astype(np.int64, copy=False)
+        score_f = score.astype(np.float64, copy=False)
+        for p_i, d_i, s_i in zip(pos_i.tolist(), did_i.tolist(), score_f.tolist()):
+            by_pos.setdefault(int(p_i), []).append((int(d_i), float(s_i)))
+
+        out_pos: list[np.ndarray] = []
+        out_did: list[np.ndarray] = []
+        out_delta: list[np.ndarray] = []
+        total_recursive_candidates = 0
+        eps = np.finfo(np.float64).tiny
+        z_unigram = math.exp(self.log_Z_unigram)
+
+        for p_i in requested_positions.tolist():
+            recursive = by_pos.get(int(p_i), [])
+            excluded = {d for d, _ in recursive}
+            candidates = recursive + self._top_unigram_fallthrough(excluded, k)
+            if not candidates:
+                continue
+            total_recursive_candidates += len(recursive)
+            if len(candidates) > k:
+                scores_arr = np.asarray([s for _, s in candidates], dtype=np.float64)
+                top_idx = np.argpartition(scores_arr, -k)[-k:]
+                top = [candidates[int(i)] for i in top_idx.tolist()]
+            else:
+                top = candidates
+
+            top_ids = np.asarray([d for d, _ in top], dtype=np.int64)
+            top_scores_log = np.asarray([s for _, s in top], dtype=np.float64)
+            top_scores = np.exp(top_scores_log)
+
+            if recursive:
+                rec_ids = np.asarray([d for d, _ in recursive], dtype=np.int64)
+                rec_scores_log = np.asarray([s for _, s in recursive], dtype=np.float64)
+                z_delta = float(
+                    np.exp(rec_scores_log).sum()
+                    - np.exp(self.unigram_floor[rec_ids]).sum()
+                )
+            else:
+                z_delta = 0.0
+            z_total = max(z_unigram + z_delta, eps)
+            residual_mass = max(z_total - float(top_scores.sum()), eps)
+            residual_vocab = max(self.vocab_size - int(top_ids.shape[0]), 1)
+            log_residual = math.log(residual_mass) - math.log(residual_vocab)
+            delta = top_scores_log - log_residual
+
+            out_pos.append(np.full(top_ids.shape[0], int(p_i), dtype=np.int32))
+            out_did.append(top_ids.astype(np.int32, copy=False))
+            out_delta.append(delta.astype(np.float32, copy=False))
+
+        if not out_pos:
+            if log_timing:
+                self._maybe_log_override_call(
+                    t0,
+                    S,
+                    0,
+                    [f"recursive_topk_uniform_residual_k={k},recursive_candidates=0"],
+                )
+            return EMPTY
+
+        result = (
+            np.concatenate(out_pos).astype(np.int32, copy=False),
+            np.concatenate(out_did).astype(np.int32, copy=False),
+            np.concatenate(out_delta).astype(np.float32, copy=False),
+        )
+        if log_timing:
+            self._maybe_log_override_call(
+                t0,
+                S,
+                int(result[0].shape[0]),
+                [
+                    f"recursive_topk_uniform_residual_k={k}",
+                    f"recursive_candidates={total_recursive_candidates:,}",
+                ],
+            )
         return result
 
     def _compute_overrides_for_sequence_serial(

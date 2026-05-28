@@ -140,6 +140,7 @@ class TransformerTrainModule(TrainModule):
         poe_sb_lookup_threads: int = 1,
         poe_sb_eval_lookup_threads: Optional[int] = None,
         poe_sb_topk_uniform_residual_k: Optional[int] = None,
+        poe_sb_recursive_topk_uniform_residual_k: Optional[int] = None,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -296,6 +297,14 @@ class TransformerTrainModule(TrainModule):
             raise OLMoConfigurationError("poe_lambda_lr is only valid when poe_lambda_learnable=True")
         if self.poe_lambda_lr is not None and self.poe_lambda_lr <= 0:
             raise OLMoConfigurationError(f"poe_lambda_lr must be positive, got {self.poe_lambda_lr}")
+        if (
+            poe_sb_topk_uniform_residual_k is not None
+            and poe_sb_recursive_topk_uniform_residual_k is not None
+        ):
+            raise OLMoConfigurationError(
+                "poe_sb_topk_uniform_residual_k and "
+                "poe_sb_recursive_topk_uniform_residual_k are mutually exclusive"
+            )
         if self.poe_lambda_decay_to_zero_windows:
             prev_end = -1
             for start, end in self.poe_lambda_decay_to_zero_windows:
@@ -328,6 +337,9 @@ class TransformerTrainModule(TrainModule):
             else self.poe_sb_lookup_threads
         )
         self.poe_sb_topk_uniform_residual_k = poe_sb_topk_uniform_residual_k
+        self.poe_sb_recursive_topk_uniform_residual_k = (
+            poe_sb_recursive_topk_uniform_residual_k
+        )
         # Lazy: instantiated on first eval_batch call (per process), so we
         # don't open the mmap on the main coordinator rank that may never
         # actually run an eval.
@@ -1257,6 +1269,9 @@ class TransformerTrainModule(TrainModule):
                 index_access=self.poe_sb_index_access,
                 lookup_threads=self.poe_sb_eval_lookup_threads,
                 topk_uniform_residual_k=self.poe_sb_topk_uniform_residual_k,
+                recursive_topk_uniform_residual_k=(
+                    self.poe_sb_recursive_topk_uniform_residual_k
+                ),
             )
         return self._poe_sb_reader
 
@@ -1272,7 +1287,10 @@ class TransformerTrainModule(TrainModule):
             or self._poe_sb_unigram_floor_dev.device != self.device
         ):
             reader = self._get_poe_sb_reader()
-            if self.poe_sb_topk_uniform_residual_k is not None:
+            if (
+                self.poe_sb_topk_uniform_residual_k is not None
+                or self.poe_sb_recursive_topk_uniform_residual_k is not None
+            ):
                 floor_cpu = torch.zeros(
                     self.poe_sb_dolma2_vocab_size,
                     dtype=dtype,
