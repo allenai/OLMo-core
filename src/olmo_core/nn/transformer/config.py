@@ -177,6 +177,10 @@ class TransformerBlockConfig(ModuleConfig):
         kept for backwards compatibility with old configs that used a single ``layer_norm`` for
         both norms. When provided, it is copied into both :data:`attention_norm` and
         :data:`feed_forward_norm`.
+
+        Because this is an ``InitVar`` it is not serialized, so dotlist/CLI overrides targeting
+        it (e.g. ``layer_norm.eps=1e-6``) no longer apply after merging. Override
+        :data:`attention_norm` and :data:`feed_forward_norm` directly instead.
     """
     feed_forward: Optional[FeedForwardConfig] = None
     """
