@@ -311,10 +311,13 @@ class TransformerBlockConfig(ModuleConfig):
             if self.feed_forward_norm is not None:
                 block_params += self.feed_forward_norm.num_params(d_model)
 
-        # Two extra norms for Peri-LN block type.
+        # Two extra norms for Peri-LN block type: a post-attention norm built from
+        # `attention_norm` and a post-feed-forward norm built from `feed_forward_norm`.
         if self.name == TransformerBlockType.peri_norm:
+            assert self.attention_norm is not None
             assert self.feed_forward_norm is not None
-            block_params += 2 * self.feed_forward_norm.num_params(d_model)
+            block_params += self.attention_norm.num_params(d_model)
+            block_params += self.feed_forward_norm.num_params(d_model)
 
         return block_params
 
