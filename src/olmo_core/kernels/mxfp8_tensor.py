@@ -4,6 +4,7 @@ from typing import Any, Dict, Tuple
 
 import torch
 
+from ..doc_utils import beta_feature
 from .mxfp8_utils import (
     _quantize_to_mxfp8_torch,
     dequantize_rows_from_mxfp8,
@@ -24,6 +25,7 @@ def _dequantize_rows_from_mxfp8_torch(
     return x.reshape(m, k).to(out_dtype)
 
 
+@beta_feature
 class OlmoMXFP8Tensor(torch.Tensor):
     """
     Prototype tensor subclass for rowwise MXFP8 payloads.
