@@ -383,8 +383,9 @@ class TransformerTrainModule(TrainModule):
 
         During configured inclusive step windows, the effective PoE weight
         decays linearly from the learned/static lambda to zero. The learned
-        lambda parameter itself is not mutated, so the next training period can
-        resume from the value learned before the decay window.
+        lambda parameter is not mutated or optimized during these windows, so
+        the next training period can resume from the value learned before the
+        decay window instead of fighting the scheduled multiplier.
         """
         windows = self.poe_lambda_decay_to_zero_windows
         if not windows:
@@ -398,6 +399,14 @@ class TransformerTrainModule(TrainModule):
                     return 0.0
                 return max(0.0, min(1.0, (end - step) / (end - start)))
         return 1.0
+
+    def _poe_lambda_decay_to_zero_active(self) -> bool:
+        """Whether the current trainer step is inside a lambda-decay window."""
+        windows = self.poe_lambda_decay_to_zero_windows
+        if not windows:
+            return False
+        step = self.trainer.global_step
+        return any(start <= step <= end for start, end in windows)
 
     def _effective_poe_lambda(self, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
         assert self.poe_lambda is not None
@@ -1613,6 +1622,19 @@ class TransformerTrainModule(TrainModule):
                 reduce_type=None,
                 namespace="optim",
             )
+
+            lambda_frozen = self._poe_lambda_decay_to_zero_active()
+            self.trainer.record_metric(
+                "poe lambda frozen",
+                float(lambda_frozen),
+                reduce_type=None,
+                namespace="optim",
+            )
+            if lambda_frozen:
+                # Use grad=None, not a zero tensor. Adam-style optimizers can
+                # still move a parameter with a zero grad via momentum state;
+                # None makes the optimizer skip the learned lambda parameter.
+                lambda_log.grad = None
 
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
