@@ -328,6 +328,7 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
     sb_eval_lookup_threads: int | None = None
     sb_topk_uniform_residual_k: int | None = None
     sb_recursive_topk_uniform_residual_k: int | None = None
+    sb_recursive_topk_uniform_residual_logprob_k: int | None = None
     eval_rank_microbatch_size: int | None = None
     dolma2_vocab_size: int = DEFAULT_DOLMA2_VOCAB_SIZE
     smoke_1gpu: bool = False
@@ -396,6 +397,9 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
             poe_sb_recursive_topk_uniform_residual_k=(
                 self.sb_recursive_topk_uniform_residual_k
             ),
+            poe_sb_recursive_topk_uniform_residual_logprob_k=(
+                self.sb_recursive_topk_uniform_residual_logprob_k
+            ),
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -409,13 +413,16 @@ class NgramSBPoEConfigurator(Olmo3ModelConfigurator):
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     if getattr(args, "sb_eval_timing", False):
         os.environ["OLMO_SB_EVAL_TIMING"] = "1"
-    if (
-        getattr(args, "sb_topk_uniform_residual_k", None) is not None
-        and getattr(args, "sb_recursive_topk_uniform_residual_k", None) is not None
-    ):
+    topk_modes = [
+        getattr(args, "sb_topk_uniform_residual_k", None),
+        getattr(args, "sb_recursive_topk_uniform_residual_k", None),
+        getattr(args, "sb_recursive_topk_uniform_residual_logprob_k", None),
+    ]
+    if sum(mode_k is not None for mode_k in topk_modes) > 1:
         raise ValueError(
-            "--sb-topk-uniform-residual-k and "
-            "--sb-recursive-topk-uniform-residual-k are mutually exclusive"
+            "--sb-topk-uniform-residual-k, "
+            "--sb-recursive-topk-uniform-residual-k, and "
+            "--sb-recursive-topk-uniform-residual-logprob-k are mutually exclusive"
         )
 
     tokenizer = TokenizerConfig.dolma2()
@@ -484,6 +491,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         recursive_topk_uniform_residual_k=getattr(
             args, "sb_recursive_topk_uniform_residual_k", None
         ),
+        recursive_topk_uniform_residual_logprob_k=getattr(
+            args, "sb_recursive_topk_uniform_residual_logprob_k", None
+        ),
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -530,6 +540,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             ),
             sb_recursive_topk_uniform_residual_k=getattr(
                 args, "sb_recursive_topk_uniform_residual_k", None
+            ),
+            sb_recursive_topk_uniform_residual_logprob_k=getattr(
+                args, "sb_recursive_topk_uniform_residual_logprob_k", None
             ),
             dolma2_vocab_size=int(tokenizer.padded_vocab_size()),
             smoke_1gpu=smoke_1gpu,
@@ -720,6 +733,18 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
             "top-K final scores and emit logit deltas relative to a uniform "
             "residual over the rest of the vocab. This bypasses the dense "
             "unigram floor."
+        ),
+    )
+    parser.add_argument(
+        "--sb-recursive-topk-uniform-residual-logprob-k",
+        type=int,
+        default=None,
+        help=(
+            "Use the recursive-SB top-K uniform-residual mode under the "
+            "normalized log-prob expert interpretation. This emits the same "
+            "residual-relative top-K deltas as --sb-recursive-topk-uniform-"
+            "residual-k because the per-position SB normalizer cancels in "
+            "the final PoE softmax."
         ),
     )
     parser.add_argument(

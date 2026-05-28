@@ -405,6 +405,10 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     # relative logit deltas after recursive backoff over the pruned index,
     # again against a uniform residual with no dense unigram floor.
     poe_sb_recursive_topk_uniform_residual_k: Optional[int] = None
+    # Same recursive top-K mode, named for the normalized log-prob expert
+    # interpretation. The emitted deltas are equivalent because the SB
+    # normalizer cancels in the final PoE softmax.
+    poe_sb_recursive_topk_uniform_residual_logprob_k: Optional[int] = None
 
     # Checkpoint settings.
 

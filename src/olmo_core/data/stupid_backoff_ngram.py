@@ -226,6 +226,12 @@ class StupidBackoffNgramLM:
         stupid-backoff scores from the pruned sparse index, includes high
         unigram fall-through candidates, then keeps the top-K final SB scores
         and emits deltas relative to a uniform residual.
+    :param recursive_topk_uniform_residual_logprob_k: Same candidate
+        selection and residual approximation as
+        ``recursive_topk_uniform_residual_k``, but named for the normalized
+        log-prob expert interpretation. The emitted sparse deltas are
+        mathematically identical because the SB normalizer is a per-position
+        constant and cancels in the final softmax.
     """
 
     def __init__(
@@ -243,6 +249,7 @@ class StupidBackoffNgramLM:
         lookup_threads: int = 1,
         topk_uniform_residual_k: Optional[int] = None,
         recursive_topk_uniform_residual_k: Optional[int] = None,
+        recursive_topk_uniform_residual_logprob_k: Optional[int] = None,
     ):
         if index_access not in {"mmap", "pread"}:
             raise ValueError(f"index_access must be 'mmap' or 'pread'; got {index_access!r}")
@@ -270,12 +277,32 @@ class StupidBackoffNgramLM:
             else int(recursive_topk_uniform_residual_k)
         )
         if (
-            self.topk_uniform_residual_k is not None
-            and self.recursive_topk_uniform_residual_k is not None
+            recursive_topk_uniform_residual_logprob_k is not None
+            and recursive_topk_uniform_residual_logprob_k <= 0
         ):
             raise ValueError(
-                "topk_uniform_residual_k and recursive_topk_uniform_residual_k "
-                "are mutually exclusive"
+                "recursive_topk_uniform_residual_logprob_k must be positive when set; "
+                f"got {recursive_topk_uniform_residual_logprob_k}"
+            )
+        self.recursive_topk_uniform_residual_logprob_k = (
+            None
+            if recursive_topk_uniform_residual_logprob_k is None
+            else int(recursive_topk_uniform_residual_logprob_k)
+        )
+        if (
+            sum(
+                mode_k is not None
+                for mode_k in (
+                    self.topk_uniform_residual_k,
+                    self.recursive_topk_uniform_residual_k,
+                    self.recursive_topk_uniform_residual_logprob_k,
+                )
+            )
+            > 1
+        ):
+            raise ValueError(
+                "topk_uniform_residual_k, recursive_topk_uniform_residual_k, "
+                "and recursive_topk_uniform_residual_logprob_k are mutually exclusive"
             )
         self._lookup_pool: Optional[ThreadPoolExecutor] = None
         caps: Dict[int, int] = {}
@@ -334,6 +361,7 @@ class StupidBackoffNgramLM:
             f"lookup_threads={self.lookup_threads} "
             f"topk_uniform_residual_k={self.topk_uniform_residual_k} "
             f"recursive_topk_uniform_residual_k={self.recursive_topk_uniform_residual_k} "
+            f"recursive_topk_uniform_residual_logprob_k={self.recursive_topk_uniform_residual_logprob_k} "
             f"max_order_continuations={self.max_order_continuations or None} "
             f"min_order_counts={self.min_order_counts or None}"
         )
@@ -704,7 +732,10 @@ class StupidBackoffNgramLM:
         input_ids = np.asarray(input_ids, dtype=np.int64)
         S = int(input_ids.shape[0])
         if self.lookup_threads <= 1 or S <= 1:
-            if self.recursive_topk_uniform_residual_k is not None:
+            if (
+                self.recursive_topk_uniform_residual_k is not None
+                or self.recursive_topk_uniform_residual_logprob_k is not None
+            ):
                 return self._compute_recursive_topk_uniform_residual_overrides_serial(
                     input_ids, score_positions=score_positions
                 )
@@ -732,7 +763,10 @@ class StupidBackoffNgramLM:
         n_positions = int(positions.shape[0])
         n_chunks = min(self.lookup_threads, n_positions)
         if n_chunks <= 1:
-            if self.recursive_topk_uniform_residual_k is not None:
+            if (
+                self.recursive_topk_uniform_residual_k is not None
+                or self.recursive_topk_uniform_residual_logprob_k is not None
+            ):
                 return self._compute_recursive_topk_uniform_residual_overrides_serial(
                     input_ids, score_positions=positions
                 )
@@ -755,7 +789,10 @@ class StupidBackoffNgramLM:
                     np.zeros(0, dtype=np.int32),
                     np.zeros(0, dtype=np.float32),
                 )
-            if self.recursive_topk_uniform_residual_k is not None:
+            if (
+                self.recursive_topk_uniform_residual_k is not None
+                or self.recursive_topk_uniform_residual_logprob_k is not None
+            ):
                 return self._compute_recursive_topk_uniform_residual_overrides_serial(
                     input_ids,
                     score_positions=chunk_positions,
@@ -1015,8 +1052,20 @@ class StupidBackoffNgramLM:
         SB scores from that full distribution, approximating the remaining
         mass uniformly over the rest of the vocabulary.
         """
-        assert self.recursive_topk_uniform_residual_k is not None
-        k = int(self.recursive_topk_uniform_residual_k)
+        assert (
+            self.recursive_topk_uniform_residual_k is not None
+            or self.recursive_topk_uniform_residual_logprob_k is not None
+        )
+        k = int(
+            self.recursive_topk_uniform_residual_k
+            if self.recursive_topk_uniform_residual_k is not None
+            else self.recursive_topk_uniform_residual_logprob_k
+        )
+        mode_label = (
+            "recursive_topk_uniform_residual_k"
+            if self.recursive_topk_uniform_residual_k is not None
+            else "recursive_topk_uniform_residual_logprob_k"
+        )
         t0 = time.perf_counter()
         pos, did, score = self._compute_overrides_for_sequence_serial(
             input_ids,
@@ -1127,6 +1176,9 @@ class StupidBackoffNgramLM:
             residual_mass = max(z_total - float(top_scores.sum()), eps)
             residual_vocab = max(self.vocab_size - int(top_ids.shape[0]), 1)
             log_residual = math.log(residual_mass) - math.log(residual_vocab)
+            # In normalized-log-prob form both top_scores_log and
+            # log_residual would subtract log(z_total). That constant cancels
+            # in the top-vs-residual delta scattered into PoE logits.
             delta = top_scores_log - log_residual
 
             out_pos.append(np.full(top_ids.shape[0], int(p_i), dtype=np.int32))
@@ -1139,7 +1191,7 @@ class StupidBackoffNgramLM:
                     t0,
                     S,
                     0,
-                    [f"recursive_topk_uniform_residual_k={k},recursive_candidates=0"],
+                    [f"{mode_label}={k},recursive_candidates=0"],
                 )
             return EMPTY
 
@@ -1154,7 +1206,7 @@ class StupidBackoffNgramLM:
                 S,
                 int(result[0].shape[0]),
                 [
-                    f"recursive_topk_uniform_residual_k={k}",
+                    f"{mode_label}={k}",
                     f"recursive_candidates={total_recursive_candidates:,}",
                 ],
             )

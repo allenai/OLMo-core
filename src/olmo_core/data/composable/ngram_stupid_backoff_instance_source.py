@@ -88,6 +88,10 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         When set, the reader first computes recursive stupid-backoff scores
         over the pruned sparse index, then keeps the top-K final scores as
         logit deltas relative to a uniform residual over the remaining vocab.
+    :param recursive_topk_uniform_residual_logprob_k: Same recursive top-K
+        selection, named for the normalized log-prob expert interpretation.
+        The emitted residual-relative deltas match the raw-score mode because
+        the SB normalizer cancels in the final PoE softmax.
     """
 
     DISPLAY_ICON = "\U000f0d77"  # nf-md-graphql (same as the KN-smoothed source)
@@ -108,6 +112,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         lookup_threads: int = 1,
         topk_uniform_residual_k: Optional[int] = None,
         recursive_topk_uniform_residual_k: Optional[int] = None,
+        recursive_topk_uniform_residual_logprob_k: Optional[int] = None,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -130,6 +135,9 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
         self._lookup_threads = int(lookup_threads)
         self._topk_uniform_residual_k = topk_uniform_residual_k
         self._recursive_topk_uniform_residual_k = recursive_topk_uniform_residual_k
+        self._recursive_topk_uniform_residual_logprob_k = (
+            recursive_topk_uniform_residual_logprob_k
+        )
         # Lazy per-process init: don't mmap in the main process so the
         # source pickles cleanly to spawn workers; first lookup populates.
         self._reader = None
@@ -180,6 +188,9 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 lookup_threads=self._lookup_threads,
                 topk_uniform_residual_k=self._topk_uniform_residual_k,
                 recursive_topk_uniform_residual_k=self._recursive_topk_uniform_residual_k,
+                recursive_topk_uniform_residual_logprob_k=(
+                    self._recursive_topk_uniform_residual_logprob_k
+                ),
             )
         return self._reader
 
@@ -202,6 +213,7 @@ class NgramStupidBackoffInstanceSource(InstanceSource):
                 f"lookup_threads={self._lookup_threads},"
                 f"topk_uniform_residual_k={self._topk_uniform_residual_k},"
                 f"recursive_topk_uniform_residual_k={self._recursive_topk_uniform_residual_k},"
+                f"recursive_topk_uniform_residual_logprob_k={self._recursive_topk_uniform_residual_logprob_k},"
             ).encode()
         )
         return sha.hexdigest()
@@ -257,6 +269,7 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
     lookup_threads: int = 1
     topk_uniform_residual_k: Optional[int] = None
     recursive_topk_uniform_residual_k: Optional[int] = None
+    recursive_topk_uniform_residual_logprob_k: Optional[int] = None
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> NgramStupidBackoffInstanceSource:
@@ -275,6 +288,9 @@ class NgramStupidBackoffInstanceSourceConfig(InstanceSourceConfig):
             lookup_threads=self.lookup_threads,
             topk_uniform_residual_k=self.topk_uniform_residual_k,
             recursive_topk_uniform_residual_k=self.recursive_topk_uniform_residual_k,
+            recursive_topk_uniform_residual_logprob_k=(
+                self.recursive_topk_uniform_residual_logprob_k
+            ),
             work_dir=work_dir,
             label=self.label,
         )

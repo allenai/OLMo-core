@@ -141,6 +141,7 @@ class TransformerTrainModule(TrainModule):
         poe_sb_eval_lookup_threads: Optional[int] = None,
         poe_sb_topk_uniform_residual_k: Optional[int] = None,
         poe_sb_recursive_topk_uniform_residual_k: Optional[int] = None,
+        poe_sb_recursive_topk_uniform_residual_logprob_k: Optional[int] = None,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -298,12 +299,20 @@ class TransformerTrainModule(TrainModule):
         if self.poe_lambda_lr is not None and self.poe_lambda_lr <= 0:
             raise OLMoConfigurationError(f"poe_lambda_lr must be positive, got {self.poe_lambda_lr}")
         if (
-            poe_sb_topk_uniform_residual_k is not None
-            and poe_sb_recursive_topk_uniform_residual_k is not None
+            sum(
+                mode_k is not None
+                for mode_k in (
+                    poe_sb_topk_uniform_residual_k,
+                    poe_sb_recursive_topk_uniform_residual_k,
+                    poe_sb_recursive_topk_uniform_residual_logprob_k,
+                )
+            )
+            > 1
         ):
             raise OLMoConfigurationError(
-                "poe_sb_topk_uniform_residual_k and "
-                "poe_sb_recursive_topk_uniform_residual_k are mutually exclusive"
+                "poe_sb_topk_uniform_residual_k, "
+                "poe_sb_recursive_topk_uniform_residual_k, and "
+                "poe_sb_recursive_topk_uniform_residual_logprob_k are mutually exclusive"
             )
         if self.poe_lambda_decay_to_zero_windows:
             prev_end = -1
@@ -339,6 +348,9 @@ class TransformerTrainModule(TrainModule):
         self.poe_sb_topk_uniform_residual_k = poe_sb_topk_uniform_residual_k
         self.poe_sb_recursive_topk_uniform_residual_k = (
             poe_sb_recursive_topk_uniform_residual_k
+        )
+        self.poe_sb_recursive_topk_uniform_residual_logprob_k = (
+            poe_sb_recursive_topk_uniform_residual_logprob_k
         )
         # Lazy: instantiated on first eval_batch call (per process), so we
         # don't open the mmap on the main coordinator rank that may never
@@ -1281,6 +1293,9 @@ class TransformerTrainModule(TrainModule):
                 recursive_topk_uniform_residual_k=(
                     self.poe_sb_recursive_topk_uniform_residual_k
                 ),
+                recursive_topk_uniform_residual_logprob_k=(
+                    self.poe_sb_recursive_topk_uniform_residual_logprob_k
+                ),
             )
         return self._poe_sb_reader
 
@@ -1299,6 +1314,7 @@ class TransformerTrainModule(TrainModule):
             if (
                 self.poe_sb_topk_uniform_residual_k is not None
                 or self.poe_sb_recursive_topk_uniform_residual_k is not None
+                or self.poe_sb_recursive_topk_uniform_residual_logprob_k is not None
             ):
                 floor_cpu = torch.zeros(
                     self.poe_sb_dolma2_vocab_size,
