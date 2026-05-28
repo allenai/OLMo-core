@@ -5,7 +5,7 @@ import os
 import time
 from dataclasses import replace
 from functools import cached_property, lru_cache
-from typing import Any, Dict, Generator, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -124,6 +124,7 @@ class TransformerTrainModule(TrainModule):
         poe_lambda: Optional[float] = None,
         poe_lambda_learnable: bool = False,
         poe_lambda_lr: Optional[float] = None,
+        poe_lambda_decay_to_zero_windows: Optional[List[Tuple[int, int]]] = None,
         poe_ngram_table_dir: Optional[str] = None,
         poe_ngram_K: int = 16,
         poe_ngram_N_max: int = 5,
@@ -248,6 +249,7 @@ class TransformerTrainModule(TrainModule):
         self.poe_lambda = poe_lambda
         self.poe_lambda_learnable = bool(poe_lambda_learnable)
         self.poe_lambda_lr = poe_lambda_lr
+        self.poe_lambda_decay_to_zero_windows = poe_lambda_decay_to_zero_windows
         if self.soft_ce_alpha_start is not None and self.poe_lambda is not None:
             raise OLMoConfigurationError(
                 "soft_ce_alpha_start and poe_lambda are mutually exclusive — "
@@ -294,6 +296,19 @@ class TransformerTrainModule(TrainModule):
             raise OLMoConfigurationError("poe_lambda_lr is only valid when poe_lambda_learnable=True")
         if self.poe_lambda_lr is not None and self.poe_lambda_lr <= 0:
             raise OLMoConfigurationError(f"poe_lambda_lr must be positive, got {self.poe_lambda_lr}")
+        if self.poe_lambda_decay_to_zero_windows:
+            prev_end = -1
+            for start, end in self.poe_lambda_decay_to_zero_windows:
+                if start <= 0 or end < start:
+                    raise OLMoConfigurationError(
+                        "poe_lambda_decay_to_zero_windows entries must have positive "
+                        f"start <= end, got {(start, end)}"
+                    )
+                if start <= prev_end:
+                    raise OLMoConfigurationError(
+                        "poe_lambda_decay_to_zero_windows must be sorted and non-overlapping"
+                    )
+                prev_end = end
         self.poe_ngram_table_dir = poe_ngram_table_dir
         self.poe_ngram_K = int(poe_ngram_K)
         self.poe_ngram_N_max = int(poe_ngram_N_max)
@@ -351,16 +366,52 @@ class TransformerTrainModule(TrainModule):
         log.info("Building optimizer...")
         self.optim: Optimizer = optim.build(self.model, strict=True)
 
+    def _poe_lambda_decay_to_zero_multiplier(self) -> float:
+        """Multiplicative schedule for anneal-time PoE ablations.
+
+        During configured inclusive step windows, the effective PoE weight
+        decays linearly from the learned/static lambda to zero. The learned
+        lambda parameter itself is not mutated, so the next training period can
+        resume from the value learned before the decay window.
+        """
+        windows = self.poe_lambda_decay_to_zero_windows
+        if not windows:
+            return 1.0
+        step = self.trainer.global_step
+        for start, end in windows:
+            if step < start:
+                return 1.0
+            if start <= step <= end:
+                if end == start:
+                    return 0.0
+                return max(0.0, min(1.0, (end - step) / (end - start)))
+        return 1.0
+
     def _effective_poe_lambda(self, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
         assert self.poe_lambda is not None
         if self.poe_lambda_learnable:
             lambda_log = self._poe_lambda_log_param()
-            return torch.exp(lambda_log).squeeze().to(dtype=dtype)
-        return torch.tensor(float(self.poe_lambda), device=self.device, dtype=dtype)
+            base = torch.exp(lambda_log).squeeze().to(dtype=dtype)
+        else:
+            base = torch.tensor(float(self.poe_lambda), device=self.device, dtype=dtype)
+        if self.poe_lambda_decay_to_zero_windows:
+            multiplier = torch.tensor(
+                self._poe_lambda_decay_to_zero_multiplier(),
+                device=base.device,
+                dtype=dtype,
+            )
+            return base * multiplier
+        return base
 
     def _effective_poe_lambda_for_logging(self) -> Union[float, torch.Tensor]:
-        if self.poe_lambda_learnable:
+        if self.poe_lambda_learnable or self.poe_lambda_decay_to_zero_windows:
             return self._effective_poe_lambda().detach().squeeze()
+        assert self.poe_lambda is not None
+        return float(self.poe_lambda)
+
+    def _base_poe_lambda_for_logging(self) -> Union[float, torch.Tensor]:
+        if self.poe_lambda_learnable:
+            return torch.exp(self._poe_lambda_log_param()).detach().squeeze()
         assert self.poe_lambda is not None
         return float(self.poe_lambda)
 
@@ -1051,6 +1102,17 @@ class TransformerTrainModule(TrainModule):
                 self._effective_poe_lambda_for_logging(),
                 namespace="train",
             )
+            if self.poe_lambda_decay_to_zero_windows:
+                self.record_metric(
+                    "poe lambda multiplier",
+                    self._poe_lambda_decay_to_zero_multiplier(),
+                    namespace="train",
+                )
+                self.record_metric(
+                    "poe lambda base",
+                    self._base_poe_lambda_for_logging(),
+                    namespace="train",
+                )
             if self.poe_lambda_learnable:
                 self.record_metric(
                     "poe lambda log",

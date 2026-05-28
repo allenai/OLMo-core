@@ -126,6 +126,7 @@ class NgramPoEConfigurator(Olmo3ModelConfigurator):
     poe_lambda: float = DEFAULT_POE_LAMBDA
     learn_poe_lambda: bool = False
     poe_lambda_lr: float | None = None
+    poe_lambda_decay_to_zero_windows: list[tuple[int, int]] | None = None
     ngram_table_dir: str = DEFAULT_NGRAM_TABLE_DIR
     soft_target_k: int = DEFAULT_SOFT_TARGET_K
     soft_target_n_max: int = DEFAULT_SOFT_TARGET_N_MAX
@@ -179,6 +180,7 @@ class NgramPoEConfigurator(Olmo3ModelConfigurator):
             poe_lambda=self.poe_lambda,
             poe_lambda_learnable=self.learn_poe_lambda,
             poe_lambda_lr=self.poe_lambda_lr,
+            poe_lambda_decay_to_zero_windows=self.poe_lambda_decay_to_zero_windows,
             poe_ngram_table_dir=self.ngram_table_dir,
             poe_ngram_K=self.soft_target_k,
             poe_ngram_N_max=self.soft_target_n_max,
@@ -190,6 +192,22 @@ class NgramPoEConfigurator(Olmo3ModelConfigurator):
         train_module = train_module_config.build(model)
         assert isinstance(train_module, TransformerTrainModule)
         return train_module
+
+
+def _parse_step_window(value: str) -> tuple[int, int]:
+    try:
+        start_s, end_s = value.split(":", 1)
+        start = int(start_s)
+        end = int(end_s)
+    except Exception as exc:
+        raise argparse.ArgumentTypeError(
+            f"expected START:END with integer steps, got {value!r}"
+        ) from exc
+    if start <= 0 or end < start:
+        raise argparse.ArgumentTypeError(
+            f"expected positive START <= END, got {value!r}"
+        )
+    return start, end
 
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
@@ -237,6 +255,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             poe_lambda=getattr(args, "poe_lambda", DEFAULT_POE_LAMBDA),
             learn_poe_lambda=getattr(args, "learn_poe_lambda", False),
             poe_lambda_lr=getattr(args, "poe_lambda_lr", None),
+            poe_lambda_decay_to_zero_windows=getattr(
+                args, "poe_lambda_decay_to_zero_window", None
+            ),
             ngram_table_dir=getattr(args, "ngram_table_dir", DEFAULT_NGRAM_TABLE_DIR),
             soft_target_k=getattr(args, "soft_target_k", DEFAULT_SOFT_TARGET_K),
             soft_target_n_max=getattr(args, "soft_target_n_max", DEFAULT_SOFT_TARGET_N_MAX),
@@ -289,6 +310,18 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         type=float,
         default=None,
         help="Optional optimizer learning rate override for learned PoE lambda.",
+    )
+    parser.add_argument(
+        "--poe-lambda-decay-to-zero-window",
+        type=_parse_step_window,
+        action="append",
+        default=None,
+        metavar="START:END",
+        help=(
+            "Inclusive step window during which effective PoE lambda is "
+            "multiplied by a linear 1->0 ramp. Repeat for multiple anneals. "
+            "The learned/static base lambda is not mutated."
+        ),
     )
     parser.add_argument(
         "--attn-backend",

@@ -363,6 +363,10 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     # Optional optimizer LR override for the learned scalar. If unset, it uses
     # the model LR schedule through its own zero-weight-decay parameter group.
     poe_lambda_lr: Optional[float] = None
+    # Optional inclusive step windows where the effective PoE lambda is
+    # multiplied by a linear 1 -> 0 ramp. The learned/static base lambda is
+    # left untouched, so later training resumes from the pre-ramp value.
+    poe_lambda_decay_to_zero_windows: Optional[List[Tuple[int, int]]] = None
     poe_ngram_table_dir: Optional[str] = None
     poe_ngram_K: int = 16
     poe_ngram_N_max: int = 5
