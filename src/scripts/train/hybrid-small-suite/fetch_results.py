@@ -164,6 +164,7 @@ def main():
     parser.add_argument("--no-download", action="store_true", help="Only list, don't download")
     parser.add_argument("--workers", type=int, default=128, help="Parallel download workers")
     parser.add_argument("--since", type=str, default=None, help="Only include experiments created on or after this date (YYYY-MM-DD)")
+    parser.add_argument("--after", type=str, default=None, help="Only include experiments with ID > this Beaker experiment ID (ULID)")
     args = parser.parse_args()
 
     since_dt = None
@@ -200,6 +201,12 @@ def main():
             filtered.append(e)
         print(f"Date filter (since {args.since}): {len(all_experiments)} -> {len(filtered)} experiments")
         all_experiments = filtered
+
+    # Filter by experiment ID (ULIDs are lexicographically time-sortable)
+    if args.after:
+        before_count = len(all_experiments)
+        all_experiments = [e for e in all_experiments if e["id"] > args.after]
+        print(f"ID filter (after {args.after}): {before_count} -> {len(all_experiments)} experiments")
 
     experiments = [e for e in all_experiments if is_olmo_eval_experiment(e)]
     print(f"Found {len(experiments)} olmo-eval experiments (out of {len(all_experiments)} total)")

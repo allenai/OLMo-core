@@ -4,7 +4,7 @@ import argparse
 import subprocess
 import time
 
-GROUP = "yashasbls-hybrid-small-evals-v2-grid"
+GROUP = "yashasbls-hybrid-small-evals-v4"
 CLUSTER = "ai2/jupiter"
 PRIORITY = "urgent"
 NUM_GPUS = 1
@@ -31,12 +31,20 @@ all_stages: dict[str, dict[str, list[str]]] = {
         "810m": [f"{CKPT_BASE}/hybrid-small-long-context-v2-810m/step23842-hf/"],
         "1.4b": [f"{CKPT_BASE}/hybrid-small-long-context-v2-1.4b/step23842-hf/"],
     },
-    "sft_think": {
-        "275m": [
-            f"{CKPT_BASE}/hybrid-small-sft-think-275M-lr{lr}/step23206-hf/"
-            for lr in ["1e-4", "2e-4", "4e-4", "8e-4"]
-        ],
-    },
+    # "long_context_debug_v3": {
+    #     "275m": [
+    #         f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr1.6e-3/step47684-hf/",
+    #         f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr8e-4/step47684-hf/",
+    #         f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr4e-4/step47684-hf/",
+    #         f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr2e-4/step47684-hf/",
+    #     ],
+    # },
+    # "sft_think": {
+    #     "275m": [
+    #         f"{CKPT_BASE}/hybrid-small-sft-think-275M-lr{lr}/step23206-hf/"
+    #         for lr in ["1e-4", "2e-4", "4e-4", "8e-4"]
+    #     ],
+    # },
 }
 
 # (task_name, num_gpus)
@@ -51,14 +59,14 @@ DOWNSTREAM_TASKS = [
     ("olmobase:math", 8),
     # GenQA — 4 GPUs (3.5-7.5h single-GPU)
     ("olmobase:gen", 4),
-    # MC Non-STEM — 4 GPUs (2-5h single-GPU)
-    ("olmobase:mcqa_non_stem", 4),
+    # MC Non-STEM — 2 GPUs (2-5h single-GPU)
+    ("olmobase:mcqa_non_stem", 1),
     # MC STEM — 1 GPU (~1h)
     ("olmobase:mcqa_stem", 1),
     # Code — 1 GPU (~10min)
     ("olmobase:easy:code:bpb", 1),
     # LBPP, BBH, MMLU Pro, DM Math — not yet in olmo-eval-internal
-    ("olmobase:easy:qa:rc", 1)
+    ("olmobase:easy:qa:rc", 2)
 ]
 
 LC_TASKS = [
@@ -97,7 +105,13 @@ SAFETY_TASKS: list[tuple[str, int]] = [
 ]
 
 
-def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS, is_lc: bool = False) -> list[str]:
+def build_command(
+    model_path: str,
+    tasks: list[str],
+    num_gpus: int = NUM_GPUS,
+    is_lc: bool = False,
+    group: str = GROUP,
+) -> list[str]:
     # Derive a clean name: last two path components joined with underscore, slashes removed
     parts = model_path.rstrip("/").split("/")
     model_short = "_".join(parts[-2:]).lower()
@@ -125,7 +139,7 @@ def build_command(model_path: str, tasks: list[str], num_gpus: int = NUM_GPUS, i
     cmd += ["--gpus", str(num_gpus)]
     cmd += ["--retries", "3"]
     cmd += ["--priority", PRIORITY]
-    cmd += ["--group", GROUP]
+    cmd += ["--group", group]
     cmd += ["--cluster", CLUSTER]
     cmd += ["--workspace", WORKSPACE]
     cmd += ["--budget", BUDGET]
@@ -161,12 +175,14 @@ def main():
         choices=["test", "downstream", "lc", "safety", "pplx", "posttrain"],
         default=["test"],
     )
+    parser.add_argument("--group", type=str, default=GROUP, help="Beaker workgroup for launched jobs.")
     parser.add_argument("--gpus", type=int, default=NUM_GPUS, help="Number of GPUs per job.")
     parser.add_argument("--model", type=str, default=None, help="Custom model path or HF name (overrides --sizes/--stages)")
     parser.add_argument("--delay", type=int, default=0, help="Seconds to wait between launching each eval job")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     num_gpus = args.gpus
+    group = args.group
 
     eval_type_map = {
         "test": TEST_TASKS,
@@ -186,7 +202,7 @@ def main():
         # Custom model: run all tasks against this single model
         for task_name, task_gpus in tasks:
             gpus = num_gpus if num_gpus != NUM_GPUS else task_gpus
-            cmd = build_command(args.model, [task_name], gpus, is_lc=task_name in lc_task_names)
+            cmd = build_command(args.model, [task_name], gpus, is_lc=task_name in lc_task_names, group=group)
             print(f"\n=== custom | {task_name} | {gpus} GPUs ===")
             print(" ".join(cmd))
             if not args.dry_run:
@@ -205,7 +221,7 @@ def main():
                     short_name = model_path.rstrip("/").split("/")[-1]
                     for task_name, task_gpus in tasks:
                         gpus = num_gpus if num_gpus != NUM_GPUS else task_gpus
-                        cmd = build_command(model_path, [task_name], gpus, is_lc=task_name in lc_task_names)
+                        cmd = build_command(model_path, [task_name], gpus, is_lc=task_name in lc_task_names, group=group)
                         print(f"\n=== {stage}/{size}/{short_name} | {task_name} | {gpus} GPUs ===")
                         print(" ".join(cmd))
                         if not args.dry_run:
