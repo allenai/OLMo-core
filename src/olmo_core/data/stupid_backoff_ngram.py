@@ -991,23 +991,13 @@ class StupidBackoffNgramLM:
             self._maybe_log_override_call(t0, S, int(result[0].shape[0]), order_summaries)
         return result
 
-    def _top_unigram_fallthrough(
-        self, excluded: set[int], k: int
-    ) -> list[tuple[int, float]]:
-        """Highest unigram-floor candidates not already recursively scored."""
+    def _ensure_unigram_desc_ids(self) -> np.ndarray:
+        """Dolma2 token ids sorted from highest to lowest unigram floor."""
         if self._unigram_desc_ids is None:
             self._unigram_desc_ids = np.argsort(self.unigram_floor)[::-1].astype(
                 np.int64, copy=False
             )
-        out: list[tuple[int, float]] = []
-        for did_arr in self._unigram_desc_ids:
-            did = int(did_arr)
-            if did in excluded:
-                continue
-            out.append((did, float(self.unigram_floor[did])))
-            if len(out) >= k:
-                break
-        return out
+        return self._unigram_desc_ids
 
     def _compute_recursive_topk_uniform_residual_overrides_serial(
         self,
@@ -1053,41 +1043,80 @@ class StupidBackoffNgramLM:
                 return EMPTY
             requested_positions = np.unique(requested_positions)
 
-        by_pos: dict[int, list[tuple[int, float]]] = {}
         pos_i = pos.astype(np.int64, copy=False)
         did_i = did.astype(np.int64, copy=False)
         score_f = score.astype(np.float64, copy=False)
-        for p_i, d_i, s_i in zip(pos_i.tolist(), did_i.tolist(), score_f.tolist()):
-            by_pos.setdefault(int(p_i), []).append((int(d_i), float(s_i)))
+        if pos_i.size > 1 and np.any(pos_i[1:] < pos_i[:-1]):
+            order = np.argsort(pos_i, kind="stable")
+            pos_i = pos_i[order]
+            did_i = did_i[order]
+            score_f = score_f[order]
+        if pos_i.size:
+            unique_pos, group_start, group_count = np.unique(
+                pos_i,
+                return_index=True,
+                return_counts=True,
+            )
+        else:
+            unique_pos = np.zeros(0, dtype=np.int64)
+            group_start = np.zeros(0, dtype=np.int64)
+            group_count = np.zeros(0, dtype=np.int64)
 
         out_pos: list[np.ndarray] = []
         out_did: list[np.ndarray] = []
         out_delta: list[np.ndarray] = []
-        total_recursive_candidates = 0
+        total_recursive_candidates = int(did_i.shape[0])
         eps = np.finfo(np.float64).tiny
         z_unigram = math.exp(self.log_Z_unigram)
+        unigram_desc_ids = self._ensure_unigram_desc_ids()
+        unigram_excluded = np.zeros(self.vocab_size, dtype=bool)
 
         for p_i in requested_positions.tolist():
-            recursive = by_pos.get(int(p_i), [])
-            excluded = {d for d, _ in recursive}
-            candidates = recursive + self._top_unigram_fallthrough(excluded, k)
-            if not candidates:
-                continue
-            total_recursive_candidates += len(recursive)
-            if len(candidates) > k:
-                scores_arr = np.asarray([s for _, s in candidates], dtype=np.float64)
-                top_idx = np.argpartition(scores_arr, -k)[-k:]
-                top = [candidates[int(i)] for i in top_idx.tolist()]
+            group_idx = int(np.searchsorted(unique_pos, int(p_i)))
+            if group_idx < unique_pos.shape[0] and int(unique_pos[group_idx]) == int(p_i):
+                start = int(group_start[group_idx])
+                stop = start + int(group_count[group_idx])
+                rec_ids = did_i[start:stop]
+                rec_scores_log = score_f[start:stop]
             else:
-                top = candidates
+                rec_ids = np.zeros(0, dtype=np.int64)
+                rec_scores_log = np.zeros(0, dtype=np.float64)
 
-            top_ids = np.asarray([d for d, _ in top], dtype=np.int64)
-            top_scores_log = np.asarray([s for _, s in top], dtype=np.float64)
+            if rec_ids.size:
+                unigram_excluded[rec_ids] = True
+            unigram_ids: list[int] = []
+            for did_arr in unigram_desc_ids:
+                did_uni = int(did_arr)
+                if unigram_excluded[did_uni]:
+                    continue
+                unigram_ids.append(did_uni)
+                if len(unigram_ids) >= k:
+                    break
+            if rec_ids.size:
+                unigram_excluded[rec_ids] = False
+
+            if unigram_ids:
+                uni_ids = np.asarray(unigram_ids, dtype=np.int64)
+                candidate_ids = np.concatenate([rec_ids, uni_ids])
+                candidate_scores_log = np.concatenate(
+                    [rec_scores_log, self.unigram_floor[uni_ids].astype(np.float64)]
+                )
+            else:
+                candidate_ids = rec_ids
+                candidate_scores_log = rec_scores_log
+            if candidate_ids.size == 0:
+                continue
+
+            if candidate_ids.shape[0] > k:
+                top_idx = np.argpartition(candidate_scores_log, -k)[-k:]
+                top_ids = candidate_ids[top_idx]
+                top_scores_log = candidate_scores_log[top_idx]
+            else:
+                top_ids = candidate_ids
+                top_scores_log = candidate_scores_log
             top_scores = np.exp(top_scores_log)
 
-            if recursive:
-                rec_ids = np.asarray([d for d, _ in recursive], dtype=np.int64)
-                rec_scores_log = np.asarray([s for _, s in recursive], dtype=np.float64)
+            if rec_ids.size:
                 z_delta = float(
                     np.exp(rec_scores_log).sum()
                     - np.exp(self.unigram_floor[rec_ids]).sum()
