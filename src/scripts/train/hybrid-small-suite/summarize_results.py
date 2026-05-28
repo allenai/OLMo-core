@@ -362,9 +362,20 @@ def main():
     parser.add_argument("--no-color", action="store_true", help="Disable color output")
     parser.add_argument("--all-tasks", action="store_true", help="Show all tasks, not just key ones")
     parser.add_argument("--group", type=str, default=None, help="Only summarize results from this group subdirectory")
+    parser.add_argument("--baseline-group", type=str, default=None, help="Separate group to use as baselines")
     args = parser.parse_args()
 
     results = collect_results(group=args.group)
+    if args.baseline_group:
+        baseline_results = collect_results(group=args.baseline_group)
+        # Merge baseline results (don't overwrite test group models)
+        for model, tasks in baseline_results.items():
+            if model not in results:
+                results[model] = tasks
+            else:
+                # Only fill in missing tasks from baseline
+                for task, score in tasks.items():
+                    results[model].setdefault(task, score)
     print(f"Loaded results for {len(results)} models\n")
 
     if args.all_tasks:

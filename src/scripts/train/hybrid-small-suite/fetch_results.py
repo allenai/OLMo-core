@@ -165,6 +165,8 @@ def main():
     parser.add_argument("--workers", type=int, default=128, help="Parallel download workers")
     parser.add_argument("--since", type=str, default=None, help="Only include experiments created on or after this date (YYYY-MM-DD)")
     parser.add_argument("--after", type=str, default=None, help="Only include experiments with ID > this Beaker experiment ID (ULID)")
+    parser.add_argument("--before", type=str, default=None, help="Only include experiments with ID < this Beaker experiment ID (ULID)")
+    parser.add_argument("--exp", type=str, nargs="+", default=None, help="Fetch specific experiment ID(s) directly (skips workspace listing)")
     args = parser.parse_args()
 
     since_dt = None
@@ -184,7 +186,16 @@ def main():
         prev_exp_ids = {r["experiment_id"] for r in prev_results}
 
     print(f"Fetching all experiments from Beaker workspace: {args.workspace}")
-    all_experiments = get_workspace_experiments(args.workspace)
+    if args.exp:
+        # Fetch specific experiments by ID
+        all_experiments = []
+        for exp_id in args.exp:
+            out = run(["beaker", "experiment", "get", "--format", "json", exp_id])
+            exps = json.loads(out)
+            all_experiments.extend(exps)
+        print(f"Fetched {len(all_experiments)} specific experiment(s)")
+    else:
+        all_experiments = get_workspace_experiments(args.workspace)
 
     # Apply date cutoff early to skip old experiments
     if since_dt:
@@ -207,6 +218,11 @@ def main():
         before_count = len(all_experiments)
         all_experiments = [e for e in all_experiments if e["id"] > args.after]
         print(f"ID filter (after {args.after}): {before_count} -> {len(all_experiments)} experiments")
+
+    if args.before:
+        before_count = len(all_experiments)
+        all_experiments = [e for e in all_experiments if e["id"] < args.before]
+        print(f"ID filter (before {args.before}): {before_count} -> {len(all_experiments)} experiments")
 
     experiments = [e for e in all_experiments if is_olmo_eval_experiment(e)]
     print(f"Found {len(experiments)} olmo-eval experiments (out of {len(all_experiments)} total)")

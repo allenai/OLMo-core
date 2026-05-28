@@ -31,14 +31,14 @@ all_stages: dict[str, dict[str, list[str]]] = {
         "810m": [f"{CKPT_BASE}/hybrid-small-long-context-v2-810m/step23842-hf/"],
         "1.4b": [f"{CKPT_BASE}/hybrid-small-long-context-v2-1.4b/step23842-hf/"],
     },
-    # "long_context_debug_v3": {
-    #     "275m": [
-    #         f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr1.6e-3/step47684-hf/",
-    #         f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr8e-4/step47684-hf/",
-    #         f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr4e-4/step47684-hf/",
-    #         f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr2e-4/step47684-hf/",
-    #     ],
-    # },
+    "long_context_debug_v3": {
+        "275m": [
+            f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr1.6e-3/step47684-hf/",
+            f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr8e-4/step47684-hf/",
+            f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr4e-4/step47684-hf/",
+            f"{CKPT_BASE}/hybrid-small-lc-v3-275m-lr2e-4/step47684-hf/",
+        ],
+    },
     # "sft_think": {
     #     "275m": [
     #         f"{CKPT_BASE}/hybrid-small-sft-think-275M-lr{lr}/step23206-hf/"
