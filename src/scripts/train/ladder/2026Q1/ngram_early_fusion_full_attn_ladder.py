@@ -57,25 +57,6 @@ DEFAULT_NGRAM_N_MAX = _poe.DEFAULT_NGRAM_N_MAX
 DEFAULT_EARLY_FUSION_ALPHA_INIT = 0.1
 
 
-@dataclasses.dataclass(kw_only=True)
-class NgramEarlyFusionModelLadder(ModelLadder):
-    """Model ladder with an eval-free 1 GPU smoke mode.
-
-    The smoke path is meant to verify that top-k Kneser-Ney fields flow from
-    the dataloader through early fusion and backward. Running the full in-loop
-    eval suite at step 50 turns that into a multi-hour downstream eval job.
-    """
-
-    smoke_1gpu: bool = False
-
-    def _configure_trainer(self, size_spec: str, for_benchmarking: bool = False):
-        trainer = super()._configure_trainer(size_spec, for_benchmarking=for_benchmarking)
-        if self.smoke_1gpu:
-            trainer.callbacks["lm_evaluator"].enabled = False
-            trainer.callbacks["downstream_evaluator"].enabled = False
-        return trainer
-
-
 @dataclasses.dataclass(kw_only=True, eq=True)
 class NgramEarlyFusionConfigurator(Olmo3ModelConfigurator):
     """Olmo3 configurator that enables early ngram fusion, not late PoE."""
@@ -173,7 +154,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     if getattr(args, "attn_backend", None) is not None:
         model_construction_kwargs["attn_backend"] = args.attn_backend
 
-    return NgramEarlyFusionModelLadder(
+    return ModelLadder(
         name=args.name,
         dir=str(_poe.io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
         sizes=[s for s in TransformerSize if s.approx_num_params <= 1e9],
@@ -203,10 +184,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,
         instance_sources=[wrapped_source],
-        smoke_1gpu=smoke_1gpu,
         data_loader=ComposableDataLoaderConfig(  # noqa: F405
-            num_workers=2 if smoke_1gpu else 16,
-            instance_filter_config=InstanceFilterConfig(),  # noqa: F405
+            num_workers=16, instance_filter_config=InstanceFilterConfig()  # noqa: F405
         ),
     )
 
@@ -252,9 +231,8 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         "--smoke-1gpu",
         action="store_true",
         help=(
-            "Run on a single GPU for fast end-to-end smoke testing. Disables "
-            "full LM/downstream eval callbacks and uses fewer dataloader "
-            "workers. Pair with --chinchilla-multiple ~0.001."
+            "Run on a single GPU for fast end-to-end smoke testing. Pair with "
+            "--chinchilla-multiple ~0.001."
         ),
     )
 
