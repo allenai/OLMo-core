@@ -348,6 +348,22 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     poe_ngram_K: int = 16
     poe_ngram_N_max: int = 5
 
+    # Early fusion with the same Kneser-Ney top-k ngram table. When enabled,
+    # the model adds a learned-scale weighted sum of LM-head unembedding rows
+    # at the embedding boundary:
+    #
+    #     h_0(t) = h_token(t) + alpha * Σ_v p_ngram(v | ctx_t) W_out[v]
+    #
+    # The top-k probabilities are used as raw full-vocabulary KN probability
+    # mass, not renormalized over the K candidates. The train loss remains
+    # ordinary hard-label CE.
+    early_fusion_ngram: bool = False
+    early_fusion_alpha_init: float = 0.1
+    early_fusion_alpha_lr: Optional[float] = None
+    early_fusion_ngram_table_dir: Optional[str] = None
+    early_fusion_ngram_K: int = 16
+    early_fusion_ngram_N_max: int = 5
+
     # Checkpoint settings.
 
     state_dict_save_opts: Optional[Dict[str, Any]] = None

@@ -122,6 +122,12 @@ class TransformerTrainModule(TrainModule):
         poe_ngram_table_dir: Optional[str] = None,
         poe_ngram_K: int = 16,
         poe_ngram_N_max: int = 5,
+        early_fusion_ngram: bool = False,
+        early_fusion_alpha_init: float = 0.1,
+        early_fusion_alpha_lr: Optional[float] = None,
+        early_fusion_ngram_table_dir: Optional[str] = None,
+        early_fusion_ngram_K: int = 16,
+        early_fusion_ngram_N_max: int = 5,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -190,6 +196,33 @@ class TransformerTrainModule(TrainModule):
             )
             model.lm_head.register_parameter(self._poe_lambda_log_name, nn.Parameter(log_lambda))
 
+        # Register learned early-fusion alpha before parallelization so FSDP
+        # owns it like any other model parameter. It lives on the LM head
+        # because the prior is built from LM-head unembedding rows.
+        self._early_fusion_alpha_log_name = "early_fusion_alpha_log"
+        self._early_fusion_alpha_log_param_name = (
+            f"lm_head.{self._early_fusion_alpha_log_name}"
+        )
+        if early_fusion_ngram:
+            if early_fusion_alpha_init <= 0:
+                raise OLMoConfigurationError(
+                    "early_fusion_alpha_init must be positive, "
+                    f"got {early_fusion_alpha_init}"
+                )
+            if model.lm_head is None:
+                raise OLMoConfigurationError("early_fusion_ngram requires a model LM head")
+            alpha_log = torch.log(
+                torch.tensor(
+                    [float(early_fusion_alpha_init)],
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+            )
+            model.lm_head.register_parameter(
+                self._early_fusion_alpha_log_name,
+                nn.Parameter(alpha_log),
+            )
+
         # Parallelize model.
         self.model = parallelize_model(
             model,
@@ -212,6 +245,11 @@ class TransformerTrainModule(TrainModule):
         if poe_lambda_learnable and poe_lambda is not None:
             with torch.no_grad():
                 self._poe_lambda_log_param().fill_(math.log(float(poe_lambda)))
+        if early_fusion_ngram:
+            with torch.no_grad():
+                self._early_fusion_alpha_log_param().fill_(
+                    math.log(float(early_fusion_alpha_init))
+                )
         self._model_mode: Optional[Literal["train", "eval"]] = None
 
         self._dp_config = dp_config
@@ -260,10 +298,42 @@ class TransformerTrainModule(TrainModule):
         self.poe_ngram_table_dir = poe_ngram_table_dir
         self.poe_ngram_K = int(poe_ngram_K)
         self.poe_ngram_N_max = int(poe_ngram_N_max)
+        self.early_fusion_ngram = bool(early_fusion_ngram)
+        self.early_fusion_alpha_init = early_fusion_alpha_init
+        self.early_fusion_alpha_lr = early_fusion_alpha_lr
+        self.early_fusion_ngram_table_dir = early_fusion_ngram_table_dir
+        self.early_fusion_ngram_K = int(early_fusion_ngram_K)
+        self.early_fusion_ngram_N_max = int(early_fusion_ngram_N_max)
+        if self.early_fusion_ngram:
+            if self.poe_lambda is not None:
+                raise OLMoConfigurationError(
+                    "early_fusion_ngram is a replacement for PoE in this "
+                    "experiment; do not set poe_lambda at the same time"
+                )
+            if tp_config is not None or cp_config is not None:
+                raise OLMoConfigurationError(
+                    "Early ngram fusion is not yet supported with TP or CP"
+                )
+            if early_fusion_ngram_table_dir is None:
+                raise OLMoConfigurationError(
+                    "early_fusion_ngram requires early_fusion_ngram_table_dir "
+                    "so eval can apply the same embedding prior as train"
+                )
+        if self.early_fusion_alpha_lr is not None:
+            if not self.early_fusion_ngram:
+                raise OLMoConfigurationError(
+                    "early_fusion_alpha_lr is only valid when early_fusion_ngram=True"
+                )
+            if self.early_fusion_alpha_lr <= 0:
+                raise OLMoConfigurationError(
+                    "early_fusion_alpha_lr must be positive, "
+                    f"got {self.early_fusion_alpha_lr}"
+                )
         # Lazy: instantiated on first eval_batch call (per process), so we
         # don't open the mmap on the main coordinator rank that may never
         # actually run an eval.
         self._poe_eval_ngram_source = None
+        self._early_fusion_eval_ngram_source = None
         self.rank_microbatch_size = rank_microbatch_size
         self.eval_rank_microbatch_size = eval_rank_microbatch_size or rank_microbatch_size
         self.max_sequence_length = max_sequence_length
@@ -287,6 +357,20 @@ class TransformerTrainModule(TrainModule):
             group_overrides = list(optim.group_overrides or [])
             group_overrides.append(
                 OptimGroupOverride(params=[self._poe_lambda_log_param_name], opts=poe_lambda_opts)
+            )
+            optim = replace(optim, group_overrides=group_overrides)
+
+        if self.early_fusion_ngram:
+            early_fusion_alpha_opts: Dict[str, Any] = {"weight_decay": 0.0}
+            if self.early_fusion_alpha_lr is not None:
+                early_fusion_alpha_opts["lr"] = self.early_fusion_alpha_lr
+                early_fusion_alpha_opts["initial_lr"] = self.early_fusion_alpha_lr
+            group_overrides = list(optim.group_overrides or [])
+            group_overrides.append(
+                OptimGroupOverride(
+                    params=[self._early_fusion_alpha_log_param_name],
+                    opts=early_fusion_alpha_opts,
+                )
             )
             optim = replace(optim, group_overrides=group_overrides)
 
@@ -376,6 +460,25 @@ class TransformerTrainModule(TrainModule):
             getattr(lm_head, self._poe_lambda_log_name)
             if lm_head is not None and hasattr(lm_head, self._poe_lambda_log_name)
             else getattr(self.model, self._poe_lambda_log_name)
+        )
+        assert isinstance(param, nn.Parameter)
+        return param
+
+    def _early_fusion_alpha(self, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+        return torch.exp(self._early_fusion_alpha_log_param()).squeeze().to(dtype=dtype)
+
+    def _early_fusion_alpha_for_logging(self) -> torch.Tensor:
+        return self._early_fusion_alpha().detach().squeeze()
+
+    def _early_fusion_alpha_log_for_logging(self) -> torch.Tensor:
+        return self._early_fusion_alpha_log_param().detach().squeeze()
+
+    def _early_fusion_alpha_log_param(self) -> nn.Parameter:
+        lm_head = getattr(self.model, "lm_head", None)
+        param = (
+            getattr(lm_head, self._early_fusion_alpha_log_name)
+            if lm_head is not None and hasattr(lm_head, self._early_fusion_alpha_log_name)
+            else getattr(self.model, self._early_fusion_alpha_log_name)
         )
         assert isinstance(param, nn.Parameter)
         return param
@@ -575,6 +678,13 @@ class TransformerTrainModule(TrainModule):
             and "ngram_log_probs" in batch
             and "ngram_token_ids" in batch
         )
+        if self.early_fusion_ngram and (
+            "ngram_log_probs" not in batch or "ngram_token_ids" not in batch
+        ):
+            raise OLMoConfigurationError(
+                "early_fusion_ngram requires batches with ngram_token_ids and "
+                "ngram_log_probs; wrap the data source with NgramTopKInstanceSource"
+            )
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -604,6 +714,14 @@ class TransformerTrainModule(TrainModule):
                     )
 
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
+                if self.early_fusion_ngram:
+                    if ngram_token_ids is None or ngram_log_probs is None:
+                        raise OLMoConfigurationError(
+                            "early_fusion_ngram requires ngram_token_ids and "
+                            "ngram_log_probs in every micro-batch"
+                        )
+                    model_kwargs["early_fusion_ngram_token_ids"] = ngram_token_ids
+                    model_kwargs["early_fusion_ngram_log_probs"] = ngram_log_probs
 
                 # NOTE on gradient flow: when ``return_logits=True`` is set,
                 # the LMHead returns ``output.ce_loss`` and ``output.z_loss``
@@ -779,6 +897,17 @@ class TransformerTrainModule(TrainModule):
                     self._poe_lambda_log_for_logging(),
                     namespace="train",
                 )
+        if self.early_fusion_ngram:
+            self.record_metric(
+                "early fusion alpha",
+                self._early_fusion_alpha_for_logging(),
+                namespace="train",
+            )
+            self.record_metric(
+                "early fusion alpha log",
+                self._early_fusion_alpha_log_for_logging(),
+                namespace="train",
+            )
 
         # And additional metrics.
         for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
@@ -851,6 +980,13 @@ class TransformerTrainModule(TrainModule):
             )
             return output._replace(logits=biased_logits, ce_loss=biased_ce_loss)
 
+        if self.early_fusion_ngram:
+            ngram_token_ids, ngram_log_probs = self._lookup_early_fusion_eval_ngram(
+                input_ids=input_ids,
+            )
+            model_kwargs["early_fusion_ngram_token_ids"] = ngram_token_ids
+            model_kwargs["early_fusion_ngram_log_probs"] = ngram_log_probs
+
         with self._eval_batch_context():
             output = self.model_forward(
                 input_ids,
@@ -884,6 +1020,47 @@ class TransformerTrainModule(TrainModule):
                 output_log_probs=True,
             )
         return self._poe_eval_ngram_source
+
+    def _get_early_fusion_eval_ngram_source(self):
+        """Lazy-instantiate the ngram source for eval-time early fusion."""
+        if self._early_fusion_eval_ngram_source is None:
+            assert self.early_fusion_ngram_table_dir is not None
+            from olmo_core.data.ngram_topk import NgramTopKSource
+
+            self._early_fusion_eval_ngram_source = NgramTopKSource(
+                table_dir=self.early_fusion_ngram_table_dir,
+                K=self.early_fusion_ngram_K,
+                N_max=self.early_fusion_ngram_N_max,
+                output_log_probs=True,
+            )
+        return self._early_fusion_eval_ngram_source
+
+    def _lookup_early_fusion_eval_ngram(
+        self,
+        *,
+        input_ids: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Look up per-position top-k fields for eval-time early fusion."""
+        prefix_len = self.early_fusion_ngram_N_max - 1
+        K = self.early_fusion_ngram_K
+        B, S = input_ids.shape
+        cpu_input_ids = input_ids.detach().to("cpu").numpy()
+        contexts = []
+        for b in range(B):
+            row = cpu_input_ids[b]
+            for s in range(S):
+                start = max(0, s + 1 - prefix_len)
+                contexts.append(tuple(int(t) for t in row[start : s + 1]))
+
+        ngram_source = self._get_early_fusion_eval_ngram_source()
+        ids_np, log_probs_np = ngram_source.lookup_batch(contexts)
+        ngram_token_ids = torch.as_tensor(
+            ids_np.reshape(B, S, K), dtype=torch.long, device=input_ids.device
+        )
+        ngram_log_probs = torch.as_tensor(
+            log_probs_np.reshape(B, S, K), dtype=torch.float32, device=input_ids.device
+        )
+        return ngram_token_ids, ngram_log_probs
 
     def _apply_poe_eval_bias(
         self,
@@ -1044,6 +1221,25 @@ class TransformerTrainModule(TrainModule):
                 # still move a parameter with a zero grad via momentum state;
                 # None makes the optimizer skip the learned lambda parameter.
                 lambda_log.grad = None
+        if self.early_fusion_ngram:
+            alpha_log = self._early_fusion_alpha_log_param()
+            alpha_log_grad = alpha_log.grad
+            self.trainer.record_metric(
+                "early fusion alpha log grad",
+                (
+                    torch.zeros((), device=alpha_log.device, dtype=alpha_log.dtype)
+                    if alpha_log_grad is None
+                    else self._scalar_metric_tensor(alpha_log_grad)
+                ),
+                reduce_type=None,
+                namespace="optim",
+            )
+            self.trainer.record_metric(
+                "early fusion alpha grad is none",
+                float(alpha_log_grad is None),
+                reduce_type=None,
+                namespace="optim",
+            )
 
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
@@ -1063,6 +1259,19 @@ class TransformerTrainModule(TrainModule):
                         torch.zeros((), device=lambda_log.device, dtype=lambda_log.dtype)
                         if lambda_log_grad is None
                         else self._scalar_metric_tensor(lambda_log_grad)
+                    ),
+                    reduce_type=None,
+                    namespace="optim",
+                )
+            if self.early_fusion_ngram:
+                alpha_log = self._early_fusion_alpha_log_param()
+                alpha_log_grad = alpha_log.grad
+                self.trainer.record_metric(
+                    "early fusion alpha log grad clipped",
+                    (
+                        torch.zeros((), device=alpha_log.device, dtype=alpha_log.dtype)
+                        if alpha_log_grad is None
+                        else self._scalar_metric_tensor(alpha_log_grad)
                     ),
                     reduce_type=None,
                     namespace="optim",

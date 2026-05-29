@@ -16,6 +16,7 @@ from typing import (
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
@@ -605,6 +606,8 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        early_fusion_ngram_token_ids = kwargs.pop("early_fusion_ngram_token_ids", None)
+        early_fusion_ngram_log_probs = kwargs.pop("early_fusion_ngram_log_probs", None)
         (
             input_ids,
             labels,
@@ -628,6 +631,15 @@ class Transformer(nn.Module):
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
         if self.embeddings is not None and self.embed_scale is not None:
             h = h * self.embed_scale
+        if (
+            early_fusion_ngram_token_ids is not None
+            and early_fusion_ngram_log_probs is not None
+        ):
+            h = h + self._compute_early_fusion_ngram_embedding(
+                early_fusion_ngram_token_ids.to(h.device, non_blocking=True),
+                early_fusion_ngram_log_probs.to(h.device, non_blocking=True),
+                dtype=h.dtype,
+            )
         if self.embedding_norm is not None:
             h = self.embedding_norm(h)
 
@@ -653,6 +665,34 @@ class Transformer(nn.Module):
             return self.lm_head(h, **lm_head_kwargs)
         else:
             return h
+
+    def _compute_early_fusion_ngram_embedding(
+        self,
+        ngram_token_ids: torch.Tensor,
+        ngram_log_probs: torch.Tensor,
+        *,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Build the raw-probability weighted unembedding prior for early fusion."""
+        if self.lm_head is None:
+            raise OLMoConfigurationError("early ngram fusion requires an LM head")
+        alpha_log = getattr(self.lm_head, "early_fusion_alpha_log", None)
+        if alpha_log is None:
+            raise OLMoConfigurationError(
+                "early ngram fusion requires lm_head.early_fusion_alpha_log"
+            )
+
+        w_out = self.lm_head.w_out.weight
+        token_vectors = F.embedding(ngram_token_ids, w_out)
+        finite_mask = torch.isfinite(ngram_log_probs)
+        weights = torch.where(
+            finite_mask,
+            torch.exp(ngram_log_probs.float()),
+            torch.zeros_like(ngram_log_probs, dtype=torch.float32),
+        ).to(dtype=token_vectors.dtype)
+        prior = (token_vectors * weights.unsqueeze(-1)).sum(dim=-2)
+        alpha = torch.exp(alpha_log).to(device=prior.device, dtype=prior.dtype)
+        return (alpha.view(1, 1, 1) * prior).to(dtype=dtype)
 
     def apply_fp8(self, float8_config: Float8Config):
         """
@@ -918,7 +958,13 @@ class Transformer(nn.Module):
         if wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks:
             if self.embedding_norm is not None:
                 fully_shard(self.embedding_norm, **fsdp_config)
-            if self.lm_head is not None:
+            # Early fusion reads lm_head.w_out.weight at the embedding
+            # boundary, before lm_head.forward() would unshard a separately
+            # wrapped LM head. Let the root wrapper own it in that mode.
+            if (
+                self.lm_head is not None
+                and not hasattr(self.lm_head, "early_fusion_alpha_log")
+            ):
                 fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)
