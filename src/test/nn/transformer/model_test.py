@@ -57,6 +57,9 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.testing.utils import FLA_MARKS, has_fla
+from olmo_core.train.train_module.transformer.config import (
+    TransformerPipelineParallelConfig,
+)
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
@@ -720,6 +723,15 @@ def test_tied_word_embeddings_share_weight_after_init():
 def test_normalized_transformer_rejects_tied_word_embeddings():
     with pytest.raises(OLMoConfigurationError):
         TransformerConfig.ngpt_271M(vocab_size=128, n_layers=2, tie_word_embeddings=True)
+
+
+def test_pipeline_parallel_rejects_tied_word_embeddings():
+    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2)
+    model = config.build(init_device="cpu")
+    pp_config = TransformerPipelineParallelConfig(degree=1, split_points=[1])
+
+    with pytest.raises(NotImplementedError, match="tied word embeddings"):
+        pp_config.split_model(model, pp_mesh=None, device=torch.device("cpu"))
 
 
 def run_tensor_parallel_tied_word_embeddings():

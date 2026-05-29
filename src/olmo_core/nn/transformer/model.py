@@ -310,9 +310,7 @@ class Transformer(nn.Module):
             )
 
         # Re-establish weight tying since `to_empty` above allocates fresh storage.
-        # Pipeline-parallel stages may lack one of the tied modules, in which case there is
-        # nothing to re-tie on this stage.
-        if self.tie_word_embeddings and self.embeddings is not None and self.lm_head is not None:
+        if self.tie_word_embeddings:
             self._tie_weights()
 
         for block in self.blocks.values():
