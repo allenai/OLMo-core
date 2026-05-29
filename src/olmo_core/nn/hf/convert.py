@@ -473,6 +473,9 @@ def convert_state_from_hf(
     if model_type == "gemma3_text":
         converted_state = _apply_gemma3_norm_transform(converted_state)
 
+    if config.tie_word_embeddings:
+        converted_state["lm_head.w_out.weight"] = converted_state["embeddings.weight"]
+
     return converted_state
 
 
@@ -537,12 +540,11 @@ def convert_state_to_hf(
         :class:`DTensor` or :class:`ShardedTensor`
     """
 
-    model_type = getattr(config, "model_type", None)
-    converter = _get_converter_to_hf(model_type)
+    converter = _get_converter_to_hf(config.model_type)
 
     converted_state = _convert_state(config, olmo_core_state, converter)
 
-    if model_type == "gemma3_text":
+    if config.model_type == "gemma3_text":
         converted_state = _apply_gemma3_norm_inverse_transform(converted_state)
 
     return converted_state

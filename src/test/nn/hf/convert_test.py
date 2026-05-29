@@ -118,6 +118,32 @@ def test_convert_state_from_hf_and_flatten():
         )
 
 
+def test_convert_state_from_hf_ties_word_embeddings():
+    hf_config = AutoConfig.for_model(
+        "qwen3",
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+        tie_word_embeddings=True,
+    )
+
+    # A tied HF checkpoint omits `lm_head.weight`.
+    hf_state = {
+        "model.embed_tokens.weight": torch.randn(hf_config.vocab_size, hf_config.hidden_size)
+    }
+
+    converted_state = convert_state_from_hf(hf_config, hf_state, model_type="qwen3")
+
+    assert "lm_head.w_out.weight" in converted_state
+    torch.testing.assert_close(
+        converted_state["lm_head.w_out.weight"], converted_state["embeddings.weight"]
+    )
+
+
 def test_convert_state_to_hf():
     hf_config = _get_olmo2_config()
 
@@ -228,35 +254,6 @@ def test_convert_state_to_flex_olmo_hf():
         )
 
 
-def _roundtrip_norm_keys(model_id, model_type, norm_suffixes, forbidden=()):
-    hf_config = AutoConfig.from_pretrained(model_id)
-    hf_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32)
-    hf_state = {k: v.detach().cpu() for k, v in hf_model.state_dict().items()}
-    del hf_model
-
-    oc_state = convert_state_from_hf(hf_config, hf_state, model_type=model_type)
-    hf_roundtrip = convert_state_to_hf(hf_config, oc_state)
-
-    for i in range(hf_config.num_hidden_layers):
-        for suffix in norm_suffixes:
-            key = f"model.layers.{i}.{suffix}"
-            assert key in hf_roundtrip, f"missing {key} in round-tripped state"
-            torch.testing.assert_close(hf_roundtrip[key], hf_state[key])
-        for suffix in forbidden:
-            assert (
-                f"model.layers.{i}.{suffix}" not in hf_roundtrip
-            ), f"unexpected key model.layers.{i}.{suffix}"
-
-
-def test_qwen3_0_6b_roundtrip_pre_norm():
-    _roundtrip_norm_keys(
-        "Qwen/Qwen3-0.6B",
-        model_type="qwen3",
-        norm_suffixes=("input_layernorm.weight", "post_attention_layernorm.weight"),
-        forbidden=("post_feedforward_layernorm.weight",),
-    )
-
-
 def test_llama_tiny_roundtrip_pre_norm():
     hf_config = AutoConfig.for_model(
         "llama",
@@ -287,20 +284,14 @@ def test_llama_tiny_roundtrip_pre_norm():
         assert f"model.layers.{i}.post_feedforward_layernorm.weight" not in hf_roundtrip
 
 
-def test_gemma3_270m_roundtrip_pre_norm():
-    _roundtrip_norm_keys(
-        "google/gemma-3-270m",
-        model_type="gemma3_text",
-        norm_suffixes=(
-            "input_layernorm.weight",
-            "post_attention_layernorm.weight",
-            "pre_feedforward_layernorm.weight",
-            "post_feedforward_layernorm.weight",
-        ),
-    )
-
-
-def _assert_logprobs_match_after_roundtrip(model_id: str, model_type: str):
+@pytest.mark.parametrize(
+    "model_id, model_type",
+    [
+        pytest.param("Qwen/Qwen3-0.6B", "qwen3", id="qwen3"),
+        pytest.param("google/gemma-3-270m", "gemma3_text", id="gemma3"),
+    ],
+)
+def test_logprobs_match_after_roundtrip(model_id: str, model_type: str):
     hf_config = AutoConfig.from_pretrained(model_id)
     hf_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32)
     hf_model.eval()
@@ -323,11 +314,3 @@ def _assert_logprobs_match_after_roundtrip(model_id: str, model_type: str):
     rt_logprobs = torch.log_softmax(rt_logits, dim=-1)
 
     torch.testing.assert_close(rt_logprobs, ref_logprobs, rtol=1e-5, atol=1e-5)
-
-
-def test_qwen3_0_6b_logprobs_roundtrip():
-    _assert_logprobs_match_after_roundtrip("Qwen/Qwen3-0.6B", model_type="qwen3")
-
-
-def test_gemma3_270m_logprobs_roundtrip():
-    _assert_logprobs_match_after_roundtrip("google/gemma-3-270m", model_type="gemma3_text")
