@@ -195,8 +195,8 @@ def parse_args(
             default=None,
             help=(
                 "Size of /dev/shm in the container, e.g. '32GiB'. The default "
-                "of 10GiB isn't enough when the soft-target wrapper mirrors "
-                "ngram tables into tmpfs at startup. Pass through to "
+                "of 10GiB may not be enough when the ngram wrapper mirrors "
+                "large top-k tables into tmpfs at startup. Pass through to "
                 "BeakerLaunchConfig.shared_memory."
             ),
         )

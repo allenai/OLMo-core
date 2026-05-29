@@ -313,45 +313,22 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
 
     z_loss_multiplier: Optional[float] = None
 
-    # Ngram soft-target auxiliary loss. When ``soft_ce_alpha_start`` is set and the
-    # batch carries ``soft_target_token_ids`` + ``soft_target_probs`` (emitted by
-    # :class:`~olmo_core.data.composable.NgramSoftTargetInstanceSource`), the total
-    # training loss becomes
-    #
-    #     total = (1 - alpha(t)) * hard_CE + alpha(t) * soft_CE + z_loss
-    #
-    # where alpha(t) decays linearly from ``soft_ce_alpha_start`` at step 0 to 0
-    # at step ``soft_ce_alpha_ramp_fraction * max_steps``, then holds at 0 for
-    # the remainder of training (i.e. late training is pure hard CE).
-    # Requires the LM head's loss_implementation = default (the fused-linear
-    # kernel doesn't materialize logits, which soft CE needs). TP / CP are
-    # currently not supported together with soft CE.
-    soft_ce_alpha_start: Optional[float] = None
-    soft_ce_alpha_ramp_fraction: float = 0.5
-    # How to extend the truncated top-K ngram into a target distribution:
-    #   "renormalize"      - top-K probs sum to 1, non-top-K target = 0
-    #   "uniform_residual" - top-K = raw KN probs, non-top-K = uniform spread
-    #                        of (1 - sum_topK p_ngram), so target is a proper
-    #                        full-vocab distribution
-    soft_ce_truncation: str = "renormalize"
-
     # Ngram product-of-experts logit bias. When ``poe_lambda`` is set and the
-    # batch carries ``soft_target_token_ids`` + ``soft_target_log_probs``
-    # (emitted by NgramSoftTargetInstanceSource with output_log_probs=True),
+    # batch carries ``ngram_token_ids`` + ``ngram_log_probs`` emitted by
+    # NgramTopKInstanceSource,
     # the training loss becomes the cross-entropy of the joint distribution
     #
     #     log p_final(w|h) = log p_lm(w|h) + λ · log p_ngram(w|h) − log Z(h)
     #
     # at the hard label. The ngram contributes at the K candidate positions
     # for each context; non-top-K positions get no bias. λ is a constant
-    # mixing weight (no schedule). Mutually exclusive with
-    # ``soft_ce_alpha_start``. Requires LMHead loss_implementation='default'
-    # so logits can be materialized; not yet compatible with TP / CP.
+    # mixing weight. Requires LMHead loss_implementation='default' so logits
+    # can be materialized; not yet compatible with TP / CP.
     #
     # ``poe_ngram_table_dir`` / ``poe_ngram_K`` / ``poe_ngram_N_max`` are used
     # at eval time to apply the same bias when the in-loop evaluators run
     # forward — eval batches don't go through the InstanceSource wrapper, so
-    # the train module instantiates its own NgramTableSoftTargetSource and
+    # the train module instantiates its own NgramTopKSource and
     # computes per-position contexts on the fly. Required when poe_lambda
     # is set; otherwise the bare-model eval would not match the deployed
     # PoE inference distribution.
@@ -370,45 +347,6 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     poe_ngram_table_dir: Optional[str] = None
     poe_ngram_K: int = 16
     poe_ngram_N_max: int = 5
-
-    # Stupid-backoff variant of the PoE bias. When ``poe_sb_table_dir`` is
-    # set (mutually exclusive with ``poe_ngram_table_dir``), the train step
-    # consumes per-position ragged overrides emitted by
-    # :class:`olmo_core.data.composable.NgramStupidBackoffInstanceSource`
-    # (``sb_override_*`` keys on the batch) and adds the SB bias on top of
-    # LM logits via :func:`olmo_core.data.sb_bias.apply_sb_bias_inplace`:
-    # a length-V unigram floor broadcast-added everywhere, plus sparse
-    # per-position scatter overrides for higher-order observed (h_k, w).
-    # ``poe_lambda`` is shared with the KN-smoothed path.
-    #
-    # ``poe_sb_dolma2_vocab_size`` defaults to dolma2's padded model vocab
-    # size, not the raw tokenizer vocab size. The SB reader needs to know the
-    # model-logit V to size its unigram floor independently of the smaller
-    # kenlm vocab size encoded in the index.
-    poe_sb_table_dir: Optional[str] = None
-    poe_sb_alpha: float = 0.4
-    poe_sb_N_max: int = 5
-    poe_sb_dolma2_vocab_size: int = 100352
-    poe_sb_max_order2_continuations: Optional[int] = None
-    poe_sb_max_order_continuations: Optional[Dict[int, int]] = None
-    poe_sb_min_order_counts: Optional[Dict[int, int]] = None
-    poe_sb_index_access: str = "mmap"
-    poe_sb_mirror_to_shm: bool = True
-    poe_sb_lookup_threads: int = 1
-    poe_sb_eval_lookup_threads: Optional[int] = None
-    # Optional KN-top-K-style SB mode. When set, SB overrides are sparse
-    # relative logit deltas from the highest matching row's top-K
-    # continuations against a uniform residual, so no dense unigram floor is
-    # added.
-    poe_sb_topk_uniform_residual_k: Optional[int] = None
-    # Optional true recursive-SB top-K mode. When set, SB overrides are sparse
-    # relative logit deltas after recursive backoff over the pruned index,
-    # again against a uniform residual with no dense unigram floor.
-    poe_sb_recursive_topk_uniform_residual_k: Optional[int] = None
-    # Same recursive top-K mode, named for the normalized log-prob expert
-    # interpretation. The emitted deltas are equivalent because the SB
-    # normalizer cancels in the final PoE softmax.
-    poe_sb_recursive_topk_uniform_residual_logprob_k: Optional[int] = None
 
     # Checkpoint settings.
 

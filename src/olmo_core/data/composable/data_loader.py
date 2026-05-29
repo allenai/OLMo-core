@@ -492,35 +492,16 @@ class ComposableDataLoader(TextDataLoaderBase):
                 if (vis_limit := instance.get("vis_limit")) is not None:
                     out["vis_limit"] = as_tensor(vis_limit)
 
-                # Soft-target fields from NgramSoftTargetInstanceSource. Pass
-                # through preserving dtype — these are float probabilities or
-                # log-probabilities, NOT integer indices. We use ``torch.as_tensor``
+                # KN top-k fields from NgramTopKInstanceSource. Pass through
+                # preserving dtype. We use ``torch.as_tensor``
                 # directly because this module's local ``as_tensor`` (composable
                 # .utils.as_tensor) is hard-wired to cast non-bool numpy arrays
-                # via ``astype(np.int_)``, which silently truncates [0,1] floats
-                # and any negative log-probs to 0 / sign-confused integers.
-                # Two mutually-exclusive value fields, one per arm:
-                #   soft_target_probs:     linear probs summing to 1 over K
-                #                          (soft-cross-entropy arm).
-                #   soft_target_log_probs: raw natural-log kenlm log-probabilities
-                #                          (product-of-experts arm).
-                if (s_ids := instance.get("soft_target_token_ids")) is not None:
-                    out["soft_target_token_ids"] = torch.as_tensor(s_ids)
-                if (s_probs := instance.get("soft_target_probs")) is not None:
-                    out["soft_target_probs"] = torch.as_tensor(s_probs)
-                if (s_log_probs := instance.get("soft_target_log_probs")) is not None:
-                    out["soft_target_log_probs"] = torch.as_tensor(s_log_probs)
-
-                # Ragged stupid-backoff override fields. These must reach the
-                # collator so it can concatenate them across the batch and add
-                # the parallel sb_override_batch_idx vector used by the train
-                # step scatter.
-                if (sb_pos := instance.get("sb_override_position")) is not None:
-                    out["sb_override_position"] = torch.as_tensor(sb_pos)
-                if (sb_tok := instance.get("sb_override_token_id")) is not None:
-                    out["sb_override_token_id"] = torch.as_tensor(sb_tok)
-                if (sb_score := instance.get("sb_override_log_score")) is not None:
-                    out["sb_override_log_score"] = torch.as_tensor(sb_score)
+                # via ``astype(np.int_)``, which silently truncates negative
+                # log-probs to sign-confused integers.
+                if (s_ids := instance.get("ngram_token_ids")) is not None:
+                    out["ngram_token_ids"] = torch.as_tensor(s_ids)
+                if (s_log_probs := instance.get("ngram_log_probs")) is not None:
+                    out["ngram_log_probs"] = torch.as_tensor(s_log_probs)
 
                 if self.generate_doc_lengths:
                     out["doc_lens"] = get_document_lengths(

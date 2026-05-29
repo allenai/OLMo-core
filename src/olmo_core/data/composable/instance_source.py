@@ -36,16 +36,10 @@ class Instance(TypedDict):
     """Optional per-token position IDs for custom RoPE positions."""
     vis_limit: NotRequired[Sequence[int]]
     """Optional per-key exclusive upper bound on visible query positions for tree-structured attention."""
-    soft_target_token_ids: NotRequired[Sequence[Sequence[int]]]
-    """Optional per-position top-K soft-target token IDs of shape ``(S, K)``."""
-    soft_target_probs: NotRequired[Sequence[Sequence[float]]]
-    """Optional per-position top-K soft-target probabilities of shape ``(S, K)``, summing to 1 along the K axis."""
-    sb_override_position: NotRequired[Sequence[int]]
-    """Optional stupid-backoff override positions for sparse PoE bias."""
-    sb_override_token_id: NotRequired[Sequence[int]]
-    """Optional stupid-backoff override token IDs for sparse PoE bias."""
-    sb_override_log_score: NotRequired[Sequence[float]]
-    """Optional stupid-backoff override log scores for sparse PoE bias."""
+    ngram_token_ids: NotRequired[Sequence[Sequence[int]]]
+    """Optional per-position top-K ngram token IDs of shape ``(S, K)``."""
+    ngram_log_probs: NotRequired[Sequence[Sequence[float]]]
+    """Optional per-position top-K ngram log probabilities of shape ``(S, K)``."""
 
 
 class InstanceSource(SourceABC):

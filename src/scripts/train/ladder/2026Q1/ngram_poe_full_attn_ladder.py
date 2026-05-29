@@ -3,9 +3,9 @@ Full-attention ladder with n-gram product-of-experts (PoE) logit bias.
 
 Data pipeline mirrors ``baseline_full_attn_ladder.py`` (same six Dolma2 source
 paths, same tokenizer, same ConcatAndChunk chunking). The data wrapper is
-``NgramSoftTargetInstanceSource`` with ``output_log_probs=True`` so per-position
-top-K log-probabilities are passed through the batch, ready to be added to
-the LM's log-probabilities at the K candidate positions.
+``NgramTopKInstanceSource`` so per-position top-k log-probabilities are
+passed through the batch, ready to be added to the LM's log-probabilities at
+the K candidate positions.
 
 Train-time loss:
 
@@ -75,8 +75,8 @@ DEFAULT_NGRAM_TABLE_DIR = (
 )
 
 # Top-K size and max ngram order. Must match the precomputed file.
-DEFAULT_SOFT_TARGET_K = 16
-DEFAULT_SOFT_TARGET_N_MAX = 5
+DEFAULT_NGRAM_K = 16
+DEFAULT_NGRAM_N_MAX = 5
 
 # Constant ngram mixing weight. λ=1.0 is "full PoE." Tunable via
 # ``--poe-lambda`` for sweeps.
@@ -85,12 +85,12 @@ DEFAULT_POE_LAMBDA = 1.0
 
 @dataclasses.dataclass(kw_only=True)
 class _WSDSChinchillaSmoke(WSDSChinchillaRunConfigurator):
-    """Smoke variant of WSDS Chinchilla. Mirrors the one in the soft-target
-    ladder. Three changes vs production: (a) relaxes the chinchilla_multiple
-    >= 0.5 floor and the power-of-2 check; (b) single anneal at the
-    requested multiple instead of one per power of 2 from 2^-1; (c) tiny
-    fixed batch size + minimal warmup so a 1-GPU smoke runs in minutes
-    rather than hours.
+    """Smoke variant of WSDS Chinchilla.
+
+    Three changes vs production: (a) relaxes the chinchilla_multiple >= 0.5
+    floor and the power-of-2 check; (b) single anneal at the requested
+    multiple instead of one per power of 2 from 2^-1; (c) tiny fixed batch
+    size + minimal warmup so a 1-GPU smoke runs in minutes rather than hours.
     """
 
     def __post_init__(self):
@@ -128,8 +128,8 @@ class NgramPoEConfigurator(Olmo3ModelConfigurator):
     poe_lambda_lr: float | None = None
     poe_lambda_decay_to_zero_windows: list[tuple[int, int]] | None = None
     ngram_table_dir: str = DEFAULT_NGRAM_TABLE_DIR
-    soft_target_k: int = DEFAULT_SOFT_TARGET_K
-    soft_target_n_max: int = DEFAULT_SOFT_TARGET_N_MAX
+    ngram_k: int = DEFAULT_NGRAM_K
+    ngram_n_max: int = DEFAULT_NGRAM_N_MAX
     smoke_1gpu: bool = False
 
     def configure_minimal_device_mesh_spec(
@@ -182,8 +182,8 @@ class NgramPoEConfigurator(Olmo3ModelConfigurator):
             poe_lambda_lr=self.poe_lambda_lr,
             poe_lambda_decay_to_zero_windows=self.poe_lambda_decay_to_zero_windows,
             poe_ngram_table_dir=self.ngram_table_dir,
-            poe_ngram_K=self.soft_target_k,
-            poe_ngram_N_max=self.soft_target_n_max,
+            poe_ngram_K=self.ngram_k,
+            poe_ngram_N_max=self.ngram_n_max,
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -222,15 +222,11 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ],
         sequence_length=args.sequence_length,
     )
-    wrapped_source = NgramSoftTargetInstanceSourceConfig(  # noqa: F405
+    wrapped_source = NgramTopKInstanceSourceConfig(  # noqa: F405
         source=base_source,
         table_dir=getattr(args, "ngram_table_dir", DEFAULT_NGRAM_TABLE_DIR),
-        K=getattr(args, "soft_target_k", DEFAULT_SOFT_TARGET_K),
-        N_max=getattr(args, "soft_target_n_max", DEFAULT_SOFT_TARGET_N_MAX),
-        # PoE wants raw natural-log kenlm log-probs, not renormalized-over-K
-        # linear probs. The downstream train_module's PoE branch reads these
-        # under the ``soft_target_log_probs`` key.
-        output_log_probs=True,
+        K=getattr(args, "ngram_k", DEFAULT_NGRAM_K),
+        N_max=getattr(args, "ngram_n_max", DEFAULT_NGRAM_N_MAX),
     )
 
     instance_sources: list[InstanceSourceConfig] = [wrapped_source]  # noqa: F405
@@ -259,8 +255,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 args, "poe_lambda_decay_to_zero_window", None
             ),
             ngram_table_dir=getattr(args, "ngram_table_dir", DEFAULT_NGRAM_TABLE_DIR),
-            soft_target_k=getattr(args, "soft_target_k", DEFAULT_SOFT_TARGET_K),
-            soft_target_n_max=getattr(args, "soft_target_n_max", DEFAULT_SOFT_TARGET_N_MAX),
+            ngram_k=getattr(args, "ngram_k", DEFAULT_NGRAM_K),
+            ngram_n_max=getattr(args, "ngram_n_max", DEFAULT_NGRAM_N_MAX),
             smoke_1gpu=smoke_1gpu,
         ),
         run_configurator=(
@@ -333,9 +329,9 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--soft-target-k",
+        "--ngram-k",
         type=int,
-        default=DEFAULT_SOFT_TARGET_K,
+        default=DEFAULT_NGRAM_K,
         help="Top-K size for the ngram log-prob bias.",
     )
     parser.add_argument(
@@ -343,11 +339,10 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help=(
             "Run on a single GPU for fast end-to-end smoke testing. "
-            "Same semantics as the soft-target ladder's flag — overrides "
-            "the configurator's 8-GPU minimum, forces max_devices=1, "
-            "and swaps in a smoke run-configurator that allows tiny "
-            "chinchilla_multiple values with minimal warmup so a smoke "
-            "completes in minutes. Pair with --chinchilla-multiple ~0.001."
+            "Overrides the configurator's 8-GPU minimum, forces "
+            "max_devices=1, and swaps in a smoke run-configurator that "
+            "allows tiny chinchilla_multiple values with minimal warmup. "
+            "Pair with --chinchilla-multiple ~0.001."
         ),
     )
 

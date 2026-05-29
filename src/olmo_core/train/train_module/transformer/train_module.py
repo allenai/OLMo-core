@@ -1,8 +1,6 @@
 import contextlib
 import logging
 import math
-import os
-import time
 from dataclasses import replace
 from functools import cached_property, lru_cache
 from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Union
@@ -11,7 +9,6 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.fsdp import FSDPModule
@@ -118,9 +115,6 @@ class TransformerTrainModule(TrainModule):
         ep_config: Optional[TransformerExpertParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         z_loss_multiplier: Optional[float] = None,
-        soft_ce_alpha_start: Optional[float] = None,
-        soft_ce_alpha_ramp_fraction: float = 0.5,
-        soft_ce_truncation: str = "renormalize",
         poe_lambda: Optional[float] = None,
         poe_lambda_learnable: bool = False,
         poe_lambda_lr: Optional[float] = None,
@@ -128,20 +122,6 @@ class TransformerTrainModule(TrainModule):
         poe_ngram_table_dir: Optional[str] = None,
         poe_ngram_K: int = 16,
         poe_ngram_N_max: int = 5,
-        poe_sb_table_dir: Optional[str] = None,
-        poe_sb_alpha: float = 0.4,
-        poe_sb_N_max: int = 5,
-        poe_sb_dolma2_vocab_size: int = 100352,
-        poe_sb_max_order2_continuations: Optional[int] = None,
-        poe_sb_max_order_continuations: Optional[Dict[int, int]] = None,
-        poe_sb_min_order_counts: Optional[Dict[int, int]] = None,
-        poe_sb_index_access: str = "mmap",
-        poe_sb_mirror_to_shm: bool = True,
-        poe_sb_lookup_threads: int = 1,
-        poe_sb_eval_lookup_threads: Optional[int] = None,
-        poe_sb_topk_uniform_residual_k: Optional[int] = None,
-        poe_sb_recursive_topk_uniform_residual_k: Optional[int] = None,
-        poe_sb_recursive_topk_uniform_residual_logprob_k: Optional[int] = None,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -240,38 +220,10 @@ class TransformerTrainModule(TrainModule):
         self._ep_config = ep_config
         self.label_ignore_index = label_ignore_index
         self.z_loss_multiplier = z_loss_multiplier
-        self.soft_ce_alpha_start = soft_ce_alpha_start
-        self.soft_ce_alpha_ramp_fraction = soft_ce_alpha_ramp_fraction
-        if soft_ce_truncation not in ("renormalize", "uniform_residual"):
-            raise OLMoConfigurationError(
-                f"soft_ce_truncation must be 'renormalize' or 'uniform_residual', "
-                f"got {soft_ce_truncation!r}"
-            )
-        self.soft_ce_truncation = soft_ce_truncation
         self.poe_lambda = poe_lambda
         self.poe_lambda_learnable = bool(poe_lambda_learnable)
         self.poe_lambda_lr = poe_lambda_lr
         self.poe_lambda_decay_to_zero_windows = poe_lambda_decay_to_zero_windows
-        if self.soft_ce_alpha_start is not None and self.poe_lambda is not None:
-            raise OLMoConfigurationError(
-                "soft_ce_alpha_start and poe_lambda are mutually exclusive — "
-                "they correspond to two different ways of injecting the ngram "
-                "signal (soft-cross-entropy auxiliary loss vs product-of-experts "
-                "logit bias). Pick one."
-            )
-        if self.soft_ce_alpha_start is not None:
-            if not (0.0 <= self.soft_ce_alpha_start <= 1.0):
-                raise OLMoConfigurationError(
-                    f"soft_ce_alpha_start must be in [0, 1], got {self.soft_ce_alpha_start}"
-                )
-            if not (0.0 < self.soft_ce_alpha_ramp_fraction <= 1.0):
-                raise OLMoConfigurationError(
-                    f"soft_ce_alpha_ramp_fraction must be in (0, 1], got {self.soft_ce_alpha_ramp_fraction}"
-                )
-            if tp_config is not None or cp_config is not None:
-                raise OLMoConfigurationError(
-                    "soft-CE auxiliary loss is not yet supported with TP or CP"
-                )
         if self.poe_lambda is not None:
             if self.poe_lambda <= 0:
                 raise OLMoConfigurationError(
@@ -281,16 +233,10 @@ class TransformerTrainModule(TrainModule):
                 raise OLMoConfigurationError(
                     "PoE training is not yet supported with TP or CP"
                 )
-            if poe_ngram_table_dir is None and poe_sb_table_dir is None:
+            if poe_ngram_table_dir is None:
                 raise OLMoConfigurationError(
-                    "poe_lambda requires either poe_ngram_table_dir (KN-smoothed) "
-                    "or poe_sb_table_dir (stupid-backoff) to be set so the eval "
-                    "path can apply the same ngram bias as the train path"
-                )
-            if poe_ngram_table_dir is not None and poe_sb_table_dir is not None:
-                raise OLMoConfigurationError(
-                    "poe_ngram_table_dir and poe_sb_table_dir are mutually exclusive "
-                    "— pick one of the two PoE ngram backends"
+                    "poe_lambda requires poe_ngram_table_dir so the eval path "
+                    "can apply the same KN top-k ngram bias as the train path"
                 )
         elif self.poe_lambda_learnable:
             raise OLMoConfigurationError("poe_lambda_learnable requires poe_lambda to be set")
@@ -298,22 +244,6 @@ class TransformerTrainModule(TrainModule):
             raise OLMoConfigurationError("poe_lambda_lr is only valid when poe_lambda_learnable=True")
         if self.poe_lambda_lr is not None and self.poe_lambda_lr <= 0:
             raise OLMoConfigurationError(f"poe_lambda_lr must be positive, got {self.poe_lambda_lr}")
-        if (
-            sum(
-                mode_k is not None
-                for mode_k in (
-                    poe_sb_topk_uniform_residual_k,
-                    poe_sb_recursive_topk_uniform_residual_k,
-                    poe_sb_recursive_topk_uniform_residual_logprob_k,
-                )
-            )
-            > 1
-        ):
-            raise OLMoConfigurationError(
-                "poe_sb_topk_uniform_residual_k, "
-                "poe_sb_recursive_topk_uniform_residual_k, and "
-                "poe_sb_recursive_topk_uniform_residual_logprob_k are mutually exclusive"
-            )
         if self.poe_lambda_decay_to_zero_windows:
             prev_end = -1
             for start, end in self.poe_lambda_decay_to_zero_windows:
@@ -330,36 +260,10 @@ class TransformerTrainModule(TrainModule):
         self.poe_ngram_table_dir = poe_ngram_table_dir
         self.poe_ngram_K = int(poe_ngram_K)
         self.poe_ngram_N_max = int(poe_ngram_N_max)
-        self.poe_sb_table_dir = poe_sb_table_dir
-        self.poe_sb_alpha = float(poe_sb_alpha)
-        self.poe_sb_N_max = int(poe_sb_N_max)
-        self.poe_sb_dolma2_vocab_size = int(poe_sb_dolma2_vocab_size)
-        self.poe_sb_max_order2_continuations = poe_sb_max_order2_continuations
-        self.poe_sb_max_order_continuations = poe_sb_max_order_continuations
-        self.poe_sb_min_order_counts = poe_sb_min_order_counts
-        self.poe_sb_index_access = poe_sb_index_access
-        self.poe_sb_mirror_to_shm = bool(poe_sb_mirror_to_shm)
-        self.poe_sb_lookup_threads = int(poe_sb_lookup_threads)
-        self.poe_sb_eval_lookup_threads = (
-            int(poe_sb_eval_lookup_threads)
-            if poe_sb_eval_lookup_threads is not None
-            else self.poe_sb_lookup_threads
-        )
-        self.poe_sb_topk_uniform_residual_k = poe_sb_topk_uniform_residual_k
-        self.poe_sb_recursive_topk_uniform_residual_k = (
-            poe_sb_recursive_topk_uniform_residual_k
-        )
-        self.poe_sb_recursive_topk_uniform_residual_logprob_k = (
-            poe_sb_recursive_topk_uniform_residual_logprob_k
-        )
         # Lazy: instantiated on first eval_batch call (per process), so we
         # don't open the mmap on the main coordinator rank that may never
         # actually run an eval.
         self._poe_eval_ngram_source = None
-        # SB-side lazy state: reader (CPU) + unigram_floor on the model device.
-        self._poe_sb_reader = None
-        self._poe_sb_unigram_floor_dev: Optional[torch.Tensor] = None
-        self._poe_sb_eval_bias_calls = 0
         self.rank_microbatch_size = rank_microbatch_size
         self.eval_rank_microbatch_size = eval_rank_microbatch_size or rank_microbatch_size
         self.max_sequence_length = max_sequence_length
@@ -663,55 +567,14 @@ class TransformerTrainModule(TrainModule):
         if self.z_loss_multiplier is not None:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
 
-        # Soft-CE auxiliary loss (ngram soft targets). Active only when the
-        # train module is configured for it AND the batch actually carries
-        # soft-target tensors (emitted by NgramSoftTargetInstanceSource).
-        # The required field depends on truncation mode:
-        #   - "renormalize"      → soft_target_probs (linear, sums to 1 over top-K)
-        #   - "uniform_residual" → soft_target_log_probs (raw KN log-probs;
-        #     the loss computes residual mass = 1 - Σ topK p at runtime).
-        soft_ce_target_field = (
-            "soft_target_probs" if self.soft_ce_truncation == "renormalize"
-            else "soft_target_log_probs"
-        )
-        soft_ce_active = (
-            self.soft_ce_alpha_start is not None
-            and soft_ce_target_field in batch
-            and "soft_target_token_ids" in batch
-        )
-        alpha: float = self._current_soft_ce_alpha() if soft_ce_active else 0.0
-        soft_ce_batch_loss: Optional[torch.Tensor] = None
-        if soft_ce_active:
-            soft_ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-
-        # Product-of-experts logit bias (ngram log-probs scattered onto LM
-        # log-probs). Active when the train module is configured with
-        # ``poe_lambda`` AND the batch carries ``soft_target_log_probs``
-        # (emitted by NgramSoftTargetInstanceSource with output_log_probs=True).
+        # Product-of-experts logit bias. Active when the train module is
+        # configured with ``poe_lambda`` and the batch carries KN top-k
+        # token IDs plus their full-vocabulary ngram log-probabilities.
         poe_active = (
             self.poe_lambda is not None
-            and "soft_target_log_probs" in batch
-            and "soft_target_token_ids" in batch
+            and "ngram_log_probs" in batch
+            and "ngram_token_ids" in batch
         )
-        # SB variant of the PoE bias. Activates when the batch carries the
-        # ragged sb_override_* fields (emitted by NgramStupidBackoffInstanceSource).
-        # Mutually exclusive with the KN-smoothed poe_active path — the
-        # init-time validator guarantees only one of poe_ngram_table_dir /
-        # poe_sb_table_dir can be set, but we still gate the train-step
-        # branch on which fields the batch actually carries.
-        poe_sb_active = (
-            self.poe_lambda is not None
-            and "sb_override_batch_idx" in batch
-        )
-        if (
-            self.poe_lambda is not None
-            and self.poe_sb_table_dir is not None
-            and not poe_sb_active
-        ):
-            raise RuntimeError(
-                "SB PoE training is configured but the batch has no sb_override_* fields. "
-                "This would silently train the baseline LM instead of the intended PoE model."
-            )
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -720,82 +583,23 @@ class TransformerTrainModule(TrainModule):
             )
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
-        if poe_sb_active:
-            sb_split_logs = getattr(self, "_sb_split_debug_logs", 0)
-            if sb_split_logs < 3:
-                total_overrides = int(batch["sb_override_batch_idx"].numel())
-                per_mb_overrides = [
-                    int(mb["sb_override_batch_idx"].numel()) for mb in micro_batches
-                ]
-                print(
-                    f"[SB train pid={os.getpid()} rank={dist.get_rank() if dist.is_initialized() else '?'}] "
-                    f"split batch_size={batch['input_ids'].shape[0]} "
-                    f"num_micro_batches={num_micro_batches} "
-                    f"total_overrides={total_overrides:,} "
-                    f"per_microbatch_overrides={per_mb_overrides[:8]}"
-                    f"{'...' if len(per_mb_overrides) > 8 else ''}",
-                    flush=True,
-                )
-                self._sb_split_debug_logs = sb_split_logs + 1
 
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
-                # Pop soft-target fields out of the micro-batch BEFORE
+                # Pop KN top-k fields out of the micro-batch before
                 # _prepare_batch, so they don't leak into model.forward(**kwargs).
                 # _prepare_batch only moves standard fields to device; we move
-                # the soft-target tensors here so the loss path's gather doesn't
-                # mix CPU indices with CUDA logits.
-                soft_target_token_ids = micro_batch.pop("soft_target_token_ids", None)
-                soft_target_probs = micro_batch.pop("soft_target_probs", None)
-                soft_target_log_probs = micro_batch.pop("soft_target_log_probs", None)
-                # Pop the SB ragged-override tensors too; same reason — don't
-                # leak them into model.forward(**kwargs).
-                sb_override_batch_idx = micro_batch.pop("sb_override_batch_idx", None)
-                sb_override_position = micro_batch.pop("sb_override_position", None)
-                sb_override_token_id = micro_batch.pop("sb_override_token_id", None)
-                sb_override_log_score = micro_batch.pop("sb_override_log_score", None)
-                sb_train_log = (
-                    poe_sb_active
-                    and getattr(self, "_sb_train_debug_logs", 0) < 6
-                )
-                t_sb_transfer = time.perf_counter() if sb_train_log else None
-                if sb_override_batch_idx is not None:
-                    sb_override_batch_idx = sb_override_batch_idx.to(
+                # these tensors here so the loss path's gather doesn't mix CPU
+                # indices with CUDA logits.
+                ngram_token_ids = micro_batch.pop("ngram_token_ids", None)
+                ngram_log_probs = micro_batch.pop("ngram_log_probs", None)
+                if ngram_token_ids is not None:
+                    ngram_token_ids = ngram_token_ids.to(
                         self.device, non_blocking=True
                     )
-                    sb_override_position = sb_override_position.to(
-                        self.device, non_blocking=True
-                    )
-                    sb_override_token_id = sb_override_token_id.to(
-                        self.device, non_blocking=True
-                    )
-                    sb_override_log_score = sb_override_log_score.to(
-                        self.device, non_blocking=True
-                    )
-                if sb_train_log and t_sb_transfer is not None:
-                    n_overrides = (
-                        int(sb_override_batch_idx.numel())
-                        if sb_override_batch_idx is not None
-                        else 0
-                    )
-                    print(
-                        f"[SB train pid={os.getpid()} rank={dist.get_rank() if dist.is_initialized() else '?'}] "
-                        f"microbatch={micro_batch_idx + 1}/{num_micro_batches} "
-                        f"override_transfer_dispatched={time.perf_counter() - t_sb_transfer:.4f}s "
-                        f"overrides={n_overrides:,}",
-                        flush=True,
-                    )
-                if soft_target_token_ids is not None:
-                    soft_target_token_ids = soft_target_token_ids.to(
-                        self.device, non_blocking=True
-                    )
-                if soft_target_probs is not None:
-                    soft_target_probs = soft_target_probs.to(
-                        self.device, non_blocking=True
-                    )
-                if soft_target_log_probs is not None:
-                    soft_target_log_probs = soft_target_log_probs.to(
+                if ngram_log_probs is not None:
+                    ngram_log_probs = ngram_log_probs.to(
                         self.device, non_blocking=True
                     )
 
@@ -809,7 +613,7 @@ class TransformerTrainModule(TrainModule):
                 # we always combine through ``output.loss`` for the gradient
                 # path, and only consult ``output.ce_loss`` / ``output.z_loss``
                 # for recording metrics.
-                if poe_active and soft_target_log_probs is not None:
+                if poe_active and ngram_log_probs is not None:
                     # Product-of-experts path: at every position, compute the
                     # model's full-vocabulary log-probability distribution, add
                     # ``λ * log p_ngram`` at the K candidate positions, then
@@ -819,7 +623,7 @@ class TransformerTrainModule(TrainModule):
                     # the joint distribution
                     #     p_final(w|h) ∝ p_lm(w|h) * p_ngram(w|h)^λ
                     # at the hard label.
-                    assert soft_target_token_ids is not None
+                    assert ngram_token_ids is not None
                     assert self.poe_lambda is not None
                     output = self.model_forward(
                         input_ids,
@@ -840,8 +644,8 @@ class TransformerTrainModule(TrainModule):
 
                     poe_loss = self._compute_poe_loss(
                         logits=logits,
-                        soft_target_token_ids=soft_target_token_ids,
-                        soft_target_log_probs=soft_target_log_probs,
+                        ngram_token_ids=ngram_token_ids,
+                        ngram_log_probs=ngram_log_probs,
                         labels=labels,
                         loss_div_factor=batch_num_tokens_for_loss,
                     )
@@ -895,154 +699,6 @@ class TransformerTrainModule(TrainModule):
                         del z_loss_with_grad
                     if z_loss is not None:
                         del z_loss
-                elif poe_sb_active and sb_override_batch_idx is not None:
-                    # Stupid-backoff PoE path. Same structure as the
-                    # KN-smoothed branch above: materialize logits via
-                    # model_forward(..., return_logits=True), apply the SB
-                    # bias via _compute_poe_loss_sb (which uses a fresh
-                    # clone of the logits so the original tensor stays
-                    # intact for downstream readers like z_loss), then
-                    # recompute z_loss from the un-biased logits for the
-                    # regularizer term.
-                    assert self.poe_lambda is not None
-                    t_forward = time.perf_counter() if sb_train_log else None
-                    output = self.model_forward(
-                        input_ids,
-                        labels=labels,
-                        ignore_index=self.label_ignore_index,
-                        loss_reduction="sum",
-                        z_loss_multiplier=self.z_loss_multiplier,
-                        loss_div_factor=batch_num_tokens_for_loss,
-                        return_logits=True,
-                        **model_kwargs,
-                    )
-                    logits = output.logits
-                    z_loss = output.z_loss
-                    if sb_train_log and t_forward is not None:
-                        print(
-                            f"[SB train pid={os.getpid()} rank={dist.get_rank() if dist.is_initialized() else '?'}] "
-                            f"microbatch={micro_batch_idx + 1}/{num_micro_batches} "
-                            f"model_forward_dispatched={time.perf_counter() - t_forward:.4f}s",
-                            flush=True,
-                        )
-                    assert logits is not None, (
-                        "SB-PoE path requires LMHead loss_implementation='default' "
-                        "so full logits are returned"
-                    )
-                    t_loss = time.perf_counter() if sb_train_log else None
-                    poe_loss = self._compute_poe_loss_sb(
-                        logits=logits,
-                        sb_override_batch_idx=sb_override_batch_idx,
-                        sb_override_position=sb_override_position,
-                        sb_override_token_id=sb_override_token_id,
-                        sb_override_log_score=sb_override_log_score,
-                        labels=labels,
-                        loss_div_factor=batch_num_tokens_for_loss,
-                    )
-                    if sb_train_log and t_loss is not None:
-                        print(
-                            f"[SB train pid={os.getpid()} rank={dist.get_rank() if dist.is_initialized() else '?'}] "
-                            f"microbatch={micro_batch_idx + 1}/{num_micro_batches} "
-                            f"sb_loss_dispatched={time.perf_counter() - t_loss:.4f}s",
-                            flush=True,
-                        )
-                    if self.z_loss_multiplier is not None:
-                        logits_local_f32 = get_local_tensor(logits).float()
-                        z_log_sum_exp = torch.logsumexp(logits_local_f32, dim=-1)
-                        z_labels_dev = labels.to(
-                            z_log_sum_exp.device, non_blocking=True
-                        )
-                        z_mask = (z_labels_dev != self.label_ignore_index).to(
-                            z_log_sum_exp.dtype
-                        )
-                        z_loss_with_grad = (
-                            self.z_loss_multiplier
-                            * (z_log_sum_exp.pow(2) * z_mask).sum()
-                            / batch_num_tokens_for_loss
-                        )
-                        del logits_local_f32, z_log_sum_exp, z_mask
-                    else:
-                        z_loss_with_grad = None
-                    del logits
-                    combined_loss = poe_loss
-                    if z_loss_with_grad is not None:
-                        combined_loss = combined_loss + z_loss_with_grad
-                    ce_batch_loss += get_local_tensor(poe_loss.detach())
-                    if z_batch_loss is not None:
-                        assert z_loss is not None
-                        z_batch_loss += get_local_tensor(z_loss.detach())
-                    combined_loss.backward()
-                    del combined_loss, poe_loss
-                    if z_loss_with_grad is not None:
-                        del z_loss_with_grad
-                    if z_loss is not None:
-                        del z_loss
-                    if sb_train_log:
-                        self._sb_train_debug_logs = (
-                            getattr(self, "_sb_train_debug_logs", 0) + 1
-                        )
-                elif soft_ce_active and (
-                    (self.soft_ce_truncation == "renormalize" and soft_target_probs is not None)
-                    or (self.soft_ce_truncation == "uniform_residual" and soft_target_log_probs is not None)
-                ):
-                    # Soft-CE path: materialize logits so we can compute soft CE.
-                    assert soft_target_token_ids is not None
-                    output = self.model_forward(
-                        input_ids,
-                        labels=labels,
-                        ignore_index=self.label_ignore_index,
-                        loss_reduction="sum",
-                        z_loss_multiplier=self.z_loss_multiplier,
-                        loss_div_factor=batch_num_tokens_for_loss,
-                        return_logits=True,
-                        **model_kwargs,
-                    )
-                    logits = output.logits
-                    # ``output.loss`` carries gradient and equals ce_loss +
-                    # z_loss combined (when z_loss_multiplier is set).
-                    # ``output.ce_loss`` and ``output.z_loss`` are detached
-                    # — for metrics only.
-                    hard_loss_with_grad = output.loss
-                    hard_ce_loss_metric = output.ce_loss
-                    z_loss_metric = output.z_loss
-                    assert logits is not None, (
-                        "soft-CE path requires LMHead loss_implementation='default' "
-                        "so full logits are returned"
-                    )
-
-                    soft_ce_loss = self._compute_soft_ce_loss(
-                        logits=logits,
-                        soft_target_token_ids=soft_target_token_ids,
-                        soft_target_probs=soft_target_probs,
-                        soft_target_log_probs=soft_target_log_probs,
-                        labels=labels,
-                        loss_div_factor=batch_num_tokens_for_loss,
-                    )
-                    del logits
-
-                    # Backprop:
-                    #   (1 − α) · (hard_ce + z) + α · soft_ce
-                    # Slight z-loss discounting: at α > 0 the regularizer's
-                    # gradient is scaled by (1 − α) instead of being applied at
-                    # full strength, but z_loss is small (≈ 1e-3) and acts as
-                    # logit-norm regularization that's least useful when the
-                    # model is being trained primarily by the soft target
-                    # anyway. Cleaner alternative — recompute hard_ce + z_loss
-                    # with gradient inline from ``logits`` — would let us
-                    # weight z exactly at 1.0, but this minimal fix gets the
-                    # critical thing right: at α = 0, full hard_ce + full
-                    # z_loss gradient is applied.
-                    combined_loss = (1.0 - alpha) * hard_loss_with_grad + alpha * soft_ce_loss
-
-                    ce_batch_loss += get_local_tensor(hard_ce_loss_metric.detach())
-                    assert soft_ce_batch_loss is not None
-                    soft_ce_batch_loss += get_local_tensor(soft_ce_loss.detach())
-                    if z_batch_loss is not None and z_loss_metric is not None:
-                        z_batch_loss += get_local_tensor(z_loss_metric.detach())
-
-                    combined_loss.backward()
-                    del combined_loss, hard_loss_with_grad, soft_ce_loss
-                    del hard_ce_loss_metric, z_loss_metric
                 else:
                     # Hard-CE-only path — baseline, byte-identical to pre-soft-CE behavior.
                     _, loss, ce_loss, z_loss = self.model_forward(
@@ -1097,35 +753,6 @@ class TransformerTrainModule(TrainModule):
                 "Z loss unscaled",
                 z_batch_loss / self.z_loss_multiplier,
                 ReduceType.mean,
-                namespace="train",
-            )
-        if soft_ce_batch_loss is not None:
-            self.record_metric(
-                "soft CE loss",
-                soft_ce_batch_loss,
-                ReduceType.mean,
-                namespace="train",
-            )
-            # Combined optimization objective:
-            #   (1-α) · hard_CE + α · soft_CE + z_loss
-            # This is the actual loss being backpropped each step; useful as
-            # a single number to track training progress when α is changing.
-            total_batch_loss = (1.0 - alpha) * ce_batch_loss + alpha * soft_ce_batch_loss
-            if z_batch_loss is not None:
-                total_batch_loss = total_batch_loss + z_batch_loss
-            self.record_metric(
-                "total loss",
-                total_batch_loss,
-                ReduceType.mean,
-                namespace="train",
-            )
-        # Always log the soft-CE α schedule so the wandb panel shows the
-        # full ramp — including the post-ramp tail at α=0 — instead of
-        # going blank once soft-CE deactivates.
-        if self.soft_ce_alpha_start is not None:
-            self.record_metric(
-                "soft CE alpha",
-                alpha,
                 namespace="train",
             )
         # Log the PoE λ so the wandb panel shows the (constant) mixing weight.
@@ -1216,20 +843,12 @@ class TransformerTrainModule(TrainModule):
                 "PoE eval requires LMHead loss_implementation='default' so logits "
                 "are returned"
             )
-            if self.poe_sb_table_dir is not None:
-                biased_logits, biased_ce_loss = self._apply_poe_eval_bias_sb(
-                    logits=output.logits,
-                    input_ids=input_ids,
-                    labels=labels,
-                    compute_ce_loss=compute_ce_loss,
-                )
-            else:
-                biased_logits, biased_ce_loss = self._apply_poe_eval_bias(
-                    logits=output.logits,
-                    input_ids=input_ids,
-                    labels=labels,
-                    compute_ce_loss=compute_ce_loss,
-                )
+            biased_logits, biased_ce_loss = self._apply_poe_eval_bias(
+                logits=output.logits,
+                input_ids=input_ids,
+                labels=labels,
+                compute_ce_loss=compute_ce_loss,
+            )
             return output._replace(logits=biased_logits, ce_loss=biased_ce_loss)
 
         with self._eval_batch_context():
@@ -1256,119 +875,15 @@ class TransformerTrainModule(TrainModule):
         """
         if self._poe_eval_ngram_source is None:
             assert self.poe_ngram_table_dir is not None
-            from olmo_core.data.ngram_soft_target import NgramTableSoftTargetSource
+            from olmo_core.data.ngram_topk import NgramTopKSource
 
-            self._poe_eval_ngram_source = NgramTableSoftTargetSource(
+            self._poe_eval_ngram_source = NgramTopKSource(
                 table_dir=self.poe_ngram_table_dir,
                 K=self.poe_ngram_K,
                 N_max=self.poe_ngram_N_max,
                 output_log_probs=True,
             )
         return self._poe_eval_ngram_source
-
-    def _get_poe_sb_reader(self):
-        """Lazy-instantiate the StupidBackoffNgramLM reader.
-
-        Parallels :meth:`_get_poe_eval_ngram_source` but for the SB index:
-        each process opens its own mmap; OS page cache shares pages with
-        the training-time dataloader workers built by
-        :class:`olmo_core.data.composable.NgramStupidBackoffInstanceSource`.
-        """
-        if self._poe_sb_reader is None:
-            assert self.poe_sb_table_dir is not None
-            from olmo_core.data.stupid_backoff_ngram import StupidBackoffNgramLM
-
-            self._poe_sb_reader = StupidBackoffNgramLM(
-                table_dir=self.poe_sb_table_dir,
-                dolma2_vocab_size=self.poe_sb_dolma2_vocab_size,
-                N_max=self.poe_sb_N_max,
-                alpha=self.poe_sb_alpha,
-                max_order2_continuations=self.poe_sb_max_order2_continuations,
-                max_order_continuations=self.poe_sb_max_order_continuations,
-                min_order_counts=self.poe_sb_min_order_counts,
-                mirror_to_shm=self.poe_sb_mirror_to_shm,
-                index_access=self.poe_sb_index_access,
-                lookup_threads=self.poe_sb_eval_lookup_threads,
-                topk_uniform_residual_k=self.poe_sb_topk_uniform_residual_k,
-                recursive_topk_uniform_residual_k=(
-                    self.poe_sb_recursive_topk_uniform_residual_k
-                ),
-                recursive_topk_uniform_residual_logprob_k=(
-                    self.poe_sb_recursive_topk_uniform_residual_logprob_k
-                ),
-            )
-        return self._poe_sb_reader
-
-    def _get_poe_sb_unigram_floor_dev(self, *, dtype: torch.dtype) -> torch.Tensor:
-        """Lazy: pull the SB unigram floor onto the model device once.
-
-        The floor is constant across batches and is the only V-sized piece
-        of the SB bias we need on-device. Cached as a non-parameter tensor.
-        """
-        if (
-            self._poe_sb_unigram_floor_dev is None
-            or self._poe_sb_unigram_floor_dev.dtype != dtype
-            or self._poe_sb_unigram_floor_dev.device != self.device
-        ):
-            reader = self._get_poe_sb_reader()
-            if (
-                self.poe_sb_topk_uniform_residual_k is not None
-                or self.poe_sb_recursive_topk_uniform_residual_k is not None
-                or self.poe_sb_recursive_topk_uniform_residual_logprob_k is not None
-            ):
-                floor_cpu = torch.zeros(
-                    self.poe_sb_dolma2_vocab_size,
-                    dtype=dtype,
-                )
-            else:
-                floor_cpu = torch.from_numpy(reader.unigram_floor).to(dtype=dtype)
-            self._poe_sb_unigram_floor_dev = floor_cpu.to(self.device, non_blocking=True)
-        return self._poe_sb_unigram_floor_dev
-
-    @staticmethod
-    def _env_flag(name: str) -> bool:
-        value = os.environ.get(name, "")
-        return value.lower() not in ("", "0", "false", "no", "off")
-
-    @staticmethod
-    def _env_int(name: str, default: int) -> int:
-        value = os.environ.get(name)
-        if value is None:
-            return default
-        try:
-            return int(value)
-        except ValueError:
-            return default
-
-    @staticmethod
-    def _env_float(name: str, default: float) -> float:
-        value = os.environ.get(name)
-        if value is None:
-            return default
-        try:
-            return float(value)
-        except ValueError:
-            return default
-
-    def _sb_eval_should_log_timing(self, *, call_idx: int, total_s: float) -> bool:
-        if not self._env_flag("OLMO_SB_EVAL_TIMING"):
-            return False
-        if dist.is_available() and dist.is_initialized() and dist.get_rank() != 0:
-            return False
-
-        first_n = self._env_int("OLMO_SB_EVAL_TIMING_FIRST_N", 3)
-        every_n = self._env_int("OLMO_SB_EVAL_TIMING_EVERY_N", 100)
-        slow_s = self._env_float("OLMO_SB_EVAL_TIMING_SLOW_S", 1.0)
-        return (
-            call_idx < first_n
-            or (every_n > 0 and (call_idx + 1) % every_n == 0)
-            or total_s >= slow_s
-        )
-
-    @staticmethod
-    def _sync_for_timing(device: torch.device) -> None:
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
 
     def _apply_poe_eval_bias(
         self,
@@ -1381,7 +896,7 @@ class TransformerTrainModule(TrainModule):
         """Apply the PoE ngram bias to eval-time logits and recompute CE.
 
         Computes per-position contexts from input_ids (same convention as
-        NgramSoftTargetInstanceSource.__getitem__), looks up per-position
+        NgramTopKInstanceSource.__getitem__), looks up per-position
         top-K (token_ids, log_probs) from the ngram source, scatter-adds
         ``λ * log_p_ngram`` onto the K candidate positions of the LM logits,
         then computes per-position CE loss on the modified logits at the hard
@@ -1397,7 +912,7 @@ class TransformerTrainModule(TrainModule):
         B, S, V = local_logits.shape
 
         # Build per-position contexts (one per (b, s)) from input_ids.
-        # Same indexing as NgramSoftTargetInstanceSource: at position s, the
+        # Same indexing as NgramTopKInstanceSource: at position s, the
         # context is the up-to-prefix_len tokens ending at s inclusive.
         cpu_input_ids = input_ids.detach().to("cpu").numpy()
         contexts = []
@@ -1409,10 +924,10 @@ class TransformerTrainModule(TrainModule):
 
         ngram_source = self._get_poe_eval_ngram_source()
         ids_np, log_probs_np = ngram_source.lookup_batch(contexts)
-        soft_target_token_ids = torch.as_tensor(
+        ngram_token_ids = torch.as_tensor(
             ids_np.reshape(B, S, K), dtype=torch.long, device=local_logits.device
         )
-        soft_target_log_probs = torch.as_tensor(
+        ngram_log_probs = torch.as_tensor(
             log_probs_np.reshape(B, S, K), dtype=torch.float32, device=local_logits.device
         )
 
@@ -1438,12 +953,12 @@ class TransformerTrainModule(TrainModule):
         # top-K relative to non-top-K" behavior PoE prescribes. Sentinel slots
         # (-inf log-prob, used when fewer than K candidates exist) scatter 0
         # so they don't corrupt logit[0] when their token id collides.
-        finite_mask = torch.isfinite(soft_target_log_probs)
+        finite_mask = torch.isfinite(ngram_log_probs)
         # Σ exp(log p_ngram) over the finite top-K entries, per position.
         # Sentinel slots contribute 0 because exp(-inf) → 0.
         masked_log_p = torch.where(
-            finite_mask, soft_target_log_probs,
-            torch.full_like(soft_target_log_probs, float("-inf")),
+            finite_mask, ngram_log_probs,
+            torch.full_like(ngram_log_probs, float("-inf")),
         )
         sum_topK_ngram_p = torch.exp(masked_log_p).sum(dim=-1, keepdim=True)  # (B, S, 1)
         # Residual mass distributed uniformly over the V−K non-top-K tokens.
@@ -1464,8 +979,8 @@ class TransformerTrainModule(TrainModule):
         # Bias to scatter onto top-K logits. Sentinel slots get 0.
         scatter_bias = torch.where(
             finite_mask,
-            soft_target_log_probs - log_residual,
-            torch.zeros_like(soft_target_log_probs),
+            ngram_log_probs - log_residual,
+            torch.zeros_like(ngram_log_probs),
         )
         if hasattr(self, "_effective_poe_lambda"):
             poe_lambda = self._effective_poe_lambda(dtype=torch.float32).to(local_logits.device)
@@ -1473,7 +988,7 @@ class TransformerTrainModule(TrainModule):
             poe_lambda = torch.tensor(float(self.poe_lambda), device=local_logits.device, dtype=torch.float32)
         biased_logits_f32 = local_logits.float().clone()
         biased_logits_f32.scatter_add_(
-            -1, soft_target_token_ids, poe_lambda * scatter_bias
+            -1, ngram_token_ids, poe_lambda * scatter_bias
         )
 
         # Per-position CE on the biased logits at the hard label.
@@ -1493,128 +1008,6 @@ class TransformerTrainModule(TrainModule):
             )
         else:
             ce_loss = None
-
-        return biased_logits_f32, ce_loss
-
-    def _apply_poe_eval_bias_sb(
-        self,
-        *,
-        logits: torch.Tensor,
-        input_ids: torch.Tensor,
-        labels: Optional[torch.Tensor],
-        compute_ce_loss: bool = True,
-    ) -> tuple:
-        """Stupid-backoff analog of :meth:`_apply_poe_eval_bias`.
-
-        Eval-callback path. Computes per-instance SB overrides synchronously on
-        CPU via :func:`olmo_core.data.sb_bias.compute_sb_overrides_for_batch`,
-        mirroring what the dataloader does at train time. LM eval then computes
-        exact CE from a dense unigram-floor normalization plus sparse
-        higher-order corrections. Downstream evals still get a materialized
-        biased-logits tensor because they may need full logits.
-        """
-        from olmo_core.data.sb_bias import (
-            compute_sb_overrides_for_batch,
-            compute_sparse_sb_ce_loss,
-        )
-
-        assert self.poe_lambda is not None
-        assert self.poe_sb_table_dir is not None
-
-        local_logits = get_local_tensor(logits)
-        B, S, V = local_logits.shape
-        timing = self._env_flag("OLMO_SB_EVAL_TIMING")
-        call_idx = self._poe_sb_eval_bias_calls
-        self._poe_sb_eval_bias_calls += 1
-        if timing:
-            self._sync_for_timing(local_logits.device)
-        t0 = time.perf_counter()
-        local_logits_f32 = local_logits.float()
-        unigram_floor = self._get_poe_sb_unigram_floor_dev(
-            dtype=local_logits_f32.dtype
-        )
-        if timing:
-            self._sync_for_timing(local_logits_f32.device)
-        t_clone = time.perf_counter()
-
-        # Synchronous CPU lookup of per-instance overrides.
-        reader = self._get_poe_sb_reader()
-        overrides_cpu = compute_sb_overrides_for_batch(input_ids, reader)
-        t_lookup = time.perf_counter()
-        # Move to logits device (the helper expects on-device tensors).
-        bidx = overrides_cpu["sb_override_batch_idx"].to(
-            local_logits_f32.device, non_blocking=True
-        )
-        pos = overrides_cpu["sb_override_position"].to(
-            local_logits_f32.device, non_blocking=True
-        )
-        tok = overrides_cpu["sb_override_token_id"].to(
-            local_logits_f32.device, non_blocking=True
-        )
-        sc = overrides_cpu["sb_override_log_score"].to(
-            local_logits_f32.device, non_blocking=True
-        )
-        if timing:
-            self._sync_for_timing(local_logits_f32.device)
-        t_copy = time.perf_counter()
-        if labels is not None and compute_ce_loss:
-            ce_loss = compute_sparse_sb_ce_loss(
-                local_logits_f32,
-                labels,
-                unigram_floor,
-                bidx,
-                pos,
-                tok,
-                sc,
-                float(self._effective_poe_lambda().detach().cpu()),
-                self.label_ignore_index,
-            )
-            biased_logits_f32 = None
-            t_apply = t_copy
-        else:
-            from olmo_core.data.sb_bias import apply_sb_bias_inplace
-
-            biased_logits_f32 = local_logits_f32.clone()
-            apply_sb_bias_inplace(
-                biased_logits_f32,
-                unigram_floor,
-                bidx,
-                pos,
-                tok,
-                sc,
-                float(self._effective_poe_lambda().detach().cpu()),
-            )
-            if timing:
-                self._sync_for_timing(biased_logits_f32.device)
-            t_apply = time.perf_counter()
-            ce_loss = None
-        if timing:
-            self._sync_for_timing(local_logits_f32.device)
-        t_ce = time.perf_counter()
-
-        total_s = t_ce - t0
-        if self._sb_eval_should_log_timing(call_idx=call_idx, total_s=total_s):
-            override_count = int(overrides_cpu["sb_override_token_id"].numel())
-            tokens = B * S
-            log.info(
-                "[SB eval timing call=%d shape=(%d,%d,%d) overrides=%d "
-                "overrides_per_token=%.2f compute_ce=%s total=%.3fs "
-                "clone_floor=%.3fs lookup_cpu=%.3fs copy_to_gpu=%.3fs "
-                "apply_bias=%.3fs ce=%.3fs]",
-                call_idx + 1,
-                B,
-                S,
-                V,
-                override_count,
-                override_count / max(tokens, 1),
-                compute_ce_loss,
-                total_s,
-                t_clone - t0,
-                t_lookup - t_clone,
-                t_copy - t_lookup,
-                t_apply - t_copy,
-                t_ce - t_apply,
-            )
 
         return biased_logits_f32, ce_loss
 
@@ -1799,158 +1192,12 @@ class TransformerTrainModule(TrainModule):
             log_once(log, "intra-document masking enabled")
         return input_ids, labels, batch
 
-    def _current_soft_ce_alpha(self) -> float:
-        """The ngram soft-CE mixing weight alpha(t) for the current step.
-
-        Linear decay from ``soft_ce_alpha_start`` at step 0 to 0 at step
-        ``soft_ce_alpha_ramp_fraction * max_steps``, then 0 thereafter.
-        Returns 0 when soft-CE is disabled or ramp is complete.
-        """
-        if self.soft_ce_alpha_start is None:
-            return 0.0
-        max_steps = self.trainer.max_steps
-        if max_steps is None or max_steps <= 0:
-            # Token-based duration with no derivable step total, or single-step run.
-            # Fall back to a constant alpha_start so the user at least sees the
-            # intended behaviour; log once so they notice.
-            log_once(
-                log,
-                "soft-CE alpha ramp needs a step-resolvable max_duration; "
-                "falling back to constant alpha=soft_ce_alpha_start",
-            )
-            return float(self.soft_ce_alpha_start)
-        ramp_steps = int(self.soft_ce_alpha_ramp_fraction * max_steps)
-        step = self.trainer.global_step
-        if ramp_steps <= 0 or step >= ramp_steps:
-            return 0.0
-        return float(self.soft_ce_alpha_start) * (1.0 - step / ramp_steps)
-
-    def _compute_soft_ce_loss(
-        self,
-        *,
-        logits: torch.Tensor,
-        soft_target_token_ids: torch.Tensor,
-        soft_target_probs: Optional[torch.Tensor] = None,
-        soft_target_log_probs: Optional[torch.Tensor] = None,
-        labels: torch.Tensor,
-        loss_div_factor: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute sum-reduction soft cross-entropy divided by ``loss_div_factor``.
-
-        Two truncation-handling modes (selected by ``self.soft_ce_truncation``):
-
-        **renormalize** (default). The target is a top-K distribution
-        renormalized to sum to 1 over the K candidate tokens; non-top-K
-        targets are zero. The loss at position t is
-
-            L = - Σ_{k=1..K} p_k · log q_k
-
-        where ``p_k`` is the renormalized top-K target probability (from
-        ``soft_target_probs``) and ``log q_k`` is the model's full-vocab
-        log-probability at the corresponding token id.
-
-        **uniform_residual**. The target is the raw KN top-K distribution
-        extended into a proper full-vocab distribution by spreading the
-        residual mass ``r = 1 − Σ topK p_ngram`` uniformly over the V−K
-        non-top-K tokens. The loss is
-
-            L = - Σ_topK p_k · log q_k
-                - (r / (V−K)) · Σ_non-topK log q_w
-
-        This avoids forcing the model to put zero mass on out-of-top-K
-        tokens (including the gold whenever the gold is rare). We avoid
-        materializing the (B, S, V) log-probs tensor by writing
-
-            Σ_non-topK log q_w = Σ_all log q_w − Σ_topK log q_w
-                              = (Σ_all logit_w) − V·logsumexp − Σ_topK log q_w
-
-        — only the per-position scalar ``Σ_all logit_w`` is new; everything
-        else we already need to compute for the top-K branch.
-
-        Naming: forward KL up to a constant. The ngram-side target
-        distribution p is fixed (not a function of model parameters), so
-        KL(p ‖ q_θ) = soft_CE(p, q_θ) − H(p) and the H(p) term has zero
-        gradient w.r.t. θ. We compute and log soft_CE because it's the
-        actual quantity we're summing, but the optimization is equivalent
-        to forward KL minimization. If we ever switch to reverse KL
-        (KL(q_θ ‖ p) — mode-seeking), this function needs to be rewritten.
-        """
-        # Upcast logits to fp32 for numerical stability of the normalizer.
-        logits_f32 = get_local_tensor(logits).float()
-        V = logits_f32.size(-1)
-        # Per-position log-of-sum-of-exponentials normalizer over the full
-        # vocabulary. Shape: (sequences in microbatch, positions per sequence).
-        log_sum_exp = torch.logsumexp(logits_f32, dim=-1)
-        # Raw logits at the K target tokens for each position. (B, S, K).
-        gathered_logits = logits_f32.gather(-1, soft_target_token_ids)
-        # log q_k per top-K target. (B, S, K).
-        gathered_log_probs = gathered_logits - log_sum_exp.unsqueeze(-1)
-
-        if self.soft_ce_truncation == "renormalize":
-            assert soft_target_probs is not None
-            soft_ce_per_pos = -(soft_target_probs.float() * gathered_log_probs).sum(dim=-1)
-        else:  # uniform_residual
-            assert soft_target_log_probs is not None
-            # Convert raw KN log-probs to linear probs at the K slots. Slots
-            # whose stored log-prob is non-finite are sentinels — placeholder
-            # entries used when a prefix has fewer than K real candidates,
-            # padded with token_id=0 — and must be excluded from both the
-            # top-K sum and the non-top-K count.
-            log_p_ngram = soft_target_log_probs.float()
-            finite_mask = torch.isfinite(log_p_ngram)
-            finite_mask_f = finite_mask.to(log_p_ngram.dtype)
-            log_p_ngram_safe = torch.where(
-                finite_mask, log_p_ngram,
-                torch.full_like(log_p_ngram, float("-inf")),
-            )
-            top_k_p = torch.exp(log_p_ngram_safe)               # (B, S, K), 0 at sentinels
-            sum_top_k_p = top_k_p.sum(dim=-1)                   # (B, S)
-            # Cap sum_top_k_p ≤ 1 − 1/V to avoid residual_total < 0 due to KN
-            # smoothing drift; matches the cap in the PoE wrapper paths. With
-            # the cap, residual_total ≥ 1/V, and the non-top-K CE term keeps a
-            # well-defined small contribution at positions where the ngram
-            # numerically claims top-K covers everything.
-            sum_top_k_p = sum_top_k_p.clamp_max(1.0 - 1.0 / float(V))
-            residual_total = (1.0 - sum_top_k_p)                # (B, S), guaranteed ≥ 1/V
-
-            # Real-top-K count per position (K minus the number of sentinels).
-            K_real = finite_mask_f.sum(dim=-1)                  # (B, S)
-            V_minus_K_real = (float(V) - K_real).clamp_min(1.0) # (B, S)
-
-            # Top-K contribution: -Σ p_k · log q_k. Sentinel slots have p_k = 0
-            # so they contribute 0 to this sum automatically.
-            ce_topK = -(top_k_p * gathered_log_probs).sum(dim=-1)  # (B, S)
-
-            # Non-top-K contribution: -(r / (V − K_real)) · Σ_non-topK log q_w.
-            # Σ_all log q_w = Σ_all (logit_w − logsumexp) = sum_logits_all − V·logsumexp.
-            # Σ_non-topK log q_w = Σ_all log q_w − Σ_real-topK log q_w.
-            sum_logits_all = logits_f32.sum(dim=-1)                       # (B, S)
-            sum_log_q_all = sum_logits_all - float(V) * log_sum_exp        # (B, S)
-            # Mask gathered_log_probs to only sum over real top-K slots
-            # (sentinel slots' gathered log_q is whatever log_q[0] happens to
-            # be; we don't want it in this sum).
-            sum_log_q_real_topK = (gathered_log_probs * finite_mask_f).sum(dim=-1)
-            sum_log_q_non_topK = sum_log_q_all - sum_log_q_real_topK
-            ce_non_topK = -(residual_total / V_minus_K_real) * sum_log_q_non_topK
-
-            soft_ce_per_pos = ce_topK + ce_non_topK
-
-        # Mask out ignored label positions. Labels arrive on CPU (the standard
-        # hard-CE path runs them through model_forward which handles the move
-        # internally); move them to logits' device for the dtype-cast multiply.
-        labels_dev = labels.to(soft_ce_per_pos.device, non_blocking=True)
-        mask = (labels_dev != self.label_ignore_index).to(soft_ce_per_pos.dtype)
-        soft_ce_per_pos = soft_ce_per_pos * mask
-        # Sum → scalar; divide by the same denominator hard CE used so the two
-        # terms are on a comparable per-valid-token scale.
-        return soft_ce_per_pos.sum() / loss_div_factor
-
     def _compute_poe_loss(
         self,
         *,
         logits: torch.Tensor,
-        soft_target_token_ids: torch.Tensor,
-        soft_target_log_probs: torch.Tensor,
+        ngram_token_ids: torch.Tensor,
+        ngram_log_probs: torch.Tensor,
         labels: torch.Tensor,
         loss_div_factor: torch.Tensor,
     ) -> torch.Tensor:
@@ -1992,21 +1239,21 @@ class TransformerTrainModule(TrainModule):
         # Upcast logits to fp32 for numerical stability of the log_softmax.
         logits_f32 = get_local_tensor(logits).float()
         V = logits_f32.size(-1)
-        K = soft_target_log_probs.size(-1)
+        K = ngram_log_probs.size(-1)
         # Per-position log-of-sum-of-exponentials normalizer over the full
         # vocabulary. Shape: (sequences in microbatch, positions per sequence).
         log_sum_exp_lm = torch.logsumexp(logits_f32, dim=-1)
         # LM full-vocabulary log-probabilities at the K target tokens.
         # Shape: (sequences, positions, K).
-        gathered_lm_log_probs = logits_f32.gather(-1, soft_target_token_ids) - log_sum_exp_lm.unsqueeze(-1)
+        gathered_lm_log_probs = logits_f32.gather(-1, ngram_token_ids) - log_sum_exp_lm.unsqueeze(-1)
 
         # Compute log_residual for the uniform-non-top-K extension.
-        soft_target_log_probs_f32 = soft_target_log_probs.float()
-        finite_mask = torch.isfinite(soft_target_log_probs_f32)
+        ngram_log_probs_f32 = ngram_log_probs.float()
+        finite_mask = torch.isfinite(ngram_log_probs_f32)
         # Σ p_ngram over finite top-K entries (sentinels contribute 0 via exp(-inf)).
         masked_log_p_ngram = torch.where(
-            finite_mask, soft_target_log_probs_f32,
-            torch.full_like(soft_target_log_probs_f32, float("-inf")),
+            finite_mask, ngram_log_probs_f32,
+            torch.full_like(ngram_log_probs_f32, float("-inf")),
         )
         sum_topK_ngram_p = torch.exp(masked_log_p_ngram).sum(dim=-1)  # (B, S)
         # Residual mass per non-top-K token (uniform spread). Cap
@@ -2024,8 +1271,8 @@ class TransformerTrainModule(TrainModule):
         # Joint log-probabilities at top-K target tokens (unnormalized).
         # For sentinel slots we use -inf so they contribute 0 to sum_joint_topk.
         ngram_log_p_safe = torch.where(
-            finite_mask, soft_target_log_probs_f32,
-            torch.full_like(soft_target_log_probs_f32, float("-inf")),
+            finite_mask, ngram_log_probs_f32,
+            torch.full_like(ngram_log_probs_f32, float("-inf")),
         )
         if hasattr(self, "_effective_poe_lambda"):
             poe_lambda = self._effective_poe_lambda(dtype=torch.float32).to(logits_f32.device)
@@ -2049,13 +1296,13 @@ class TransformerTrainModule(TrainModule):
         safe_labels[safe_labels == self.label_ignore_index] = 0
         label_lm_log_probs = logits_f32.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1) - log_sum_exp_lm
 
-        match = soft_target_token_ids == safe_labels.unsqueeze(-1)  # (B, S, K)
+        match = ngram_token_ids == safe_labels.unsqueeze(-1)  # (B, S, K)
         # match must also fall on a finite slot (sentinel tokens default to 0,
         # which can spuriously match label 0); only count finite-slot matches.
         match = match & finite_mask
         any_match = match.any(dim=-1)                                # (B, S)
         # Bias at the gold position: stored log-prob if gold ∈ top-K, else log_residual.
-        topk_match_bias = (match.to(soft_target_log_probs_f32.dtype) * ngram_log_p_safe).sum(dim=-1)
+        topk_match_bias = (match.to(ngram_log_probs_f32.dtype) * ngram_log_p_safe).sum(dim=-1)
         match_bias = torch.where(any_match, topk_match_bias, log_residual)
         label_joint_log_probs = label_lm_log_probs + poe_lambda * match_bias - log_Z
 
@@ -2065,65 +1312,6 @@ class TransformerTrainModule(TrainModule):
         per_pos_loss = per_pos_loss * mask
         # Sum → scalar; divide by the same denominator hard CE uses.
         return per_pos_loss.sum() / loss_div_factor
-
-    def _compute_poe_loss_sb(
-        self,
-        *,
-        logits: torch.Tensor,
-        sb_override_batch_idx: torch.Tensor,
-        sb_override_position: torch.Tensor,
-        sb_override_token_id: torch.Tensor,
-        sb_override_log_score: torch.Tensor,
-        labels: torch.Tensor,
-        loss_div_factor: torch.Tensor,
-    ) -> torch.Tensor:
-        """Stupid-backoff analog of :meth:`_compute_poe_loss`.
-
-        Unlike the KN-smoothed-top-K path, the SB bias touches *every* w in
-        the vocab (the unigram floor as a baseline + sparse overrides for
-        observed higher-order (h_k, w) pairs), so we don't have a clean
-        gather + logsumexp trick for the joint normalizer Z. Instead we
-        materialize the biased logits explicitly via
-        :func:`olmo_core.data.sb_bias.apply_sb_bias_inplace` on an fp32
-        clone of the LM logits, then call standard cross-entropy.
-
-        The clone is required because the original logits tensor is shared
-        with the rest of the forward pass (e.g. ``output.z_loss`` was
-        already computed from it inside the LMHead); in-place modification
-        would corrupt those readers. Gradient flow goes from the CE through
-        the clone (and its broadcast-add + scatter-add ops) back to the
-        original logits tensor — autograd handles this correctly because
-        every op we apply is differentiable.
-        """
-        from olmo_core.data.sb_bias import apply_sb_bias_inplace
-
-        local_logits = get_local_tensor(logits)
-        # Clone-then-modify so the original LM logits stay intact for any
-        # downstream consumer (e.g. z_loss recomputed by the caller).
-        biased_logits_f32 = local_logits.float().clone()
-        unigram_floor = self._get_poe_sb_unigram_floor_dev(
-            dtype=biased_logits_f32.dtype
-        )
-        assert self.poe_lambda is not None
-        apply_sb_bias_inplace(
-            biased_logits_f32,
-            unigram_floor,
-            sb_override_batch_idx,
-            sb_override_position,
-            sb_override_token_id,
-            sb_override_log_score,
-            self._effective_poe_lambda(dtype=torch.float32),
-        )
-        labels_dev = labels.to(biased_logits_f32.device, non_blocking=True)
-        flat_logits = biased_logits_f32.flatten(0, 1)  # (B*S, V)
-        flat_labels = labels_dev.flatten()             # (B*S,)
-        ce_sum = F.cross_entropy(
-            flat_logits,
-            flat_labels,
-            ignore_index=self.label_ignore_index,
-            reduction="sum",
-        )
-        return ce_sum / loss_div_factor
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:

@@ -53,16 +53,8 @@ class DataCollator:
         all_label_mask = []
         all_pos_ids = []
         all_vis_limit = []
-        all_soft_target_token_ids = []
-        all_soft_target_probs = []
-        all_soft_target_log_probs = []
-        # Stupid-backoff arm: ragged per-instance overrides, concatenated
-        # flat across the batch with an extra batch-index column. See
-        # NgramStupidBackoffInstanceSource for the shape contract.
-        all_sb_override_batch_idx = []
-        all_sb_override_position = []
-        all_sb_override_token_id = []
-        all_sb_override_log_score = []
+        all_ngram_token_ids = []
+        all_ngram_log_probs = []
         all_indices = []
         all_metadata = []
         all_instance_mask = []
@@ -161,82 +153,37 @@ class DataCollator:
                     )
                 )
 
-            # Pad soft-target token IDs and probs. Each has shape (S, K);
-            # we pad only the S dim (K is fixed across the source). Padded
-            # positions get token_id=0 (arbitrary; never referenced because
-            # their prob is 0) and prob=0 (so 0 * log_softmax = 0 at the
-            # loss, same convention as label_mask=False for hard CE).
-            soft_target_token_ids = (
-                x.get("soft_target_token_ids") if isinstance(x, dict) else None
+            # Pad KN top-k token IDs and log probabilities. Each has shape
+            # (S, K); we pad only the sequence dimension.
+            ngram_token_ids = (
+                x.get("ngram_token_ids") if isinstance(x, dict) else None
             )
-            if soft_target_token_ids is not None:
-                if not isinstance(soft_target_token_ids, torch.Tensor):
-                    soft_target_token_ids = torch.as_tensor(soft_target_token_ids)
-                all_soft_target_token_ids.append(
+            if ngram_token_ids is not None:
+                if not isinstance(ngram_token_ids, torch.Tensor):
+                    ngram_token_ids = torch.as_tensor(ngram_token_ids)
+                all_ngram_token_ids.append(
                     F.pad(
-                        soft_target_token_ids.to(dtype=torch.long),
+                        ngram_token_ids.to(dtype=torch.long),
                         (0, 0) + pad_shape,
                         value=0,
                     )
                 )
 
-            soft_target_probs = x.get("soft_target_probs") if isinstance(x, dict) else None
-            if soft_target_probs is not None:
-                if not isinstance(soft_target_probs, torch.Tensor):
-                    soft_target_probs = torch.as_tensor(soft_target_probs)
-                all_soft_target_probs.append(
-                    F.pad(
-                        soft_target_probs.to(dtype=torch.float32),
-                        (0, 0) + pad_shape,
-                        value=0.0,
-                    )
-                )
-
-            # Product-of-experts arm: raw natural-log kenlm log-probabilities
-            # for the K candidates. Pad with -inf so the downstream softmax
-            # gives 0 weight at padded slots.
-            soft_target_log_probs = (
-                x.get("soft_target_log_probs") if isinstance(x, dict) else None
+            # Natural-log KenLM probabilities for the K candidates. Pad with
+            # -inf so padded rows contribute zero probability.
+            ngram_log_probs = (
+                x.get("ngram_log_probs") if isinstance(x, dict) else None
             )
-            if soft_target_log_probs is not None:
-                if not isinstance(soft_target_log_probs, torch.Tensor):
-                    soft_target_log_probs = torch.as_tensor(soft_target_log_probs)
-                all_soft_target_log_probs.append(
+            if ngram_log_probs is not None:
+                if not isinstance(ngram_log_probs, torch.Tensor):
+                    ngram_log_probs = torch.as_tensor(ngram_log_probs)
+                all_ngram_log_probs.append(
                     F.pad(
-                        soft_target_log_probs.to(dtype=torch.float32),
+                        ngram_log_probs.to(dtype=torch.float32),
                         (0, 0) + pad_shape,
                         value=float("-inf"),
                     )
                 )
-
-            # Stupid-backoff arm: ragged per-instance arrays. Concatenate
-            # flat across the batch and emit a parallel batch_idx so the
-            # train step can scatter into logits[batch_idx, position,
-            # token_id] in one fused op.
-            sb_position = (
-                x.get("sb_override_position") if isinstance(x, dict) else None
-            )
-            sb_token_id = (
-                x.get("sb_override_token_id") if isinstance(x, dict) else None
-            )
-            sb_log_score = (
-                x.get("sb_override_log_score") if isinstance(x, dict) else None
-            )
-            if sb_position is not None:
-                pos_t = torch.as_tensor(sb_position, dtype=torch.long)
-                tok_t = torch.as_tensor(sb_token_id, dtype=torch.long)
-                sc_t = torch.as_tensor(sb_log_score, dtype=torch.float32)
-                assert pos_t.shape == tok_t.shape == sc_t.shape, (
-                    f"sb_override_* arrays must have matching shape; got "
-                    f"position={pos_t.shape} token_id={tok_t.shape} "
-                    f"log_score={sc_t.shape}"
-                )
-                all_sb_override_batch_idx.append(
-                    torch.full_like(pos_t, batch_idx, dtype=torch.long)
-                )
-                all_sb_override_position.append(pos_t)
-                all_sb_override_token_id.append(tok_t)
-                all_sb_override_log_score.append(sc_t)
 
             # Indices.
             index = x.get("index") if isinstance(x, dict) else None
@@ -283,19 +230,10 @@ class DataCollator:
             out["pos_ids"] = torch.stack(all_pos_ids)
         if all_vis_limit:
             out["vis_limit"] = torch.stack(all_vis_limit)
-        if all_soft_target_token_ids:
-            out["soft_target_token_ids"] = torch.stack(all_soft_target_token_ids)
-        if all_soft_target_probs:
-            out["soft_target_probs"] = torch.stack(all_soft_target_probs)
-        if all_soft_target_log_probs:
-            out["soft_target_log_probs"] = torch.stack(all_soft_target_log_probs)
-        if all_sb_override_batch_idx:
-            # Empty cat is fine if all instances had no overrides; otherwise
-            # concatenate to flat (total_overrides,) tensors.
-            out["sb_override_batch_idx"] = torch.cat(all_sb_override_batch_idx)
-            out["sb_override_position"] = torch.cat(all_sb_override_position)
-            out["sb_override_token_id"] = torch.cat(all_sb_override_token_id)
-            out["sb_override_log_score"] = torch.cat(all_sb_override_log_score)
+        if all_ngram_token_ids:
+            out["ngram_token_ids"] = torch.stack(all_ngram_token_ids)
+        if all_ngram_log_probs:
+            out["ngram_log_probs"] = torch.stack(all_ngram_log_probs)
         if all_indices:
             out["index"] = torch.stack(all_indices)
         if all_instance_mask:

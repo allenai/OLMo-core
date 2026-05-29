@@ -501,13 +501,9 @@ from .packing_instance_source import (
     PackingInstanceSource,
     PackingInstanceSourceConfig,
 )
-from .ngram_soft_target_instance_source import (
-    NgramSoftTargetInstanceSource,
-    NgramSoftTargetInstanceSourceConfig,
-)
-from .ngram_stupid_backoff_instance_source import (
-    NgramStupidBackoffInstanceSource,
-    NgramStupidBackoffInstanceSourceConfig,
+from .ngram_topk_instance_source import (
+    NgramTopKInstanceSource,
+    NgramTopKInstanceSourceConfig,
 )
 from .random_instance_source import RandomInstanceSource, RandomInstanceSourceConfig
 from .sampling_document_source import (
@@ -589,10 +585,8 @@ __all__ = [
     "RandomInstanceSourceConfig",
     "PreChunkedInstanceSource",
     "PreChunkedInstanceSourceConfig",
-    "NgramSoftTargetInstanceSource",
-    "NgramSoftTargetInstanceSourceConfig",
-    "NgramStupidBackoffInstanceSource",
-    "NgramStupidBackoffInstanceSourceConfig",
+    "NgramTopKInstanceSource",
+    "NgramTopKInstanceSourceConfig",
     # Other types.
     "InstanceFilterConfig",
     "LongDocStrategy",

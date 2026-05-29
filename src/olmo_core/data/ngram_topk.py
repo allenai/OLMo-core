@@ -1,5 +1,5 @@
 """
-Training-time soft-target lookup for ngram-train.
+Training-time Kneser-Ney top-k lookup for ngram product-of-experts training.
 
 Reads a precomputed top-K forward index (FXTK v=1) produced by
 ``data_gen/build_topk_forward_index.py``. For each query position with
@@ -68,7 +68,7 @@ def _mirror_to_shm(path: str) -> str:
         tmp_path = Path(str(cache_path) + ".partial")
         try:
             print(
-                f"[ngram_soft_target] mirroring {path} ({src_size // 2**20} MB) "
+                f"[ngram_topk] mirroring {path} ({src_size // 2**20} MB) "
                 f"→ {cache_path} ...",
                 flush=True,
             )
@@ -76,7 +76,7 @@ def _mirror_to_shm(path: str) -> str:
                 shutil.copyfileobj(src, dst, length=32 * 1024 * 1024)
             tmp_path.replace(cache_path)
             print(
-                f"[ngram_soft_target] mirrored {Path(path).name} "
+                f"[ngram_topk] mirrored {Path(path).name} "
                 f"({src_size // 2**20} MB) into /dev/shm",
                 flush=True,
             )
@@ -241,14 +241,12 @@ class TopKForwardIndex:
 
 
 # ----------------------------------------------------------------------
-# Public class — same name + lookup_batch signature as the previous
-# kenlm-backed implementation, so InstanceSource and collator code don't
-# need to change.
+# Public class used by the composable data source and eval-time PoE wrapper.
 # ----------------------------------------------------------------------
 
 
-class NgramTableSoftTargetSource:
-    """Soft-target lookup over a precomputed top-K forward index.
+class NgramTopKSource:
+    """Lookup over a precomputed top-k Kneser-Ney forward index.
 
     :param table_dir: Directory containing ``forward_index_topk.bin``.
         Or a path directly to that file.
@@ -256,16 +254,8 @@ class NgramTableSoftTargetSource:
         with.
     :param N_max: Highest ngram order. Must be ≤ the highest order present
         in the index.
-    :param output_log_probs: If False (default), ``lookup_batch`` returns
-        per-position linear probabilities renormalized to sum to 1 over the
-        K candidates — the right shape for the soft-cross-entropy arm,
-        where the ngram is treated as a self-contained target distribution
-        over those K tokens. If True, ``lookup_batch`` returns the raw
-        kenlm log-probabilities for the K candidates, converted from log10
-        (the file's storage convention) to natural log. These are the
-        full-vocabulary log-probabilities for the K tokens — the right
-        thing for product-of-experts, where we add ``λ * log_p_ngram``
-        directly onto LM logits and rely on softmax to renormalize.
+    :param output_log_probs: Deprecated compatibility argument. Values are
+        always returned as natural-log full-vocabulary ngram probabilities.
     """
 
     def __init__(
@@ -273,16 +263,14 @@ class NgramTableSoftTargetSource:
         table_dir: Union[str, os.PathLike],
         K: int = 16,
         N_max: int = 5,
-        output_log_probs: bool = False,
-        # Accepted for backwards-compatibility with the pre-precompute config
-        # but ignored — the precompute already folded in the unigram path
-        # exactly (top-K' unigrams with K' = K is mathematically sufficient
-        # because the γ-product is per-prefix, ordering preserved).
+        output_log_probs: bool = True,
+        # Accepted for backwards compatibility with older configs but ignored;
+        # the precompute already folded in the unigram path exactly.
         unigram_shortlist: Optional[int] = None,
     ):
         self.K = int(K)
         self.N_max = int(N_max)
-        self.output_log_probs = bool(output_log_probs)
+        self.output_log_probs = True
 
         p = Path(table_dir)
         if p.is_dir():
@@ -314,7 +302,7 @@ class NgramTableSoftTargetSource:
     def _ensure_open(self):
         if self._index is not None:
             return
-        tag = f"[ngram_soft_target pid={os.getpid()}]"
+        tag = f"[ngram_topk pid={os.getpid()}]"
         import time as _t
 
         t0 = _t.time()
@@ -351,49 +339,38 @@ class NgramTableSoftTargetSource:
     def lookup_batch(
         self, contexts: Sequence[Sequence[int]]
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """For each context, return top-K continuations and an associated
-        per-candidate value. Output meaning depends on ``output_log_probs``:
+        """For each context, return top-k continuations and their natural-log
+        full-vocabulary Kneser-Ney probabilities.
 
-        - ``output_log_probs=False`` (default, soft-cross-entropy arm): values
-          are linear probabilities renormalized to sum to 1 over the K
-          candidates. Sentinel slots (no valid candidate) contribute 0 to
-          the row sum.
-        - ``output_log_probs=True`` (product-of-experts arm): values are the
-          raw kenlm log-probabilities for the K candidates, converted from
-          log10 (the file's storage convention) to natural log. Sentinel
-          slots are returned as ``-inf`` so a downstream scatter-add into
-          a softmax gives 0 weight at those slots.
+        Sentinel slots are returned as ``-inf`` so downstream exponentiation
+        gives them zero weight.
 
         :param contexts: One sequence of ints per query position. Each
             sequence is the (up to N_max-1)-token left context, oldest first.
-        :returns: ``(ids[N, K] int32, values[N, K] float32)``. See above
-            for the meaning of ``values``.
+        :returns: ``(ids[N, K] int32, log_probs[N, K] float32)``.
         """
         self._ensure_open()
         my_pid = os.getpid()
-        cnt = NgramTableSoftTargetSource._lookup_batch_call_count.get(my_pid, 0)
-        log_this = cnt < NgramTableSoftTargetSource._lookup_batch_log_first_n
-        NgramTableSoftTargetSource._lookup_batch_call_count[my_pid] = cnt + 1
+        cnt = NgramTopKSource._lookup_batch_call_count.get(my_pid, 0)
+        log_this = cnt < NgramTopKSource._lookup_batch_log_first_n
+        NgramTopKSource._lookup_batch_call_count[my_pid] = cnt + 1
         if log_this:
             import time as _t
 
             t_start = _t.time()
             print(
-                f"[ngram_soft_target pid={my_pid}] lookup_batch call #{cnt}: "
-                f"{len(contexts)} contexts (output_log_probs={self.output_log_probs})",
+                f"[ngram_topk pid={my_pid}] lookup_batch call #{cnt}: "
+                f"{len(contexts)} contexts",
                 flush=True,
             )
 
         N = len(contexts)
         K = self.K
         ids_out = np.zeros((N, K), dtype=np.int32)
-        if self.output_log_probs:
-            # Initialize to -inf so untouched rows / unused slots have no
-            # weight when downstream softmax exponentiates them.
-            values_out = np.full((N, K), -np.inf, dtype=np.float32)
-            ln10 = np.float32(np.log(10.0))
-        else:
-            values_out = np.zeros((N, K), dtype=np.float32)
+        # Initialize to -inf so untouched rows / unused slots have no weight
+        # when downstream softmax exponentiates them.
+        values_out = np.full((N, K), -np.inf, dtype=np.float32)
+        ln10 = np.float32(np.log(10.0))
 
         idx = self._index
         for i, ctx in enumerate(contexts):
@@ -402,22 +379,13 @@ class NgramTableSoftTargetSource:
             if mx == float("-inf"):
                 continue
             ids_out[i] = tokens.astype(np.int32, copy=False)
-            if self.output_log_probs:
-                # Raw kenlm log-probabilities, converted log10 → natural log.
-                # Sentinel slots stay at -inf (their stored log10 was -inf).
-                values_out[i] = logprobs.astype(np.float32) * ln10
-            else:
-                # Renormalize over the K valid slots. Sentinels (-inf) → 0.
-                shifted = logprobs.astype(np.float32) - np.float32(mx)
-                linear = np.power(np.float32(10.0), shifted, dtype=np.float32)
-                total = float(linear.sum())
-                if total > 0:
-                    linear = linear / np.float32(total)
-                values_out[i] = linear
+            # Raw kenlm log-probabilities, converted log10 -> natural log.
+            # Sentinel slots stay at -inf.
+            values_out[i] = logprobs.astype(np.float32) * ln10
 
         if log_this:
             print(
-                f"[ngram_soft_target pid={my_pid}] lookup_batch call #{cnt} done "
+                f"[ngram_topk pid={my_pid}] lookup_batch call #{cnt} done "
                 f"in {_t.time() - t_start:.3f}s",
                 flush=True,
             )
