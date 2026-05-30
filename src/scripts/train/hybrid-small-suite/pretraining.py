@@ -241,7 +241,7 @@ if __name__ == "__main__":
         train_module_config_builder=partial(build_train_module_config, model_size=model_size),
         trainer_config_builder=partial(build_trainer_config, model_size=model_size),
         include_default_evals=False,
-        beaker_workspace="ai2/oe-scaling-ladders",
+        beaker_workspace="ai2/scaling-ladders",
         num_execution_units=1,
     )
     main(config_builder=config_builder)
