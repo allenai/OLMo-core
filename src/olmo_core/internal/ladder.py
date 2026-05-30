@@ -12,6 +12,7 @@ from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.launch.beaker import (
+    BeakerEnvSecret,
     BeakerEnvVar,
     BeakerLaunchConfig,
     OLMoCoreBeakerImage,
@@ -208,6 +209,17 @@ def parse_args(
             help=(
                 "Environment variable to set inside the Beaker task. Repeatable, "
                 "for example '--env-var FOO=1 --env-var BAR=baz'."
+            ),
+        )
+        parser.add_argument(
+            "--env-secret",
+            action="append",
+            default=None,
+            metavar="NAME=SECRET_NAME",
+            help=(
+                "Environment variable to set inside the Beaker task from a "
+                "Beaker secret. Repeatable, for example "
+                "'--env-secret HF_TOKEN=HF_TOKEN'."
             ),
         )
 
@@ -487,6 +499,17 @@ def configure_launcher(
         if not env_name:
             raise ValueError(f"expected non-empty environment variable name in {raw_env_var!r}")
         launch_config.env_vars.append(BeakerEnvVar(name=env_name, value=env_value))
+    for raw_env_secret in getattr(args, "env_secret", None) or []:
+        if "=" not in raw_env_secret:
+            raise ValueError(
+                f"expected --env-secret as NAME=SECRET_NAME, got {raw_env_secret!r}"
+            )
+        env_name, secret_name = raw_env_secret.split("=", 1)
+        if not env_name:
+            raise ValueError(f"expected non-empty environment variable name in {raw_env_secret!r}")
+        if not secret_name:
+            raise ValueError(f"expected non-empty secret name in {raw_env_secret!r}")
+        launch_config.env_secrets.append(BeakerEnvSecret(name=env_name, secret=secret_name))
     return launch_config
 
 
