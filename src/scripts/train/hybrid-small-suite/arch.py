@@ -61,7 +61,7 @@ MODEL_CONFIGS: Dict[str, dict] = {
         n_layers=20,
         n_heads=16,
         num_nodes=32,
-        global_batch_size=8 * 1024 * 1024,
+        global_batch_size=2 * 1024 * 1024,
         rank_microbatch_size=4 * SEQUENCE_LENGTH,
     ),
 }
