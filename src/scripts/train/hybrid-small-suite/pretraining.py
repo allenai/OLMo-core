@@ -72,6 +72,7 @@ from olmo_core.internal.experiment import (
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode
 from olmo_core.optim import (
+    ConstantWithWarmup,
     CosWithWarmupAndLinearDecay,
     OptimGroupOverride,
     SchedulerUnits,
@@ -90,7 +91,7 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-CHINCHILLA_MULTIPLE = 100
+CHINCHILLA_MULTIPLE = 8
 DATA_MIX = DataMix.OLMo_mix_0925
 
 # Per-size learning rates.
@@ -117,11 +118,8 @@ def build_train_module_config(
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        scheduler=CosWithWarmupAndLinearDecay(
-            units=SchedulerUnits.steps,
+        scheduler=ConstantWithWarmup(
             warmup=2000,
-            decay=2000,
-            decay_fraction=None,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -195,7 +193,7 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
             WandBCallback(
                 name=run_name,
                 group=common.run_name,
-                project="hybrid-small-suite",
+                project="lr-ladder",
                 entity="ai2-llm",
                 cancel_check_interval=cancel_check_interval,
                 enabled=True,
@@ -221,7 +219,6 @@ if __name__ == "__main__":
         "saturn": AttentionBackendName.flash_2,   # A100s — no flash_3 support
         "titan": AttentionBackendName.flash_4,    # B200, Blackwell
         "jupiter": AttentionBackendName.flash_3,
-        "pluto": AttentionBackendName.flash_3,
     }
     cluster_arg = " ".join(sys.argv[2:4]).lower()
     attn_backend = AttentionBackendName.flash_3  # default
@@ -245,3 +242,4 @@ if __name__ == "__main__":
         num_execution_units=1,
     )
     main(config_builder=config_builder)
+
