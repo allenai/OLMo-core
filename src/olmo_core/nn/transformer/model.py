@@ -355,6 +355,67 @@ class Transformer(nn.Module):
 
         return generator
 
+    def _detect_emo_routers(self) -> Tuple[Optional[int], List[int]]:
+        """
+        Scan the blocks (once, then cached) for document-aware MoE routers — those exposing an
+        ``eos_token_id``, e.g. :class:`~olmo_core.nn.moe.emo_router.EmoRouter`.
+
+        The result is cached because the block structure and router types are static after model
+        construction, so non-EMO models pay this scan at most once.
+
+        :returns: ``(eos_token_id, block_indices)`` — the EOS token id and the indices of the blocks
+            using a document-aware router, or ``(None, [])`` if there are none.
+        """
+        cache = getattr(self, "_emo_router_cache", None)
+        if cache is not None:
+            return cache
+
+        eos_token_id: Optional[int] = None
+        block_indices: List[int] = []
+        for block_key, block in self.blocks.items():
+            if not getattr(block, "is_moe", False):
+                continue
+            block_eos = getattr(getattr(block, "router", None), "eos_token_id", None)
+            if block_eos is None:
+                continue
+            eos_token_id = block_eos
+            block_indices.append(int(block_key))
+
+        cache = (eos_token_id, block_indices)
+        self._emo_router_cache: Tuple[Optional[int], List[int]] = cache
+        return cache
+
+    def _emo_document_boundaries(
+        self, input_ids: torch.Tensor
+    ) -> Tuple[Optional[List[torch.Tensor]], List[int]]:
+        """
+        Compute per-instance document boundaries from EOS token positions in ``input_ids``, but only
+        if the model actually contains a document-aware MoE router.
+
+        For non-EMO models this short-circuits on the cached detection and the boundary tensors are
+        never computed (and nothing is passed to any router).
+
+        :returns: A ``(boundaries, block_indices)`` tuple where ``boundaries`` is a list (one entry
+            per instance) of 1-D tensors of document-boundary positions, and ``block_indices`` are
+            the indices of the blocks that should receive them. Returns ``(None, [])`` when no
+            document-aware router is present.
+        """
+        eos_token_id, block_indices = self._detect_emo_routers()
+        if eos_token_id is None:
+            return None, []
+
+        matches = input_ids == eos_token_id
+        boundaries: List[torch.Tensor] = []
+        for row in matches:
+            pos = torch.nonzero(row, as_tuple=True)[0]
+            # Drop position 0 to avoid empty leading documents.
+            pos = pos[pos > 0]
+            if pos.numel() > 1:
+                pos = pos.unique(sorted=True)
+            boundaries.append(pos)
+
+        return boundaries, block_indices
+
     def _prepare_inputs(
         self,
         input_ids: torch.Tensor,
@@ -482,6 +543,14 @@ class Transformer(nn.Module):
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
+
+            # Document-aware MoE routers (e.g. EmoRouter) need per-document boundaries derived from
+            # the EOS token. Only computed/plumbed when such a router is present, and only routed to
+            # the blocks that use it, so non-EMO models are completely unaffected.
+            emo_boundaries, emo_block_indices = self._emo_document_boundaries(input_ids)
+            if emo_boundaries is not None:
+                for block_idx in emo_block_indices:
+                    per_block_kwargs[block_idx]["document_boundaries"] = emo_boundaries
 
             if (max_doc_len is not None or cu_doc_lens is not None) and cache_leftpad is not None:
                 raise ValueError("max_doc_len/cu_doc_lens and cache_leftpad are mutually exclusive")
