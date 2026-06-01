@@ -69,7 +69,7 @@ fi
 #   (Beaker wraps it with torchrun automatically for multi-GPU jobs).
 # ---------------------------------------------------------------------------
 python -m olmo_core.launch.beaker \
-    "${BEAKER_DRY_RUN_FLAG[@]}" \
+    ${BEAKER_DRY_RUN_FLAG[@]+"${BEAKER_DRY_RUN_FLAG[@]}"} \
     --name "${RUN_NAME}" \
     --nodes "${NODES}" \
     --gpus "${GPUS}" \

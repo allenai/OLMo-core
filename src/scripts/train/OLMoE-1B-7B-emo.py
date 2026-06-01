@@ -32,6 +32,7 @@ checking that EMO routing is wired up the way you expect.
 
 import argparse
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from typing import List, cast
@@ -301,6 +302,12 @@ def parse_args():
 
 
 def main():
+    # We read data from S3 (e.g. --data-root=s3://ai2-llm) using the AWS_* env-var credentials
+    # injected via Beaker secrets, not a named AWS profile. The Beaker launcher sets S3_PROFILE=S3
+    # by default, which would make boto look for an '[S3]' profile that doesn't exist here; clearing
+    # it falls back to the default (env-var) credential chain.
+    os.environ.pop("S3_PROFILE", None)
+
     opts, overrides = parse_args()
     config = build_config(opts, overrides)
 
