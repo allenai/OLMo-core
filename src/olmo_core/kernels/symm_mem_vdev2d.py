@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import importlib
 import os
+from pathlib import Path
 from typing import Optional
 
+from filelock import FileLock
 import nvtx
 import torch
 
@@ -12,6 +14,13 @@ from .mxfp8_utils import quantize_rows_to_mxfp8, reduce_gathered_rows_from_mxfp8
 _EXTENSION_MODULE_NAME = "olmo_core.kernels._symm_mem_vdev2d_ext_gpu"
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
+
+
+def _try_import_cuda_extension():
+    try:
+        return importlib.import_module(_EXTENSION_MODULE_NAME)
+    except Exception:
+        return None
 
 
 def _load_cuda_extension():
@@ -31,12 +40,19 @@ def _load_cuda_extension():
         try:
             from .build_symm_mem_vdev2d_ext import build_extension
 
-            build_extension(
-                inplace=True,
-                verbose=False,
-                force=False,
-                backend=build_backend,
-            )
+            lock_path = Path(__file__).resolve().parent / "_symm_mem_vdev2d_ext_gpu.lock"
+            lock_timeout = float(os.getenv("OLMO_SYMM_VDEV2D_BUILD_LOCK_TIMEOUT", "600"))
+            with FileLock(lock_path, timeout=lock_timeout):
+                _CUDA_EXTENSION = _try_import_cuda_extension()
+                if _CUDA_EXTENSION is not None:
+                    return _CUDA_EXTENSION
+
+                build_extension(
+                    inplace=True,
+                    verbose=False,
+                    force=False,
+                    backend=build_backend,
+                )
         except Exception as e:
             _CUDA_EXTENSION_ERROR = e
             raise RuntimeError(f"Failed to auto-build CUDA symm_mem_vdev2d extension: {e}") from e
