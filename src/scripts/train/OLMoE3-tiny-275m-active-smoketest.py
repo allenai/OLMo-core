@@ -35,6 +35,7 @@ The script also forces ``MICRO_BSZ=4`` and ``EP_DIM=1`` in eval mode (mirrors th
 import argparse
 import logging
 import math
+import os
 from dataclasses import dataclass
 from typing import List, Optional, cast
 
@@ -94,6 +95,15 @@ from olmo_core.train.train_module.transformer import TransformerPipelineParallel
 log = logging.getLogger(__name__)
 
 torch.set_float32_matmul_precision("high")
+
+
+def prepare_s3_environment(opts: argparse.Namespace) -> None:
+    if (
+        str(opts.data_root).startswith("s3://")
+        and os.getenv("AWS_ACCESS_KEY_ID")
+        and os.getenv("AWS_SECRET_ACCESS_KEY")
+    ):
+        os.environ.pop("S3_PROFILE", None)
 
 
 # Local ExperimentConfig with the right ``train_module`` annotation. The version in
@@ -600,6 +610,7 @@ def finalize_config(config: ExperimentConfig, opts: argparse.Namespace) -> None:
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+    prepare_s3_environment(opts)
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
     in_eval_mode = bool(getattr(opts, "eval_checkpoints", None))
