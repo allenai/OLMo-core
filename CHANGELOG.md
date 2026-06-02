@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `TransformerConfig.olmo3_hybrid_7B`, a preset for the Olmo Hybrid 7B model (Gated Delta Net + attention layers in a `[gdn, gdn, gdn, attn]` pattern).
+- Added `convert_hybrid_state_from_hf` and wired hybrid (`olmo_hybrid`) model dispatch into both `convert_state_from_hf` and `convert_state_to_hf`, enabling bidirectional HF weight conversion for hybrid models.
 - Added `HFConverterCallback`, which can be used to convert models to huggingface format at the end of the training run.
 - Trainer now records checkpoint save and load durations as `train/checkpoint_save_duration_s` and `train/checkpoint_load_duration_s` metrics.
 - Added `PowerLR`, a power-law learning rate scheduler with linear warmup, power-decay phase (`lr = initial_lr * (current / warmup) ** b` for negative `b`, making the LR independent of the training horizon), and an optional linear decay tail. Registered as `"power_lr"`.

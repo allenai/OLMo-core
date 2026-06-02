@@ -466,6 +466,12 @@ def convert_state_from_hf(
     :param model_type: The model type of the HF model.
     """
 
+    if model_type is None:
+        model_type = getattr(config, "model_type", None)
+
+    if model_type == "olmo_hybrid":
+        return convert_hybrid_state_from_hf(hf_state, _hybrid_layer_types_from_config(config))
+
     converter = _get_converter_from_hf(model_type=model_type)
 
     converted_state = _convert_state(config, hf_state, converter)
@@ -539,6 +545,9 @@ def convert_state_to_hf(
     :param olmo_core_state: An unsharded OLMo Core model state dict. None of the states can be
         :class:`DTensor` or :class:`ShardedTensor`
     """
+
+    if config.model_type == "olmo_hybrid":
+        return convert_hybrid_state_to_hf(olmo_core_state, _hybrid_layer_types_from_config(config))
 
     converter = _get_converter_to_hf(config.model_type)
 
@@ -652,3 +661,81 @@ def convert_hybrid_state_to_hf(
         hf_state[hf_key] = value
 
     return hf_state
+
+
+def _invert_hybrid_key_map(key_map: Dict[str, str]) -> Dict[str, str]:
+    inverse: Dict[str, str] = {}
+    for olmo_suffix, hf_suffix in key_map.items():
+        if hf_suffix in inverse:
+            raise ValueError(f"Non-invertible hybrid key map: duplicate HF key {hf_suffix!r}")
+        inverse[hf_suffix] = olmo_suffix
+    return inverse
+
+
+#: Inverse of the hybrid maps, for the HF -> OLMo-core direction.
+_HF_TO_OLMO_HYBRID_SHARED_KEY_MAP: Dict[str, str] = _invert_hybrid_key_map(HYBRID_SHARED_KEY_MAP)
+_HF_TO_OLMO_HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = _invert_hybrid_key_map(
+    HYBRID_GDN_LAYER_KEY_MAP
+)
+_HF_TO_OLMO_HYBRID_ATTN_LAYER_KEY_MAP: Dict[str, str] = _invert_hybrid_key_map(
+    HYBRID_ATTN_LAYER_KEY_MAP
+)
+
+_HF_HYBRID_BLOCK_KEY_RE = re.compile(r"^model\.layers\.(\d+)\.(.+)$")
+
+
+@beta_feature
+def convert_hybrid_state_from_hf(
+    state_dict: Dict[str, Any],
+    layer_types: List[str],
+) -> Dict[str, Any]:
+    """
+    Convert an HF ``olmo_hybrid`` state dict to OLMo-core format.
+
+    Inverse of :func:`convert_hybrid_state_to_hf`: uses the inverse of
+    :data:`HYBRID_SHARED_KEY_MAP` for non-block keys, and the inverse of
+    :data:`HYBRID_GDN_LAYER_KEY_MAP` / :data:`HYBRID_ATTN_LAYER_KEY_MAP`
+    based on *layer_types*.
+
+    :param state_dict: An unsharded HF ``olmo_hybrid`` model state dict.
+    :param layer_types: Per-layer type list (``"linear_attention"`` or ``"full_attention"``).
+    """
+    olmo_state: Dict[str, Any] = {}
+
+    for hf_key, value in state_dict.items():
+        # Try shared (non-block) keys first.
+        if hf_key in _HF_TO_OLMO_HYBRID_SHARED_KEY_MAP:
+            olmo_state[_HF_TO_OLMO_HYBRID_SHARED_KEY_MAP[hf_key]] = value
+            continue
+
+        m = _HF_HYBRID_BLOCK_KEY_RE.match(hf_key)
+        if m is None:
+            raise KeyError(f"Unmapped key: {hf_key}")
+
+        layer_idx = int(m.group(1))
+        suffix = m.group(2)
+
+        key_map = (
+            _HF_TO_OLMO_HYBRID_GDN_LAYER_KEY_MAP
+            if layer_types[layer_idx] == "linear_attention"
+            else _HF_TO_OLMO_HYBRID_ATTN_LAYER_KEY_MAP
+        )
+        if suffix not in key_map:
+            raise KeyError(
+                f"Unmapped block suffix for layer {layer_idx} "
+                f"(type={layer_types[layer_idx]!r}): {hf_key}"
+            )
+
+        olmo_state[f"blocks.{layer_idx}.{key_map[suffix]}"] = value
+
+    return olmo_state
+
+
+def _hybrid_layer_types_from_config(config: PretrainedConfig) -> List[str]:
+    """Read the per-layer type list from an HF ``olmo_hybrid`` config."""
+    layer_types = getattr(config, "layer_types", None)
+    if layer_types is None:
+        raise ValueError(
+            "olmo_hybrid HF config is missing the `layer_types` field required for conversion."
+        )
+    return list(layer_types)

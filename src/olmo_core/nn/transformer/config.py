@@ -17,6 +17,7 @@ from ..attention import (
     AttentionConfig,
     AttentionType,
     GateConfig,
+    GatedDeltaNetConfig,
     SlidingWindowAttentionConfig,
 )
 from ..buffer_cache import BufferCache
@@ -984,6 +985,48 @@ class TransformerConfig(ModelConfig):
             attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
             **kwargs,
         )
+        return config
+
+    @classmethod
+    def olmo3_hybrid_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 7B Olmo 3 hybrid model config that combines Gated Delta Net (GDN) recurrent
+        layers with standard attention layers in a ``[gdn, gdn, gdn, attn]`` pattern.
+
+        Matches the recipe used to train ``allenai/Olmo-Hybrid-Instruct-SFT-7B``: it
+        starts from :meth:`olmo3_7B`, removes ``remove_heads`` attention heads (scaling
+        ``d_model`` down accordingly) to match the params/throughput of the dense 7B
+        model, disables RoPE (as in long-context extension), and replaces 3 of every 4
+        layers with GDN layers.
+        """
+        remove_heads = kwargs.pop("remove_heads", 2)
+        head_dim = kwargs.pop("head_dim", 128)
+        config = cls.olmo3_7B(vocab_size=vocab_size, **kwargs)
+        assert isinstance(config.block, TransformerBlockConfig)
+        assert isinstance(config.block.sequence_mixer, AttentionConfig)
+
+        # Remove heads (and scale down d_model) to compensate for the extra GDN params.
+        config.d_model -= remove_heads * head_dim
+        num_heads = config.block.sequence_mixer.n_heads - remove_heads
+        config.block.sequence_mixer.n_heads = num_heads
+        assert config.d_model / num_heads == head_dim
+
+        # RoPE was disabled at the start of long-context extension.
+        attn_block = config.block.replace(
+            sequence_mixer=config.block.sequence_mixer.replace(rope=None),
+        )
+        gdn_block = attn_block.replace(
+            sequence_mixer=GatedDeltaNetConfig(
+                n_heads=num_heads,
+                head_dim=int(0.75 * config.d_model / num_heads),
+                allow_neg_eigval=True,
+            ),
+        )
+
+        # 3 GDN layers followed by 1 attention layer, repeating.
+        config.block = {"gdn": gdn_block, "attn": attn_block}
+        config.block_pattern = ["gdn", "gdn", "gdn", "attn"]
+        assert config.n_layers % len(config.block_pattern) == 0
         return config
 
     @classmethod

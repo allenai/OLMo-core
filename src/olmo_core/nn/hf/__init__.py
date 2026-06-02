@@ -12,6 +12,7 @@ from .config import (
     is_olmo_hybrid_model,
 )
 from .convert import (
+    convert_hybrid_state_from_hf,
     convert_hybrid_state_to_hf,
     convert_state_from_hf,
     convert_state_to_hf,
@@ -26,6 +27,7 @@ from .convert_checkpoint import (
 
 __all__ = [
     "convert_checkpoint_to_hf",
+    "convert_hybrid_state_from_hf",
     "convert_hybrid_state_to_hf",
     "convert_state_from_hf",
     "convert_state_to_hf",
