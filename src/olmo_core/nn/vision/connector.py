@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ...config import DType, StrEnum
-from ..config import ModuleConfig
-from .config import VisionBackboneConfig
+from olmo_core.config import DType, StrEnum
+from olmo_core.nn.config import ModuleConfig
+from olmo_core.nn.vision.config import VisionBackboneConfig
 
 __all__ = [
     "ImagePoolingType",
@@ -29,8 +29,8 @@ class ImagePoolingType(StrEnum):
     attention_meanq = "attention_meanq"
     """
     For each group, use the mean of its patch features as the query and
-    cross-attend over all patches in the group as keys/values. This is Molmo's
-    default; with a 4-patch group it reduces patch count 4×.
+    cross-attend over all patches in the group as keys/values. With a 4-patch
+    group it reduces patch count 4×.
     """
 
     none = "none"
@@ -48,7 +48,6 @@ class ImageProjectorType(StrEnum):
     mlp = "mlp"
     """
     SwiGLU two-stream MLP: ``w2(silu(w1(x)) * w3(x))``.
-    Matches Molmo's ``ImageProjectorMLP`` with ``llama_swiglu`` activation.
     """
 
     linear = "linear"
@@ -142,8 +141,7 @@ class _PoolingCrossAttention(nn.Module):
 class _ConnectorMLP(nn.Module):
     """SwiGLU MLP that projects vision features to LM embedding dimension.
 
-    Computes ``w2(silu(w1(x)) * w3(x))``, matching Molmo's ``ImageProjectorMLP``
-    with ``llama_swiglu`` activation.
+    Computes ``w2(silu(w1(x)) * w3(x))``.
     """
 
     def __init__(

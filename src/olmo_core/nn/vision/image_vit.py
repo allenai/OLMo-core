@@ -1,17 +1,38 @@
 import math
-from typing import List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers.activations import get_activation
 
-from .config import VisionBackboneConfig
+from olmo_core.nn.vision.config import VisionBackboneConfig
 
 __all__ = [
     "VisionTransformer",
     "SiglipVisionTransformer",
 ]
+
+
+def _quick_gelu(x: torch.Tensor) -> torch.Tensor:
+    # OpenAI CLIP's "QuickGELU"; not available as a PyTorch built-in.
+    return x * torch.sigmoid(1.702 * x)
+
+
+# Activations used by the supported vision encoders, implemented with plain
+# PyTorch ops. Names follow the HF convention so configs map directly onto
+# HF checkpoint configs.
+_ACTIVATIONS: Dict[str, Callable[[torch.Tensor], torch.Tensor]] = {
+    "quick_gelu": _quick_gelu,
+    "gelu_pytorch_tanh": lambda x: F.gelu(x, approximate="tanh"),
+    "gelu": F.gelu,
+}
+
+
+def _get_activation(name: str) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Resolve an activation function by name."""
+    if name not in _ACTIVATIONS:
+        raise ValueError(f"Unknown activation {name!r}; expected one of {sorted(_ACTIVATIONS)}.")
+    return _ACTIVATIONS[name]
 
 
 class _ViTAttention(nn.Module):
@@ -102,7 +123,7 @@ class _ViTMLP(nn.Module):
         self.w2 = nn.Linear(
             cfg.image_mlp_dim, cfg.image_emb_dim, bias=True, device=init_device, dtype=dtype
         )
-        self.act = get_activation(cfg.image_mlp_activations)
+        self.act = _get_activation(cfg.image_mlp_activations)
         self._emb_dim = cfg.image_emb_dim
         self._mlp_dim = cfg.image_mlp_dim
 
@@ -169,10 +190,9 @@ def _interpolate_pos_emb(
 
 class VisionTransformer(nn.Module):
     """
-    OpenAI CLIP-style vision transformer with a prepended CLS token.
+    CLIP-style vision transformer with a prepended CLS token.
 
-    Matches ``VisionTransformer`` in the Molmo reference implementation and is
-    suitable for weights from OpenAI CLIP ViT-L/14-336.
+    Compatible with OpenAI CLIP ViT-L/14-336 weights.
 
     The forward pass accepts pre-patchified images and returns the hidden states
     from every block, so callers can select specific layers (e.g. ``[-2, -9]``).
@@ -261,8 +281,7 @@ class SiglipVisionTransformer(nn.Module):
     """
     SigLIP-style vision transformer without a CLS token.
 
-    Matches ``SiglipVisionTransformer`` in the Molmo reference implementation and is
-    suitable for weights from SigLIP-SO400M-14-378.
+    Compatible with SigLIP-SO400M-14-378 weights.
 
     Like :class:`VisionTransformer`, the forward pass returns hidden states from every
     block. There is no CLS token, so each output tensor has shape

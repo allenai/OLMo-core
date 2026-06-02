@@ -2,9 +2,10 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch.nn as nn
+from typing_extensions import Self
 
-from ...config import DType, StrEnum
-from ..config import ModuleConfig
+from olmo_core.config import DType, StrEnum
+from olmo_core.nn.config import ModuleConfig
 
 __all__ = [
     "VisionBackboneType",
@@ -88,7 +89,11 @@ class VisionBackboneConfig(ModuleConfig):
     """Number of key/value heads. Equal to ``image_num_heads`` for MHA; less for GQA."""
 
     image_num_layers: int = 23
-    """Number of transformer blocks. CLIP ViT-L/14 uses 23 (not 24) since Molmo extracts from layer -2."""
+    """
+    Number of transformer blocks to instantiate. The full HF CLIP ViT-L/14 tower has
+    24 layers; the default of 23 keeps only the layers needed when features are read
+    from the second-to-last layer (index ``-2``), dropping the unused final block.
+    """
 
     image_head_dim: int = 64
     """Per-head dimension. Must satisfy ``image_emb_dim == image_num_heads * image_head_dim``."""
@@ -97,7 +102,10 @@ class VisionBackboneConfig(ModuleConfig):
     """Hidden size of the per-block feed-forward network."""
 
     image_mlp_activations: str = "quick_gelu"
-    """Activation name for the ViT FFN, passed to ``transformers.activations.get_activation``."""
+    """
+    Activation name for the ViT FFN. One of ``quick_gelu`` (CLIP),
+    ``gelu_pytorch_tanh`` (SigLIP), or ``gelu``.
+    """
 
     image_num_pos: int = 577
     """Number of positional embedding slots. For CLIP ViT-L/14-336: 24*24 patches + 1 CLS = 577."""
@@ -128,7 +136,7 @@ class VisionBackboneConfig(ModuleConfig):
     # ------------------------------------------------------------------
 
     @classmethod
-    def siglip_b16_224(cls) -> "VisionBackboneConfig":
+    def siglip_b16_224(cls) -> Self:
         """
         Returns a :class:`VisionBackboneConfig` matching SigLIP ViT-B/16-224
         (``google/siglip-base-patch16-224``).
@@ -149,7 +157,7 @@ class VisionBackboneConfig(ModuleConfig):
         )
 
     @classmethod
-    def siglip_l16_384(cls) -> "VisionBackboneConfig":
+    def siglip_l16_384(cls) -> Self:
         """
         Returns a :class:`VisionBackboneConfig` matching SigLIP ViT-L/16-384
         (``google/siglip-large-patch16-384``).
@@ -170,7 +178,7 @@ class VisionBackboneConfig(ModuleConfig):
         )
 
     @classmethod
-    def siglip_so400m_patch14_224(cls) -> "VisionBackboneConfig":
+    def siglip_so400m_patch14_224(cls) -> Self:
         """
         Returns a :class:`VisionBackboneConfig` matching SigLIP SO400M/14-224
         (``google/siglip-so400m-patch14-224``).
@@ -191,7 +199,7 @@ class VisionBackboneConfig(ModuleConfig):
         )
 
     @classmethod
-    def siglip_so400m(cls) -> "VisionBackboneConfig":
+    def siglip_so400m(cls) -> Self:
         """
         Returns a :class:`VisionBackboneConfig` matching SigLIP SO400M/14-378
         (``google/siglip-so400m-patch14-378``).
@@ -216,7 +224,7 @@ class VisionBackboneConfig(ModuleConfig):
     # ------------------------------------------------------------------
 
     @classmethod
-    def siglip2_b16_256(cls) -> "VisionBackboneConfig":
+    def siglip2_b16_256(cls) -> Self:
         """
         Returns a :class:`VisionBackboneConfig` matching SigLIP2 ViT-B/16-256
         (``google/siglip2-base-patch16-256``).
@@ -237,7 +245,7 @@ class VisionBackboneConfig(ModuleConfig):
         )
 
     @classmethod
-    def siglip2_l16_256(cls) -> "VisionBackboneConfig":
+    def siglip2_l16_256(cls) -> Self:
         """
         Returns a :class:`VisionBackboneConfig` matching SigLIP2 ViT-L/16-256
         (``google/siglip2-large-patch16-256``).
@@ -258,7 +266,7 @@ class VisionBackboneConfig(ModuleConfig):
         )
 
     @classmethod
-    def siglip2_so400m_patch14_378(cls) -> "VisionBackboneConfig":
+    def siglip2_so400m_patch14_378(cls) -> Self:
         """
         Returns a :class:`VisionBackboneConfig` matching SigLIP2 SO400M/14-378
         (``google/siglip2-so400m-patch14-378``).
@@ -279,7 +287,7 @@ class VisionBackboneConfig(ModuleConfig):
         )
 
     @classmethod
-    def siglip2_so400m_patch16_256(cls) -> "VisionBackboneConfig":
+    def siglip2_so400m_patch16_256(cls) -> Self:
         """
         Returns a :class:`VisionBackboneConfig` matching SigLIP2 SO400M/16-256
         (``google/siglip2-so400m-patch16-256``).

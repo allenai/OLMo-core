@@ -4,11 +4,11 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from ...config import Config
-from ..lm_head import LMOutputWithLoss
-from ..transformer.config import TransformerConfig
-from .config import VisionBackboneConfig
-from .connector import VisionConnectorConfig
+from olmo_core.config import Config
+from olmo_core.nn.lm_head import LMOutputWithLoss
+from olmo_core.nn.transformer.config import TransformerConfig
+from olmo_core.nn.vision.config import VisionBackboneConfig
+from olmo_core.nn.vision.connector import VisionConnectorConfig
 
 __all__ = [
     "MultimodalTransformerConfig",
@@ -25,7 +25,7 @@ class MultimodalTransformerConfig(Config):
     a vision encoder (:class:`~olmo_core.nn.vision.VisionBackboneConfig`), and
     a vision-to-language connector
     (:class:`~olmo_core.nn.vision.VisionConnectorConfig`) into a single module
-    matching Molmo's image-feature splice mechanics.
+    that splices projected image features into the LM embedding stream.
 
     Example::
 
@@ -60,8 +60,8 @@ class MultimodalTransformerConfig(Config):
     """
     Indices of the ViT hidden-state layers to extract and concatenate before
     the connector. Negative indices count from the last layer. For example,
-    ``(-1,)`` uses only the final layer; ``(-2, -9)`` matches Molmo's two-layer
-    extraction and requires :attr:`connector.num_input_layers` to be ``2``.
+    ``(-1,)`` uses only the final layer; a two-layer selection such as ``(-2, -9)``
+    requires :attr:`connector.num_input_layers` to be ``2``.
     """
 
     def build(self, init_device: str = "cpu") -> "MultimodalTransformer":
@@ -78,7 +78,7 @@ class MultimodalTransformer(nn.Module):
     """
     Vision-language model: vision encoder + connector + language model.
 
-    Forward pass flow (matching Molmo's reference implementation):
+    Forward pass flow:
 
     1. Look up LM token embeddings for ``input_ids``.
     2. If images are provided, run them through the vision tower, extract the
@@ -187,8 +187,11 @@ class MultimodalTransformer(nn.Module):
                     f"preprocessor must insert exactly one <im_patch> per pooled feature."
                 )
             d = h.shape[-1]
-            h.view(-1, d)[is_image_patch] = h.view(-1, d)[is_image_patch] + image_features.reshape(
-                -1, d
-            )
+            # ``.contiguous()`` guards against a non-contiguous ``h`` (e.g. from a fused
+            # embedding_norm), for which ``.view()`` would raise. ``flat`` is a view of
+            # the contiguous ``h``, so the in-place add below propagates back into ``h``.
+            h = h.contiguous()
+            flat = h.view(-1, d)
+            flat[is_image_patch] = flat[is_image_patch] + image_features.reshape(-1, d)
 
         return self.lm(input_ids, input_embeddings=h, labels=labels, **kwargs)

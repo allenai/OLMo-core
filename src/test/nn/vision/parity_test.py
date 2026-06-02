@@ -134,7 +134,17 @@ def _convert_siglip_state_dict(hf_sd: Dict[str, torch.Tensor]) -> Dict[str, torc
 
 
 def _try_load_hf(model_cls, model_id: str):
-    """Load an HF model offline-first; skip the test if not cached and not downloadable."""
+    """Load an HF model, preferring the local cache.
+
+    Tries ``local_files_only=True`` first so a cached checkpoint never triggers a
+    network download (which would turn this unit test into a slow integration
+    download). Only if the checkpoint isn't cached do we fall back to a normal
+    ``from_pretrained`` that may download. Skips the test if neither succeeds.
+    """
+    try:
+        return model_cls.from_pretrained(model_id, local_files_only=True).eval()
+    except Exception:  # noqa: BLE001  # not cached locally; fall back to download
+        pass
     try:
         return model_cls.from_pretrained(model_id).eval()
     except Exception as e:  # noqa: BLE001
@@ -150,8 +160,8 @@ def test_clip_parity():
     """Our :class:`VisionTransformer` matches HF's ``CLIPVisionModel`` numerically.
 
     Uses ``openai/clip-vit-large-patch14-336`` (default config). HF has 24
-    blocks; our default config sets ``image_num_layers=23`` (Molmo's choice),
-    so we override to 24 for the parity test.
+    blocks; our default config sets ``image_num_layers=23`` (the final block is
+    unused when reading from layer ``-2``), so we override to 24 for the parity test.
 
     ``CLIPVisionModel`` is the vision-only model in ``transformers``; it exposes
     ``forward(pixel_values=…)`` directly and does not have a nested
