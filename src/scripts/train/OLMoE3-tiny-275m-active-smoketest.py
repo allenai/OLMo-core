@@ -558,7 +558,7 @@ def build_dataset_config(
     include_instance_filter: bool = True,
 ) -> NumpyFSLDatasetConfig:
     return NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMoE_mix_0824_dev,
+        DataMix.OLMo_mix_0925,
         tokenizer=tokenizer_config,
         mix_base_dir=opts.data_root,
         work_dir=opts.work_dir,
