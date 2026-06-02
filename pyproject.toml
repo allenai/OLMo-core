@@ -81,6 +81,7 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 olmo_core = ["py.typed", "*.txt"]
+"olmo_core.kernels" = ["cuda/*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "olmo_core.version.VERSION" }

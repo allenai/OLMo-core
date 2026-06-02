@@ -1,1 +1,2 @@
 include src/olmo_core/data/mixes/*.txt
+recursive-include src/olmo_core/kernels/cuda *
