@@ -163,6 +163,11 @@ class MultimodalTransformer(nn.Module):
             self.lm.embeddings is not None
         ), "MultimodalTransformer requires the LM to have an embedding table"
 
+        device = self.lm.device
+        input_ids = input_ids.to(device)
+        if labels is not None:
+            labels = labels.to(device)
+
         # Compute LM token embeddings with any configured scale / norm.
         h = self.lm.embeddings(input_ids)
         if self.lm.embed_scale is not None:
@@ -173,6 +178,9 @@ class MultimodalTransformer(nn.Module):
         if images is not None:
             if pooled_patches_idx is None:
                 raise ValueError("`pooled_patches_idx` is required when `images` is provided")
+
+            images = images.to(device)
+            pooled_patches_idx = pooled_patches_idx.to(device)
 
             image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
 
