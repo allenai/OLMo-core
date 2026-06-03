@@ -1,8 +1,9 @@
 """
-Tiny active-275M MoE smoketest derived from ``OLMoE3-dev-260401-launchable.py``.
+Tiny active-275M MoE ladder script derived from ``OLMoE3-dev-260401-launchable.py``.
 
-The model is configured for ~278M active params / ~1.13B total params and trains
-for 4x Chinchilla according to the repo default: active non-embedding params.
+The model is configured for ~278M active params / ~1.13B total params. By default
+it trains for 1x Chinchilla according to the repo default: active non-embedding
+params. Use ``--chinchilla-multiple`` for longer runs.
 The data mix is loaded from S3, so the Beaker workspace must have AWS env-key
 secrets available. This script also unsets ``S3_PROFILE`` when ``--data-root`` is
 an S3 URI and env AWS keys are present, so boto3 uses the Beaker-provided keys
@@ -21,7 +22,7 @@ The MoE EP path needs the symmetric-memory CUDA extension. The launch below sets
 Run from a pushed branch with ``uv``::
 
     uv run --extra dev --extra beaker python -m olmo_core.launch.beaker \\
-      --name=olmoe3-tiny-275m-4xchinchilla-smoketest \\
+      --name=olmoe3-tiny-275m-cx1-lr3e-4 \\
       --cluster ai2/titan \\
       --nodes 1 \\
       --gpus 8 \\
@@ -33,10 +34,13 @@ Run from a pushed branch with ``uv``::
       --env OLMO_SYMM_VDEV2D_AUTO_BUILD=1 \\
       --env-secret AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY WANDB_API_KEY=jacobm_WANDB_API_KEY \\
       -- \\
-      python src/scripts/train/OLMoE3-tiny-275m-active-smoketest.py \\
-        --save-folder=/weka/oe-training-default/ai2-llm/checkpoints/$USER/olmoe3-tiny-275m-4xchinchilla-smoketest \\
-        --name=olmoe3-tiny-275m-4xchinchilla-smoketest \\
-        --data-root=s3://ai2-llm
+      python src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py \\
+        --save-folder=/weka/oe-training-default/ai2-llm/checkpoints/$USER/olmoe3-tiny-275m-cx1-lr3e-4 \\
+        --name=olmoe3-tiny-275m-cx1-lr3e-4 \\
+        --data-root=s3://ai2-llm \\
+        --lr=3e-4 \\
+        --chinchilla-multiple=1 \\
+        --tag=lr3e-4-cx1
 
 Eval over saved checkpoints (no training): pass ``--eval-checkpoints`` (one or more
 paths; globs supported). When set, the train module / trainer are built with
@@ -99,7 +103,7 @@ from olmo_core.optim.scheduler import (
     ComposableSchedulerStageType,
     OverrideDecay,
 )
-from olmo_core.script_utils import main
+from olmo_core.script_utils import get_cli_parser, main
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -126,6 +130,76 @@ def prepare_s3_environment(opts: argparse.Namespace) -> None:
         and os.getenv("AWS_SECRET_ACCESS_KEY")
     ):
         os.environ.pop("S3_PROFILE", None)
+
+
+def get_parser() -> argparse.ArgumentParser:
+    parser = get_cli_parser()
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=LR,
+        help="Peak learning rate for all parameter groups before group-specific overrides.",
+    )
+    parser.add_argument(
+        "--chinchilla-multiple",
+        type=float,
+        default=CHINCHILLA_MULTIPLE,
+        help="Training duration multiple, based on active non-embedding parameters.",
+    )
+    parser.add_argument(
+        "--global-batch-size-seq",
+        type=int,
+        default=GLOBAL_BATCH_SIZE_SEQ,
+        help="Global batch size in sequences. Tokens per step are this times sequence length.",
+    )
+    parser.add_argument(
+        "--warmup-fraction",
+        type=float,
+        default=SCHED_WARMUP_FRACTION,
+        help="Fraction of total training tokens used for linear LR warmup.",
+    )
+    parser.add_argument(
+        "--tag",
+        type=str,
+        default=TAG,
+        help="Short tag appended to WandB run/group names.",
+    )
+    return parser
+
+
+def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_duration_tokens: int) -> None:
+    global CHINCHILLA_MULTIPLE
+    global GLOBAL_BATCH_SIZE_SEQ, GLOBAL_BATCH_SIZE, NUM_MICRO_BATCHES, GLOBAL_BATCH_TOKENS_IN_M
+    global SCHED_WARMUP_FRACTION, SCHED_WARMUP_TOKENS
+    global LR, EXPERT_LR, TAG, MONKEY_PATCH_DECAY_DURATION_TOKENS
+
+    if opts.chinchilla_multiple <= 0:
+        raise ValueError("--chinchilla-multiple must be > 0")
+    if opts.lr <= 0:
+        raise ValueError("--lr must be > 0")
+    if opts.global_batch_size_seq <= 0:
+        raise ValueError("--global-batch-size-seq must be > 0")
+    if not 0 < opts.warmup_fraction < 1:
+        raise ValueError("--warmup-fraction must be between 0 and 1")
+
+    CHINCHILLA_MULTIPLE = opts.chinchilla_multiple
+    GLOBAL_BATCH_SIZE_SEQ = opts.global_batch_size_seq
+    GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * sequence_length
+    NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ * PP_DIM
+    if NUM_MICRO_BATCHES <= 0:
+        raise ValueError("global batch size is too small for the configured node/GPU/microbatch setup")
+    if GLOBAL_BATCH_SIZE_SEQ % (REF_NUM_NODES * 8 * MICRO_BSZ) != 0:
+        raise ValueError("--global-batch-size-seq must divide evenly across nodes, GPUs, and MICRO_BSZ")
+    GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
+
+    SCHED_WARMUP_FRACTION = opts.warmup_fraction
+    SCHED_WARMUP_TOKENS = int(((max_duration_tokens * SCHED_WARMUP_FRACTION) // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+    SCHED_WARMUP_TOKENS = max(GLOBAL_BATCH_SIZE, SCHED_WARMUP_TOKENS)
+
+    LR = opts.lr
+    EXPERT_LR = LR
+    TAG = opts.tag
+    MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 
 
 # Local ExperimentConfig with the right ``train_module`` annotation. The version in
@@ -176,23 +250,22 @@ PP_DIM = 1
 
 REF_NUM_NODES = 1
 
-# 4x Chinchilla based on active non-embedding parameters.
-CHINCHILLA_MULTIPLE = 4.0
+# Chinchilla multiple is based on active non-embedding parameters.
+CHINCHILLA_MULTIPLE = 1.0
 MICRO_BSZ = 1  # 4 # temporary; for testing
-GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 2 * 1
+GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 4 * 1
 
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * DEFAULT_SEQUENCE_LENGTH
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ * PP_DIM
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
-SCHED_WARMUP_TOKENS = int((1e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_WARMUP_FRACTION = 0.1
+SCHED_WARMUP_TOKENS = GLOBAL_BATCH_SIZE
 SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 1.0
 SCHED_FINAL_FRACTION = 0.1
 
-LR = 4e-4
-LR = LR / SCHED_MID_FRACTION
-LR = LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
+LR = 3e-4
 EXPERT_LR = LR
 
 NUM_LAYERS = 12
@@ -232,7 +305,7 @@ USE_MUON = False
 USE_PERI_NORM = True
 PRODUCTION_RUN = True
 
-TAG = "smoketest"
+TAG = "cx1"
 
 MONKEY_PATCH_DECAY_START_TOKENS = None
 MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
@@ -639,9 +712,10 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
 
     model_config = build_model_config(tokenizer_config)
     max_duration_tokens = Duration.chinchilla_tokens(
-        CHINCHILLA_MULTIPLE,
+        opts.chinchilla_multiple,
         model_params=model_config.num_active_non_embedding_params,
     ).value
+    configure_sweep_hparams(opts, sequence_length, max_duration_tokens)
     dataset_config = build_dataset_config(opts, tokenizer_config, sequence_length)
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=GLOBAL_BATCH_SIZE,
@@ -675,4 +749,4 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
 
 
 if __name__ == "__main__":
-    main(build_config)
+    main(build_config, parser=get_parser())
