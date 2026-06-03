@@ -682,14 +682,6 @@ longmino,preprocessed/longmino/{TOKENIZER}/s2pdf_dedupe_minhash_v1_with_no_pii_b
 longmino,preprocessed/longmino/{TOKENIZER}/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2/length_2e15/travel/part-5-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2/length_2e15/travel/part-6-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2/length_2e15/travel/part-7-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/sponge_63_mixes/eli5_60pct_filter-decon-2/part-0-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/sponge_63_mixes/eli5_60pct_filter-decon-2/part-1-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/sponge_63_mixes/eli5_60pct_filter-decon-2/part-2-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/sponge_63_mixes/eli5_60pct_filter-decon-2/part-3-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/sponge_63_mixes/eli5_60pct_filter-decon-2/part-4-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/sponge_63_mixes/eli5_60pct_filter-decon-2/part-5-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/sponge_63_mixes/eli5_60pct_filter-decon-2/part-6-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/sponge_63_mixes/eli5_60pct_filter-decon-2/part-7-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/stack-edu/fim-weighted-pl-edu-score-decon/C/part-0-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/stack-edu/fim-weighted-pl-edu-score-decon/C/part-1-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/stack-edu/fim-weighted-pl-edu-score-decon/C/part-2-00000.npy
