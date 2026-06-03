@@ -16,7 +16,7 @@ DRY_RUN="${DRY_RUN:-1}"
 
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
 RUN_PREFIX="olmoe3-tiny-275m-cx1-b256k"
-SAVE_ROOT="/weka/oe-training-default/ai2-llm/checkpoints/${USER}"
+CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 GLOBAL_BATCH_SIZE_SEQ=32
 
 COMMON_BEAKER_ARGS=(
@@ -53,7 +53,7 @@ launch_one() {
       "${COMMON_BEAKER_ARGS[@]}" \
       -- \
       python "${SCRIPT}" \
-        --save-folder="${SAVE_ROOT}/${name}" \
+        --save-folder="${CHECKPOINT_ROOT}/${name}" \
         --name="${name}" \
         --data-root=s3://ai2-llm \
         --lr="${lr}" \

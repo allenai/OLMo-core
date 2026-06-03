@@ -35,7 +35,7 @@ Run from a pushed branch with ``uv``::
       --env-secret AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY WANDB_API_KEY=jacobm_WANDB_API_KEY \\
       -- \\
       python src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py \\
-        --save-folder=/weka/oe-training-default/ai2-llm/checkpoints/$USER/olmoe3-tiny-275m-cx1-lr3e-4 \\
+        --save-folder=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-tiny-275m-cx1-lr3e-4 \\
         --name=olmoe3-tiny-275m-cx1-lr3e-4 \\
         --data-root=s3://ai2-llm \\
         --lr=3e-4 \\
@@ -52,10 +52,10 @@ The script also forces ``MICRO_BSZ=4`` and ``EP_DIM=1`` in eval mode (mirrors th
       --nodes 1 --gpus 8 --weka oe-training-default \\
       -- \\
       python src/scripts/train/OLMoE3-tiny-275m-active-smoketest.py \\
-        --save-folder=/weka/oe-training-default/ai2-llm/checkpoints/$USER/olmoe3-dev-eval \\
+        --save-folder=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-dev-eval \\
         --name=olmoe3-dev-eval \\
         --data-root=/weka/oe-training-default/ai2-llm \\
-        --eval-checkpoints "/weka/.../checkpoints/$USER/some-run/step*"
+        --eval-checkpoints "/weka/.../checkpoints/jacobm/olmoe3/some-run/step*"
 """
 
 import argparse

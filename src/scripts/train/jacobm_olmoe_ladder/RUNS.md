@@ -18,6 +18,13 @@ Unless noted otherwise, runs use:
 - Scheduler: linear warmup then cosine decay to 0.1x final LR
 - Warmup fraction: 10%
 - Sequence length: 8192
+- Future checkpoint root: `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3`
+
+Earlier runs before this checkpoint-root cleanup were launched with the local
+machine username in the path, so they saved under
+`/weka/oe-training-default/ai2-llm/checkpoints/jacob/<run-name>`. Future ladder
+launchers default to the `jacobm/olmoe3` root above. Set `CHECKPOINT_ROOT` to
+override this in the launcher scripts.
 
 ## Run Table
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
 RUN_PREFIX="olmoe3-tiny-275m-cx1-b256k"
-SAVE_ROOT="/weka/oe-training-default/ai2-llm/checkpoints/${USER}"
+CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-tiny-275m-cx1-b256k-launch-logs}"
 JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
 GLOBAL_BATCH_SIZE_SEQ=32
@@ -35,7 +35,7 @@ launch_one() {
     "${COMMON_BEAKER_ARGS[@]}" \
     -- \
     python "${SCRIPT}"
-    --save-folder="${SAVE_ROOT}/${name}"
+    --save-folder="${CHECKPOINT_ROOT}/${name}"
     --name="${name}"
     --data-root=s3://ai2-llm
     --lr="${lr}"
