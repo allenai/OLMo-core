@@ -44,7 +44,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
-from olmo_core.nn import OutputDiscardCheckpoint
+from olmo_core.nn.output_discard_checkpoint import OutputDiscardCheckpoint
 from olmo_core.nn import output_discard_checkpoint as odc_module
 
 WARMUP_ITERS = 3

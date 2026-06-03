@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import threading
 import warnings
-from typing import Any, Callable, Optional, Sequence, Tuple, cast
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Optional, cast
 
 import torch
 from torch.utils.checkpoint import detach_variable
@@ -13,132 +15,107 @@ from ..doc_utils import beta_feature
 __all__ = ["OutputDiscardCheckpoint"]
 
 
-_SHARE_STORAGE_CPP = r"""
-#include <torch/extension.h>
-
-void share_storage(at::Tensor dst, at::Tensor src) {
-    auto* dst_impl = dst.storage().unsafeGetStorageImpl();
-
-    auto* src_storage_ref = new c10::Storage(src.storage());
-
-    void*       data   = src_storage_ref->data_ptr().get();
-    size_t      nbytes = src_storage_ref->nbytes();
-    c10::Device device = src_storage_ref->device();
-
-    c10::DataPtr shared(
-        data,
-        static_cast<void*>(src_storage_ref),
-        [](void* ctx) { delete static_cast<c10::Storage*>(ctx); },
-        device);
-
-    dst_impl->set_data_ptr(std::move(shared));
-    dst_impl->set_nbytes(nbytes);
-}
-"""
-
-_share_storage_ext = None
-_share_storage_lock = threading.Lock()
-_share_storage_build_error: Optional[Exception] = None
-_share_storage_fallback_warned = False
+_SHARE_STORAGE_CPP_PATH = Path(__file__).parent / "_csrc" / "share_storage.cpp"
 
 
-def _get_share_storage() -> Optional[Callable[[torch.Tensor, torch.Tensor], None]]:
-    global _share_storage_ext
-    global _share_storage_build_error
-    if _share_storage_ext is not None:
-        return _share_storage_ext.share_storage
-    if _share_storage_build_error is not None:
-        return None
+@dataclass
+class _SharedStorageLoader:
+    """
+    Lazily builds and caches the C++ ``share_storage`` extension, falling back
+    to a pure-Python implementation on machines without a working C++ toolchain.
 
-    with _share_storage_lock:
-        if _share_storage_ext is not None:
-            return _share_storage_ext.share_storage
-        if _share_storage_build_error is not None:
-            return None
-        try:
-            _share_storage_ext = load_inline(
-                name="olmo_share_storage_ext",
-                cpp_sources=_SHARE_STORAGE_CPP,
-                functions=["share_storage"],
-                verbose=False,
-            )
-            return _share_storage_ext.share_storage
-        except Exception as exc:  # pragma: no cover - environment dependent
-            _share_storage_build_error = exc
+    A single module-level instance (:data:`_shared_storage_loader`) holds the
+    build state so it is shared across all :class:`OutputDiscardCheckpoint`
+    objects without leaning on module globals.
+    """
+
+    _ext: Any = None
+    _build_error: Optional[Exception] = None
+    _fallback_warned: bool = False
+    _lock: Any = field(default_factory=threading.Lock)
+
+    def share(self, dst: torch.Tensor, src: torch.Tensor) -> None:
+        if (fn := self._load()) is not None:
+            fn(dst, src)
+        else:
+            self._fallback(dst, src)
+
+    def _load(self) -> Optional[Callable[[torch.Tensor, torch.Tensor], None]]:
+        if self._ext is not None:
+            return self._ext.share_storage
+        if self._build_error is not None:
             return None
 
+        with self._lock:
+            if self._ext is not None:
+                return self._ext.share_storage
+            if self._build_error is not None:
+                return None
+            try:
+                self._ext = load_inline(
+                    name="olmo_share_storage_ext",
+                    cpp_sources=_SHARE_STORAGE_CPP_PATH.read_text(),
+                    functions=["share_storage"],
+                    verbose=False,
+                )
+                return self._ext.share_storage
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._build_error = exc
+                return None
 
-def _fallback_share_storage(dst: torch.Tensor, src: torch.Tensor):
-    """
-    Python fallback for environments where the C++ extension cannot be built.
+    def _fallback(self, dst: torch.Tensor, src: torch.Tensor) -> None:
+        """
+        Python fallback for environments where the C++ extension cannot be built.
 
-    Unlike the C++ path -- which mutates ``dst``'s ``StorageImpl`` ``data_ptr``
-    in place -- we cannot rebind a Python ``Storage``'s data pointer from
-    user-space without going through ``Tensor.set_()``, which would swap
-    ``dst``'s ``StorageImpl`` for a new one and leave any autograd-saved views
-    of ``dst`` pointing at the old (empty) storage. Instead we resize ``dst``'s
-    existing storage in place and copy ``src``'s bytes into it. This preserves
-    ``StorageImpl`` identity (so saved views see the refilled data) at the
-    cost of an extra allocation + copy during recompute.
-    """
-    global _share_storage_fallback_warned
+        Unlike the C++ path -- which mutates ``dst``'s ``StorageImpl`` ``data_ptr``
+        in place -- we cannot rebind a Python ``Storage``'s data pointer from
+        user-space without going through ``Tensor.set_()``, which would swap
+        ``dst``'s ``StorageImpl`` for a new one and leave any autograd-saved views
+        of ``dst`` pointing at the old (empty) storage. Instead we resize ``dst``'s
+        existing storage in place and copy ``src``'s bytes into it. This preserves
+        ``StorageImpl`` identity (so saved views see the refilled data) at the
+        cost of an extra allocation + copy during recompute.
+        """
+        old_version = dst._version
+        with torch.no_grad():
+            dst_storage = dst.untyped_storage()
+            src_storage = src.untyped_storage()
+            dst_storage.resize_(src_storage.nbytes())
+            dst_storage.copy_(src_storage)
 
-    old_version = dst._version
-    with torch.no_grad():
-        dst_storage = dst.untyped_storage()
-        src_storage = src.untyped_storage()
-        dst_storage.resize_(src_storage.nbytes())
-        dst_storage.copy_(src_storage)
-
-    if hasattr(torch._C, "_autograd") and hasattr(
-        torch._C._autograd, "_unsafe_set_version_counter"
-    ):
-        torch._C._autograd._unsafe_set_version_counter([dst], [old_version])
-    elif not _share_storage_fallback_warned:  # pragma: no cover - very old torch only
-        warnings.warn(
-            "OutputDiscardCheckpoint fallback could not access "
-            "torch._C._autograd._unsafe_set_version_counter; autograd version "
-            "counter errors may occur.",
-            stacklevel=2,
-        )
-        _share_storage_fallback_warned = True
-
-    if not _share_storage_fallback_warned and _share_storage_build_error is not None:
-        warnings.warn(
-            "OutputDiscardCheckpoint C++ share_storage extension is unavailable; "
-            "using Python fallback. Build error was: "
-            f"{_share_storage_build_error!r}",
-            stacklevel=2,
-        )
-        _share_storage_fallback_warned = True
-
-
-def _share_storage(dst: torch.Tensor, src: torch.Tensor):
-    share_storage = _get_share_storage()
-    if share_storage is not None:
-        share_storage(dst, src)
-    else:
-        _fallback_share_storage(dst, src)
-
-
-def _collect_tensor_outputs(outputs: Any) -> Tuple[torch.Tensor, ...]:
-    if isinstance(outputs, torch.Tensor):
-        return (outputs,)
-    if isinstance(outputs, (tuple, list)):
-        if not all(isinstance(out, torch.Tensor) for out in outputs):
-            raise TypeError(
-                "OutputDiscardCheckpoint only supports tensor outputs or tuple/list of tensors."
+        if hasattr(torch._C, "_autograd") and hasattr(
+            torch._C._autograd, "_unsafe_set_version_counter"
+        ):
+            torch._C._autograd._unsafe_set_version_counter([dst], [old_version])
+        elif not self._fallback_warned:  # pragma: no cover - very old torch only
+            warnings.warn(
+                "OutputDiscardCheckpoint fallback could not access "
+                "torch._C._autograd._unsafe_set_version_counter; autograd version "
+                "counter errors may occur.",
+                stacklevel=2,
             )
-        return tuple(cast(Sequence[torch.Tensor], outputs))
-    raise TypeError(
-        "OutputDiscardCheckpoint only supports tensor outputs or tuple/list of tensors."
-    )
+            self._fallback_warned = True
+
+        if not self._fallback_warned and self._build_error is not None:
+            warnings.warn(
+                "OutputDiscardCheckpoint C++ share_storage extension is unavailable; "
+                "using Python fallback. Build error was: "
+                f"{self._build_error!r}",
+                stacklevel=2,
+            )
+            self._fallback_warned = True
 
 
-def _detach_but_keep_requires_grad(x: torch.Tensor) -> torch.Tensor:
-    out = x.detach()
-    out.requires_grad_(x.requires_grad)
-    return out
+_shared_storage_loader = _SharedStorageLoader()
+
+
+def _collect_tensor_outputs(outputs: Any) -> tuple[torch.Tensor, ...]:
+    items = outputs if isinstance(outputs, (tuple, list)) else (outputs,)
+    if not all(isinstance(out, torch.Tensor) for out in items):
+        raise TypeError(
+            "OutputDiscardCheckpoint only supports tensor outputs or tuple/list of tensors."
+        )
+    return tuple(items)
 
 
 class _OutputDiscardCheckpointFunction(torch.autograd.Function):
@@ -179,14 +156,14 @@ class _OutputDiscardCheckpointFunction(torch.autograd.Function):
                 "Make sure backward hook triggers before consumers need them."
             )
 
-        outputs = cast(Tuple[torch.Tensor, ...], ctx.outputs)
-        grad_outputs_tensors = cast(Tuple[torch.Tensor, ...], grad_outputs)
+        outputs = cast(tuple[torch.Tensor, ...], ctx.outputs)
+        grad_outputs_tensors = cast(tuple[torch.Tensor, ...], grad_outputs)
         torch.autograd.backward(outputs, grad_outputs_tensors)
 
-        tensor_inputs = cast(Tuple[torch.Tensor, ...], ctx.inputs)
+        tensor_inputs = cast(tuple[torch.Tensor, ...], ctx.inputs)
         tensor_input_iter = iter(tensor_inputs)
         grads: list[Optional[torch.Tensor]] = []
-        for is_tensor in cast(Tuple[bool, ...], ctx.arg_is_tensor):
+        for is_tensor in cast(tuple[bool, ...], ctx.arg_is_tensor):
             if is_tensor:
                 inp = next(tensor_input_iter)
                 grads.append(inp.grad)
@@ -238,12 +215,29 @@ class OutputDiscardCheckpoint:
     autograd graph downstream of ``y`` so that its hook runs before any
     saved-tensor reference to ``y`` is dereferenced during backward. The
     output of the layer that immediately consumes ``y`` is the safe default.
+
+    .. warning::
+        This is a beta utility with limitations the recompute does not yet
+        handle:
+
+        - **RNG state** is not saved or restored, so the recompute is only
+          correct for deterministic checkpointed regions (no dropout or other
+          stochastic ops inside ``fn``).
+        - **Autocast / AMP context** is not captured, so the recompute runs
+          under whatever autocast state is active during backward rather than
+          the state used in the original forward.
+        - **No-grad inputs**: recompute only restores storage and produces
+          grads when ``hook_tensor`` requires grad. If it does not, the
+          output storage is discarded but no hook is registered, so this is
+          only safe when recompute is arranged by other means.
+
+        Use it only where these assumptions hold.
     """
 
     def __init__(self):
         self.run_function: Optional[Callable[..., Any]] = None
         self._ctx: Optional[Any] = None
-        self.outputs: Optional[Tuple[torch.Tensor, ...]] = None
+        self.outputs: Optional[tuple[torch.Tensor, ...]] = None
         self._hook_handle: Optional[torch.utils.hooks.RemovableHandle] = None
 
     def checkpoint(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -308,16 +302,17 @@ class OutputDiscardCheckpoint:
             raise RuntimeError("Invalid state: missing forward outputs.")
 
         ctx = self._ctx
-        saved_tensors = tuple(cast(Tuple[torch.Tensor, ...], ctx.saved_tensors))
+        saved_tensors = tuple(cast(tuple[torch.Tensor, ...], ctx.saved_tensors))
         tensor_iter = iter(saved_tensors)
-        non_tensor_iter = iter(cast(Tuple[Any, ...], ctx.non_tensor_args))
+        non_tensor_iter = iter(cast(tuple[Any, ...], ctx.non_tensor_args))
 
         recompute_args: list[Any] = []
         recompute_tensor_inputs: list[torch.Tensor] = []
-        for is_tensor in cast(Tuple[bool, ...], ctx.arg_is_tensor):
+        for is_tensor in cast(tuple[bool, ...], ctx.arg_is_tensor):
             if is_tensor:
                 src = next(tensor_iter)
-                inp = _detach_but_keep_requires_grad(src)
+                inp = src.detach()
+                inp.requires_grad_(src.requires_grad)
                 recompute_args.append(inp)
                 recompute_tensor_inputs.append(inp)
             else:
@@ -334,7 +329,7 @@ class OutputDiscardCheckpoint:
             )
 
         for output, recomputation_output in zip(self.outputs, recompute_outputs_tensors):
-            _share_storage(output, recomputation_output)
+            _shared_storage_loader.share(output, recomputation_output)
 
         ctx.outputs = recompute_outputs_tensors
         ctx.inputs = tuple(recompute_tensor_inputs)

@@ -79,7 +79,7 @@ environments = [
 include-package-data = true
 
 [tool.setuptools.package-data]
-olmo_core = ["py.typed", "*.txt"]
+olmo_core = ["py.typed", "*.txt", "nn/_csrc/*.cpp"]
 
 [tool.setuptools.dynamic]
 version = { attr = "olmo_core.version.VERSION" }
