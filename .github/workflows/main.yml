@@ -8,9 +8,15 @@ on:
   pull_request:
     branches:
       - main
+      # Temporary: run CI for the incremental MoE PRs landing into this integration branch.
+      # Remove before merging akshitab/moe-v2-core into main.
+      - akshitab/moe-v2-core
   push:
     branches:
       - main
+      # Temporary: keep the MoE integration branch continuously tested as PRs merge in.
+      # Remove before merging akshitab/moe-v2-core into main.
+      - akshitab/moe-v2-core
     tags:
       - "v*.*.*"
 
