@@ -110,7 +110,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         mix_base_dir="s3://ai2-llm",
         work_dir=work_dir,
         sequence_length=SEQUENCE_LENGTH,
-        generate_doc_lengths=False,  # enables intra-document masking
+        generate_doc_lengths=True,  # required for intra-document masking with llama3 CP load balancer
         source_group_size=8,
         source_permutation_seed=123,
     )
