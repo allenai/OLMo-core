@@ -104,7 +104,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     dataset_config = NumpyPackedFSLDatasetConfig.from_data_mix(
         DataMix.longmino_qwen,
         tokenizer=tokenizer_config,
-        mix_base_dir=root_dir,
+        mix_base_dir="s3://ai2-llm",
         work_dir=work_dir,
         sequence_length=SEQUENCE_LENGTH,
         generate_doc_lengths=False,  # enables intra-document masking

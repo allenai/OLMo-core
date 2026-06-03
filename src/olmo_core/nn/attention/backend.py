@@ -1084,7 +1084,7 @@ class TEAttentionBackend(AttentionBackend):
             raise ValueError("One of ring or uly must be specified")
 
     @torch.compiler.disable(
-        reason="Transformer Engine attention uses Python/pybind setup that Dynamo should not trace"
+        #reason="Transformer Engine attention uses Python/pybind setup that Dynamo should not trace"
     )
     def forward(
         self,
