@@ -27,9 +27,11 @@ launch_one() {
   local chinchilla="$1"
   local batch_tag="$2"
   local batch_seq="$3"
-  local lr="$4"
-  local lr_tag="$5"
-  local name="${RUN_PREFIX}-cx${chinchilla}-${batch_tag}-${lr_tag}"
+  local micro_bsz="$4"
+  local lr="$5"
+  local lr_tag="$6"
+  local perf_tag="ep1mb${micro_bsz}"
+  local name="${RUN_PREFIX}-cx${chinchilla}-${batch_tag}-${perf_tag}-${lr_tag}"
   local log_path="${LOG_DIR}/${name}.log"
 
   local cmd=(
@@ -45,7 +47,9 @@ launch_one() {
     --chinchilla-multiple="${chinchilla}"
     --global-batch-size-seq="${batch_seq}"
     --num-nodes="${NUM_NODES}"
-    --tag="${lr_tag}-cx${chinchilla}-${batch_tag}"
+    --micro-batch-size="${micro_bsz}"
+    --ep-dim=1
+    --tag="${lr_tag}-cx${chinchilla}-${batch_tag}-${perf_tag}"
   )
 
   echo "Launching ${name}..."
@@ -83,10 +87,10 @@ launch_one() {
 }
 
 # Cx2 high-side check after 7e-4 beat 5e-4.
-launch_one 2 b256k 32 1e-3 lr1e-3
+launch_one 2 b256k 32 4 1e-3 lr1e-3
 
 # Cx4 sweep at the dense-ladder Cx4 batch rule: 512k tokens / 64 sequences.
-launch_one 4 b512k 64 1e-3 lr1e-3
-launch_one 4 b512k 64 1.5e-3 lr1.5e-3
-launch_one 4 b512k 64 2.5e-3 lr2.5e-3
-launch_one 4 b512k 64 3.5e-3 lr3.5e-3
+launch_one 4 b512k 64 8 1e-3 lr1e-3
+launch_one 4 b512k 64 8 1.5e-3 lr1.5e-3
+launch_one 4 b512k 64 8 2.5e-3 lr2.5e-3
+launch_one 4 b512k 64 8 3.5e-3 lr3.5e-3

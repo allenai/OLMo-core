@@ -110,3 +110,16 @@ For a cleaner Cx1 U-plot right side, two extra high-LR Cx1 probes were queued:
 
 - `256k@3e-3`
 - `256k@5e-3`
+
+## Throughput Fix
+
+Initial tiny MoE sweeps used `EP_DIM=8` and `MICRO_BSZ=1`, which underutilized
+the GPUs. For the tiny MoE, use `EP_DIM=1` and increase per-rank microbatch size
+as much as possible while preserving the intended global batch:
+
+- 256k tokens / 32 sequences on 1 node: `--micro-batch-size=4 --ep-dim=1`
+- 512k tokens / 64 sequences on 1 node: `--micro-batch-size=8 --ep-dim=1`
+
+This preserves the optimizer batch/schedule while increasing per-GPU work. The
+requeued run names include `ep1mb4` or `ep1mb8` to avoid checkpoint collisions
+with cancelled lower-throughput jobs.

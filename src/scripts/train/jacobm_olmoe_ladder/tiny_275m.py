@@ -159,6 +159,18 @@ def get_parser() -> argparse.ArgumentParser:
         help="Number of training nodes. Used to derive gradient accumulation from global batch size.",
     )
     parser.add_argument(
+        "--micro-batch-size",
+        type=int,
+        default=MICRO_BSZ,
+        help="Per-rank microbatch size in sequences.",
+    )
+    parser.add_argument(
+        "--ep-dim",
+        type=int,
+        default=EP_DIM,
+        help="Expert-parallel degree. Use 1 to disable expert parallelism.",
+    )
+    parser.add_argument(
         "--warmup-fraction",
         type=float,
         default=SCHED_WARMUP_FRACTION,
@@ -175,7 +187,8 @@ def get_parser() -> argparse.ArgumentParser:
 
 def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_duration_tokens: int) -> None:
     global CHINCHILLA_MULTIPLE
-    global REF_NUM_NODES, GLOBAL_BATCH_SIZE_SEQ, GLOBAL_BATCH_SIZE, NUM_MICRO_BATCHES, GLOBAL_BATCH_TOKENS_IN_M
+    global REF_NUM_NODES, MICRO_BSZ, EP_DIM
+    global GLOBAL_BATCH_SIZE_SEQ, GLOBAL_BATCH_SIZE, NUM_MICRO_BATCHES, GLOBAL_BATCH_TOKENS_IN_M
     global SCHED_WARMUP_FRACTION, SCHED_WARMUP_TOKENS
     global LR, EXPERT_LR, TAG, MONKEY_PATCH_DECAY_DURATION_TOKENS
 
@@ -187,11 +200,17 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
         raise ValueError("--global-batch-size-seq must be > 0")
     if opts.num_nodes <= 0:
         raise ValueError("--num-nodes must be > 0")
+    if opts.micro_batch_size <= 0:
+        raise ValueError("--micro-batch-size must be > 0")
+    if opts.ep_dim <= 0:
+        raise ValueError("--ep-dim must be > 0")
     if not 0 < opts.warmup_fraction < 1:
         raise ValueError("--warmup-fraction must be between 0 and 1")
 
     CHINCHILLA_MULTIPLE = opts.chinchilla_multiple
     REF_NUM_NODES = opts.num_nodes
+    MICRO_BSZ = opts.micro_batch_size
+    EP_DIM = opts.ep_dim
     GLOBAL_BATCH_SIZE_SEQ = opts.global_batch_size_seq
     GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * sequence_length
     NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ * PP_DIM
@@ -254,14 +273,14 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 
 DENSE_LAYER_MLP = TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS
 
-EP_DIM = 8
+EP_DIM = 1
 PP_DIM = 1
 
 REF_NUM_NODES = 1
 
 # Chinchilla multiple is based on active non-embedding parameters.
 CHINCHILLA_MULTIPLE = 1.0
-MICRO_BSZ = 1  # 4 # temporary; for testing
+MICRO_BSZ = 1
 GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 4 * 1
 
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * DEFAULT_SEQUENCE_LENGTH

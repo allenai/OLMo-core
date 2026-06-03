@@ -37,7 +37,7 @@ run_cmd() {
 launch_one() {
   local lr="$1"
   local lr_tag="$2"
-  local name="${RUN_PREFIX}-cx1-b256k-${lr_tag}"
+  local name="${RUN_PREFIX}-cx1-b256k-ep1mb4-${lr_tag}"
 
   run_cmd \
     uv run --extra dev --extra beaker python -m olmo_core.launch.beaker \
@@ -52,7 +52,9 @@ launch_one() {
         --chinchilla-multiple=1 \
         --global-batch-size-seq=32 \
         --num-nodes="${NUM_NODES}" \
-        --tag="${lr_tag}-cx1-b256k"
+        --micro-batch-size=4 \
+        --ep-dim=1 \
+        --tag="${lr_tag}-cx1-b256k-ep1mb4"
 }
 
 launch_one 3e-3 lr3e-3
