@@ -13,8 +13,11 @@ import math
 import re
 import statistics
 from dataclasses import dataclass
+from pathlib import Path
 
 import wandb
+
+from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
 
 
 WANDB_PATH = "ai2-llm/jacobm-olmoe-ladder"
@@ -79,6 +82,8 @@ def main() -> None:
         default=[100, 250, 500],
         help="Final-token averaging windows in millions of tokens.",
     )
+    parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
+    parser.add_argument("--refresh-cache", action="store_true", help="Ignore cached finished-run histories.")
     args = parser.parse_args()
 
     api = wandb.Api()
@@ -97,7 +102,13 @@ def main() -> None:
             continue
 
         history: list[tuple[int, int, float]] = []
-        for row in run.scan_history(keys=fields, page_size=1000):
+        for row in scan_history_cached(
+            run,
+            project=args.project,
+            keys=fields,
+            cache_dir=args.cache_dir,
+            refresh_cache=args.refresh_cache,
+        ):
             loss = row.get(LOSS_KEY)
             step = row.get("_step")
             tokens = row.get(TOKENS_KEY)

@@ -40,6 +40,11 @@ averages. It infers batch size from run-name tags:
 - `b256k`: 262,144 tokens/step
 - `b512k`: 524,288 tokens/step
 
+Finished-run histories are cached under
+`~/.cache/olmoe3_ladder/wandb_histories` by default. The cache key is the W&B run
+id and project, and entries are invalidated if W&B state or summary step changes.
+Use `--refresh-cache` to force a fresh W&B history scan.
+
 For a narrower pull:
 
 ```bash
