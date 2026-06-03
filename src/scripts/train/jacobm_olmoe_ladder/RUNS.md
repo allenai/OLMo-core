@@ -61,6 +61,12 @@ experiment name.
 | 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-lr3.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 3.5e-3 | `01KT79NBSBGCSAJ225ZNHR63ZY` | https://beaker.org/ex/01KT79NBSBGCSAJ225ZNHR63ZY | Cx4 LR sweep at dense-ladder Cx4 batch rule. |
 | 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-lr3e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 3e-3 | `01KT7A59M00K94XJ59WMK2H517` | https://beaker.org/ex/01KT7A59M00K94XJ59WMK2H517 | Extra high-side Cx1 LR probe for cleaner U-plot. |
 | 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-lr5e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 5e-3 | `01KT7A5EBAX04FYRRVK8BRXX1B` | https://beaker.org/ex/01KT7A5EBAX04FYRRVK8BRXX1B | Extra high-side Cx1 LR probe for cleaner U-plot. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-ep1mb4-lr1e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 1e-3 | `01KT7JTTXH7ND3CVCM76Y7BDH9` | https://beaker.org/ex/01KT7JTTXH7ND3CVCM76Y7BDH9 | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=4. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-ep1mb8-lr1e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1e-3 | `01KT7JV2FD3T57PM5BG28DTJH4` | https://beaker.org/ex/01KT7JV2FD3T57PM5BG28DTJH4 | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=8. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-ep1mb8-lr1.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.5e-3 | `01KT7JV8DDQ4ZF7SB3BX7XXPZX` | https://beaker.org/ex/01KT7JV8DDQ4ZF7SB3BX7XXPZX | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=8. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-ep1mb8-lr2.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 2.5e-3 | `01KT7JVE2BVB70KHD37Y39F36V` | https://beaker.org/ex/01KT7JVE2BVB70KHD37Y39F36V | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=8. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-ep1mb8-lr3.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 3.5e-3 | `01KT7JVMPHDH3EN3T3N20F3MJN` | https://beaker.org/ex/01KT7JVMPHDH3EN3T3N20F3MJN | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=8. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr3e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 3e-3 | `01KT7KBFWN0SYRHB9K10S2KXWK` | https://beaker.org/ex/01KT7KBFWN0SYRHB9K10S2KXWK | Two-GPU smoke for preserving the 256k global batch with microbatch=16 and EP=1. |
 
 ## Planned Sweeps
 
