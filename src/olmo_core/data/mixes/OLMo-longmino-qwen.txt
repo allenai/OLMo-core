@@ -840,11 +840,3 @@ longmino,preprocessed/longmino/{TOKENIZER}/tulu_flan/v1-FULLDECON-HARD-TRAIN-60M
 longmino,preprocessed/longmino/{TOKENIZER}/tulu_flan/v1-FULLDECON-HARD-TRAIN-60M-shots_all-upweight_1-dialog_false-sep_rulebased-decon/part-5-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/tulu_flan/v1-FULLDECON-HARD-TRAIN-60M-shots_all-upweight_1-dialog_false-sep_rulebased-decon/part-6-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/tulu_flan/v1-FULLDECON-HARD-TRAIN-60M-shots_all-upweight_1-dialog_false-sep_rulebased-decon/part-7-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/wiki_psgqa_rewrites/part-0-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/wiki_psgqa_rewrites/part-1-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/wiki_psgqa_rewrites/part-2-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/wiki_psgqa_rewrites/part-3-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/wiki_psgqa_rewrites/part-4-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/wiki_psgqa_rewrites/part-5-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/wiki_psgqa_rewrites/part-6-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/wiki_psgqa_rewrites/part-7-00000.npy
