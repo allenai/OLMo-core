@@ -126,9 +126,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             save_folder=save_dir,
             save_overwrite=True,
             # Set load_path to start from a pre-trained checkpoint, e.g.:
-            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-4B/",
+            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-4B/model_and_optim",
             load_strategy=LoadStrategy.always,
-            # load_trainer_state=False,
+            load_trainer_state=False,
             # load_optim_state=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
