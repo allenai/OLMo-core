@@ -76,3 +76,10 @@ token-window average, so the follow-up LR refinement was tightened to:
 - 256k LR refinement: `4e-4`, `6e-4`, `7e-4`, `1e-3`
 - batch probe at strong LRs: `128k@5e-4`, `128k@8e-4`, `512k@5e-4`, `512k@8e-4`
 - Cx2 transfer check, queued first: `256k@5e-4`, `256k@7e-4`
+
+After all follow-up runs finished, Cx1 `256k@1e-3` and `256k@1.2e-3` were nearly
+tied and best among completed Cx1 runs. Because the high side had not clearly
+turned over, the next Cx1 high-side probes were:
+
+- `256k@1.5e-3`
+- `256k@2e-3`
