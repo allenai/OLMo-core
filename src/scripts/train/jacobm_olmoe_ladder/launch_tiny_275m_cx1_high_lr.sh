@@ -6,12 +6,13 @@ RUN_PREFIX="olmoe3-tiny-275m"
 SAVE_ROOT="/weka/oe-training-default/ai2-llm/checkpoints/${USER}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-tiny-275m-cx1-high-lr-launch-logs}"
 JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
+NUM_NODES=2
 
 mkdir -p "${LOG_DIR}"
 
 COMMON_BEAKER_ARGS=(
   --cluster ai2/titan
-  --nodes 1
+  --nodes "${NUM_NODES}"
   --gpus 8
   --weka oe-training-default
   --beaker-image tianhuat/olmo-core-torch211-2404-cu128
@@ -25,7 +26,7 @@ COMMON_BEAKER_ARGS=(
 launch_one() {
   local lr="$1"
   local lr_tag="$2"
-  local name="${RUN_PREFIX}-cx1-b256k-${lr_tag}"
+  local name="${RUN_PREFIX}-cx1-b256k-n${NUM_NODES}-${lr_tag}"
   local log_path="${LOG_DIR}/${name}.log"
 
   local cmd=(
@@ -40,7 +41,8 @@ launch_one() {
     --lr="${lr}"
     --chinchilla-multiple=1
     --global-batch-size-seq=32
-    --tag="${lr_tag}-cx1-b256k"
+    --num-nodes="${NUM_NODES}"
+    --tag="${lr_tag}-cx1-b256k-n${NUM_NODES}"
   )
 
   echo "Launching ${name}..."

@@ -9,10 +9,11 @@ DRY_RUN="${DRY_RUN:-1}"
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
 RUN_PREFIX="olmoe3-tiny-275m"
 SAVE_ROOT="/weka/oe-training-default/ai2-llm/checkpoints/${USER}"
+NUM_NODES=2
 
 COMMON_BEAKER_ARGS=(
   --cluster ai2/titan
-  --nodes 1
+  --nodes "${NUM_NODES}"
   --gpus 8
   --weka oe-training-default
   --beaker-image tianhuat/olmo-core-torch211-2404-cu128
@@ -36,7 +37,7 @@ run_cmd() {
 launch_one() {
   local lr="$1"
   local lr_tag="$2"
-  local name="${RUN_PREFIX}-cx1-b256k-${lr_tag}"
+  local name="${RUN_PREFIX}-cx1-b256k-n${NUM_NODES}-${lr_tag}"
 
   run_cmd \
     uv run --extra dev --extra beaker python -m olmo_core.launch.beaker \
@@ -50,7 +51,8 @@ launch_one() {
         --lr="${lr}" \
         --chinchilla-multiple=1 \
         --global-batch-size-seq=32 \
-        --tag="${lr_tag}-cx1-b256k"
+        --num-nodes="${NUM_NODES}" \
+        --tag="${lr_tag}-cx1-b256k-n${NUM_NODES}"
 }
 
 launch_one 1.5e-3 lr1.5e-3

@@ -153,6 +153,12 @@ def get_parser() -> argparse.ArgumentParser:
         help="Global batch size in sequences. Tokens per step are this times sequence length.",
     )
     parser.add_argument(
+        "--num-nodes",
+        type=int,
+        default=REF_NUM_NODES,
+        help="Number of training nodes. Used to derive gradient accumulation from global batch size.",
+    )
+    parser.add_argument(
         "--warmup-fraction",
         type=float,
         default=SCHED_WARMUP_FRACTION,
@@ -169,7 +175,7 @@ def get_parser() -> argparse.ArgumentParser:
 
 def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_duration_tokens: int) -> None:
     global CHINCHILLA_MULTIPLE
-    global GLOBAL_BATCH_SIZE_SEQ, GLOBAL_BATCH_SIZE, NUM_MICRO_BATCHES, GLOBAL_BATCH_TOKENS_IN_M
+    global REF_NUM_NODES, GLOBAL_BATCH_SIZE_SEQ, GLOBAL_BATCH_SIZE, NUM_MICRO_BATCHES, GLOBAL_BATCH_TOKENS_IN_M
     global SCHED_WARMUP_FRACTION, SCHED_WARMUP_TOKENS
     global LR, EXPERT_LR, TAG, MONKEY_PATCH_DECAY_DURATION_TOKENS
 
@@ -179,10 +185,13 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
         raise ValueError("--lr must be > 0")
     if opts.global_batch_size_seq <= 0:
         raise ValueError("--global-batch-size-seq must be > 0")
+    if opts.num_nodes <= 0:
+        raise ValueError("--num-nodes must be > 0")
     if not 0 < opts.warmup_fraction < 1:
         raise ValueError("--warmup-fraction must be between 0 and 1")
 
     CHINCHILLA_MULTIPLE = opts.chinchilla_multiple
+    REF_NUM_NODES = opts.num_nodes
     GLOBAL_BATCH_SIZE_SEQ = opts.global_batch_size_seq
     GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * sequence_length
     NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ * PP_DIM
