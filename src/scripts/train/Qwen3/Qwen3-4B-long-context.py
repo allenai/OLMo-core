@@ -150,7 +150,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 group=cli_context.run_name,
                 entity="ai2-llm",
                 project="memory-networks",
-                enabled=False,  # enable via --trainer.callbacks.wandb.enabled=true
+                enabled=True,
                 cancel_check_interval=10,
             ),
         )
