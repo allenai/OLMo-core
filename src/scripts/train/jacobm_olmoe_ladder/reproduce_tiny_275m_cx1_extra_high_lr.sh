@@ -10,11 +10,13 @@ SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
 RUN_PREFIX="olmoe3-tiny-275m"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 NUM_NODES=1
+NUM_GPUS=2
+MICRO_BSZ=16
 
 COMMON_BEAKER_ARGS=(
   --cluster ai2/titan
   --nodes "${NUM_NODES}"
-  --gpus 8
+  --gpus "${NUM_GPUS}"
   --weka oe-training-default
   --beaker-image tianhuat/olmo-core-torch211-2404-cu128
   --workspace ai2/OLMo-3-moe-experiments
@@ -37,7 +39,7 @@ run_cmd() {
 launch_one() {
   local lr="$1"
   local lr_tag="$2"
-  local name="${RUN_PREFIX}-cx1-b256k-ep1mb4-${lr_tag}"
+  local name="${RUN_PREFIX}-cx1-b256k-gpu${NUM_GPUS}-ep1mb${MICRO_BSZ}-${lr_tag}"
 
   run_cmd \
     uv run --extra dev --extra beaker python -m olmo_core.launch.beaker \
@@ -52,10 +54,15 @@ launch_one() {
         --chinchilla-multiple=1 \
         --global-batch-size-seq=32 \
         --num-nodes="${NUM_NODES}" \
-        --micro-batch-size=4 \
+        --gpus-per-node="${NUM_GPUS}" \
+        --micro-batch-size="${MICRO_BSZ}" \
         --ep-dim=1 \
-        --tag="${lr_tag}-cx1-b256k-ep1mb4"
+        --tag="${lr_tag}-cx1-b256k-gpu${NUM_GPUS}-ep1mb${MICRO_BSZ}"
 }
 
-launch_one 3e-3 lr3e-3
+# The 3e-3 point was relaunched as the 2-GPU smoke:
+# olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr3e-3.
+if [[ "${LAUNCH_CX1_3E3:-0}" == "1" ]]; then
+  launch_one 3e-3 lr3e-3
+fi
 launch_one 5e-3 lr5e-3

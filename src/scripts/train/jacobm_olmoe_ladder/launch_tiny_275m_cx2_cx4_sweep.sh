@@ -10,34 +10,34 @@ NUM_NODES=1
 
 mkdir -p "${LOG_DIR}"
 
-COMMON_BEAKER_ARGS=(
-  --cluster ai2/titan
-  --nodes "${NUM_NODES}"
-  --gpus 8
-  --weka oe-training-default
-  --beaker-image tianhuat/olmo-core-torch211-2404-cu128
-  --workspace ai2/OLMo-3-moe-experiments
-  --budget ai2/oe-other
-  --priority urgent
-  --env OLMO_SYMM_VDEV2D_AUTO_BUILD=1
-  --env-secret AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY WANDB_API_KEY=jacobm_WANDB_API_KEY
-)
-
 launch_one() {
   local chinchilla="$1"
   local batch_tag="$2"
   local batch_seq="$3"
-  local micro_bsz="$4"
-  local lr="$5"
-  local lr_tag="$6"
-  local perf_tag="ep1mb${micro_bsz}"
+  local gpus="$4"
+  local micro_bsz="$5"
+  local lr="$6"
+  local lr_tag="$7"
+  local perf_tag="gpu${gpus}-ep1mb${micro_bsz}"
   local name="${RUN_PREFIX}-cx${chinchilla}-${batch_tag}-${perf_tag}-${lr_tag}"
   local log_path="${LOG_DIR}/${name}.log"
+  local common_beaker_args=(
+    --cluster ai2/titan
+    --nodes "${NUM_NODES}"
+    --gpus "${gpus}"
+    --weka oe-training-default
+    --beaker-image tianhuat/olmo-core-torch211-2404-cu128
+    --workspace ai2/OLMo-3-moe-experiments
+    --budget ai2/oe-other
+    --priority urgent
+    --env OLMO_SYMM_VDEV2D_AUTO_BUILD=1
+    --env-secret AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY WANDB_API_KEY=jacobm_WANDB_API_KEY
+  )
 
   local cmd=(
     uv run --extra dev --extra beaker python -m olmo_core.launch.beaker
     --name="${name}" \
-    "${COMMON_BEAKER_ARGS[@]}" \
+    "${common_beaker_args[@]}" \
     -- \
     python "${SCRIPT}"
     --save-folder="${CHECKPOINT_ROOT}/${name}"
@@ -47,6 +47,7 @@ launch_one() {
     --chinchilla-multiple="${chinchilla}"
     --global-batch-size-seq="${batch_seq}"
     --num-nodes="${NUM_NODES}"
+    --gpus-per-node="${gpus}"
     --micro-batch-size="${micro_bsz}"
     --ep-dim=1
     --tag="${lr_tag}-cx${chinchilla}-${batch_tag}-${perf_tag}"
@@ -87,10 +88,10 @@ launch_one() {
 }
 
 # Cx2 high-side check after 7e-4 beat 5e-4.
-launch_one 2 b256k 32 4 1e-3 lr1e-3
+launch_one 2 b256k 32 2 16 1e-3 lr1e-3
 
 # Cx4 sweep at the dense-ladder Cx4 batch rule: 512k tokens / 64 sequences.
-launch_one 4 b512k 64 8 1e-3 lr1e-3
-launch_one 4 b512k 64 8 1.5e-3 lr1.5e-3
-launch_one 4 b512k 64 8 2.5e-3 lr2.5e-3
-launch_one 4 b512k 64 8 3.5e-3 lr3.5e-3
+launch_one 4 b512k 64 4 16 1e-3 lr1e-3
+launch_one 4 b512k 64 4 16 1.5e-3 lr1.5e-3
+launch_one 4 b512k 64 4 16 2.5e-3 lr2.5e-3
+launch_one 4 b512k 64 4 16 3.5e-3 lr3.5e-3
