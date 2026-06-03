@@ -54,6 +54,15 @@ uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/summarize_wandb
   --name-regex 'olmoe3-tiny-275m-cx'
 ```
 
+Plot the Cx1 U-plot:
+
+```bash
+uv run --with wandb --with matplotlib python src/scripts/train/jacobm_olmoe_ladder/plot_cx1_uplot.py
+```
+
+The plot uses blue for the primary `avg250M` curve, orange dashed for `avg100M`,
+and green dotted for `avg500M` so the auxiliary windows are readable in Slack.
+
 ## 2026-06-02 Snapshot
 
 Initial read after the first 2M-batch sweep finished and the 256k-batch sweep was
@@ -91,3 +100,8 @@ ladder jobs were:
 - Cx2 high-side check: `256k@1e-3`
 - Cx4 sweep at dense-ladder Cx4 batch rule (`512k`): `1e-3`, `1.5e-3`,
   `2.5e-3`, `3.5e-3`
+
+For a cleaner Cx1 U-plot right side, two extra high-LR Cx1 probes were queued:
+
+- `256k@3e-3`
+- `256k@5e-3`
