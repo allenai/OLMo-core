@@ -800,14 +800,6 @@ longmino,preprocessed/longmino/{TOKENIZER}/stack-edu/fim-weighted-pl-edu-score-d
 longmino,preprocessed/longmino/{TOKENIZER}/stack-edu/fim-weighted-pl-edu-score-decon/TypeScript/part-5-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/stack-edu/fim-weighted-pl-edu-score-decon/TypeScript/part-6-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/stack-edu/fim-weighted-pl-edu-score-decon/TypeScript/part-7-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/thinking-data/part-0-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/thinking-data/part-1-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/thinking-data/part-2-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/thinking-data/part-3-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/thinking-data/part-4-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/thinking-data/part-5-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/thinking-data/part-6-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/thinking-data/part-7-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/tokyotech-llm/swallowcode/part-0-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/tokyotech-llm/swallowcode/part-1-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/tokyotech-llm/swallowcode/part-2-00000.npy
