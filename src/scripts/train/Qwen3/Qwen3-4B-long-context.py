@@ -23,6 +23,7 @@ from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWC
 from olmo_core.train import Duration, TrainerConfig, LoadStrategy
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
+    ConfigSaverCallback,
     SlackNotifierCallback,
     WandBCallback,
 )
@@ -157,6 +158,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             "slack_notifier",
             SlackNotifierCallback(name=run_name_with_ts, enabled=False),
         )
+        .with_callback("config_saver", ConfigSaverCallback())
     )
 
     experiment_config = ExperimentConfig(
