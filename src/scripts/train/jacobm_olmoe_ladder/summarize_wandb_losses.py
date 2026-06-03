@@ -24,6 +24,7 @@ TOKENS_KEY = "throughput/total tokens"
 
 @dataclass(frozen=True)
 class RunSpec:
+    chinchilla: str
     batch_label: str
     batch_tokens: int
     lr: str
@@ -31,6 +32,10 @@ class RunSpec:
 
 def parse_run_spec(name: str) -> RunSpec | None:
     if "olmoe3-tiny-275m-cx" not in name:
+        return None
+
+    chinchilla_match = re.search(r"cx([0-9]+)", name)
+    if chinchilla_match is None:
         return None
 
     if "b128k" in name:
@@ -48,7 +53,12 @@ def parse_run_spec(name: str) -> RunSpec | None:
     if match is None:
         return None
 
-    return RunSpec(batch_label=batch_label, batch_tokens=batch_tokens, lr=match.group(1))
+    return RunSpec(
+        chinchilla=chinchilla_match.group(1),
+        batch_label=batch_label,
+        batch_tokens=batch_tokens,
+        lr=match.group(1),
+    )
 
 
 def lr_sort_key(lr: str) -> float:
@@ -100,6 +110,7 @@ def main() -> None:
         history.sort(key=lambda item: item[1])
         final_step, final_tokens, final_loss = history[-1]
         out: dict[str, object] = {
+            "cx": spec.chinchilla,
             "batch": spec.batch_label,
             "lr": spec.lr,
             "state": run.state,
@@ -119,7 +130,7 @@ def main() -> None:
 
         rows.append(out)
 
-    rows.sort(key=lambda row: (str(row["batch"]), lr_sort_key(str(row["lr"]))))
+    rows.sort(key=lambda row: (float(row["cx"]), str(row["batch"]), lr_sort_key(str(row["lr"]))))
 
     window_headers = []
     for window in windows:
@@ -127,9 +138,10 @@ def main() -> None:
         window_headers.append(f"avg{window_m}M")
         window_headers.append(f"n{window_m}M")
 
-    print("\t".join(["batch", "lr", "state", "step", "tokensB", "final", *window_headers, "run_id", "url"]))
+    print("\t".join(["cx", "batch", "lr", "state", "step", "tokensB", "final", *window_headers, "run_id", "url"]))
     for row in rows:
         values = [
+            str(row["cx"]),
             str(row["batch"]),
             str(row["lr"]),
             str(row["state"]),

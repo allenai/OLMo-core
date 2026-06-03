@@ -32,7 +32,7 @@ uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/summarize_wandb
 ```
 
 The script uses the local `WANDB_API_KEY`, pulls runs from W&B, filters to
-`olmoe3-tiny-275m-cx1`, and prints TSV with final loss plus final-token-window
+`olmoe3-tiny-275m-cx1` by default, and prints TSV with final loss plus final-token-window
 averages. It infers batch size from run-name tags:
 
 - no `b...` tag and `cx1-lr`: 2M tokens/step
@@ -45,6 +45,13 @@ For a narrower pull:
 ```bash
 uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/summarize_wandb_losses.py \
   --name-regex 'olmoe3-tiny-275m-cx1-b256k'
+```
+
+For both Cx1 and Cx2:
+
+```bash
+uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/summarize_wandb_losses.py \
+  --name-regex 'olmoe3-tiny-275m-cx'
 ```
 
 ## 2026-06-02 Snapshot
