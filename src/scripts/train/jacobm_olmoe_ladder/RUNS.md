@@ -31,6 +31,10 @@ experiment name.
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-lr3e-4` | `tiny_275m.py` | 1x | 2,097,152 | 256 | 3e-4 | `01KT5K59VSV3G6BX7WDE5V156B` | https://beaker.org/ex/01KT5K59VSV3G6BX7WDE5V156B | 2M-batch Cx1 LR sweep. |
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-lr8e-4` | `tiny_275m.py` | 1x | 2,097,152 | 256 | 8e-4 | `01KT5K5EM002XR2K3818Y1XV0T` | https://beaker.org/ex/01KT5K5EM002XR2K3818Y1XV0T | 2M-batch Cx1 LR sweep; best visible training CE among `1e-4`, `3e-4`, and `8e-4` in the attached W&B plot. |
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-lr1.2e-3` | `tiny_275m.py` | 1x | 2,097,152 | 256 | 1.2e-3 | `01KT5K5MJ19KGCQK5CV96JJ3CS` | https://beaker.org/ex/01KT5K5MJ19KGCQK5CV96JJ3CS | 2M-batch Cx1 LR sweep; queued when the 256k-batch sweep was planned. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr3e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 3e-4 | `01KT5QEQ3CKEEG2D2XD938RR3S` | https://beaker.org/ex/01KT5QEQ3CKEEG2D2XD938RR3S | 256k-batch Cx1 LR sweep. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr5e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 5e-4 | `01KT5QEVY6QNE4VNHF21DZVG4H` | https://beaker.org/ex/01KT5QEVY6QNE4VNHF21DZVG4H | 256k-batch Cx1 LR sweep. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr8e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 8e-4 | `01KT5QF1R9GKB17899TN04Z1VD` | https://beaker.org/ex/01KT5QF1R9GKB17899TN04Z1VD | 256k-batch Cx1 LR sweep. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr1.2e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.2e-3 | `01KT5QF87053QWKAYK53NBKGS2` | https://beaker.org/ex/01KT5QF87053QWKAYK53NBKGS2 | 256k-batch Cx1 LR sweep. |
 
 ## Planned Sweeps
 
@@ -47,7 +51,7 @@ Recommended LRs:
 - `8e-4`
 - `1.2e-3`
 
-Planned run names:
+Launched run names:
 
 - `olmoe3-tiny-275m-cx1-b256k-lr3e-4`
 - `olmoe3-tiny-275m-cx1-b256k-lr5e-4`
