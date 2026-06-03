@@ -35,6 +35,16 @@ experiment name.
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr5e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 5e-4 | `01KT5QEVY6QNE4VNHF21DZVG4H` | https://beaker.org/ex/01KT5QEVY6QNE4VNHF21DZVG4H | 256k-batch Cx1 LR sweep. |
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr8e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 8e-4 | `01KT5QF1R9GKB17899TN04Z1VD` | https://beaker.org/ex/01KT5QF1R9GKB17899TN04Z1VD | 256k-batch Cx1 LR sweep. |
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr1.2e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.2e-3 | `01KT5QF87053QWKAYK53NBKGS2` | https://beaker.org/ex/01KT5QF87053QWKAYK53NBKGS2 | 256k-batch Cx1 LR sweep. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx2-b256k-lr5e-4` | `tiny_275m.py` | 2x | 262,144 | 32 | 5e-4 | `01KT61W21PBSX5F2SS0RHNSAPS` | https://beaker.org/ex/01KT61W21PBSX5F2SS0RHNSAPS | Cx2 transfer check; queued before Cx1 follow-ups. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx2-b256k-lr7e-4` | `tiny_275m.py` | 2x | 262,144 | 32 | 7e-4 | `01KT61W6Z3S0TQ58CJ9RHRP15G` | https://beaker.org/ex/01KT61W6Z3S0TQ58CJ9RHRP15G | Cx2 transfer check; queued before Cx1 follow-ups. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr4e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 4e-4 | `01KT61WCH6S6N0MV4VVB7751RR` | https://beaker.org/ex/01KT61WCH6S6N0MV4VVB7751RR | 256k-batch Cx1 LR refinement. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr6e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 6e-4 | `01KT61WJF7MWYVEV8CG6SGG9NM` | https://beaker.org/ex/01KT61WJF7MWYVEV8CG6SGG9NM | 256k-batch Cx1 LR refinement. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr7e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 7e-4 | `01KT61WR3EC0A5JHRY35EE1R7A` | https://beaker.org/ex/01KT61WR3EC0A5JHRY35EE1R7A | 256k-batch Cx1 LR refinement. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr1e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KT61WY9CK4MHK3CX39KKYYG0` | https://beaker.org/ex/01KT61WY9CK4MHK3CX39KKYYG0 | 256k-batch Cx1 LR refinement. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b128k-lr5e-4` | `tiny_275m.py` | 1x | 131,072 | 16 | 5e-4 | `01KT61X45SVNDB6YYNKKEJWJD1` | https://beaker.org/ex/01KT61X45SVNDB6YYNKKEJWJD1 | 128k-batch Cx1 batch-size probe. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b128k-lr8e-4` | `tiny_275m.py` | 1x | 131,072 | 16 | 8e-4 | `01KT61XAEYQ7R2A64QYP6CW3Y1` | https://beaker.org/ex/01KT61XAEYQ7R2A64QYP6CW3Y1 | 128k-batch Cx1 batch-size probe. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b512k-lr5e-4` | `tiny_275m.py` | 1x | 524,288 | 64 | 5e-4 | `01KT61XFXM7N00EVCYJHF183G5` | https://beaker.org/ex/01KT61XFXM7N00EVCYJHF183G5 | 512k-batch Cx1 batch-size probe. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b512k-lr8e-4` | `tiny_275m.py` | 1x | 524,288 | 64 | 8e-4 | `01KT61XPH6PGMNYMGD95ST09PS` | https://beaker.org/ex/01KT61XPH6PGMNYMGD95ST09PS | 512k-batch Cx1 batch-size probe. |
 
 ## Planned Sweeps
 
