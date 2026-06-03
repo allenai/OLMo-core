@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
 RUN_PREFIX="olmoe3-tiny-275m-cx1"
 SAVE_ROOT="/weka/oe-training-default/ai2-llm/checkpoints/${USER}"
+LOG_DIR="${LOG_DIR:-/tmp/olmoe3-tiny-275m-cx1-launch-logs}"
+JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
+
+mkdir -p "${LOG_DIR}"
 
 COMMON_BEAKER_ARGS=(
   --cluster ai2/titan
@@ -22,21 +26,70 @@ launch_one() {
   local lr="$1"
   local lr_tag="$2"
   local name="${RUN_PREFIX}-${lr_tag}"
+  local log_path="${LOG_DIR}/${name}.log"
 
-  uv run --extra dev --extra beaker python -m olmo_core.launch.beaker \
+  local cmd=(
+    uv run --extra dev --extra beaker python -m olmo_core.launch.beaker
     --name="${name}" \
     "${COMMON_BEAKER_ARGS[@]}" \
     -- \
-    python "${SCRIPT}" \
-      --save-folder="${SAVE_ROOT}/${name}" \
-      --name="${name}" \
-      --data-root=s3://ai2-llm \
-      --lr="${lr}" \
-      --chinchilla-multiple=1 \
-      --tag="${lr_tag}-cx1"
+    python "${SCRIPT}"
+    --save-folder="${SAVE_ROOT}/${name}"
+    --name="${name}"
+    --data-root=s3://ai2-llm
+    --lr="${lr}"
+    --chinchilla-multiple=1
+    --tag="${lr_tag}-cx1"
+  )
+
+  echo "Launching ${name}..."
+  printf 'Command:'
+  printf ' %q' "${cmd[@]}"
+  printf '\n'
+
+  "${cmd[@]}" >"${log_path}" 2>&1 &
+  local pid=$!
+  local deadline=$((SECONDS + JOB_CREATED_TIMEOUT_SECONDS))
+
+  while (( SECONDS < deadline )); do
+    if grep -q "✓ job created" "${log_path}"; then
+      sed -n '1,/✓ job created/p' "${log_path}"
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+      echo "Detached local launcher for ${name}; Beaker job continues."
+      return 0
+    fi
+
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      cat "${log_path}"
+      wait "${pid}"
+      return $?
+    fi
+
+    sleep 2
+  done
+
+  echo "Timed out waiting for Beaker job creation for ${name}; log follows:"
+  cat "${log_path}"
+  kill "${pid}" 2>/dev/null || true
+  wait "${pid}" 2>/dev/null || true
+  return 1
 }
 
-launch_one "1e-4" "lr1e-4"
-launch_one "3e-4" "lr3e-4"
-launch_one "8e-4" "lr8e-4"
-launch_one "1.2e-3" "lr1.2e-3"
+declare -A LR_BY_TAG=(
+  [lr1e-4]="1e-4"
+  [lr3e-4]="3e-4"
+  [lr8e-4]="8e-4"
+  [lr1.2e-3]="1.2e-3"
+)
+
+if (( $# > 0 )); then
+  for lr_tag in "$@"; do
+    launch_one "${LR_BY_TAG[${lr_tag}]}" "${lr_tag}"
+  done
+else
+  launch_one "1e-4" "lr1e-4"
+  launch_one "3e-4" "lr3e-4"
+  launch_one "8e-4" "lr8e-4"
+  launch_one "1.2e-3" "lr1.2e-3"
+fi
