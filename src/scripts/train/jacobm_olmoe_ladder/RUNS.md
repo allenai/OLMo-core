@@ -54,6 +54,11 @@ experiment name.
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-b512k-lr8e-4` | `tiny_275m.py` | 1x | 524,288 | 64 | 8e-4 | `01KT61XPH6PGMNYMGD95ST09PS` | https://beaker.org/ex/01KT61XPH6PGMNYMGD95ST09PS | 512k-batch Cx1 batch-size probe. |
 | 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-n2-lr1.5e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.5e-3 | `01KT73WQH8SDVQ0DS3XGAYD6KT` | https://beaker.org/ex/01KT73WQH8SDVQ0DS3XGAYD6KT | Two-node high-side LR probe. Checkpoints under `jacobm/olmoe3`. |
 | 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-n2-lr2e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 2e-3 | `01KT73WX76DE1RT678F7R3Y0C1` | https://beaker.org/ex/01KT73WX76DE1RT678F7R3Y0C1 | Two-node high-side LR probe. Checkpoints under `jacobm/olmoe3`. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-lr1e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 1e-3 | `01KT79MKV709DG6F6WQ1NSQT8J` | https://beaker.org/ex/01KT79MKV709DG6F6WQ1NSQT8J | Cx2 high-side check after `7e-4` beat `5e-4`. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-lr1e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1e-3 | `01KT79MT2NJBZ9QXQS969P9RQ2` | https://beaker.org/ex/01KT79MT2NJBZ9QXQS969P9RQ2 | Cx4 LR sweep at dense-ladder Cx4 batch rule. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-lr1.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.5e-3 | `01KT79N045S7RHSF80FKE2H77B` | https://beaker.org/ex/01KT79N045S7RHSF80FKE2H77B | Cx4 LR sweep at dense-ladder Cx4 batch rule. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-lr2.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 2.5e-3 | `01KT79N5S8NM71V6RXMVNB85AV` | https://beaker.org/ex/01KT79N5S8NM71V6RXMVNB85AV | Cx4 LR sweep at dense-ladder Cx4 batch rule. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-lr3.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 3.5e-3 | `01KT79NBSBGCSAJ225ZNHR63ZY` | https://beaker.org/ex/01KT79NBSBGCSAJ225ZNHR63ZY | Cx4 LR sweep at dense-ladder Cx4 batch rule. |
 
 ## Planned Sweeps
 
