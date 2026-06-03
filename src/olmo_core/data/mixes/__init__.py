@@ -53,7 +53,7 @@ class DataMix(DataMixBase):
     # Long-context extension mixes
     OLMo_longmino_mix_0625 = "OLMo-longmino-mix-0625"
     OLMo_longmino_mix_0925 = "OLMo-longmino-mix-0925"
-    longmino_qwen = "longmino-qwen"
+    longmino_qwen = "OLMo-longmino-qwen"
 
     # Validation mixes
     v3_small_ppl_validation = "v3-small-ppl-validation"
