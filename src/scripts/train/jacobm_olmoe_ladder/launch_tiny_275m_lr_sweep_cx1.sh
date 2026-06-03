@@ -76,16 +76,22 @@ launch_one() {
   return 1
 }
 
-declare -A LR_BY_TAG=(
-  [lr1e-4]="1e-4"
-  [lr3e-4]="3e-4"
-  [lr8e-4]="8e-4"
-  ["lr1.2e-3"]="1.2e-3"
-)
+lr_for_tag() {
+  case "$1" in
+    lr1e-4) echo "1e-4" ;;
+    lr3e-4) echo "3e-4" ;;
+    lr8e-4) echo "8e-4" ;;
+    lr1.2e-3) echo "1.2e-3" ;;
+    *)
+      echo "Unknown LR tag '$1'" >&2
+      return 1
+      ;;
+  esac
+}
 
 if (( $# > 0 )); then
   for lr_tag in "$@"; do
-    launch_one "${LR_BY_TAG[$lr_tag]}" "${lr_tag}"
+    launch_one "$(lr_for_tag "${lr_tag}")" "${lr_tag}"
   done
 else
   launch_one "1e-4" "lr1e-4"
