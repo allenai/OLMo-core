@@ -80,12 +80,12 @@ declare -A LR_BY_TAG=(
   [lr1e-4]="1e-4"
   [lr3e-4]="3e-4"
   [lr8e-4]="8e-4"
-  [lr1.2e-3]="1.2e-3"
+  ["lr1.2e-3"]="1.2e-3"
 )
 
 if (( $# > 0 )); then
   for lr_tag in "$@"; do
-    launch_one "${LR_BY_TAG[${lr_tag}]}" "${lr_tag}"
+    launch_one "${LR_BY_TAG[$lr_tag]}" "${lr_tag}"
   done
 else
   launch_one "1e-4" "lr1e-4"
