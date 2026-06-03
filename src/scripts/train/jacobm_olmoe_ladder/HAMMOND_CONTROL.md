@@ -53,6 +53,30 @@ ssh jacobm@hammond-cs-aus-452.reviz.ai2.in \
   "beaker session exec <SESSION_ID> -- bash -lc 'cd /weka/oe-adapt-default/jacobm/olmoe3/OLMo-core && /root/.local/bin/codex remote-control start --json'"
 ```
 
+## Connect from Codex Desktop
+
+Remote control uses Codex's relay, so no Beaker app-server port or SSH tunnel is needed.
+
+From the laptop:
+
+1. Open Codex Desktop.
+2. Confirm the app is signed into the same ChatGPT account/workspace used by the remote Codex auth.
+3. Open `Settings > Connections > Control other devices`.
+4. Select `hammond-cs-aus-452.reviz.ai2.in`.
+5. Open `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core`.
+
+If Hammond does not appear, restart remote control in the live session:
+
+```bash
+ssh jacobm@hammond-cs-aus-452.reviz.ai2.in \
+  "beaker session exec <SESSION_ID> -- bash -lc 'cd /weka/oe-adapt-default/jacobm/olmoe3/OLMo-core && /root/.local/bin/codex remote-control start --json'"
+```
+
+The command should return JSON with:
+
+- `status: connected`
+- `serverName: hammond-cs-aus-452.reviz.ai2.in`
+
 ## Current session
 
 Started 2026-06-03:
@@ -61,3 +85,4 @@ Started 2026-06-03:
 - Host: `hammond-cs-aus-452.reviz.ai2.in`
 - Codex: `0.136.0`
 - Remote-control status: running
+- Environment ID: `env_e_6a209d70cad08331a7ffb20891a66edb`
