@@ -13,6 +13,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
@@ -66,6 +67,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     # Qwen3-4B with YaRN context extension: native 32k → 64k
     model_config = TransformerConfig.qwen3_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
+        attn_backend=AttentionBackendName.flash_2,
     ).with_rope_scaling(
         YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
     )
