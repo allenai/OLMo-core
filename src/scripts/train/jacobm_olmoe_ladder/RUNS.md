@@ -73,6 +73,11 @@ experiment name.
 | 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr2.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 2.5e-3 | `01KT7KYASSEMQJY7P6P040G7ND` | https://beaker.org/ex/01KT7KYASSEMQJY7P6P040G7ND | Relaunched with partial-node settings after throughput smoke. 4 GPUs, EP=1, microbatch=16. |
 | 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr3.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 3.5e-3 | `01KT7KYG086VY082EN6HPSSX9G` | https://beaker.org/ex/01KT7KYG086VY082EN6HPSSX9G | Relaunched with partial-node settings after throughput smoke. 4 GPUs, EP=1, microbatch=16. |
 | 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr5e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 5e-3 | `01KT7KYTYWGV7CAFNNBBWAT91H` | https://beaker.org/ex/01KT7KYTYWGV7CAFNNBBWAT91H | Relaunched high-side Cx1 LR point with partial-node settings. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr8e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 8e-3 | `01KT7MQ5F42DBCD30P8JDKJ9JH` | https://beaker.org/ex/01KT7MQ5F42DBCD30P8JDKJ9JH | High-side Cx1 follow-up to clearly bracket the right side of the U-plot. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-gpu2-ep1mb16-lr1.5e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 1.5e-3 | `01KT7MQAVHRSPW4VG6BVQSY8AW` | https://beaker.org/ex/01KT7MQAVHRSPW4VG6BVQSY8AW | Cx2 high-side follow-up. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-gpu2-ep1mb16-lr2.5e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 2.5e-3 | `01KT7MQGH9KF529Q8NC6N63F8K` | https://beaker.org/ex/01KT7MQGH9KF529Q8NC6N63F8K | Cx2 high-side follow-up. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-gpu2-ep1mb16-lr3.5e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 3.5e-3 | `01KT7MQPK57YJ9KM7NKN06BDFB` | https://beaker.org/ex/01KT7MQPK57YJ9KM7NKN06BDFB | Cx2 high-side follow-up. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 5e-3 | `01KT7MQWG562KJVZYX2G8A19CZ` | https://beaker.org/ex/01KT7MQWG562KJVZYX2G8A19CZ | Cx4 high-side follow-up after `3.5e-3` looked healthy early. 4 GPUs, EP=1, microbatch=16. |
 
 ## Planned Sweeps
 
