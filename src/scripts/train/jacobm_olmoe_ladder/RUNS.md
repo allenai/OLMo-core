@@ -52,6 +52,8 @@ experiment name.
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-b128k-lr8e-4` | `tiny_275m.py` | 1x | 131,072 | 16 | 8e-4 | `01KT61XAEYQ7R2A64QYP6CW3Y1` | https://beaker.org/ex/01KT61XAEYQ7R2A64QYP6CW3Y1 | 128k-batch Cx1 batch-size probe. |
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-b512k-lr5e-4` | `tiny_275m.py` | 1x | 524,288 | 64 | 5e-4 | `01KT61XFXM7N00EVCYJHF183G5` | https://beaker.org/ex/01KT61XFXM7N00EVCYJHF183G5 | 512k-batch Cx1 batch-size probe. |
 | 2026-06-02 | `olmoe3-tiny-275m-cx1-b512k-lr8e-4` | `tiny_275m.py` | 1x | 524,288 | 64 | 8e-4 | `01KT61XPH6PGMNYMGD95ST09PS` | https://beaker.org/ex/01KT61XPH6PGMNYMGD95ST09PS | 512k-batch Cx1 batch-size probe. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-n2-lr1.5e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.5e-3 | `01KT73WQH8SDVQ0DS3XGAYD6KT` | https://beaker.org/ex/01KT73WQH8SDVQ0DS3XGAYD6KT | Two-node high-side LR probe. Checkpoints under `jacobm/olmoe3`. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-n2-lr2e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 2e-3 | `01KT73WX76DE1RT678F7R3Y0C1` | https://beaker.org/ex/01KT73WX76DE1RT678F7R3Y0C1 | Two-node high-side LR probe. Checkpoints under `jacobm/olmoe3`. |
 
 ## Planned Sweeps
 
