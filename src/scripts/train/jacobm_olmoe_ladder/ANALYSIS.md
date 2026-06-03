@@ -62,3 +62,10 @@ The first follow-up recommendation was:
 
 - 256k LR refinement: `6e-4`, `1e-3`, `1.5e-3`, `2e-3`
 - batch probe at strong LRs: `128k@5e-4`, `128k@8e-4`, `512k@5e-4`, `512k@8e-4`
+
+After a later W&B refresh, `5e-4` at 256k looked stronger than `8e-4` by recent
+token-window average, so the follow-up LR refinement was tightened to:
+
+- 256k LR refinement: `4e-4`, `6e-4`, `7e-4`, `1e-3`
+- batch probe at strong LRs: `128k@5e-4`, `128k@8e-4`, `512k@5e-4`, `512k@8e-4`
+- Cx2 transfer check, queued first: `256k@5e-4`, `256k@7e-4`
