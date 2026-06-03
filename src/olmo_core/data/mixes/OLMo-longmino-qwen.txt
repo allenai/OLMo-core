@@ -74,7 +74,6 @@ longmino,preprocessed/longmino/{TOKENIZER}/cc_all_dressed/all_dressed_v3/weborga
 longmino,preprocessed/longmino/{TOKENIZER}/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/part-7-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/part-0-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/part-1-00000.npy
-longmino,preprocessed/longmino/{TOKENIZER}/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/part-2-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/part-3-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/part-4-00000.npy
 longmino,preprocessed/longmino/{TOKENIZER}/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/part-5-00000.npy
