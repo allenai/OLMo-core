@@ -61,7 +61,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         # override with --launch.num_nodes=N
     )
 
-    tokenizer_config = TokenizerConfig.dolma2()
+    tokenizer_config = TokenizerConfig.qwen3()
 
     # Qwen3-4B with YaRN context extension: native 32k → 64k
     model_config = TransformerConfig.qwen3_4B(
@@ -102,7 +102,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     dataset_config = NumpyPackedFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_longmino_mix_0925,
+        DataMix.longmino_qwen,
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
         work_dir=work_dir,
@@ -123,8 +123,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             save_folder=save_dir,
             save_overwrite=True,
             # Set load_path to start from a pre-trained checkpoint, e.g.:
-            load_path="gs://ai2-llm/checkpoints/.../stepXXXXX",
-            load_strategy=LoadStrategy.if_available,
+            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-4B/",
+            load_strategy=LoadStrategy.always,
             # load_trainer_state=False,
             # load_optim_state=True,
             metrics_collect_interval=10,

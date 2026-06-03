@@ -22,12 +22,7 @@ from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
-from ..rope import (
-    ComplexRotaryEmbedding,
-    FusedRotaryEmbedding,
-    RoPEConfig,
-    RotaryEmbedding,
-)
+from ..rope import ComplexRotaryEmbedding, FusedRotaryEmbedding, RoPEConfig, RotaryEmbedding
 from ..utils import get_tp_wrappers
 from . import flash_attn_api
 from .backend import (
@@ -39,6 +34,8 @@ from .backend import (
     TEAttentionBackend,
     TorchAttentionBackend,
 )
+from .landmark import landmark_grouped_softmax, repeat_kv
+from .landmark_kernel import fused_landmark_attention, has_landmark_kernel
 from .ring import (
     RingAttentionLlama3LoadBalancer,
     RingAttentionLoadBalancer,
@@ -68,6 +65,7 @@ __all__ = [
     "Attention",
     "FusedAttention",
     "NormalizedAttention",
+    "LandmarkAttention",
     "RingAttentionLoadBalancerType",
     "RingAttentionLoadBalancer",
     "RingAttentionZigZagLoadBalancer",
@@ -172,6 +170,10 @@ class AttentionType(StrEnum):
     """
     ➡️ :class:`NormalizedAttention`
     """
+    landmark = "landmark"
+    """
+    ➡️ :class:`LandmarkAttention`
+    """
 
 
 @SequenceMixerConfig.register("attention")
@@ -201,6 +203,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
+    mem_freq: Optional[int] = None
+    """
+    The number of regular tokens between landmark tokens, used only by
+    :class:`LandmarkAttention` (``name="landmark"``). The landmark block size is ``mem_freq + 1``.
+    """
+    landmark_use_kernel: Optional[bool] = None
+    """
+    For :class:`LandmarkAttention` only: use the fused Triton kernel instead of the eager path.
+    Defaults to ``False`` (eager). See :class:`LandmarkAttention` for the caveats.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -293,6 +305,19 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             cache=cache,
         )
 
+        mem_freq = kwargs.pop("mem_freq", None)
+        landmark_use_kernel = kwargs.pop("landmark_use_kernel", None)
+        if self.name != AttentionType.landmark:
+            if mem_freq is not None:
+                raise OLMoConfigurationError(
+                    f"'mem_freq' is only supported with landmark attention (got name='{self.name}')"
+                )
+            if landmark_use_kernel is not None:
+                raise OLMoConfigurationError(
+                    "'landmark_use_kernel' is only supported with landmark attention "
+                    f"(got name='{self.name}')"
+                )
+
         try:
             if self.name == "default":
                 return Attention(**kwargs)
@@ -309,6 +334,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                         "'window_size' is not supported with normalized attention"
                     )
                 return NormalizedAttention(**kwargs)
+            elif self.name == "landmark":
+                if "window_size" in kwargs:
+                    raise OLMoConfigurationError(
+                        "'window_size' (sliding window) is not supported with landmark attention"
+                    )
+                if mem_freq is None:
+                    raise OLMoConfigurationError("landmark attention requires 'mem_freq' to be set")
+                if landmark_use_kernel is not None:
+                    kwargs["use_kernel"] = landmark_use_kernel
+                return LandmarkAttention(mem_freq=mem_freq, **kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -546,33 +581,23 @@ class Attention(SequenceMixer):
             **rope_kwargs,
         )
 
-    def forward(
+    def _prepare_qkv(
         self,
         x: torch.Tensor,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
+        *,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-        cache_leftpad: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Apply attention to the input.
+        Compute the query, key, and value tensors from the input, applying QKV clipping,
+        QK-norm, and RoPE. This is the shared pre-attention logic used by :meth:`forward`
+        (and subclasses such as :class:`LandmarkAttention`).
 
-        :param x: The input of shape ``(batch_size, seq_len, d_model)``.
-        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
-            :class:`torch.int32` tensor that should always have one more element than there
-            are documents (the first element in the tensor should always be ``0``).
-            Required together with ``max_doc_len`` when using intra-document masking.
-        :param max_doc_len: The maximum document length in the input ``x``.
-            Required together with ``cu_doc_lens`` when using intra-document masking.
-
-        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
+        :returns: ``(q, k, v)`` with shapes ``(batch_size, seq_len, n_heads (local), head_dim)``,
+            ``(batch_size, seq_len, n_kv_heads (local), head_dim)``, and
+            ``(batch_size, seq_len, n_kv_heads (local), head_dim)`` respectively.
         """
         B, T, _ = x.shape
 
@@ -617,6 +642,45 @@ class Attention(SequenceMixer):
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
             q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
+
+        return q, k, v
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Apply attention to the input.
+
+        :param x: The input of shape ``(batch_size, seq_len, d_model)``.
+        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
+            :class:`torch.int32` tensor that should always have one more element than there
+            are documents (the first element in the tensor should always be ``0``).
+            Required together with ``max_doc_len`` when using intra-document masking.
+        :param max_doc_len: The maximum document length in the input ``x``.
+            Required together with ``cu_doc_lens`` when using intra-document masking.
+
+        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
+        """
+        B, T, _ = x.shape
+
+        # shape: (batch_size, seq_len, n_heads (local), head_dim),
+        #        (batch_size, seq_len, n_kv_heads (local), head_dim),
+        #        (batch_size, seq_len, n_kv_heads (local), head_dim)
+        q, k, v = self._prepare_qkv(
+            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=cu_doc_lens
+        )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -807,6 +871,198 @@ class Attention(SequenceMixer):
         attn_flops = 12 * self.n_heads * self.head_dim * effective_seq_len
 
         return param_flops + attn_flops
+
+
+class LandmarkAttention(Attention):
+    """
+    Landmark attention, a drop-in :class:`Attention` variant.
+
+    Landmark attention inserts a special "landmark" token after every ``mem_freq`` regular tokens,
+    dividing the sequence into blocks of ``block_size = mem_freq + 1`` tokens, and computes a grouped
+    (two-level) softmax so that a query attends to a block's tokens gated by the attention weight
+    assigned to that block's landmark. The projections, QK-norm, RoPE, weight init, and tensor
+    parallel plan are all inherited from :class:`Attention`.
+
+    Two forward implementations are available, selected by ``use_kernel``:
+
+    - **Eager** (default): a dense :func:`~olmo_core.nn.attention.landmark.landmark_grouped_softmax`
+      that is fully autograd-differentiable, so it provides a working forward *and backward* on both
+      CPU and GPU. This is ``O(T^2)`` in memory.
+    - **Fused kernel** (``use_kernel=True``): the Triton kernel
+      (:func:`~olmo_core.nn.attention.landmark_kernel.fused_landmark_attention`), which is flash-style
+      (``O(T)`` memory) and requires landmark tokens at fixed periodic positions
+      (``pos % block_size == block_size - 1``) and ``mem_freq >= 15``. Its forward and backward are
+      validated against the eager path (gradients match exactly in fp32). This is the memory-efficient
+      path for long-context training; it is CUDA + triton only.
+
+    .. note::
+        Generation / KV-caching, context parallelism, intra-document masking, and long-context
+        landmark retrieval are not yet supported.
+
+    :param mem_freq: The number of regular tokens between landmark tokens. The landmark block size
+        is ``mem_freq + 1``.
+    :param use_kernel: Use the fused Triton kernel instead of the eager path. Defaults to ``False``.
+
+    See :class:`Attention` for the remaining parameters.
+    """
+
+    def __init__(
+        self,
+        *,
+        mem_freq: int,
+        use_kernel: bool = False,
+        softmax_scale: Optional[float] = None,
+        **kwargs,
+    ):
+        if kwargs.get("gate") is not None:
+            raise OLMoConfigurationError("LandmarkAttention does not support attention gating")
+        if kwargs.get("window_size") is not None:
+            raise OLMoConfigurationError(
+                "LandmarkAttention does not support sliding window attention"
+            )
+        super().__init__(softmax_scale=softmax_scale, **kwargs)
+        if mem_freq is None or mem_freq < 1:
+            raise OLMoConfigurationError(
+                f"LandmarkAttention requires mem_freq >= 1 (got {mem_freq})"
+            )
+        self.mem_freq = mem_freq
+        self.block_size = mem_freq + 1
+        self.use_kernel = use_kernel
+        self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Apply landmark attention to the input of shape ``(batch_size, seq_len, d_model)``.
+        """
+        if any(
+            v is not None
+            for v in (
+                cu_doc_lens,
+                cu_doc_lens_q,
+                cu_doc_lens_k,
+                max_doc_len,
+                max_doc_len_q,
+                max_doc_len_k,
+                local_k_slice,
+            )
+        ):
+            raise NotImplementedError(
+                "Intra-document masking (cu_doc_lens) is not supported with landmark attention"
+            )
+        if cache_leftpad is not None or self.kv_cache_manager is not None:
+            raise NotImplementedError(
+                "KV-caching / generation is not yet supported with landmark attention"
+            )
+
+        B, T, _ = x.shape
+        if T % self.block_size != 0:
+            raise OLMoConfigurationError(
+                f"Sequence length ({T}) must be a multiple of the landmark block size "
+                f"(mem_freq + 1 = {self.block_size})."
+            )
+
+        # shape: (B, T, n_heads, head_dim), (B, T, n_kv_heads, head_dim), (B, T, n_kv_heads, head_dim)
+        q, k, v = self._prepare_qkv(
+            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
+        )
+
+        # -> (B, n_heads, T, head_dim), expanding KV heads for GQA.
+        n_rep = q.shape[2] // k.shape[2]
+        q = q.transpose(1, 2)
+        k = repeat_kv(k.transpose(1, 2), n_rep)
+        v = repeat_kv(v.transpose(1, 2), n_rep)
+
+        if self.use_kernel:
+            if not has_landmark_kernel():
+                raise RuntimeError(
+                    "LandmarkAttention was built with 'use_kernel=True' but the fused Triton kernel "
+                    "is unavailable (install 'triton' and run on a CUDA device)."
+                )
+            if self.block_size < 16:
+                # The kernel tiles by ``block_size`` and uses ``tl.dot``, which requires tile
+                # dimensions >= 16.
+                raise OLMoConfigurationError(
+                    f"The fused landmark kernel requires mem_freq >= 15 (block size "
+                    f"{self.block_size} < 16); tl.dot needs tile dimensions of at least 16."
+                )
+            is_mem = (torch.arange(T, device=q.device) % self.block_size) == (self.block_size - 1)
+            # shape: (B, n_heads, T, head_dim)
+            att = fused_landmark_attention(
+                q, k, v, is_mem, sm_scale=self.softmax_scale, block_size=self.block_size
+            )
+        else:
+            # Eager grouped-softmax path: works on CPU/GPU and is fully autograd-differentiable,
+            # so it provides a working training backward without the fused kernel.
+            # shape: (B, n_heads, T, head_dim)
+            att = self._eager_forward(q, k, v)
+
+        # shape: (B, T, n_heads * head_dim)
+        att = att.transpose(1, 2).contiguous().view(B, T, -1)
+
+        # shape: (B, T, d_model)
+        return self.w_out(att)
+
+    def _eager_forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        B, n_heads, T, _ = q.shape
+        attn_mask, is_mem, last_section_mask = self._landmark_masks(T, q.device, q.dtype)
+
+        attn = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale
+        attn = attn + attn_mask
+        attn = torch.maximum(
+            attn, torch.tensor(torch.finfo(attn.dtype).min, device=attn.device, dtype=attn.dtype)
+        )
+
+        probs = landmark_grouped_softmax(
+            attn,
+            dim=-1,
+            is_mem=is_mem.expand(B, n_heads, T, T),
+            last_section_mask=last_section_mask.expand(B, 1, T, T),
+        ).to(q.dtype)
+
+        # shape: (B, n_heads, T, head_dim)
+        return torch.matmul(probs, v)
+
+    def _landmark_masks(
+        self, T: int, device: torch.device, dtype: torch.dtype
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Build the additive causal attention mask, the landmark mask (``is_mem``), and the
+        ``last_section_mask`` for the eager grouped-softmax path. All are batch-independent
+        (built with a batch dim of 1) and depend only on ``T`` and the landmark block size.
+        """
+        block_size = self.block_size
+        finfo_min = torch.finfo(dtype).min
+
+        # additive causal mask, shape (1, 1, T, T): 0 on/below the diagonal, -inf above.
+        causal = torch.full((T, T), finfo_min, dtype=dtype, device=device)
+        attn_mask = torch.triu(causal, diagonal=1)[None, None].clone()
+
+        # shape: (1, 1, 1, T)
+        is_mem = ((torch.arange(T, device=device) % block_size) == (block_size - 1)).view(
+            1, 1, 1, T
+        )
+        mem_ids = torch.where(attn_mask < -1, 0, torch.cumsum(is_mem, -1) - is_mem.int())
+        last_section_mask = torch.amax(mem_ids, -1, keepdim=True) == mem_ids
+        # Mask landmark tokens that fall in the query's own (last) section.
+        attn_mask.masked_fill_(last_section_mask & is_mem, finfo_min)
+        last_section_mask = last_section_mask.logical_and(attn_mask > -1)
+        is_mem = is_mem.logical_and(attn_mask > -1)
+
+        return attn_mask, is_mem, last_section_mask
 
 
 @beta_feature

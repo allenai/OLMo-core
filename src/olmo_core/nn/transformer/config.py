@@ -1479,6 +1479,9 @@ class TransformerConfig(ModelConfig):
         use_flash: Optional[bool] = None,
         attn_backend: Optional[AttentionBackendName] = None,
         sliding_window: Optional[SlidingWindowAttentionConfig] = None,
+        landmark: bool = False,
+        mem_freq: Optional[int] = None,
+        landmark_use_kernel: bool = False,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
@@ -1525,6 +1528,17 @@ class TransformerConfig(ModelConfig):
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
 
+        if landmark:
+            if mem_freq is None:
+                raise OLMoConfigurationError("'mem_freq' must be set when 'landmark=True'.")
+            if sliding_window is not None:
+                raise OLMoConfigurationError(
+                    "Landmark attention is not compatible with sliding window attention."
+                )
+            att_type = AttentionType.landmark
+        elif mem_freq is not None:
+            raise OLMoConfigurationError("'mem_freq' is only valid when 'landmark=True'.")
+
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
             feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
@@ -1551,6 +1565,8 @@ class TransformerConfig(ModelConfig):
                 use_flash=use_flash,
                 backend=attn_backend,
                 sliding_window=sliding_window,
+                mem_freq=mem_freq,
+                landmark_use_kernel=landmark_use_kernel if landmark else None,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,

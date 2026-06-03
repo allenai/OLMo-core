@@ -468,6 +468,7 @@ from .instance_source import (
     InstanceSourceConfig,
     SplitInstanceSourceConfig,
 )
+from .landmark_instance_source import LandmarkInstanceSource, LandmarkInstanceSourceConfig
 from .mixing_document_source import (
     MixingDocumentSource,
     MixingDocumentSourceConfig,
@@ -498,14 +499,8 @@ from .packing_instance_source import (
     PackingInstanceSourceConfig,
 )
 from .random_instance_source import RandomInstanceSource, RandomInstanceSourceConfig
-from .sampling_document_source import (
-    SamplingDocumentSource,
-    SamplingDocumentSourceConfig,
-)
-from .sampling_instance_source import (
-    SamplingInstanceSource,
-    SamplingInstanceSourceConfig,
-)
+from .sampling_document_source import SamplingDocumentSource, SamplingDocumentSourceConfig
+from .sampling_instance_source import SamplingInstanceSource, SamplingInstanceSourceConfig
 from .sampling_token_source import SamplingTokenSource, SamplingTokenSourceConfig
 from .sliced_instance_source import SlicedInstanceSource
 from .sliced_token_source import SlicedTokenSource
@@ -563,6 +558,8 @@ __all__ = [
     # Instance source implementations.
     "ConcatAndChunkInstanceSource",
     "ConcatAndChunkInstanceSourceConfig",
+    "LandmarkInstanceSource",
+    "LandmarkInstanceSourceConfig",
     "PackingInstanceSource",
     "PackingInstanceSourceConfig",
     "ConcatenatedInstanceSource",

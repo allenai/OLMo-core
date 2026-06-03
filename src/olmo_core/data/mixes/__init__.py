@@ -53,6 +53,7 @@ class DataMix(DataMixBase):
     # Long-context extension mixes
     OLMo_longmino_mix_0625 = "OLMo-longmino-mix-0625"
     OLMo_longmino_mix_0925 = "OLMo-longmino-mix-0925"
+    longmino_qwen = "longmino-qwen"
 
     # Validation mixes
     v3_small_ppl_validation = "v3-small-ppl-validation"
@@ -93,6 +94,9 @@ class DataMix(DataMixBase):
         elif self == DataMix.OLMo_mix_0625:
             if tokenizer == TokenizerName.dolma2_sigdig:
                 tokenizer_id = "dolma2-tokenizer-sigdig"
+        elif self == DataMix.longmino_qwen:
+            if tokenizer == TokenizerName.qwen3:
+                tokenizer_id = "qwen"
         elif self in [
             # Mixes used for OLMo3 training are saved with "dolma3-tokenizer" tokenizer,
             # which is exactly the same as "dolma2-tokenizer" but with a different name.
