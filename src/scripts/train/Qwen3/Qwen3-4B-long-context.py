@@ -94,7 +94,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             shard_degree=1,
         ),
         # Qwen3-4B: n_heads=32, n_kv_heads=8 → head_stride=4
-        cp_config=TransformerContextParallelConfig.llama3(degree=8, head_stride=4),
+        cp_config=TransformerContextParallelConfig.zig_zag(degree=8, head_stride=4),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.7,
@@ -110,7 +110,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         mix_base_dir="s3://ai2-llm",
         work_dir=work_dir,
         sequence_length=SEQUENCE_LENGTH,
-        generate_doc_lengths=True,  # required for intra-document masking with llama3 CP load balancer
+        generate_doc_lengths=False,
         source_group_size=8,
         source_permutation_seed=123,
     )
