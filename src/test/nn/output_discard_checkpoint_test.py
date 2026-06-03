@@ -1,4 +1,5 @@
 import copy
+from typing import Any
 
 import pytest
 import torch
@@ -176,6 +177,7 @@ def test_share_storage_cpp_extension_rebinds_in_place():
     share_storage = loader._load()
     if share_storage is None:
         pytest.skip(f"C++ share_storage extension unavailable: {loader._build_error!r}")
+    assert share_storage is not None  # narrow for mypy past pytest.skip
 
     dst = torch.arange(8, dtype=torch.float32)
     dst_view = dst.view(2, 4)  # shares dst's StorageImpl
@@ -223,7 +225,12 @@ def test_output_discard_checkpoint_ffn_integration(n_layers):
     stack. ``n_layers > 1`` exercises per-block ODC instances and verifies the
     recompute hooks fire in the correct order during a chained backward.
     """
-    ffn_kwargs = dict(d_model=64, hidden_size=128, bias=False, init_device="cpu")
+    ffn_kwargs: dict[str, Any] = {
+        "d_model": 64,
+        "hidden_size": 128,
+        "bias": False,
+        "init_device": "cpu",
+    }
 
     torch.manual_seed(0)
     baseline = torch.nn.Sequential(*[FeedForward(**ffn_kwargs) for _ in range(n_layers)])
