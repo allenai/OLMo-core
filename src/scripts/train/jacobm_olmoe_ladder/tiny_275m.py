@@ -159,6 +159,12 @@ def get_parser() -> argparse.ArgumentParser:
         help="Number of training nodes. Used to derive gradient accumulation from global batch size.",
     )
     parser.add_argument(
+        "--gpus-per-node",
+        type=int,
+        default=REF_GPUS_PER_NODE,
+        help="Number of training GPUs per node. Used to derive gradient accumulation from global batch size.",
+    )
+    parser.add_argument(
         "--micro-batch-size",
         type=int,
         default=MICRO_BSZ,
@@ -187,7 +193,7 @@ def get_parser() -> argparse.ArgumentParser:
 
 def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_duration_tokens: int) -> None:
     global CHINCHILLA_MULTIPLE
-    global REF_NUM_NODES, MICRO_BSZ, EP_DIM
+    global REF_NUM_NODES, REF_GPUS_PER_NODE, MICRO_BSZ, EP_DIM
     global GLOBAL_BATCH_SIZE_SEQ, GLOBAL_BATCH_SIZE, NUM_MICRO_BATCHES, GLOBAL_BATCH_TOKENS_IN_M
     global SCHED_WARMUP_FRACTION, SCHED_WARMUP_TOKENS
     global LR, EXPERT_LR, TAG, MONKEY_PATCH_DECAY_DURATION_TOKENS
@@ -200,6 +206,8 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
         raise ValueError("--global-batch-size-seq must be > 0")
     if opts.num_nodes <= 0:
         raise ValueError("--num-nodes must be > 0")
+    if opts.gpus_per_node <= 0:
+        raise ValueError("--gpus-per-node must be > 0")
     if opts.micro_batch_size <= 0:
         raise ValueError("--micro-batch-size must be > 0")
     if opts.ep_dim <= 0:
@@ -209,15 +217,16 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
 
     CHINCHILLA_MULTIPLE = opts.chinchilla_multiple
     REF_NUM_NODES = opts.num_nodes
+    REF_GPUS_PER_NODE = opts.gpus_per_node
     MICRO_BSZ = opts.micro_batch_size
     EP_DIM = opts.ep_dim
     GLOBAL_BATCH_SIZE_SEQ = opts.global_batch_size_seq
     GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * sequence_length
-    NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ * PP_DIM
+    NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * REF_GPUS_PER_NODE) // MICRO_BSZ * PP_DIM
     if NUM_MICRO_BATCHES <= 0:
         raise ValueError("global batch size is too small for the configured node/GPU/microbatch setup")
-    if GLOBAL_BATCH_SIZE_SEQ % (REF_NUM_NODES * 8 * MICRO_BSZ) != 0:
-        raise ValueError("--global-batch-size-seq must divide evenly across nodes, GPUs, and MICRO_BSZ")
+    if GLOBAL_BATCH_SIZE_SEQ % (REF_NUM_NODES * REF_GPUS_PER_NODE * MICRO_BSZ) != 0:
+        raise ValueError("--global-batch-size-seq must divide evenly across nodes, GPUs per node, and MICRO_BSZ")
     GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
     SCHED_WARMUP_FRACTION = opts.warmup_fraction
@@ -277,6 +286,7 @@ EP_DIM = 1
 PP_DIM = 1
 
 REF_NUM_NODES = 1
+REF_GPUS_PER_NODE = 8
 
 # Chinchilla multiple is based on active non-embedding parameters.
 CHINCHILLA_MULTIPLE = 1.0
@@ -284,7 +294,7 @@ MICRO_BSZ = 1
 GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 4 * 1
 
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * DEFAULT_SEQUENCE_LENGTH
-NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ * PP_DIM
+NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * REF_GPUS_PER_NODE) // MICRO_BSZ * PP_DIM
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
 SCHED_WARMUP_FRACTION = 0.1
