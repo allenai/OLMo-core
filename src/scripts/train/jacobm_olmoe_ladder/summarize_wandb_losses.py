@@ -49,7 +49,10 @@ def parse_run_spec(name: str) -> RunSpec | None:
     else:
         return None
 
-    match = re.search(r"lr(1\.2e-3|1\.5e-3|2e-3|1e-3|8e-4|7e-4|6e-4|5e-4|4e-4|3e-4|1e-4)", name)
+    match = re.search(
+        r"lr(3\.5e-3|2\.5e-3|1\.2e-3|1\.5e-3|2e-3|1e-3|8e-4|7e-4|6e-4|5e-4|4e-4|3e-4|1e-4)",
+        name,
+    )
     if match is None:
         return None
 

@@ -83,3 +83,11 @@ turned over, the next Cx1 high-side probes were:
 
 - `256k@1.5e-3`
 - `256k@2e-3`
+
+Those high-side probes gave a shallow Cx1 turn, with local quadratic fits in
+log LR estimating the Cx1 optimum around `1.6e-3` to `1.8e-3`. The next 275M
+ladder jobs were:
+
+- Cx2 high-side check: `256k@1e-3`
+- Cx4 sweep at dense-ladder Cx4 batch rule (`512k`): `1e-3`, `1.5e-3`,
+  `2.5e-3`, `3.5e-3`
