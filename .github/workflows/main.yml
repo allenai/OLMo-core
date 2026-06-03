@@ -254,7 +254,7 @@ jobs:
             --branch ${{ env.BRANCH_NAME }} \
             --beaker-image ${{ matrix.task.image }} \
             --budget ai2/oe-other \
-            --priority normal \
+            --priority low \
             --preemptible \
             --gpus ${{ matrix.task.gpus }} \
             --task-timeout 10m \
