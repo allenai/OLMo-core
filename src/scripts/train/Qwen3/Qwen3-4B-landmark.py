@@ -104,10 +104,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=1,
         ),
-        # Ulysses CP splits heads (not the sequence) so the full T is visible per GPU.
-        # Landmark attention is compatible because the grouped softmax sees the complete
-        # sequence; only ring/zigzag CP (which splits T) is incompatible.
-        # Qwen3-4B: n_heads=32, n_kv_heads=8 → 4 q-heads and 1 kv-head per CP rank.
+        # Ulysses CP: LandmarkAttention.forward performs the cp2hp/hp2cp all-to-all itself so that
+        # each rank gathers the full sequence T (with n_heads/8 heads) before the grouped softmax,
+        # which must see every preceding block's landmark. Ring/zigzag CP (which splits T) is
+        # incompatible and is rejected by LandmarkAttention.apply_cp.
+        # Qwen3-4B: n_heads=32, n_kv_heads=8 → 4 q-heads and 1 kv-head per CP rank (both divisible
+        # by degree=8, as Ulysses requires).
         cp_config=TransformerContextParallelConfig.ulysses(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,

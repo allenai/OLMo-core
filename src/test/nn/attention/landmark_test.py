@@ -10,10 +10,11 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType, LandmarkAttention
 from olmo_core.nn.attention.landmark import landmark_grouped_softmax
 from olmo_core.nn.attention.landmark_kernel import fused_landmark_attention, has_landmark_kernel
+from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.testing import requires_gpu
+from olmo_core.testing import requires_gpu, run_distributed_test
 
 
 def _landmark_attention(
@@ -230,6 +231,145 @@ def test_landmark_instance_source_requires_multiple_of_mem_freq(tmp_path):
     content = ConcatAndChunkInstanceSource(tokens, sequence_length=10, work_dir=tmp_path)
     with pytest.raises(OLMoConfigurationError):
         LandmarkInstanceSource(content, mem_freq=3, mem_id=999, work_dir=tmp_path)
+
+
+def test_landmark_instance_source_exclude_landmark_predictors(tmp_path):
+    from olmo_core.data.utils import get_labels
+
+    mem_freq, mem_id = 3, 999  # block_size 4
+    block_size = mem_freq + 1
+    tokens = InMemoryTokenSource(tokens=list(range(100, 124)), work_dir=tmp_path)
+    content = ConcatAndChunkInstanceSource(tokens, sequence_length=12, work_dir=tmp_path)
+
+    default = LandmarkInstanceSource(content, mem_freq=mem_freq, mem_id=mem_id, work_dir=tmp_path)
+    excluded = LandmarkInstanceSource(
+        content,
+        mem_freq=mem_freq,
+        mem_id=mem_id,
+        exclude_landmark_predictors=True,
+        work_dir=tmp_path,
+    )
+
+    # Changing the option must change the fingerprint (so cached artifacts aren't reused).
+    assert default.fingerprint != excluded.fingerprint
+
+    # input_ids are identical; only label_mask differs.
+    d_inst, e_inst = default[0], excluded[0]
+    assert list(d_inst["input_ids"]) == list(e_inst["input_ids"])
+
+    landmark_positions = [i for i in range(16) if (i % block_size) == (block_size - 1)]  # 3,7,11,15
+
+    def loss_positions(inst):
+        batch = {
+            "input_ids": torch.tensor([list(map(int, inst["input_ids"]))]),
+            "label_mask": torch.tensor([list(map(bool, inst["label_mask"]))]),
+        }
+        labels = get_labels(batch, label_ignore_index=-100)[0]
+        return {i for i in range(labels.numel()) if labels[i].item() != -100}
+
+    default_loss = loss_positions(d_inst)
+    excluded_loss = loss_positions(e_inst)
+
+    # By default, interior landmark positions contribute as predictors.
+    assert default_loss & set(landmark_positions) == {3, 7, 11}  # 15 is the final position
+    # With the option on, no landmark position contributes, and that's the only difference.
+    assert excluded_loss & set(landmark_positions) == set()
+    assert default_loss - excluded_loss == {3, 7, 11}
+
+
+def _landmark_transformer_config(seq_len: int) -> TransformerConfig:
+    # Small landmark transformer (eager path) used by the context-parallel test. n_heads and
+    # n_kv_heads must be divisible by the CP degree (world_size=2).
+    return TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=256,
+        n_layers=2,
+        n_heads=8,
+        n_kv_heads=2,
+        qk_norm=True,
+        rope_theta=10_000,
+        landmark=True,
+        mem_freq=3,  # block_size 4
+    )
+
+
+def _run_landmark_ulysses_cp(
+    checkpoint_dir: str, inputs_path: str, outputs_path: str, seq_len: int
+):
+    from torch.distributed.tensor import DTensor, Shard, init_device_mesh
+
+    from olmo_core.distributed.checkpoint import load_model_and_optim_state
+    from olmo_core.distributed.utils import get_full_tensor, get_world_size
+
+    mesh = init_device_mesh("cpu", (get_world_size(),), mesh_dim_names=("cp",))
+
+    model = _landmark_transformer_config(seq_len).build()
+    model.apply_cp(mesh["cp"], uly=UlyssesContextParallelStyle())
+    model.init_weights(device=torch.device("cpu"), max_seq_len=seq_len)
+    load_model_and_optim_state(checkpoint_dir, model)
+    model.eval()
+
+    # The model shards input_ids and the RoPE buffers internally via the Ulysses load balancer, so
+    # we pass the full (replicated) input; each rank returns its sequence shard of the logits.
+    input_ids = torch.load(inputs_path, map_location="cpu")
+    with torch.no_grad():
+        local_logits = model(input_ids=input_ids)
+    logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
+
+    expected = torch.load(outputs_path, map_location="cpu")
+    torch.testing.assert_close(get_full_tensor(logits), expected, rtol=1e-4, atol=1e-4)
+
+
+def test_landmark_ulysses_cp_matches_full(tmp_path):
+    # Ulysses CP must reproduce a single-rank full-sequence forward: LandmarkAttention.forward
+    # gathers the complete sequence (with n_heads / cp_degree heads) via all-to-all, so the grouped
+    # softmax still sees every preceding block's landmark. The model itself shards the input and the
+    # RoPE buffers, so this also covers RoPE under CP.
+    from olmo_core.distributed.checkpoint import save_model_and_optim_state
+
+    torch.manual_seed(0)
+    seq_len = 16  # 4 landmark blocks; divisible by block_size (4) and world_size (2)
+
+    model = _landmark_transformer_config(seq_len).build()
+    model.init_weights(device=torch.device("cpu"), max_seq_len=seq_len)
+    model.eval()
+
+    input_ids = torch.randint(0, 256, (2, seq_len))
+    with torch.no_grad():
+        expected = model(input_ids=input_ids)
+
+    inputs_path = tmp_path / "x.pt"
+    outputs_path = tmp_path / "y.pt"
+    checkpoint_dir = tmp_path / "checkpoint"
+    torch.save(input_ids, inputs_path)
+    torch.save(expected, outputs_path)
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        _run_landmark_ulysses_cp,
+        backend="gloo",
+        world_size=2,
+        func_args=(str(checkpoint_dir), str(inputs_path), str(outputs_path), seq_len),
+    )
+
+
+def test_landmark_rejects_ring_cp():
+    from torch.distributed.device_mesh import DeviceMesh
+
+    from olmo_core.nn.attention.ring import (
+        RingAttentionZigZagLoadBalancer,
+        RingContextParallelStyle,
+    )
+
+    attn = _landmark_attention(mem_freq=3)
+    # An empty DeviceMesh shell is enough to exercise the guard, which fires before any collective
+    # is created.
+    fake_mesh = DeviceMesh.__new__(DeviceMesh)
+    with pytest.raises(OLMoConfigurationError, match="only supports Ulysses"):
+        attn.apply_cp(
+            fake_mesh,
+            ring=RingContextParallelStyle(load_balancer=RingAttentionZigZagLoadBalancer),
+        )
 
 
 def test_landmark_factory_wiring():

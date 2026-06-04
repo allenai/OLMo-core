@@ -11,6 +11,11 @@ from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
+from olmo_core.distributed.parallel.context_parallel import (
+    all_to_all_cp2hp,
+    all_to_all_single_cp2hp,
+    all_to_all_single_hp2cp,
+)
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
@@ -929,6 +934,61 @@ class LandmarkAttention(Attention):
         self.block_size = mem_freq + 1
         self.use_kernel = use_kernel
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
+        # Ulysses context-parallel state, populated by ``apply_cp``. Unlike the base ``Attention``,
+        # landmark attention has its own forward and does not route through ``self.backend``, so it
+        # performs the Ulysses all-to-all itself (see ``forward``).
+        self._cp_pg: Optional[torch.distributed.ProcessGroup] = None
+        self._cp_world_size: int = 1
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
+    ):
+        """
+        Prepare landmark attention for Ulysses context parallelism.
+
+        Ring/zigzag CP splits the sequence into per-rank chunks, which breaks the landmark grouped
+        softmax (a query must see the landmark tokens of *all* preceding blocks). Ulysses CP instead
+        splits the heads: each rank gathers the full sequence (with ``n_heads / cp_degree`` heads)
+        via an all-to-all, so the grouped softmax sees the complete sequence. We therefore only
+        support Ulysses, and we perform the all-to-all in :meth:`forward` rather than in
+        ``self.backend`` (which landmark attention never uses).
+
+        :param cp_mesh: The context parallel device sub-mesh.
+        :param ring: Must be ``None``; ring CP is not supported.
+        :param uly: The Ulysses context parallel style.
+
+        :raises OLMoConfigurationError: If ring CP is requested, or if the number of (KV) heads is
+            not divisible by the CP degree.
+        """
+        if ring is not None:
+            raise OLMoConfigurationError(
+                "LandmarkAttention only supports Ulysses context parallelism, not ring/zigzag CP "
+                "(which splits the sequence and breaks the landmark grouped softmax). Use "
+                "TransformerContextParallelConfig.ulysses(...)."
+            )
+        if uly is None:
+            raise ValueError("One of 'ring' or 'uly' must be specified")
+
+        cp_size = cp_mesh.size()
+        if self.n_heads % cp_size != 0:
+            raise OLMoConfigurationError(
+                f"Ulysses CP degree ({cp_size}) must divide n_heads ({self.n_heads})"
+            )
+        if self.n_kv_heads % cp_size != 0:
+            raise OLMoConfigurationError(
+                f"Ulysses CP degree ({cp_size}) must divide n_kv_heads ({self.n_kv_heads}); "
+                f"landmark attention does not support replicating KV heads across CP ranks"
+            )
+
+        self._cp_pg = cp_mesh.get_group()
+        self._cp_world_size = cp_size
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_pg is not None
 
     @torch.compiler.disable
     def forward(
@@ -969,19 +1029,34 @@ class LandmarkAttention(Attention):
                 "KV-caching / generation is not yet supported with landmark attention"
             )
 
-        B, T, _ = x.shape
+        # ``T_local`` is the per-rank sequence length: the full sequence when CP is disabled, or the
+        # CP shard (``T / cp_degree``) under Ulysses CP. RoPE is applied below in ``_prepare_qkv``
+        # using the (already CP-sharded) positional buffers, i.e. with correct *global* positions,
+        # before the Ulysses all-to-all gathers the full sequence.
+        B, T_local, _ = x.shape
+
+        # shape: (B, T_local, n_heads, head_dim), (B, T_local, n_kv_heads, head_dim) x2
+        q, k, v = self._prepare_qkv(
+            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
+        )
+
+        if self.cp_enabled:
+            assert self._cp_pg is not None
+            # Ulysses: gather the full sequence and scatter the heads across CP ranks.
+            # (B, T/CP, H, D) -> (B, T, H/CP, D); likewise for the KV heads.
+            q = all_to_all_single_cp2hp(q, self._cp_pg)
+            k, v = all_to_all_cp2hp([k, v], self._cp_pg)
+
+        # Each rank now holds the full sequence ``T`` (= ``T_local`` without CP).
+        T = q.shape[1]
         if T % self.block_size != 0:
             raise OLMoConfigurationError(
                 f"Sequence length ({T}) must be a multiple of the landmark block size "
                 f"(mem_freq + 1 = {self.block_size})."
             )
 
-        # shape: (B, T, n_heads, head_dim), (B, T, n_kv_heads, head_dim), (B, T, n_kv_heads, head_dim)
-        q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
-        )
-
-        # -> (B, n_heads, T, head_dim), expanding KV heads for GQA.
+        # -> (B, n_heads, T, head_dim), expanding KV heads for GQA. Under CP the head counts here
+        # are the per-rank (n_heads / cp_degree) counts; their ratio (n_rep) is unchanged.
         n_rep = q.shape[2] // k.shape[2]
         q = q.transpose(1, 2)
         k = repeat_kv(k.transpose(1, 2), n_rep)
@@ -1011,10 +1086,19 @@ class LandmarkAttention(Attention):
             # shape: (B, n_heads, T, head_dim)
             att = self._eager_forward(q, k, v)
 
-        # shape: (B, T, n_heads * head_dim)
-        att = att.transpose(1, 2).contiguous().view(B, T, -1)
+        # shape: (B, T, n_heads (local), head_dim)
+        att = att.transpose(1, 2)
 
-        # shape: (B, T, d_model)
+        if self.cp_enabled:
+            assert self._cp_pg is not None
+            # Ulysses: scatter the sequence back and gather the heads.
+            # (B, T, H/CP, D) -> (B, T/CP, H, D)
+            att = all_to_all_single_hp2cp(att.contiguous(), self._cp_pg)
+
+        # shape: (B, T_local, n_heads * head_dim)
+        att = att.contiguous().view(B, T_local, -1)
+
+        # shape: (B, T_local, d_model)
         return self.w_out(att)
 
     def _eager_forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:

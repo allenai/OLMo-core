@@ -19,17 +19,22 @@ class LandmarkInstanceSourceConfig(InstanceSourceConfig):
         is ``mem_freq + 1``.
     :param mem_id: The token ID to insert as the landmark token. This should be a reserved ID in
         the model's vocabulary whose embedding is learned during training.
+    :param exclude_landmark_predictors: If ``True``, also exclude landmark tokens as loss
+        *predictors* (not just as targets), matching reference implementations that drop landmark
+        logits entirely. See :class:`LandmarkInstanceSource` for details. Defaults to ``False``.
     """
 
     source: InstanceSourceConfig
     mem_freq: int
     mem_id: int
+    exclude_landmark_predictors: bool = False
 
     def build(self, work_dir: PathOrStr) -> "LandmarkInstanceSource":
         return LandmarkInstanceSource(
             self.source.build(work_dir),
             mem_freq=self.mem_freq,
             mem_id=self.mem_id,
+            exclude_landmark_predictors=self.exclude_landmark_predictors,
             work_dir=work_dir,
         )
 
@@ -51,9 +56,12 @@ class LandmarkInstanceSource(InstanceSource):
 
     .. note::
         With the standard left-shifted label convention, marking landmark positions in
-        ``label_mask`` excludes the landmark tokens as prediction *targets*. Interior landmark
-        positions are still used as predictors of the following content token; this differs slightly
-        from reference implementations that drop landmark logits entirely.
+        ``label_mask`` excludes the landmark tokens as prediction *targets*. By default, interior
+        landmark positions are still used as predictors of the following content token; this differs
+        slightly from reference implementations that drop landmark logits entirely. Set
+        ``exclude_landmark_predictors=True`` to also drop the loss term *at* each landmark position
+        (by masking the label of the following content token), so landmark tokens contribute to the
+        loss neither as targets nor as predictors.
     """
 
     Config = LandmarkInstanceSourceConfig
@@ -66,6 +74,7 @@ class LandmarkInstanceSource(InstanceSource):
         mem_freq: int,
         mem_id: int,
         work_dir: PathOrStr,
+        exclude_landmark_predictors: bool = False,
     ):
         if mem_freq < 1:
             raise OLMoConfigurationError(f"'mem_freq' must be >= 1 (got {mem_freq}).")
@@ -90,6 +99,7 @@ class LandmarkInstanceSource(InstanceSource):
         self.mem_freq = mem_freq
         self.mem_id = mem_id
         self.block_size = block_size
+        self.exclude_landmark_predictors = exclude_landmark_predictors
 
     @property
     def source(self) -> InstanceSource:
@@ -107,6 +117,7 @@ class LandmarkInstanceSource(InstanceSource):
                 f"class={self.__class__.__name__},"
                 f"{self.mem_freq=},"
                 f"{self.mem_id=},"
+                f"{self.exclude_landmark_predictors=},"
                 f"source={self.source.fingerprint},"
             ).encode()
         )
@@ -139,7 +150,15 @@ class LandmarkInstanceSource(InstanceSource):
                 new_mask.extend(label_mask[start : start + self.mem_freq])
             else:
                 new_mask.extend([True] * self.mem_freq)
-            new_mask.append(False)  # landmark tokens are excluded from the loss
+            new_mask.append(False)  # landmark tokens are excluded from the loss (as targets)
+
+        if self.exclude_landmark_predictors:
+            # Also exclude landmark tokens as loss *predictors*. With left-shifted labels, the loss
+            # term at a landmark position ``p`` predicts token ``p + 1`` (the next block's first
+            # content token), so masking that token's ``label_mask`` drops the term. Landmark
+            # positions are at ``p % block_size == block_size - 1``; mask each ``p + 1`` that exists.
+            for p in range(self.block_size - 1, len(new_mask) - 1, self.block_size):
+                new_mask[p + 1] = False
 
         return {"input_ids": new_ids, "label_mask": new_mask}
 
