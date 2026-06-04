@@ -445,19 +445,21 @@ Cx8 full-run results from the fresh `r2` grid:
 | `4e-4` | finished | 40971 | 32.221 | 2.5113 | 2.5092 | 2.5085 |
 | `6e-4` | finished | 40971 | 32.221 | 2.4999 | 2.4978 | 2.4972 |
 | `8e-4` | finished | 40971 | 32.221 | 2.4929 | 2.4909 | 2.4903 |
+| `1.6e-3` | finished | 40971 | 32.221 | 2.4884 | 2.4864 | 2.4859 |
 
-The best observed Cx8 LR is `8e-4`, but it is the high edge of the completed
-grid, so the rung is not bracketed. Quadratic fits to loss vs log10(LR) are
-therefore not trusted yet: the 3-point fit over `4e-4`/`6e-4`/`8e-4` points
-outside the bracket at about `5.9e-3`, while the 4-point fit points just beyond
-the bracket at about `1.34e-3`. After the initial `1.6e-3` extension also looked
-too hot early, launched two more aggressive high-side probes to make the bracket
-unambiguous:
+The best observed Cx8 LR is now `1.6e-3`, but it is the high edge of the
+completed grid, so the rung is not bracketed. Quadratic fits to loss vs
+log10(LR) are therefore not trusted yet. The earlier stopped `3.2e-3` partial
+looked poor, but full-run-only selection means we need a completed high-side
+point before calling the rung bracketed. After `1.6e-3` finished better than
+`8e-4`, launched a fresh full `3.2e-3` extension:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
 - Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q661N0YHYHC9A9T9AGV1J`;
   stopped intentionally after Cx8 `1.6e-3` was already clearly worse than the
   completed `8e-4` best. Ignore for full-run analysis.
+- Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r3`: `01KTAA55V6QXN45QZFBHTY6B65`;
+  launched after the full `1.6e-3` result made Cx8 high-edge-best again.
 - Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q6HX5X6KFW5RD1VSC9BV4`;
   stopped intentionally after lower high-side probes were already clearly worse.
   Ignore for full-run analysis.
