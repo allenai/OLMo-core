@@ -162,17 +162,19 @@ def _force_rebuild_build_directory(build_directory: str, *, enabled: bool) -> No
     if not enabled:
         return
 
+    from olmo_core.distributed.utils import get_fs_local_rank
+
+    # Wipe once per filesystem: get_fs_local_rank() is global rank 0 on a shared FS
+    # (OLMO_SHARED_FS=1), per-node local rank 0 on node-local FS, and 0 when not
+    # distributed -- so each distinct build cache is wiped exactly once (the default JIT
+    # cache under TORCH_EXTENSIONS_DIR is typically node-local).
+    if get_fs_local_rank() == 0:
+        shutil.rmtree(build_directory, ignore_errors=True)
+        os.makedirs(build_directory, exist_ok=True)
+
     dist = torch.distributed
     if dist.is_available() and dist.is_initialized():
-        rank = dist.get_rank()
-        if rank == 0:
-            shutil.rmtree(build_directory, ignore_errors=True)
-            os.makedirs(build_directory, exist_ok=True)
         dist.barrier()
-        return
-
-    shutil.rmtree(build_directory, ignore_errors=True)
-    os.makedirs(build_directory, exist_ok=True)
 
 
 def _is_transient_missing_lock_error(exc: BaseException, build_directory: str) -> bool:
@@ -209,8 +211,8 @@ def load_cuda_extension(
 
     Wraps :func:`torch.utils.cpp_extension.load` with an arch/ABI-tagged build directory,
     stale-lock cleanup, and retries on transient missing-lock errors that can occur when
-    multiple ranks build concurrently. ``torch`` is imported lazily here, so importing this
-    module never triggers a compile.
+    multiple ranks build concurrently. ``torch.utils.cpp_extension`` is imported lazily inside
+    this function, so importing this module never triggers an extension build.
 
     :param base_name: Base name for the extension; an ABI tag (and arch tag, unless
         ``with_arch_suffix=False``) is appended to form the build/module name.

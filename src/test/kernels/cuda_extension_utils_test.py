@@ -5,6 +5,7 @@ from olmo_core.kernels.cuda_extension_utils import (
     _cuda_arch_tag,
     _env_bool,
     _env_float,
+    _force_rebuild_build_directory,
     _maybe_remove_stale_build_lock,
     _torch_extension_abi_tag,
 )
@@ -57,3 +58,19 @@ def test_maybe_remove_stale_build_lock(tmp_path):
 
     _maybe_remove_stale_build_lock(tmp_path, timeout_seconds=1.0)
     assert not lock.exists()
+
+
+def test_force_rebuild_build_directory_non_distributed(tmp_path):
+    build_dir = tmp_path / "ext_build"
+    build_dir.mkdir()
+    stale = build_dir / "stale.o"
+    stale.touch()
+
+    # Disabled -> no-op.
+    _force_rebuild_build_directory(str(build_dir), enabled=False)
+    assert stale.exists()
+
+    # Enabled, not distributed -> fs-local rank 0 wipes and recreates the directory.
+    _force_rebuild_build_directory(str(build_dir), enabled=True)
+    assert build_dir.is_dir()
+    assert not stale.exists()
