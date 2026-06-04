@@ -23,7 +23,7 @@ DATA_ROOT="${DATA_ROOT:-/weka/oe-training-default/ai2-llm}"
 # ---------------------------------------------------------------------------
 # Beaker cluster configuration
 # ---------------------------------------------------------------------------
-NODES="${NODES:-2}"
+NODES="${NODES:-8}"
 GPUS="${GPUS:-8}"
 WORKSPACE="${WORKSPACE:-ai2/flex2}"
 CLUSTER="${CLUSTER:-ai2/jupiter}"
@@ -76,6 +76,7 @@ python -m olmo_core.launch.beaker \
     --workspace "${WORKSPACE}" \
     --cluster "${CLUSTER}" \
     --priority "${PRIORITY}" \
+    --preemptible \
     --weka "${WEKA}" \
     --shared-filesystem \
     --env-secret "${ENV_SECRETS[@]}" \
