@@ -69,6 +69,7 @@ def build_launch_config(
     num_execution_units: Optional[int] = None,
     step_timeout: Optional[int] = None,
     step_soft_timeout: Optional[int] = 10 * 60,
+    num_gpus: int = 8,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
 
@@ -147,7 +148,7 @@ def build_launch_config(
         weka_buckets=weka_buckets,
         beaker_image=beaker_image,
         num_nodes=num_nodes,
-        num_gpus=8,
+        num_gpus=num_gpus,
         num_execution_units=num_execution_units,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
