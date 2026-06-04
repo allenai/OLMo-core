@@ -90,9 +90,11 @@ uv run --with wandb --with matplotlib python src/scripts/train/jacobm_olmoe_ladd
   --finished-only
 ```
 
-Completed-run plots split lines by run family when a rung contains multiple
-settings, such as Cx1 `original`, `n2`, and `gpu2-ep1mb16`. Do not connect these
-families into a single U-curve; use the family-specific lines for LR-rule fits.
+Completed-run per-rung plots split lines by run family when a rung contains
+multiple settings, such as Cx1 `original`, `n2`, and `gpu2-ep1mb16`. Do not
+connect these families into a single U-curve; use the family-specific lines for
+LR-rule fits. The aggregate model plot shows only the canonical family for each
+rung.
 
 Plots are written to `src/scripts/train/jacobm_olmoe_ladder/plots/`. The
 committed artifacts include one U-plot per Cx rung and one aggregate U-plot for
@@ -201,6 +203,13 @@ LR-rule plot, two current-family basin reruns finished:
 These current-family reruns are worse than the older same-LR Cx1 basin points,
 but preserve the same preference ordering (`2e-3` slightly better than
 `1.5e-3`) and give a cleaner reference for run-family effects.
+
+To complete a fully comparable Cx1 current-family curve, queued additional
+`gpu2-ep1mb16` cold/mid probes:
+
+- Cx1 `8e-4`, `gpu2-ep1mb16`, `r2`: `01KTA3V92BK4FBXXEQF80KSAAA`
+- Cx1 `1e-3`, `gpu2-ep1mb16`, `r2`: `01KTA3W6HMJHQ6SM72NXW55AW3`
+- Cx1 `1.2e-3`, `gpu2-ep1mb16`, `r2`: `01KTA3X9R2PWD408NG6617M1NS`
 
 ## 2026-06-04 Completed Cx2/Cx4 Snapshot
 

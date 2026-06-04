@@ -22,6 +22,14 @@ CANONICAL_BATCH_BY_CX = {
     16: "1M",
 }
 
+CANONICAL_FAMILY_BY_CX = {
+    1: "gpu2-ep1mb16",
+    2: "gpu2-ep1mb16",
+    4: "gpu4-ep1mb16",
+    8: "gpu4-ep1mb8",
+    16: "gpu8-ep1mb16",
+}
+
 
 def is_analysis_run(name: str) -> bool:
     lowered = name.lower()
@@ -126,7 +134,11 @@ def plot_cx(points, cx: int, out_path: Path, window_m: int) -> None:
 
 def plot_model(points, model: str, out_path: Path, window_m: int) -> None:
     fig, ax = plt.subplots(figsize=(8.2, 5.2))
-    model_points = [p for p in points if p["model"] == model]
+    model_points = [
+        p
+        for p in points
+        if p["model"] == model and p["family"] == CANONICAL_FAMILY_BY_CX.get(p["cx"], p["family"])
+    ]
     families_by_cx = {
         cx: sorted({p["family"] for p in model_points if p["cx"] == cx and p["state"] == "finished"})
         for cx in sorted({p["cx"] for p in model_points})
