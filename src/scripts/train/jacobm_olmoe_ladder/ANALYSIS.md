@@ -362,6 +362,19 @@ for analysis: Cx8 `2e-4` (`nda8dyu0`), Cx8 `4e-4` (`9n2gwlx7`), Cx8 `8e-4`
 (`rquath33`), Cx8 `1.6e-3` (`32ujpusd`), Cx16 `1e-4` (`9h2gbx4b`), Cx16
 `2e-4` (`6cd1cdmy`), Cx16 `4e-4` (`k0xuoc5d`), and Cx16 `8e-4` (`ai2h8nbw`).
 
+Fresh `r2` completion grid launched from commit `2cfd4c56`:
+
+- Cx8 `2e-4`, `gpu4-ep1mb8`: `01KT8JPNQTTSQFDCGNV7HT8VV1`
+- Cx8 `4e-4`, `gpu4-ep1mb8`: `01KT8JQ0V85RVSY309P3BXQ85Y`
+- Cx8 `6e-4`, `gpu4-ep1mb8`: `01KT8JQCM49JRFVNMT7WRV701V`
+- Cx8 `8e-4`, `gpu4-ep1mb8`: `01KT8JQR750TFJKE13ZXY7JYTT`
+- Cx16 `2e-4`, `gpu8-ep1mb16`: `01KT8JR3WKXCR6TN8897A57DHS`
+- Cx16 `4e-4`, `gpu8-ep1mb16`: `01KT8JRFSG3J7AJ5PV7E32Z46K`
+- Cx16 `6e-4`, `gpu8-ep1mb16`: `01KT8JRVAG6RVGT231477NGQD9`
+
+Treat these as the canonical full-run sources for Cx8/Cx16 U-plots. The earlier
+storage-failed partials are useful only as qualitative pruning evidence.
+
 ## 810M and 1.2B Baseline Prep
 
 `tiny_275m.py` now accepts `--model-size` with:

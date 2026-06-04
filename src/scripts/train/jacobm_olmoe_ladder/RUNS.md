@@ -133,6 +133,18 @@ their W&B runs for analysis:
 - Cx16 `4e-4`: `01KT8HKT4P0ZB8QXDPP57Y6MDP`
 - Cx16 `8e-4`: `01KT8HM745W5A1J1Y3TWRZ3QT0`
 
+Fresh `r2` reruns from commit `2cfd4c56` use final-only permanent checkpoints
+plus latest ephemeral checkpoints. These are the canonical Cx8/Cx16 completion
+runs unless a job fails and is explicitly replaced:
+
+- Cx8 `2e-4`, `gpu4-ep1mb8`: `01KT8JPNQTTSQFDCGNV7HT8VV1`
+- Cx8 `4e-4`, `gpu4-ep1mb8`: `01KT8JQ0V85RVSY309P3BXQ85Y`
+- Cx8 `6e-4`, `gpu4-ep1mb8`: `01KT8JQCM49JRFVNMT7WRV701V`
+- Cx8 `8e-4`, `gpu4-ep1mb8`: `01KT8JQR750TFJKE13ZXY7JYTT`
+- Cx16 `2e-4`, `gpu8-ep1mb16`: `01KT8JR3WKXCR6TN8897A57DHS`
+- Cx16 `4e-4`, `gpu8-ep1mb16`: `01KT8JRFSG3J7AJ5PV7E32Z46K`
+- Cx16 `6e-4`, `gpu8-ep1mb16`: `01KT8JRVAG6RVGT231477NGQD9`
+
 ## Planned Sweeps
 
 ### Cx1, 256k tokens/step
