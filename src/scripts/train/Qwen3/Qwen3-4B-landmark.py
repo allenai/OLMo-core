@@ -95,7 +95,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             ],
         ),
         scheduler=LinearWithWarmup(warmup=400, alpha_f=0.0),
-        compile_model=False,  # torch.compile incompatible with landmark boolean mask shapes
+        compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
@@ -108,7 +108,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             shard_degree=8,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.full,
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.7,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,

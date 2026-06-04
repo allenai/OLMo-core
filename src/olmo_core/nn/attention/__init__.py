@@ -930,6 +930,7 @@ class LandmarkAttention(Attention):
         self.use_kernel = use_kernel
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
 
+    @torch.compiler.disable
     def forward(
         self,
         x: torch.Tensor,

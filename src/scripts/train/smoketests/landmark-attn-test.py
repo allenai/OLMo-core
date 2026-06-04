@@ -19,7 +19,7 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import WandBCallback
+from olmo_core.train.callbacks import ConfigSaverCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
@@ -82,7 +82,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             ],
         ),
         scheduler=CosWithWarmup(warmup_steps=2),
-        compile_model=False,  # torch.compile incompatible with landmark boolean mask shapes
+        compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
@@ -129,6 +129,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             cancel_check_interval=5,
             max_duration=Duration.steps(20),
         )
+        .with_callback("config_saver", ConfigSaverCallback())
         .with_callback(
             "wandb",
             WandBCallback(
