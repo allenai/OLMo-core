@@ -153,7 +153,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         TrainerConfig(
             save_folder=save_dir,
             save_overwrite=True,
-            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-0.6B/model_and_optim",
+            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-0.6B-olmocore/model_and_optim",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             metrics_collect_interval=10,
