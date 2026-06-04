@@ -170,9 +170,11 @@ Status update: the four Cx8 `r2` runs finished successfully on 2026-06-04:
   avg500M 2.4903.
 
 The best completed Cx8 point is the high-edge `8e-4` run, so Cx8 is not yet
-bracketed. Launched one bounded high-side extension:
+bracketed. Launched high-side extensions:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
+- Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q661N0YHYHC9A9T9AGV1J`
+- Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q6HX5X6KFW5RD1VSC9BV4`
 
 Status update: the canonical Cx16 `r2` runs finished successfully on 2026-06-04.
 
@@ -184,9 +186,11 @@ Status update: the canonical Cx16 `r2` runs finished successfully on 2026-06-04.
   avg500M 2.4354.
 
 The best completed Cx16 point is the high-edge `6e-4` run, so Cx16 is not yet
-bracketed. Launched one bounded high-side extension:
+bracketed. Launched high-side extensions:
 
 - Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
+- Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q6X0B6PG3G6ZSBZGTPSVQ`
+- Cx16 `4.8e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q774FWC6NZDSGTD0Y2W7K`
 
 ## Planned Sweeps
 

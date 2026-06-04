@@ -400,10 +400,13 @@ The best observed Cx8 LR is `8e-4`, but it is the high edge of the completed
 grid, so the rung is not bracketed. Quadratic fits to loss vs log10(LR) are
 therefore not trusted yet: the 3-point fit over `4e-4`/`6e-4`/`8e-4` points
 outside the bracket at about `5.9e-3`, while the 4-point fit points just beyond
-the bracket at about `1.34e-3`. Per the ladder rule, launched a single high-side
-extension:
+the bracket at about `1.34e-3`. After the initial `1.6e-3` extension also looked
+too hot early, launched two more aggressive high-side probes to make the bracket
+unambiguous:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
+- Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q661N0YHYHC9A9T9AGV1J`
+- Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q6HX5X6KFW5RD1VSC9BV4`
 
 Cx16 completed full-run results from the canonical `r2` grid:
 
@@ -416,9 +419,13 @@ Cx16 completed full-run results from the canonical `r2` grid:
 The best observed Cx16 LR is `6e-4`, but it is the high edge of the completed
 grid, so the rung is not bracketed. The 3-point quadratic fit to loss vs
 log10(LR) points outside the bracket at about `1.34e-3`, so do not trust the
-fitted optimum yet. Per the ladder rule, launched a single high-side extension:
+fitted optimum yet. After the initial `1.2e-3` extension also looked too hot
+early, launched two more aggressive high-side probes to make the bracket
+unambiguous:
 
 - Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
+- Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q6X0B6PG3G6ZSBZGTPSVQ`
+- Cx16 `4.8e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q774FWC6NZDSGTD0Y2W7K`
 
 ## 810M and 1.2B Baseline Prep
 
