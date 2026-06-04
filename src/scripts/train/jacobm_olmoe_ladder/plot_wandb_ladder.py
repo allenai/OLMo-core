@@ -38,6 +38,20 @@ def model_label_from_name(name: str) -> str:
     return "unknown"
 
 
+def family_label_from_name(name: str) -> str:
+    if "gpu8-ep1mb16" in name:
+        return "gpu8-ep1mb16"
+    if "gpu4-ep1mb16" in name:
+        return "gpu4-ep1mb16"
+    if "gpu4-ep1mb8" in name:
+        return "gpu4-ep1mb8"
+    if "gpu2-ep1mb16" in name:
+        return "gpu2-ep1mb16"
+    if "-n2-" in name or "-n2_" in name:
+        return "n2"
+    return "original"
+
+
 def summarize_rows(rows, window_m: int, finished_only: bool, canonical_only: bool):
     points = []
     for row in rows:
@@ -61,6 +75,7 @@ def summarize_rows(rows, window_m: int, finished_only: bool, canonical_only: boo
                 "lr": row.spec.lr,
                 "lr_tag": row.spec.lr_tag,
                 "state": row.state,
+                "family": family_label_from_name(row.name),
                 "tokens_b": final.tokens / 1e9,
                 "loss": avg,
                 "n": count,
@@ -79,13 +94,13 @@ def style_for_state(state: str) -> dict:
 def plot_cx(points, cx: int, out_path: Path, window_m: int) -> None:
     fig, ax = plt.subplots(figsize=(7.2, 4.8))
     cx_points = sorted([p for p in points if p["cx"] == cx], key=lambda p: p["lr"])
-    for state in sorted({p["state"] for p in cx_points}):
-        group = [p for p in cx_points if p["state"] == state]
+    for state, family in sorted({(p["state"], p["family"]) for p in cx_points}):
+        group = [p for p in cx_points if p["state"] == state and p["family"] == family]
         style = style_for_state(state)
         ax.plot(
             [p["lr"] for p in group],
             [p["loss"] for p in group],
-            label=state,
+            label=f"{state} ({family})",
             **style,
         )
     for point in cx_points:
@@ -112,17 +127,30 @@ def plot_cx(points, cx: int, out_path: Path, window_m: int) -> None:
 def plot_model(points, model: str, out_path: Path, window_m: int) -> None:
     fig, ax = plt.subplots(figsize=(8.2, 5.2))
     model_points = [p for p in points if p["model"] == model]
-    for cx in sorted({p["cx"] for p in model_points}):
-        group = sorted([p for p in model_points if p["cx"] == cx and p["state"] == "finished"], key=lambda p: p["lr"])
-        if not group:
-            continue
-        ax.plot(
-            [p["lr"] for p in group],
-            [p["loss"] for p in group],
-            marker="o",
-            linewidth=1.8,
-            label=f"Cx{cx}",
-        )
+    families_by_cx = {
+        cx: sorted({p["family"] for p in model_points if p["cx"] == cx and p["state"] == "finished"})
+        for cx in sorted({p["cx"] for p in model_points})
+    }
+    for cx in sorted(families_by_cx):
+        for family in families_by_cx[cx]:
+            group = sorted(
+                [
+                    p
+                    for p in model_points
+                    if p["cx"] == cx and p["family"] == family and p["state"] == "finished"
+                ],
+                key=lambda p: p["lr"],
+            )
+            if not group:
+                continue
+            label = f"Cx{cx}" if len(families_by_cx[cx]) == 1 else f"Cx{cx} ({family})"
+            ax.plot(
+                [p["lr"] for p in group],
+                [p["loss"] for p in group],
+                marker="o",
+                linewidth=1.8,
+                label=label,
+            )
     ax.set_xscale("log")
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"train CE avg{window_m}M")

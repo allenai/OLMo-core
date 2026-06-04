@@ -90,6 +90,10 @@ uv run --with wandb --with matplotlib python src/scripts/train/jacobm_olmoe_ladd
   --finished-only
 ```
 
+Completed-run plots split lines by run family when a rung contains multiple
+settings, such as Cx1 `original`, `n2`, and `gpu2-ep1mb16`. Do not connect these
+families into a single U-curve; use the family-specific lines for LR-rule fits.
+
 Plots are written to `src/scripts/train/jacobm_olmoe_ladder/plots/`. The
 committed artifacts include one U-plot per Cx rung and one aggregate U-plot for
 the 275M model. By default the plotter only includes the canonical ladder batch
