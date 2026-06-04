@@ -145,11 +145,16 @@ runs unless a job fails and is explicitly replaced:
 - Cx16 `4e-4`, `gpu8-ep1mb16`: `01KT8JRFSG3J7AJ5PV7E32Z46K`
 - Cx16 `6e-4`, `gpu8-ep1mb16`: `01KT8JRVAG6RVGT231477NGQD9`
 
-Status update: the Cx16 `2e-4` `r2` run
-(`01KT8JR3WKXCR6TN8897A57DHS`) failed at step ~4507 with a CUDA/NCCL watchdog
-abort, not a storage-full checkpoint failure. Ignore it for final LR-rule
-analysis unless explicitly using partial-run diagnostics. It was replaced from
-scratch with:
+Status update: the Cx16 `2e-4` `r2` experiment
+(`01KT8JR3WKXCR6TN8897A57DHS`) had its first job fail at step ~4507 with a
+CUDA/NCCL watchdog abort, not a storage-full checkpoint failure. The experiment
+was resumed in Beaker so it can pick up from the latest checkpoint:
+
+- Cx16 `2e-4`, `gpu8-ep1mb16`, `r2` resumed job:
+  `01KT8P9WZJ20XGTY44BH38M9W2`
+
+An accidental fresh-from-scratch replacement was briefly launched and stopped
+early; ignore it for analysis:
 
 - Cx16 `2e-4`, `gpu8-ep1mb16`, `r3`: `01KT8NJ55CHAKYCG1E1J7Q9QBJ`
 

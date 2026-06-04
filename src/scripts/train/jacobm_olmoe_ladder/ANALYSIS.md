@@ -372,12 +372,17 @@ Fresh `r2` completion grid launched from commit `2cfd4c56`:
 - Cx16 `4e-4`, `gpu8-ep1mb16`: `01KT8JRFSG3J7AJ5PV7E32Z46K`
 - Cx16 `6e-4`, `gpu8-ep1mb16`: `01KT8JRVAG6RVGT231477NGQD9`
 
-Treat these as the canonical full-run sources for Cx8/Cx16 U-plots, except the
-Cx16 `2e-4` `r2` run failed around step 4507 with a CUDA/NCCL watchdog abort.
-It did not show a loss blow-up or storage-full checkpoint failure before the
-abort, so ignore it for final LR-rule analysis and use its replacement instead:
+Treat these as the canonical full-run sources for Cx8/Cx16 U-plots. The Cx16
+`2e-4` `r2` experiment had its first job fail around step 4507 with a CUDA/NCCL
+watchdog abort. It did not show a loss blow-up or storage-full checkpoint
+failure before the abort, so the same Beaker experiment was resumed to use the
+latest checkpoint:
 
-- Cx16 `2e-4`, `gpu8-ep1mb16`, `r3`: `01KT8NJ55CHAKYCG1E1J7Q9QBJ`
+- Cx16 `2e-4`, `gpu8-ep1mb16`, `r2` resumed job:
+  `01KT8P9WZJ20XGTY44BH38M9W2`
+
+An accidental fresh-from-scratch `r3` replacement
+(`01KT8NJ55CHAKYCG1E1J7Q9QBJ`) was stopped early. Ignore it for analysis.
 
 The earlier storage-failed partials are useful only as qualitative pruning
 evidence.
