@@ -61,6 +61,8 @@ Required Beaker secrets:
 - `jacobm_WANDB_API_KEY`
 
 Hammond control-session secrets are listed in `HAMMOND_CONTROL.md`.
+Use `jacobm_git_config` for remote git identity; do not use the shared `git-config`
+secret for this project.
 
 ## Tiny 275M MoE scripts
 

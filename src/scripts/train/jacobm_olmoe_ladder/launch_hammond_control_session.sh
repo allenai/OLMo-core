@@ -14,13 +14,14 @@ CODEX_VERSION="${CODEX_VERSION:-0.136.0}"
 CODEX_TARGET="${CODEX_TARGET:-x86_64-unknown-linux-musl}"
 
 BEAKER_CONFIG_SECRET="${BEAKER_CONFIG_SECRET:-jacobm_beaker_config}"
-GIT_CONFIG_SECRET="${GIT_CONFIG_SECRET:-git-config}"
+GIT_CONFIG_SECRET="${GIT_CONFIG_SECRET:-jacobm_git_config}"
 GITHUB_SSH_KEY_SECRET="${GITHUB_SSH_KEY_SECRET:-jacobm_github_ssh_key}"
 CODEX_AUTH_SECRET="${CODEX_AUTH_SECRET:-jacobm_codex_auth_json}"
 CODEX_CONFIG_SECRET="${CODEX_CONFIG_SECRET:-jacobm_codex_config_toml}"
 
 if [[ "${REFRESH_SECRETS:-0}" == "1" ]]; then
   beaker secret write -w "${WORKSPACE}" "${BEAKER_CONFIG_SECRET}" < "${HOME}/.beaker/config.yml"
+  beaker secret write -w "${WORKSPACE}" "${GIT_CONFIG_SECRET}" < "${HOME}/.gitconfig"
   beaker secret write -w "${WORKSPACE}" "${GITHUB_SSH_KEY_SECRET}" < "${HOME}/.ssh/id_ed25519"
   beaker secret write -w "${WORKSPACE}" "${CODEX_AUTH_SECRET}" < "${HOME}/.codex/auth.json"
   beaker secret write -w "${WORKSPACE}" "${CODEX_CONFIG_SECRET}" < "${HOME}/.codex/config.toml"

@@ -28,13 +28,13 @@ It uses `/weka/oe-adapt-default/jacobm/olmoe3` as the project root and clones `a
 These secrets live in `ai2/OLMo-3-moe-experiments`:
 
 - `jacobm_beaker_config`
+- `jacobm_git_config`
 - `jacobm_github_ssh_key`
 - `jacobm_codex_auth_json`
 - `jacobm_codex_config_toml`
 - `jacobm_WANDB_API_KEY`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
-- `git-config`
 
 `REFRESH_SECRETS=1` updates the Jacob-specific secrets from local files. It does not print secret values.
 
