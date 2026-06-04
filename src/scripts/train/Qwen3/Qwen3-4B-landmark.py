@@ -28,6 +28,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -69,7 +70,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         beaker_image=OLMoCoreBeakerImage.stable,
         workspace="ai2/flex2",
         budget="ai2/oe-other",
-        num_nodes=4,  # 4 nodes × 8 GPUs = 32 GPUs; shard_degree=8 → 4 DP replicas
+        num_nodes=4,  # 4 nodes × 8 GPUs = 32 GPUs; cp_degree=8 → 4 DP replicas
     )
 
     tokenizer_config = TokenizerConfig.qwen3()
@@ -101,15 +102,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            # shard_degree=8: 32 GPUs / 8 = 4 DP replicas (same as original CP=8 config).
-            # Without CP, the full 65k-token activations live on each GPU. shard_degree=1
-            # would leave only ~22 GB for activations after model state (~58 GB); shard_degree=8
-            # drops model state to ~7 GB, leaving ~73 GB headroom for budget AC to work with.
-            shard_degree=8,
+            shard_degree=1,
         ),
+        # Ulysses CP splits heads (not the sequence) so the full T is visible per GPU.
+        # Landmark attention is compatible because the grouped softmax sees the complete
+        # sequence; only ring/zigzag CP (which splits T) is incompatible.
+        # Qwen3-4B: n_heads=32, n_kv_heads=8 → 4 q-heads and 1 kv-head per CP rank.
+        cp_config=TransformerContextParallelConfig.ulysses(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.4,
+            activation_memory_budget=0.7,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
