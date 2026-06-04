@@ -84,8 +84,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         landmark=True,
         mem_freq=MEM_FREQ,
         landmark_use_kernel=True,
-        attention_backend_name=AttentionBackendName.torch,
     )
+    model_config.block.sequence_mixer.landmark_use_kernel = False
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,  # 1 sequence per rank per micro-step
