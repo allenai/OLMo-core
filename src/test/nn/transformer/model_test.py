@@ -55,7 +55,7 @@ from olmo_core.testing import (
     requires_multi_gpu,
     run_distributed_test,
 )
-from olmo_core.testing.utils import FLA_MARKS, has_fla
+from olmo_core.testing.utils import FLA_MARKS, has_fla, requires_fla, requires_gpu
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
@@ -679,3 +679,81 @@ def test_qwen3_builder_configs(config_builder, expected_d_model):
     num_actual_params = sum(p.numel() for p in model.parameters())
     assert config.num_params == num_actual_params
     assert model.num_params == num_actual_params
+
+
+@pytest.mark.parametrize(
+    "config_builder,expected_d_model,expected_n_heads,expected_gdn_v_heads",
+    [
+        pytest.param(TransformerConfig.qwen3_5_0_8B, 1024, 8, 16, id="qwen3_5_0_8B"),
+        pytest.param(TransformerConfig.qwen3_5_4B, 2560, 16, 32, id="qwen3_5_4B"),
+        pytest.param(TransformerConfig.qwen3_5_9B, 4096, 16, 32, id="qwen3_5_9B"),
+        pytest.param(TransformerConfig.qwen3_5_27B, 5120, 24, 48, id="qwen3_5_27B"),
+    ],
+)
+def test_qwen3_5_builder_configs(
+    config_builder, expected_d_model, expected_n_heads, expected_gdn_v_heads
+):
+    config = config_builder(vocab_size=248320, n_layers=4)
+    assert config.d_model == expected_d_model
+    assert config.n_layers == 4
+    assert config.block_pattern == ["gdn", "gdn", "gdn", "attn"]
+
+    assert isinstance(config.block, dict)
+    gdn_block = config.block["gdn"]
+    attn_block = config.block["attn"]
+    assert isinstance(gdn_block.sequence_mixer, GatedDeltaNetConfig)
+    assert isinstance(attn_block.sequence_mixer, AttentionConfig)
+
+    gdn = gdn_block.sequence_mixer
+    assert gdn.allow_neg_eigval is False
+    assert gdn.n_v_heads == expected_gdn_v_heads
+    assert gdn.head_dim == 128
+
+    attn = attn_block.sequence_mixer
+    assert attn.n_heads == expected_n_heads
+    assert attn.head_dim == 256
+    assert attn.rope is not None
+    assert attn.rope.theta == 10_000_000
+    assert attn.rope.partial_rotary_factor == 0.25
+    assert attn.gate is not None
+
+    layer_types = ["gdn", "gdn", "gdn", "attn"]
+    for layer_idx, block_config in enumerate(config.resolved_block_configs):
+        if layer_types[layer_idx] == "gdn":
+            assert isinstance(block_config.sequence_mixer, GatedDeltaNetConfig)
+        else:
+            assert isinstance(block_config.sequence_mixer, AttentionConfig)
+
+
+@pytest.mark.parametrize(
+    "config_builder",
+    [
+        pytest.param(TransformerConfig.qwen3_5_0_8B, id="qwen3_5_0_8B"),
+        pytest.param(TransformerConfig.qwen3_5_4B, id="qwen3_5_4B"),
+        pytest.param(TransformerConfig.qwen3_5_9B, id="qwen3_5_9B"),
+        pytest.param(TransformerConfig.qwen3_5_27B, id="qwen3_5_27B"),
+    ],
+)
+@pytest.mark.skipif(not has_fla, reason="flash-linear-attention (fla) not available")
+def test_qwen3_5_param_count(config_builder):
+    config = config_builder(vocab_size=248320, n_layers=4)
+    model = config.build(init_device="meta")
+    num_actual_params = sum(p.numel() for p in model.parameters())
+    assert config.num_params == num_actual_params
+    assert model.num_params == num_actual_params
+
+
+@requires_gpu
+@requires_fla
+def test_qwen3_5_forward():
+    device = torch.device("cuda")
+    config = TransformerConfig.qwen3_5_0_8B(
+        vocab_size=1000,
+        n_layers=4,
+        attn_backend=AttentionBackendName.torch,
+    )
+    model = config.build(init_device="cpu").eval().to(device)
+    input_ids = torch.randint(0, 1000, (2, 16), device=device)
+    with torch.no_grad():
+        logits = model(input_ids)
+    assert logits.shape == (2, 16, 1000)
