@@ -102,6 +102,10 @@ the 275M model. By default the plotter only includes the canonical ladder batch
 for each rung (`256k` for Cx1/Cx2, `512k` for Cx4, `768k` for Cx8, and `1M` for
 Cx16); pass `--include-noncanonical` to include historical batch-size probes.
 
+Diagnostic runs with `sanity` in the name are excluded from the standard plotter
+and from LR-rule fits. These are for controlled settings-difference checks, not
+for the ladder sweep itself.
+
 ## 2026-06-02 Snapshot
 
 Initial read after the first 2M-batch sweep finished and the 256k-batch sweep was

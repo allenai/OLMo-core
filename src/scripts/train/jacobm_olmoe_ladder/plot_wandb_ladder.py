@@ -33,7 +33,7 @@ CANONICAL_FAMILY_BY_CX = {
 
 def is_analysis_run(name: str) -> bool:
     lowered = name.lower()
-    return "smoke" not in lowered and "smoketest" not in lowered
+    return "smoke" not in lowered and "smoketest" not in lowered and "sanity" not in lowered
 
 
 def model_label_from_name(name: str) -> str:
