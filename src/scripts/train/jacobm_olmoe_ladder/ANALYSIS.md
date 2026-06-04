@@ -459,7 +459,9 @@ completed grid, so the rung is not bracketed. Quadratic fits to loss vs
 log10(LR) are therefore not trusted yet. The earlier stopped `3.2e-3` partial
 looked poor, but full-run-only selection means we need a completed high-side
 point before calling the rung bracketed. After `1.6e-3` finished better than
-`8e-4`, launched a fresh full `3.2e-3` extension:
+`8e-4`, launched a fresh full `3.2e-3` extension. Because the completed Cx8
+curve is still monotonically improving at the high edge, also launched a farther
+right-side sentinel at `6.4e-3` to find the upturn faster:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
 - Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q661N0YHYHC9A9T9AGV1J`;
@@ -470,6 +472,8 @@ point before calling the rung bracketed. After `1.6e-3` finished better than
 - Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q6HX5X6KFW5RD1VSC9BV4`;
   stopped intentionally after lower high-side probes were already clearly worse.
   Ignore for full-run analysis.
+- Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r3`: `01KTAC584AMG9645NEKF479R15`;
+  far right-side sentinel.
 
 Cx16 completed full-run results from the canonical `r2` grid:
 
@@ -479,17 +483,19 @@ Cx16 completed full-run results from the canonical `r2` grid:
 | `4e-4` | finished | 61457 | 64.442 | 2.4381 | 2.4474 | 2.4461 |
 | `6e-4` | finished | 61457 | 64.442 | 2.4274 | 2.4367 | 2.4354 |
 
-The best observed Cx16 LR is `6e-4`, but it is the high edge of the completed
-grid, so the rung is not bracketed. The 3-point quadratic fit to loss vs
-log10(LR) points outside the bracket at about `1.34e-3`, so do not trust the
-fitted optimum yet. After the initial `1.2e-3` extension also looked too hot
-early, launched two more aggressive high-side probes to make the bracket
-unambiguous:
+The best observed completed Cx16 LR is `6e-4`, but it is the high edge of the
+completed grid, so the rung is not bracketed. The 3-point quadratic fit to loss
+vs log10(LR) points outside the bracket at about `1.34e-3`, so do not trust the
+fitted optimum yet. The in-flight `1.2e-3` extension later improved enough to
+look plausibly better than `6e-4` at matched final-window estimates, so launched
+a farther right-side `2.4e-3` sentinel to find the turn faster:
 
 - Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
 - Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q6X0B6PG3G6ZSBZGTPSVQ`;
   stopped intentionally after Cx16 `1.2e-3` was already clearly worse than the
   completed `6e-4` best. Ignore for full-run analysis.
+- Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r3`: `01KTAC763FP2W34ZX6N4CT21QD`;
+  far right-side sentinel.
 - Cx16 `4.8e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q774FWC6NZDSGTD0Y2W7K`;
   stopped intentionally while queued after lower high-side probes were already
   clearly worse. Ignore for full-run analysis.
