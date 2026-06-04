@@ -48,7 +48,7 @@ CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
 # 151860 is in the reserved range [151644, 151935] and does not appear in normal text.
 LANDMARK_TOKEN_ID = 151860
 
-GLOBAL_BATCH_SIZE = 1024 * 64  # ~4M tokens
+GLOBAL_BATCH_SIZE = 1024 # * 64  # ~4M tokens
 MAX_TOKENS = 10_000_000_000  # 10B
 # StepFun optimal LR (Li et al. 2025): 1.79 * n^-0.713 * d^0.307
 # n ≈ 3.65B non-embedding params, d = 10B tokens → ~3.2e-4
