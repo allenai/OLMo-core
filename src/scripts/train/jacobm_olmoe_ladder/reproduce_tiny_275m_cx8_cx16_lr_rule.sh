@@ -8,6 +8,7 @@ set -euo pipefail
 DRY_RUN="${DRY_RUN:-1}"
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
 RUN_PREFIX="olmoe3-tiny-275m"
+RUN_SUFFIX="${RUN_SUFFIX:-r2}"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 NUM_NODES=1
 
@@ -30,7 +31,7 @@ launch_one() {
   local lr="$6"
   local lr_tag="$7"
   local perf_tag="gpu${gpus}-ep1mb${micro_bsz}"
-  local name="${RUN_PREFIX}-cx${chinchilla}-${batch_tag}-${perf_tag}-${lr_tag}"
+  local name="${RUN_PREFIX}-cx${chinchilla}-${batch_tag}-${perf_tag}-${lr_tag}-${RUN_SUFFIX}"
   local common_beaker_args=(
     --cluster ai2/titan
     --nodes "${NUM_NODES}"
@@ -61,15 +62,14 @@ launch_one() {
         --gpus-per-node="${gpus}" \
         --micro-batch-size="${micro_bsz}" \
         --ep-dim=1 \
-        --tag="${lr_tag}-cx${chinchilla}-${batch_tag}-${perf_tag}"
+        --tag="${lr_tag}-cx${chinchilla}-${batch_tag}-${perf_tag}-${RUN_SUFFIX}"
 }
 
 launch_one 8 b768k 96 4 8 2e-4 lr2e-4
 launch_one 8 b768k 96 4 8 4e-4 lr4e-4
+launch_one 8 b768k 96 4 8 6e-4 lr6e-4
 launch_one 8 b768k 96 4 8 8e-4 lr8e-4
-launch_one 8 b768k 96 4 8 1.6e-3 lr1.6e-3
 
-launch_one 16 b1m 128 4 16 1e-4 lr1e-4
-launch_one 16 b1m 128 4 16 2e-4 lr2e-4
-launch_one 16 b1m 128 4 16 4e-4 lr4e-4
-launch_one 16 b1m 128 4 16 8e-4 lr8e-4
+launch_one 16 b1m 128 8 16 2e-4 lr2e-4
+launch_one 16 b1m 128 8 16 4e-4 lr4e-4
+launch_one 16 b1m 128 8 16 6e-4 lr6e-4

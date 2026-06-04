@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
 RUN_PREFIX="olmoe3-tiny-275m"
+RUN_SUFFIX="${RUN_SUFFIX:-r2}"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-tiny-275m-cx8-cx16-lr-rule-launch-logs}"
 JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
@@ -19,7 +20,7 @@ launch_one() {
   local lr="$6"
   local lr_tag="$7"
   local perf_tag="gpu${gpus}-ep1mb${micro_bsz}"
-  local name="${RUN_PREFIX}-cx${chinchilla}-${batch_tag}-${perf_tag}-${lr_tag}"
+  local name="${RUN_PREFIX}-cx${chinchilla}-${batch_tag}-${perf_tag}-${lr_tag}-${RUN_SUFFIX}"
   local log_path="${LOG_DIR}/${name}.log"
   local common_beaker_args=(
     --cluster ai2/titan
@@ -51,7 +52,7 @@ launch_one() {
     --gpus-per-node="${gpus}"
     --micro-batch-size="${micro_bsz}"
     --ep-dim=1
-    --tag="${lr_tag}-cx${chinchilla}-${batch_tag}-${perf_tag}"
+    --tag="${lr_tag}-cx${chinchilla}-${batch_tag}-${perf_tag}-${RUN_SUFFIX}"
   )
 
   echo "Launching ${name}..."
@@ -89,15 +90,15 @@ launch_one() {
 }
 
 # Cx8: dense-ladder batch rule, 786,432 tokens / 96 sequences.
-# Coarse factor-of-two LR sweep; use 4 GPUs while 275M capacity is ample.
+# Rerun from scratch after the storage-failed partials. Keep the cold bracket,
+# rerun the two plausible middle points, and bisect between them.
 launch_one 8 b768k 96 4 8 2e-4 lr2e-4
 launch_one 8 b768k 96 4 8 4e-4 lr4e-4
+launch_one 8 b768k 96 4 8 6e-4 lr6e-4
 launch_one 8 b768k 96 4 8 8e-4 lr8e-4
-launch_one 8 b768k 96 4 8 1.6e-3 lr1.6e-3
 
 # Cx16: 1,048,576 tokens / 128 sequences.
-# Coarse factor-of-two LR sweep; use 4 GPUs for better turnaround.
-launch_one 16 b1m 128 4 16 1e-4 lr1e-4
-launch_one 16 b1m 128 4 16 2e-4 lr2e-4
-launch_one 16 b1m 128 4 16 4e-4 lr4e-4
-launch_one 16 b1m 128 4 16 8e-4 lr8e-4
+# Rerun around the partial-run basin; use 8 GPUs for faster turnaround.
+launch_one 16 b1m 128 8 16 2e-4 lr2e-4
+launch_one 16 b1m 128 8 16 4e-4 lr4e-4
+launch_one 16 b1m 128 8 16 6e-4 lr6e-4

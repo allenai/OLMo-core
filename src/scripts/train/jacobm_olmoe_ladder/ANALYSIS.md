@@ -323,6 +323,45 @@ Replacement coarse Cx8/Cx16 jobs launched from commit `6a465f0d`:
 - Cx16 `4e-4`, `gpu4-ep1mb16`: `01KT8466QCKVK2WDKW7F75TK9H`
 - Cx16 `8e-4`, `gpu4-ep1mb16`: `01KT846JGMA8TDYZGGH4E34K3P`
 
+These replacement jobs failed before completion because
+`/weka/oe-training-default` filled up during checkpoint writes. Treat them as
+partial curves only; do not include them in completed-run U-plots or final LR
+rules. Their intermediate checkpoints were later deleted during storage cleanup,
+so these runs cannot be resumed.
+
+Partial Cx8 evidence from the long storage-failed runs:
+
+| LR | Step | TokensB | avg250M |
+| ---: | ---: | ---: | ---: |
+| `2e-4` | 18,999 | 14.941 | 2.6778 |
+| `4e-4` | 18,999 | 14.941 | 2.6522 |
+| `8e-4` | 17,999 | 14.155 | 2.6672 |
+| `1.6e-3` | 16,999 | 13.369 | 2.7016 |
+
+This is not a final comparison, but it suggests `4e-4` is the strongest coarse
+Cx8 candidate so far and `1.6e-3` is likely too hot. If rerunning from scratch,
+prefer a narrower Cx8 grid around `4e-4`/`8e-4` rather than repeating the full
+four-point coarse grid.
+
+Partial Cx16 evidence from the long storage-failed runs:
+
+| LR | Step | TokensB | avg250M |
+| ---: | ---: | ---: | ---: |
+| `1e-4` | 11,999 | 12.582 | 2.8690 |
+| `2e-4` | 11,999 | 12.582 | 2.7714 |
+| `4e-4` | 9,999 | 10.485 | 2.7666 |
+| `8e-4` | 5,999 | 6.290 | 2.9042 |
+
+This is also partial-only, but it strongly disfavors the Cx16 endpoints:
+`1e-4` is too cold and `8e-4` is too hot. The useful Cx16 rerun range appears
+to be centered on `2e-4`/`4e-4`.
+
+Accidental restart jobs from commit `bdd30f9` were stopped immediately after we
+noticed they could not resume from deleted checkpoints. Ignore these W&B runs
+for analysis: Cx8 `2e-4` (`nda8dyu0`), Cx8 `4e-4` (`9n2gwlx7`), Cx8 `8e-4`
+(`rquath33`), Cx8 `1.6e-3` (`32ujpusd`), Cx16 `1e-4` (`9h2gbx4b`), Cx16
+`2e-4` (`6cd1cdmy`), Cx16 `4e-4` (`k0xuoc5d`), and Cx16 `8e-4` (`ai2h8nbw`).
+
 ## 810M and 1.2B Baseline Prep
 
 `tiny_275m.py` now accepts `--model-size` with:

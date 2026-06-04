@@ -114,6 +114,25 @@ experiment name.
 | 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu4-ep1mb16-lr4e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 4e-4 | `01KT8466QCKVK2WDKW7F75TK9H` | https://beaker.org/ex/01KT8466QCKVK2WDKW7F75TK9H | Replacement coarse factor-of-two Cx16 LR grid. 4 GPUs, EP=1, microbatch=16. |
 | 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu4-ep1mb16-lr8e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 8e-4 | `01KT846JGMA8TDYZGGH4E34K3P` | https://beaker.org/ex/01KT846JGMA8TDYZGGH4E34K3P | Replacement coarse factor-of-two Cx16 LR grid. 4 GPUs, EP=1, microbatch=16. |
 
+Status update for the replacement Cx8/Cx16 grids above: all eight jobs failed
+before completion when `/weka/oe-training-default` filled up during checkpoint
+writes. Their intermediate checkpoints were deleted during cleanup, so they
+cannot be resumed. Treat them as partial-only W&B curves and exclude them from
+completed-run U-plots and final LR rules.
+
+Accidental relaunches from commit `bdd30f9` were stopped quickly after we
+realized the deleted checkpoint dirs prevented resume. Ignore these jobs and
+their W&B runs for analysis:
+
+- Cx8 `2e-4`: `01KT8HHKES4H7D59RY9WB80MNJ`
+- Cx8 `4e-4`: `01KT8HHZPVWKAHB2MCTJFFZA4H`
+- Cx8 `8e-4`: `01KT8HJB8JPBEKHFCD9EZCXJQZ`
+- Cx8 `1.6e-3`: `01KT8HJPVC15B839NFH1W17G5B`
+- Cx16 `1e-4`: `01KT8HK34D5T5JPEN454R2NZR2`
+- Cx16 `2e-4`: `01KT8HKFBYQC1MXAGJXDBP96FQ`
+- Cx16 `4e-4`: `01KT8HKT4P0ZB8QXDPP57Y6MDP`
+- Cx16 `8e-4`: `01KT8HM745W5A1J1Y3TWRZ3QT0`
+
 ## Planned Sweeps
 
 ### Cx1, 256k tokens/step

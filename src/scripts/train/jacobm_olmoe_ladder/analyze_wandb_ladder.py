@@ -30,7 +30,7 @@ LOSS_KEY = "train/CE loss"
 TOKENS_KEY = "throughput/total tokens"
 FIELDS = ["_step", LOSS_KEY, TOKENS_KEY]
 
-CURRENT_FAMILY_MARKERS = ("gpu2-ep1mb16", "gpu4-ep1mb8", "gpu4-ep1mb16")
+CURRENT_FAMILY_MARKERS = ("gpu2-ep1mb16", "gpu4-ep1mb8", "gpu4-ep1mb16", "gpu8-ep1mb16")
 LR_TAG_RE = re.compile(r"lr([0-9]+(?:\.[0-9]+)?e-[0-9]+)")
 
 
