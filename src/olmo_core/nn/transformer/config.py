@@ -1366,6 +1366,7 @@ class TransformerConfig(ModelConfig):
             n_heads=kwargs.pop("n_heads", 32),
             n_kv_heads=kwargs.pop("n_kv_heads", 8),
             head_dim=kwargs.pop("head_dim", 128),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             rope_full_precision=kwargs.pop("rope_full_precision", False),
             layer_norm_eps=1e-6,
