@@ -23,6 +23,11 @@ CANONICAL_BATCH_BY_CX = {
 }
 
 
+def is_analysis_run(name: str) -> bool:
+    lowered = name.lower()
+    return "smoke" not in lowered and "smoketest" not in lowered
+
+
 def model_label_from_name(name: str) -> str:
     if "tiny-275m" in name:
         return "275m"
@@ -37,6 +42,8 @@ def summarize_rows(rows, window_m: int, finished_only: bool, canonical_only: boo
     points = []
     for row in rows:
         if not row.history:
+            continue
+        if not is_analysis_run(row.name):
             continue
         if finished_only and row.state != "finished":
             continue
