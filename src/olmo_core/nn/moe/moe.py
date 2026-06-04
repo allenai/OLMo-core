@@ -1,7 +1,7 @@
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -222,17 +222,24 @@ class MoEBase(nn.Module):
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        document_boundaries: Optional[List[torch.Tensor]] = None,
     ) -> torch.Tensor:
         """
         Run the MoE on the input ``x`` of shape ``(*, d_model)``.
 
         :param x: The input of shape ``(*, d_model)``.
+        :param document_boundaries: Optional per-instance document boundaries used by document-aware
+            routers (e.g. :class:`~olmo_core.nn.moe.emo_router.EmoRouter`). Only passed to the router
+            when provided, so non-document-aware routers are unaffected.
 
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
+        router_kwargs: Dict[str, Any] = {}
+        if document_boundaries is not None:
+            router_kwargs["document_boundaries"] = document_boundaries
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x, loss_div_factor=loss_div_factor
+            x, loss_div_factor=loss_div_factor, **router_kwargs
         )
 
         if router_aux_loss is not None:

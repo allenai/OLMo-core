@@ -70,6 +70,11 @@ class MoERouterType(StrEnum):
     ➡️ :class:`MoELinearRouter`
     """
 
+    emo = "emo"
+    """
+    ➡️ :class:`~olmo_core.nn.moe.emo_router.EmoRouter`
+    """
+
 
 class MoERouterGatingFunction(StrEnum):
     softmax = "softmax"
@@ -94,6 +99,20 @@ class MoERouterConfig(ModuleConfig):
     gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
     dtype: Optional[DType] = None
 
+    # Options for the EMO router (``name = MoERouterType.emo``); ignored otherwise.
+    emo_eos_token_id: Optional[int] = None
+    """EOS token id used to derive document boundaries for the EMO router. Required for ``emo``."""
+    emo_min_document_expert_pool: Optional[int] = None
+    """Minimum per-document expert pool size (sampled during training). Required for ``emo``."""
+    emo_max_document_expert_pool: Optional[int] = None
+    """Maximum per-document expert pool size (sampled during training). Required for ``emo``."""
+    emo_eval_document_expert_pool: Optional[int] = None
+    """Fixed per-document pool size used at eval time. Defaults to the midpoint of the min/max range."""
+    emo_num_shared_experts: int = 0
+    """Number of always-active shared experts for the EMO router."""
+    emo_global_load_balancing: bool = True
+    """Whether the EMO router reduces its load-balancing statistics across the DP group."""
+
     def num_params(self, d_model: int, num_experts: int) -> int:
         """
         The number of params that the module will have once built.
@@ -101,7 +120,7 @@ class MoERouterConfig(ModuleConfig):
         :param d_model: The model dimensionality.
         """
         num_params = 0
-        if self.name == MoERouterType.default:
+        if self.name in (MoERouterType.default, MoERouterType.emo):
             num_params += d_model * num_experts
         else:
             raise NotImplementedError
@@ -128,6 +147,9 @@ class MoERouterConfig(ModuleConfig):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        # The ``emo_*`` fields only apply to the EMO router. Pop them out so they're never passed
+        # to other router types, and strip the prefix for the EMO router constructor.
+        emo_kwargs = {k[len("emo_") :]: kwargs.pop(k) for k in list(kwargs) if k.startswith("emo_")}
         kwargs.update(
             d_model=d_model,
             num_experts=num_experts,
@@ -144,6 +166,11 @@ class MoERouterConfig(ModuleConfig):
         try:
             if self.name == MoERouterType.default:
                 return MoELinearRouter(**kwargs)
+            elif self.name == MoERouterType.emo:
+                from .emo_router import EmoRouter
+
+                kwargs.update(emo_kwargs)
+                return EmoRouter(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
