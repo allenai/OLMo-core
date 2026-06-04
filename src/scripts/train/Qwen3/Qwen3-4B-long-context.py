@@ -94,7 +94,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             shard_degree=1,
         ),
         # Qwen3-4B: n_heads=32, n_kv_heads=8 → head_stride=4
-        cp_config=TransformerContextParallelConfig.zig_zag(degree=8, head_stride=4),
+        cp_config=TransformerContextParallelConfig.ulysses(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.7,
