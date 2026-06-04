@@ -227,18 +227,25 @@ Cx2 completed `avg250M`:
 | ---: | --- | ---: |
 | `5e-4` | finished | 2.6644 |
 | `7e-4` | finished | 2.6569 |
+| `6e-4` `gpu2-ep1mb16` `r2` | finished | 2.6724 |
+| `8e-4` `gpu2-ep1mb16` `r2` | finished | 2.6674 |
 | `1e-3` | finished | 2.6647 |
 | `1.5e-3` | finished | 2.6663 |
 | `2.5e-3` | finished | 2.6775 |
 | `3.5e-3` | finished | 2.6897 |
 
-Cx2 is bracketed. The best completed point is `7e-4`, with `5e-4` and `1e-3`
-close but worse, and the high side degrades monotonically after `1e-3`.
+Cx2 is bracketed within each visible family, but the cross-family comparison is
+not clean. The best completed historical point is still the old `7e-4`, with
+`5e-4` and `1e-3` close but worse, and the high side degrading monotonically
+after `1e-3`. The new current-family low/mid probes finished successfully on
+2026-06-04; within that family, `8e-4` beat `6e-4`, but both were worse than the
+old `5e-4`/`7e-4` points. Treat Cx2 as a settings-family discrepancy rather
+than a single merged U-curve.
 
 The Cx2 curve is visually odd because the old low-side `5e-4`/`7e-4` points do
 not align cleanly with the current-family `gpu2-ep1mb16` high-side trend. To
-test whether this is a real Cx2 optimum shift or a family/noise artifact, queued
-two current-family low/mid probes:
+test whether this is a real Cx2 optimum shift or a family/noise artifact, we
+queued and completed two current-family low/mid probes:
 
 - Cx2 `6e-4`, `gpu2-ep1mb16`, `r2`: `01KT9RWMECT8AZ63RQH748STYB`
 - Cx2 `8e-4`, `gpu2-ep1mb16`, `r2`: `01KT9S05X2WW2BPJVVJXGRYQSV`
