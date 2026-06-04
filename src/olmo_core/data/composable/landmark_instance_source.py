@@ -127,12 +127,14 @@ class LandmarkInstanceSource(InstanceSource):
         # which may be smaller than this source's max during a sequence-length ramp.
         content_len = (len(input_ids) // self.mem_freq) * self.mem_freq
 
+        mem_token = type(input_ids[0])(self.mem_id) if input_ids else self.mem_id
+
         new_ids: list = []
         new_mask: list = []
         for start in range(0, content_len, self.mem_freq):
             block = input_ids[start : start + self.mem_freq]
             new_ids.extend(block)
-            new_ids.append(self.mem_id)
+            new_ids.append(mem_token)
             if label_mask is not None:
                 new_mask.extend(label_mask[start : start + self.mem_freq])
             else:
