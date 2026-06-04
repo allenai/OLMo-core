@@ -204,6 +204,14 @@ Cx2 completed `avg250M`:
 Cx2 is bracketed. The best completed point is `7e-4`, with `5e-4` and `1e-3`
 close but worse, and the high side degrades monotonically after `1e-3`.
 
+The Cx2 curve is visually odd because the old low-side `5e-4`/`7e-4` points do
+not align cleanly with the current-family `gpu2-ep1mb16` high-side trend. To
+test whether this is a real Cx2 optimum shift or a family/noise artifact, queued
+two current-family low/mid probes:
+
+- Cx2 `6e-4`, `gpu2-ep1mb16`, `r2`: `01KT9RWMECT8AZ63RQH748STYB`
+- Cx2 `8e-4`, `gpu2-ep1mb16`, `r2`: `01KT9S05X2WW2BPJVVJXGRYQSV`
+
 Cx4 completed `avg250M`:
 
 | LR | State | avg250M |
