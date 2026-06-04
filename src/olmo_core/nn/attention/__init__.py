@@ -1056,7 +1056,7 @@ class LandmarkAttention(Attention):
         is_mem = ((torch.arange(T, device=device) % block_size) == (block_size - 1)).view(
             1, 1, 1, T
         )
-        mem_ids = torch.where(attn_mask < -1, 0, torch.cumsum(is_mem, -1) - is_mem.int())
+        mem_ids = torch.where(attn_mask < -1, -1, torch.cumsum(is_mem, -1) - is_mem.int())
         last_section_mask = torch.amax(mem_ids, -1, keepdim=True) == mem_ids
         # Mask landmark tokens that fall in the query's own (last) section.
         attn_mask.masked_fill_(last_section_mask & is_mem, finfo_min)

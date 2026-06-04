@@ -101,14 +101,13 @@ def landmark_grouped_softmax(
     :param last_section_mask: Boolean mask (broadcastable to ``x``) marking, for each query, the
         keys that belong to the query's own ("last") section.
     """
-    last_and_rest_mask = last_section_mask
-    full_access_mask = is_mem | last_and_rest_mask
+    full_access_mask = is_mem | last_section_mask
 
     max_mem_cnt = int(is_mem.sum(dim=dim).max().item()) + 1
     mem_group_idx = torch.cumsum(is_mem, dim=dim)
     mem_bucket_id = max_mem_cnt - 1
     resp_mem_idx = torch.where(
-        last_and_rest_mask,
+        last_section_mask,
         max_mem_cnt - 1,
         torch.where(is_mem, mem_bucket_id, mem_group_idx),
     )
