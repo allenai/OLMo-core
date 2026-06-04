@@ -187,10 +187,16 @@ These are all worse than the completed Cx1 basin around `1.5e-3` / `2e-3`
 
 The Cx1 optimum region still came from earlier pre-current-family jobs, while
 the clean `gpu2-ep1mb16` Cx1 points only covered the hot side. To clean up the
-LR-rule plot, queued two current-family basin reruns:
+LR-rule plot, two current-family basin reruns finished:
 
-- Cx1 `1.5e-3`, `gpu2-ep1mb16`, `r2`: `01KT9T7WAH2A5D2W14P9P3VF81`
-- Cx1 `2e-3`, `gpu2-ep1mb16`, `r2`: `01KT9T9F9A3VNG4YYF8B7TNS84`
+| LR | State | avg100M | avg250M | avg500M |
+| ---: | --- | ---: | ---: | ---: |
+| `1.5e-3` | finished | 2.7769 | 2.7794 | 2.7831 |
+| `2e-3` | finished | 2.7739 | 2.7765 | 2.7809 |
+
+These current-family reruns are worse than the older same-LR Cx1 basin points,
+but preserve the same preference ordering (`2e-3` slightly better than
+`1.5e-3`) and give a cleaner reference for run-family effects.
 
 ## 2026-06-04 Completed Cx2/Cx4 Snapshot
 
