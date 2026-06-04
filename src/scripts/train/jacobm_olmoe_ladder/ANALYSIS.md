@@ -77,10 +77,10 @@ uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_l
   --name-regex 'olmoe3-tiny-275m-cx4'
 ```
 
-The `--current-family` flag keeps only the partial-node `gpu2-ep1mb16` /
-`gpu4-ep1mb16` relaunches, which avoids comparing against canceled lower-throughput
-predecessors. Omit it for full historical tables, and use `--mode final
---finished-only` when making final U-plots.
+The `--current-family` flag keeps only the current partial-node relaunches, such
+as `gpu2-ep1mb16`, `gpu4-ep1mb8`, and `gpu4-ep1mb16`, which avoids comparing
+against canceled lower-throughput predecessors. Omit it for full historical
+tables, and use `--mode final --finished-only` when making final U-plots.
 
 Generate completed-run plots:
 
@@ -204,19 +204,20 @@ Cx2 completed `avg250M`:
 Cx2 is bracketed. The best completed point is `7e-4`, with `5e-4` and `1e-3`
 close but worse, and the high side degrades monotonically after `1e-3`.
 
-Cx4 completed `avg250M` for the current middle/high bracket:
+Cx4 completed `avg250M`:
 
 | LR | State | avg250M |
 | ---: | --- | ---: |
+| `5e-4` | finished | 2.5773 |
+| `7e-4` | finished | 2.5699 |
 | `1e-3` | finished | 2.5644 |
 | `1.5e-3` | finished | 2.5611 |
 | `2.5e-3` | finished | 2.5648 |
 | `3.5e-3` | finished | 2.5749 |
 | `5e-3` | finished | 2.5887 |
 
-Cx4 is provisionally centered around `1.5e-3`. The completed `5e-3` high-side
-probe is clearly worse, so the remaining uncertainty is only on the low side:
-`5e-4` and `7e-4` are still running.
+Cx4 is bracketed and centered around `1.5e-3`. The low side worsens below
+`1e-3`, the high side worsens above `2.5e-3`, and `5e-3` is clearly too hot.
 
 ## 275M Cx8/Cx16 Rule Completion
 

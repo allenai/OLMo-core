@@ -30,7 +30,8 @@ LOSS_KEY = "train/CE loss"
 TOKENS_KEY = "throughput/total tokens"
 FIELDS = ["_step", LOSS_KEY, TOKENS_KEY]
 
-CURRENT_FAMILY_MARKERS = ("gpu2-ep1mb16", "gpu4-ep1mb16")
+CURRENT_FAMILY_MARKERS = ("gpu2-ep1mb16", "gpu4-ep1mb8", "gpu4-ep1mb16")
+LR_TAG_RE = re.compile(r"lr([0-9]+(?:\.[0-9]+)?e-[0-9]+)")
 
 
 @dataclass(frozen=True)
@@ -65,10 +66,7 @@ def parse_run_spec(name: str) -> RunSpec | None:
         return None
 
     cx_match = re.search(r"cx([0-9]+)", name)
-    lr_match = re.search(
-        r"lr(8e-3|5e-3|3\.5e-3|3e-3|2\.5e-3|2e-3|1\.5e-3|1\.2e-3|1e-3|8e-4|7e-4|6e-4|5e-4|4e-4|3e-4|1e-4)",
-        name,
-    )
+    lr_match = LR_TAG_RE.search(name)
     if cx_match is None or lr_match is None:
         return None
 
