@@ -137,6 +137,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = ComposableDataLoaderConfig(
+        tokenizer=tokenizer_config,
         work_dir=str(work_dir),
         global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,
