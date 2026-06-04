@@ -108,8 +108,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             shard_degree=8,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.7,
+            mode=TransformerActivationCheckpointingMode.full,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
