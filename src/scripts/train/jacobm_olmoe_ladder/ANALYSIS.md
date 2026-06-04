@@ -208,12 +208,19 @@ These current-family reruns are worse than the older same-LR Cx1 basin points,
 but preserve the same preference ordering (`2e-3` slightly better than
 `1.5e-3`) and give a cleaner reference for run-family effects.
 
-To complete a fully comparable Cx1 current-family curve, queued additional
-`gpu2-ep1mb16` cold/mid probes:
+To complete a fully comparable Cx1 current-family curve, additional
+`gpu2-ep1mb16` cold/mid probes finished:
 
-- Cx1 `8e-4`, `gpu2-ep1mb16`, `r2`: `01KTA3V92BK4FBXXEQF80KSAAA`
-- Cx1 `1e-3`, `gpu2-ep1mb16`, `r2`: `01KTA3W6HMJHQ6SM72NXW55AW3`
-- Cx1 `1.2e-3`, `gpu2-ep1mb16`, `r2`: `01KTA3X9R2PWD408NG6617M1NS`
+| LR | State | avg100M | avg250M | avg500M |
+| ---: | --- | ---: | ---: | ---: |
+| `8e-4` | finished | 2.7868 | 2.7888 | 2.7915 |
+| `1e-3` | finished | 2.7830 | 2.7852 | 2.7881 |
+| `1.2e-3` | finished | 2.7823 | 2.7843 | 2.7876 |
+
+Within the current `gpu2-ep1mb16` family, the best observed Cx1 point is now
+`1.2e-3`, but it is only barely better than `1e-3`. The full current-family
+curve is still worse than the old Cx1 family at comparable LRs, so keep treating
+Cx1 as a run-family discrepancy until the EP=8 sanity probe finishes.
 
 ## 2026-06-04 Completed Cx2/Cx4 Snapshot
 
