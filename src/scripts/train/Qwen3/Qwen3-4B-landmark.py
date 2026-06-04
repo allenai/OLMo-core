@@ -109,7 +109,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.7,
+            activation_memory_budget=0.4,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
