@@ -18,7 +18,7 @@ from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
 )
-from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import CosWithWarmup, LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -40,14 +40,14 @@ from olmo_core.train.train_module import (
 #   upstream source must produce sequences of CONTENT_SEQUENCE_LENGTH tokens.
 MEM_FREQ = 63
 BLOCK_SIZE = MEM_FREQ + 1  # 64
-SEQUENCE_LENGTH = 1024  # 64k model context (must be divisible by BLOCK_SIZE)
+SEQUENCE_LENGTH = 4096  # 64k model context (must be divisible by BLOCK_SIZE)
 CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
 
 # Qwen3 reserved token used as the landmark (memory) token.
 # 151860 is in the reserved range [151644, 151935] and does not appear in normal text.
 LANDMARK_TOKEN_ID = 151860
 
-GLOBAL_BATCH_SIZE = 1024 #* 64  # ~4M tokens
+GLOBAL_BATCH_SIZE = 32768 #* 64  # ~4M tokens
 MAX_TOKENS = 10_000_000_000  # 10B
 # StepFun optimal LR (Li et al. 2025): 1.79 * n^-0.713 * d^0.307
 # n ≈ 3.65B non-embedding params, d = 10B tokens → ~3.2e-4
@@ -71,7 +71,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         workspace="ai2/flex2",
         budget="ai2/oe-other",
         num_nodes=1,  # 4 nodes × 8 GPUs = 32 GPUs; cp_degree=8 → 4 DP replicas
-        num_gpus=1,
+        num_gpus=2,
     )
 
     tokenizer_config = TokenizerConfig.qwen3()
@@ -96,15 +96,15 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        scheduler=LinearWithWarmup(warmup=4, alpha_f=0.0),
-        compile_model=True,
-        # dp_config=TransformerDataParallelConfig(
-        #     name=DataParallelType.hsdp,
-        #     param_dtype=DType.bfloat16,
-        #     reduce_dtype=DType.float32,
-        #     wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-        #     shard_degree=1,
-        # ),
+        scheduler=CosWithWarmup(warmup_steps=10),
+        compile_model=False,
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            shard_degree=1,
+        ),
         # Ulysses CP: LandmarkAttention.forward performs the cp2hp/hp2cp all-to-all itself so that
         # each rank gathers the full sequence T (with n_heads/8 heads) before the grouped softmax,
         # which must see every preceding block's landmark. Ring/zigzag CP (which splits T) is
@@ -112,10 +112,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         # Qwen3-4B: n_heads=32, n_kv_heads=8 → 4 q-heads and 1 kv-head per CP rank (both divisible
         # by degree=8, as Ulysses requires).
         #cp_config=TransformerContextParallelConfig.ulysses(degree=8),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.7,
-        ),
+        # ac_config=TransformerActivationCheckpointingConfig(
+        #     mode=TransformerActivationCheckpointingMode.budget,
+        #     activation_memory_budget=0.7,
+        # ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
@@ -132,7 +132,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                     tokenizer=tokenizer_config,
                     mix=DataMix.longmino_qwen,
                     mix_base_dir="s3://ai2-llm",
-                    source_group_size=8,
+                    source_group_size=1,
                 )
             ],
             sequence_length=CONTENT_SEQUENCE_LENGTH,

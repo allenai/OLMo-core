@@ -112,10 +112,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         # Qwen3-4B: n_heads=32, n_kv_heads=8 → 4 q-heads and 1 kv-head per CP rank (both divisible
         # by degree=8, as Ulysses requires).
         #cp_config=TransformerContextParallelConfig.ulysses(degree=8),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.7,
-        ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
