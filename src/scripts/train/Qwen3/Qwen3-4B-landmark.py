@@ -95,7 +95,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             ],
         ),
         scheduler=LinearWithWarmup(warmup=400, alpha_f=0.0),
-        compile_model=True,
+        compile_model=False,  # torch.compile incompatible with landmark boolean mask shapes
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
