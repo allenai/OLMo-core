@@ -158,6 +158,22 @@ early; ignore it for analysis:
 
 - Cx16 `2e-4`, `gpu8-ep1mb16`, `r3`: `01KT8NJ55CHAKYCG1E1J7Q9QBJ`
 
+Status update: the four Cx8 `r2` runs finished successfully on 2026-06-04:
+
+- Cx8 `2e-4`: finished, step 40971, 32.221B tokens, avg250M 2.5429,
+  avg500M 2.5422.
+- Cx8 `4e-4`: finished, step 40971, 32.221B tokens, avg250M 2.5092,
+  avg500M 2.5085.
+- Cx8 `6e-4`: finished, step 40971, 32.221B tokens, avg250M 2.4978,
+  avg500M 2.4972.
+- Cx8 `8e-4`: finished, step 40971, 32.221B tokens, avg250M 2.4909,
+  avg500M 2.4903.
+
+The best completed Cx8 point is the high-edge `8e-4` run, so Cx8 is not yet
+bracketed. Launched one bounded high-side extension:
+
+- Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
+
 ## Planned Sweeps
 
 ### Cx1, 256k tokens/step

@@ -387,6 +387,24 @@ An accidental fresh-from-scratch `r3` replacement
 The earlier storage-failed partials are useful only as qualitative pruning
 evidence.
 
+Cx8 full-run results from the fresh `r2` grid:
+
+| LR | State | Step | TokensB | avg100M | avg250M | avg500M |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `2e-4` | finished | 40971 | 32.221 | 2.5450 | 2.5429 | 2.5422 |
+| `4e-4` | finished | 40971 | 32.221 | 2.5113 | 2.5092 | 2.5085 |
+| `6e-4` | finished | 40971 | 32.221 | 2.4999 | 2.4978 | 2.4972 |
+| `8e-4` | finished | 40971 | 32.221 | 2.4929 | 2.4909 | 2.4903 |
+
+The best observed Cx8 LR is `8e-4`, but it is the high edge of the completed
+grid, so the rung is not bracketed. Quadratic fits to loss vs log10(LR) are
+therefore not trusted yet: the 3-point fit over `4e-4`/`6e-4`/`8e-4` points
+outside the bracket at about `5.9e-3`, while the 4-point fit points just beyond
+the bracket at about `1.34e-3`. Per the ladder rule, launched a single high-side
+extension:
+
+- Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
+
 ## 810M and 1.2B Baseline Prep
 
 `tiny_275m.py` now accepts `--model-size` with:
