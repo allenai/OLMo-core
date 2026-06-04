@@ -145,6 +145,14 @@ runs unless a job fails and is explicitly replaced:
 - Cx16 `4e-4`, `gpu8-ep1mb16`: `01KT8JRFSG3J7AJ5PV7E32Z46K`
 - Cx16 `6e-4`, `gpu8-ep1mb16`: `01KT8JRVAG6RVGT231477NGQD9`
 
+Status update: the Cx16 `2e-4` `r2` run
+(`01KT8JR3WKXCR6TN8897A57DHS`) failed at step ~4507 with a CUDA/NCCL watchdog
+abort, not a storage-full checkpoint failure. Ignore it for final LR-rule
+analysis unless explicitly using partial-run diagnostics. It was replaced from
+scratch with:
+
+- Cx16 `2e-4`, `gpu8-ep1mb16`, `r3`: `01KT8NJ55CHAKYCG1E1J7Q9QBJ`
+
 ## Planned Sweeps
 
 ### Cx1, 256k tokens/step
