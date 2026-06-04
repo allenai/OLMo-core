@@ -73,7 +73,7 @@ experiment name.
 | 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1.2e-3-r2` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.2e-3 | `01KTA3X9R2PWD408NG6617M1NS` | https://beaker.org/ex/01KTA3X9R2PWD408NG6617M1NS | Current-family Cx1 cold/mid probe. Finished step 15365, avg250M 2.7843, avg500M 2.7876. 2 GPUs, EP=1, microbatch=16. |
 | 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1.5e-3-r2` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.5e-3 | `01KT9T7WAH2A5D2W14P9P3VF81` | https://beaker.org/ex/01KT9T7WAH2A5D2W14P9P3VF81 | Current-family Cx1 basin rerun to clean up the LR-rule plot. Finished step 15365, avg250M 2.7794, avg500M 2.7831. 2 GPUs, EP=1, microbatch=16. |
 | 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2` | `tiny_275m.py` | 1x | 262,144 | 32 | 2e-3 | `01KT9T9F9A3VNG4YYF8B7TNS84` | https://beaker.org/ex/01KT9T9F9A3VNG4YYF8B7TNS84 | Current-family Cx1 basin rerun to clean up the LR-rule plot. Finished step 15365, avg250M 2.7765, avg500M 2.7809. 2 GPUs, EP=1, microbatch=16. |
-| 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu8-ep8mb4-lr1e-3-sanity` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KTA98DW402AB3DJH739WBPW5` | https://beaker.org/ex/01KTA98DW402AB3DJH739WBPW5 | Diagnostic-only sanity check for the Cx1 settings-family discrepancy. Uses EP=8 with the highest legal microbatch for 8 GPUs at 256k global batch. Exclude from ladder LR fits and canonical plots. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu8-ep8mb4-lr1e-3-sanity` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KTA98DW402AB3DJH739WBPW5` | https://beaker.org/ex/01KTA98DW402AB3DJH739WBPW5 | Diagnostic-only sanity check for the Cx1 settings-family discrepancy. Finished step 15365, avg250M 2.7671, avg500M 2.7702. Uses EP=8 with the highest legal microbatch for 8 GPUs at 256k global batch. Exclude from ladder LR fits and canonical plots. |
 | 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1e-3 | `01KT7KXYNS2CZDHVQ3THE6DGHH` | https://beaker.org/ex/01KT7KXYNS2CZDHVQ3THE6DGHH | Relaunched with partial-node settings after throughput smoke. 4 GPUs, EP=1, microbatch=16. |
 | 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.5e-3 | `01KT7KY3WARYXENM35PNFM9M4C` | https://beaker.org/ex/01KT7KY3WARYXENM35PNFM9M4C | Relaunched with partial-node settings after throughput smoke. 4 GPUs, EP=1, microbatch=16. |
 | 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr2.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 2.5e-3 | `01KT7KYASSEMQJY7P6P040G7ND` | https://beaker.org/ex/01KT7KYASSEMQJY7P6P040G7ND | Relaunched with partial-node settings after throughput smoke. 4 GPUs, EP=1, microbatch=16. |
@@ -207,8 +207,10 @@ Status update: the canonical Cx16 `r2` runs finished successfully on 2026-06-04.
   avg500M 2.4461.
 - Cx16 `6e-4`: finished, step 61457, 64.442B tokens, avg250M 2.4367,
   avg500M 2.4354.
+- Cx16 `1.2e-3`: finished, step 61457, 64.442B tokens, avg250M 2.4301,
+  avg500M 2.4288.
 
-The best completed Cx16 point is the high-edge `6e-4` run, so Cx16 is not yet
+The best completed Cx16 point is the high-edge `1.2e-3` run, so Cx16 is not yet
 bracketed. Launched high-side extensions:
 
 - Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`

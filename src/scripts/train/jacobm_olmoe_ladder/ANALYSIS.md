@@ -222,6 +222,19 @@ Within the current `gpu2-ep1mb16` family, the best observed Cx1 point is now
 curve is still worse than the old Cx1 family at comparable LRs, so keep treating
 Cx1 as a run-family discrepancy until the EP=8 sanity probe finishes.
 
+The EP=8 sanity probe finished with the fast legal 8-GPU microbatch setting:
+
+| LR | Family | State | avg100M | avg250M | avg500M |
+| ---: | --- | --- | ---: | ---: | ---: |
+| `1e-3` | old/original | finished | 2.7635 | 2.7657 | 2.7687 |
+| `1e-3` | `gpu2-ep1mb16` | finished | 2.7830 | 2.7852 | 2.7881 |
+| `1e-3` | `gpu8-ep8mb4` sanity | finished | 2.7649 | 2.7671 | 2.7702 |
+
+This strongly suggests the Cx1 family discrepancy is tied to EP/settings rather
+than simply microbatch size: the EP=8 sanity run lands very close to the old
+same-LR Cx1 result and much better than the EP=1 current-family rerun. Keep the
+sanity run out of LR-rule fits, but use it to interpret the run-family gap.
+
 ## 2026-06-04 Completed Cx2/Cx4 Snapshot
 
 Final completed-run summaries use final-token-window averages and ignore canceled
@@ -485,14 +498,14 @@ Cx16 completed full-run results from the canonical `r2` grid:
 | `2e-4` | finished | 61457 | 64.442 | 2.4665 | 2.4759 | 2.4744 |
 | `4e-4` | finished | 61457 | 64.442 | 2.4381 | 2.4474 | 2.4461 |
 | `6e-4` | finished | 61457 | 64.442 | 2.4274 | 2.4367 | 2.4354 |
+| `1.2e-3` | finished | 61457 | 64.442 | 2.4208 | 2.4301 | 2.4288 |
 
-The best observed completed Cx16 LR is `6e-4`, but it is the high edge of the
+The best observed completed Cx16 LR is `1.2e-3`, but it is the high edge of the
 completed grid, so the rung is not bracketed. The 3-point quadratic fit to loss
 vs log10(LR) points outside the bracket at about `1.34e-3`, so do not trust the
-fitted optimum yet. The in-flight `1.2e-3` extension later improved enough to
-look plausibly better than `6e-4` at matched final-window estimates, so launched
-a farther right-side `2.4e-3` extension. For a true order-of-magnitude sentinel,
-also launched `6e-3`:
+fitted optimum yet. Since `1.2e-3` finished better than `6e-4`, the completed
+curve is still improving at the high edge. Keep the farther right-side `2.4e-3`
+extension and true order-of-magnitude `6e-3` sentinel running to find the turn.
 
 - Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
 - Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q6X0B6PG3G6ZSBZGTPSVQ`;
