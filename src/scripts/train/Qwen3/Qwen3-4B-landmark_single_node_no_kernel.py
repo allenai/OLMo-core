@@ -84,7 +84,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         landmark=True,
         mem_freq=MEM_FREQ,
         landmark_use_kernel=True,
-        attention_backend_name=AttentionBackendName.eager,
+        attention_backend_name=AttentionBackendName.torch,
     )
 
     train_module_config = TransformerTrainModuleConfig(
