@@ -174,14 +174,19 @@ bracketed. Launched one bounded high-side extension:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
 
-Status update: Cx16 `4e-4` and `6e-4` finished successfully on 2026-06-04.
-The resumed Cx16 `2e-4` run is still active, so defer Cx16 follow-up decisions
-until the low-side point finishes.
+Status update: the canonical Cx16 `r2` runs finished successfully on 2026-06-04.
 
+- Cx16 `2e-4`: finished after Beaker resume, step 61457, 64.442B tokens,
+  avg250M 2.4759, avg500M 2.4744.
 - Cx16 `4e-4`: finished, step 61457, 64.442B tokens, avg250M 2.4474,
   avg500M 2.4461.
 - Cx16 `6e-4`: finished, step 61457, 64.442B tokens, avg250M 2.4367,
   avg500M 2.4354.
+
+The best completed Cx16 point is the high-edge `6e-4` run, so Cx16 is not yet
+bracketed. Launched one bounded high-side extension:
+
+- Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
 
 ## Planned Sweeps
 

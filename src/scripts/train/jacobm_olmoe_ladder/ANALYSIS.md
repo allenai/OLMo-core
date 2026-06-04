@@ -405,16 +405,20 @@ extension:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
 
-Cx16 completed full-run results so far:
+Cx16 completed full-run results from the canonical `r2` grid:
 
 | LR | State | Step | TokensB | avg100M | avg250M | avg500M |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `2e-4` | finished | 61457 | 64.442 | 2.4665 | 2.4759 | 2.4744 |
 | `4e-4` | finished | 61457 | 64.442 | 2.4381 | 2.4474 | 2.4461 |
 | `6e-4` | finished | 61457 | 64.442 | 2.4274 | 2.4367 | 2.4354 |
 
-The completed Cx16 hot-side pair currently favors `6e-4`. Do not make the Cx16
-LR decision yet: the resumed `2e-4` low-side run is still active and is needed
-to decide whether the rung is bracketed or high-edge.
+The best observed Cx16 LR is `6e-4`, but it is the high edge of the completed
+grid, so the rung is not bracketed. The 3-point quadratic fit to loss vs
+log10(LR) points outside the bracket at about `1.34e-3`, so do not trust the
+fitted optimum yet. Per the ladder rule, launched a single high-side extension:
+
+- Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
 
 ## 810M and 1.2B Baseline Prep
 
