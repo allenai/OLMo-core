@@ -64,12 +64,12 @@ launch_one() {
         --tag="${lr_tag}-cx${chinchilla}-${batch_tag}-${perf_tag}"
 }
 
-launch_one 8 b768k 96 2 24 3e-4 lr3e-4
-launch_one 8 b768k 96 2 24 5e-4 lr5e-4
-launch_one 8 b768k 96 2 24 7e-4 lr7e-4
-launch_one 8 b768k 96 2 24 1e-3 lr1e-3
+launch_one 8 b768k 96 4 8 2e-4 lr2e-4
+launch_one 8 b768k 96 4 8 4e-4 lr4e-4
+launch_one 8 b768k 96 4 8 8e-4 lr8e-4
+launch_one 8 b768k 96 4 8 1.6e-3 lr1.6e-3
 
-launch_one 16 b1m 128 2 32 2e-4 lr2e-4
-launch_one 16 b1m 128 2 32 3e-4 lr3e-4
-launch_one 16 b1m 128 2 32 5e-4 lr5e-4
-launch_one 16 b1m 128 2 32 7e-4 lr7e-4
+launch_one 16 b1m 128 4 16 1e-4 lr1e-4
+launch_one 16 b1m 128 4 16 2e-4 lr2e-4
+launch_one 16 b1m 128 4 16 4e-4 lr4e-4
+launch_one 16 b1m 128 4 16 8e-4 lr8e-4

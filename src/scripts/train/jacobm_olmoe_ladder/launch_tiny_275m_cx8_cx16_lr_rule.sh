@@ -64,7 +64,7 @@ launch_one() {
   local deadline=$((SECONDS + JOB_CREATED_TIMEOUT_SECONDS))
 
   while (( SECONDS < deadline )); do
-    if grep -q "✓ job created" "${log_path}"; then
+    if [[ -f "${log_path}" ]] && grep -q "✓ job created" "${log_path}"; then
       sed -n '1,/✓ job created/p' "${log_path}"
       kill "${pid}" 2>/dev/null || true
       wait "${pid}" 2>/dev/null || true
@@ -89,14 +89,15 @@ launch_one() {
 }
 
 # Cx8: dense-ladder batch rule, 786,432 tokens / 96 sequences.
-# Use two GPUs with microbatch 24 if the smoke confirms it is stable.
-launch_one 8 b768k 96 2 24 3e-4 lr3e-4
-launch_one 8 b768k 96 2 24 5e-4 lr5e-4
-launch_one 8 b768k 96 2 24 7e-4 lr7e-4
-launch_one 8 b768k 96 2 24 1e-3 lr1e-3
+# Coarse factor-of-two LR sweep; use 4 GPUs while 275M capacity is ample.
+launch_one 8 b768k 96 4 8 2e-4 lr2e-4
+launch_one 8 b768k 96 4 8 4e-4 lr4e-4
+launch_one 8 b768k 96 4 8 8e-4 lr8e-4
+launch_one 8 b768k 96 4 8 1.6e-3 lr1.6e-3
 
 # Cx16: 1,048,576 tokens / 128 sequences.
-launch_one 16 b1m 128 2 32 2e-4 lr2e-4
-launch_one 16 b1m 128 2 32 3e-4 lr3e-4
-launch_one 16 b1m 128 2 32 5e-4 lr5e-4
-launch_one 16 b1m 128 2 32 7e-4 lr7e-4
+# Coarse factor-of-two LR sweep; use 4 GPUs for better turnaround.
+launch_one 16 b1m 128 4 16 1e-4 lr1e-4
+launch_one 16 b1m 128 4 16 2e-4 lr2e-4
+launch_one 16 b1m 128 4 16 4e-4 lr4e-4
+launch_one 16 b1m 128 4 16 8e-4 lr8e-4

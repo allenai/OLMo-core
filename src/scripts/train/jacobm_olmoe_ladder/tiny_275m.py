@@ -247,6 +247,30 @@ def get_parser() -> argparse.ArgumentParser:
         help="Fraction of total training tokens used for linear LR warmup.",
     )
     parser.add_argument(
+        "--save-interval",
+        type=int,
+        default=None,
+        help=(
+            "Permanent checkpoint interval in steps. Defaults to only the final checkpoint; "
+            "periodic resume checkpoints are controlled by --ephemeral-save-interval."
+        ),
+    )
+    parser.add_argument(
+        "--ephemeral-save-interval",
+        type=int,
+        default=SAVE_INTERVAL,
+        help=(
+            "Temporary checkpoint interval in steps. OLMo Core keeps only the latest "
+            "ephemeral checkpoint, so this gives resume safety without retaining every save."
+        ),
+    )
+    parser.add_argument(
+        "--pre-train-checkpoint",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Whether to save a persistent step-0 checkpoint before training.",
+    )
+    parser.add_argument(
         "--tag",
         type=str,
         default=TAG,
@@ -278,6 +302,16 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
         raise ValueError("--ep-dim must be > 0")
     if not 0 < opts.warmup_fraction < 1:
         raise ValueError("--warmup-fraction must be between 0 and 1")
+    if opts.save_interval is not None and opts.save_interval < 1:
+        raise ValueError("--save-interval must be >= 1 when set")
+    if opts.ephemeral_save_interval is not None and opts.ephemeral_save_interval < 1:
+        raise ValueError("--ephemeral-save-interval must be >= 1 when set")
+    if (
+        opts.save_interval is not None
+        and opts.ephemeral_save_interval is not None
+        and opts.ephemeral_save_interval >= opts.save_interval
+    ):
+        raise ValueError("--ephemeral-save-interval must be less than --save-interval when both are set")
 
     CHINCHILLA_MULTIPLE = opts.chinchilla_multiple
     REF_NUM_NODES = opts.num_nodes
@@ -726,10 +760,10 @@ def build_trainer_config(
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=SAVE_INTERVAL,
-                ephemeral_save_interval=None,
+                save_interval=opts.save_interval,
+                ephemeral_save_interval=opts.ephemeral_save_interval,
                 save_async=False,
-                pre_train_checkpoint=PRODUCTION_RUN,
+                pre_train_checkpoint=opts.pre_train_checkpoint,
             ),
         )
         .with_callback(
