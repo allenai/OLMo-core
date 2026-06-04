@@ -177,7 +177,9 @@ The best completed Cx8 point is the high-edge `8e-4` run, so Cx8 is not yet
 bracketed. Launched high-side extensions:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
-- Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q661N0YHYHC9A9T9AGV1J`
+- Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q661N0YHYHC9A9T9AGV1J`;
+  stopped intentionally after Cx8 `1.6e-3` was already clearly worse than the
+  completed `8e-4` best. Ignore for full-run analysis.
 - Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q6HX5X6KFW5RD1VSC9BV4`;
   stopped intentionally after lower high-side probes were already clearly worse.
   Ignore for full-run analysis.
@@ -195,7 +197,9 @@ The best completed Cx16 point is the high-edge `6e-4` run, so Cx16 is not yet
 bracketed. Launched high-side extensions:
 
 - Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
-- Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q6X0B6PG3G6ZSBZGTPSVQ`
+- Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q6X0B6PG3G6ZSBZGTPSVQ`;
+  stopped intentionally after Cx16 `1.2e-3` was already clearly worse than the
+  completed `6e-4` best. Ignore for full-run analysis.
 - Cx16 `4.8e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q774FWC6NZDSGTD0Y2W7K`;
   stopped intentionally while queued after lower high-side probes were already
   clearly worse. Ignore for full-run analysis.
