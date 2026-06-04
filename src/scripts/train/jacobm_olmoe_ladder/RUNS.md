@@ -196,6 +196,8 @@ bracketed. Launched high-side extensions:
   far right-side sentinel launched after adopting the policy of occasionally
   jumping farther when a completed curve is still monotonically improving at the
   high edge.
+- Cx8 `1.6e-2`, `gpu4-ep1mb8`, `sentinel`: `01KTACFJ4D4FQG33ZPT4R306WT`;
+  true order-of-magnitude sentinel to quickly find a right-side upturn.
 
 Status update: the canonical Cx16 `r2` runs finished successfully on 2026-06-04.
 
@@ -219,6 +221,8 @@ bracketed. Launched high-side extensions:
 - Cx16 `4.8e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q774FWC6NZDSGTD0Y2W7K`;
   stopped intentionally while queued after lower high-side probes were already
   clearly worse. Ignore for full-run analysis.
+- Cx16 `6e-3`, `gpu8-ep1mb16`, `sentinel`: `01KTACHG3Z4Y1G9HW9ESYZK58Q`;
+  true order-of-magnitude sentinel to quickly find a right-side upturn.
 
 ## Planned Sweeps
 

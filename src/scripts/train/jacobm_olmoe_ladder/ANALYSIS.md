@@ -461,7 +461,8 @@ looked poor, but full-run-only selection means we need a completed high-side
 point before calling the rung bracketed. After `1.6e-3` finished better than
 `8e-4`, launched a fresh full `3.2e-3` extension. Because the completed Cx8
 curve is still monotonically improving at the high edge, also launched a farther
-right-side sentinel at `6.4e-3` to find the upturn faster:
+right-side extension at `6.4e-3`. For a true order-of-magnitude sentinel, also
+launched `1.6e-2`:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
 - Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q661N0YHYHC9A9T9AGV1J`;
@@ -474,6 +475,8 @@ right-side sentinel at `6.4e-3` to find the upturn faster:
   Ignore for full-run analysis.
 - Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r3`: `01KTAC584AMG9645NEKF479R15`;
   far right-side sentinel.
+- Cx8 `1.6e-2`, `gpu4-ep1mb8`, `sentinel`: `01KTACFJ4D4FQG33ZPT4R306WT`;
+  true order-of-magnitude sentinel.
 
 Cx16 completed full-run results from the canonical `r2` grid:
 
@@ -488,7 +491,8 @@ completed grid, so the rung is not bracketed. The 3-point quadratic fit to loss
 vs log10(LR) points outside the bracket at about `1.34e-3`, so do not trust the
 fitted optimum yet. The in-flight `1.2e-3` extension later improved enough to
 look plausibly better than `6e-4` at matched final-window estimates, so launched
-a farther right-side `2.4e-3` sentinel to find the turn faster:
+a farther right-side `2.4e-3` extension. For a true order-of-magnitude sentinel,
+also launched `6e-3`:
 
 - Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
 - Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q6X0B6PG3G6ZSBZGTPSVQ`;
@@ -499,6 +503,8 @@ a farther right-side `2.4e-3` sentinel to find the turn faster:
 - Cx16 `4.8e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q774FWC6NZDSGTD0Y2W7K`;
   stopped intentionally while queued after lower high-side probes were already
   clearly worse. Ignore for full-run analysis.
+- Cx16 `6e-3`, `gpu8-ep1mb16`, `sentinel`: `01KTACHG3Z4Y1G9HW9ESYZK58Q`;
+  true order-of-magnitude sentinel.
 
 ## 810M and 1.2B Baseline Prep
 
