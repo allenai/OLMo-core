@@ -110,7 +110,7 @@ def fused_linear_cross_entropy_loss(
         bias,
         ce_weight,
         ignore_index,
-        z_loss_multiplier,
+        z_loss_multiplier if compute_z_loss else 0.0,
         label_smoothing,
         reduction,
         softcap,
