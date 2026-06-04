@@ -212,14 +212,16 @@ Cx4 completed `avg250M` for the current middle/high bracket:
 | `1.5e-3` | finished | 2.5611 |
 | `2.5e-3` | finished | 2.5648 |
 | `3.5e-3` | finished | 2.5749 |
+| `5e-3` | finished | 2.5887 |
 
-Cx4 is provisionally centered around `1.5e-3`, but it is not final-bracketed
-until the running `5e-4`, `7e-4`, and `5e-3` full runs finish.
+Cx4 is provisionally centered around `1.5e-3`. The completed `5e-3` high-side
+probe is clearly worse, so the remaining uncertainty is only on the low side:
+`5e-4` and `7e-4` are still running.
 
 ## 275M Cx8/Cx16 Rule Completion
 
 Before launching the full Cx8/Cx16 grid, smoke the high-microbatch settings.
-The preferred full-grid settings, if smokes are healthy, are:
+The original preferred full-grid settings were:
 
 - Cx8: 768k tokens / 96 sequences on 2 GPUs with `--micro-batch-size=24`
 - Cx16: 1M tokens / 128 sequences on 2 GPUs with `--micro-batch-size=32`
@@ -244,6 +246,25 @@ Next smoke direction: retry EP=1 with smaller microbatches before introducing
 expert parallelism. Candidate settings are Cx8 `gpu2-ep1mb16` and Cx16
 `gpu2-ep1mb16`, then consider more GPUs or EP only if those are unhealthy.
 
+Retry smoke jobs launched from commit `6a465f0d`:
+
+- `olmoe3-tiny-275m-cx8-smoke-b768k-gpu2-ep1mb16-lr5e-4`
+  (`01KT829008RED7EA12EP2J2KSV`)
+- `olmoe3-tiny-275m-cx16-smoke-b1m-gpu2-ep1mb16-lr5e-4`
+  (`01KT829CG1KNWB9GRVVZ8HAY0T`)
+
+Both retries reached the final smoke step with finite loss, `optim/step
+skipped=0`, and step throughput above the 600 TFLOPs/GPU target. Cx8 finished
+step 513/513 at about 693 TFLOPs/GPU for the final logged step, with actual
+average throughput about 596 TFLOPs/GPU after data/checkpoint overhead. Cx16
+finished step 385/385 and exited cleanly, with final logged step throughput in
+the same 680-700 TFLOPs/GPU range.
+
+An accidental second Cx16 retry,
+`olmoe3-tiny-275m-cx16-smoke-b1m-gpu2-ep1mb16-lr5e-4-1ae64a69`
+(`01KT82H1A9XT62VC8XRVZHJPWV`), was stopped manually because it duplicated the
+canonical Cx16 smoke and used the same checkpoint root. Ignore it for analysis.
+
 Launcher / dry-run command printer:
 
 ```bash
@@ -256,19 +277,50 @@ Actual launcher:
 src/scripts/train/jacobm_olmoe_ladder/launch_tiny_275m_cx8_cx16_lr_rule.sh
 ```
 
-Initial Cx8 LR grid:
+Use coarse factor-of-two LR sweeps for new rungs, then bisect/extend only after
+the initial bracket is visible. This replaces the earlier too-granular grids.
 
-- `3e-4`
-- `5e-4`
-- `7e-4`
-- `1e-3`
-
-Initial Cx16 LR grid:
+Current Cx8 LR grid:
 
 - `2e-4`
-- `3e-4`
-- `5e-4`
-- `7e-4`
+- `4e-4`
+- `8e-4`
+- `1.6e-3`
+
+Current Cx16 LR grid:
+
+- `1e-4`
+- `2e-4`
+- `4e-4`
+- `8e-4`
+
+Future 275M launches do not need to be as GPU-conservative as the first
+Cx8/Cx16 smokes. While 2-GPU `ep1mb16` is viable, use 4 GPUs for Cx16 and
+consider 4 GPUs for Cx8 as well, so these cheap 275M runs finish faster while we
+have ample B200 capacity.
+
+The first granular Cx8/Cx16 grid was stopped manually and should be ignored for
+analysis:
+
+- Cx8 `3e-4`: `01KT836RV6PHBQ3M5SCVYECWC4`
+- Cx8 `5e-4`: `01KT8373YTV4C1G08D20XXMHZG`
+- Cx8 `7e-4`: `01KT837GAWN3H1XBYASH520M2A`
+- Cx8 `1e-3`: `01KT837VTNEK7F783YZYHYRJ1Y`
+- Cx16 `2e-4`: `01KT8387116V5NF6QNDCSBN9CA`
+- Cx16 `3e-4`: `01KT838HX2QMM7RJCYT2P6MW92`
+- Cx16 `5e-4`: `01KT838WN9G1WDPG5RWBS0CGTM`
+- Cx16 `7e-4`: `01KT83989R9R79D6FA2QXX15J9`
+
+Replacement coarse Cx8/Cx16 jobs launched from commit `6a465f0d`:
+
+- Cx8 `2e-4`, `gpu4-ep1mb8`: `01KT8445FT6GZFKPE7JKS3F8RY`
+- Cx8 `4e-4`, `gpu4-ep1mb8`: `01KT844H6AQWZNNSXJZRV258VZ`
+- Cx8 `8e-4`, `gpu4-ep1mb8`: `01KT844XB38AM31SCZDSTA1EAA`
+- Cx8 `1.6e-3`, `gpu4-ep1mb8`: `01KT84589PJ0VDVSS7CDQPBSCV`
+- Cx16 `1e-4`, `gpu4-ep1mb16`: `01KT845KM5CF6JZHJB6KW6WARW`
+- Cx16 `2e-4`, `gpu4-ep1mb16`: `01KT845WN987DZTN03Q7NSXAK4`
+- Cx16 `4e-4`, `gpu4-ep1mb16`: `01KT8466QCKVK2WDKW7F75TK9H`
+- Cx16 `8e-4`, `gpu4-ep1mb16`: `01KT846JGMA8TDYZGGH4E34K3P`
 
 ## 810M and 1.2B Baseline Prep
 
@@ -310,3 +362,46 @@ The first larger-model smokes failed before reaching training because the local
 `tiny_275m.py` now consumes `model_size=...` style script overrides before merge
 as a compatibility guard, but the larger-model smokes should be relaunched only
 from a commit that includes the model-size support.
+
+Relaunched larger-model `r2` smokes from commit `6a465f0d`:
+
+- 810M `gpu2-ep1mb16`: `01KT82MKYTJDPBRN01P0XHXS38`
+- 810M `gpu2-ep1mb8`: `01KT82MYJXY98QSK4CMES19PH9`
+- 1.2B `gpu2-ep1mb8`: `01KT82NA11D9E3DEH1NPXDR6WJ`
+- 1.2B `gpu2-ep1mb4`: `01KT82NN0Q5MPJQ167W5XY8BQA`
+
+All four `r2` smokes failed during dry-run batch allocation with real OOMs, so
+the model-size CLI path is fixed but two-GPU EP=1 is too tight for the larger
+models:
+
+- 810M `gpu2-ep1mb16`: OOM on a 320 MiB allocation with about 250 MiB free.
+- 810M `gpu2-ep1mb8`: OOM on a 12.25 GiB allocation with about 11.64 GiB free.
+- 1.2B `gpu2-ep1mb8`: OOM on a 1.50 GiB allocation with about 218 MiB free.
+- 1.2B `gpu2-ep1mb4`: OOM on a 6.12 GiB allocation with about 3.57 GiB free.
+
+Next larger-model smoke direction: try more GPUs before changing the
+architecture. For 810M, a 4-GPU EP=1 smoke with `mb8` or `mb4` is the most
+direct next probe. For 1.2B, start with 4-GPU EP=1 `mb4`; if it still OOMs,
+fall back to EP.
+
+Relaunched larger-model `r3` smokes:
+
+- 810M `gpu4-ep1mb8`: `01KT840XF9T975KJM3SHXFCH7D`
+- 810M `gpu4-ep1mb4`: `01KT8418KTXB8Z26DVJF8VRSGD`
+- 1.2B `gpu4-ep1mb4`: `01KT841MWJKFK5KWCAXCGA9WC1`
+- 1.2B `gpu4-ep2mb4`: `01KT8420RGXWJ8C3JFCNG67W2T`
+
+`r3` smoke outcomes:
+
+- 810M `gpu4-ep1mb8` OOMed during dry-run/backward allocation.
+- 810M `gpu4-ep1mb4` finished cleanly with `optim/step skipped=0`, about
+  654 TFLOPs/GPU on the final logged step, and about 610 TFLOPs/GPU actual
+  average. Use `gpu4-ep1mb4` as the validated Cx1 setting.
+- 1.2B `gpu4-ep1mb4` finished cleanly with `optim/step skipped=0`, about
+  682 TFLOPs/GPU on the final logged step, and about 662 TFLOPs/GPU actual
+  average. Treat EP=1 as the preferred setting.
+- 1.2B `gpu4-ep2mb4` also finished cleanly, with lower actual average
+  throughput around 607 TFLOPs/GPU. Keep EP=2 only as a memory fallback.
+
+For 810M full probes, use `gpu4-ep1mb4` for Cx1 and `gpu8-ep1mb4` for Cx4;
+the 8-GPU Cx4 setting does not need a separate smoke test.
