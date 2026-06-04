@@ -185,10 +185,22 @@ The Cx1 high-side relaunches finished cleanly:
 These are all worse than the completed Cx1 basin around `1.5e-3` / `2e-3`
 (`avg250M` about 2.762), so Cx1 is bracketed on the high side.
 
+The Cx1 optimum region still came from earlier pre-current-family jobs, while
+the clean `gpu2-ep1mb16` Cx1 points only covered the hot side. To clean up the
+LR-rule plot, queued two current-family basin reruns:
+
+- Cx1 `1.5e-3`, `gpu2-ep1mb16`, `r2`: `01KT9T7WAH2A5D2W14P9P3VF81`
+- Cx1 `2e-3`, `gpu2-ep1mb16`, `r2`: `01KT9T9F9A3VNG4YYF8B7TNS84`
+
 ## 2026-06-04 Completed Cx2/Cx4 Snapshot
 
 Final completed-run summaries use final-token-window averages and ignore canceled
 or failed partial predecessors.
+
+The early Cx4 jobs without the current `gpu4-ep1mb16` settings did not finish
+successfully: `1e-3`, `1.5e-3`, and `2.5e-3` finalized with exit code 1, and
+`3.5e-3` was stopped while queued. The completed Cx4 table below is from the
+clean current-family reruns.
 
 Cx2 completed `avg250M`:
 
