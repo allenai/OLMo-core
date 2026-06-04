@@ -174,6 +174,15 @@ bracketed. Launched one bounded high-side extension:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
 
+Status update: Cx16 `4e-4` and `6e-4` finished successfully on 2026-06-04.
+The resumed Cx16 `2e-4` run is still active, so defer Cx16 follow-up decisions
+until the low-side point finishes.
+
+- Cx16 `4e-4`: finished, step 61457, 64.442B tokens, avg250M 2.4474,
+  avg500M 2.4461.
+- Cx16 `6e-4`: finished, step 61457, 64.442B tokens, avg250M 2.4367,
+  avg500M 2.4354.
+
 ## Planned Sweeps
 
 ### Cx1, 256k tokens/step

@@ -405,6 +405,17 @@ extension:
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
 
+Cx16 completed full-run results so far:
+
+| LR | State | Step | TokensB | avg100M | avg250M | avg500M |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `4e-4` | finished | 61457 | 64.442 | 2.4381 | 2.4474 | 2.4461 |
+| `6e-4` | finished | 61457 | 64.442 | 2.4274 | 2.4367 | 2.4354 |
+
+The completed Cx16 hot-side pair currently favors `6e-4`. Do not make the Cx16
+LR decision yet: the resumed `2e-4` low-side run is still active and is needed
+to decide whether the rung is bracketed or high-edge.
+
 ## 810M and 1.2B Baseline Prep
 
 `tiny_275m.py` now accepts `--model-size` with:
