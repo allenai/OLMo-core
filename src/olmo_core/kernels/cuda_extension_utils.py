@@ -15,11 +15,13 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Optional, Sequence, Union
+from typing import Any, Optional, Sequence, Union
 
 import torch
 
 log = logging.getLogger(__name__)
+
+__all__ = ["load_cuda_extension"]
 
 PathLikeStr = Union[str, os.PathLike[str]]
 
@@ -49,7 +51,19 @@ def _env_float(names: Sequence[str], default: float) -> float:
     return default
 
 
-def cuda_arch_tag() -> str:
+def _env_int(names: Sequence[str], default: int) -> int:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except ValueError:
+            continue
+    return default
+
+
+def _cuda_arch_tag() -> str:
     """
     Return a short tag for the current CUDA compute capability (e.g. ``"sm90"``), or ``"cpu"``
     if CUDA isn't available. Used to keep build directories distinct across GPU architectures.
@@ -60,7 +74,7 @@ def cuda_arch_tag() -> str:
     return f"sm{major}{minor}"
 
 
-def torch_extension_abi_tag() -> str:
+def _torch_extension_abi_tag() -> str:
     """
     Return a tag encoding the torch version, CUDA version, and C++11 ABI flag, so a cached
     extension build is only reused under a compatible toolchain.
@@ -109,7 +123,7 @@ def _lock_file_is_open_by_another_process(lock_path: Path) -> Optional[bool]:
     return False
 
 
-def maybe_remove_stale_build_lock(build_directory: PathLikeStr, *, timeout_seconds: float) -> None:
+def _maybe_remove_stale_build_lock(build_directory: PathLikeStr, *, timeout_seconds: float) -> None:
     """
     Remove a leftover ``lock`` file in a cpp-extension build directory if it is no longer held by
     any process. When ``/proc`` is available the lock's open file descriptors are checked directly;
@@ -189,7 +203,7 @@ def load_cuda_extension(
     stale_lock_timeout_env_names: Sequence[str] = ("OLMO_MOE_EXT_STALE_LOCK_TIMEOUT_SEC",),
     stale_lock_timeout_default_seconds: float = 600.0,
     with_arch_suffix: bool = True,
-):
+) -> Any:
     """
     JIT-build (if needed) and load a CUDA/C++ extension.
 
@@ -209,9 +223,9 @@ def load_cuda_extension(
     """
     from torch.utils.cpp_extension import _get_build_directory, load
 
-    ext_name_parts = [base_name, torch_extension_abi_tag()]
+    ext_name_parts = [base_name, _torch_extension_abi_tag()]
     if with_arch_suffix:
-        ext_name_parts.append(cuda_arch_tag())
+        ext_name_parts.append(_cuda_arch_tag())
     ext_name = "_".join(ext_name_parts)
     build_directory = _get_build_directory(ext_name, verbose=False)
 
@@ -222,13 +236,13 @@ def load_cuda_extension(
     force_rebuild = _env_bool(force_rebuild_env_names, default=False)
     _force_rebuild_build_directory(build_directory, enabled=force_rebuild)
     verbose = _env_bool(verbose_env_names, default=False)
-    max_retries = max(int(_env_float(("OLMO_MOE_EXT_LOAD_RETRIES",), 8.0)), 1)
+    max_retries = max(_env_int(("OLMO_MOE_EXT_LOAD_RETRIES",), 8), 1)
     retry_sleep_s = max(_env_float(("OLMO_MOE_EXT_LOAD_RETRY_SLEEP_SEC",), 0.1), 0.0)
 
     for attempt in range(max_retries):
         # Ensure build directory exists before cpp_extension.load() creates/open lock file.
         os.makedirs(build_directory, exist_ok=True)
-        maybe_remove_stale_build_lock(build_directory, timeout_seconds=stale_lock_timeout_s)
+        _maybe_remove_stale_build_lock(build_directory, timeout_seconds=stale_lock_timeout_s)
         try:
             return load(
                 name=ext_name,

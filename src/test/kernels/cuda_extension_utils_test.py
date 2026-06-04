@@ -2,11 +2,11 @@ import os
 import time
 
 from olmo_core.kernels.cuda_extension_utils import (
+    _cuda_arch_tag,
     _env_bool,
     _env_float,
-    cuda_arch_tag,
-    maybe_remove_stale_build_lock,
-    torch_extension_abi_tag,
+    _maybe_remove_stale_build_lock,
+    _torch_extension_abi_tag,
 )
 
 
@@ -33,11 +33,11 @@ def test_env_float(monkeypatch):
 
 
 def test_arch_and_abi_tags():
-    arch = cuda_arch_tag()
+    arch = _cuda_arch_tag()
     assert isinstance(arch, str)
     assert arch == "cpu" or arch.startswith("sm")
 
-    abi = torch_extension_abi_tag()
+    abi = _torch_extension_abi_tag()
     assert abi.startswith("torch")
     assert "cxxabi" in abi
     # Should be a filesystem-safe tag (no separators that would break a build dir name).
@@ -46,7 +46,7 @@ def test_arch_and_abi_tags():
 
 def test_maybe_remove_stale_build_lock(tmp_path):
     # No lock present -> no-op (and no error).
-    maybe_remove_stale_build_lock(tmp_path, timeout_seconds=0.0)
+    _maybe_remove_stale_build_lock(tmp_path, timeout_seconds=0.0)
 
     lock = tmp_path / "lock"
     lock.touch()
@@ -55,5 +55,5 @@ def test_maybe_remove_stale_build_lock(tmp_path):
     old = time.time() - 3600
     os.utime(lock, (old, old))
 
-    maybe_remove_stale_build_lock(tmp_path, timeout_seconds=1.0)
+    _maybe_remove_stale_build_lock(tmp_path, timeout_seconds=1.0)
     assert not lock.exists()
