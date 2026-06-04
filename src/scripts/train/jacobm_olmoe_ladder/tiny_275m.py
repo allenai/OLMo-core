@@ -123,6 +123,64 @@ log = logging.getLogger(__name__)
 torch.set_float32_matmul_precision("high")
 
 
+@dataclass(frozen=True)
+class ModelSizeSpec:
+    d_model: int
+    d_attn: int
+    n_layers: int
+    head_dim: int
+    num_experts: int
+    top_k: int
+    moe_hidden_size: int
+    num_shared_experts: int
+    shared_mlp_hidden_size: int
+    dense_prefix_layers: int
+    dense_layer_mlp: int
+
+
+MODEL_SIZE_SPECS = {
+    "275m": ModelSizeSpec(
+        d_model=768,
+        d_attn=1024,
+        n_layers=12,
+        head_dim=128,
+        num_experts=48,
+        top_k=4,
+        moe_hidden_size=768,
+        num_shared_experts=1,
+        shared_mlp_hidden_size=384,
+        dense_prefix_layers=1,
+        dense_layer_mlp=3456,
+    ),
+    "810m": ModelSizeSpec(
+        d_model=1280,
+        d_attn=1536,
+        n_layers=20,
+        head_dim=128,
+        num_experts=48,
+        top_k=4,
+        moe_hidden_size=1280,
+        num_shared_experts=1,
+        shared_mlp_hidden_size=640,
+        dense_prefix_layers=1,
+        dense_layer_mlp=5760,
+    ),
+    "1p2b": ModelSizeSpec(
+        d_model=1536,
+        d_attn=2048,
+        n_layers=22,
+        head_dim=128,
+        num_experts=48,
+        top_k=4,
+        moe_hidden_size=1536,
+        num_shared_experts=1,
+        shared_mlp_hidden_size=768,
+        dense_prefix_layers=1,
+        dense_layer_mlp=6912,
+    ),
+}
+
+
 def prepare_s3_environment(opts: argparse.Namespace) -> None:
     if (
         str(opts.data_root).startswith("s3://")
@@ -134,6 +192,12 @@ def prepare_s3_environment(opts: argparse.Namespace) -> None:
 
 def get_parser() -> argparse.ArgumentParser:
     parser = get_cli_parser()
+    parser.add_argument(
+        "--model-size",
+        choices=sorted(MODEL_SIZE_SPECS),
+        default="275m",
+        help="MoE A0 active-parameter scale to train.",
+    )
     parser.add_argument(
         "--lr",
         type=float,
@@ -237,6 +301,49 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
     EXPERT_LR = LR
     TAG = opts.tag
     MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+
+
+def configure_model_size(opts: argparse.Namespace) -> None:
+    global NUM_EXPERTS, TOP_K, D_MODEL, D_ATTN, HEAD_DIM, NUM_HEAD, NUM_KV_HEAD
+    global MOE_HIDDEN_SIZE, NUM_SHARED_EXPERTS, SHARED_MLP_HIDDEN_SIZE
+    global EFFECTIVE_MLP, MLP_RATIO, DENSE_LAYER_MLP, NUM_LAYERS, SPLIT_POINTS
+
+    spec = MODEL_SIZE_SPECS[opts.model_size]
+    if spec.dense_prefix_layers != 1:
+        raise ValueError("Only one dense prefix layer is currently implemented")
+
+    NUM_EXPERTS = spec.num_experts
+    TOP_K = spec.top_k
+    D_MODEL = spec.d_model
+    D_ATTN = spec.d_attn
+    HEAD_DIM = spec.head_dim
+    NUM_HEAD = D_ATTN // HEAD_DIM
+    NUM_KV_HEAD = NUM_HEAD // 2
+    MOE_HIDDEN_SIZE = spec.moe_hidden_size
+    NUM_SHARED_EXPERTS = spec.num_shared_experts
+    SHARED_MLP_HIDDEN_SIZE = spec.shared_mlp_hidden_size
+    EFFECTIVE_MLP = MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS
+    MLP_RATIO = EFFECTIVE_MLP / D_MODEL
+    DENSE_LAYER_MLP = spec.dense_layer_mlp
+    NUM_LAYERS = spec.n_layers
+
+    if PP_DIM > 1:
+        _, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=1)
+    else:
+        SPLIT_POINTS = None
+
+
+def consume_script_overrides(opts: argparse.Namespace, overrides: List[str]) -> List[str]:
+    """Consume script-level key=value overrides before Config.merge sees them."""
+    filtered_overrides: List[str] = []
+    for override in overrides:
+        if override.startswith("model_size="):
+            opts.model_size = override.split("=", 1)[1]
+            continue
+        filtered_overrides.append(override)
+    if opts.model_size not in MODEL_SIZE_SPECS:
+        raise ValueError(f"--model-size must be one of {sorted(MODEL_SIZE_SPECS)}")
+    return filtered_overrides
 
 
 # Local ExperimentConfig with the right ``train_module`` annotation. The version in
@@ -735,19 +842,21 @@ def finalize_config(config: ExperimentConfig, opts: argparse.Namespace) -> None:
     assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"
     wandb_original_name = wandb_cb.name
     wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
-    wandb_cb.name += f"_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
+    wandb_cb.name += f"_{opts.model_size}_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
     wandb_cb.group = (
         f"{wandb_original_name}_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
-        f"_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
+        f"_{opts.model_size}_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
     )
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
     prepare_s3_environment(opts)
+    overrides = consume_script_overrides(opts, overrides)
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
     in_eval_mode = bool(getattr(opts, "eval_checkpoints", None))
 
+    configure_model_size(opts)
     model_config = build_model_config(tokenizer_config)
     max_duration_tokens = Duration.chinchilla_tokens(
         opts.chinchilla_multiple,
