@@ -337,6 +337,13 @@ or active params including embeddings. We round to a nearby launchable coarse
 center rather than overfitting that distinction; the first exploratory 810M Cx1
 pilot is `1.6e-3`.
 
+Launched the first 810M Cx1 sweep on 2026-06-05 with the validated 4-GPU,
+EP=1, microbatch=4 settings. The active LR set is `6e-4`, `1.2e-3`,
+`1.6e-3` (existing pilot), `2.4e-3`, and `6e-3`. Treat `6e-3` as a hot-side
+sentinel: useful for bracketing, but do not stop it early unless it is
+operationally broken or obviously unstable. These runs use final-only permanent
+checkpoints plus latest ephemeral resume checkpoints.
+
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
 center is reasonable. For rungs where the best point remains on the edge or no
 transfer prior is reliable, include a much wider sentinel instead of repeatedly
