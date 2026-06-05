@@ -352,6 +352,20 @@ step 7669 / 2.01B tokens to free 4 GPUs for the sentinel, so ignore it for final
 LR selection and canonical plots. These runs use final-only permanent
 checkpoints plus latest ephemeral resume checkpoints.
 
+Initial 810M Cx1 results finished on 2026-06-05:
+
+| LR | State | avg100M | avg250M | avg500M |
+| ---: | --- | ---: | ---: | ---: |
+| `6e-4` | finished | 2.4096 | 2.4103 | 2.4131 |
+| `1.2e-3` | finished | 2.4147 | 2.4156 | 2.4188 |
+| `2.4e-3` | finished | 2.4456 | 2.4465 | 2.4499 |
+| `6e-3` | finished | 2.5418 | 2.5424 | 2.5457 |
+
+The hot side is bracketed, and `6e-3` served its sentinel purpose. The best
+observed point is the low-edge `6e-4`, with `1.2e-3` close behind, so Cx1 is not
+yet cold-side bracketed. Per the ladder policy, the next 810M Cx1 action is a
+small cold-side extension, not Cx4 yet.
+
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
 center is reasonable. For rungs where the best point remains on the edge or no
 transfer prior is reliable, include a much wider sentinel instead of repeatedly

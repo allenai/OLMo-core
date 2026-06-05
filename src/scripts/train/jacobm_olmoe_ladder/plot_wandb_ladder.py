@@ -31,10 +31,19 @@ CANONICAL_FAMILY_BY_CX = {
     16: "gpu8-ep1mb16",
 }
 
+CANONICAL_FAMILY_BY_MODEL_CX = {
+    "275m": CANONICAL_FAMILY_BY_CX,
+    "810m": {
+        1: "gpu4-ep1mb4",
+        4: "gpu8-ep1mb4",
+    },
+}
+
 
 def is_analysis_run(name: str) -> bool:
     lowered = name.lower()
-    return "smoke" not in lowered and "smoketest" not in lowered and "sanity" not in lowered
+    ignored_markers = ("smoke", "smoketest", "sanity", "pilot")
+    return not any(marker in lowered for marker in ignored_markers)
 
 
 def model_label_from_name(name: str) -> str:
@@ -50,10 +59,14 @@ def model_label_from_name(name: str) -> str:
 def family_label_from_name(name: str) -> str:
     if "gpu8-ep1mb16" in name:
         return "gpu8-ep1mb16"
+    if "gpu8-ep1mb4" in name:
+        return "gpu8-ep1mb4"
     if "gpu4-ep1mb16" in name:
         return "gpu4-ep1mb16"
     if "gpu4-ep1mb8" in name:
         return "gpu4-ep1mb8"
+    if "gpu4-ep1mb4" in name:
+        return "gpu4-ep1mb4"
     if "gpu2-ep1mb16" in name:
         return "gpu2-ep1mb16"
     if "-n2-" in name or "-n2_" in name:
@@ -151,9 +164,14 @@ def annotate_fitted_lr(ax, group, label_prefix: str, color=None) -> None:
     )
 
 
-def plot_cx(points, cx: int, out_path: Path, window_m: int) -> None:
+def canonical_family_for(point) -> str:
+    by_cx = CANONICAL_FAMILY_BY_MODEL_CX.get(point["model"], CANONICAL_FAMILY_BY_CX)
+    return by_cx.get(point["cx"], point["family"])
+
+
+def plot_cx(points, model: str, cx: int, out_path: Path, window_m: int) -> None:
     fig, ax = plt.subplots(figsize=(7.2, 4.8))
-    cx_points = sorted([p for p in points if p["cx"] == cx], key=lambda p: p["lr"])
+    cx_points = sorted([p for p in points if p["model"] == model and p["cx"] == cx], key=lambda p: p["lr"])
     colors_by_family = {}
     for state, family in sorted({(p["state"], p["family"]) for p in cx_points}):
         group = [p for p in cx_points if p["state"] == state and p["family"] == family]
@@ -181,7 +199,7 @@ def plot_cx(points, cx: int, out_path: Path, window_m: int) -> None:
     ax.set_xscale("log")
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"train CE avg{window_m}M")
-    ax.set_title(f"275M Cx{cx} LR sweep")
+    ax.set_title(f"{model} Cx{cx} LR sweep")
     ax.grid(True, which="both", alpha=0.25)
     ax.legend(loc="best")
     fig.tight_layout()
@@ -194,7 +212,7 @@ def plot_model(points, model: str, out_path: Path, window_m: int) -> None:
     model_points = [
         p
         for p in points
-        if p["model"] == model and p["family"] == CANONICAL_FAMILY_BY_CX.get(p["cx"], p["family"])
+        if p["model"] == model and p["family"] == canonical_family_for(p)
     ]
     families_by_cx = {
         cx: sorted({p["family"] for p in model_points if p["cx"] == cx and p["state"] == "finished"})
@@ -261,8 +279,9 @@ def main() -> None:
     points = summarize_rows(rows, args.window_m, args.finished_only, not args.include_noncanonical)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    for cx in sorted({p["cx"] for p in points}):
-        plot_cx(points, cx, args.output_dir / f"275m_cx{cx}_uplot.png", args.window_m)
+    for model in sorted({p["model"] for p in points}):
+        for cx in sorted({p["cx"] for p in points if p["model"] == model}):
+            plot_cx(points, model, cx, args.output_dir / f"{model}_cx{cx}_uplot.png", args.window_m)
     for model in sorted({p["model"] for p in points}):
         plot_model(points, model, args.output_dir / f"{model}_all_cx_uplot.png", args.window_m)
 
