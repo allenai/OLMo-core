@@ -34,7 +34,7 @@ CANONICAL_FAMILY_BY_CX = {
 CANONICAL_FAMILY_BY_MODEL_CX = {
     "275m": CANONICAL_FAMILY_BY_CX,
     "810m": {
-        1: "gpu4-ep1mb4",
+        1: ("gpu4-ep1mb4", "gpu8-ep1mb4"),
         4: "gpu8-ep1mb4",
     },
 }
@@ -166,7 +166,18 @@ def annotate_fitted_lr(ax, group, label_prefix: str, color=None) -> None:
 
 def canonical_family_for(point) -> str:
     by_cx = CANONICAL_FAMILY_BY_MODEL_CX.get(point["model"], CANONICAL_FAMILY_BY_CX)
-    return by_cx.get(point["cx"], point["family"])
+    family = by_cx.get(point["cx"], point["family"])
+    if isinstance(family, tuple):
+        return family[0]
+    return family
+
+
+def is_canonical_family(point) -> bool:
+    by_cx = CANONICAL_FAMILY_BY_MODEL_CX.get(point["model"], CANONICAL_FAMILY_BY_CX)
+    family = by_cx.get(point["cx"], point["family"])
+    if isinstance(family, tuple):
+        return point["family"] in family
+    return point["family"] == family
 
 
 def plot_cx(points, model: str, cx: int, out_path: Path, window_m: int) -> None:
@@ -212,7 +223,7 @@ def plot_model(points, model: str, out_path: Path, window_m: int) -> None:
     model_points = [
         p
         for p in points
-        if p["model"] == model and p["family"] == canonical_family_for(p)
+        if p["model"] == model and is_canonical_family(p)
     ]
     families_by_cx = {
         cx: sorted({p["family"] for p in model_points if p["cx"] == cx and p["state"] == "finished"})

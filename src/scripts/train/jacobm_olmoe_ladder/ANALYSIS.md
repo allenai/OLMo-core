@@ -360,6 +360,7 @@ Initial 810M Cx1 results finished on 2026-06-05:
 | `1.2e-3` | finished | 2.4147 | 2.4156 | 2.4188 |
 | `2.4e-3` | finished | 2.4456 | 2.4465 | 2.4499 |
 | `6e-3` | finished | 2.5418 | 2.5424 | 2.5457 |
+| `5e-5` | finished | 2.5678 | 2.5680 | 2.5705 |
 
 The hot side is bracketed, and `6e-3` served its sentinel purpose. The best
 observed point is the low-edge `6e-4`, with `1.2e-3` close behind, so Cx1 is not
@@ -374,7 +375,10 @@ Also launched a farther cold sentinel at `5e-5`. The first long-name
 `gpu4-ep1mb4` attempt failed before training because the generated W&B group
 exceeded the 128-character limit, so ignore that attempt. It was relaunched with
 a shorter name at `gpu8-ep1mb4`, keeping the same global token batch for U-plot
-comparability while using more GPUs to reduce wall-clock.
+comparability while using more GPUs to reduce wall-clock. The relaunched
+sentinel finished and is clearly worse than `6e-4`, so the far-cold side is now
+bracketed; wait for the in-progress `3e-4` and `1.5e-4` runs before fitting the
+full cold-side curve.
 
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
 center is reasonable. For rungs where the best point remains on the edge or no
