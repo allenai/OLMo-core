@@ -21,6 +21,7 @@ Layout: the **last ``num_landmarks`` tokens of every chunk are landmarks**; ``T`
   * :class:`SparseLandmarkAttention`       -- the :class:`Attention` sequence mixer wrapping it
     (``AttentionType.sparse_landmark``). A fused Triton kernel is the natural next step for peak speed.
 """
+import os
 from typing import Optional
 
 import torch
@@ -29,6 +30,10 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from . import Attention
 from .landmark import repeat_kv
+from .landmark_sparse_kernel import (
+    has_sparse_kernel,
+    sparse_landmark_attention_triton_train,
+)
 
 
 def sparse_landmark_attention_ref(
@@ -195,8 +200,15 @@ class SparseLandmarkAttention(Attention):
         k = repeat_kv(k.transpose(1, 2), n_rep)
         v = repeat_kv(v.transpose(1, 2), n_rep)
 
-        att = sparse_landmark_attention(
-            q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
-        )
+        # Fused Triton fwd+bwd kernel when available (much faster); eager torch fallback otherwise.
+        # Disable with LM_SPARSE_KERNEL=0.
+        if q.is_cuda and has_sparse_kernel() and os.environ.get("LM_SPARSE_KERNEL", "1") != "0":
+            att = sparse_landmark_attention_triton_train(
+                q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
+            )
+        else:
+            att = sparse_landmark_attention(
+                q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
+            )
         att = att.transpose(1, 2).contiguous().view(B, T, -1)
         return self.w_out(att)
