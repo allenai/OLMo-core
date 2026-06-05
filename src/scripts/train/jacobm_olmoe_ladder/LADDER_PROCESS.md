@@ -68,12 +68,14 @@ Start each new rung with a coarse LR sweep, not a dense grid.
 
 Default pattern:
 
-- Use factor-of-two spacing when uncertain.
+- Use factor-of-two spacing around a plausible transferred estimate.
 - Use 3-4 LRs for an initial probe when runs are expensive.
 - Center the new rung around the trend from smaller rungs when there is enough
   evidence.
 - Do not launch dense local grids unless the rung is cheap or unusually
   ambiguous.
+- When there is no reliable transferred prior, widen the first probe or include
+  a sentinel. Repeated small expansions are too slow once runs become expensive.
 
 For early cheap 275M rungs, it is acceptable to run more points to diagnose
 systems or family effects. For larger token budgets or larger model sizes, prefer
@@ -118,6 +120,46 @@ Once a rung has at least three bracketed completed points:
 Use the fitted optimum as a guide, not an oracle. Small final-window differences
 can be noise, and run-family effects can dominate if settings changed.
 
+## Transfer Rule
+
+For each completed canonical 275M rung, estimate the rung optimum with a local
+quadratic fit of loss vs `log10(lr)`. Prefer 3-point or 5-point local fits around
+the basin; use the best observed LR as a sanity check. Do not use a fit that
+points outside the completed bracket.
+
+Fit the 275M data-scale rule as:
+
+```text
+log10(lr*) = a + b log10(Cx)
+```
+
+Then transfer the 275M LR estimate to a larger model with:
+
+```text
+lr_large(Cx) = lr_275m(Cx) * (N_large / N_275m)^alpha
+```
+
+Use `alpha = -0.25` as the working model-size transfer exponent. This is a
+deliberately mild model-size correction: it lowers LR for larger active models
+without assuming the exact dense-ladder scaling law transfers perfectly to this
+MoE architecture.
+
+Current 810M Cx1 estimate, using completed canonical Cx1-Cx4 275M brackets:
+
+- Cx1 fitted 275M optimum: about `2.0e-3` to `2.1e-3`.
+- Cx2 fitted 275M optimum: about `1.1e-3`.
+- Cx4 fitted 275M optimum: about `1.5e-3`.
+- A log-log Cx rule over Cx1-Cx4 gives a 275M Cx1 center around
+  `1.7e-3` to `1.8e-3`.
+- Applying `alpha = -0.25` gives an 810M Cx1 center around `1.2e-3` to
+  `1.4e-3` depending on whether the active-size ratio uses non-embedding active
+  params or active params including embeddings.
+
+For practical launch grids, round this to a nearby coarse center rather than
+pretending the estimate is exact. The first 810M Cx1 pilot uses `1.6e-3`; final
+810M sweep choices can ignore or include that pilot depending on when the 275M
+Cx8/Cx16 brackets finish.
+
 ## Moving To The Next Rung
 
 Move on from a rung when:
@@ -150,8 +192,10 @@ Keep architecture fixed for larger baseline checks:
 - EP=1 by default.
 - Validated Cx1 setting: `gpu4-ep1mb4`.
 - Use `gpu8-ep1mb4` for Cx4 to speed up, no extra 8-GPU smoke required.
-- After 275M Cx8/Cx16 are usable, launch 810M Cx1 coarse LR probes.
-- Initial 810M Cx1 LRs: `1e-4`, `2e-4`, `4e-4`, `8e-4`.
+- After 275M Cx8/Cx16 are usable, launch 810M Cx1 coarse LR probes centered on
+  the transferred 275M LR rule.
+- Current provisional 810M Cx1 center is around `1.6e-3`; a likely first real
+  sweep is `8e-4`, `1.6e-3`, `3.2e-3`, adjusted after Cx8/Cx16 finish.
 - After 810M Cx1 and the 275M LR-rule evidence are available, launch 810M Cx4
   around the transferred rule using 3-4 factor-of-two-spaced LRs.
 - Launch 810M Cx8 only if Cx4 is clean or needed to validate the transferred
@@ -240,4 +284,3 @@ Before handing the project to another session/person:
 - Regenerate and push plots if full-run results changed.
 - Mention any unrelated dirty worktree files so they are not accidentally
   reverted.
-

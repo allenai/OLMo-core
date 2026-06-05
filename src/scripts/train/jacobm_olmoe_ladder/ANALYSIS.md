@@ -235,6 +235,12 @@ than simply microbatch size: the EP=8 sanity run lands very close to the old
 same-LR Cx1 result and much better than the EP=1 current-family rerun. Keep the
 sanity run out of LR-rule fits, but use it to interpret the run-family gap.
 
+Follow-up sanity check: Tianhua suggested running the same Cx1 EP=8 setting with
+`USE_ROWWISE_A2A=False`. This uses the slower dropless EP path. If it moves back
+toward the current EP=1 result, then the better EP=8/original Cx1 losses may be
+coming from early token dropping rather than microbatch size or another
+throughput-setting difference.
+
 ## 2026-06-04 Completed Cx2/Cx4 Snapshot
 
 Final completed-run summaries use final-token-window averages and ignore canceled
@@ -288,6 +294,45 @@ Cx4 completed `avg250M`:
 
 Cx4 is bracketed and centered around `1.5e-3`. The low side worsens below
 `1e-3`, the high side worsens above `2.5e-3`, and `5e-3` is clearly too hot.
+
+## 810M LR Transfer Plan
+
+Use completed canonical 275M full runs to estimate an LR rule, then transfer that
+rule to larger active parameter counts.
+
+Per-rung fitting rule:
+
+- Fit loss vs `log10(lr)` with a local 3-point or 5-point quadratic around the
+  visible basin.
+- Use final `avg250M` training CE as the primary metric, with `avg100M` and
+  `avg500M` as robustness checks.
+- Do not accept a fitted optimum outside the completed bracket; in that case,
+  extend the rung rather than fitting through an edge.
+
+Current completed canonical Cx1-Cx4 estimates:
+
+- Cx1: local fit optimum about `2.0e-3` to `2.1e-3`.
+- Cx2: local fit optimum about `1.1e-3`.
+- Cx4: local fit optimum about `1.5e-3`.
+
+Fitting `log10(lr*) = a + b log10(Cx)` over the completed Cx1-Cx4 estimates
+gives a noisy but useful 275M Cx1 center around `1.7e-3` to `1.8e-3`. For model
+size transfer, use:
+
+```text
+lr_810m(Cx) = lr_275m(Cx) * (N_810m / N_275m)^alpha
+```
+
+with working exponent `alpha = -0.25`. This gives an 810M Cx1 center around
+`1.2e-3` to `1.4e-3`, depending on whether `N` uses active non-embedding params
+or active params including embeddings. We round to a nearby launchable coarse
+center rather than overfitting that distinction; the first exploratory 810M Cx1
+pilot is `1.6e-3`.
+
+For transferred larger-model sweeps, factor-of-two spacing around the transferred
+center is reasonable. For rungs where the best point remains on the edge or no
+transfer prior is reliable, include a much wider sentinel instead of repeatedly
+walking outward by small multiples.
 
 ## 275M Cx8/Cx16 Rule Completion
 

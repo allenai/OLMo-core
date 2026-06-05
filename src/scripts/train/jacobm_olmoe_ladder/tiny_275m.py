@@ -241,6 +241,12 @@ def get_parser() -> argparse.ArgumentParser:
         help="Expert-parallel degree. Use 1 to disable expert parallelism.",
     )
     parser.add_argument(
+        "--use-rowwise-a2a",
+        action=argparse.BooleanOptionalAction,
+        default=USE_ROWWISE_A2A,
+        help="Use the rowwise all-to-all EP path. Disable for the slower dropless EP sanity check.",
+    )
+    parser.add_argument(
         "--warmup-fraction",
         type=float,
         default=SCHED_WARMUP_FRACTION,
@@ -285,6 +291,7 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
     global GLOBAL_BATCH_SIZE_SEQ, GLOBAL_BATCH_SIZE, NUM_MICRO_BATCHES, GLOBAL_BATCH_TOKENS_IN_M
     global SCHED_WARMUP_FRACTION, SCHED_WARMUP_TOKENS
     global LR, EXPERT_LR, TAG, MONKEY_PATCH_DECAY_DURATION_TOKENS
+    global USE_ROWWISE_A2A
 
     if opts.chinchilla_multiple <= 0:
         raise ValueError("--chinchilla-multiple must be > 0")
@@ -318,6 +325,7 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
     REF_GPUS_PER_NODE = opts.gpus_per_node
     MICRO_BSZ = opts.micro_batch_size
     EP_DIM = opts.ep_dim
+    USE_ROWWISE_A2A = opts.use_rowwise_a2a
     GLOBAL_BATCH_SIZE_SEQ = opts.global_batch_size_seq
     GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * sequence_length
     NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * REF_GPUS_PER_NODE) // MICRO_BSZ * PP_DIM
