@@ -229,6 +229,7 @@ The EP=8 sanity probe finished with the fast legal 8-GPU microbatch setting:
 | `1e-3` | old/original | finished | 2.7635 | 2.7657 | 2.7687 |
 | `1e-3` | `gpu2-ep1mb16` | finished | 2.7830 | 2.7852 | 2.7881 |
 | `1e-3` | `gpu8-ep8mb4` sanity | finished | 2.7649 | 2.7671 | 2.7702 |
+| `1e-3` | `gpu8-ep8mb4` dropless sanity | finished | 2.7646 | 2.7668 | 2.7699 |
 
 This strongly suggests the Cx1 family discrepancy is tied to EP/settings rather
 than simply microbatch size: the EP=8 sanity run lands very close to the old
@@ -244,10 +245,15 @@ throughput-setting difference.
 The first dropless launch failed before training because the W&B group name
 exceeded the 128-character limit. It was relaunched as
 `olmoe3-tiny-cx1-ep8drop-lr1e-3` (`01KTB86J84BNDZJYXWMPVC9FVG`) with the same
-8-GPU, EP=8, microbatch=4, `--no-use-rowwise-a2a` settings. The replacement got
-past dry-run and W&B init and reached real training past step 1400 with skipped
-steps 0 and token drop rate 0.0. Keep it out of LR-rule fits and canonical
-plots.
+8-GPU, EP=8, microbatch=4, `--no-use-rowwise-a2a` settings. The replacement
+finished cleanly with skipped steps 0 and token drop rate 0.0.
+
+The dropless result lands essentially on top of the rowwise EP=8 sanity result,
+not on the EP=1 current-family rerun. That argues against the Cx1 family gap
+being explained by early token dropping from rowwise EP alone. The discrepancy is
+still tied to the broader EP=8 / 8-GPU settings family, but this specific
+dropless-vs-rowwise check does not support token dropping as the cause. Keep both
+sanity runs out of LR-rule fits and canonical plots.
 
 ## 2026-06-04 Completed Cx2/Cx4 Snapshot
 
