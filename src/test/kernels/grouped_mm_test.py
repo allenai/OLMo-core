@@ -61,3 +61,26 @@ def test_grouped_mm_wrapper_writes_input_grad_out_buffer():
     assert grad_a.untyped_storage().data_ptr() == input_grad_out.untyped_storage().data_ptr()
     torch.testing.assert_close(grad_a, grad_a_ref)
     torch.testing.assert_close(grad_b, grad_b_ref)
+
+
+@requires_gpu
+def test_grouped_mm_wrapper_matches_torch_grouped_mm_fwd_bwd():
+    # Default path (no out=/input_grad_out= buffers): the wrapper should be a drop-in for
+    # torch.nn.functional.grouped_mm in both the forward output and the gradients.
+    device = torch.device("cuda")
+    a, b, offs = _build_grouped_mm_inputs(device=device)
+    a = a.detach().requires_grad_(True)
+    b = b.detach().requires_grad_(True)
+
+    a_ref = a.detach().clone().requires_grad_(True)
+    b_ref = b.detach().clone().requires_grad_(True)
+
+    out = grouped_mm(a, b, offs=offs)
+    out_ref = F.grouped_mm(a_ref, b_ref, offs=offs)
+    torch.testing.assert_close(out, out_ref)
+
+    grad_out = torch.randn_like(out)
+    grad_a, grad_b = torch.autograd.grad(out, (a, b), grad_outputs=grad_out)
+    grad_a_ref, grad_b_ref = torch.autograd.grad(out_ref, (a_ref, b_ref), grad_outputs=grad_out)
+    torch.testing.assert_close(grad_a, grad_a_ref)
+    torch.testing.assert_close(grad_b, grad_b_ref)
