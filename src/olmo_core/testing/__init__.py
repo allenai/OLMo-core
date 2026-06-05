@@ -17,6 +17,7 @@ from .utils import (
     has_grouped_gemm,
     has_multiple_gpus,
     has_quack,
+    has_torch_grouped_mm,
     has_torchao,
     requires_flash_attn_2,
     requires_flash_attn_4,
@@ -25,6 +26,7 @@ from .utils import (
     requires_multi_gpu,
     requires_quack,
     requires_te,
+    requires_torch_grouped_mm,
 )
 
 __all__ = [
@@ -44,6 +46,7 @@ __all__ = [
     "has_flash_attn_4",
     "has_grouped_gemm",
     "has_multiple_gpus",
+    "has_torch_grouped_mm",
     "has_torchao",
     "has_quack",
     "requires_flash_attn_2",
@@ -51,6 +54,7 @@ __all__ = [
     "requires_te",
     "requires_gpu",
     "requires_grouped_gemm",
+    "requires_torch_grouped_mm",
     "requires_quack",
     "requires_multi_gpu",
     "run_distributed_test",

@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.kernels.grouped_mm import grouped_mm
-from olmo_core.testing import requires_gpu
+from olmo_core.testing import requires_torch_grouped_mm
 
 
 def _build_grouped_mm_inputs(
@@ -17,7 +17,7 @@ def _build_grouped_mm_inputs(
     return a, b, offs
 
 
-@requires_gpu
+@requires_torch_grouped_mm
 def test_grouped_mm_wrapper_matches_torch_grouped_mm():
     device = torch.device("cuda")
     a, b, offs = _build_grouped_mm_inputs(device=device)
@@ -28,7 +28,7 @@ def test_grouped_mm_wrapper_matches_torch_grouped_mm():
     torch.testing.assert_close(out, ref)
 
 
-@requires_gpu
+@requires_torch_grouped_mm
 def test_grouped_mm_wrapper_writes_forward_out_buffer():
     device = torch.device("cuda")
     a, b, offs = _build_grouped_mm_inputs(device=device)
@@ -41,7 +41,7 @@ def test_grouped_mm_wrapper_writes_forward_out_buffer():
     torch.testing.assert_close(out, ref)
 
 
-@requires_gpu
+@requires_torch_grouped_mm
 def test_grouped_mm_wrapper_writes_input_grad_out_buffer():
     device = torch.device("cuda")
     a, b, offs = _build_grouped_mm_inputs(device=device)
@@ -63,7 +63,7 @@ def test_grouped_mm_wrapper_writes_input_grad_out_buffer():
     torch.testing.assert_close(grad_b, grad_b_ref)
 
 
-@requires_gpu
+@requires_torch_grouped_mm
 def test_grouped_mm_wrapper_matches_torch_grouped_mm_fwd_bwd():
     # Default path (no out=/input_grad_out= buffers): the wrapper should be a drop-in for
     # torch.nn.functional.grouped_mm in both the forward output and the gradients.
