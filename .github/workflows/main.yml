@@ -159,7 +159,7 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            image: &gpu_test_image petew/olmo-core-tch2100cu128-2026-01-23
+            image: &gpu_test_image tylerr/olmo-core-tch291cu128-2025-11-25
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -211,6 +211,16 @@ jobs:
             run: |
               pytest -v --color=yes -m gpu \
                 src/integration_tests/
+
+          # The MoE kernels require torch >= 2.10 (torch.nn.functional.grouped_mm,
+          # F.ScalingType/F.SwizzleType); their tests are version-gated and skip on the
+          # torch 2.9 image above, so run them on a torch 2.10 image here.
+          - name: Test MoE kernels (GPU, torch 2.10)
+            image: petew/olmo-core-tch2100cu128-2026-01-23
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/kernels/
     steps:
       - uses: actions/checkout@v5
         with:
