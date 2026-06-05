@@ -199,7 +199,8 @@ launched high-side extensions:
 - Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r3`: `01KTAC584AMG9645NEKF479R15`;
   far right-side sentinel launched after adopting the policy of occasionally
   jumping farther when a completed curve is still monotonically improving at the
-  high edge.
+  high edge. Finished successfully on 2026-06-05 at step 40971, 32.221B
+  tokens, avg250M 2.5347, avg500M 2.5341.
 - Cx8 `1.6e-2`, `gpu4-ep1mb8`, `sentinel`: `01KTACFJ4D4FQG33ZPT4R306WT`;
   true order-of-magnitude sentinel to quickly find a right-side upturn.
 

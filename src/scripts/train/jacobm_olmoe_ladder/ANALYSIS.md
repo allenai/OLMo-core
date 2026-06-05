@@ -512,13 +512,14 @@ Cx8 full-run results from the fresh `r2` grid:
 | `8e-4` | finished | 40971 | 32.221 | 2.4929 | 2.4909 | 2.4903 |
 | `1.6e-3` | finished | 40971 | 32.221 | 2.4884 | 2.4864 | 2.4859 |
 | `3.2e-3` | finished | 40971 | 32.221 | 2.5006 | 2.4987 | 2.4982 |
+| `6.4e-3` | finished | 40971 | 32.221 | 2.5367 | 2.5347 | 2.5341 |
 
 The best observed Cx8 LR is `1.6e-3`. The completed `3.2e-3` extension is
-worse, so Cx8 is now bracketed on the right side. A local quadratic fit of loss
-vs log10(LR) gives a fitted optimum around `1.35e-3` (`1.35e-3` with the 5-point
-fit and `1.36e-3` with the 3-point fit). Treat this as a broad optimum region
-rather than a precise number because the basin is shallow from `8e-4` through
-`1.6e-3`.
+worse, and `6.4e-3` is much worse, so Cx8 is now well bracketed on the right
+side. A local quadratic fit of loss vs log10(LR) gives a fitted optimum around
+`1.35e-3` (`1.35e-3` with the 5-point fit and `1.36e-3` with the 3-point fit).
+Treat this as a broad optimum region rather than a precise number because the
+basin is shallow from `8e-4` through `1.6e-3`.
 
 Because the completed Cx8 curve had previously been monotonically improving at
 the high edge, we also launched a farther right-side extension at `6.4e-3` and a
@@ -535,7 +536,7 @@ right-tail numbers but they are no longer required to establish the Cx8 bracket.
   stopped intentionally after lower high-side probes were already clearly worse.
   Ignore for full-run analysis.
 - Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r3`: `01KTAC584AMG9645NEKF479R15`;
-  far right-side sentinel.
+  finished successfully on 2026-06-05, avg250M 2.5347, avg500M 2.5341.
 - Cx8 `1.6e-2`, `gpu4-ep1mb8`, `sentinel`: `01KTACFJ4D4FQG33ZPT4R306WT`;
   true order-of-magnitude sentinel.
 
