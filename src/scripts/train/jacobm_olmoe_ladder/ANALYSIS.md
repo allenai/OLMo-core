@@ -513,6 +513,7 @@ Cx8 full-run results from the fresh `r2` grid:
 | `1.6e-3` | finished | 40971 | 32.221 | 2.4884 | 2.4864 | 2.4859 |
 | `3.2e-3` | finished | 40971 | 32.221 | 2.5006 | 2.4987 | 2.4982 |
 | `6.4e-3` | finished | 40971 | 32.221 | 2.5367 | 2.5347 | 2.5341 |
+| `1.6e-2` | finished | 40971 | 32.221 | 2.6308 | 2.6285 | 2.6278 |
 
 The best observed Cx8 LR is `1.6e-3`. The completed `3.2e-3` extension is
 worse, and `6.4e-3` is much worse, so Cx8 is now well bracketed on the right
@@ -524,7 +525,8 @@ basin is shallow from `8e-4` through `1.6e-3`.
 Because the completed Cx8 curve had previously been monotonically improving at
 the high edge, we also launched a farther right-side extension at `6.4e-3` and a
 true order-of-magnitude sentinel at `1.6e-2`; keep those running for final
-right-tail numbers but they are no longer required to establish the Cx8 bracket.
+right-tail numbers. Both are now complete and confirm the right side is safely
+hot.
 
 - Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
 - Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q661N0YHYHC9A9T9AGV1J`;
@@ -538,7 +540,7 @@ right-tail numbers but they are no longer required to establish the Cx8 bracket.
 - Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r3`: `01KTAC584AMG9645NEKF479R15`;
   finished successfully on 2026-06-05, avg250M 2.5347, avg500M 2.5341.
 - Cx8 `1.6e-2`, `gpu4-ep1mb8`, `sentinel`: `01KTACFJ4D4FQG33ZPT4R306WT`;
-  true order-of-magnitude sentinel.
+  finished successfully on 2026-06-05, avg250M 2.6285, avg500M 2.6278.
 
 Cx16 completed full-run results from the canonical `r2` grid:
 
@@ -548,25 +550,26 @@ Cx16 completed full-run results from the canonical `r2` grid:
 | `4e-4` | finished | 61457 | 64.442 | 2.4381 | 2.4474 | 2.4461 |
 | `6e-4` | finished | 61457 | 64.442 | 2.4274 | 2.4367 | 2.4354 |
 | `1.2e-3` | finished | 61457 | 64.442 | 2.4208 | 2.4301 | 2.4288 |
+| `2.4e-3` | finished | 61457 | 64.442 | 2.4321 | 2.4413 | 2.4400 |
+| `6e-3` | finished | 61457 | 64.442 | 2.4781 | 2.4876 | 2.4862 |
 
-The best observed completed Cx16 LR is `1.2e-3`, but it is the high edge of the
-completed grid, so the rung is not bracketed. The 3-point quadratic fit to loss
-vs log10(LR) points outside the bracket at about `1.34e-3`, so do not trust the
-fitted optimum yet. Since `1.2e-3` finished better than `6e-4`, the completed
-curve is still improving at the high edge. Keep the farther right-side `2.4e-3`
-extension and true order-of-magnitude `6e-3` sentinel running to find the turn.
+The best observed completed Cx16 LR is `1.2e-3`. The completed `2.4e-3` and
+`6e-3` right-side points are worse, so Cx16 is now bracketed. A local quadratic
+fit of loss vs log10(LR) gives a fitted optimum around `1.07e-3` with the
+5-point fit and `1.10e-3` with the 3-point fit. Treat `1.1e-3` to `1.2e-3` as
+the current Cx16 optimum region.
 
 - Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
 - Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q6X0B6PG3G6ZSBZGTPSVQ`;
   stopped intentionally after Cx16 `1.2e-3` was already clearly worse than the
   completed `6e-4` best. Ignore for full-run analysis.
 - Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r3`: `01KTAC763FP2W34ZX6N4CT21QD`;
-  far right-side sentinel.
+  finished successfully on 2026-06-05, avg250M 2.4413, avg500M 2.4400.
 - Cx16 `4.8e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q774FWC6NZDSGTD0Y2W7K`;
   stopped intentionally while queued after lower high-side probes were already
   clearly worse. Ignore for full-run analysis.
 - Cx16 `6e-3`, `gpu8-ep1mb16`, `sentinel`: `01KTACHG3Z4Y1G9HW9ESYZK58Q`;
-  true order-of-magnitude sentinel.
+  finished successfully on 2026-06-05, avg250M 2.4876, avg500M 2.4862.
 
 ## 810M and 1.2B Baseline Prep
 

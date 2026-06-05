@@ -202,7 +202,9 @@ launched high-side extensions:
   high edge. Finished successfully on 2026-06-05 at step 40971, 32.221B
   tokens, avg250M 2.5347, avg500M 2.5341.
 - Cx8 `1.6e-2`, `gpu4-ep1mb8`, `sentinel`: `01KTACFJ4D4FQG33ZPT4R306WT`;
-  true order-of-magnitude sentinel to quickly find a right-side upturn.
+  true order-of-magnitude sentinel to quickly find a right-side upturn. Finished
+  successfully on 2026-06-05 at step 40971, 32.221B tokens, avg250M 2.6285,
+  avg500M 2.6278.
 
 Status update: the canonical Cx16 `r2` runs finished successfully on 2026-06-04.
 
@@ -224,12 +226,15 @@ bracketed. Launched high-side extensions:
   completed `6e-4` best. Ignore for full-run analysis.
 - Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r3`: `01KTAC763FP2W34ZX6N4CT21QD`;
   far right-side sentinel launched after `1.2e-3` improved enough in flight to
-  make Cx16 plausibly high-edge-best.
+  make Cx16 plausibly high-edge-best. Finished successfully on 2026-06-05 at
+  step 61457, 64.442B tokens, avg250M 2.4413, avg500M 2.4400.
 - Cx16 `4.8e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q774FWC6NZDSGTD0Y2W7K`;
   stopped intentionally while queued after lower high-side probes were already
   clearly worse. Ignore for full-run analysis.
 - Cx16 `6e-3`, `gpu8-ep1mb16`, `sentinel`: `01KTACHG3Z4Y1G9HW9ESYZK58Q`;
-  true order-of-magnitude sentinel to quickly find a right-side upturn.
+  true order-of-magnitude sentinel to quickly find a right-side upturn. Finished
+  successfully on 2026-06-05 at step 61457, 64.442B tokens, avg250M 2.4876,
+  avg500M 2.4862.
 
 ## Planned Sweeps
 
