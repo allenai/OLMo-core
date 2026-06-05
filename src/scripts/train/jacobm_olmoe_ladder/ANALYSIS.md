@@ -370,6 +370,9 @@ Launched cold-side extensions at `3e-4` and `1.5e-4` with the same validated
 4-GPU, EP=1, microbatch=4 setting. These should determine whether `6e-4` is the
 basin floor or still too warm.
 
+Also launched a farther cold sentinel at `5e-5`, keeping the same 4-GPU
+`gpu4-ep1mb4` setting for comparability with the rest of the 810M Cx1 curve.
+
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
 center is reasonable. For rungs where the best point remains on the edge or no
 transfer prior is reliable, include a much wider sentinel instead of repeatedly
