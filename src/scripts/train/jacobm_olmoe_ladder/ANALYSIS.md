@@ -387,6 +387,9 @@ walking outward by small multiples.
 
 ## Validation Eval Follow-up
 
+TODO: discuss and decide how validation losses should enter ladder decisions in
+addition to the train losses we currently use for U-plots.
+
 Scaling-ladders runs attach `with_recommended_evals(..., task_set="fast")` to
 normal training, which logs LM validation components such as
 `c4_en-validation`, Dolma slices, Pile, and Wikitext, plus downstream fast tasks
