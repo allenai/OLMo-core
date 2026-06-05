@@ -3,9 +3,9 @@ from typing import Optional
 
 from olmo_core.config import DType
 from olmo_core.data import (
+    DataMix,
     NumpyDataLoaderConfig,
-    NumpyDatasetDType,
-    NumpyFSLDatasetConfig,
+    NumpyPackedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -14,8 +14,11 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
+from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
@@ -24,22 +27,24 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 
-# Plain Qwen3-0.6B (dense attention, no landmark tokens). Matches the landmark variant's
-# 4096-position context so the two runs are directly comparable on WikiText.
-SEQUENCE_LENGTH = 4096
-
-# Raw uint32 token array uploaded to weka. 557K tokens of WikiText tokenized with the Qwen3
-# tokenizer. The same source feeds Qwen3-0.6B-landmark-wikitext_single_node.py.
-WIKITEXT_PATH = "/weka/oe-training-default/ai2-llm/checkpoints/amandab/npys/wikitext_tokens.npy"
-
-GLOBAL_BATCH_SIZE = 32768  # ~32K tokens
+# Qwen3.5-4B is a hybrid Gated DeltaNet + full-attention model. Unlike Qwen3-4B-long-context.py,
+# we do NOT apply YaRN: `with_rope_scaling` is rejected for hybrid models with named blocks, and
+# the linear-attention (GDN) layers carry long-range state natively. We simply train at a long
+# sequence length on the longmino mix.
+SEQUENCE_LENGTH = 65536  # 64k context
+GLOBAL_BATCH_SIZE = 65536 * 64  # ~4M tokens
 MAX_TOKENS = 10_000_000_000  # 10B
-LR = 2e-5
+LR = 3.2e-4
+
+# TODO: set to your Qwen3.5-4B olmo-core checkpoint (the `model_and_optim` directory).
+# Override at launch with --trainer.load_path=...
+CHECKPOINT_PATH = "FILL_ME"
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
@@ -58,14 +63,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         beaker_image=OLMoCoreBeakerImage.stable,
         workspace="ai2/flex2",
         budget="ai2/oe-other",
-        num_nodes=1,
-        num_gpus=2,
+        num_nodes=4,  # override with --launch.num_nodes=N
     )
 
     tokenizer_config = TokenizerConfig.qwen3()
 
-    # Qwen3-0.6B with standard dense attention.
-    model_config = TransformerConfig.qwen3_0_6B(
+    # Qwen3.5-4B: hybrid Gated DeltaNet (linear attention) + full attention, 3:1 ratio.
+    model_config = TransformerConfig.qwen3_5_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
         attn_backend=AttentionBackendName.flash_2,
     )
@@ -81,31 +85,38 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        scheduler=CosWithWarmup(warmup_steps=10),
+        scheduler=LinearWithWarmup(warmup=400, alpha_f=0.0),
+        # GatedDeltaNet layers use custom kernels; keep compile off until verified.
         compile_model=False,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=1,
+        ),
+        # NOTE: no Ulysses context parallelism here. Ulysses splits the sequence across ranks,
+        # which is incompatible with the GatedDeltaNet recurrence; each rank processes a full
+        # 64k sequence. Only 1/4 of layers are full-attention, so memory is dominated by the
+        # GDN layers + activation checkpointing rather than quadratic attention.
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.7,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
     )
 
-    # Single local WikiText source. Use the plain concat-and-chunk FSL dataset (NOT the packed
-    # variant): the packed dataset does per-document bin-packing and, without doc-length metadata,
-    # treats the whole file as one document and truncates to a single sequence. Concat-and-chunk
-    # streams the tokens and slices them into fixed-length sequences, matching the landmark
-    # pipeline's ConcatAndChunkInstanceSource.
-    dataset_config = NumpyFSLDatasetConfig(
-        paths=[WIKITEXT_PATH],
+    dataset_config = NumpyPackedFSLDatasetConfig.from_data_mix(
+        DataMix.longmino_qwen,
         tokenizer=tokenizer_config,
-        dtype=NumpyDatasetDType.uint32,
+        mix_base_dir="s3://ai2-llm",
         work_dir=work_dir,
         sequence_length=SEQUENCE_LENGTH,
+        generate_doc_lengths=False,
+        source_group_size=8,
+        source_permutation_seed=123,
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -118,7 +129,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         TrainerConfig(
             save_folder=save_dir,
             save_overwrite=True,
-            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-0.6B-olmocore/model_and_optim",
+            load_path=CHECKPOINT_PATH,
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             metrics_collect_interval=10,
@@ -167,25 +178,26 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    Plain Qwen3-0.6B (dense attention, no landmark) trained on WikiText.
+    Qwen3.5-4B (hybrid Gated DeltaNet + full attention) long-context training on longmino at 64k.
 
-    The non-landmark counterpart to Qwen3-0.6B-landmark-wikitext_single_node.py: same model size,
-    sequence length (4096), batch size, optimizer, and starting checkpoint, but with standard
-    attention and a packed FSL dataset instead of the landmark composable pipeline. The data is a
-    single local raw-uint32 token array (wikitext_tokens.npy, ~557K Qwen3 tokens) on weka, so the
-    loader cycles the data many times over the 10B-token schedule (small overfit / sanity setup).
+    The 3.5 analogue of Qwen3-4B-long-context.py. Unlike that script, it does NOT use YaRN — the
+    hybrid model rejects `with_rope_scaling`, and the GatedDeltaNet layers handle long range
+    natively — and it omits Ulysses context parallelism (incompatible with the GDN recurrence),
+    relying on FSDP/HSDP + activation checkpointing for a full 64k sequence per rank.
 
-    Training starts from the pre-trained Qwen3-0.6B checkpoint.
+    Set CHECKPOINT_PATH (or --trainer.load_path) to a Qwen3.5-4B olmo-core checkpoint before
+    launching.
 
     Examples:
         Render the config and exit:
-            python src/scripts/train/Qwen3/Qwen3-0.6B-wikitext_single_node.py dry_run my-run ai2/jupiter-cirrascale-2
+            python src/scripts/train/Qwen3/Qwen3.5-4B-long-context.py dry_run my-run ai2/jupiter
 
-        Launch on Beaker (single node):
-            python src/scripts/train/Qwen3/Qwen3-0.6B-wikitext_single_node.py launch my-run ai2/jupiter-cirrascale-2
+        Launch on Beaker with 4 nodes, pointing at a checkpoint:
+            python src/scripts/train/Qwen3/Qwen3.5-4B-long-context.py launch my-run ai2/jupiter \\
+                --trainer.load_path=/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3.5-4B/model_and_optim
 
-        Override LR:
-            python src/scripts/train/Qwen3/Qwen3-0.6B-wikitext_single_node.py launch my-run ai2/jupiter-cirrascale-2 \\
-                --train_module.optim.lr=1e-4
+        Override node count or LR:
+            python src/scripts/train/Qwen3/Qwen3.5-4B-long-context.py launch my-run ai2/jupiter \\
+                --launch.num_nodes=8 --train_module.optim.lr=1e-4
     """
     main(config_builder=build_experiment_config)
