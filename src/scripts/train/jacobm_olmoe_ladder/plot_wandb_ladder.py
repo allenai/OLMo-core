@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 from analyze_wandb_ladder import load_rows, mean_loss_in_window
 from wandb_cache import DEFAULT_CACHE_DIR
@@ -99,18 +100,74 @@ def style_for_state(state: str) -> dict:
     return {"alpha": 0.45, "marker": "x", "linewidth": 1.0}
 
 
+def fitted_lr(points) -> tuple[float, float, int] | None:
+    finished = sorted([p for p in points if p["state"] == "finished"], key=lambda p: p["lr"])
+    if len(finished) < 3:
+        return None
+
+    best_idx = min(range(len(finished)), key=lambda i: finished[i]["loss"])
+    if best_idx == 0 or best_idx == len(finished) - 1:
+        return None
+
+    if len(finished) >= 5:
+        start = min(max(best_idx - 2, 0), len(finished) - 5)
+        fit_points = finished[start : start + 5]
+    else:
+        fit_points = finished[best_idx - 1 : best_idx + 2]
+
+    x = np.array([math.log10(p["lr"]) for p in fit_points])
+    y = np.array([p["loss"] for p in fit_points])
+    a, b, c = np.polyfit(x, y, 2)
+    if a <= 0:
+        return None
+
+    optimum_log_lr = -b / (2 * a)
+    min_log_lr = min(math.log10(p["lr"]) for p in finished)
+    max_log_lr = max(math.log10(p["lr"]) for p in finished)
+    if not min_log_lr <= optimum_log_lr <= max_log_lr:
+        return None
+
+    optimum_lr = 10**optimum_log_lr
+    optimum_loss = float(a * optimum_log_lr**2 + b * optimum_log_lr + c)
+    return optimum_lr, optimum_loss, len(fit_points)
+
+
+def annotate_fitted_lr(ax, group, label_prefix: str, color=None) -> None:
+    fit = fitted_lr(group)
+    if fit is None:
+        return
+    lr, loss, n_points = fit
+    ax.axvline(lr, color=color, linestyle=":", linewidth=1.2, alpha=0.75)
+    ax.scatter([lr], [loss], marker="*", s=80, color=color, edgecolor="black", linewidth=0.4, zorder=5)
+    ax.annotate(
+        f"{label_prefix} fit{n_points}: {lr:.2g}",
+        (lr, loss),
+        textcoords="offset points",
+        xytext=(6, -14),
+        ha="left",
+        fontsize=8,
+        color=color,
+        alpha=0.9,
+    )
+
+
 def plot_cx(points, cx: int, out_path: Path, window_m: int) -> None:
     fig, ax = plt.subplots(figsize=(7.2, 4.8))
     cx_points = sorted([p for p in points if p["cx"] == cx], key=lambda p: p["lr"])
+    colors_by_family = {}
     for state, family in sorted({(p["state"], p["family"]) for p in cx_points}):
         group = [p for p in cx_points if p["state"] == state and p["family"] == family]
         style = style_for_state(state)
-        ax.plot(
+        (line,) = ax.plot(
             [p["lr"] for p in group],
             [p["loss"] for p in group],
             label=f"{state} ({family})",
             **style,
         )
+        colors_by_family.setdefault(family, line.get_color())
+    for family in sorted({p["family"] for p in cx_points}):
+        group = [p for p in cx_points if p["family"] == family]
+        annotate_fitted_lr(ax, group, family, colors_by_family.get(family))
     for point in cx_points:
         ax.annotate(
             point["lr_tag"],
@@ -156,13 +213,14 @@ def plot_model(points, model: str, out_path: Path, window_m: int) -> None:
             if not group:
                 continue
             label = f"Cx{cx}" if len(families_by_cx[cx]) == 1 else f"Cx{cx} ({family})"
-            ax.plot(
+            (line,) = ax.plot(
                 [p["lr"] for p in group],
                 [p["loss"] for p in group],
                 marker="o",
                 linewidth=1.8,
                 label=label,
             )
+            annotate_fitted_lr(ax, group, f"Cx{cx}", line.get_color())
     ax.set_xscale("log")
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"train CE avg{window_m}M")
