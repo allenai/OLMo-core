@@ -253,6 +253,27 @@ def get_parser() -> argparse.ArgumentParser:
         help="Fraction of total training tokens used for linear LR warmup.",
     )
     parser.add_argument(
+        "--ladder-evals",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Enable scaling-ladders-style in-loop evals during training. "
+            "Eval-checkpoint mode always enables these callbacks."
+        ),
+    )
+    parser.add_argument(
+        "--eval-task-set",
+        type=str,
+        default="fast",
+        help="Task group to use for downstream ladder evals.",
+    )
+    parser.add_argument(
+        "--eval-interval",
+        type=int,
+        default=EVAL_INTERVAL,
+        help="Step interval for ladder evals during training/eval-checkpoint runs.",
+    )
+    parser.add_argument(
         "--save-interval",
         type=int,
         default=None,
@@ -805,41 +826,54 @@ def build_trainer_config(
         )
     )
 
-    if in_eval_mode:
-        # Mirrors ``TrainerConfig.with_recommended_evals(..., task_set="fast", ...)`` from
-        # the original test-refactor script's IN_EVAL_MODE branch, but we plumb data paths
-        # via ``opts.data_root`` / ``opts.work_dir`` instead of cluster-derived defaults.
-        from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig
-        from olmo_core.eval.task_groups import TASK_GROUPS
-        from olmo_core.train.callbacks import (
-            DownstreamEvaluatorCallbackConfig,
-            LMEvaluatorCallbackConfig,
-        )
-
-        config = config.with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=sorted(TASK_GROUPS["fast"]),
-                tokenizer=tokenizer_config,
-                eval_interval=EVAL_INTERVAL,
-                eval_on_finish=True,
-            ),
-        ).with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
-                    DataMix.v3_small_ppl_validation,
-                    mix_base_dir=opts.data_root,
-                    sequence_length=sequence_length,
-                    tokenizer=tokenizer_config,
-                    work_dir=opts.work_dir,
-                ),
-                eval_interval=EVAL_INTERVAL,
-                eval_on_finish=True,
-            ),
-        )
+    if in_eval_mode or opts.ladder_evals:
+        config = add_ladder_evals(config, opts, tokenizer_config, sequence_length)
 
     return config
+
+
+def add_ladder_evals(
+    config: TrainerConfig,
+    opts: argparse.Namespace,
+    tokenizer_config: TokenizerConfig,
+    sequence_length: int,
+) -> TrainerConfig:
+    # Mirrors scaling-ladders' TrainerConfig.with_recommended_evals(..., task_set="fast"),
+    # while keeping data paths explicit for this standalone script.
+    from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig
+    from olmo_core.eval.task_groups import TASK_GROUPS
+    from olmo_core.train.callbacks import (
+        DownstreamEvaluatorCallbackConfig,
+        LMEvaluatorCallbackConfig,
+    )
+
+    try:
+        tasks = sorted(TASK_GROUPS[opts.eval_task_set])
+    except KeyError as e:
+        raise ValueError(f"Task set not recognized: {opts.eval_task_set}") from e
+
+    return config.with_callback(
+        "downstream_evaluator",
+        DownstreamEvaluatorCallbackConfig(
+            tasks=tasks,
+            tokenizer=tokenizer_config,
+            eval_interval=opts.eval_interval,
+            eval_on_finish=True,
+        ),
+    ).with_callback(
+        "lm_evaluator",
+        LMEvaluatorCallbackConfig(
+            eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+                DataMix.v3_small_ppl_validation,
+                mix_base_dir=opts.data_root,
+                sequence_length=sequence_length,
+                tokenizer=tokenizer_config,
+                work_dir=opts.work_dir,
+            ),
+            eval_interval=opts.eval_interval,
+            eval_on_finish=True,
+        ),
+    )
 
 
 def build_dataset_config(

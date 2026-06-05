@@ -381,6 +381,19 @@ center is reasonable. For rungs where the best point remains on the edge or no
 transfer prior is reliable, include a much wider sentinel instead of repeatedly
 walking outward by small multiples.
 
+## Validation Eval Follow-up
+
+Scaling-ladders runs attach `with_recommended_evals(..., task_set="fast")` to
+normal training, which logs LM validation components such as
+`c4_en-validation`, Dolma slices, Pile, and Wikitext, plus downstream fast tasks
+including ARC/MMLU BPB and MC metrics. Our early MoE ladder runs were selected
+from train loss only; once we have backfilled and smoke-tested these evals, we
+should decide how to use validation losses alongside train losses in LR
+selection. In particular, discuss whether the primary U-plot target should
+remain final-window train loss, switch to C4 validation loss/PPL, use a small
+set of validation metrics as tie-breakers, or require agreement between train
+and validation before carrying a transferred LR rule to 810M/1.2B.
+
 ## 275M Cx8/Cx16 Rule Completion
 
 Before launching the full Cx8/Cx16 grid, smoke the high-microbatch settings.
