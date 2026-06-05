@@ -1,3 +1,4 @@
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -14,6 +15,14 @@ from olmo_core.kernels.scaled_grouped_mm import (
     prequantize_scaled_grouped_mm_rhs,
     scaled_grouped_mm_q,
     scaled_grouped_mm_q_fp8_weight,
+)
+from olmo_core.testing import has_torch_grouped_mm
+
+# The whole FP8 scaled-grouped-mm path requires torch >= 2.10 (F.grouped_mm reference +
+# F.ScalingType/F.SwizzleType). Skip the file wholesale on older torch.
+pytestmark = pytest.mark.skipif(
+    not has_torch_grouped_mm,
+    reason="Requires torch.nn.functional.grouped_mm (torch>=2.10)",
 )
 
 
