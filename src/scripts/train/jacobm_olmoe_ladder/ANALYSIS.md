@@ -241,6 +241,14 @@ toward the current EP=1 result, then the better EP=8/original Cx1 losses may be
 coming from early token dropping rather than microbatch size or another
 throughput-setting difference.
 
+The first dropless launch failed before training because the W&B group name
+exceeded the 128-character limit. It was relaunched as
+`olmoe3-tiny-cx1-ep8drop-lr1e-3` (`01KTB86J84BNDZJYXWMPVC9FVG`) with the same
+8-GPU, EP=8, microbatch=4, `--no-use-rowwise-a2a` settings. The replacement got
+past dry-run and W&B init and reached real training past step 1400 with skipped
+steps 0 and token drop rate 0.0. Keep it out of LR-rule fits and canonical
+plots.
+
 ## 2026-06-04 Completed Cx2/Cx4 Snapshot
 
 Final completed-run summaries use final-token-window averages and ignore canceled
