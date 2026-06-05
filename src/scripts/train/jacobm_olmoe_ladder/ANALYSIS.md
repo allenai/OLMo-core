@@ -338,10 +338,12 @@ center rather than overfitting that distinction; the first exploratory 810M Cx1
 pilot is `1.6e-3`.
 
 Launched the first 810M Cx1 sweep on 2026-06-05 with the validated 4-GPU,
-EP=1, microbatch=4 settings. The active LR set is `6e-4`, `1.2e-3`,
-`1.6e-3` (existing pilot), `2.4e-3`, and `6e-3`. Treat `6e-3` as a hot-side
-sentinel: useful for bracketing, but do not stop it early unless it is
-operationally broken or obviously unstable. These runs use final-only permanent
+EP=1, microbatch=4 settings. The active full-run LR set is `6e-4`, `1.2e-3`,
+`2.4e-3`, and `6e-3`. Treat `6e-3` as a hot-side sentinel: useful for
+bracketing, but do not stop it early unless it is operationally broken or
+obviously unstable. The earlier `1.6e-3` pilot was stopped intentionally around
+step 7669 / 2.01B tokens to free 4 GPUs for the sentinel, so ignore it for final
+LR selection and canonical plots. These runs use final-only permanent
 checkpoints plus latest ephemeral resume checkpoints.
 
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
