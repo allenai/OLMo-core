@@ -366,6 +366,10 @@ observed point is the low-edge `6e-4`, with `1.2e-3` close behind, so Cx1 is not
 yet cold-side bracketed. Per the ladder policy, the next 810M Cx1 action is a
 small cold-side extension, not Cx4 yet.
 
+Launched cold-side extensions at `3e-4` and `1.5e-4` with the same validated
+4-GPU, EP=1, microbatch=4 setting. These should determine whether `6e-4` is the
+basin floor or still too warm.
+
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
 center is reasonable. For rungs where the best point remains on the edge or no
 transfer prior is reliable, include a much wider sentinel instead of repeatedly
