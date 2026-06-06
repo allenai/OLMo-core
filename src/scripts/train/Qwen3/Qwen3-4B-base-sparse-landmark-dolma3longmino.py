@@ -14,6 +14,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -88,6 +89,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         mem_freq=MEM_FREQ,
         num_landmarks=1,
     )
+    # Fused linear cross-entropy (Liger): never materializes the full 64k x 151936 logits
+    # (~19-39GB), which is the dominant memory cost without sequence parallelism (no CP here).
+    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,  # full 64k per rank (no CP)
@@ -114,11 +118,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             shard_degree=8,
         ),
         # No Ulysses CP: SparseLandmarkAttention.apply_cp raises NotImplementedError. Each rank
-        # processes the full 64k sequence; sparse attention keeps the *attention* sub-quadratic, but
-        # the FFN/other activations at full 64k still need the freed memory from sharding + AC.
+        # processes the full 64k sequence, so use FULL activation checkpointing (recompute every
+        # block; only one block's activations are live at peak) rather than budget mode -- budget
+        # mode kept too many full-64k activations resident and OOM'd.
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.6,
+            mode=TransformerActivationCheckpointingMode.full,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
