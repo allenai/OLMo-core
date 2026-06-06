@@ -386,8 +386,35 @@ exceeded the 128-character limit, so ignore that attempt. It was relaunched with
 a shorter name at `gpu8-ep1mb4`, keeping the same global token batch for U-plot
 comparability while using more GPUs to reduce wall-clock. The relaunched
 sentinel finished and is clearly worse than `6e-4`, so the far-cold side is now
-bracketed; wait for the in-progress `3e-4` and `1.5e-4` runs before fitting the
-full cold-side curve.
+bracketed.
+
+Final 810M Cx1 results after the cold-side extensions:
+
+| LR | State | avg100M | avg250M | avg500M |
+| ---: | --- | ---: | ---: | ---: |
+| `5e-5` | finished | 2.5678 | 2.5680 | 2.5705 |
+| `1.5e-4` | finished | 2.4482 | 2.4486 | 2.4512 |
+| `3e-4` | finished | 2.4201 | 2.4207 | 2.4234 |
+| `6e-4` | finished | 2.4096 | 2.4103 | 2.4131 |
+| `1.2e-3` | finished | 2.4147 | 2.4156 | 2.4188 |
+| `2.4e-3` | finished | 2.4456 | 2.4465 | 2.4499 |
+| `6e-3` | finished | 2.5418 | 2.5424 | 2.5457 |
+
+The best observed 810M Cx1 LR is `6e-4`. A local 5-point quadratic over
+`1.5e-4`, `3e-4`, `6e-4`, `1.2e-3`, and `2.4e-3` gives fitted optimum
+`6.21e-4` on avg250M, so Cx1 is now cleanly bracketed.
+
+For the 810M Cx4 transfer:
+
+- 275M local fitted optima on avg250M: Cx1 `2.13e-3`, Cx2 `1.12e-3`, Cx4
+  `1.46e-3`, Cx8 `1.36e-3`, Cx16 `1.10e-3`.
+- Fitting the 275M LR rule with Cx2 included predicts 810M Cx4 `4.95e-4` after
+  calibrating to the observed 810M Cx1 optimum.
+- Fitting the 275M LR rule without Cx2 predicts 810M Cx4 `4.51e-4`.
+
+These agree well enough to center the 810M Cx4 sweep around `4e-4` to `5e-4`.
+Launched exactly four Cx4 LRs with the validated `gpu8-ep1mb4` setting:
+`2e-4`, `4e-4`, `8e-4`, and `1.6e-3`.
 
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
 center is reasonable. For rungs where the best point remains on the edge or no
