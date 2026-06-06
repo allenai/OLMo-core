@@ -422,12 +422,12 @@ Launched exactly four Cx4 LRs with the validated `gpu8-ep1mb4` setting:
 | ---: | --- | ---: | ---: | ---: |
 | `2e-4` | finished | 2.2516 | 2.2578 | 2.2568 |
 | `4e-4` | finished | 2.2364 | 2.2427 | 2.2417 |
-| `8e-4` | running at 53.47B / 55.21B tokens | 2.2503 | 2.2449 | 2.2495 |
-| `1.6e-3` | running at 38.43B / 55.21B tokens | 2.3966 | 2.3966 | 2.3996 |
+| `8e-4` | finished | 2.2387 | 2.2451 | 2.2442 |
+| `1.6e-3` | running at 41.59B / 55.21B tokens | 2.3759 | 2.3700 | 2.3723 |
 
-The first two completed Cx4 points favor `4e-4` over `2e-4`. Do not fit or
-choose the Cx4 optimum until the `8e-4` and `1.6e-3` full runs finish. Final
-checkpoint eval backfills were launched for the completed `2e-4` and `4e-4`
+The first three completed Cx4 points favor `4e-4`, with `8e-4` extremely close
+and `2e-4` worse. Do not fit or choose the Cx4 optimum until the `1.6e-3` full
+run finishes. Final checkpoint eval backfills were launched for completed Cx4
 runs because these training jobs did not run evals in-loop.
 
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
