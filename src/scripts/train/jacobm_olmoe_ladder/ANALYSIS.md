@@ -343,6 +343,15 @@ or active params including embeddings. We round to a nearby launchable coarse
 center rather than overfitting that distinction; the first exploratory 810M Cx1
 pilot is `1.6e-3`.
 
+After the real 810M Cx1 sweep is complete, use the observed 810M Cx1 optimum to
+calibrate the 275M-to-810M transfer before launching 810M Cx4. Because the 275M
+Cx2 optimum is somewhat out of step with Cx1/Cx4, compute the transferred Cx4
+prediction both with and without Cx2 in the 275M LR-rule fit, then choose a
+single corrected Cx4 center from those estimates and the observed 810M Cx1
+offset. The 810M Cx4 sweep should be exactly four coarse, factor-spaced LRs
+centered around that corrected prediction, using the validated `gpu8-ep1mb4`
+setting.
+
 Launched the first 810M Cx1 sweep on 2026-06-05 with the validated 4-GPU,
 EP=1, microbatch=4 settings. The active full-run LR set is `6e-4`, `1.2e-3`,
 `2.4e-3`, and `6e-3`. Treat `6e-3` as a hot-side sentinel: useful for
