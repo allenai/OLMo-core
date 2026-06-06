@@ -416,6 +416,20 @@ These agree well enough to center the 810M Cx4 sweep around `4e-4` to `5e-4`.
 Launched exactly four Cx4 LRs with the validated `gpu8-ep1mb4` setting:
 `2e-4`, `4e-4`, `8e-4`, and `1.6e-3`.
 
+2026-06-06 partial completion update:
+
+| LR | State | avg100M | avg250M | avg500M |
+| ---: | --- | ---: | ---: | ---: |
+| `2e-4` | finished | 2.2516 | 2.2578 | 2.2568 |
+| `4e-4` | finished | 2.2364 | 2.2427 | 2.2417 |
+| `8e-4` | running at 53.47B / 55.21B tokens | 2.2503 | 2.2449 | 2.2495 |
+| `1.6e-3` | running at 38.43B / 55.21B tokens | 2.3966 | 2.3966 | 2.3996 |
+
+The first two completed Cx4 points favor `4e-4` over `2e-4`. Do not fit or
+choose the Cx4 optimum until the `8e-4` and `1.6e-3` full runs finish. Final
+checkpoint eval backfills were launched for the completed `2e-4` and `4e-4`
+runs because these training jobs did not run evals in-loop.
+
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
 center is reasonable. For rungs where the best point remains on the edge or no
 transfer prior is reliable, include a much wider sentinel instead of repeatedly
