@@ -16,7 +16,9 @@ from datetime import datetime
 from functools import partial
 from typing import Dict
 
-from arch import MODEL_CONFIGS, build_model_config, parse_model_size
+from arch import MODEL_CONFIGS
+from arch import build_model_config as arch_build_model_config
+from arch import parse_model_size
 
 from olmo_core.config import DType
 from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig
@@ -30,7 +32,11 @@ from olmo_core.internal.experiment import (
     main,
 )
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode
+from olmo_core.nn.lm_head import LMLossImplementation
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -47,6 +53,18 @@ from olmo_core.train.train_module import (
 
 SEQUENCE_LENGTH = 32_768
 SEED = 34521
+
+
+def build_model_config(
+    common: CommonComponents,
+    model_size: str,
+    sft_configs: Dict[str, dict],
+    attn_backend: AttentionBackendName = AttentionBackendName.flash_3,
+) -> TransformerConfig:
+    model_config = arch_build_model_config(common, model_size, attn_backend=attn_backend)
+    if sft_configs[model_size].get("fused_linear_loss", False):
+        model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
+    return model_config
 
 
 def build_train_module_config(
@@ -181,7 +199,7 @@ def run_sft(sft_configs: Dict[str, dict], dataset_path: str, tags: list[str]):
         max_sequence_length=SEQUENCE_LENGTH,
         num_nodes=cfg["num_nodes"],
         data_config_builder=partial(build_data_components, dataset_path=dataset_path),
-        model_config_builder=partial(build_model_config, model_size=model_size, attn_backend=attn_backend),
+        model_config_builder=partial(build_model_config, model_size=model_size, sft_configs=sft_configs, attn_backend=attn_backend),
         train_module_config_builder=partial(build_train_module_config, model_size=model_size, sft_configs=sft_configs),
         trainer_config_builder=partial(build_trainer_config, model_size=model_size, sft_configs=sft_configs, tags=tags),
         include_default_evals=False,

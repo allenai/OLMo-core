@@ -38,6 +38,7 @@ SFT_THINK_CONFIGS = {
     "1.4b": dict(
         lr=1e-4,
         global_batch_size=64 * SEQUENCE_LENGTH,
+        fused_linear_loss=True,
         load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-long-context-v2-1.4b/step23842/",
     ),
 }
