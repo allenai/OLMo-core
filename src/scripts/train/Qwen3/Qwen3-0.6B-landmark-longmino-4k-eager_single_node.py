@@ -15,6 +15,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
     TransformerConfig,
 )
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
@@ -26,6 +27,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -118,6 +120,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=1,
+        ),
+        # The eager grouped softmax materializes a (B, n_heads, T, T) probs tensor per layer and
+        # saves it for backward; across 28 layers that OOMs an 80GB GPU even at 4k. Full activation
+        # checkpointing recomputes each block in backward so only one layer's attention is live.
+        # (Verified compatible with the eager landmark autograd.Function under NO_REENTRANT AC.)
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.full,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
