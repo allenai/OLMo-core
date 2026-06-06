@@ -335,6 +335,15 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         help="Top-K size for the ngram log-prob bias.",
     )
     parser.add_argument(
+        "--ngram-n-max",
+        type=int,
+        default=DEFAULT_NGRAM_N_MAX,
+        help=(
+            "Maximum ngram order to check during lookup. Use values below 5 "
+            "for n<5 ablations against an index that contains at least this order."
+        ),
+    )
+    parser.add_argument(
         "--smoke-1gpu",
         action="store_true",
         help=(
