@@ -301,7 +301,9 @@ After that, the in-loop eval-test training run
 should use `--eval-interval=2000` plus the final checkpoint eval.
 
 The jobs below are eval-only, tagged `eval-backfill`, and should be excluded
-from LR U-plots and training-loss analysis.
+from LR U-plots and training-loss analysis. All 32 finished on 2026-06-06, and
+their 180 eval-related W&B summary metrics were copied onto the corresponding
+source training W&B run summaries with `eval_backfill/...` metadata.
 
 | Name | Beaker experiment | Source checkpoint family |
 | --- | --- | --- |
