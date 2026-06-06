@@ -127,7 +127,7 @@ experiment name.
 | 2026-06-06 | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr8e-4-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 8e-4 | `01KTDDBGWNHKZ3F4Q1VJD2RPTS` | https://beaker.org/ex/01KTDDBGWNHKZ3F4Q1VJD2RPTS | 810M Cx4 four-point sweep centered around the transfer-calibrated Cx4 estimate. 8 GPUs, EP=1, microbatch=4, final-only permanent checkpoint plus ephemeral resume checkpoints. |
 | 2026-06-06 | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr1.6e-3-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.6e-3 | `01KTDDBWP8EC88V8SDW5Y0VTSV` | https://beaker.org/ex/01KTDDBWP8EC88V8SDW5Y0VTSV | 810M Cx4 four-point sweep centered around the transfer-calibrated Cx4 estimate. 8 GPUs, EP=1, microbatch=4, final-only permanent checkpoint plus ephemeral resume checkpoints. |
 | 2026-06-05 | `olmoe3-eval-275m-cx1-lr1e-3-r2` | `tiny_275m.py` | eval-only | n/a | n/a | n/a | `01KTD0JFDAE3CXYKZV85CYVRYC` | https://beaker.org/ex/01KTD0JFDAE3CXYKZV85CYVRYC | Eval backfill smoke over checkpoint `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1e-3-r2/step15365`. Finished successfully with 178 W&B eval keys, including downstream BPB/BPB v2 metrics and LM validation components. Created from launcher `launch_moe_a0_eval_backfill_smoke.sh`; ignore for LR U-plots. |
-| 2026-06-05 | `olmoe3-275m-cx1-evaltest-lr1e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KTD0K416CRVYAN5CN5SQPK5Y` | https://beaker.org/ex/01KTD0K416CRVYAN5CN5SQPK5Y | 275M Cx1 ladder-eval training test. 2 GPUs, EP=1, microbatch=16, `--ladder-evals --eval-task-set=fast --eval-interval=100`. Passed startup and logged 178 W&B eval keys by step 197 with skipped steps 0. Ignore for canonical LR-selection unless we explicitly promote it. |
+| 2026-06-05 | `olmoe3-275m-cx1-evaltest-lr1e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KTD0K416CRVYAN5CN5SQPK5Y` | https://beaker.org/ex/01KTD0K416CRVYAN5CN5SQPK5Y | 275M Cx1 ladder-eval training test. 2 GPUs, EP=1, microbatch=16, `--ladder-evals --eval-task-set=fast --eval-interval=100`. Passed startup and logged 178 W&B eval keys by step 197 with skipped steps 0, but the 100-step eval cadence made the run too slow. Stopped intentionally on 2026-06-06 after proving the eval hook. Ignore for canonical LR-selection unless we explicitly promote it. Future in-loop eval training should use interval 2000 plus final eval/checkpoint. |
 | 2026-06-04 | `olmoe3-moe-a0-1p2b-smoke-b256k-gpu4-ep1mb4-lr3e-4-r3` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 3e-4 | `01KT841MWJKFK5KWCAXCGA9WC1` | https://beaker.org/ex/01KT841MWJKFK5KWCAXCGA9WC1 | Succeeded. Preferred 1.2B setting: 4 GPUs, EP=1, microbatch=4; skipped steps 0, about 662 actual avg TFLOPs/GPU. |
 | 2026-06-04 | `olmoe3-moe-a0-1p2b-smoke-b256k-gpu4-ep2mb4-lr3e-4-r3` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 3e-4 | `01KT8420RGXWJ8C3JFCNG67W2T` | https://beaker.org/ex/01KT8420RGXWJ8C3JFCNG67W2T | Succeeded but slower than EP=1. Keep as memory fallback only; skipped steps 0, about 607 actual avg TFLOPs/GPU. |
 | 2026-06-04 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr2e-4` | `tiny_275m.py` | 8x | 786,432 | 96 | 2e-4 | `01KT8445FT6GZFKPE7JKS3F8RY` | https://beaker.org/ex/01KT8445FT6GZFKPE7JKS3F8RY | Replacement coarse factor-of-two Cx8 LR grid. 4 GPUs, EP=1, microbatch=8. |
@@ -289,3 +289,51 @@ Reproducibility record / dry-run command printer:
 ```bash
 src/scripts/train/jacobm_olmoe_ladder/reproduce_tiny_275m_lr_sweep_cx1_b256k.sh
 ```
+
+## Eval Backfills Launched 2026-06-06
+
+The eval smoke `olmoe3-eval-275m-cx1-lr1e-3-r2`
+(`01KTD0JFDAE3CXYKZV85CYVRYC`) proved that final-checkpoint eval backfills work.
+After that, the in-loop eval-test training run
+`olmoe3-275m-cx1-evaltest-lr1e-3`
+(`01KTD0K416CRVYAN5CN5SQPK5Y`) was stopped intentionally because the temporary
+`--eval-interval=100` setting made it too slow. Future in-loop eval training
+should use `--eval-interval=2000` plus the final checkpoint eval.
+
+The jobs below are eval-only, tagged `eval-backfill`, and should be excluded
+from LR U-plots and training-loss analysis.
+
+| Name | Beaker experiment | Source checkpoint family |
+| --- | --- | --- |
+| `eval-275m-275-01` | https://beaker.org/ex/01KTDSRH22CQEQK9N3MPSHK5C6 | 275M Cx1 `1.2e-3-r2`, final checkpoint |
+| `eval-275m-275-02` | https://beaker.org/ex/01KTDSRY3TWWNV7GSK4N04X0V5 | 275M Cx1 `1.5e-3-r2`, final checkpoint |
+| `eval-275m-275-03` | https://beaker.org/ex/01KTDSSAC83NWFMTEJQR0QZHMN | 275M Cx1 `1e-3-r2`, final checkpoint |
+| `eval-275m-275-04` | https://beaker.org/ex/01KTDSSPBC9T7Z5NWBYP8KJH4H | 275M Cx1 `2e-3-r2`, final checkpoint |
+| `eval-275m-275-05` | https://beaker.org/ex/01KTDST1YNTWWX8W33J9EXZTA1 | 275M Cx1 `8e-4-r2`, final checkpoint |
+| `eval-275m-275-06` | https://beaker.org/ex/01KTDSTDSPTPARPCJEQH1N6F5T | 275M Cx16 `1.2e-3-r2`, final checkpoint |
+| `eval-275m-275-07` | https://beaker.org/ex/01KTDSTSPH5P839P0D2T1MDMPK | 275M Cx16 `2.4e-3-r3`, final checkpoint |
+| `eval-275m-275-08` | https://beaker.org/ex/01KTDSV5REYVM86SMEGFJQW56X | 275M Cx16 `2e-4-r2`, final checkpoint |
+| `eval-275m-275-09` | https://beaker.org/ex/01KTDSVH6SM4YSQ8RTK8A7GRWE | 275M Cx16 `4e-4-r2`, final checkpoint |
+| `eval-275m-275-10` | https://beaker.org/ex/01KTDSVX1NZFSSR847CDBTEB76 | 275M Cx16 `6e-3-sentinel`, final checkpoint |
+| `eval-275m-275-11` | https://beaker.org/ex/01KTDSWA6D2VCFG5A0F989V08H | 275M Cx16 `6e-4-r2`, final checkpoint |
+| `eval-275m-275-12` | https://beaker.org/ex/01KTDSWPR0GYAWWVRQAX0ZJPX7 | 275M Cx2 `1e-3`, final checkpoint |
+| `eval-275m-275-13` | https://beaker.org/ex/01KTDSX27M9FJ6B6PXW7D65JK4 | 275M Cx2 `6e-4-r2`, final checkpoint |
+| `eval-275m-275-14` | https://beaker.org/ex/01KTDSXE8J4YHX0K1RX7K9NZQ0 | 275M Cx2 `8e-4-r2`, final checkpoint |
+| `eval-275m-275-15` | https://beaker.org/ex/01KTDSXSX5PRXM01J6M918KDBF | 275M Cx4 `1.5e-3`, final checkpoint |
+| `eval-275m-275-16` | https://beaker.org/ex/01KTDSY6DTECEGRQ3ZGRRQE2RR | 275M Cx4 `1e-3`, final checkpoint |
+| `eval-275m-275-17` | https://beaker.org/ex/01KTDSYJCDCBZ6MKDVJ3PM12A9 | 275M Cx4 `2.5e-3`, final checkpoint |
+| `eval-275m-275-18` | https://beaker.org/ex/01KTDSYXN8MNT2517TFM9K2SYA | 275M Cx8 `1.6e-2-sentinel`, final checkpoint |
+| `eval-275m-275-19` | https://beaker.org/ex/01KTDSZ9NEW1SKAZCMY2W6PWJA | 275M Cx8 `1.6e-3-r2`, final checkpoint |
+| `eval-275m-275-20` | https://beaker.org/ex/01KTDSZNERKPY0N0WVBC8XMJWT | 275M Cx8 `2e-4-r2`, final checkpoint |
+| `eval-275m-275-21` | https://beaker.org/ex/01KTDT015E5PXQG3HCRD27EYA4 | 275M Cx8 `3.2e-3-r3`, final checkpoint |
+| `eval-275m-275-22` | https://beaker.org/ex/01KTDT0E3TX5HJ55E9PR9CZ4QW | 275M Cx8 `4e-4-r2`, final checkpoint |
+| `eval-275m-275-23` | https://beaker.org/ex/01KTDT0TMXNWV7K2HSGRZ1TF8F | 275M Cx8 `6.4e-3-r3`, final checkpoint |
+| `eval-275m-275-24` | https://beaker.org/ex/01KTDT17B1M54RPSKRS23K916Q | 275M Cx8 `6e-4-r2`, final checkpoint |
+| `eval-275m-275-25` | https://beaker.org/ex/01KTDT1JPCZTJ7Y7282MAP9PJN | 275M Cx8 `8e-4-r2`, final checkpoint |
+| `eval-810m-810-01` | https://beaker.org/ex/01KTDT1XT861M6E2W34A1F5Z7A | 810M Cx1 `5e-5-cs-r2`, final checkpoint |
+| `eval-810m-810-02` | https://beaker.org/ex/01KTDT2AKPF46Y2T3M8H5G8VRS | 810M Cx1 `1.2e-3-r1`, final checkpoint |
+| `eval-810m-810-03` | https://beaker.org/ex/01KTDT2NYWRZBCW8XAYB80YYC3 | 810M Cx1 `1.5e-4-cold-r1`, final checkpoint |
+| `eval-810m-810-04` | https://beaker.org/ex/01KTDT31TADK1X5SQFWCNAA41J | 810M Cx1 `2.4e-3-r1`, final checkpoint |
+| `eval-810m-810-05` | https://beaker.org/ex/01KTDT3DMNDCWEXPTCM3H84D1G | 810M Cx1 `3e-4-cold-r1`, final checkpoint |
+| `eval-810m-810-06` | https://beaker.org/ex/01KTDT3RA3DWXEZF68B6234A4B | 810M Cx1 `6e-3-r1`, final checkpoint |
+| `eval-810m-810-07` | https://beaker.org/ex/01KTDT41V1R22KWH57NTHCBKVF | 810M Cx1 `6e-4-r1`, final checkpoint |

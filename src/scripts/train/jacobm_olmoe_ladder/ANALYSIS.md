@@ -423,8 +423,9 @@ walking outward by small multiples.
 
 ## Validation Eval Follow-up
 
-TODO: discuss and decide how validation losses should enter ladder decisions in
-addition to the train losses we currently use for U-plots.
+TODO: after the 2026-06-06 backfills finish, discuss and decide how validation
+losses should enter ladder decisions in addition to the train losses we
+currently use for U-plots.
 
 Scaling-ladders runs attach `with_recommended_evals(..., task_set="fast")` to
 normal training, which logs LM validation components such as
@@ -436,6 +437,13 @@ selection. In particular, discuss whether the primary U-plot target should
 remain final-window train loss, switch to C4 validation loss/PPL, use a small
 set of validation metrics as tie-breakers, or require agreement between train
 and validation before carrying a transferred LR rule to 810M/1.2B.
+
+The first in-loop eval training proof used `--eval-interval=100`; it proved the
+hook but was too slow, so it was stopped intentionally. For future training runs
+with in-loop evals, use `--ladder-evals --eval-task-set=fast
+--eval-interval=2000` plus the final checkpoint eval. For completed runs, prefer
+eval-only `--eval-checkpoints` backfills tagged `eval-backfill`; exclude those
+eval-only runs from train-loss U-plots.
 
 ## 275M Cx8/Cx16 Rule Completion
 
