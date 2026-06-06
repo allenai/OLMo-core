@@ -1637,6 +1637,9 @@ class TransformerConfig(ModelConfig):
         landmark: bool = False,
         mem_freq: Optional[int] = None,
         landmark_use_kernel: bool = False,
+        fast_landmark: bool = False,
+        sparse_landmark: bool = False,
+        num_landmarks: Optional[int] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
@@ -1683,16 +1686,33 @@ class TransformerConfig(ModelConfig):
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
 
-        if landmark:
+        if sum([landmark, fast_landmark, sparse_landmark]) > 1:
+            raise OLMoConfigurationError(
+                "Only one of 'landmark', 'fast_landmark', 'sparse_landmark' may be set."
+            )
+        if landmark or fast_landmark or sparse_landmark:
             if mem_freq is None:
-                raise OLMoConfigurationError("'mem_freq' must be set when 'landmark=True'.")
+                raise OLMoConfigurationError(
+                    "'mem_freq' must be set for a landmark attention variant."
+                )
             if sliding_window is not None:
                 raise OLMoConfigurationError(
                     "Landmark attention is not compatible with sliding window attention."
                 )
-            att_type = AttentionType.landmark
+            att_type = (
+                AttentionType.landmark
+                if landmark
+                else AttentionType.fast_landmark
+                if fast_landmark
+                else AttentionType.sparse_landmark
+            )
         elif mem_freq is not None:
-            raise OLMoConfigurationError("'mem_freq' is only valid when 'landmark=True'.")
+            raise OLMoConfigurationError(
+                "'mem_freq' is only valid with a landmark attention variant "
+                "(landmark / fast_landmark / sparse_landmark)."
+            )
+        if num_landmarks is not None and not sparse_landmark:
+            raise OLMoConfigurationError("'num_landmarks' is only valid when 'sparse_landmark=True'.")
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
@@ -1722,6 +1742,7 @@ class TransformerConfig(ModelConfig):
                 sliding_window=sliding_window,
                 mem_freq=mem_freq,
                 landmark_use_kernel=landmark_use_kernel if landmark else None,
+                num_landmarks=num_landmarks if sparse_landmark else None,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,

@@ -71,6 +71,8 @@ __all__ = [
     "FusedAttention",
     "NormalizedAttention",
     "LandmarkAttention",
+    "FastLandmarkAttention",
+    "SparseLandmarkAttention",
     "RingAttentionLoadBalancerType",
     "RingAttentionLoadBalancer",
     "RingAttentionZigZagLoadBalancer",
@@ -180,6 +182,16 @@ class AttentionType(StrEnum):
     ➡️ :class:`LandmarkAttention`
     """
 
+    fast_landmark = "fast_landmark"
+    """
+    ➡️ :class:`FastLandmarkAttention` (landmark attention with the optimized FA2-style kernel)
+    """
+
+    sparse_landmark = "sparse_landmark"
+    """
+    ➡️ :class:`SparseLandmarkAttention` (sparse landmark-only-across-chunks attention)
+    """
+
 
 @SequenceMixerConfig.register("attention")
 @dataclass
@@ -217,6 +229,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
     For :class:`LandmarkAttention` only: use the fused Triton kernel instead of the eager path.
     Defaults to ``False`` (eager). See :class:`LandmarkAttention` for the caveats.
+    """
+    num_landmarks: Optional[int] = None
+    """
+    For :class:`SparseLandmarkAttention` (``name="sparse_landmark"``) only: number of landmark
+    tokens per chunk (the last ``num_landmarks`` tokens of each chunk). Defaults to 1.
     """
 
     def num_params(self, d_model: int) -> int:
@@ -312,16 +329,26 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
 
         mem_freq = kwargs.pop("mem_freq", None)
         landmark_use_kernel = kwargs.pop("landmark_use_kernel", None)
-        if self.name != AttentionType.landmark:
-            if mem_freq is not None:
-                raise OLMoConfigurationError(
-                    f"'mem_freq' is only supported with landmark attention (got name='{self.name}')"
-                )
-            if landmark_use_kernel is not None:
-                raise OLMoConfigurationError(
-                    "'landmark_use_kernel' is only supported with landmark attention "
-                    f"(got name='{self.name}')"
-                )
+        num_landmarks = kwargs.pop("num_landmarks", None)
+        _landmark_types = (
+            AttentionType.landmark,
+            AttentionType.fast_landmark,
+            AttentionType.sparse_landmark,
+        )
+        if self.name not in _landmark_types and mem_freq is not None:
+            raise OLMoConfigurationError(
+                f"'mem_freq' is only supported with landmark attention variants (got name='{self.name}')"
+            )
+        if self.name != AttentionType.landmark and landmark_use_kernel is not None:
+            raise OLMoConfigurationError(
+                "'landmark_use_kernel' is only supported with landmark attention "
+                f"(got name='{self.name}')"
+            )
+        if self.name != AttentionType.sparse_landmark and num_landmarks is not None:
+            raise OLMoConfigurationError(
+                "'num_landmarks' is only supported with sparse_landmark attention "
+                f"(got name='{self.name}')"
+            )
 
         try:
             if self.name == "default":
@@ -349,6 +376,24 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 if landmark_use_kernel is not None:
                     kwargs["use_kernel"] = landmark_use_kernel
                 return LandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif self.name == "fast_landmark":
+                if "window_size" in kwargs:
+                    raise OLMoConfigurationError(
+                        "'window_size' is not supported with fast_landmark attention"
+                    )
+                if mem_freq is None:
+                    raise OLMoConfigurationError("fast_landmark attention requires 'mem_freq' to be set")
+                return FastLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif self.name == "sparse_landmark":
+                if "window_size" in kwargs:
+                    raise OLMoConfigurationError(
+                        "'window_size' is not supported with sparse_landmark attention"
+                    )
+                if mem_freq is None:
+                    raise OLMoConfigurationError("sparse_landmark attention requires 'mem_freq' to be set")
+                if num_landmarks is not None:
+                    kwargs["num_landmarks"] = num_landmarks
+                return SparseLandmarkAttention(mem_freq=mem_freq, **kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -1498,3 +1543,10 @@ class FusedAttention(SequenceMixer):
         attn_flops = 12 * self.n_heads * self.head_dim * seq_len
 
         return param_flops + attn_flops
+
+
+# New landmark-attention sequence mixers. These live in their own modules and subclass ``Attention``
+# (defined above), so they are imported at the end of this package to avoid a circular import; the
+# ``AttentionConfig.build`` branches above reference them by name at call time.
+from .landmark_fast import FastLandmarkAttention  # noqa: E402
+from .landmark_sparse import SparseLandmarkAttention  # noqa: E402
