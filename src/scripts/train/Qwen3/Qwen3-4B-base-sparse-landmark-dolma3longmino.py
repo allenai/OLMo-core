@@ -157,7 +157,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         TrainerConfig(
             save_folder=save_dir,
             save_overwrite=True,
-            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-4B/model_and_optim",
+            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-4B-base/model_and_optim",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             metrics_collect_interval=10,
@@ -210,7 +210,7 @@ if __name__ == "__main__":
     Sub-quadratic: queries see past chunks only through their landmark tokens (num_landmarks=1).
     No context parallelism (SparseLandmarkAttention doesn't support it); each rank runs full 64k.
 
-        python src/scripts/train/Qwen3/Qwen3-4B-sparse-landmark-dolma3longmino.py \\
+        python src/scripts/train/Qwen3/Qwen3-4B-base-sparse-landmark-dolma3longmino.py \\
             launch my-run ai2/jupiter-cirrascale-2
     """
     main(config_builder=build_experiment_config)

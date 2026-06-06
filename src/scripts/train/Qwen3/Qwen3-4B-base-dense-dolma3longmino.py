@@ -6,7 +6,6 @@ from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     ConcatAndChunkInstanceSourceConfig,
-    LandmarkInstanceSourceConfig,
     NumpyDocumentSourceConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -14,6 +13,8 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -28,25 +29,15 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 
-# Qwen3-4B + SPARSE LANDMARK attention at 64k context on the 15B-token dolma3_longmino sample.
-# AttentionType.sparse_landmark: a query attends fully within its own chunk but sees past chunks
-# only through their landmark tokens (sub-quadratic; faster than full/dense landmark at long
-# context). num_landmarks=1 matches LandmarkInstanceSource's 1-landmark-per-chunk data.
-# NOTE: SparseLandmarkAttention does NOT support context parallelism, so (unlike the landmark/fast
-# scripts) there is no Ulysses CP here -- each rank processes the full 64k sequence; the sparse
-# attention keeps that affordable, and FSDP shards params across the 32 GPUs.
-# Pair with Qwen3-4B-{landmark,fast-landmark,dense}-dolma3longmino.py.
-MEM_FREQ = 63
-BLOCK_SIZE = MEM_FREQ + 1  # 64
-SEQUENCE_LENGTH = 65536  # 64k (must be divisible by BLOCK_SIZE)
-CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
-
-LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
+# Qwen3-4B DENSE baseline at 64k context on the 15B-token dolma3_longmino sample. Uses YaRN
+# (factor 2) to extend the native 32k context to 64k. Paired with Qwen3-4B-landmark-dolma3longmino.py.
+SEQUENCE_LENGTH = 65536  # 64k context
 
 DATA_DIR = (
     "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen"
@@ -54,7 +45,6 @@ DATA_DIR = (
 
 GLOBAL_BATCH_SIZE = 65536 * 64  # ~4M tokens
 MAX_TOKENS = 10_000_000_000  # 10B
-# StepFun optimal LR (Li et al. 2025): 1.79 * n^-0.713 * d^0.307 ≈ 3.2e-4 for n≈3.65B, d=10B
 LR = 3.2e-4
 
 
@@ -81,16 +71,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.qwen3()
 
-    # Qwen3-4B with the SPARSE landmark attention mixer (AttentionType.sparse_landmark). No YaRN.
+    # Qwen3-4B with YaRN context extension: native 32k → 64k, full (flash-attn 2) attention.
     model_config = TransformerConfig.qwen3_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        sparse_landmark=True,
-        mem_freq=MEM_FREQ,
-        num_landmarks=1,
+        attn_backend=AttentionBackendName.flash_2,
+    ).with_rope_scaling(
+        YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=SEQUENCE_LENGTH,  # full 64k per rank (no CP)
+        rank_microbatch_size=SEQUENCE_LENGTH,  # 1 instance per rank with CP
         max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=LR,
@@ -107,42 +97,32 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            # Shard params/grads/optim 8-way within each node (replicate across the 4 nodes). Unlike
-            # the CP'd landmark/fast/dense runs, there is no sequence parallelism here, so each rank
-            # holds the full 64k activations -- shard_degree=1 (no sharding) OOMs because the full
-            # 4B params + Adam state (~64GB) leave no room. 8-way sharding frees ~56GB/GPU.
-            shard_degree=8,
+            shard_degree=1,
         ),
-        # No Ulysses CP: SparseLandmarkAttention.apply_cp raises NotImplementedError. Each rank
-        # processes the full 64k sequence; sparse attention keeps the *attention* sub-quadratic, but
-        # the FFN/other activations at full 64k still need the freed memory from sharding + AC.
+        # Qwen3-4B: n_heads=32, n_kv_heads=8 → head_stride=4
+        cp_config=TransformerContextParallelConfig.ulysses(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.6,
+            activation_memory_budget=0.7,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
     )
 
-    # Composable data pipeline on the new dolma3_longmino sample:
+    # Composable data pipeline on the new dolma3_longmino sample (no landmark insertion):
     #   NumpyDocumentSource (part-*.npy, Qwen3 uint32, EOS-separated)
-    #     -> ConcatAndChunkInstanceSource (seq_len=CONTENT_SEQUENCE_LENGTH=64512)
-    #     -> LandmarkInstanceSource (insert landmark token every MEM_FREQ tokens -> seq_len=65536)
-    instance_source_config = LandmarkInstanceSourceConfig(
-        source=ConcatAndChunkInstanceSourceConfig(
-            sources=[
-                NumpyDocumentSourceConfig(
-                    source_paths=[f"{DATA_DIR}/part-*.npy"],
-                    tokenizer=tokenizer_config,
-                    expand_glob=True,
-                    source_group_size=1,
-                )
-            ],
-            sequence_length=CONTENT_SEQUENCE_LENGTH,
-        ),
-        mem_freq=MEM_FREQ,
-        mem_id=LANDMARK_TOKEN_ID,
+    #     -> ConcatAndChunkInstanceSource (seq_len=SEQUENCE_LENGTH=65536)
+    instance_source_config = ConcatAndChunkInstanceSourceConfig(
+        sources=[
+            NumpyDocumentSourceConfig(
+                source_paths=[f"{DATA_DIR}/part-*.npy"],
+                tokenizer=tokenizer_config,
+                expand_glob=True,
+                source_group_size=1,
+            )
+        ],
+        sequence_length=SEQUENCE_LENGTH,
     )
 
     data_loader_config = ComposableDataLoaderConfig(
@@ -157,7 +137,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         TrainerConfig(
             save_folder=save_dir,
             save_overwrite=True,
-            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-4B/model_and_optim",
+            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-4B-base/model_and_optim",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             metrics_collect_interval=10,
@@ -206,11 +186,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    Qwen3-4B + SPARSE landmark attention at 64k on the 15B dolma3_longmino sample (4 nodes, urgent).
-    Sub-quadratic: queries see past chunks only through their landmark tokens (num_landmarks=1).
-    No context parallelism (SparseLandmarkAttention doesn't support it); each rank runs full 64k.
+    Qwen3-4B dense (YaRN 32k→64k) baseline at 64k on the 15B dolma3_longmino sample (4 nodes, urgent).
 
-        python src/scripts/train/Qwen3/Qwen3-4B-sparse-landmark-dolma3longmino.py \\
+        python src/scripts/train/Qwen3/Qwen3-4B-base-dense-dolma3longmino.py \\
             launch my-run ai2/jupiter-cirrascale-2
     """
     main(config_builder=build_experiment_config)
