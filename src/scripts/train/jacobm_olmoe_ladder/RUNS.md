@@ -343,8 +343,9 @@ source training W&B run summaries with `eval_backfill/...` metadata.
 ## 810M Cx4 Eval Backfills Launched 2026-06-06
 
 The Cx4 training runs did not have in-loop evals enabled. Eval-only final
-checkpoint backfills should be copied back to the source training W&B summaries
-with `copy_eval_backfills_to_wandb.py` as they finish.
+checkpoint backfills are copied back to the source training W&B summaries with
+`copy_eval_backfills_to_wandb.py` as they finish. The `2e-4`, `4e-4`, and
+`8e-4` backfills have finished and were copied back on 2026-06-06.
 
 | Name | Beaker experiment | Source checkpoint |
 | --- | --- | --- |

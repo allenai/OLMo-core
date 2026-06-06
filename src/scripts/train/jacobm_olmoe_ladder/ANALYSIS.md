@@ -423,12 +423,14 @@ Launched exactly four Cx4 LRs with the validated `gpu8-ep1mb4` setting:
 | `2e-4` | finished | 2.2516 | 2.2578 | 2.2568 |
 | `4e-4` | finished | 2.2364 | 2.2427 | 2.2417 |
 | `8e-4` | finished | 2.2387 | 2.2451 | 2.2442 |
-| `1.6e-3` | running at 41.59B / 55.21B tokens | 2.3759 | 2.3700 | 2.3723 |
+| `1.6e-3` | running at 43.18B / 55.21B tokens | 2.3513 | 2.3501 | 2.3484 |
 
 The first three completed Cx4 points favor `4e-4`, with `8e-4` extremely close
 and `2e-4` worse. Do not fit or choose the Cx4 optimum until the `1.6e-3` full
 run finishes. Final checkpoint eval backfills were launched for completed Cx4
-runs because these training jobs did not run evals in-loop.
+runs because these training jobs did not run evals in-loop. The `2e-4`, `4e-4`,
+and `8e-4` Cx4 eval backfills have finished and their 180 eval summary metrics
+have been copied onto the corresponding source W&B training runs.
 
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
 center is reasonable. For rungs where the best point remains on the edge or no
@@ -779,3 +781,24 @@ Relaunched larger-model `r3` smokes:
 
 For 810M full probes, use `gpu4-ep1mb4` for Cx1 and `gpu8-ep1mb4` for Cx4;
 the 8-GPU Cx4 setting does not need a separate smoke test.
+
+For the first 1.2B Cx1 sweep, match the dense-ladder Cx1 batch size and use the
+currently idle cluster capacity for wall-clock speed:
+
+- `--model-size=1p2b`
+- `--chinchilla-multiple=1`
+- `--global-batch-size-seq=32` / 262,144 tokens
+- `--gpus-per-node=8`
+- `--ep-dim=1`
+- `--micro-batch-size=2`
+- `--ladder-evals --eval-task-set=fast --eval-interval=2000`
+
+Prepared launchers:
+
+```bash
+src/scripts/train/jacobm_olmoe_ladder/launch_moe_a0_1p2b_cx1_sweep.sh
+src/scripts/train/jacobm_olmoe_ladder/reproduce_moe_a0_1p2b_cx1_sweep.sh
+```
+
+These require `LR_SPECS="lr:tag ..."` at launch time. Do not fill the 1.2B LR
+list until the completed 810M Cx4 fit has updated the transfer rule.

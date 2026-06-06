@@ -206,7 +206,29 @@ Keep architecture fixed for larger baseline checks:
 - EP=1 by default.
 - Preferred smoke-tested setting: `gpu4-ep1mb4`.
 - EP=2 is a fallback only if memory forces it.
-- Do not launch full 1.2B LR probes without explicit approval.
+- First Cx1 sweep should use the dense-ladder Cx1 batch size:
+  `global_batch_size_seq=32` / 262,144 tokens.
+- Because the cluster is currently lightly loaded, prefer `gpu8-ep1mb2` for
+  1.2B Cx1 wall-clock speed even though `gpu4-ep1mb4` is likely more
+  compute-efficient.
+- The 1.2B Cx1 launcher is prepared, but its LR list should be supplied only
+  after the 810M Cx4 fit updates the transfer rule.
+- Do not launch full 1.2B LR probes until that updated transfer rule is recorded.
+
+## Validation-Loss Use
+
+Eval backfills and future in-loop evals are now available, but train-loss U-plots
+remain the primary LR-selection signal until we explicitly change policy.
+
+For each bracketed rung, compare:
+
+- final-window training CE optimum;
+- C4 validation CE optimum;
+- a small held-out aggregate over C4, MMLU RC BPBv2, and ARC Challenge RC BPBv2.
+
+Do not tune the validation aggregate after looking at results. If train and eval
+optima disagree, record the disagreement and discuss before using validation
+loss to choose LRs or architecture winners.
 
 ## Monitoring Cadence
 
