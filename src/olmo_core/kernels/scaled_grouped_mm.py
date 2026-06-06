@@ -12,6 +12,7 @@ try:
 except ImportError:
     from olmo_core._nvtx import nvtx
 
+from ..doc_utils import beta_feature
 from .mxfp8_tensor import OlmoMXFP8Tensor
 from .mxfp8_utils import (
     dequantize_rows_from_mxfp8,
@@ -642,6 +643,7 @@ class _ScaledGroupedMMQFP8WeightFunction(torch.autograd.Function):
         return grad_a, grad_anchor, None, None, None, None, None, None, None, None, None
 
 
+@beta_feature
 def scaled_grouped_mm_q(
     mat_a: Tensor,
     mat_b: Tensor,
@@ -677,6 +679,7 @@ def scaled_grouped_mm_q(
     )
 
 
+@beta_feature
 def scaled_grouped_mm_q_fp8_weight(
     mat_a: Tensor,
     grad_anchor: Tensor,

@@ -5,6 +5,7 @@ from typing import Callable, Mapping, Optional, Sequence
 
 import torch
 
+from olmo_core.doc_utils import beta_feature
 from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedRHS,
     prequantize_scaled_grouped_mm_rhs,
@@ -25,6 +26,7 @@ class FP8WeightCacheSpec:
     transform: Callable[[torch.Tensor], torch.Tensor]
 
 
+@beta_feature
 class FP8WeightStore:
     """
     Generic logical weight store for fp32-main -> FP8-model training.
