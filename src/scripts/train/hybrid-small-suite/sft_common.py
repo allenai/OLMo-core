@@ -46,6 +46,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -72,6 +73,11 @@ def build_train_module_config(
 ) -> TransformerTrainModuleConfig:
     sft_cfg = sft_configs[model_size]
 
+    cp_degree = sft_cfg.get("cp_degree", 1)
+    cp_config = (
+        TransformerContextParallelConfig.ulysses(degree=cp_degree) if cp_degree > 1 else None
+    )
+
     return TransformerTrainModuleConfig(
         rank_microbatch_size=common.max_sequence_length,
         max_sequence_length=common.max_sequence_length,
@@ -88,6 +94,7 @@ def build_train_module_config(
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
+        cp_config=cp_config,
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=1,
