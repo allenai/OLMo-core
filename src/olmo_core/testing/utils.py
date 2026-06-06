@@ -15,6 +15,10 @@ has_cuda = torch.cuda.is_available()
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 has_mps = torch.mps.is_available()
 compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
+# torch.nn.functional.grouped_mm (and the F.ScalingType / F.SwizzleType enums used by the
+# scaled/FP8 path) were added in torch 2.10; the MoE-v2 kernels require them. Note this is
+# distinct from `has_grouped_gemm`, which checks for the third-party `grouped_gemm` package.
+has_torch_grouped_mm = hasattr(torch.nn.functional, "grouped_mm")
 has_flash_attn_2 = flash_attn_api.has_flash_attn_2()
 has_flash_attn_3 = flash_attn_api.has_flash_attn_3()
 has_flash_attn_4 = flash_attn_api.has_flash_attn_4()
@@ -154,6 +158,22 @@ GROUPED_GEMM_MARKS = (
 
 def requires_grouped_gemm(func):
     for mark in GROUPED_GEMM_MARKS:
+        func = mark(func)
+    return func
+
+
+TORCH_GROUPED_MM_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_cuda, reason="Requires a GPU"),
+    pytest.mark.skipif(
+        not has_torch_grouped_mm,
+        reason="Requires torch.nn.functional.grouped_mm (torch>=2.10)",
+    ),
+)
+
+
+def requires_torch_grouped_mm(func):
+    for mark in TORCH_GROUPED_MM_MARKS:
         func = mark(func)
     return func
 
