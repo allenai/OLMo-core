@@ -96,6 +96,8 @@ Primary docs:
 W&B tooling:
 
 - `src/scripts/train/jacobm_olmoe_ladder/summarize_wandb_losses.py`
+- `src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_ladder.py`
+- `src/scripts/train/jacobm_olmoe_ladder/plot_wandb_ladder.py`
 - `src/scripts/train/jacobm_olmoe_ladder/plot_cx1_uplot.py`
 - `src/scripts/train/jacobm_olmoe_ladder/wandb_cache.py`
 
@@ -135,6 +137,37 @@ Dense-ladder context from coworkers:
 - They sometimes fit linear trends over the final 1k steps, but averaging over final token windows is acceptable for our current use.
 
 For MoE runs, we have been using final-token-window summaries rather than only final step loss.
+
+## 2026-06-07 overnight state
+
+Training-loss LR selection only. Validation evals are being logged/backfilled,
+but they are not yet used to choose LR centers.
+
+Recently completed:
+
+- 1.2B Cx1, `gpu8-ep1mb2`, `global_batch_size_seq=32`: `1e-4`, `2e-4`,
+  `4e-4`, `8e-4` all finished. Final-window avg250M favors `4e-4`; local
+  quadratic fits put `lr*` around `4.8e-4` to `5.0e-4`.
+
+Currently queued/running:
+
+- 810M Cx8, `gpu8-ep1mb4`, `global_batch_size_seq=96`: `1e-4`, `2e-4`,
+  `4e-4`, `8e-4`.
+- 1.2B Cx4, `gpu8-ep1mb2`, `global_batch_size_seq=64`: `1.5e-4`, `3e-4`,
+  `6e-4`, `1.2e-3`.
+- 810M Cx2, `gpu8-ep1mb4`, `global_batch_size_seq=64`: `1.5e-4`, `3e-4`,
+  `6e-4`, `1.2e-3`.
+
+Next loop:
+
+1. Check Beaker/W&B for started/failed jobs.
+2. Once a full run finishes, update final-window training loss summaries and
+   regenerate plots.
+3. Push plot/doc updates to GitHub when new completed results are added.
+4. Do not choose larger Cx rungs until the current 810M Cx2/Cx8 and 1.2B Cx4
+   evidence lands.
+5. Overnight cadence can be long, around 4 hours, once all jobs are either
+   running or cleanly queued.
 
 ## Recent important implementation commits
 

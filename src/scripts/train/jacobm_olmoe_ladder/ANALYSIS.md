@@ -469,6 +469,42 @@ queued because its LR list does not depend on the pending 1.2B result:
 Settings: `gpu8-ep1mb4`, `global_batch_size_seq=96` / 786,432 tokens,
 `--ladder-evals --eval-task-set=fast --eval-interval=2000`.
 
+2026-06-07 1.2B Cx1 completion update:
+
+| LR | State | avg100M | avg250M | avg500M |
+| ---: | --- | ---: | ---: | ---: |
+| `1e-4` | finished | 2.3549 | 2.3550 | 2.3580 |
+| `2e-4` | finished | 2.3244 | 2.3246 | 2.3276 |
+| `4e-4` | finished | 2.3106 | 2.3108 | 2.3139 |
+| `8e-4` | finished | 2.3145 | 2.3148 | 2.3181 |
+
+The completed Cx1 curve is bracketed and favors `4e-4` by observed avg250M.
+A quadratic fit over all four avg250M points gives `lr* = 4.86e-4`; a local
+three-point fit around the basin gives `lr* = 4.84e-4` to `5.03e-4`. Treat the
+1.2B Cx1 optimum as about `5e-4`.
+
+For 1.2B Cx4, the 810M Cx4/Cx1 relationship and the updated larger-model
+transfer put the center around `3e-4` to `4e-4`, cooler than simply copying the
+1.2B Cx1 optimum. Launched exactly four Cx4 LRs:
+
+- `1.5e-4`: `01KTHW5XZXCNW9VV7FAMCS1C8F`
+- `3e-4`: `01KTHW68C59T1XE9WNFW3EP3G1`
+- `6e-4`: `01KTHW6KH3XFR790J6J4G8ZAJ6`
+- `1.2e-3`: `01KTHW6ZSXGD1P8NEA7S3KM198`
+
+Settings: `gpu8-ep1mb2`, `global_batch_size_seq=64` / 524,288 tokens,
+`--ladder-evals --eval-task-set=fast --eval-interval=2000`.
+
+Also queued the fixed 810M Cx2 completeness sweep:
+
+- `1.5e-4`: `01KTHW7HB59AMPSZBP8FJHS5QG`
+- `3e-4`: `01KTHW7WY6Z2NFAP8FNT1HP3XN`
+- `6e-4`: `01KTHW88Q43J8M8CRCDN9VZDHV`
+- `1.2e-3`: `01KTHW8MCKRJH3PW0W58KRVXA4`
+
+Settings: `gpu8-ep1mb4`, `global_batch_size_seq=64` / 524,288 tokens,
+`--ladder-evals --eval-task-set=fast --eval-interval=2000`.
+
 ## Validation Eval Follow-up
 
 TODO: after the 2026-06-06 backfills finish, discuss and decide how validation

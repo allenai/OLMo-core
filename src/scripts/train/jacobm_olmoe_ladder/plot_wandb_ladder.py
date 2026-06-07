@@ -35,7 +35,13 @@ CANONICAL_FAMILY_BY_MODEL_CX = {
     "275m": CANONICAL_FAMILY_BY_CX,
     "810m": {
         1: ("gpu4-ep1mb4", "gpu8-ep1mb4"),
+        2: "gpu8-ep1mb4",
         4: "gpu8-ep1mb4",
+        8: "gpu8-ep1mb4",
+    },
+    "1p2b": {
+        1: "gpu8-ep1mb2",
+        4: "gpu8-ep1mb2",
     },
 }
 
@@ -61,6 +67,8 @@ def family_label_from_name(name: str) -> str:
         return "gpu8-ep1mb16"
     if "gpu8-ep1mb4" in name:
         return "gpu8-ep1mb4"
+    if "gpu8-ep1mb2" in name:
+        return "gpu8-ep1mb2"
     if "gpu4-ep1mb16" in name:
         return "gpu4-ep1mb16"
     if "gpu4-ep1mb8" in name:
