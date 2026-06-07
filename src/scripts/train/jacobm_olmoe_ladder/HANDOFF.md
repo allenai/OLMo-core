@@ -64,27 +64,64 @@ Hammond control-session secrets are listed in `HAMMOND_CONTROL.md`.
 Use `jacobm_git_config` for remote git identity; do not use the shared `git-config`
 secret for this project.
 
-## Tiny 275M MoE scripts
+## Training script and model sizes
 
 The main train script is:
 
 - `src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py`
 
-It supports MoE ladder runs with arguments for:
+Despite the filename, this script now supports all current baseline sizes:
 
-- `--chinchilla-multiplier`
-- `--global-batch-size`
-- `--learning-rate`
+- `275m`: current tiny MoE baseline, about 278M active including embeddings
+  and about 1.13B total params.
+- `810m`: about 817M active including embeddings and about 4.93B total params.
+- `1p2b`: about 1.22B active including embeddings and about 7.76B total params.
+
+Important arguments:
+
+- `--model-size`
+- `--chinchilla-multiple`
+- `--global-batch-size-seq`
+- `--lr`
 - `--gpus-per-node`
 - `--micro-batch-size`
 - `--ep-dim`
+- `--ladder-evals`
+- `--eval-task-set=fast`
+- `--eval-interval`
 
-Current throughput-oriented settings:
+Checkpoint policy for current/future training jobs:
 
-- Cx1/Cx2 256k batch runs: 2 GPUs, `--gpus-per-node=2`, `--micro-batch-size=16`, `--ep-dim=1`
-- Cx4 512k batch runs: 4 GPUs, `--gpus-per-node=4`, `--micro-batch-size=16`, `--ep-dim=1`
+- Permanent checkpoints: final only, using `--save-interval=999999999`.
+- Resume checkpoints: ephemeral every 500 steps, using
+  `--ephemeral-save-interval=500`.
 
-This replaced the older slow setting `EP_DIM=8`, `MICRO_BSZ=1`. Aim for `throughput/device/TFLOPs_per_GPU` around 600+.
+This avoids filling Weka with intermediate permanent checkpoints.
+
+Throughput policy:
+
+- Prefer `EP_DIM=1` for these model sizes. Tianhua indicated EP only becomes
+  necessary at substantially larger total parameter counts, roughly 5B+ in the
+  relevant regime, and our smoke tests confirmed EP=1 is faster where it fits.
+- Increase microbatch as much as memory allows, then use GPU count primarily to
+  improve wall clock when the cluster is idle.
+- The old slow setting was `EP_DIM=8`, `MICRO_BSZ=1`; avoid using it except for
+  explicit sanity checks.
+- Aim for `throughput/device/TFLOPs_per_GPU` around 600+ when possible.
+
+Canonical settings currently in use:
+
+| Model | Cx | Batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 275M | 1/2 | 262,144 | 32 | 2 | 1 | 16 | Canonical final family for low Cx. |
+| 275M | 4 | 524,288 | 64 | 4 | 1 | 16 | Canonical final family. |
+| 275M | 8 | 786,432 | 96 | 4 | 1 | 8 | Used after increasing Cx8 GPU count. |
+| 275M | 16 | 1,048,576 | 128 | 8 | 1 | 16 | Used to finish Cx16 faster. |
+| 810M | 1 | 262,144 | 32 | 4 | 1 | 4 | Completed Cx1 family. |
+| 810M | 2/4 | 524,288 | 64 | 8 | 1 | 4 | Cx2 queued; Cx4 completed. |
+| 810M | 8 | 786,432 | 96 | 8 | 1 | 4 | Currently running. |
+| 1.2B | 1 | 262,144 | 32 | 8 | 1 | 2 | Completed Cx1 family. |
+| 1.2B | 4 | 524,288 | 64 | 8 | 1 | 2 | Currently running/queued. |
 
 ## Run tracking and analysis
 
@@ -105,7 +142,20 @@ Loss metric:
 
 - `train/CE loss`
 
-The W&B scripts cache run histories, especially for completed runs, because there will eventually be many ladder points.
+LR selection metric:
+
+- Use final-window **training** CE loss only for LR selection for now.
+- Validation losses and downstream evals are logged/backfilled, but are
+  observational only until Jacob explicitly changes the policy.
+- Prefer `avg250M` as the primary decision column. Also inspect `avg100M` and
+  `avg500M` for noise/sensitivity.
+- Do not use a 512-step smoke test, eval-only run, sanity run, or partial run as
+  a completed U-plot point.
+
+The W&B scripts cache run histories, especially for completed runs, because
+there will eventually be many ladder points. Prefer cached plotting for routine
+updates; only use `--refresh-cache` for newly completed runs or when the cache is
+known stale.
 
 Useful pattern:
 
@@ -114,34 +164,104 @@ uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/summarize_wandb
   --name-regex 'olmoe3-tiny-275m'
 ```
 
-## Current experiment direction
+Useful current summaries:
+
+```bash
+uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_ladder.py \
+  --name-regex 'olmoe3-(tiny-275m|moe-a0-810m|moe-a0-1p2b)-cx' \
+  --mode final --finished-only --windows-m 100 250 500
+```
+
+Regenerate plots from cached histories:
+
+```bash
+uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/plot_wandb_ladder.py \
+  --name-regex 'olmoe3-(tiny-275m|moe-a0-810m|moe-a0-1p2b)-cx' \
+  --finished-only --window-m 250
+```
+
+Refresh only when needed:
+
+```bash
+uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_ladder.py \
+  --name-regex '<specific-finished-run-family>' \
+  --mode final --finished-only --windows-m 100 250 500 --refresh-cache
+```
+
+## Laddering philosophy
 
 We are building a MoE ladder foundation before committing to larger architecture choices.
 
-Near-term target:
-
-1. Finish and analyze 275M-ish MoE learning-rate sweeps.
-2. Pick good LRs for Cx1, Cx2, Cx4, and later higher chinchilla multiples.
-3. Move to larger MoE model sizes, likely around 810M and 1.2B-ish active/ladder rungs.
+The v0 baseline goal is to establish comparable LR-tuned baselines across three
+active-parameter rungs (`275m`, `810m`, `1p2b`) and useful Chinchilla multiples.
+This gives us a baseline ladder for judging later architecture interventions
+such as alternate sparsity choices.
 
 Dense-ladder context from coworkers:
 
 - Their batch-size rule was roughly `B = 0.6 * D ** 0.6`.
-- For 275M-ish dense/hybrid, example batch schedule:
+- Example batch schedule:
   - Cx1: 262,144 tokens
   - Cx2: 524,288 tokens
   - Cx4: 524,288 tokens
   - Cx8: 786,432 tokens
-  - Cx16: 1M tokens
+  - Cx16: 1,048,576 tokens
 - They fit U-plots over log LR vs final-stage train loss.
-- They sometimes fit linear trends over the final 1k steps, but averaging over final token windows is acceptable for our current use.
+- They sometimes fit linear trends over the final 1k steps, but averaging over
+  final token windows is acceptable for our current use.
 
-For MoE runs, we have been using final-token-window summaries rather than only final step loss.
+Our LR sweep policy:
 
-## 2026-06-07 overnight state
+- Start with a coarse factor-spaced sweep around a transfer estimate, not a
+  dense grid.
+- For larger/expensive rungs, use exactly four points when possible.
+- If the curve is still descending at the high edge, launch a farther-out
+  sentinel point rather than walking outward by only one small multiple.
+- If the best point is bracketed, fit a local quadratic in log LR. Use three
+  points around the basin or five points if the local neighborhood is clean.
+- Treat fitted optima as decision aids, not exact truth. Prefer robust bracketed
+  basins over tiny final-window differences.
+- Do not stop full training jobs early unless a run is clearly invalid or
+  uninformative. Jacob prefers finishing full runs for robust plots.
 
-Training-loss LR selection only. Validation evals are being logged/backfilled,
-but they are not yet used to choose LR centers.
+Transfer-rule policy:
+
+- The initial prior `alpha=-0.25` for model-size transfer was too hot for this
+  MoE ladder.
+- Real 275M -> 810M evidence implies a much cooler size transfer, roughly
+  `alpha ~= -1.0` when using active params including embeddings, or `alpha ~= -0.9`
+  with active non-embedding params.
+- After observing 810M Cx1, calibrating the 275M Cx rule predicted 810M Cx4
+  well: predicted about `4.5e-4` to `5.0e-4`, observed/fitted about `5.0e-4`.
+- Use completed larger-model points to refine transfer before launching dependent
+  rungs. Do not pre-decide LRs for dependent rungs before the relevant completed
+  evidence lands.
+
+Current fitted/observed LR centers, training avg250M:
+
+| Model / Cx | Pre-run prediction / center | Observed or current expectation |
+| --- | ---: | ---: |
+| 810M Cx1 | initial `~1.0e-3`, later widened colder | fitted `~6.2e-4` |
+| 810M Cx4 | `4.5e-4` without 275M Cx2, `5.0e-4` with Cx2 | fitted `~5.0e-4` |
+| 1.2B Cx1 | `~4.0e-4` from updated transfer | fitted `~4.8e-4` to `5.0e-4` |
+| 1.2B Cx4 | `~3.3e-4` via size transfer, `~3.9e-4` via 1.2B Cx1 times 810M Cx4/Cx1 ratio | pending |
+| 810M Cx2 | interpolation/extrapolation around `5.1e-4` to `5.6e-4` | pending |
+| 810M Cx8 | extrapolation around `3.5e-4` to `4.5e-4` | pending |
+
+Validation/eval policy:
+
+- Current in-loop eval setting is `--ladder-evals --eval-task-set=fast
+  --eval-interval=2000`.
+- Evals include C4 plus downstream BPB/BPBv2 style metrics such as MMLU RC BPBv2
+  and ARC Challenge RC BPBv2.
+- Final checkpoint eval backfills can be copied onto source W&B runs using
+  `copy_eval_backfills_to_wandb.py`.
+- We still need a future discussion on how validation losses should affect
+  checkpoint/LR selection. For now, ignore evals for LR choice.
+
+## 2026-06-07 pause state
+
+This is the current state at pause, after commit `4ddca365` was pushed.
 
 Recently completed:
 
@@ -149,28 +269,118 @@ Recently completed:
   `4e-4`, `8e-4` all finished. Final-window avg250M favors `4e-4`; local
   quadratic fits put `lr*` around `4.8e-4` to `5.0e-4`.
 
-Currently queued/running:
+Currently running:
 
 - 810M Cx8, `gpu8-ep1mb4`, `global_batch_size_seq=96`: `1e-4`, `2e-4`,
   `4e-4`, `8e-4`.
 - 1.2B Cx4, `gpu8-ep1mb2`, `global_batch_size_seq=64`: `1.5e-4`, `3e-4`,
-  `6e-4`, `1.2e-3`.
+  `6e-4` are running.
+
+Queued/not yet started:
+
+- 1.2B Cx4 `1.2e-3`.
 - 810M Cx2, `gpu8-ep1mb4`, `global_batch_size_seq=64`: `1.5e-4`, `3e-4`,
   `6e-4`, `1.2e-3`.
+
+Beaker IDs:
+
+| Family | LR | Beaker ID |
+| --- | ---: | --- |
+| 810M Cx8 | `1e-4` | `01KTHQWMSQ0A4P6RCNKPS7YPYD` |
+| 810M Cx8 | `2e-4` | `01KTHQX04RMEK7C7V6DZRZVXM6` |
+| 810M Cx8 | `4e-4` | `01KTHQXB575GS84FBP4SNZ1GAA` |
+| 810M Cx8 | `8e-4` | `01KTHQXNN4MFDBAP490ACJTJ07` |
+| 1.2B Cx4 | `1.5e-4` | `01KTHW5XZXCNW9VV7FAMCS1C8F` |
+| 1.2B Cx4 | `3e-4` | `01KTHW68C59T1XE9WNFW3EP3G1` |
+| 1.2B Cx4 | `6e-4` | `01KTHW6KH3XFR790J6J4G8ZAJ6` |
+| 1.2B Cx4 | `1.2e-3` | `01KTHW6ZSXGD1P8NEA7S3KM198` |
+| 810M Cx2 | `1.5e-4` | `01KTHW7HB59AMPSZBP8FJHS5QG` |
+| 810M Cx2 | `3e-4` | `01KTHW7WY6Z2NFAP8FNT1HP3XN` |
+| 810M Cx2 | `6e-4` | `01KTHW88Q43J8M8CRCDN9VZDHV` |
+| 810M Cx2 | `1.2e-3` | `01KTHW8MCKRJH3PW0W58KRVXA4` |
+
+Latest ETA check before pausing:
+
+- Shortest ETA was about 44 hours, from the running 810M Cx8 jobs.
+- 810M Cx8 progress was about 3.9% for `1e-4`/`2e-4`/`4e-4`, and about 2.2%
+  for `8e-4`.
+- Running 1.2B Cx4 jobs were about 1.0% through with estimated 56-57 hours left.
+- All running jobs had `optim/step skipped = 0`.
+
+ETA command:
+
+```bash
+uv run --with wandb python - <<'PY'
+import time, math
+from datetime import datetime
+import wandb
+
+api = wandb.Api(timeout=60)
+project = "ai2-llm/jacobm-olmoe-ladder"
+families = (
+    "olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2",
+    "olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4",
+    "olmoe3-moe-a0-810m-cx2-b512k-gpu8-ep1mb4",
+)
+
+def target_tokens(name: str) -> int | None:
+    if "810m-cx8" in name:
+        return 20 * 817_000_000 * 8
+    if "810m-cx2" in name:
+        return 20 * 817_000_000 * 2
+    if "1p2b-cx4" in name:
+        return 20 * 1_220_000_000 * 4
+    return None
+
+now = time.time()
+rows = []
+for run in api.runs(project, per_page=200):
+    if not any(family in run.name for family in families):
+        continue
+    tokens = run.summary.get("throughput/total tokens")
+    target = target_tokens(run.name)
+    created_at = run.created_at
+    start_ts = None
+    if isinstance(created_at, str):
+        start_ts = datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp()
+    elapsed = now - start_ts if start_ts else None
+    rate = float(tokens) / elapsed if tokens and elapsed and elapsed > 0 else None
+    eta = (target - float(tokens)) / rate if target and tokens and rate and float(tokens) < target else None
+    rows.append((eta if eta is not None else float("inf"), run.state, run.name, tokens, target, rate))
+
+for eta, state, name, tokens, target, rate in sorted(rows):
+    eta_s = "n/a" if math.isinf(eta) else f"{eta / 3600:.1f}h"
+    progress = "n/a" if not tokens or not target else f"{100 * float(tokens) / target:.1f}%"
+    print(f"{eta_s}\t{progress}\t{state}\t{name}")
+PY
+```
 
 Next loop:
 
 1. Check Beaker/W&B for started/failed jobs.
-2. Once a full run finishes, update final-window training loss summaries and
+2. Check only occasionally. There is no reason to loop tightly while the shortest
+   ETA is roughly two days.
+3. Once a full run finishes, update final-window training loss summaries and
    regenerate plots.
-3. Push plot/doc updates to GitHub when new completed results are added.
-4. Do not choose larger Cx rungs until the current 810M Cx2/Cx8 and 1.2B Cx4
+4. Push plot/doc updates to GitHub when new completed results are added.
+5. Do not choose larger Cx rungs until the current 810M Cx2/Cx8 and 1.2B Cx4
    evidence lands.
-5. Overnight cadence can be long, around 4 hours, once all jobs are either
-   running or cleanly queued.
+6. If a fresh loop is started while jobs are still far from completion, use a
+   long cadence such as 4-8 hours.
+
+Current pushed plot files:
+
+- `src/scripts/train/jacobm_olmoe_ladder/plots/275m_all_cx_uplot.png`
+- `src/scripts/train/jacobm_olmoe_ladder/plots/810m_all_cx_uplot.png`
+- `src/scripts/train/jacobm_olmoe_ladder/plots/1p2b_all_cx_uplot.png`
+- Per-Cx plot files in the same directory.
 
 ## Recent important implementation commits
 
+- `4ddca365` launch 1.2B Cx4 and 810M Cx2 sweeps; add 1.2B plotting support
+- `2d7917a0` queue 810M Cx8 ladder sweep
+- `11d1c46a` record 810M Cx4 fit and 1.2B Cx1 launch
+- `3f0ac56a` prepare 1.2B Cx1 ladder launcher
 - `49b53f25` cache W&B histories
 - `fbf429d0` improve throughput settings
 - `699cdbd9` add 2-GPU smoke launcher
