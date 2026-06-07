@@ -62,6 +62,61 @@ Candidate variants:
 | Same `top_k`, changed expert count/hidden | Isolate pool size vs per-expert size | Tests whether total expert pool cardinality matters independent of active fan-in. |
 | Shared expert size sweep | `0`, `d_model/4`, `d_model/2`, maybe `d_model` | Turns shared expert from binary choice into an active-capacity allocation question. |
 
+The first expert-size sweep should use a clean granularity family:
+
+```text
+num_experts / top_k = 12
+top_k * moe_hidden_size = 4 * d_model
+num_experts * moe_hidden_size = 48 * d_model
+```
+
+This exactly preserves routed active hidden units and routed total expert hidden
+units. Shared expert size, dense prefix, attention, width, depth, and batch rules
+stay fixed. Total parameter counts will differ slightly because the router has
+one output per expert, but the expert FFN budget is matched.
+
+The three core variants are:
+
+| Variant name | Experts | `top_k` | `moe_hidden_size` rule | Motivation |
+| --- | ---: | ---: | ---: | --- |
+| `coarse_24e_top2` | 24 | 2 | `2 * d_model` | Phi-style coarse top-2 endpoint. |
+| `baseline_48e_top4` | 48 | 4 | `1 * d_model` | Current MoE A0 baseline. |
+| `fine_96e_top8` | 96 | 8 | `d_model / 2` | DeepSeek/Qwen-style fine-grained endpoint. |
+
+Exact 275M configs:
+
+| Variant | `d_model` | `d_attn` | Layers | Heads | KV heads | Experts | `top_k` | `moe_hidden_size` | Shared experts | Shared hidden | Dense prefix | Dense MLP |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `coarse_24e_top2` | 768 | 1024 | 12 | 8 | 4 | 24 | 2 | 1536 | 1 | 384 | 1 | 3456 |
+| `baseline_48e_top4` | 768 | 1024 | 12 | 8 | 4 | 48 | 4 | 768 | 1 | 384 | 1 | 3456 |
+| `fine_96e_top8` | 768 | 1024 | 12 | 8 | 4 | 96 | 8 | 384 | 1 | 384 | 1 | 3456 |
+
+Exact 810M configs:
+
+| Variant | `d_model` | `d_attn` | Layers | Heads | KV heads | Experts | `top_k` | `moe_hidden_size` | Shared experts | Shared hidden | Dense prefix | Dense MLP |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `coarse_24e_top2` | 1280 | 1536 | 20 | 12 | 6 | 24 | 2 | 2560 | 1 | 640 | 1 | 5760 |
+| `baseline_48e_top4` | 1280 | 1536 | 20 | 12 | 6 | 48 | 4 | 1280 | 1 | 640 | 1 | 5760 |
+| `fine_96e_top8` | 1280 | 1536 | 20 | 12 | 6 | 96 | 8 | 640 | 1 | 640 | 1 | 5760 |
+
+Exact 1.2B configs:
+
+| Variant | `d_model` | `d_attn` | Layers | Heads | KV heads | Experts | `top_k` | `moe_hidden_size` | Shared experts | Shared hidden | Dense prefix | Dense MLP |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `coarse_24e_top2` | 1536 | 2048 | 22 | 16 | 8 | 24 | 2 | 3072 | 1 | 768 | 1 | 6912 |
+| `baseline_48e_top4` | 1536 | 2048 | 22 | 16 | 8 | 48 | 4 | 1536 | 1 | 768 | 1 | 6912 |
+| `fine_96e_top8` | 1536 | 2048 | 22 | 16 | 8 | 96 | 8 | 768 | 1 | 768 | 1 | 6912 |
+
+Code-style config fragments:
+
+```python
+EXPERT_GEOMETRY_VARIANTS = {
+    "coarse_24e_top2": dict(num_experts=24, top_k=2, moe_hidden_mult=2.0),
+    "baseline_48e_top4": dict(num_experts=48, top_k=4, moe_hidden_mult=1.0),
+    "fine_96e_top8": dict(num_experts=96, top_k=8, moe_hidden_mult=0.5),
+}
+```
+
 Important controls:
 
 - Keep active params approximately fixed.
