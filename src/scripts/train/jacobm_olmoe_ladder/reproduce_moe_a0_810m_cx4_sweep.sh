@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Reproducibility record for the 810M MoE A0 Cx1 cold-side sentinel.
-# By default this prints the command without launching the job.
-# Set DRY_RUN=0 to submit it again.
+# Reproducibility record for the completed 810M MoE A0 Cx4 LR sweep.
+# These jobs did not run in-loop ladder evals; final checkpoint evals were
+# backfilled separately. By default this prints commands without launching jobs.
+# Set DRY_RUN=0 to submit them again.
 
 DRY_RUN="${DRY_RUN:-1}"
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
-RUN_PREFIX="olmoe3-810m-cx1"
+RUN_PREFIX="olmoe3-moe-a0-810m-cx4"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
-NUM_NODES="${NUM_NODES:-1}"
+NUM_NODES=1
 GPUS="${GPUS:-8}"
-EP_DIM="${EP_DIM:-1}"
-MICRO_BSZ="${MICRO_BSZ:-4}"
-GLOBAL_BATCH_SIZE_SEQ="${GLOBAL_BATCH_SIZE_SEQ:-32}"
-CHINCHILLA_MULTIPLE="${CHINCHILLA_MULTIPLE:-1}"
-SWEEP_SUFFIX="${SWEEP_SUFFIX:-cs-r2}"
+EP_DIM=1
+MICRO_BSZ=4
+GLOBAL_BATCH_SIZE_SEQ=64
+CHINCHILLA_MULTIPLE="${CHINCHILLA_MULTIPLE:-4}"
+SWEEP_SUFFIX="${SWEEP_SUFFIX:-r1}"
 EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
 
 run_cmd() {
@@ -32,7 +33,7 @@ launch_one() {
   local lr="$1"
   local lr_tag="$2"
   local perf_tag="gpu${GPUS}-ep${EP_DIM}mb${MICRO_BSZ}"
-  local name="${RUN_PREFIX}-b256k-${perf_tag}-${lr_tag}-${SWEEP_SUFFIX}"
+  local name="${RUN_PREFIX}-b512k-${perf_tag}-${lr_tag}-${SWEEP_SUFFIX}"
   local common_beaker_args=(
     --cluster ai2/titan
     --nodes "${NUM_NODES}"
@@ -67,7 +68,10 @@ launch_one() {
         --save-interval=999999999 \
         --ephemeral-save-interval="${EPHEMERAL_SAVE_INTERVAL}" \
         --no-pre-train-checkpoint \
-        --tag="${lr_tag}-810m-cx1-${SWEEP_SUFFIX}"
+        --tag="${lr_tag}-810m-cx4-b512k-${perf_tag}-${SWEEP_SUFFIX}"
 }
 
-launch_one 5e-5 lr5e-5
+launch_one 2e-4 lr2e-4
+launch_one 4e-4 lr4e-4
+launch_one 8e-4 lr8e-4
+launch_one 1.6e-3 lr1.6e-3

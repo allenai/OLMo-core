@@ -65,7 +65,7 @@ launch_one() {
   local deadline=$((SECONDS + JOB_CREATED_TIMEOUT_SECONDS))
 
   while (( SECONDS < deadline )); do
-    if grep -q "✓ job created" "${log_path}"; then
+    if [[ -f "${log_path}" ]] && grep -q "✓ job created" "${log_path}"; then
       sed -n '1,/✓ job created/p' "${log_path}"
       kill "${pid}" 2>/dev/null || true
       wait "${pid}" 2>/dev/null || true
@@ -89,5 +89,5 @@ launch_one() {
   return 1
 }
 
-launch_one 8 b768k 96 2 24 5e-4 lr5e-4
-launch_one 16 b1m 128 2 32 5e-4 lr5e-4
+launch_one 8 b768k 96 2 16 5e-4 lr5e-4
+launch_one 16 b1m 128 2 16 5e-4 lr5e-4

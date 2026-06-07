@@ -9,6 +9,7 @@ JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
 NUM_NODES=1
 GLOBAL_BATCH_SIZE_SEQ=32
 CHINCHILLA_MULTIPLE="${CHINCHILLA_MULTIPLE:-0.02}"
+SMOKE_SUFFIX="${SMOKE_SUFFIX:-r3}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -20,7 +21,7 @@ launch_one() {
   local lr="$5"
   local lr_tag="$6"
   local perf_tag="gpu${gpus}-ep${ep_dim}mb${micro_bsz}"
-  local name="${RUN_PREFIX}-${model_size}-smoke-b256k-${perf_tag}-${lr_tag}"
+  local name="${RUN_PREFIX}-${model_size}-smoke-b256k-${perf_tag}-${lr_tag}-${SMOKE_SUFFIX}"
   local log_path="${LOG_DIR}/${name}.log"
   local common_beaker_args=(
     --cluster ai2/titan
@@ -53,7 +54,7 @@ launch_one() {
     --gpus-per-node="${gpus}"
     --micro-batch-size="${micro_bsz}"
     --ep-dim="${ep_dim}"
-    --tag="${lr_tag}-${model_size}-smoke-b256k-${perf_tag}"
+    --tag="${lr_tag}-${model_size}-smoke-b256k-${perf_tag}-${SMOKE_SUFFIX}"
   )
 
   echo "Launching ${name}..."
@@ -66,7 +67,7 @@ launch_one() {
   local deadline=$((SECONDS + JOB_CREATED_TIMEOUT_SECONDS))
 
   while (( SECONDS < deadline )); do
-    if grep -q "✓ job created" "${log_path}"; then
+    if [[ -f "${log_path}" ]] && grep -q "✓ job created" "${log_path}"; then
       sed -n '1,/✓ job created/p' "${log_path}"
       kill "${pid}" 2>/dev/null || true
       wait "${pid}" 2>/dev/null || true
@@ -90,10 +91,10 @@ launch_one() {
   return 1
 }
 
-# EP=1 is the preferred path if memory allows. These smokes probe high
-# per-rank microbatch sizes before falling back to smaller values or EP.
-launch_one 810m 2 16 1 5e-4 lr5e-4
-launch_one 810m 2 8 1 5e-4 lr5e-4
+# The 2-GPU EP=1 r2 smokes OOMed during dry-run batch allocation. First try
+# more GPUs before falling back to expert parallelism.
+launch_one 810m 4 8 1 5e-4 lr5e-4
+launch_one 810m 4 4 1 5e-4 lr5e-4
 
-launch_one 1p2b 2 8 1 3e-4 lr3e-4
-launch_one 1p2b 2 4 1 3e-4 lr3e-4
+launch_one 1p2b 4 4 1 3e-4 lr3e-4
+launch_one 1p2b 4 4 2 3e-4 lr3e-4

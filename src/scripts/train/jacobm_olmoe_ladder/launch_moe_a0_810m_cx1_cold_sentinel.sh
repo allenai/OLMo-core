@@ -2,17 +2,17 @@
 set -euo pipefail
 
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
-RUN_PREFIX="olmoe3-moe-a0-810m-cx1"
+RUN_PREFIX="olmoe3-810m-cx1"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-moe-a0-810m-cx1-cold-sentinel-launch-logs}"
 JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
-NUM_NODES=1
-GPUS=4
-EP_DIM=1
-MICRO_BSZ=4
-GLOBAL_BATCH_SIZE_SEQ=32
+NUM_NODES="${NUM_NODES:-1}"
+GPUS="${GPUS:-8}"
+EP_DIM="${EP_DIM:-1}"
+MICRO_BSZ="${MICRO_BSZ:-4}"
+GLOBAL_BATCH_SIZE_SEQ="${GLOBAL_BATCH_SIZE_SEQ:-32}"
 CHINCHILLA_MULTIPLE="${CHINCHILLA_MULTIPLE:-1}"
-SWEEP_SUFFIX="${SWEEP_SUFFIX:-cold-sentinel-r1}"
+SWEEP_SUFFIX="${SWEEP_SUFFIX:-cs-r2}"
 EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
 
 mkdir -p "${LOG_DIR}"
@@ -57,7 +57,7 @@ launch_one() {
     --save-interval=999999999
     --ephemeral-save-interval="${EPHEMERAL_SAVE_INTERVAL}"
     --no-pre-train-checkpoint
-    --tag="${lr_tag}-810m-cx1-b256k-${perf_tag}-${SWEEP_SUFFIX}"
+    --tag="${lr_tag}-810m-cx1-${SWEEP_SUFFIX}"
   )
 
   echo "Launching ${name}..."

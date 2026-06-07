@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Reproducibility record for Cx8/Cx16 high-microbatch smoke tests.
+# Reproducibility record for Cx8/Cx16 smoke tests.
 # By default this prints the commands without launching jobs.
 # Set DRY_RUN=0 to submit them again.
 
@@ -65,5 +65,5 @@ launch_one() {
         --tag="${lr_tag}-cx${chinchilla}-smoke-${batch_tag}-${perf_tag}"
 }
 
-launch_one 8 b768k 96 2 24 5e-4 lr5e-4
-launch_one 16 b1m 128 2 32 5e-4 lr5e-4
+launch_one 8 b768k 96 2 16 5e-4 lr5e-4
+launch_one 16 b1m 128 2 16 5e-4 lr5e-4
