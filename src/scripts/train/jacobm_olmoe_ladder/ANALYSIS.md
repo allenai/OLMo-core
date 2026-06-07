@@ -458,6 +458,17 @@ fast evals every 2000 steps:
 All four started cleanly, reached a few hundred steps, and reported
 `optim/step skipped = 0`.
 
+While the 1.2B Cx1 sweep was near completion, the next fixed 810M rung was
+queued because its LR list does not depend on the pending 1.2B result:
+
+- 810M Cx8 `1e-4`: `01KTHQWMSQ0A4P6RCNKPS7YPYD`
+- 810M Cx8 `2e-4`: `01KTHQX04RMEK7C7V6DZRZVXM6`
+- 810M Cx8 `4e-4`: `01KTHQXB575GS84FBP4SNZ1GAA`
+- 810M Cx8 `8e-4`: `01KTHQXNN4MFDBAP490ACJTJ07`
+
+Settings: `gpu8-ep1mb4`, `global_batch_size_seq=96` / 786,432 tokens,
+`--ladder-evals --eval-task-set=fast --eval-interval=2000`.
+
 ## Validation Eval Follow-up
 
 TODO: after the 2026-06-06 backfills finish, discuss and decide how validation
