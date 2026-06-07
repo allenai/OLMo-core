@@ -57,6 +57,7 @@ BACKFILLS = [
     BackfillSpec("eval-810m-cx4-lr2e-4-r1", "olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr2e-4-r1"),
     BackfillSpec("eval-810m-cx4-lr4e-4-r1", "olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr4e-4-r1"),
     BackfillSpec("eval-810m-cx4-lr8e-4-r1", "olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr8e-4-r1"),
+    BackfillSpec("eval-810m-cx4-lr1.6e-3-r1", "olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr1.6e-3-r1"),
 ]
 
 

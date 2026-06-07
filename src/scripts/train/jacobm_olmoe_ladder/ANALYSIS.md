@@ -416,26 +416,47 @@ These agree well enough to center the 810M Cx4 sweep around `4e-4` to `5e-4`.
 Launched exactly four Cx4 LRs with the validated `gpu8-ep1mb4` setting:
 `2e-4`, `4e-4`, `8e-4`, and `1.6e-3`.
 
-2026-06-06 partial completion update:
+2026-06-07 final completion update:
 
 | LR | State | avg100M | avg250M | avg500M |
 | ---: | --- | ---: | ---: | ---: |
 | `2e-4` | finished | 2.2516 | 2.2578 | 2.2568 |
 | `4e-4` | finished | 2.2364 | 2.2427 | 2.2417 |
 | `8e-4` | finished | 2.2387 | 2.2451 | 2.2442 |
-| `1.6e-3` | running at 43.18B / 55.21B tokens | 2.3513 | 2.3501 | 2.3484 |
+| `1.6e-3` | finished | 2.2622 | 2.2687 | 2.2678 |
 
-The first three completed Cx4 points favor `4e-4`, with `8e-4` extremely close
-and `2e-4` worse. Do not fit or choose the Cx4 optimum until the `1.6e-3` full
-run finishes. Final checkpoint eval backfills were launched for completed Cx4
-runs because these training jobs did not run evals in-loop. The `2e-4`, `4e-4`,
-and `8e-4` Cx4 eval backfills have finished and their 180 eval summary metrics
+The completed Cx4 curve favors `4e-4` by observed avg250M/avg500M. A quadratic
+fit over all four avg250M points gives `lr* = 4.99e-4`; a local three-point fit
+over `2e-4`, `4e-4`, and `8e-4` gives `lr* = 5.14e-4`. Treat the 810M Cx4
+optimum as about `5e-4`.
+
+This means the observed 275M -> 810M LR transfer is much cooler than the initial
+`alpha=-0.25` working prior. Using the 810M Cx1 and Cx4 optima, the implied
+active-size exponent is roughly `-1.0` with active params including embeddings,
+or roughly `-0.9` with active non-embedding params. Applying that to 810M -> 1.2B
+puts the 1.2B Cx1 center around `4e-4`.
+
+Final checkpoint eval backfills were launched for completed Cx4 runs because
+these training jobs did not run evals in-loop. The `2e-4`, `4e-4`, `8e-4`, and
+`1.6e-3` Cx4 eval backfills have finished and their 180 eval summary metrics
 have been copied onto the corresponding source W&B training runs.
 
 For transferred larger-model sweeps, factor-of-two spacing around the transferred
 center is reasonable. For rungs where the best point remains on the edge or no
 transfer prior is reliable, include a much wider sentinel instead of repeatedly
 walking outward by small multiples.
+
+Based on the updated transfer rule, the first 1.2B Cx1 sweep was launched on
+2026-06-07 with `gpu8-ep1mb2`, `global_batch_size_seq=32`, EP=1, and in-loop
+fast evals every 2000 steps:
+
+- `1e-4`: `01KTG4J00SXZPREAA3A1E463P9`
+- `2e-4`: `01KTG4JAQ2Z82YSGPAWRBW353H`
+- `4e-4`: `01KTG4JQ19A27ZC6H0FDD9661S`
+- `8e-4`: `01KTG4K2MZHZNCYVG5K9RPV4SW`
+
+All four started cleanly, reached a few hundred steps, and reported
+`optim/step skipped = 0`.
 
 ## Validation Eval Follow-up
 
