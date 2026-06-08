@@ -341,7 +341,7 @@ def main() -> None:
         refresh_cache=args.refresh_cache,
         current_family=False,
         exclude_current_family=False,
-        states=None,
+        states=["finished"] if args.finished_only else None,
     )
     rows = load_rows(loader_args)
     points = summarize_rows(rows, args.window_m, args.finished_only, not args.include_noncanonical)
