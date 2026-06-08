@@ -440,11 +440,20 @@ class TransformerGenerationModule(GenerationModule):
                 # Avoid loading the entire experiment config b/c we don't care about validation outside
                 # of the transformer config and the tokenizer config
                 transformer_config = TransformerConfig.from_dict(config_dict["model"])
-                tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
             except KeyError as e:
                 raise OLMoConfigurationError(
                     f"Failed to load config from checkpoint at {config_path}: missing required field {e}"
                 ) from e
+
+            # The tokenizer config is only needed to synthesize a generation config when one
+            # isn't provided. Tolerate checkpoints whose config stores the tokenizer elsewhere
+            # or stores `dataset` in a different shape (e.g. composable data configs where
+            # `dataset` is a list of sources), so loading still works when a generation config
+            # is passed explicitly.
+            try:
+                tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
+            except (KeyError, TypeError):
+                tokenizer_config = None
 
         # Create work directory on rank 0
         work_dir = Path(
