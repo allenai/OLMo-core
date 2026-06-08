@@ -19,9 +19,10 @@ launch config (H200, head_dim 128): ``num_warps=4, num_stages=2``.
 via ``AttentionType.fast_landmark``); it supports Ulysses context parallelism exactly as the
 original landmark attention does. The fused Triton kernel is required (CUDA + triton).
 """
+
 import math
 import os
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -33,7 +34,10 @@ from olmo_core.distributed.parallel.context_parallel import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 
-from . import Attention  # base mixer (defined before the end-of-module import in __init__)
+from . import (
+    Attention,  # base mixer (defined before the end-of-module import in __init__)
+)
+from .kv_cache import KVCacheManager
 from .landmark import landmark_grouped_softmax, repeat_kv
 from .landmark_kernel import (
     FusedLandmarkAttention,
@@ -59,10 +63,37 @@ if triton is not None:
 
     @triton.jit
     def _bwd_kv_kernel(
-        Q, K, V, sm_scale, Out, DO, DQ, DK, DV, L, M, D,
-        sqz, sqh, sqm, sqd, skz, skh, skn, skd, svz, svh, svn, svd,
-        Z, H, N_CTX_Q, N_CTX_KV,
-        BLOCK: tl.constexpr, BLOCK_DMODEL: tl.constexpr, N_PREFIX_Q: tl.constexpr,
+        Q,
+        K,
+        V,
+        sm_scale,
+        Out,
+        DO,
+        DQ,
+        DK,
+        DV,
+        L,
+        M,
+        D,
+        sqz,
+        sqh,
+        sqm,
+        sqd,
+        skz,
+        skh,
+        skn,
+        skd,
+        svz,
+        svh,
+        svn,
+        svd,
+        Z,
+        H,
+        N_CTX_Q,
+        N_CTX_KV,
+        BLOCK: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        N_PREFIX_Q: tl.constexpr,
     ):
         # dk/dv only, one program per (key-block, head); atomic-free. dk/dv accumulation order is
         # the same as the original kernel -> bit-identical.
@@ -161,7 +192,8 @@ if triton is not None:
 
             dv += tl.dot(
                 tl.trans((p[:, None] * normal_p_normalized).to(Q.dtype.element_ty)),
-                do, allow_tf32=False,
+                do,
+                allow_tf32=False,
             )
 
             Di = tl.load(D_ptrs + offs_m)
@@ -184,10 +216,37 @@ if triton is not None:
 
     @triton.jit
     def _bwd_q_kernel(
-        Q, K, V, sm_scale, Out, DO, DQ, DK, DV, L, M, D,
-        sqz, sqh, sqm, sqd, skz, skh, skn, skd, svz, svh, svn, svd,
-        Z, H, N_CTX_Q, N_CTX_KV,
-        BLOCK: tl.constexpr, BLOCK_DMODEL: tl.constexpr, N_PREFIX_Q: tl.constexpr,
+        Q,
+        K,
+        V,
+        sm_scale,
+        Out,
+        DO,
+        DQ,
+        DK,
+        DV,
+        L,
+        M,
+        D,
+        sqz,
+        sqh,
+        sqm,
+        sqd,
+        skz,
+        skh,
+        skn,
+        skd,
+        svz,
+        svh,
+        svn,
+        svd,
+        Z,
+        H,
+        N_CTX_Q,
+        N_CTX_KV,
+        BLOCK: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        N_PREFIX_Q: tl.constexpr,
     ):
         # dq only, one program per (query-block, head). Causal-only key-block loop via a runtime
         # *upper* bound, atomic-free. dq accumulates ascending -> bit-identical to the original.
@@ -293,14 +352,38 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         num_warps = _env_int("LM_FAST_FWD_WARPS", 4)
         num_stages = _env_int("LM_FAST_FWD_STAGES", 3)
         _fwd_kernel[grid](
-            q, k, v, sm_scale, o,
-            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-            L, m, q.shape[0], q.shape[1], q.shape[2], k.shape[2],
-            BLOCK=BLOCK, BLOCK_DMODEL=d, N_PREFIX_Q=n_prefix_q,
-            num_warps=num_warps, num_stages=num_stages,
+            q,
+            k,
+            v,
+            sm_scale,
+            o,
+            q.stride(0),
+            q.stride(1),
+            q.stride(2),
+            q.stride(3),
+            k.stride(0),
+            k.stride(1),
+            k.stride(2),
+            k.stride(3),
+            v.stride(0),
+            v.stride(1),
+            v.stride(2),
+            v.stride(3),
+            o.stride(0),
+            o.stride(1),
+            o.stride(2),
+            o.stride(3),
+            L,
+            m,
+            q.shape[0],
+            q.shape[1],
+            q.shape[2],
+            k.shape[2],
+            BLOCK=BLOCK,
+            BLOCK_DMODEL=d,
+            N_PREFIX_Q=n_prefix_q,
+            num_warps=num_warps,
+            num_stages=num_stages,
         )
         ctx.save_for_backward(q, k, v, o, L, m)
         ctx.grid = grid
@@ -325,23 +408,61 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         do_scaled = torch.empty_like(do)
         delta = torch.empty_like(lse)
         _bwd_preprocess[(ctx.grid[0], ctx.grid[1])](
-            o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-            do, lse, lse.stride(0), lse.stride(1), do_scaled, delta, q.shape[2],
-            BLOCK_M=BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
+            o,
+            o.stride(0),
+            o.stride(1),
+            o.stride(2),
+            o.stride(3),
+            do,
+            lse,
+            lse.stride(0),
+            lse.stride(1),
+            do_scaled,
+            delta,
+            q.shape[2],
+            BLOCK_M=BLOCK,
+            D_HEAD=ctx.BLOCK_DMODEL,
         )
         args = (
-            q, k, v, ctx.sm_scale, o, do_scaled, dq, dk, dv, lse, m, delta,
-            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            q.shape[0], q.shape[1], q.shape[2], k.shape[2],
+            q,
+            k,
+            v,
+            ctx.sm_scale,
+            o,
+            do_scaled,
+            dq,
+            dk,
+            dv,
+            lse,
+            m,
+            delta,
+            q.stride(0),
+            q.stride(1),
+            q.stride(2),
+            q.stride(3),
+            k.stride(0),
+            k.stride(1),
+            k.stride(2),
+            k.stride(3),
+            v.stride(0),
+            v.stride(1),
+            v.stride(2),
+            v.stride(3),
+            q.shape[0],
+            q.shape[1],
+            q.shape[2],
+            k.shape[2],
         )
         const = dict(BLOCK=BLOCK, BLOCK_DMODEL=ctx.BLOCK_DMODEL, N_PREFIX_Q=ctx.N_PREFIX_Q)
         warps = _env_int("LM_FAST_WARPS", 4)
         stages = _env_int("LM_FAST_STAGES", 2)
         n_kv_blocks = triton.cdiv(k.shape[2], BLOCK)
-        _bwd_kv_kernel[(ctx.grid[1], n_kv_blocks)](*args, **const, num_warps=warps, num_stages=stages)
-        _bwd_q_kernel[(ctx.grid[1], ctx.grid[0])](*args, **const, num_warps=warps, num_stages=stages)
+        _bwd_kv_kernel[(ctx.grid[1], n_kv_blocks)](
+            *args, **const, num_warps=warps, num_stages=stages
+        )
+        _bwd_q_kernel[(ctx.grid[1], ctx.grid[0])](
+            *args, **const, num_warps=warps, num_stages=stages
+        )
         return dq, dk, dv, None, None, None
 
 
@@ -392,6 +513,43 @@ class FastLandmarkAttention(Attention):
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
         self._cp_pg: Optional[torch.distributed.ProcessGroup] = None
         self._cp_world_size: int = 1
+        # Eval-decode state (set by the generation module for landmark HELMET/RULER-style eval). When
+        # ``_eval_prompt_len`` is not None, the decode step treats all post-prompt positions as one
+        # growing local block instead of continuing the fixed per-block structure. See
+        # :meth:`set_landmark_eval_decode`.
+        self._eval_prompt_len: Optional[int] = None
+        self._eval_decode_mode: str = "extend_last_block"
+
+    def set_landmark_eval_decode(self, prompt_len: int, mode: str = "extend_last_block") -> None:
+        """Enable "one long local block" decoding (see :class:`GenerationConfig.landmark_decode_mode`).
+
+        :param prompt_len: Length of the (landmark-inserted) prompt. Generated tokens occupy absolute
+            positions ``>= prompt_len`` and are never treated as landmarks.
+        :param mode: ``"extend_last_block"`` or ``"generation_only"``.
+        """
+        if mode not in ("extend_last_block", "generation_only"):
+            raise OLMoConfigurationError(
+                f"Unknown landmark decode mode {mode!r} "
+                "(expected 'extend_last_block' or 'generation_only')."
+            )
+        self._eval_prompt_len = prompt_len
+        self._eval_decode_mode = mode
+
+    def clear_landmark_eval_decode(self) -> None:
+        """Disable "one long local block" decoding, restoring the default per-block decode."""
+        self._eval_prompt_len = None
+
+    def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
+        # Fast landmark attention implements its own cached prefill/decode in ``_forward_generate``
+        # (it does not route through the flash backend), so skip the backend KV-cache assertion.
+        self.kv_cache_manager = KVCacheManager(
+            batch_size=batch_size,
+            max_seq_len=max_seq_len,
+            num_kv_heads=self.n_kv_heads,
+            head_dim=self.head_dim,
+            device=self.w_k.weight.device,
+            dtype=self.w_k.weight.dtype,  # eager decode matmuls q against the cache directly
+        )
 
     def apply_cp(
         self,
@@ -435,8 +593,18 @@ class FastLandmarkAttention(Attention):
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if any(v is not None for v in (cu_doc_lens, cu_doc_lens_q, cu_doc_lens_k, max_doc_len,
-                                       max_doc_len_q, max_doc_len_k, local_k_slice)):
+        if any(
+            v is not None
+            for v in (
+                cu_doc_lens,
+                cu_doc_lens_q,
+                cu_doc_lens_k,
+                max_doc_len,
+                max_doc_len_q,
+                max_doc_len_k,
+                local_k_slice,
+            )
+        ):
             raise NotImplementedError(
                 "Intra-document masking (cu_doc_lens) is not supported with landmark attention"
             )
@@ -549,7 +717,8 @@ class FastLandmarkAttention(Attention):
 
     def _prefill(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         """Prefill over an arbitrary-length prompt: right-pad to a multiple of block_size, run the
-        fused kernel, slice off the padded tail (padding is future-only, never attended causally)."""
+        fused kernel, slice off the padded tail (padding is future-only, never attended causally).
+        """
         T = q.shape[2]
         pad = (-T) % self.block_size
         if pad:
@@ -572,6 +741,8 @@ class FastLandmarkAttention(Attention):
         plus past blocks via landmark gating. Drop the self key to match.
         """
         Lb = self.block_size
+        if self._eval_prompt_len is not None:
+            return self._decode_one_eval(q, k, v, qpos)
         if qpos % Lb == Lb - 1:
             k = k[:, :, :qpos]  # keys 0..qpos-1 (drop the landmark's own position)
             v = v[:, :, :qpos]
@@ -579,6 +750,39 @@ class FastLandmarkAttention(Attention):
         j = torch.arange(total, device=q.device)
         is_mem = ((j % Lb) == (Lb - 1)).view(1, 1, 1, total)
         last_section = ((j // Lb) == (qpos // Lb)).view(1, 1, 1, total)
+
+        scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
+        Bsz, Hn = scores.shape[0], scores.shape[1]
+        probs = landmark_grouped_softmax(
+            scores,
+            dim=-1,
+            is_mem=is_mem.expand(Bsz, Hn, 1, total),
+            last_section_mask=last_section.expand(Bsz, Hn, 1, total),
+        )
+        return torch.matmul(probs.to(v.dtype), v)
+
+    def _decode_one_eval(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, qpos: int
+    ) -> torch.Tensor:
+        """Decode a generated token as part of "one long local block" (landmark eval mode).
+
+        Generated tokens (absolute position ``>= prompt_len``) are never landmarks. They attend
+        directly to every key in the growing local block ``[section_start, qpos]`` and reach earlier
+        prompt blocks only through those blocks' landmark tokens. ``section_start`` is the start of
+        the prompt's final block (``extend_last_block``) or the end of the prompt
+        (``generation_only``). See :meth:`set_landmark_eval_decode`.
+        """
+        Lb = self.block_size
+        P = self._eval_prompt_len
+        assert P is not None
+        section_start = (P // Lb) * Lb if self._eval_decode_mode == "extend_last_block" else P
+
+        total = k.shape[2]  # = qpos + 1 (generated query attends to keys 0..qpos)
+        j = torch.arange(total, device=q.device)
+        # Only the prompt's landmarks (below the local block) gate access to past blocks; generated
+        # positions are never landmarks.
+        is_mem = (((j % Lb) == (Lb - 1)) & (j < section_start)).view(1, 1, 1, total)
+        last_section = (j >= section_start).view(1, 1, 1, total)
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
         Bsz, Hn = scores.shape[0], scores.shape[1]

@@ -21,6 +21,7 @@ Layout: the **last ``num_landmarks`` tokens of every chunk are landmarks**; ``T`
   * :class:`SparseLandmarkAttention`       -- the :class:`Attention` sequence mixer wrapping it
     (``AttentionType.sparse_landmark``). A fused Triton kernel is the natural next step for peak speed.
 """
+
 import os
 from typing import Optional
 
@@ -30,6 +31,7 @@ import torch.nn.functional as F
 from olmo_core.exceptions import OLMoConfigurationError
 
 from . import Attention
+from .kv_cache import KVCacheManager
 from .landmark import repeat_kv
 from .landmark_sparse_kernel import (
     has_sparse_kernel,
@@ -143,23 +145,66 @@ class SparseLandmarkAttention(Attention):
         **kwargs,
     ):
         if kwargs.get("gate") is not None:
-            raise OLMoConfigurationError("SparseLandmarkAttention does not support attention gating")
+            raise OLMoConfigurationError(
+                "SparseLandmarkAttention does not support attention gating"
+            )
         if kwargs.get("window_size") is not None:
             raise OLMoConfigurationError(
                 "SparseLandmarkAttention does not support sliding window attention"
             )
         super().__init__(softmax_scale=softmax_scale, **kwargs)
         if mem_freq is None or mem_freq < 1:
-            raise OLMoConfigurationError(f"SparseLandmarkAttention requires mem_freq >= 1 (got {mem_freq})")
+            raise OLMoConfigurationError(
+                f"SparseLandmarkAttention requires mem_freq >= 1 (got {mem_freq})"
+            )
         if num_landmarks < 1:
             raise OLMoConfigurationError(f"num_landmarks must be >= 1 (got {num_landmarks})")
         self.mem_freq = mem_freq
         self.num_landmarks = num_landmarks
         self.block_size = mem_freq + num_landmarks
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
+        # Eval-decode state (set by the generation module for landmark HELMET/RULER-style eval). When
+        # ``_eval_prompt_len`` is not None, the decode step treats all post-prompt positions as one
+        # growing local block instead of continuing the fixed per-block structure. See
+        # :meth:`set_landmark_eval_decode`.
+        self._eval_prompt_len: Optional[int] = None
+        self._eval_decode_mode: str = "extend_last_block"
+
+    def set_landmark_eval_decode(self, prompt_len: int, mode: str = "extend_last_block") -> None:
+        """Enable "one long local block" decoding (see :class:`GenerationConfig.landmark_decode_mode`).
+
+        :param prompt_len: Length of the (landmark-inserted) prompt. Generated tokens occupy absolute
+            positions ``>= prompt_len`` and are never treated as landmarks.
+        :param mode: ``"extend_last_block"`` or ``"generation_only"``.
+        """
+        if mode not in ("extend_last_block", "generation_only"):
+            raise OLMoConfigurationError(
+                f"Unknown landmark decode mode {mode!r} "
+                "(expected 'extend_last_block' or 'generation_only')."
+            )
+        self._eval_prompt_len = prompt_len
+        self._eval_decode_mode = mode
+
+    def clear_landmark_eval_decode(self) -> None:
+        """Disable "one long local block" decoding, restoring the default per-block decode."""
+        self._eval_prompt_len = None
+
+    def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
+        # Sparse landmark attention implements its own cached prefill/decode in ``_forward_generate``
+        # (it does not route through the flash backend), so skip the backend KV-cache assertion.
+        self.kv_cache_manager = KVCacheManager(
+            batch_size=batch_size,
+            max_seq_len=max_seq_len,
+            num_kv_heads=self.n_kv_heads,
+            head_dim=self.head_dim,
+            device=self.w_k.weight.device,
+            dtype=self.w_k.weight.dtype,  # eager decode matmuls q against the cache directly
+        )
 
     def apply_cp(self, *args, **kwargs):
-        raise NotImplementedError("Context parallelism is not yet supported for SparseLandmarkAttention")
+        raise NotImplementedError(
+            "Context parallelism is not yet supported for SparseLandmarkAttention"
+        )
 
     @torch.compiler.disable
     def forward(
@@ -177,8 +222,18 @@ class SparseLandmarkAttention(Attention):
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if any(v is not None for v in (cu_doc_lens, cu_doc_lens_q, cu_doc_lens_k, max_doc_len,
-                                       max_doc_len_q, max_doc_len_k, local_k_slice)):
+        if any(
+            v is not None
+            for v in (
+                cu_doc_lens,
+                cu_doc_lens_q,
+                cu_doc_lens_k,
+                max_doc_len,
+                max_doc_len_q,
+                max_doc_len_k,
+                local_k_slice,
+            )
+        ):
             raise NotImplementedError(
                 "Intra-document masking (cu_doc_lens) is not supported with sparse landmark attention"
             )
@@ -300,10 +355,19 @@ class SparseLandmarkAttention(Attention):
         total = k.shape[2]
         L, G = self.block_size, self.num_landmarks
         j = torch.arange(total, device=q.device)
-        cq = qpos // L
-        ck = j // L
         is_lm = (j % L) >= (L - G)
-        allowed = ((ck == cq) & (j <= qpos)) | (is_lm & (ck < cq))  # (total,)
+
+        if self._eval_prompt_len is not None:
+            # Landmark eval mode: the generated query is part of "one long local block". It attends
+            # directly to the growing block ``[section_start, qpos]`` and reaches earlier prompt
+            # blocks only through their landmarks (generated positions are never landmarks).
+            P = self._eval_prompt_len
+            section_start = (P // L) * L if self._eval_decode_mode == "extend_last_block" else P
+            allowed = ((j >= section_start) & (j <= qpos)) | (is_lm & (j < section_start))
+        else:
+            cq = qpos // L
+            ck = j // L
+            allowed = ((ck == cq) & (j <= qpos)) | (is_lm & (ck < cq))  # (total,)
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
         scores = scores.masked_fill(~allowed.view(1, 1, 1, total), float("-inf"))
