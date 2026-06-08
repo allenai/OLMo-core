@@ -11,6 +11,7 @@ import torch
 
 from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.attention.landmark_kernel import has_landmark_kernel
 from olmo_core.nn.attention.landmark_sparse_kernel import has_sparse_kernel
 from olmo_core.nn.layer_norm import LayerNormConfig
@@ -47,8 +48,16 @@ def _check_decode_matches_full(attn, *, N, P, d_model, dtype, device, atol, rtol
         out_ref = attn(x)
 
         # Cached: single-shot prefill of the first P tokens, then decode the rest one at a time.
-        attn.init_kv_cache_manager(batch_size=1, max_seq_len=N)
-        attn.kv_cache_manager.reset(1, N)
+        # Build the cache with the test dtype (init_kv_cache_manager hardcodes bf16; in real
+        # generation the whole model is bf16, but here we want fp32 caches for the fp32 case).
+        attn.kv_cache_manager = KVCacheManager(
+            batch_size=1,
+            max_seq_len=N,
+            num_kv_heads=attn.n_kv_heads,
+            head_dim=attn.head_dim,
+            device=x.device,
+            dtype=x.dtype,
+        )
         chunks = [attn(x[:, :P])]
         for t in range(P, N):
             chunks.append(attn(x[:, t : t + 1]))
