@@ -564,9 +564,18 @@ class FastLandmarkAttention(Attention):
     ) -> torch.Tensor:
         """Single-query decode using the eager grouped-softmax reference (numerically matched to the
         training kernel). Query at absolute position ``qpos`` attends to cached keys ``0..total-1``
-        (all <= qpos, so causal masking is implicit)."""
-        total = k.shape[2]
+        (all <= qpos, so causal masking is implicit).
+
+        A landmark-position query (the inserted memory token, ``qpos % block_size == block_size-1``)
+        does not attend to itself: the training kernel decrements the causal bound on the last row of
+        a block, so the landmark token sees only its block's content tokens ``[block_start, qpos-1]``
+        plus past blocks via landmark gating. Drop the self key to match.
+        """
         Lb = self.block_size
+        if qpos % Lb == Lb - 1:
+            k = k[:, :, :qpos]  # keys 0..qpos-1 (drop the landmark's own position)
+            v = v[:, :, :qpos]
+        total = k.shape[2]
         j = torch.arange(total, device=q.device)
         is_mem = ((j % Lb) == (Lb - 1)).view(1, 1, 1, total)
         last_section = ((j // Lb) == (qpos // Lb)).view(1, 1, 1, total)
