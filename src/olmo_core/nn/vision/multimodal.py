@@ -7,22 +7,22 @@ import torch.nn as nn
 from olmo_core.config import Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer.config import TransformerConfig
-from olmo_core.nn.vision.config import VisionBackboneConfig
+from olmo_core.nn.vision.config import VisionEncoderConfig
 from olmo_core.nn.vision.connector import VisionConnectorConfig
 
 __all__ = [
-    "MultimodalTransformerConfig",
-    "MultimodalTransformer",
+    "MultimodalLMConfig",
+    "MultimodalLM",
 ]
 
 
 @dataclass
-class MultimodalTransformerConfig(Config):
+class MultimodalLMConfig(Config):
     """
     Configuration for a multimodal (vision-language) transformer.
 
     Composes a language model (:class:`~olmo_core.nn.transformer.TransformerConfig`),
-    a vision encoder (:class:`~olmo_core.nn.vision.VisionBackboneConfig`), and
+    a vision encoder (:class:`~olmo_core.nn.vision.VisionEncoderConfig`), and
     a vision-to-language connector
     (:class:`~olmo_core.nn.vision.VisionConnectorConfig`) into a single module
     that splices projected image features into the LM embedding stream.
@@ -30,9 +30,9 @@ class MultimodalTransformerConfig(Config):
     Example::
 
         lm_cfg = TransformerConfig.olmo2_1M(vocab_size=50000)
-        vis_cfg = VisionBackboneConfig()           # CLIP ViT-L/14-336
-        conn_cfg = VisionConnectorConfig.from_vision_backbone(vis_cfg, output_dim=lm_cfg.d_model)
-        cfg = MultimodalTransformerConfig(
+        vis_cfg = VisionEncoderConfig()           # CLIP ViT-L/14-336
+        conn_cfg = VisionConnectorConfig.from_vision_encoder(vis_cfg, output_dim=lm_cfg.d_model)
+        cfg = MultimodalLMConfig(
             lm=lm_cfg, vision=vis_cfg, connector=conn_cfg, image_patch_token_id=49152,
         )
         model = cfg.build()
@@ -41,7 +41,7 @@ class MultimodalTransformerConfig(Config):
     lm: TransformerConfig
     """Language model configuration."""
 
-    vision: VisionBackboneConfig
+    vision: VisionEncoderConfig
     """Vision encoder configuration."""
 
     connector: VisionConnectorConfig
@@ -64,17 +64,17 @@ class MultimodalTransformerConfig(Config):
     requires :attr:`connector.num_input_layers` to be ``2``.
     """
 
-    def build(self, init_device: str = "cpu") -> "MultimodalTransformer":
+    def build(self, init_device: str = "cpu") -> "MultimodalLM":
         """
         Instantiate the multimodal model on ``init_device``.
 
         :param init_device: Device string (e.g. ``"cpu"``, ``"meta"``).
-        :returns: A :class:`MultimodalTransformer`.
+        :returns: A :class:`MultimodalLM`.
         """
-        return MultimodalTransformer(self, init_device=init_device)
+        return MultimodalLM(self, init_device=init_device)
 
 
-class MultimodalTransformer(nn.Module):
+class MultimodalLM(nn.Module):
     """
     Vision-language model: vision encoder + connector + language model.
 
@@ -93,7 +93,7 @@ class MultimodalTransformer(nn.Module):
     :param init_device: Device on which to initialise parameters.
     """
 
-    def __init__(self, cfg: MultimodalTransformerConfig, init_device: str = "cpu"):
+    def __init__(self, cfg: MultimodalLMConfig, init_device: str = "cpu"):
         super().__init__()
         self.cfg = cfg
         self.lm = cfg.lm.build(init_device=init_device)
@@ -161,7 +161,7 @@ class MultimodalTransformer(nn.Module):
         """
         assert (
             self.lm.embeddings is not None
-        ), "MultimodalTransformer requires the LM to have an embedding table"
+        ), "MultimodalLM requires the LM to have an embedding table"
 
         device = self.lm.device
         input_ids = input_ids.to(device)

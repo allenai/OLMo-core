@@ -8,14 +8,14 @@ from olmo_core.config import DType, StrEnum
 from olmo_core.nn.config import ModuleConfig
 
 __all__ = [
-    "VisionBackboneType",
+    "VisionEncoderType",
     "VisionBlockType",
     "VisionBlockConfig",
-    "VisionBackboneConfig",
+    "VisionEncoderConfig",
 ]
 
 
-class VisionBackboneType(StrEnum):
+class VisionEncoderType(StrEnum):
     """
     An enumeration of supported vision encoder architectures.
     """
@@ -31,13 +31,13 @@ class VisionBackboneType(StrEnum):
     """
     SigLIP-style encoder (no CLS token).
     Default config matches SigLIP-SO400M-14-378.
-    ➡️ :class:`~olmo_core.nn.vision.SiglipVisionTransformer`
+    ➡️ :class:`~olmo_core.nn.vision.VisionTransformer`
     """
 
     siglip2 = "siglip2"
     """
     SigLIP2-style encoder (no CLS token; same architecture as SigLIP, improved training).
-    ➡️ :class:`~olmo_core.nn.vision.SiglipVisionTransformer`
+    ➡️ :class:`~olmo_core.nn.vision.VisionTransformer`
     """
 
 
@@ -64,18 +64,18 @@ class VisionBlockConfig(ModuleConfig):
     :attr:`VisionBlockType.standard` is available; additional block variants can be
     registered here as they are added.
 
-    The block reads its layer dimensions from the parent :class:`VisionBackboneConfig`
+    The block reads its layer dimensions from the parent :class:`VisionEncoderConfig`
     passed to :meth:`build`.
     """
 
     name: VisionBlockType = VisionBlockType.standard
     """The vision block implementation to use."""
 
-    def build(self, cfg: "VisionBackboneConfig", init_device: str = "cpu") -> nn.Module:
+    def build(self, cfg: "VisionEncoderConfig", init_device: str = "cpu") -> nn.Module:
         """
         Instantiate the block.
 
-        :param cfg: The parent vision backbone configuration supplying layer dimensions.
+        :param cfg: The parent vision encoder configuration supplying layer dimensions.
         :param init_device: Device on which to initialise parameters.
         :returns: A :class:`~olmo_core.nn.vision.ViTBlock` instance.
         """
@@ -88,7 +88,7 @@ class VisionBlockConfig(ModuleConfig):
 
 
 @dataclass
-class VisionBackboneConfig(ModuleConfig):
+class VisionEncoderConfig(ModuleConfig):
     """
     Configuration for a vision transformer encoder.
 
@@ -98,7 +98,7 @@ class VisionBackboneConfig(ModuleConfig):
     ==========================================  =======================
     Factory                                     Checkpoint
     ==========================================  =======================
-    :meth:`VisionBackboneConfig`                CLIP ViT-L/14-336
+    :meth:`VisionEncoderConfig`                CLIP ViT-L/14-336
     :meth:`siglip_b16_224`                      SigLIP B/16-224
     :meth:`siglip_l16_384`                      SigLIP L/16-384
     :meth:`siglip_so400m_patch14_224`           SigLIP SO400M/14-224
@@ -111,14 +111,14 @@ class VisionBackboneConfig(ModuleConfig):
 
     Example usage::
 
-        cfg = VisionBackboneConfig()           # CLIP ViT-L/14-336
-        cfg = VisionBackboneConfig.siglip2_so400m_patch14_378()
+        cfg = VisionEncoderConfig()           # CLIP ViT-L/14-336
+        cfg = VisionEncoderConfig.siglip2_so400m_patch14_378()
         vit = cfg.build(init_device="cpu")
         # images: (B, n_patches, patch_size**2 * 3)  -- pre-patchified
         # outputs: list of per-layer hidden states
     """
 
-    name: VisionBackboneType = VisionBackboneType.openai
+    name: VisionEncoderType = VisionEncoderType.openai
     """The vision encoder architecture."""
 
     image_default_input_size: Tuple[int, int] = (336, 336)
@@ -167,6 +167,24 @@ class VisionBackboneConfig(ModuleConfig):
     residual_dropout: float = 0.0
     """Dropout probability applied after the attention output projection."""
 
+    use_cls_token: bool = True
+    """
+    Whether to prepend a learnable CLS token (CLIP-style). SigLIP-style encoders set
+    this to ``False``.
+    """
+
+    patch_embedding_bias: bool = False
+    """
+    Whether the patch-embedding projection has a bias term. CLIP omits it; SigLIP
+    includes it.
+    """
+
+    use_pre_ln: bool = True
+    """
+    Whether a LayerNorm is applied to the embeddings before the transformer blocks
+    (CLIP-style). SigLIP-style encoders set this to ``False``.
+    """
+
     block: VisionBlockConfig = field(default_factory=VisionBlockConfig)
     """
     Configuration selecting the transformer block implementation. Defaults to the
@@ -192,11 +210,14 @@ class VisionBackboneConfig(ModuleConfig):
     @classmethod
     def siglip_b16_224(cls) -> Self:
         """
-        Returns a :class:`VisionBackboneConfig` matching SigLIP ViT-B/16-224
+        Returns a :class:`VisionEncoderConfig` matching SigLIP ViT-B/16-224
         (``google/siglip-base-patch16-224``).
         """
         return cls(
-            name=VisionBackboneType.siglip,
+            name=VisionEncoderType.siglip,
+            use_cls_token=False,
+            patch_embedding_bias=True,
+            use_pre_ln=False,
             image_default_input_size=(224, 224),
             image_patch_size=16,
             image_emb_dim=768,
@@ -213,11 +234,14 @@ class VisionBackboneConfig(ModuleConfig):
     @classmethod
     def siglip_l16_384(cls) -> Self:
         """
-        Returns a :class:`VisionBackboneConfig` matching SigLIP ViT-L/16-384
+        Returns a :class:`VisionEncoderConfig` matching SigLIP ViT-L/16-384
         (``google/siglip-large-patch16-384``).
         """
         return cls(
-            name=VisionBackboneType.siglip,
+            name=VisionEncoderType.siglip,
+            use_cls_token=False,
+            patch_embedding_bias=True,
+            use_pre_ln=False,
             image_default_input_size=(384, 384),
             image_patch_size=16,
             image_emb_dim=1024,
@@ -234,11 +258,14 @@ class VisionBackboneConfig(ModuleConfig):
     @classmethod
     def siglip_so400m_patch14_224(cls) -> Self:
         """
-        Returns a :class:`VisionBackboneConfig` matching SigLIP SO400M/14-224
+        Returns a :class:`VisionEncoderConfig` matching SigLIP SO400M/14-224
         (``google/siglip-so400m-patch14-224``).
         """
         return cls(
-            name=VisionBackboneType.siglip,
+            name=VisionEncoderType.siglip,
+            use_cls_token=False,
+            patch_embedding_bias=True,
+            use_pre_ln=False,
             image_default_input_size=(224, 224),
             image_patch_size=14,
             image_emb_dim=1152,
@@ -255,11 +282,14 @@ class VisionBackboneConfig(ModuleConfig):
     @classmethod
     def siglip_so400m(cls) -> Self:
         """
-        Returns a :class:`VisionBackboneConfig` matching SigLIP SO400M/14-378
+        Returns a :class:`VisionEncoderConfig` matching SigLIP SO400M/14-378
         (``google/siglip-so400m-patch14-378``).
         """
         return cls(
-            name=VisionBackboneType.siglip,
+            name=VisionEncoderType.siglip,
+            use_cls_token=False,
+            patch_embedding_bias=True,
+            use_pre_ln=False,
             image_default_input_size=(378, 378),
             image_patch_size=14,
             image_emb_dim=1152,
@@ -280,11 +310,14 @@ class VisionBackboneConfig(ModuleConfig):
     @classmethod
     def siglip2_b16_256(cls) -> Self:
         """
-        Returns a :class:`VisionBackboneConfig` matching SigLIP2 ViT-B/16-256
+        Returns a :class:`VisionEncoderConfig` matching SigLIP2 ViT-B/16-256
         (``google/siglip2-base-patch16-256``).
         """
         return cls(
-            name=VisionBackboneType.siglip2,
+            name=VisionEncoderType.siglip2,
+            use_cls_token=False,
+            patch_embedding_bias=True,
+            use_pre_ln=False,
             image_default_input_size=(256, 256),
             image_patch_size=16,
             image_emb_dim=768,
@@ -301,11 +334,14 @@ class VisionBackboneConfig(ModuleConfig):
     @classmethod
     def siglip2_l16_256(cls) -> Self:
         """
-        Returns a :class:`VisionBackboneConfig` matching SigLIP2 ViT-L/16-256
+        Returns a :class:`VisionEncoderConfig` matching SigLIP2 ViT-L/16-256
         (``google/siglip2-large-patch16-256``).
         """
         return cls(
-            name=VisionBackboneType.siglip2,
+            name=VisionEncoderType.siglip2,
+            use_cls_token=False,
+            patch_embedding_bias=True,
+            use_pre_ln=False,
             image_default_input_size=(256, 256),
             image_patch_size=16,
             image_emb_dim=1024,
@@ -322,11 +358,14 @@ class VisionBackboneConfig(ModuleConfig):
     @classmethod
     def siglip2_so400m_patch14_378(cls) -> Self:
         """
-        Returns a :class:`VisionBackboneConfig` matching SigLIP2 SO400M/14-378
+        Returns a :class:`VisionEncoderConfig` matching SigLIP2 SO400M/14-378
         (``google/siglip2-so400m-patch14-378``).
         """
         return cls(
-            name=VisionBackboneType.siglip2,
+            name=VisionEncoderType.siglip2,
+            use_cls_token=False,
+            patch_embedding_bias=True,
+            use_pre_ln=False,
             image_default_input_size=(378, 378),
             image_patch_size=14,
             image_emb_dim=1152,
@@ -343,11 +382,14 @@ class VisionBackboneConfig(ModuleConfig):
     @classmethod
     def siglip2_so400m_patch16_256(cls) -> Self:
         """
-        Returns a :class:`VisionBackboneConfig` matching SigLIP2 SO400M/16-256
+        Returns a :class:`VisionEncoderConfig` matching SigLIP2 SO400M/16-256
         (``google/siglip2-so400m-patch16-256``).
         """
         return cls(
-            name=VisionBackboneType.siglip2,
+            name=VisionEncoderType.siglip2,
+            use_cls_token=False,
+            patch_embedding_bias=True,
+            use_pre_ln=False,
             image_default_input_size=(256, 256),
             image_patch_size=16,
             image_emb_dim=1152,
@@ -366,14 +408,9 @@ class VisionBackboneConfig(ModuleConfig):
         Instantiate the vision encoder on ``init_device``.
 
         :param init_device: Device string (e.g. ``"cpu"``, ``"meta"``).
-        :returns: A :class:`~olmo_core.nn.vision.VisionTransformer` or
-            :class:`~olmo_core.nn.vision.SiglipVisionTransformer` instance.
+        :returns: A :class:`~olmo_core.nn.vision.VisionTransformer` instance configured
+            for the selected encoder variant.
         """
-        from .image_vit import SiglipVisionTransformer, VisionTransformer
+        from .image_vit import VisionTransformer
 
-        if self.name == VisionBackboneType.openai:
-            return VisionTransformer(self, init_device=init_device)
-        elif self.name in (VisionBackboneType.siglip, VisionBackboneType.siglip2):
-            return SiglipVisionTransformer(self, init_device=init_device)
-        else:
-            raise NotImplementedError(f"Vision backbone type '{self.name}' is not supported.")
+        return VisionTransformer(self, init_device=init_device)

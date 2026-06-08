@@ -3,10 +3,10 @@ Vision encoder modules for multimodal (VLM) training.
 """
 
 from .config import (
-    VisionBackboneConfig,
-    VisionBackboneType,
     VisionBlockConfig,
     VisionBlockType,
+    VisionEncoderConfig,
+    VisionEncoderType,
 )
 from .connector import (
     ImagePoolingType,
@@ -14,29 +14,22 @@ from .connector import (
     VisionConnector,
     VisionConnectorConfig,
 )
-from .image_vit import (
-    SiglipVisionTransformer,
-    VisionTransformer,
-    ViTAttention,
-    ViTBlock,
-    ViTMLP,
-)
-from .multimodal import MultimodalTransformer, MultimodalTransformerConfig
+from .image_vit import VisionTransformer, ViTAttention, ViTBlock, ViTMLP
+from .multimodal import MultimodalLM, MultimodalLMConfig
 
 __all__ = [
-    "VisionBackboneType",
-    "VisionBackboneConfig",
+    "VisionEncoderType",
+    "VisionEncoderConfig",
     "VisionBlockType",
     "VisionBlockConfig",
     "ViTAttention",
     "ViTMLP",
     "ViTBlock",
     "VisionTransformer",
-    "SiglipVisionTransformer",
     "ImagePoolingType",
     "ImageProjectorType",
     "VisionConnectorConfig",
     "VisionConnector",
-    "MultimodalTransformerConfig",
-    "MultimodalTransformer",
+    "MultimodalLMConfig",
+    "MultimodalLM",
 ]

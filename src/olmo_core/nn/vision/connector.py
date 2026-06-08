@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.nn.config import ModuleConfig
-from olmo_core.nn.vision.config import VisionBackboneConfig
+from olmo_core.nn.vision.config import VisionEncoderConfig
 
 __all__ = [
     "ImagePoolingType",
@@ -183,12 +183,12 @@ class VisionConnectorConfig(ModuleConfig):
     preprocessor (which builds ``pooled_patches_idx``). The connector only
     needs to know the pooling and projection style.
 
-    Use :meth:`from_vision_backbone` to build a config from a
-    :class:`~olmo_core.nn.vision.VisionBackboneConfig` and an LM ``d_model``.
+    Use :meth:`from_vision_encoder` to build a config from a
+    :class:`~olmo_core.nn.vision.VisionEncoderConfig` and an LM ``d_model``.
     """
 
     image_emb_dim: int = 1024
-    """Vision encoder hidden dimension (from :attr:`VisionBackboneConfig.image_emb_dim`)."""
+    """Vision encoder hidden dimension (from :attr:`VisionEncoderConfig.image_emb_dim`)."""
 
     image_num_heads: int = 16
     """Number of attention heads for pooling cross-attention."""
@@ -235,18 +235,18 @@ class VisionConnectorConfig(ModuleConfig):
     """Default parameter dtype."""
 
     @classmethod
-    def from_vision_backbone(
+    def from_vision_encoder(
         cls,
-        vision_cfg: VisionBackboneConfig,
+        vision_cfg: VisionEncoderConfig,
         output_dim: int,
         num_input_layers: int = 1,
         **kwargs,
     ) -> "VisionConnectorConfig":
         """
         Convenience factory that copies attention hyperparameters from a
-        :class:`~olmo_core.nn.vision.VisionBackboneConfig`.
+        :class:`~olmo_core.nn.vision.VisionEncoderConfig`.
 
-        :param vision_cfg: Vision backbone configuration.
+        :param vision_cfg: Vision encoder configuration.
         :param output_dim: LM ``d_model``.
         :param num_input_layers: Number of ViT layer outputs to concatenate
             before pooling (default 1 = last layer only).

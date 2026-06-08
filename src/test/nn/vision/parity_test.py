@@ -16,9 +16,8 @@ import pytest
 import torch
 
 from olmo_core.nn.vision import (
-    SiglipVisionTransformer,
-    VisionBackboneConfig,
-    VisionBackboneType,
+    VisionEncoderConfig,
+    VisionEncoderType,
     VisionTransformer,
 )
 
@@ -169,8 +168,8 @@ def test_clip_parity():
     """
     hf = _try_load_hf(transformers.CLIPVisionModel, "openai/clip-vit-large-patch14-336")
 
-    cfg = VisionBackboneConfig(image_num_layers=24)  # match HF's 24-layer checkpoint
-    assert cfg.name == VisionBackboneType.openai
+    cfg = VisionEncoderConfig(image_num_layers=24)  # match HF's 24-layer checkpoint
+    assert cfg.name == VisionEncoderType.openai
     ours = VisionTransformer(cfg, init_device="cpu").eval()
     ours.load_state_dict(_convert_clip_state_dict(hf.state_dict()))
 
@@ -195,10 +194,10 @@ def test_clip_parity():
 
 
 def test_siglip_parity():
-    """Our :class:`SiglipVisionTransformer` matches HF's ``SiglipVisionModel``.
+    """Our :class:`VisionTransformer` matches HF's ``SiglipVisionModel``.
 
     Uses ``google/siglip-so400m-patch14-384``, which truncates to a 27×27
-    patch grid (floor(384/14) = 27). Our :meth:`VisionBackboneConfig.siglip_so400m`
+    patch grid (floor(384/14) = 27). Our :meth:`VisionEncoderConfig.siglip_so400m`
     config uses input size 378 (= 27×14) to match the same 27×27 grid exactly.
 
     ``SiglipVisionModel`` exposes ``forward(pixel_values=…)`` directly; it does
@@ -206,8 +205,8 @@ def test_siglip_parity():
     """
     hf = _try_load_hf(transformers.SiglipVisionModel, "google/siglip-so400m-patch14-384")
 
-    cfg = VisionBackboneConfig.siglip_so400m()
-    ours = SiglipVisionTransformer(cfg, init_device="cpu").eval()
+    cfg = VisionEncoderConfig.siglip_so400m()
+    ours = VisionTransformer(cfg, init_device="cpu").eval()
     ours.load_state_dict(_convert_siglip_state_dict(hf.state_dict()))
 
     torch.manual_seed(0)
@@ -230,7 +229,7 @@ def test_siglip_parity():
 
 
 def test_siglip2_parity():
-    """Our :class:`SiglipVisionTransformer` matches HF's SigLIP2 checkpoint.
+    """Our :class:`VisionTransformer` matches HF's SigLIP2 checkpoint.
 
     Uses ``google/siglip2-so400m-patch14-384``.  Despite the "384" in the
     model ID, both 378×378 and 384×384 inputs produce a 27×27 patch grid
@@ -243,8 +242,8 @@ def test_siglip2_parity():
     """
     hf = _try_load_hf(transformers.SiglipVisionModel, "google/siglip2-so400m-patch14-384")
 
-    cfg = VisionBackboneConfig.siglip2_so400m_patch14_378()
-    ours = SiglipVisionTransformer(cfg, init_device="cpu").eval()
+    cfg = VisionEncoderConfig.siglip2_so400m_patch14_378()
+    ours = VisionTransformer(cfg, init_device="cpu").eval()
     ours.load_state_dict(_convert_siglip_state_dict(hf.state_dict()))
 
     torch.manual_seed(0)

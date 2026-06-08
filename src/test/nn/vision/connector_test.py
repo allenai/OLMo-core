@@ -4,9 +4,9 @@ import torch
 from olmo_core.nn.vision import (
     ImagePoolingType,
     ImageProjectorType,
-    VisionBackboneConfig,
     VisionConnector,
     VisionConnectorConfig,
+    VisionEncoderConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -75,14 +75,14 @@ def _row_major_pooled_idx(
 # ---------------------------------------------------------------------------
 
 
-def test_from_vision_backbone():
-    vis_cfg = VisionBackboneConfig(
+def test_from_vision_encoder():
+    vis_cfg = VisionEncoderConfig(
         image_emb_dim=64,
         image_num_heads=4,
         image_num_key_value_heads=4,
         image_head_dim=16,
     )
-    conn_cfg = VisionConnectorConfig.from_vision_backbone(vis_cfg, output_dim=256)
+    conn_cfg = VisionConnectorConfig.from_vision_encoder(vis_cfg, output_dim=256)
     assert conn_cfg.image_emb_dim == 64
     assert conn_cfg.output_dim == 256
     assert conn_cfg.num_input_layers == 1
