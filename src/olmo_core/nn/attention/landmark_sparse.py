@@ -25,6 +25,7 @@ import os
 from typing import Optional
 
 import torch
+import torch.nn.functional as F
 
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -181,9 +182,12 @@ class SparseLandmarkAttention(Attention):
             raise NotImplementedError(
                 "Intra-document masking (cu_doc_lens) is not supported with sparse landmark attention"
             )
-        if cache_leftpad is not None or self.kv_cache_manager is not None:
+        # Generation path: incremental decode / prefill with a KV cache.
+        if self.kv_cache_manager is not None:
+            return self._forward_generate(x, pos_sin, pos_cos, freqs_cis, cache_leftpad)
+        if cache_leftpad is not None:
             raise NotImplementedError(
-                "KV-caching / generation is not supported with sparse landmark attention"
+                "cache_leftpad is only supported together with a KV cache manager"
             )
 
         B, T, _ = x.shape
@@ -200,15 +204,108 @@ class SparseLandmarkAttention(Attention):
         k = repeat_kv(k.transpose(1, 2), n_rep)
         v = repeat_kv(v.transpose(1, 2), n_rep)
 
-        # Fused Triton fwd+bwd kernel when available (much faster); eager torch fallback otherwise.
-        # Disable with LM_SPARSE_KERNEL=0.
-        if q.is_cuda and has_sparse_kernel() and os.environ.get("LM_SPARSE_KERNEL", "1") != "0":
-            att = sparse_landmark_attention_triton_train(
-                q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
-            )
-        else:
-            att = sparse_landmark_attention(
-                q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
-            )
+        att = self._attn_core(q, k, v)
         att = att.transpose(1, 2).contiguous().view(B, T, -1)
         return self.w_out(att)
+
+    def _attn_core(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """Sparse landmark self-attention on ``(B, H, T, D)`` with ``T`` a multiple of block_size.
+
+        Fused Triton fwd+bwd kernel when available (much faster); eager torch fallback otherwise.
+        Disable the kernel with ``LM_SPARSE_KERNEL=0``.
+        """
+        if q.is_cuda and has_sparse_kernel() and os.environ.get("LM_SPARSE_KERNEL", "1") != "0":
+            return sparse_landmark_attention_triton_train(
+                q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
+            )
+        return sparse_landmark_attention(
+            q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
+        )
+
+    def _forward_generate(
+        self,
+        x: torch.Tensor,
+        pos_sin: Optional[torch.Tensor],
+        pos_cos: Optional[torch.Tensor],
+        freqs_cis: Optional[torch.Tensor],
+        cache_leftpad: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Generation with a KV cache: single-shot prefill (T>1) or incremental decode (T==1).
+
+        Chunk boundaries follow absolute position, so generation must be left-pad free (the real
+        tokens of every sequence must start at absolute position 0) to stay aligned with training --
+        i.e. ``batch_size == 1`` for these evals. Batched left-padded generation is rejected.
+        """
+        kvm = self.kv_cache_manager
+        assert kvm is not None
+        if cache_leftpad is not None and bool(cache_leftpad.ne(0).any()):
+            raise NotImplementedError(
+                "Sparse landmark generation requires batch_size=1 / no left-padding "
+                "(chunk boundaries are tied to absolute position)."
+            )
+
+        B, T, _ = x.shape
+        start_pos = int(kvm.current_position())
+        q, k, v = self._prepare_qkv(
+            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
+        )
+
+        # Append this step's K/V (un-repeated, n_kv_heads) to the cache and advance the length.
+        kvm.k_cache[:, start_pos : start_pos + T].copy_(k)
+        kvm.v_cache[:, start_pos : start_pos + T].copy_(v)
+        kvm.update_seqlen(T)
+        total = start_pos + T
+
+        n_rep = q.shape[2] // k.shape[2]
+        qh = q.transpose(1, 2)  # (B, H, T, D)
+
+        if T == 1:
+            kh = repeat_kv(kvm.k_cache[:, :total].transpose(1, 2), n_rep)  # (B, H, total, D)
+            vh = repeat_kv(kvm.v_cache[:, :total].transpose(1, 2), n_rep)
+            att = self._decode_one(qh, kh, vh, start_pos)
+        else:
+            if start_pos != 0:
+                raise NotImplementedError(
+                    "Sparse landmark multi-token forward with a non-empty cache is not supported "
+                    "(only single-shot prefill from position 0)."
+                )
+            kh = repeat_kv(k.transpose(1, 2), n_rep)
+            vh = repeat_kv(v.transpose(1, 2), n_rep)
+            att = self._prefill(qh, kh, vh)
+
+        att = att.transpose(1, 2).contiguous().view(B, T, -1)
+        return self.w_out(att)
+
+    def _prefill(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """Prefill attention over an arbitrary-length prompt by right-padding to a multiple of
+        block_size and reusing the self-attention core. Padding tokens are appended after the prompt,
+        so causal/own-chunk masking never lets a real query attend to them; their outputs are sliced off.
+        """
+        T = q.shape[2]
+        pad = (-T) % self.block_size
+        if pad:
+            q = F.pad(q, (0, 0, 0, pad))
+            k = F.pad(k, (0, 0, 0, pad))
+            v = F.pad(v, (0, 0, 0, pad))
+        att = self._attn_core(q, k, v)
+        return att[:, :, :T]
+
+    def _decode_one(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, qpos: int
+    ) -> torch.Tensor:
+        """Single-query decode: query at absolute position ``qpos`` attends to cached keys
+        ``0..total-1`` under the sparse-landmark rule (own-chunk causal + past-chunk landmarks).
+        Equivalent to row ``qpos`` of :func:`sparse_landmark_attention_ref`.
+        """
+        total = k.shape[2]
+        L, G = self.block_size, self.num_landmarks
+        j = torch.arange(total, device=q.device)
+        cq = qpos // L
+        ck = j // L
+        is_lm = (j % L) >= (L - G)
+        allowed = ((ck == cq) & (j <= qpos)) | (is_lm & (ck < cq))  # (total,)
+
+        scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
+        scores = scores.masked_fill(~allowed.view(1, 1, 1, total), float("-inf"))
+        p = torch.softmax(scores, dim=-1)
+        return torch.matmul(p, v)
