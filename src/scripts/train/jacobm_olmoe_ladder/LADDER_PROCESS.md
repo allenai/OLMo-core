@@ -20,6 +20,8 @@ search.
 Model sizes in this lineage:
 
 - `275m`: current architecture search scale, about 278M active params.
+- `mid_480m`: planned midpoint rung, estimated around 480M active params and
+  about 2.6B total params before smoke-test confirmation.
 - `810m`: first larger baseline, same MoE structure, EP=1 preferred.
 - `1p2b`: prepared and smoke-tested, but do not launch full LR probes without
   explicit approval.
@@ -160,6 +162,12 @@ pretending the estimate is exact. The first 810M Cx1 pilot uses `1.6e-3`; final
 810M sweep choices can ignore or include that pilot depending on when the 275M
 Cx8/Cx16 brackets finish.
 
+The initial `alpha=-0.25` prior was too warm once the real 810M points landed.
+Current 275M-to-810M evidence implies a cooler model-size transfer, roughly
+`alpha ~= -1.0` when using active params including embeddings, or `alpha ~= -0.9`
+with active non-embedding params. Continue using the measured larger-model
+points to update transfer before launching dependent rungs.
+
 ## Moving To The Next Rung
 
 Move on from a rung when:
@@ -186,6 +194,51 @@ Keep architecture fixed for larger baseline checks:
 - `shared_mlp_hidden_size = d_model / 2`
 - one dense prefix layer
 - GQA with `n_kv_heads = n_heads // 2`
+
+Midpoint / `mid_480m`:
+
+- Add a midpoint rung because the dense ladder source of truth now includes a
+  mid-size model, and the extra point should improve transfer fits.
+- This midpoint is not required to land exactly on a "450M" name. The goal is a
+  real middle point between the current 275M and 810M active-parameter rungs.
+- Planned shape:
+  - `d_model=1024`
+  - `d_attn=1024`
+  - `n_layers=16`
+  - `n_heads=8`
+  - `n_kv_heads=4`
+  - `head_dim=128`
+  - `num_experts=48`
+  - `top_k=4`
+  - `moe_hidden_size=1024`
+  - `num_shared_experts=1`
+  - `shared_mlp_hidden_size=512`
+  - `dense_prefix_layers=1`
+  - `dense_layer_mlp=4608`
+- Estimated counts before smoke-test confirmation:
+  - active params including embeddings/head: about 480M
+  - active non-embedding params: about 275M
+  - total params including all experts: about 2.6B
+- Smoke-test first to confirm exact params, no OOM, skipped steps 0, W&B logging,
+  and acceptable throughput. Start with `gpu4-ep1mb8`; if it OOMs, fall back to
+  `micro_batch_size=4`, and if it has obvious memory headroom, consider
+  `micro_batch_size=16`.
+- Once the smoke passes, launch midpoint Cx1/Cx2/Cx4 together because they are
+  cheap enough to run overnight and provide immediate transfer value.
+- Planned midpoint settings and initial LR grids:
+
+| Cx | Batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch | LR grid |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 262,144 | 32 | 4 | 1 | 8 | `6e-4`, `1.2e-3`, `2.4e-3` |
+| 2 | 524,288 | 64 | 4 | 1 | 8 | `3e-4`, `6e-4`, `1.2e-3` |
+| 4 | 524,288 | 64 | 4 | 1 | 8 | `4e-4`, `8e-4`, `1.6e-3` |
+
+- These LRs are coefficient-informed, not arbitrary: they interpolate between
+  the completed 275M fitted optima and 810M observed/fitted optima under the
+  updated cooler transfer rule.
+- If Cx1/Cx2/Cx4 bracket cleanly and the predictions hold, extend the midpoint
+  to Cx8 and Cx16 using 3-point centered sweeps from the refit rule. Do not
+  settle those higher-Cx LRs until the midpoint Cx1/Cx2/Cx4 results are in.
 
 810M:
 

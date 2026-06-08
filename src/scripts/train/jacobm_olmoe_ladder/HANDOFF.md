@@ -74,6 +74,10 @@ Despite the filename, this script now supports all current baseline sizes:
 
 - `275m`: current tiny MoE baseline, about 278M active including embeddings
   and about 1.13B total params.
+- `mid_480m`: planned midpoint baseline rung, not yet implemented/smoked. The
+  intended shape is 16 layers at `d_model=1024`, with the same 48E/top-4 MoE A0
+  recipe. Estimated counts before smoke-test confirmation are about 480M active
+  including embeddings/head and about 2.6B total params.
 - `810m`: about 817M active including embeddings and about 4.93B total params.
 - `1p2b`: about 1.22B active including embeddings and about 7.76B total params.
 
@@ -117,6 +121,8 @@ Canonical settings currently in use:
 | 275M | 4 | 524,288 | 64 | 4 | 1 | 16 | Canonical final family. |
 | 275M | 8 | 786,432 | 96 | 4 | 1 | 8 | Used after increasing Cx8 GPU count. |
 | 275M | 16 | 1,048,576 | 128 | 8 | 1 | 16 | Used to finish Cx16 faster. |
+| Midpoint | 1 | 262,144 | 32 | 4 | 1 | 8 | Planned smoke/launch setting; fall back to mbz=4 if needed. |
+| Midpoint | 2/4 | 524,288 | 64 | 4 | 1 | 8 | Planned Cx2/Cx4 setting after smoke. |
 | 810M | 1 | 262,144 | 32 | 4 | 1 | 4 | Completed Cx1 family. |
 | 810M | 2/4 | 524,288 | 64 | 8 | 1 | 4 | Cx2 queued; Cx4 completed. |
 | 810M | 8 | 786,432 | 96 | 8 | 1 | 4 | Currently running. |
