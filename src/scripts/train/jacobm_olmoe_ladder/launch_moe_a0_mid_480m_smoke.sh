@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
-RUN_PREFIX="olmoe3-moe-a0-mid-480m-smoke"
+RUN_PREFIX="m480-smoke"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-moe-a0-mid-480m-smoke-launch-logs}"
 JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
@@ -13,14 +13,14 @@ MICRO_BSZ="${MICRO_BSZ:-8}"
 GLOBAL_BATCH_SIZE_SEQ=32
 CHINCHILLA_MULTIPLE="${CHINCHILLA_MULTIPLE:-0.02}"
 LR="${LR:-1.2e-3}"
-LR_TAG="${LR_TAG:-lr1.2e-3}"
-SMOKE_SUFFIX="${SMOKE_SUFFIX:-r1}"
+LR_TAG="${LR_TAG:-lr12}"
+SMOKE_SUFFIX="${SMOKE_SUFFIX:-r2}"
 EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
 
 mkdir -p "${LOG_DIR}"
 
 perf_tag="gpu${GPUS}-ep${EP_DIM}mb${MICRO_BSZ}"
-name="${RUN_PREFIX}-b256k-${perf_tag}-${LR_TAG}-${SMOKE_SUFFIX}"
+name="${RUN_PREFIX}-${perf_tag}-${LR_TAG}-${SMOKE_SUFFIX}"
 log_path="${LOG_DIR}/${name}.log"
 
 common_beaker_args=(
@@ -57,7 +57,7 @@ cmd=(
   --save-interval=999999999
   --ephemeral-save-interval="${EPHEMERAL_SAVE_INTERVAL}"
   --no-pre-train-checkpoint
-  --tag="${LR_TAG}-mid-480m-smoke-b256k-${perf_tag}-${SMOKE_SUFFIX}"
+  --tag="${LR_TAG}-m480-smk-${perf_tag}-${SMOKE_SUFFIX}"
 )
 
 echo "Launching ${name}..."
