@@ -22,10 +22,11 @@ python src/scripts/train/OLMo_hybrid/OLMo-hybrid-7B-sft-think-train.py launch \
     --dataset_path="${DATASET_PATH}" \
     --seq_len="${SEQ_LEN}" \
     --num_nodes="${NUM_NODES}" \
-    --budget=ai2/oe-omai \
-    --workspace=ai2/oe-science \
+    --budget=ai2/oe-other \
+    --workspace=ai2/olmo-instruct \
     --launch.num_gpus=8 \
     --launch.priority=urgent \
+    --launch.follow=false \
     --train_module.optim.lr="${LEARNING_RATE}" \
     --trainer.callbacks.wandb.enabled=True \
     --trainer.max_duration.value=2
