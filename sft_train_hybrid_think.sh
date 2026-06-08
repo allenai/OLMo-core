@@ -7,12 +7,12 @@
 # (--train_module.optim.lr=..., --launch.priority=..., --trainer.callbacks.wandb.enabled=...).
 set -euo pipefail
 
-BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-long-context-drope/step23842
+BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-long-context-drope/step23842/model_and_optim
 DATASET_PATH=/weka/oe-training-default/saumyam/Dolci-Think-SFT-32B-75pct-olmo-tokenizer
 CLUSTER=ai2/jupiter
 LEARNING_RATE=1e-4
 SEQ_LEN=32768
-NUM_NODES=4
+NUM_NODES=1
 RUN_NAME=olmo-7b-hybrid-75pct-mix-lr-${LEARNING_RATE}
 
 python src/scripts/train/OLMo_hybrid/OLMo-hybrid-7B-sft-think-train.py launch \
