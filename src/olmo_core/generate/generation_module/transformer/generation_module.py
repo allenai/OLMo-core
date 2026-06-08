@@ -555,6 +555,7 @@ class TransformerGenerationModule(GenerationModule):
 
         # Load transformer config from checkpoint if not provided
         tokenizer_config = None
+        checkpoint_landmark_mem_id: Optional[int] = None
         if transformer_config is None and get_rank(process_group) == 0:
             config_path = join_path(checkpoint_dir, "config.json")
             with cached_path(config_path).open() as f:
@@ -578,14 +579,23 @@ class TransformerGenerationModule(GenerationModule):
             except (KeyError, TypeError):
                 tokenizer_config = None
 
+            # For composable data pipelines the dataset field is a list of InstanceSourceConfig
+            # dicts; a LandmarkInstanceSourceConfig carries `mem_id` at the top level.
+            dataset_cfg = config_dict.get("dataset")
+            if isinstance(dataset_cfg, list):
+                for src in dataset_cfg:
+                    if isinstance(src, dict) and "mem_id" in src:
+                        checkpoint_landmark_mem_id = int(src["mem_id"])
+                        break
+
         # Create work directory on rank 0
         work_dir = Path(
             work_dir or (tempfile.mkdtemp() if get_rank(process_group) == 0 else "/tmp")
         )
 
         # Broadcast config and work_dir to all ranks
-        transformer_config, work_dir, tokenizer_config = broadcast_object(
-            (transformer_config, work_dir, tokenizer_config)
+        transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id = (
+            broadcast_object((transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id))
         )
 
         if transformer_config is None:
@@ -603,10 +613,23 @@ class TransformerGenerationModule(GenerationModule):
             generation_config = GenerationConfig(
                 pad_token_id=tokenizer_config.pad_token_id,
                 eos_token_id=tokenizer_config.eos_token_id,
+                landmark_mem_id=checkpoint_landmark_mem_id,
             )
             log_or_print(
                 log,
                 f"No generation config provided, using defaults from checkpoint config: {generation_config}",
+            )
+
+        # Auto-fill landmark_mem_id from checkpoint config when the caller didn't set it.
+        if checkpoint_landmark_mem_id is not None and generation_config.landmark_mem_id is None:
+            import dataclasses
+
+            generation_config = dataclasses.replace(
+                generation_config, landmark_mem_id=checkpoint_landmark_mem_id
+            )
+            log_or_print(
+                log,
+                f"Auto-filled landmark_mem_id={checkpoint_landmark_mem_id} from checkpoint config",
             )
 
         # Build model and generation module
