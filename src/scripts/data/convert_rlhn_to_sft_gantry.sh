@@ -45,6 +45,7 @@ gantry run \
   --gpus 0 \
   --priority "${PRIORITY}" \
   --shared-memory 32GiB \
+  --timeout 0 \
   --env-secret "HF_TOKEN=${HF_SECRET}" \
   --env HF_HUB_ENABLE_HF_TRANSFER=1 \
   --env TOKENIZERS_PARALLELISM=true \
