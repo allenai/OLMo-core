@@ -712,6 +712,7 @@ class Transformer(nn.Module):
         block_interval: Optional[int] = None,
         modules: Optional[List[str]] = None,
         activation_memory_budget: Optional[float] = None,
+        determinism_check: str = "default",
     ):
         """
         Apply activation checkpointing to the model.
@@ -725,6 +726,8 @@ class Transformer(nn.Module):
             [0, 1]. 0 corresponds to the memory usage when recomputing all activations, and 1
             corresponds to the memory usage when recomputing no activations (which is the default).
             Requires compilation to be enabled.
+        :param determinism_check: Passed through to torch's ``checkpoint_wrapper``. "default" compares
+            forward vs. recompute tensor metadata; "none" skips the check.
         """
 
         if mode == TransformerActivationCheckpointingMode.budget:
@@ -775,7 +778,11 @@ class Transformer(nn.Module):
                     continue
 
                 parent = self if not parent_name else self.get_submodule(parent_name)
-                module = ptd_checkpoint_wrapper(module, preserve_rng_state=preserve_rng_state)
+                module = ptd_checkpoint_wrapper(
+                    module,
+                    preserve_rng_state=preserve_rng_state,
+                    determinism_check=determinism_check,
+                )
                 parent.register_module(name.split(".")[-1], module)
                 log.info(f"Wrapped '{name}' for activation checkpointing")
                 wrapped_modules.add(name)
@@ -788,18 +795,27 @@ class Transformer(nn.Module):
                             raise OLMoConfigurationError(
                                 "Wrapping MoE blocks for activation checkpointing is not supported."
                             )
-                        block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                        block = ptd_checkpoint_wrapper(
+                            block,
+                            preserve_rng_state=preserve_rng_state,
+                            determinism_check=determinism_check,
+                        )
                 elif mode == TransformerActivationCheckpointingMode.full:
                     if isinstance(block, MoETransformerBlock):
                         raise OLMoConfigurationError(
                             "Wrapping MoE blocks for activation checkpointing is not supported."
                         )
-                    block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                    block = ptd_checkpoint_wrapper(
+                        block,
+                        preserve_rng_state=preserve_rng_state,
+                        determinism_check=determinism_check,
+                    )
                 elif mode == TransformerActivationCheckpointingMode.selected_ops:
                     block = ptd_checkpoint_wrapper(
                         block,
                         context_fn=selective_checkpointing_context_fn,
                         preserve_rng_state=preserve_rng_state,
+                        determinism_check=determinism_check,
                     )
 
                 self.blocks.register_module(str(block_idx), block)
