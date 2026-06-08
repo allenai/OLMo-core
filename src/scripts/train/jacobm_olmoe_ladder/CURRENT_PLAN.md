@@ -78,45 +78,32 @@ Ignore unless explicitly resumed:
 - Cancelled 810M Cx8 `1e-4`
 - Cancelled 1.2B Cx4 `1.2e-3`
 
-Monitor midpoint smoke:
+Midpoint smoke status:
 
-- Beaker: https://beaker.org/ex/01KTMJY87YW09KHB4H6ERGZQ4K
-- Name: `olmoe3-moe-a0-mid-480m-smoke-b256k-gpu4-ep1mb8-lr1.2e-3-r1`
-- Fresh job: `01KTMJY8HEXVFS5T6MT2G1CNNZ`
+- Original long-name smoke `01KTMJY87YW09KHB4H6ERGZQ4K` failed before
+  training because the W&B group name exceeded 128 characters.
+- Short-name retry `01KTMM5YQTGA9TXKFYMF5NPB46`
+  (`m480-smoke-gpu4-ep1mb8-lr12-r2`) passed startup and was stopped
+  intentionally after validation.
+- The validated setting is `gpu4-ep1mb8`: skipped steps 0, loss decreasing,
+  and roughly 632-644 TFLOPs/GPU after warmup.
 
 ## Midpoint / `mid_480m`
 
-Current smoke settings:
+Validated settings:
 
 - `gpu4-ep1mb8`
 - EP=1
-- Cx `0.02`
-- LR `1.2e-3`
 - batch 262,144 tokens / `global_batch_size_seq=32`
-- no in-loop evals
+- full jobs use in-loop fast evals every 2000 steps
 
-Smoke success criteria:
-
-- exact params logged
-- no OOM
-- skipped steps 0
-- W&B logging
-- loss decreasing
-- checkpoint path correct
-- TFLOPs/GPU around the 600+ target
-
-If smoke OOMs, try `gpu4-ep1mb4`.
-
-If smoke has obvious memory headroom, consider whether `mbz=16` is worth testing
-before full jobs.
-
-After smoke passes, launch Cx1/Cx2/Cx4 together:
+Queued Cx1/Cx2/Cx4 together on 2026-06-08:
 
 | Cx | Batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch | LR grid |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| 1 | 262,144 | 32 | 4 | 1 | 8 | `6e-4`, `1.2e-3`, `2.4e-3` |
-| 2 | 524,288 | 64 | 4 | 1 | 8 | `3e-4`, `6e-4`, `1.2e-3` |
-| 4 | 524,288 | 64 | 4 | 1 | 8 | `4e-4`, `8e-4`, `1.6e-3` |
+| 1 | 262,144 | 32 | 4 | 1 | 8 | `6e-4` (`01KTMMJCV3818NDPK51R89MH08`), `1.2e-3` (`01KTMMJSTMY3TSR7MHH5G7M22H`), `2.4e-3` (`01KTMMK7VN9BXSCBYX2HQKQQWH`) |
+| 2 | 524,288 | 64 | 4 | 1 | 8 | `3e-4` (`01KTMMKN716ZSRZN473CV4BC23`), `6e-4` (`01KTMMM35QKDE15XCSKG76Z6ST`), `1.2e-3` (`01KTMMMHBEV4JW3N0X4X3MFHK8`) |
+| 4 | 524,288 | 64 | 4 | 1 | 8 | `4e-4` (`01KTMMMZ1539AV33SHB12S17Q4`), `8e-4` (`01KTMMNC9R56MX1MSGZQ865SXA`), `1.6e-3` (`01KTMMNTA3NN9K4THQXCKGP717`) |
 
 If midpoint Cx1/Cx2/Cx4 bracket cleanly, later launch midpoint Cx8/Cx16 using
 3-point centered sweeps from the refit rule.
