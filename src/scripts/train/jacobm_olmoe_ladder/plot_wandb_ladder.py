@@ -33,6 +33,13 @@ CANONICAL_FAMILY_BY_CX = {
 
 CANONICAL_FAMILY_BY_MODEL_CX = {
     "275m": CANONICAL_FAMILY_BY_CX,
+    "mid_480m": {
+        1: "gpu4-ep1mb8",
+        2: "gpu4-ep1mb8",
+        4: "gpu4-ep1mb8",
+        8: "gpu4-ep1mb8",
+        16: "gpu4-ep1mb8",
+    },
     "810m": {
         1: ("gpu4-ep1mb4", "gpu8-ep1mb4"),
         2: "gpu8-ep1mb4",
@@ -55,6 +62,8 @@ def is_analysis_run(name: str) -> bool:
 def model_label_from_name(name: str) -> str:
     if "tiny-275m" in name:
         return "275m"
+    if "mid-480m" in name or "mid_480m" in name or "480m" in name:
+        return "mid_480m"
     if "810m" in name:
         return "810m"
     if "1p2b" in name:
@@ -269,6 +278,46 @@ def plot_model(points, model: str, out_path: Path, window_m: int) -> None:
     plt.close(fig)
 
 
+def plot_cx_across_models(points, cx: int, out_path: Path, window_m: int) -> None:
+    fig, ax = plt.subplots(figsize=(8.2, 5.2))
+    cx_points = [
+        p
+        for p in points
+        if p["cx"] == cx and p["state"] == "finished" and is_canonical_family(p)
+    ]
+    for model in sorted({p["model"] for p in cx_points}):
+        model_points = sorted([p for p in cx_points if p["model"] == model], key=lambda p: p["lr"])
+        if not model_points:
+            continue
+        (line,) = ax.plot(
+            [p["lr"] for p in model_points],
+            [p["loss"] for p in model_points],
+            marker="o",
+            linewidth=1.8,
+            label=model,
+        )
+        annotate_fitted_lr(ax, model_points, model, line.get_color())
+        for point in model_points:
+            ax.annotate(
+                point["lr_tag"],
+                (point["lr"], point["loss"]),
+                textcoords="offset points",
+                xytext=(0, 7),
+                ha="center",
+                fontsize=8,
+                alpha=0.85,
+            )
+    ax.set_xscale("log")
+    ax.set_xlabel("learning rate")
+    ax.set_ylabel(f"train CE avg{window_m}M")
+    ax.set_title(f"Cx{cx} LR sweeps by model size")
+    ax.grid(True, which="both", alpha=0.25)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=180)
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default="ai2-llm/jacobm-olmoe-ladder")
@@ -303,6 +352,8 @@ def main() -> None:
             plot_cx(points, model, cx, args.output_dir / f"{model}_cx{cx}_uplot.png", args.window_m)
     for model in sorted({p["model"] for p in points}):
         plot_model(points, model, args.output_dir / f"{model}_all_cx_uplot.png", args.window_m)
+    for cx in sorted({p["cx"] for p in points}):
+        plot_cx_across_models(points, cx, args.output_dir / f"cx{cx}_all_models_uplot.png", args.window_m)
 
 
 if __name__ == "__main__":

@@ -317,6 +317,15 @@ uv run --with wandb --with matplotlib python src/scripts/train/jacobm_olmoe_ladd
 
 Commit and push docs/plot updates when full-run results change.
 
+Plot both comparison directions:
+
+- Per-model plots: one plot per model/Cx pair plus one aggregate plot per model
+  across all completed Cx rungs. These compare Chinchilla multiples while
+  holding model size fixed.
+- Per-Cx plots: one aggregate plot per Cx across all completed model sizes.
+  These compare model sizes while holding the data multiple fixed.
+- The plotter emits per-Cx aggregate files as `cx<N>_all_models_uplot.png`.
+
 ## Launch And Cancellation Rules
 
 Allowed without asking, under the active goal:
