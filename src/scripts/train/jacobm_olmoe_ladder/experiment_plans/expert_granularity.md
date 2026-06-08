@@ -241,11 +241,11 @@ Predict:
 lr_variant(Cx4) = m_variant * lr_baseline_275m(Cx4)
 ```
 
-Run two or three LRs:
+Run exactly three LRs so the confirmation rung has a curve that can be fit:
 
-- predicted LR;
-- one powers-of-two neighbor in the more uncertain direction;
-- both neighbors (`0.5x`, `1x`, `2x`) if the Cx1 transfer probe was ambiguous.
+- `0.5x` predicted LR;
+- `1x` predicted LR;
+- `2x` predicted LR.
 
 Using the current approximate baseline Cx4 optimum `~1.5e-3`, if
 `m_variant ~= 1`, the natural confirmation grid is:
@@ -293,7 +293,11 @@ evidence lands.
 Candidate 1.2B rungs:
 
 - Cx1 first.
-- Cx4 only if Cx1 and lower-scale evidence justify it.
+- Cx4 if Cx1 and lower-scale evidence justify it.
+- Potentially all Chinchilla multiples that the 1.2B baseline eventually covers.
+  If the baseline is trained through Cx16, the strongest architecture-comparison
+  claim would compare the promoted variant over the same Cx range, budget
+  permitting.
 
 ## Monitoring
 
@@ -339,6 +343,22 @@ Plot expectations:
 - Separate variant lines or facet by variant.
 - Do not mix expert-geometry variants into the baseline plots without clear
   labels.
+- Store plots under an experiment-specific directory, for example:
+
+```text
+src/scripts/train/jacobm_olmoe_ladder/plots/expert_granularity/
+```
+
+Recommended plot families:
+
+- Baseline-only ladder plots should continue to live in the existing baseline
+  plot location.
+- Expert-granularity U-plots should show LR curves for each variant at a fixed
+  model size and Cx.
+- Baseline-vs-variant comparison plots should show final-window training loss
+  at each Cx using each variant's selected/fitted LR.
+- For early analysis, make comparison plots from training loss only. Validation
+  overlays can be added later after the validation-selection policy is decided.
 
 ## Promotion Criteria
 
@@ -378,6 +398,8 @@ After every completed run:
 
 - Decide how validation losses should be used for LR choice, model selection, or
   promotion. Current policy: do not use them for LR selection.
+- Decide exact plotting conventions for baseline-vs-experiment comparison once
+  the first expert-granularity runs finish.
 - Generate exact parameter-count table after implementing the CLI variant.
 - Decide whether to smoke 96E/top8 at 275M before full Cx1, because router/alltoall
   behavior may differ from the baseline even with matched active capacity.
