@@ -1,3 +1,5 @@
+import argparse
+import sys
 from datetime import datetime
 from functools import partial
 
@@ -6,12 +8,18 @@ from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig
 from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.common import get_beaker_username
+from olmo_core.internal.common import (
+    build_launch_config,
+    get_beaker_username,
+    get_root_dir,
+    get_work_dir,
+)
 from olmo_core.internal.experiment import (
+    CliContext,
     CommonComponents,
     DataComponents,
+    SubCmd,
     build_config,
-    main,
 )
 from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
@@ -34,9 +42,12 @@ from olmo_core.train.train_module import (
 
 SEQUENCE_LENGTH = 32_768
 GLOBAL_BATCH_SIZE = 64 * SEQUENCE_LENGTH
+DEFAULT_NUM_NODES = 8
 DATASET_PATH = (
     "/weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/olmo-hybrid-sft-triple-tools"
 )
+# Default checkpoint to initialize from when ``--pretrain_checkpoint`` is not given.
+DEFAULT_LOAD_PATH = "/weka/oe-training-default/ai2-llm/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-long-context-drope/step23842"
 
 # Remove heads to match params/TPS of OLMo3 7B transformer. This is to enable a
 # fair comparison with OLMo3 7B. If training from scratch, we recommend setting the
@@ -139,7 +150,9 @@ def build_data_components(
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
 
 
-def build_trainer_config(common: CommonComponents) -> TrainerConfig:
+def build_trainer_config(
+    common: CommonComponents, load_path: str = DEFAULT_LOAD_PATH
+) -> TrainerConfig:
     cancel_check_interval = 10
 
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
@@ -147,7 +160,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             load_strategy=LoadStrategy.always,
-            load_path="/weka/oe-training-default/ai2-llm/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-long-context-drope/step23842",
+            load_path=load_path,
             load_trainer_state=False,
             load_optim_state=False,  # Double check
             save_folder=f"{common.save_folder}/",
@@ -178,19 +191,151 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     )
 
 
+def build_common_with_relaunch(
+    cli_context: CliContext,
+    *,
+    tokenizer,
+    global_batch_size: int,
+    max_sequence_length: int,
+    beaker_image: str,
+    num_nodes: int,
+    beaker_workspace: str,
+    flight_recorder: bool,
+    num_execution_units,
+    pretrain_checkpoint: str,
+    budget: str,
+    dataset_path: str,
+) -> CommonComponents:
+    """
+    Like :func:`olmo_core.internal.experiment.build_common_components`, but builds the remote
+    Beaker command so that the CLI args that are *not* config-overrides (``--seq_len``,
+    ``--num_nodes``, ``--budget``, ``--workspace``, ``--dataset_path`` and the positional
+    ``pretrain_checkpoint``) are re-emitted, ensuring the relaunched ``train`` job rebuilds the
+    exact same config.
+    """
+    root_dir = get_root_dir(cli_context.cluster)
+    beaker_user = get_beaker_username()
+
+    launch_config = None
+    if beaker_user is not None:
+        post_cmd = cli_context.cmd.post_launch_subcmd()
+        remote_cmd = [
+            cli_context.script,
+            str(post_cmd),
+            cli_context.run_name,
+            pretrain_checkpoint,
+            cli_context.cluster,
+            f"--seq_len={max_sequence_length}",
+            f"--num_nodes={num_nodes}",
+            f"--global_batch_size={global_batch_size}",
+            f"--budget={budget}",
+            f"--workspace={beaker_workspace}",
+            f"--dataset_path={dataset_path}",
+            *cli_context.overrides,
+        ]
+        launch_config = build_launch_config(
+            name=f"{cli_context.run_name}-{post_cmd}",
+            root_dir=root_dir,
+            cmd=remote_cmd,
+            cluster=cli_context.cluster,
+            nccl_debug=True,
+            flight_recorder=flight_recorder,
+            beaker_image=beaker_image,
+            num_nodes=num_nodes,
+            workspace=beaker_workspace,
+            budget=budget,
+            num_execution_units=num_execution_units,
+        )
+        launch_config.launch_timeout = 5 * 60
+
+    if beaker_user is not None:
+        save_folder = f"{root_dir}/checkpoints/{beaker_user.lower()}/{cli_context.run_name}"
+    else:
+        save_folder = f"{root_dir}/checkpoints/{cli_context.run_name}"
+
+    return CommonComponents(
+        run_name=cli_context.run_name,
+        root_dir=root_dir,
+        work_dir=get_work_dir(root_dir),
+        save_folder=save_folder,
+        launch=launch_config,
+        tokenizer=tokenizer,
+        max_sequence_length=max_sequence_length,
+        global_batch_size=global_batch_size,
+    )
+
+
+def parse_args() -> "tuple[argparse.Namespace, list]":
+    parser = argparse.ArgumentParser(
+        description="SFT the OLMo hybrid (GatedDeltaNet) 7B model.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python %(prog)s dry_run test-run /path/to/base/ckpt ai2/jupiter --dataset_path /path/to/sft-data
+  python %(prog)s launch hybrid-sft-run /path/to/base/ckpt ai2/jupiter \\
+      --dataset_path /path/to/sft-data --seq_len 32768 --num_nodes 4 \\
+      --budget ai2/oe-omai --workspace ai2/oe-science \\
+      --train_module.optim.lr=1e-4 --launch.priority=urgent
+""",
+    )
+    parser.add_argument("cmd", choices=[str(s) for s in SubCmd], help="Subcommand to run.")
+    parser.add_argument("run_name", help="Run name for W&B and the checkpoint dir.")
+    parser.add_argument(
+        "pretrain_checkpoint",
+        nargs="?",
+        default=DEFAULT_LOAD_PATH,
+        help="OLMo-core checkpoint to initialize from (defaults to the hybrid LC checkpoint).",
+    )
+    parser.add_argument("cluster", help="Beaker cluster (e.g. 'ai2/jupiter').")
+    parser.add_argument("--seq_len", type=int, default=SEQUENCE_LENGTH, help="Max sequence length.")
+    parser.add_argument("--num_nodes", type=int, default=DEFAULT_NUM_NODES, help="Number of nodes.")
+    parser.add_argument(
+        "--global_batch_size",
+        type=int,
+        default=None,
+        help="Global batch size in tokens (defaults to 64 * seq_len).",
+    )
+    parser.add_argument("--budget", default="ai2/oe-other", help="Beaker budget.")
+    parser.add_argument("--workspace", default="ai2/olmo-instruct", help="Beaker workspace.")
+    parser.add_argument(
+        "--dataset_path", default=DATASET_PATH, help="Path to the pre-tokenized SFT dataset."
+    )
+    return parser.parse_known_args()
+
+
 if __name__ == "__main__":
-    config_builder = partial(
-        build_config,
-        global_batch_size=GLOBAL_BATCH_SIZE,
-        max_sequence_length=SEQUENCE_LENGTH,
+    args, overrides = parse_args()
+    global_batch_size = args.global_batch_size or (64 * args.seq_len)
+
+    cmd = SubCmd(args.cmd)
+    cli_context = CliContext(
+        script=sys.argv[0],
+        cmd=cmd,
+        run_name=args.run_name,
+        cluster=args.cluster,
+        overrides=overrides,
+    )
+
+    config = build_config(
+        cli_context,
+        common_config_builder=partial(
+            build_common_with_relaunch,
+            pretrain_checkpoint=args.pretrain_checkpoint,
+            budget=args.budget,
+            dataset_path=args.dataset_path,
+        ),
         data_config_builder=build_data_components,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
-        trainer_config_builder=build_trainer_config,
-        include_default_evals=False,
-        beaker_workspace="ai2/olmo-instruct",
-        num_nodes=8,
+        trainer_config_builder=partial(build_trainer_config, load_path=args.pretrain_checkpoint),
+        global_batch_size=global_batch_size,
+        max_sequence_length=args.seq_len,
+        num_nodes=args.num_nodes,
+        beaker_workspace=args.workspace,
         num_execution_units=1,
-        dataset_path=DATASET_PATH,
+        include_default_evals=False,
+        dataset_path=args.dataset_path,
     )
-    main(config_builder=config_builder)
+
+    cmd.prepare_environment(config)
+    cmd.run(config)
