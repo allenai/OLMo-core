@@ -52,6 +52,14 @@ CANONICAL_FAMILY_BY_MODEL_CX = {
     },
 }
 
+MODEL_SORT_ORDER = {
+    "275m": 0,
+    "mid_480m": 1,
+    "810m": 2,
+    "1p2b": 3,
+    "unknown": 99,
+}
+
 
 def is_analysis_run(name: str) -> bool:
     lowered = name.lower()
@@ -285,7 +293,7 @@ def plot_cx_across_models(points, cx: int, out_path: Path, window_m: int) -> Non
         for p in points
         if p["cx"] == cx and p["state"] == "finished" and is_canonical_family(p)
     ]
-    for model in sorted({p["model"] for p in cx_points}):
+    for model in sorted({p["model"] for p in cx_points}, key=lambda m: MODEL_SORT_ORDER.get(m, 98)):
         model_points = sorted([p for p in cx_points if p["model"] == model], key=lambda p: p["lr"])
         if not model_points:
             continue
