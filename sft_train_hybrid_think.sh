@@ -26,7 +26,6 @@ python src/scripts/train/OLMo_hybrid/OLMo-hybrid-7B-sft-think-train.py launch \
     --workspace=ai2/olmo-instruct \
     --launch.num_gpus=8 \
     --launch.priority=urgent \
-    --launch.follow=false \
     --train_module.optim.lr="${LEARNING_RATE}" \
     --trainer.callbacks.wandb.enabled=True \
     --trainer.max_duration.value=2
