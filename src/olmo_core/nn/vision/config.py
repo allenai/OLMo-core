@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Tuple
 
 import torch.nn as nn
@@ -9,6 +9,8 @@ from olmo_core.nn.config import ModuleConfig
 
 __all__ = [
     "VisionBackboneType",
+    "VisionBlockType",
+    "VisionBlockConfig",
     "VisionBackboneConfig",
 ]
 
@@ -37,6 +39,52 @@ class VisionBackboneType(StrEnum):
     SigLIP2-style encoder (no CLS token; same architecture as SigLIP, improved training).
     ➡️ :class:`~olmo_core.nn.vision.SiglipVisionTransformer`
     """
+
+
+class VisionBlockType(StrEnum):
+    """
+    An enumeration of the different vision transformer block implementations.
+    """
+
+    standard = "standard"
+    """
+    Standard pre-LN ViT block (multi-head attention + MLP).
+    ➡️ :class:`~olmo_core.nn.vision.ViTBlock`
+    """
+
+
+@dataclass
+class VisionBlockConfig(ModuleConfig):
+    """
+    Configuration for a single vision transformer block.
+
+    Mirrors the language-model :class:`~olmo_core.nn.transformer.TransformerBlockConfig`
+    pattern: the block implementation is selected via :attr:`name` and :meth:`build`
+    dispatches to the matching public block class. Today only
+    :attr:`VisionBlockType.standard` is available; additional block variants can be
+    registered here as they are added.
+
+    The block reads its layer dimensions from the parent :class:`VisionBackboneConfig`
+    passed to :meth:`build`.
+    """
+
+    name: VisionBlockType = VisionBlockType.standard
+    """The vision block implementation to use."""
+
+    def build(self, cfg: "VisionBackboneConfig", init_device: str = "cpu") -> nn.Module:
+        """
+        Instantiate the block.
+
+        :param cfg: The parent vision backbone configuration supplying layer dimensions.
+        :param init_device: Device on which to initialise parameters.
+        :returns: A :class:`~olmo_core.nn.vision.ViTBlock` instance.
+        """
+        from .image_vit import ViTBlock
+
+        if self.name == VisionBlockType.standard:
+            return ViTBlock(cfg, init_device=init_device)
+        else:
+            raise NotImplementedError(self.name)
 
 
 @dataclass
@@ -118,6 +166,12 @@ class VisionBackboneConfig(ModuleConfig):
 
     residual_dropout: float = 0.0
     """Dropout probability applied after the attention output projection."""
+
+    block: VisionBlockConfig = field(default_factory=VisionBlockConfig)
+    """
+    Configuration selecting the transformer block implementation. Defaults to the
+    standard pre-LN ViT block; see :class:`VisionBlockConfig`.
+    """
 
     initializer_range: float = 0.02
     """Std dev for normal-distribution weight initialisation."""

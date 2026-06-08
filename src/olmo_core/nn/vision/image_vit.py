@@ -8,6 +8,9 @@ import torch.nn.functional as F
 from olmo_core.nn.vision.config import VisionBackboneConfig
 
 __all__ = [
+    "ViTAttention",
+    "ViTMLP",
+    "ViTBlock",
     "VisionTransformer",
     "SiglipVisionTransformer",
 ]
@@ -35,7 +38,7 @@ def _get_activation(name: str) -> Callable[[torch.Tensor], torch.Tensor]:
     return _ACTIVATIONS[name]
 
 
-class _ViTAttention(nn.Module):
+class ViTAttention(nn.Module):
     """Multi-head dot-product attention for a vision transformer block."""
 
     def __init__(self, cfg: VisionBackboneConfig, init_device: str = "cpu"):
@@ -111,7 +114,7 @@ class _ViTAttention(nn.Module):
         return out
 
 
-class _ViTMLP(nn.Module):
+class ViTMLP(nn.Module):
     """Two-layer feed-forward network used inside each ViT block."""
 
     def __init__(self, cfg: VisionBackboneConfig, init_device: str = "cpu"):
@@ -137,7 +140,7 @@ class _ViTMLP(nn.Module):
         return self.w2(self.act(self.w1(x)))
 
 
-class _ViTBlock(nn.Module):
+class ViTBlock(nn.Module):
     """Standard pre-LN ViT residual block (attention + MLP)."""
 
     def __init__(self, cfg: VisionBackboneConfig, init_device: str = "cpu"):
@@ -149,8 +152,8 @@ class _ViTBlock(nn.Module):
         self.ffn_norm = nn.LayerNorm(
             cfg.image_emb_dim, eps=cfg.image_norm_eps, device=init_device, dtype=dtype
         )
-        self.attn = _ViTAttention(cfg, init_device=init_device)
-        self.ffn = _ViTMLP(cfg, init_device=init_device)
+        self.attn = ViTAttention(cfg, init_device=init_device)
+        self.ffn = ViTMLP(cfg, init_device=init_device)
 
     def reset_parameters(self):
         self.attn_norm.reset_parameters()
@@ -225,7 +228,7 @@ class VisionTransformer(nn.Module):
             cfg.image_emb_dim, eps=cfg.image_norm_eps, device=init_device, dtype=dtype
         )
         self.blocks = nn.ModuleList(
-            [_ViTBlock(cfg, init_device=init_device) for _ in range(cfg.image_num_layers)]
+            [cfg.block.build(cfg, init_device=init_device) for _ in range(cfg.image_num_layers)]
         )
 
         self.reset_parameters()
@@ -308,7 +311,7 @@ class SiglipVisionTransformer(nn.Module):
         )
 
         self.blocks = nn.ModuleList(
-            [_ViTBlock(cfg, init_device=init_device) for _ in range(cfg.image_num_layers)]
+            [cfg.block.build(cfg, init_device=init_device) for _ in range(cfg.image_num_layers)]
         )
 
         self.reset_parameters()
