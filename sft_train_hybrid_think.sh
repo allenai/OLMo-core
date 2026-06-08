@@ -8,7 +8,7 @@
 set -euo pipefail
 
 BASE_CKPT=/weka/oe-training-default/ai2-llm/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h-long-context-drope/step23842
-DATASET_PATH=/weka/oe-adapt-default/saumyam/Dolci-Think-SFT-32B-75pct-olmo-tokenizer
+DATASET_PATH=/weka/oe-training-default/saumyam/Dolci-Think-SFT-32B-75pct-olmo-tokenizer
 CLUSTER=ai2/jupiter
 LEARNING_RATE=1e-4
 SEQ_LEN=32768
