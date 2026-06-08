@@ -18,16 +18,20 @@ CKPT_BASE = "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls"
 all_stages: dict[str, dict[str, list[str]]] = {
     "pretraining": {
         "275m": [f"{CKPT_BASE}/hybrid-small-275M-Cx100/step161186-hf/"],
+        "450m": [f"{CKPT_BASE}/hybrid-small-450m-cx100-lr8e-3/step179814-hf/"],
         "810m": [f"{CKPT_BASE}/hybrid-small-810M-Cx100/step269926-hf/"],
         "1.4b": [f"{CKPT_BASE}/hybrid-small-1.4B-Cx100/step308433-hf/"],
     },
     "midtraining": {
         "275m": [f"{CKPT_BASE}/hybrid-small-midtraining-275M-v2-lr1.6e-3/step38147-hf/"],
+        "450m": [f"{CKPT_BASE}/hybrid-small-midtraining-450m/step38147-hf/"],
         "810m": [f"{CKPT_BASE}/hybrid-small-midtraining-v2-810M-lr4e-4/step23842-hf/"],
         "1.4b": [f"{CKPT_BASE}/hybrid-small-midtraining-v2-1.4b-lr4e-4/step11921-hf/"],
     },
     "long_context": {
         "275m": [f"{CKPT_BASE}/hybrid-small-long-context-v2-275m/step47684-hf/"],
+        # TODO: still training, update with final step folder.
+        # "450m": [f"{CKPT_BASE}/hybrid-small-lc-v2-450m/stepXXXXX-hf/"],
         "810m": [f"{CKPT_BASE}/hybrid-small-long-context-v2-810m/step23842-hf/"],
         "1.4b": [f"{CKPT_BASE}/hybrid-small-long-context-v2-1.4b/step23842-hf/"],
     },
@@ -160,7 +164,7 @@ def main():
     parser.add_argument(
         "--sizes",
         nargs="+",
-        choices=["275m", "810m", "1.4b"],
+        choices=["275m", "450m", "810m", "1.4b"],
         default=["275m"],
     )
     parser.add_argument(

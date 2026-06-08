@@ -70,7 +70,7 @@ LOWER_IS_BETTER = {
 }
 
 # Model name -> (scale, stage) for sorting
-SCALE_ORDER = {"275M": 0, "275m": 0, "810M": 1, "810m": 1, "1B": 2, "1b": 2, "1.4B": 3, "1.4b": 3, "7B": 4, "7b": 4}
+SCALE_ORDER = {"275M": 0, "275m": 0, "450M": 1, "450m": 1, "810M": 2, "810m": 2, "1B": 3, "1b": 3, "1.4B": 4, "1.4b": 4, "7B": 5, "7b": 5}
 STAGE_ORDER = {"pretrain": 0, "midtrain": 1, "long-context": 2, "baseline": 3}
 
 
@@ -80,6 +80,8 @@ def parse_model_info(model_name: str) -> tuple[str, str, str]:
     # Determine scale
     if "275m" in name:
         scale = "275M"
+    elif "450m" in name:
+        scale = "450M"
     elif "810m" in name:
         scale = "810M"
     elif "1.4b" in name:
