@@ -35,7 +35,7 @@ from olmo_core.train.train_module import (
 SEQUENCE_LENGTH = 32_768
 GLOBAL_BATCH_SIZE = 64 * SEQUENCE_LENGTH
 DATASET_PATH = (
-    "/weka/oe-training-default/ai2-llm/jacobm/data/sft/rl-sft-32k/olmo-hybrid-sft-triple-tools"
+    "/weka/oe-training-default/saumyam/Dolci-Think-SFT-32B-75pct-olmo-tokenizer"
 )
 
 # Remove heads to match params/TPS of OLMo3 7B transformer. This is to enable a
