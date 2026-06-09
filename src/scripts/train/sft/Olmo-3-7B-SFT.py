@@ -335,6 +335,7 @@ class SFTConfig(Config):
                     *overrides,
                 ],
                 cluster=cluster,
+                beaker_image="saumyam/olmo-core-old-torch",
                 num_nodes=num_nodes,
                 budget=budget,
                 workspace=workspace,
