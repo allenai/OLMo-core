@@ -170,9 +170,11 @@ the high-edge `1.2e-3`. Per the ladder policy, launched one factor-of-two
 high-side extension:
 
 - `2.4e-3`: `01KTPWRQD0Z7SN3KEA6EBMTCB2`
+- `9.6e-3`: `01KTQ3V5C3BJNDXHD38BV76KTH`
 
-Do not fit or make a final midpoint Cx2 LR decision until the `2.4e-3`
-extension finishes.
+The `9.6e-3` run is an intentionally far hot-side sentinel, not a dense grid
+point. Do not fit or make a final midpoint Cx2 LR decision until the `2.4e-3`
+extension and the far sentinel finish.
 
 ## 2026-06-02 Snapshot
 

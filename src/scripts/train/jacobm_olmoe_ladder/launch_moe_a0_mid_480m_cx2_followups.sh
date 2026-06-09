@@ -101,4 +101,6 @@ launch_one() {
 }
 
 # Initial Cx2 triplet was monotonic, with `1.2e-3` best at the high edge.
-launch_one cx2 b512k 64 2.4e-3 lr2.4e-3
+# `2.4e-3` was launched first as the nearest factor-of-two extension; this
+# script now launches the wider sentinel to quickly find the hot side.
+launch_one cx2 b512k 64 9.6e-3 lr9.6e-3
