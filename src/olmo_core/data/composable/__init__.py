@@ -591,6 +591,8 @@ __all__ = [
     "PreChunkedInstanceSourceConfig",
     "NgramTopKInstanceSource",
     "NgramTopKInstanceSourceConfig",
+    "NgramContextInstanceSource",
+    "NgramContextInstanceSourceConfig",
     # Other types.
     "InstanceFilterConfig",
     "LongDocStrategy",
