@@ -137,6 +137,25 @@ def moe_unpermute_bwd(
     keep_mask: Optional[torch.Tensor] = None,
     out: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Backward of the MoE unpermute-and-combine.
+
+    The unpermute forward combines a token's top-k expert outputs weighted by the
+    router probabilities (``out[token] = sum_k input_fwd[row] * probs[token, k]``).
+    This computes the gradients of that operation.
+
+    :param grad_output: The gradient w.r.t. the combined output, shape
+        ``(num_tokens, hidden)``.
+    :param input_fwd: The permuted expert outputs from the forward pass.
+    :param row_id_map: The row-id map describing the permutation; entries of ``-1``
+        mark dropped rows and are skipped.
+    :param probs: The router probabilities, shape ``(num_tokens, top_k)``, float32.
+    :param keep_mask: Optional mask of which rows were kept (not dropped).
+    :param out: Optional pre-allocated buffer for the ``input_fwd`` gradient.
+
+    :returns: A tuple ``(grad_input_fwd, grad_probs)`` of the gradients w.r.t. the
+        permuted expert outputs and the router probabilities.
+    """
     _check_inputs(grad_output, input_fwd, row_id_map, probs, keep_mask, out)
 
     grad_output_in = grad_output if grad_output.is_contiguous() else grad_output.contiguous()
@@ -166,3 +185,6 @@ def moe_unpermute_bwd(
         keep_mask_bool,
         out,
     )
+
+
+__all__ = ["moe_unpermute_bwd"]

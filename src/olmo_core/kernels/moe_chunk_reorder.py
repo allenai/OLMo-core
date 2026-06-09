@@ -389,6 +389,24 @@ def moe_chunk_permute(
     backend: Literal["auto", "cuda", "triton"] = "auto",
     backward_grad_input_buffer=None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Permute token rows so that tokens routed to the same expert are contiguous.
+
+    Gathers rows of ``inp`` according to ``routing_map`` into the expert-grouped
+    layout a grouped matmul expects. Differentiable: the backward scatters the
+    gradient back to the original row order.
+
+    :param inp: The activations to permute, shape ``(num_tokens, d_model)``. Must be on CUDA.
+    :param routing_map: The per-row expert assignment used to build the permutation.
+    :param num_out_tokens: The number of output rows; defaults to ``inp.shape[0]``.
+    :param out: Optional pre-allocated buffer to write the permuted rows into.
+    :param backend: Which kernel to use (``"cuda"``, ``"triton"``, or ``"auto"``).
+    :param backward_grad_input_buffer: Optional buffer for the backward pass to write
+        the input gradient into, so a communication buffer can be reused.
+
+    :returns: A tuple ``(permuted, row_id_map)`` of the permuted activations and the
+        row-id map describing the permutation (reused by :func:`moe_chunk_unpermute`).
+    """
     if not inp.is_cuda:
         raise ValueError("moe_chunk_permute expects CUDA input")
     if backend not in ("auto", "cuda", "triton"):
@@ -424,6 +442,22 @@ def moe_chunk_unpermute(
     backend: Literal["auto", "cuda", "triton"] = "auto",
     backward_grad_input_buffer=None,
 ) -> torch.Tensor:
+    """
+    Invert :func:`moe_chunk_permute`, restoring the original token order.
+
+    Scatters the expert-grouped rows of ``inp`` back to their original positions
+    using ``row_id_map``; rows whose map entry is ``-1`` are zero-filled.
+
+    :param inp: The expert-grouped activations to unpermute. Must be on CUDA.
+    :param row_id_map: The row-id map produced by :func:`moe_chunk_permute`.
+    :param num_tokens: The number of output tokens; defaults to ``row_id_map.numel()``.
+    :param out: Optional pre-allocated buffer to write the result into.
+    :param backend: Which kernel to use (``"cuda"``, ``"triton"``, or ``"auto"``).
+    :param backward_grad_input_buffer: Optional buffer for the backward pass to write
+        its gradient into, so a communication buffer can be reused.
+
+    :returns: The unpermuted activations in the original token order.
+    """
     if not inp.is_cuda:
         raise ValueError("moe_chunk_unpermute expects CUDA input")
     if backend not in ("auto", "cuda", "triton"):
@@ -452,3 +486,6 @@ def moe_chunk_unpermute(
     return _ChunkUnpermuteFunction.apply(
         inp, row_id_map_i32, num_tokens, backend, out, backward_grad_input_buffer
     )
+
+
+__all__ = ["moe_chunk_permute", "moe_chunk_unpermute"]

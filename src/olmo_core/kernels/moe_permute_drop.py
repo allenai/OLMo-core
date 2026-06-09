@@ -103,6 +103,24 @@ def moe_permute_drop_fwd(
     num_out_tokens: int,
     out: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Permute tokens into expert-grouped order while dropping over-capacity tokens.
+
+    Fuses the routing permutation with token dropping: tokens beyond an expert's
+    capacity (the gap between ``requested_offsets`` and ``keep_offsets``) are
+    dropped as part of the permute rather than in a separate pass.
+
+    :param inp: The activations to permute, shape ``(num_tokens, d_model)``. Must be on CUDA.
+    :param routing_map: The per-row expert assignment.
+    :param requested_offsets: Per-expert cumulative counts of requested tokens.
+    :param keep_offsets: Per-expert cumulative counts after capacity dropping.
+    :param keep_splits: Per-expert kept-token counts.
+    :param num_out_tokens: The number of output rows in the permuted buffer.
+    :param out: Optional pre-allocated buffer to write the permuted rows into.
+
+    :returns: A tuple ``(permuted, row_id_map)`` of the permuted-and-dropped
+        activations and the row-id map describing the mapping.
+    """
     if inp.ndim != 2:
         raise ValueError(f"Expected rank-2 input, got shape={tuple(inp.shape)}")
     if routing_map.ndim != 2:
@@ -148,3 +166,6 @@ def moe_permute_drop_fwd(
         ws.temp_storage,
         out,
     )
+
+
+__all__ = ["moe_permute_drop_fwd"]
