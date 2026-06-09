@@ -136,6 +136,22 @@ fits for Cx1, Cx4, and Cx8 gives a shallow LR-vs-Cx rule with Cx16 prediction
 around `4.25e-4`, so the next 810M Cx16 sweep is centered as
 `2e-4`, `4e-4`, `8e-4`.
 
+## 2026-06-09 480M Cx1 Status
+
+The midpoint `mid_480m` Cx1 sweep completed as a clean 3-point bracket:
+
+| LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
+| ---: | --- | ---: | ---: | ---: | ---: | --- |
+| `6e-4` | finished | 7.608B | 2.5696 | 2.5676 | 2.5725 | `56vuwauw` |
+| `1.2e-3` | finished | 7.608B | 2.5653 | 2.5636 | 2.5690 | `49mybsr0` |
+| `2.4e-3` | finished | 7.608B | 2.5839 | 2.5826 | 2.5889 | `7zz7c1zu` |
+
+The best observed point is `1.2e-3`; `2.4e-3` is clearly hot and `6e-4` is
+only slightly worse on the cold side. A local 3-point quadratic fit can be used
+for the midpoint Cx1 optimum after the plot refresh, but do not update the
+baseline transfer rule from this rung alone. Wait for midpoint Cx2/Cx4 and the
+remaining 810M/1.2B rungs before drawing a new cross-model conclusion.
+
 ## 2026-06-02 Snapshot
 
 Initial read after the first 2M-batch sweep finished and the 256k-batch sweep was
