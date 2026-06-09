@@ -314,6 +314,14 @@ class TransformerGenerationModule(GenerationModule):
             max_length = prompt_len + generation_config.max_new_tokens
         elif generation_config.max_length is not None:
             max_length = generation_config.max_length
+            # ``max_length`` is an absolute cap on ``generated.shape[1]``. Eval harnesses set it
+            # to ``len(content_prompt) + max_gen_toks``, unaware that landmark generation inserts
+            # memory tokens into the prompt. Those inserted tokens count toward
+            # ``generated.shape[1]``, so without compensation they eat into (and can zero out) the
+            # new-token budget. Extend the cap by the number of inserted landmark tokens so the
+            # content-token budget stays ``max_gen_toks``.
+            if landmark_active:
+                max_length += prompt_len - orig_input_ids.shape[1]
         else:
             max_length = None  # Generate until EOS or stop tokens or OOM...
 
