@@ -21,7 +21,7 @@ import torch
 
 log = logging.getLogger(__name__)
 
-__all__ = ["load_cuda_extension"]
+__all__ = ["load_cuda_extension", "LazyCudaExtension"]
 
 PathLikeStr = Union[str, os.PathLike[str]]
 
@@ -265,3 +265,81 @@ def load_cuda_extension(
                 time.sleep(retry_sleep_s * (attempt + 1))
 
     raise RuntimeError("Failed to load CUDA extension after retries")
+
+
+class LazyCudaExtension:
+    """
+    Lazily JIT-build and cache a single CUDA/C++ extension.
+
+    Wraps :func:`load_cuda_extension` with memoization and clear error reporting:
+    the extension is built on the first :meth:`load` call and cached; if that build
+    fails, the original error is cached and re-raised (chained) on every later call
+    so the build isn't retried in a loop. Source file names are resolved relative to
+    the ``cuda/`` directory of this package.
+
+    :param name: Human-readable extension name used in error messages.
+    :param base_name: Base name passed to :func:`load_cuda_extension`.
+    :param sources: Source file names, relative to this package's ``cuda/`` directory.
+    :param extra_cflags: Extra host-compiler flags.
+    :param extra_cuda_cflags: Extra ``nvcc`` flags; omit for C++-only extensions.
+    :param verbose_env_names: See :func:`load_cuda_extension`.
+    :param force_rebuild_env_names: See :func:`load_cuda_extension`.
+    :param stale_lock_timeout_env_names: See :func:`load_cuda_extension`.
+    :param with_arch_suffix: See :func:`load_cuda_extension`.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        base_name: str,
+        sources: Sequence[str],
+        extra_cflags: Optional[Sequence[str]] = None,
+        extra_cuda_cflags: Optional[Sequence[str]] = None,
+        verbose_env_names: Sequence[str] = (),
+        force_rebuild_env_names: Sequence[str] = (),
+        stale_lock_timeout_env_names: Sequence[str] = ("OLMO_MOE_EXT_STALE_LOCK_TIMEOUT_SEC",),
+        with_arch_suffix: bool = True,
+    ) -> None:
+        self.name = name
+        self.base_name = base_name
+        self.sources = tuple(sources)
+        self.extra_cflags = list(extra_cflags) if extra_cflags is not None else None
+        self.extra_cuda_cflags = list(extra_cuda_cflags) if extra_cuda_cflags is not None else None
+        self.verbose_env_names = tuple(verbose_env_names)
+        self.force_rebuild_env_names = tuple(force_rebuild_env_names)
+        self.stale_lock_timeout_env_names = tuple(stale_lock_timeout_env_names)
+        self.with_arch_suffix = with_arch_suffix
+        self._extension: Any = None
+        self._attempted = False
+        self._error: Optional[Exception] = None
+
+    def load(self) -> Any:
+        """
+        Return the loaded extension module, building it on first call.
+
+        :raises RuntimeError: If the extension cannot be built or loaded.
+        """
+        if self._extension is not None:
+            return self._extension
+        if self._attempted:
+            raise RuntimeError(f"CUDA {self.name} extension is unavailable") from self._error
+
+        self._attempted = True
+        cuda_dir = Path(__file__).resolve().parent / "cuda"
+        try:
+            self._extension = load_cuda_extension(
+                base_name=self.base_name,
+                sources=[cuda_dir / src for src in self.sources],
+                extra_cflags=self.extra_cflags,
+                extra_cuda_cflags=self.extra_cuda_cflags,
+                verbose_env_names=self.verbose_env_names,
+                force_rebuild_env_names=self.force_rebuild_env_names,
+                stale_lock_timeout_env_names=self.stale_lock_timeout_env_names,
+                with_arch_suffix=self.with_arch_suffix,
+            )
+        except Exception as e:
+            self._error = e
+            raise RuntimeError(f"Failed to build/load CUDA {self.name} extension: {e}") from e
+
+        return self._extension
