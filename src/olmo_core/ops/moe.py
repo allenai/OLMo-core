@@ -391,6 +391,14 @@ def all_to_all_async(
 
     :returns: ``(x, y, handle)`` — the (unchanged) input ``x``, the output buffer ``y``
         (not yet valid until waited on), and the in-flight work ``handle``.
+
+    .. warning::
+        The returned passthrough ``x`` must feed **only** the matching
+        :func:`all_to_all_wait` — do not fan it out to other ops. The backward all-to-all
+        handle is stashed as an attribute on ``x``'s gradient and carried along that single
+        autograd edge from :class:`AllToAllWaitOp` to :class:`AllToAllAsyncOp`. If ``x`` has
+        more than one consumer, autograd sums the incoming gradients into a fresh tensor that
+        drops the stashed handle, breaking the backward pass. This contract is not enforced.
     """
     return AllToAllAsyncOp.apply(  # type: ignore
         x,
