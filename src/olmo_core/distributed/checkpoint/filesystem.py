@@ -4,8 +4,10 @@ import logging
 import operator
 import os
 import pickle
+import sys
 import tempfile
 import traceback
+import types
 from concurrent.futures import (
     Executor,
     ProcessPoolExecutor,
@@ -51,6 +53,24 @@ from olmo_core.io import (
 from olmo_core.utils import generate_uuid, get_default_thread_count, get_element_size
 
 log = logging.getLogger(__name__)
+
+
+def _ensure_float8_compat():
+    # torchao >= 0.7 removed Float8Tensor from torchao.float8.float8_tensor.
+    # Old checkpoints that were saved with float8 linear layers pickle this class by name,
+    # so we register a minimal stub so torch.load can deserialize them. The resulting tensor
+    # (raw float8 storage) is then copied into the bfloat16 target by the caller.
+    if "torchao.float8.float8_tensor" not in sys.modules:
+        try:
+            import torchao.float8.float8_tensor  # noqa: F401
+        except ModuleNotFoundError:
+            stub = types.ModuleType("torchao.float8.float8_tensor")
+
+            class Float8Tensor(torch.Tensor):
+                pass
+
+            stub.Float8Tensor = Float8Tensor
+            sys.modules["torchao.float8.float8_tensor"] = stub
 
 
 @dataclass
@@ -404,6 +424,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 planner.load_bytes(read_item, bytes)
             else:
                 # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
+                _ensure_float8_compat()
                 tensor = cast(
                     torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
                 )
