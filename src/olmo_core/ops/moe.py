@@ -289,6 +289,30 @@ class AllToAllAsyncOp(torch.autograd.Function):
     later blocks on the handle. The work handle and the metadata needed by the wait /
     backward passes are stashed as attributes on the output tensor (``_a2a_*``) so they
     travel through autograd without extra ``ctx`` plumbing across the two ops.
+
+    The backward mirrors the forward, so the gradient all-to-all overlaps too:
+    ``AllToAllWaitOp.backward`` launches the reverse all-to-all and ``AllToAllAsyncOp.backward``
+    waits on it. The in-flight handle is handed between them by stashing it on the gradient of
+    the passthrough ``x``.
+
+    That handoff only works if ``x`` has a single consumer (the matching
+    :func:`all_to_all_wait`), because Python attributes don't survive tensor arithmetic.
+    Tracing the gradient of ``x``:
+
+    - One consumer (correct)::
+
+        WaitOp.backward -> x_grad (._a2a_handle attached)
+                        -> AsyncOp.backward gets that same tensor -> handle found, waited
+
+    - Two consumers / fan-out (wrong)::
+
+        WaitOp.backward -> grad_A (._a2a_handle attached)
+        the other op    -> grad_B (no attribute)
+        autograd sums   -> grad_A + grad_B = a NEW tensor (handle lost)
+                        -> AsyncOp.backward gets the new tensor -> handle missing -> raises
+
+    The guard in ``AllToAllAsyncOp.backward`` turns the fan-out case into a clear error instead
+    of a silent desync. The single-consumer contract is not otherwise enforced.
     """
 
     @staticmethod
@@ -322,8 +346,18 @@ class AllToAllAsyncOp(torch.autograd.Function):
     @staticmethod
     def backward(ctx, *grad_outputs):
         x_grad = grad_outputs[0]
-        x_grad_handle = x_grad._a2a_handle
-        x_grad_handle.wait()
+        # The reverse all-to-all handle was stashed on this gradient by AllToAllWaitOp.backward.
+        # If it's missing, the passthrough was fanned out to more than one consumer: autograd
+        # summed the gradients into a fresh tensor, which dropped the attribute (see class doc).
+        handle = getattr(x_grad, "_a2a_handle", None)
+        if handle is None:
+            raise RuntimeError(
+                "all_to_all_async backward could not find its in-flight gradient handle. The "
+                "passthrough tensor returned by all_to_all_async must feed ONLY the matching "
+                "all_to_all_wait; fanning it out to other ops makes autograd accumulate "
+                "gradients into a new tensor that drops the stashed handle."
+            )
+        handle.wait()
         del x_grad._a2a_handle
         return x_grad, None, None, None, None
 
