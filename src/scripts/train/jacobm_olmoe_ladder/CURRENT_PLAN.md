@@ -65,6 +65,23 @@ Implemented sizes:
 `mid_480m` is newly added and estimated at about 480M active params including
 embeddings/head and about 2.6B total before smoke confirmation.
 
+## Default Job Settings
+
+For future baseline launches, use this GPU allocation table unless a run needs
+a smoke-tested memory fallback or the cluster is temporarily constrained:
+
+| Model | Cx1 | Cx2 | Cx4 | Cx8 |
+| --- | ---: | ---: | ---: | ---: |
+| 275M | 1-2 GPUs | 2 GPUs | 4 GPUs | 8 GPUs |
+| mid_480m | 4 GPUs | 4 GPUs | 4 GPUs | 8 GPUs |
+| 810M | 8 GPUs | 8 GPUs | 8 GPUs | 16 GPUs |
+| 1.2B | 8 GPUs | 8 GPUs | 16 GPUs | 32 GPUs |
+
+Keep EP=1 by default. Preserve the intended dense-ladder global batch rule for
+each Cx; increasing GPU count should primarily reduce wall-clock, not silently
+change the optimizer batch. Use the known-good microbatch for each model size
+unless a smoke test or prior run proves a larger microbatch is healthy.
+
 ## Current Jobs
 
 Continue:
