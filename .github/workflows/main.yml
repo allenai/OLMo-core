@@ -168,6 +168,7 @@ jobs:
                 --ignore-glob='src/test/nn/attention*' \
                 --ignore-glob='src/test/nn/moe*' \
                 --ignore-glob='src/test/optim*' \
+                --ignore-glob='src/test/kernels*' \
                 src/test/
 
           - name: Test checkpoint (GPU)
@@ -217,6 +218,15 @@ jobs:
           # torch 2.9 image above, so run them on a torch 2.10 image here.
           - name: Test MoE kernels (GPU, torch 2.10)
             image: petew/olmo-core-tch2100cu128-2026-01-23
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/kernels/
+
+          # Trial run of the MoE kernel tests on an image that ships the CUDA
+          # toolkit (nvcc), which is needed to JIT-build the .cu kernel extensions.
+          - name: Test MoE kernels (GPU, torch 2.10, CUDA toolkit)
+            image: tianhuat/olmo-core-torch210-2404-cu128
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
