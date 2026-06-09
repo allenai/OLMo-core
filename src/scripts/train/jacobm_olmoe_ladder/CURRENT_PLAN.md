@@ -70,6 +70,7 @@ embeddings/head and about 2.6B total before smoke confirmation.
 Continue:
 
 - 810M Cx8: `2e-4`, `4e-4`, `8e-4`
+- 810M Cx16: `2e-4`, `4e-4`, `8e-4`
 - 1.2B Cx4: `1.5e-4`, `3e-4`, `6e-4`
 - 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3`
 
@@ -110,7 +111,8 @@ If midpoint Cx1/Cx2/Cx4 bracket cleanly, later launch midpoint Cx8/Cx16 using
 
 ## Next Baseline Progression
 
-- If 810M Cx8 brackets cleanly, prepare/launch 810M Cx16 with 3 centered LRs.
+- 810M Cx8 bracketed cleanly around `4e-4`; 810M Cx16 is queued with
+  `2e-4`, `4e-4`, `8e-4`.
 - If 1.2B Cx4 brackets cleanly, prepare/launch 1.2B Cx8 with 3 centered LRs.
 - After midpoint results land, refit size transfer using 275M, midpoint, 810M,
   and 1.2B.
