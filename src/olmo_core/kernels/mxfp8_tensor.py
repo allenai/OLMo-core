@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict, Tuple
 
 import torch
@@ -193,6 +194,13 @@ class OlmoMXFP8Tensor(torch.Tensor):
 
         def unwrap(value):
             if isinstance(value, OlmoMXFP8Tensor):
+                warnings.warn(
+                    f"{func} is not specialized for OlmoMXFP8Tensor; the operand "
+                    f"will be dequantized to {value.orig_dtype} and the MXFP8 "
+                    "representation (and its memory/compute benefit) will be lost. "
+                    "Use as_scaled_grouped_mm_prequantized_lhs() to keep the FP8 path.",
+                    stacklevel=2,
+                )
                 return value.dequantize()
             if isinstance(value, tuple):
                 return tuple(unwrap(item) for item in value)
