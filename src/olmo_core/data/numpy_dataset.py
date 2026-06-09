@@ -96,6 +96,23 @@ log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+def _get_data_prep_max_workers() -> Optional[int]:
+    raw_value = os.environ.get("OLMO_DATA_PREP_WORKERS")
+    if raw_value in (None, ""):
+        return None
+
+    try:
+        max_workers = int(raw_value)
+    except ValueError as e:
+        raise OLMoEnvironmentError(
+            "'OLMO_DATA_PREP_WORKERS' must be a positive integer"
+        ) from e
+
+    if max_workers <= 0:
+        raise OLMoEnvironmentError("'OLMO_DATA_PREP_WORKERS' must be a positive integer")
+    return max_workers
+
+
 @dataclass
 class InstanceFilterConfig(Config):
     repetition_max_period: int = 13
@@ -768,7 +785,9 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                 paths_needed.append((path, idx))
 
         if paths_needed:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=_get_data_prep_max_workers()
+            ) as executor:
                 futures = []
                 for path, idx in paths_needed:
                     indices_path = self._get_instance_indices_path(path)
@@ -951,7 +970,9 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                 paths_needed.append(path)
 
         if paths_needed:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=_get_data_prep_max_workers()
+            ) as executor:
                 futures = []
                 for path in paths_needed:
                     indices_path = self._get_instance_indices_path(path)
@@ -1315,7 +1336,9 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                 sources_needed.append(source_paths)
 
         if sources_needed:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=_get_data_prep_max_workers()
+            ) as executor:
                 futures = []
                 for source_paths in sources_needed:
                     log.info(f"Packing documents from {source_paths} into instances...")
@@ -2110,7 +2133,9 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                 paths_needed.append(path)
 
         if paths_needed:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=_get_data_prep_max_workers()
+            ) as executor:
                 futures = []
                 for path in paths_needed:
                     indices_path = self._get_document_indices_path(path)

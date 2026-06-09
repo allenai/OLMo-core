@@ -214,25 +214,30 @@ class SourceMixtureDataset:  # Note: "dataset" naming is a bit inconsistent with
     A list of sources and their associated paths and token counts.
     """
 
+    def selected_path_tokens(self) -> List[SourcePathTokens]:
+        """
+        Flatten the mixture to paths that contribute at least one token.
+        """
+        return [
+            item
+            for item in list(chain.from_iterable([outcome.path_tokens for outcome in self.sources]))
+            if item.tokens > 0
+        ]
+
     def to_index(self) -> Dict[Tuple[str, int], int]:
         """
         Convert the dataset to an indexed array of dict((int, path), int).
         """
         return {
-            (str(outcome.path), idx): outcome.tokens
-            for idx, outcome in enumerate(
-                list(chain.from_iterable([outcome.path_tokens for outcome in self.sources]))
-            )
+            (str(item.path), idx): item.tokens
+            for idx, item in enumerate(self.selected_path_tokens())
         }
 
     def to_paths(self) -> List[PathOrStr]:
         """
         Convert the dataset to a list of paths while maintaining stable ordering.
         """
-        return [
-            item.path
-            for item in list(chain.from_iterable([outcome.path_tokens for outcome in self.sources]))
-        ]
+        return [item.path for item in self.selected_path_tokens()]
 
 
 @dataclass
