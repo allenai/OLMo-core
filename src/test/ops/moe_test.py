@@ -3,7 +3,12 @@ import pytest
 import torch
 
 from olmo_core.ops import moe as ops
-from olmo_core.testing import DEVICES, requires_gpu, requires_multi_gpu, run_distributed_test
+from olmo_core.testing import (
+    DEVICES,
+    requires_gpu,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 
 
 @requires_gpu
