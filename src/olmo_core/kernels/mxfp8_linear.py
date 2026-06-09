@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any, Optional, Tuple
 
 import torch
@@ -61,6 +62,18 @@ def _check_scaled_mm_shapes(mat_a: Tensor, mat_b: Tensor) -> None:
             "MXFP8 scaled_mm output dim must be divisible by 16, "
             f"got mat_a={tuple(mat_a.shape)} mat_b={tuple(mat_b.shape)}"
         )
+
+
+def _record_debug_saved_activation(tensor: Tensor, name: str) -> None:
+    if not os.getenv("OLMO_EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG"):
+        return
+
+    try:
+        from olmo_core.nn.moe.v2.activation_debug import record_named_saved_activation
+
+        record_named_saved_activation(tensor, name)
+    except Exception:
+        pass
 
 
 @torch.no_grad()
@@ -306,6 +319,14 @@ class _ScaledMMMXFP8FP8WeightFunction(torch.autograd.Function):
                     mat_a,
                     check_mat_b_version=False,
                 )
+                # _record_debug_saved_activation(
+                #     prequantized_mat_a_as_rhs.mat_b_q,
+                #     "scaled_mm_mxfp8_fp8_weight.wgrad_input_as_rhs.mxfp8_qdata",
+                # )
+                # _record_debug_saved_activation(
+                #     prequantized_mat_a_as_rhs.scale_b,
+                #     "scaled_mm_mxfp8_fp8_weight.wgrad_input_as_rhs.mxfp8_scales",
+                # )
                 ctx.save_for_backward()
             else:
                 ctx.save_for_backward(mat_a)

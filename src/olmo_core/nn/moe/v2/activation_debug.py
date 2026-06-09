@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import os
+import threading
 import weakref
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
 
@@ -13,6 +15,7 @@ if TYPE_CHECKING:
 
 
 EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENV_VAR = "OLMO_EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG"
+_DEBUG_STATE = threading.local()
 
 
 def _debug_activation_enabled() -> bool:
@@ -34,6 +37,13 @@ def _set_train_global_arg(key: str, value) -> None:
     from olmo_core.train.globals import set_global_arg
 
     set_global_arg(key, value)
+
+
+@torch.compiler.disable(reason="Activation debug hooks use Python containers and stack inspection")
+def record_named_saved_activation(tensor: torch.Tensor, name: str) -> None:
+    recorder = getattr(_DEBUG_STATE, "record_named_saved_activation", None)
+    if recorder is not None:
+        recorder(tensor, name, name)
 
 
 def maybe_dump_ep_no_sync_saved_activations(
@@ -61,10 +71,48 @@ def maybe_dump_ep_no_sync_saved_activations(
     }
     mem_before_gib = torch.cuda.memory_allocated() / (1024**3)
 
-    def _record_saved_tensor(tensor: torch.Tensor) -> torch.Tensor:
+    def _saved_activation_name(tensor: torch.Tensor) -> Optional[str]:
+        name = getattr(tensor, "_olmo_saved_activation_name", None)
+        if isinstance(name, str) and name:
+            return name
+        return None
+
+    def _format_names(record: Dict[str, object]) -> str:
+        names = cast(set[str], record.get("names", set()))
+        if not names:
+            return " names=<unnamed>"
+        return " names=" + "|".join(sorted(names))
+
+    def _saved_tensor_source() -> str:
+        for frame in inspect.stack(context=0)[2:]:
+            filename = frame.filename
+            if "/olmo_core/" not in filename:
+                continue
+            if filename.endswith("activation_debug.py"):
+                continue
+            try:
+                rel = filename.split("/olmo_core/", 1)[1]
+            except IndexError:
+                rel = filename
+            return f"{rel}:{frame.function}:{frame.lineno}"
+        return "<unknown>"
+
+    def _format_sources(record: Dict[str, object]) -> str:
+        sources = cast(set[str], record.get("sources", set()))
+        if not sources:
+            return " sources=<unknown>"
+        return " sources=" + "|".join(sorted(sources))
+
+    def _record_saved_tensor(
+        tensor: torch.Tensor,
+        name_override: Optional[str] = None,
+        source_override: Optional[str] = None,
+    ) -> torch.Tensor:
         storage = tensor.untyped_storage()
         storage_nbytes = storage.nbytes()
         key = (str(tensor.device), storage.data_ptr(), storage_nbytes)
+        tensor_name = name_override or _saved_activation_name(tensor)
+        tensor_source = source_override or _saved_tensor_source()
         record = saved_activations_by_storage.get(key)
         if record is None:
             saved_activations_by_storage[key] = {
@@ -73,16 +121,40 @@ def maybe_dump_ep_no_sync_saved_activations(
                 "dtype": str(tensor.dtype),
                 "storage_nbytes": storage_nbytes,
                 "save_count": 1,
+                "names": {tensor_name} if tensor_name is not None else set(),
+                "sources": {tensor_source},
             }
         else:
             record["save_count"] = cast(int, record["save_count"]) + 1
+            if tensor_name is not None:
+                record_names = record["names"]
+                assert isinstance(record_names, set)
+                record_names.add(tensor_name)
+            record_sources = record["sources"]
+            assert isinstance(record_sources, set)
+            record_sources.add(tensor_source)
         saved_tensor_weakrefs.append(weakref.ref(tensor))
         return tensor
 
-    with torch.autograd.graph.saved_tensors_hooks(_record_saved_tensor, lambda tensor: tensor):
-        out = no_sync_forward(
-            x, loss_div_factor=loss_div_factor, **forward_kwargs
-        )
+    _record_saved_tensor = torch.compiler.disable(
+        reason="Activation debug hook uses Python containers and stack inspection"
+    )(_record_saved_tensor)
+
+    old_recorder = getattr(_DEBUG_STATE, "record_named_saved_activation", None)
+    _DEBUG_STATE.record_named_saved_activation = _record_saved_tensor
+    try:
+        with torch.autograd.graph.saved_tensors_hooks(_record_saved_tensor, lambda tensor: tensor):
+            out = no_sync_forward(
+                x, loss_div_factor=loss_div_factor, **forward_kwargs
+            )
+    finally:
+        if old_recorder is None:
+            try:
+                delattr(_DEBUG_STATE, "record_named_saved_activation")
+            except AttributeError:
+                pass
+        else:
+            _DEBUG_STATE.record_named_saved_activation = old_recorder
 
     mem_after_gib = torch.cuda.memory_allocated() / (1024**3)
     total_unique_storage_nbytes_pack = sum(
@@ -102,6 +174,8 @@ def maybe_dump_ep_no_sync_saved_activations(
         f"storage_nbytes={record['storage_nbytes']} "
         f"storage_mib={cast(int, record['storage_nbytes']) / (1024**2):.2f} "
         f"refs={record['save_count']}"
+        f"{_format_names(record)}"
+        f"{_format_sources(record)}"
         for record in saved_activations_by_storage.values()
     )
 
@@ -116,6 +190,11 @@ def maybe_dump_ep_no_sync_saved_activations(
         storage_nbytes = storage.nbytes()
         key = (str(tensor.device), storage.data_ptr(), storage_nbytes)
         record = live_saved_activations_by_storage.get(key)
+        tensor_name = _saved_activation_name(tensor)
+        tensor_sources = cast(
+            set[str],
+            saved_activations_by_storage.get(key, {}).get("sources", set()),
+        )
         if record is None:
             live_saved_activations_by_storage[key] = {
                 "kind": "param" if key in param_storage_keys else "activation",
@@ -123,9 +202,18 @@ def maybe_dump_ep_no_sync_saved_activations(
                 "dtype": str(tensor.dtype),
                 "storage_nbytes": storage_nbytes,
                 "live_ref_count": 1,
+                "names": {tensor_name} if tensor_name is not None else set(),
+                "sources": set(tensor_sources),
             }
         else:
             record["live_ref_count"] = cast(int, record["live_ref_count"]) + 1
+            if tensor_name is not None:
+                record_names = record["names"]
+                assert isinstance(record_names, set)
+                record_names.add(tensor_name)
+            record_sources = record["sources"]
+            assert isinstance(record_sources, set)
+            record_sources.update(tensor_sources)
 
     total_unique_storage_nbytes_live = sum(
         cast(int, record["storage_nbytes"])
@@ -145,6 +233,8 @@ def maybe_dump_ep_no_sync_saved_activations(
         f"storage_nbytes={record['storage_nbytes']} "
         f"storage_mib={cast(int, record['storage_nbytes']) / (1024**2):.2f} "
         f"live_refs={record['live_ref_count']}"
+        f"{_format_names(record)}"
+        f"{_format_sources(record)}"
         for record in live_saved_activations_by_storage.values()
     )
     print(

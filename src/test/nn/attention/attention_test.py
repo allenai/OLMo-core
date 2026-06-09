@@ -1052,6 +1052,66 @@ def test_attention_builder_config_fused_v2_mxfp8_qkv_only():
     assert attn_config.num_params(d_model) == n_params
 
 
+def test_attention_builder_config_fused_v2_mxfp8_save_qkv_for_backward():
+    d_model = 256
+    attn_config = AttentionConfig(
+        name=AttentionType.fused_v2,
+        n_heads=8,
+        n_kv_heads=2,
+        head_dim=32,
+        mxfp8_save_qkv_for_backward=True,
+    )
+
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=1)
+
+    assert isinstance(attn, FusedAttentionV2)
+    assert attn.mxfp8_save_qkv_for_backward
+    assert attn._mxfp8_saved_qkv_for_backward_last_pack_count == 0
+
+
+class _SaveQKVForBackward(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, q, k, v):  # type: ignore[override]
+        ctx.save_for_backward(q, k, v)
+        return q + k + v
+
+    @staticmethod
+    def backward(ctx, grad_out):  # type: ignore[override]
+        q, k, v = ctx.saved_tensors
+        zero = (q.sum() + k.sum() + v.sum()) * 0
+        grad = grad_out + zero
+        return grad, grad, grad
+
+
+@requires_gpu
+def test_fused_attention_v2_mxfp8_save_qkv_for_backward_hooks_saved_tensors():
+    seed_all(4310)
+    attn = FusedAttentionV2(
+        d_model=128,
+        n_heads=4,
+        n_kv_heads=4,
+        head_dim=32,
+        backend=AttentionBackendName.torch,
+        init_device="cuda",
+        dtype=torch.bfloat16,
+        mxfp8_save_qkv_for_backward=True,
+    )
+
+    def sdpa(q, k, v, **kwargs):
+        del kwargs
+        return _SaveQKVForBackward.apply(q, k, v)
+
+    attn.sdpa = sdpa  # type: ignore[method-assign]
+    x = torch.randn(4, 8, 128, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+
+    out = attn(x)
+    out.float().sum().backward()
+
+    assert out.shape == x.shape
+    assert attn._mxfp8_saved_qkv_for_backward_last_pack_count == 3
+    assert x.grad is not None
+
+
 @requires_gpu
 def test_fused_attention_v2_mxfp8_projections_backward():
     seed_all(1732)
