@@ -109,18 +109,19 @@ for the ladder sweep itself.
 
 ## 2026-06-09 810M Cx2 Status
 
-Three full 810M Cx2 runs have completed:
+The full 810M Cx2 sweep has completed:
 
 | LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
 | ---: | --- | ---: | ---: | ---: | ---: | --- |
 | `1.5e-4` | finished | 27.603B | 2.3544 | 2.3608 | 2.3589 | `fcqkb55w` |
 | `3e-4` | finished | 27.603B | 2.3245 | 2.3308 | 2.3291 | `ogp6mrt6` |
 | `6e-4` | finished | 27.603B | 2.3096 | 2.3160 | 2.3144 | `okb4e1u0` |
+| `1.2e-3` | finished | 27.603B | 2.3112 | 2.3176 | 2.3161 | `d13uavyt` |
 
-Do not fit or launch from the 810M Cx2 curve yet. The best completed point is
-now the high-edge `6e-4`, and the `1.2e-3` hot-side run is still running. Use
-the completed Cx2 curve only after the hot-side full run lands, unless a later
-failure forces a separate decision.
+The Cx2 curve is bracketed. The best observed point is `6e-4`, with `1.2e-3`
+only slightly worse. Use the plotter's local quadratic estimate for reporting,
+but do not launch new work from Cx2 alone; combine it with completed Cx1/Cx4/Cx8
+and active Cx16 evidence when updating the 810M LR rule.
 
 ## 2026-06-09 810M Cx8 Status
 
