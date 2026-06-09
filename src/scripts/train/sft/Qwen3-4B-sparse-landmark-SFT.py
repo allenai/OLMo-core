@@ -5,10 +5,9 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
+    ConcatAndChunkInstanceSourceConfig,
     LandmarkInstanceSourceConfig,
-    PackingInstanceSourceConfig,
 )
-from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
@@ -41,8 +40,12 @@ from olmo_core.train.train_module import (
 # (q4b-sparse-landmark-dolma3longmino/step2385) and fine-tunes on the rlhn SFT set.
 #
 # Data pipeline (composable):
-#   PackingInstanceSource(token_ids + labels_mask)   # bin-pack SFT conversations, carry loss mask
-#     -> LandmarkInstanceSource(mem_freq, mem_id)     # insert a landmark token every MEM_FREQ tokens
+#   ConcatAndChunkInstanceSource(token_ids + labels_mask)  # concat + chunk to CONTENT len, carry mask
+#     -> LandmarkInstanceSource(mem_freq, mem_id)           # insert a landmark token every MEM_FREQ
+#
+# NOTE: we use ConcatAndChunk (not bin-packing) because PackingInstanceSource builds a SegmentTree
+# whose size must be a power of 2, and the landmark content length (a multiple of MEM_FREQ) can never
+# be a power of 2. ConcatAndChunk also matches the landmark pretraining regime exactly.
 #
 # PARALLELISM: SparseLandmarkAttention does NOT support Ulysses CP (apply_cp raises), so unlike the
 # dense/fast SFT runs there is no sequence parallelism here -- each rank processes the full 64k
@@ -149,17 +152,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     # Composable SFT data pipeline:
-    #   PackingInstanceSource (token_ids_part_*.npy + labels_mask_*.npy, packed to CONTENT length)
+    #   ConcatAndChunkInstanceSource (token_ids_part_*.npy + labels_mask_*.npy, chunked to CONTENT len)
     #     -> LandmarkInstanceSource (insert landmark token every MEM_FREQ tokens -> SEQUENCE_LENGTH)
     clean_path = DATASET_PATH.rstrip("/")
     instance_source_config = LandmarkInstanceSourceConfig(
-        source=PackingInstanceSourceConfig.from_npy(
+        source=ConcatAndChunkInstanceSourceConfig.from_npy(
             f"{clean_path}/token_ids_part_*.npy",
             tokenizer=tokenizer_config,
             sequence_length=CONTENT_SEQUENCE_LENGTH,
             label_mask_paths=[f"{clean_path}/labels_mask_*.npy"],
             expand_glob=True,
-            long_doc_strategy=LongDocStrategy.truncate,  # truncate docs over CONTENT_SEQUENCE_LENGTH
         ),
         mem_freq=MEM_FREQ,
         mem_id=LANDMARK_TOKEN_ID,

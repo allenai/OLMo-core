@@ -5,9 +5,8 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
-    PackingInstanceSourceConfig,
+    ConcatAndChunkInstanceSourceConfig,
 )
-from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
@@ -44,7 +43,7 @@ from olmo_core.train.train_module import (
 # dense pretraining run. No landmark tokens are inserted.
 #
 # Data pipeline (composable):
-#   PackingInstanceSource(token_ids + labels_mask)   # bin-pack SFT conversations, carry loss mask
+#   ConcatAndChunkInstanceSource(token_ids + labels_mask)  # concat + chunk to SEQUENCE_LENGTH, carry mask
 #
 # DOC MASKING: this dense run leaves generate_doc_lengths=False so the data pipeline matches the
 # fast/sparse landmark SFT runs (landmark attention cannot do intra-document masking), keeping
@@ -137,15 +136,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     # Composable SFT data pipeline (no landmark insertion):
-    #   PackingInstanceSource (token_ids_part_*.npy + labels_mask_*.npy, packed to SEQUENCE_LENGTH)
+    #   ConcatAndChunkInstanceSource (token_ids_part_*.npy + labels_mask_*.npy, chunked to SEQUENCE_LENGTH)
     clean_path = DATASET_PATH.rstrip("/")
-    instance_source_config = PackingInstanceSourceConfig.from_npy(
+    instance_source_config = ConcatAndChunkInstanceSourceConfig.from_npy(
         f"{clean_path}/token_ids_part_*.npy",
         tokenizer=tokenizer_config,
         sequence_length=SEQUENCE_LENGTH,
         label_mask_paths=[f"{clean_path}/labels_mask_*.npy"],
         expand_glob=True,
-        long_doc_strategy=LongDocStrategy.truncate,  # truncate docs over SEQUENCE_LENGTH
     )
 
     data_loader_config = ComposableDataLoaderConfig(
