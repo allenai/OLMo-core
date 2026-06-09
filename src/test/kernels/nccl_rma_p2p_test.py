@@ -28,6 +28,13 @@ def _run_put_signal_wait() -> None:
     local_rank = get_local_rank()
     torch.cuda.set_device(local_rank)
 
+    # Build/load the extension on every rank before any collective. The first call
+    # JIT-compiles it (slow); doing it here (with a barrier) avoids one rank stalling
+    # inside a gloo collective while its peer is still compiling, and surfaces a real
+    # build failure symmetrically instead of as a confusing "connection closed by peer".
+    nccl_rma_p2p.runtime_version()
+    dist.barrier()
+
     unique_id = _broadcast_unique_id(rank)
     ctx = nccl_rma_p2p.init(
         unique_id,
