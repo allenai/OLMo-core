@@ -747,25 +747,45 @@ class Attention(SequenceMixer):
             cache_leftpad=cache_leftpad,
         )
 
-        if self.gate is not None:
-            assert self.w_g is not None
-            g = self.w_g(x)
-            if self.gate.full_precision:
-                g = g.float()
-            gate_values = torch.sigmoid(g).to(att.dtype)
-            if self.gate.granularity == GateGranularity.headwise:
-                # head-wise gating is broadcast across head_dim
-                # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = att * gate_values.unsqueeze(-1)
-            elif self.gate.granularity == GateGranularity.elementwise:
-                att = att.view(B, T, -1) * gate_values
-                # the following att.view op is redundant (a no-op)
-
-        # shape: (batch_size, seq_len, d_model)
+        # shape: (batch_size, seq_len, n_heads * head_dim)
         att = att.view(B, T, -1)
+
+        # shape: (batch_size, seq_len, n_heads * head_dim)
+        att = self._apply_gate(att, x)
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
+
+    def _apply_gate(self, att: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply the optional output gate (``att * sigmoid(w_g(x))``) to the attention output, just
+        before the output projection. This is the shared gating logic used by :meth:`forward` and by
+        the landmark attention variants, all of which compute their attention output and then call
+        :attr:`w_out`. When no gate is configured this is a no-op (returns ``att`` unchanged), so
+        non-gated models are byte-for-byte unaffected.
+
+        :param att: The attention output of shape ``(batch_size, seq_len, n_heads * head_dim)``
+            (n_heads being the *local* head count under tensor parallelism).
+        :param x: The block input of shape ``(batch_size, seq_len, d_model)``, used to compute the
+            gate.
+
+        :returns: The gated attention output, same shape as ``att``.
+        """
+        if self.gate is None:
+            return att
+        assert self.w_g is not None
+        B, T, _ = x.shape
+        g = self.w_g(x)
+        if self.gate.full_precision:
+            g = g.float()
+        gate_values = torch.sigmoid(g).to(att.dtype)
+        if self.gate.granularity == GateGranularity.headwise:
+            # head-wise gating: one value per (local) head, broadcast across head_dim. Use -1 for the
+            # head dim so this stays correct when heads are sharded under tensor parallelism.
+            att = (att.view(B, T, -1, self.head_dim) * gate_values.unsqueeze(-1)).view(B, T, -1)
+        else:  # elementwise: one value per output element.
+            att = att * gate_values
+        return att
 
     def apply_tp(
         self,
@@ -930,8 +950,11 @@ class LandmarkAttention(Attention):
     Landmark attention inserts a special "landmark" token after every ``mem_freq`` regular tokens,
     dividing the sequence into blocks of ``block_size = mem_freq + 1`` tokens, and computes a grouped
     (two-level) softmax so that a query attends to a block's tokens gated by the attention weight
-    assigned to that block's landmark. The projections, QK-norm, RoPE, weight init, and tensor
-    parallel plan are all inherited from :class:`Attention`.
+    assigned to that block's landmark. The projections, QK-norm, RoPE, optional output gating, weight
+    init, and tensor parallel plan are all inherited from :class:`Attention`. When a
+    :class:`GateConfig` is supplied the gate is applied to the landmark attention output
+    (``att * sigmoid(w_g(x))``) exactly as in the base attention, which lets landmark attention drop
+    into gated models like Qwen3.5.
 
     Two forward implementations are available, selected by ``use_kernel``:
 
@@ -964,8 +987,6 @@ class LandmarkAttention(Attention):
         softmax_scale: Optional[float] = None,
         **kwargs,
     ):
-        if kwargs.get("gate") is not None:
-            raise OLMoConfigurationError("LandmarkAttention does not support attention gating")
         if kwargs.get("window_size") is not None:
             raise OLMoConfigurationError(
                 "LandmarkAttention does not support sliding window attention"
@@ -1142,6 +1163,9 @@ class LandmarkAttention(Attention):
 
         # shape: (B, T_local, n_heads * head_dim)
         att = att.contiguous().view(B, T_local, -1)
+
+        # shape: (B, T_local, n_heads * head_dim)
+        att = self._apply_gate(att, x)
 
         # shape: (B, T_local, d_model)
         return self.w_out(att)

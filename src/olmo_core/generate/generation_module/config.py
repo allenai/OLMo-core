@@ -41,6 +41,37 @@ class GenerationConfig(Config):
     stop_token_ids: Optional[List[int]] = None
     """Tokens to stop generation at. If provided, the generation will stop when any of these tokens are generated."""
 
+    landmark_mem_id: Optional[int] = None
+    """
+    For landmark-attention models only: the token ID used as the landmark ("memory") token. When the
+    model uses a landmark attention variant (``fast_landmark`` / ``sparse_landmark``), generation
+    automatically inserts this token into the *prompt* every ``mem_freq`` content tokens (so the
+    prefill sees the same block structure the model was trained on) while decoding plain content
+    tokens (no landmarks). This must be set for landmark models; it is ignored otherwise.
+    """
+
+    landmark_decode_mode: str = "extend_last_block"
+    """
+    For landmark-attention models only: how the decode step treats the prompt's final (possibly
+    partial) content block, i.e. what counts as the growing "one long local block":
+
+    - ``"extend_last_block"``: the local block spans the last prompt block boundary through all
+      generated tokens, so generated tokens attend directly to the tail content of the prompt's
+      final block as well as to each other (plus past blocks via their landmarks).
+    - ``"generation_only"``: only the generated tokens form the local block; the entire prompt is
+      reachable only through the prompt's landmarks. To keep landmarks at the trained (periodic)
+      positions, the prompt's final partial block is padded with :data:`landmark_pad_id` up to the
+      next landmark position so the prompt always ends with a landmark token.
+    """
+
+    landmark_pad_id: Optional[int] = None
+    """
+    For landmark-attention models in ``"generation_only"`` decode mode only: the token ID used to
+    pad the prompt's final partial block (up to the next landmark position) so the prompt ends with a
+    landmark token. Should be a semantically neutral token such as the tokenizer's space token. If
+    ``None``, :data:`pad_token_id` is used.
+    """
+
     def __post_init__(self):
         self.validate()
 
@@ -64,3 +95,8 @@ class GenerationConfig(Config):
             raise ValueError(f"top_k must be positive or -1, got {self.top_k}")
         if self.top_p <= 0.0 or self.top_p > 1.0:
             raise ValueError(f"top_p must be in (0, 1], got {self.top_p}")
+        if self.landmark_decode_mode not in ("extend_last_block", "generation_only"):
+            raise ValueError(
+                "landmark_decode_mode must be 'extend_last_block' or 'generation_only', "
+                f"got {self.landmark_decode_mode!r}"
+            )

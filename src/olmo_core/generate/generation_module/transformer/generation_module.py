@@ -32,7 +32,12 @@ from olmo_core.generate.generation_module import GenerationConfig, GenerationMod
 from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
-from olmo_core.nn.attention import Attention, AttentionBackendName
+from olmo_core.nn.attention import (
+    Attention,
+    AttentionBackendName,
+    FastLandmarkAttention,
+    SparseLandmarkAttention,
+)
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
@@ -41,6 +46,58 @@ from olmo_core.train.train_module.transformer.config import (
 from olmo_core.utils import gc_cuda, get_default_device, log_or_print, move_to_device
 
 log = logging.getLogger(__name__)
+
+# Landmark attention variants that need prompt-side landmark insertion + "one long local block"
+# decoding during generation.
+_LANDMARK_ATTENTION_TYPES = (FastLandmarkAttention, SparseLandmarkAttention)
+
+
+def _insert_landmark_tokens(input_ids: torch.Tensor, mem_freq: int, mem_id: int) -> torch.Tensor:
+    """
+    Insert a landmark token after every ``mem_freq`` content tokens of each row, reproducing the
+    block structure that landmark models are trained on (a landmark at every position ``p`` with
+    ``(p + 1) % (mem_freq + 1) == 0``). A trailing partial block (fewer than ``mem_freq`` tokens) is
+    left without a landmark.
+
+    :param input_ids: Content token IDs of shape ``(batch_size, seq_len)`` (no landmarks).
+    :param mem_freq: Number of content tokens between landmarks (landmark block size is
+        ``mem_freq + 1``).
+    :param mem_id: The landmark token ID to insert.
+
+    :returns: Token IDs of shape ``(batch_size, seq_len + seq_len // mem_freq)`` with landmarks
+        inserted at the fixed periodic positions.
+    """
+    B, C = input_ids.shape
+    n_land = C // mem_freq
+    if n_land == 0:
+        return input_ids
+    block_size = mem_freq + 1
+    out_len = C + n_land
+    out = input_ids.new_full((B, out_len), mem_id)
+    pos = torch.arange(out_len, device=input_ids.device)
+    content_pos = pos[((pos + 1) % block_size) != 0]  # everything except the landmark slots
+    out[:, content_pos] = input_ids
+    return out
+
+
+def _build_landmark_prompt(
+    input_ids: torch.Tensor, mem_freq: int, mem_id: int, *, mode: str, pad_id: int
+) -> torch.Tensor:
+    """
+    Build the landmark-structured prompt fed to prefill from a content-only prompt.
+
+    In ``"generation_only"`` mode the final partial block is padded with ``pad_id`` up to the next
+    landmark position, so the prompt always ends with a landmark token (keeping landmarks at the
+    trained periodic positions). In ``"extend_last_block"`` mode a trailing partial block is left
+    as-is (it stays part of the growing local block during decode).
+    """
+    content = input_ids
+    if mode == "generation_only":
+        pad_len = (-content.shape[1]) % mem_freq
+        if pad_len:
+            pad_block = content.new_full((content.shape[0], pad_len), pad_id)
+            content = torch.cat([content, pad_block], dim=1)
+    return _insert_landmark_tokens(content, mem_freq, mem_id)
 
 
 class TransformerGenerationModule(GenerationModule):
@@ -122,6 +179,23 @@ class TransformerGenerationModule(GenerationModule):
             assert isinstance(block.attention, Attention)
             cast(Attention, block.attention).kv_cache_manager = None
 
+    def _landmark_attention_layers(self) -> List[Attention]:
+        """Return the model's landmark attention layers (empty if this is not a landmark model)."""
+        layers: List[Attention] = []
+        for block in self.model.blocks.values():
+            attn = block.attention
+            if isinstance(attn, _LANDMARK_ATTENTION_TYPES):
+                layers.append(cast(Attention, attn))
+        return layers
+
+    def _set_landmark_eval_decode(self, prompt_len: int, mode: str):
+        for attn in self._landmark_attention_layers():
+            attn.set_landmark_eval_decode(prompt_len, mode)  # type: ignore[attr-defined]
+
+    def _clear_landmark_eval_decode(self):
+        for attn in self._landmark_attention_layers():
+            attn.clear_landmark_eval_decode()  # type: ignore[attr-defined]
+
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:
             if mode == "train":
@@ -176,7 +250,48 @@ class TransformerGenerationModule(GenerationModule):
         pad = generation_config.pad_token_id
 
         input_ids = move_to_device(input_ids, self.device)
+
+        # Landmark attention: insert landmark tokens into the *prompt* every ``mem_freq`` content
+        # tokens (so prefill sees the trained block structure) and decode plain content tokens as
+        # "one long local block". This keeps the eval harness landmark-agnostic -- it only ever sees
+        # content tokens in and content tokens out.
+        landmark_layers = self._landmark_attention_layers()
+        landmark_active = len(landmark_layers) > 0
+        orig_input_ids = input_ids
+        if landmark_active:
+            if generation_config.landmark_mem_id is None:
+                raise OLMoConfigurationError(
+                    "This is a landmark-attention model; set GenerationConfig.landmark_mem_id "
+                    "(the landmark token ID) to generate."
+                )
+            if not generation_config.use_cache:
+                raise OLMoConfigurationError(
+                    "Landmark-attention generation requires use_cache=True."
+                )
+            if attention_mask is not None and not bool(attention_mask.all()):
+                raise OLMoConfigurationError(
+                    "Landmark-attention generation does not support left-padding / attention masks "
+                    "(blocks are tied to absolute position; use batch_size=1)."
+                )
+            mem_freqs = {int(getattr(a, "mem_freq")) for a in landmark_layers}
+            if len(mem_freqs) != 1:
+                raise OLMoConfigurationError(
+                    f"Landmark layers have inconsistent mem_freq values: {sorted(mem_freqs)}"
+                )
+            pad_id = generation_config.landmark_pad_id
+            if pad_id is None:
+                pad_id = generation_config.pad_token_id
+            input_ids = _build_landmark_prompt(
+                input_ids,
+                mem_freqs.pop(),
+                generation_config.landmark_mem_id,
+                mode=generation_config.landmark_decode_mode,
+                pad_id=pad_id,
+            )
+
         batch_size, prompt_len = input_ids.shape
+        if landmark_active:
+            self._set_landmark_eval_decode(prompt_len, generation_config.landmark_decode_mode)
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         stop_tokens = (
             torch.tensor(generation_config.stop_token_ids, device=self.device, dtype=torch.int32)
@@ -322,7 +437,15 @@ class TransformerGenerationModule(GenerationModule):
             stats_lines.append(f"{'=' * 60}")
             log_or_print(log, "\n".join(stats_lines))
 
-        if completions_only:
+        if landmark_active:
+            # ``generated`` holds the landmark-inserted prompt followed by plain content tokens; the
+            # caller never asked for landmarks, so report the prompt in its original content space.
+            self._clear_landmark_eval_decode()
+            completion = generated[:, prompt_len:]
+            generated = (
+                completion if completions_only else torch.cat([orig_input_ids, completion], dim=1)
+            )
+        elif completions_only:
             generated = generated[:, prompt_len:]
             # NOTE: completions_only does not apply to logits/logprobs. They are already computed only for completions.
         return generated, logits, logprobs
@@ -432,6 +555,7 @@ class TransformerGenerationModule(GenerationModule):
 
         # Load transformer config from checkpoint if not provided
         tokenizer_config = None
+        checkpoint_landmark_mem_id: Optional[int] = None
         if transformer_config is None and get_rank(process_group) == 0:
             config_path = join_path(checkpoint_dir, "config.json")
             with cached_path(config_path).open() as f:
@@ -440,11 +564,29 @@ class TransformerGenerationModule(GenerationModule):
                 # Avoid loading the entire experiment config b/c we don't care about validation outside
                 # of the transformer config and the tokenizer config
                 transformer_config = TransformerConfig.from_dict(config_dict["model"])
-                tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
             except KeyError as e:
                 raise OLMoConfigurationError(
                     f"Failed to load config from checkpoint at {config_path}: missing required field {e}"
                 ) from e
+
+            # The tokenizer config is only needed to synthesize a generation config when one
+            # isn't provided. Tolerate checkpoints whose config stores the tokenizer elsewhere
+            # or stores `dataset` in a different shape (e.g. composable data configs where
+            # `dataset` is a list of sources), so loading still works when a generation config
+            # is passed explicitly.
+            try:
+                tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
+            except (KeyError, TypeError):
+                tokenizer_config = None
+
+            # For composable data pipelines the dataset field is a list of InstanceSourceConfig
+            # dicts; a LandmarkInstanceSourceConfig carries `mem_id` at the top level.
+            dataset_cfg = config_dict.get("dataset")
+            if isinstance(dataset_cfg, list):
+                for src in dataset_cfg:
+                    if isinstance(src, dict) and "mem_id" in src:
+                        checkpoint_landmark_mem_id = int(src["mem_id"])
+                        break
 
         # Create work directory on rank 0
         work_dir = Path(
@@ -452,8 +594,8 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         # Broadcast config and work_dir to all ranks
-        transformer_config, work_dir, tokenizer_config = broadcast_object(
-            (transformer_config, work_dir, tokenizer_config)
+        transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id = (
+            broadcast_object((transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id))
         )
 
         if transformer_config is None:
@@ -471,10 +613,23 @@ class TransformerGenerationModule(GenerationModule):
             generation_config = GenerationConfig(
                 pad_token_id=tokenizer_config.pad_token_id,
                 eos_token_id=tokenizer_config.eos_token_id,
+                landmark_mem_id=checkpoint_landmark_mem_id,
             )
             log_or_print(
                 log,
                 f"No generation config provided, using defaults from checkpoint config: {generation_config}",
+            )
+
+        # Auto-fill landmark_mem_id from checkpoint config when the caller didn't set it.
+        if checkpoint_landmark_mem_id is not None and generation_config.landmark_mem_id is None:
+            import dataclasses
+
+            generation_config = dataclasses.replace(
+                generation_config, landmark_mem_id=checkpoint_landmark_mem_id
+            )
+            log_or_print(
+                log,
+                f"Auto-filled landmark_mem_id={checkpoint_landmark_mem_id} from checkpoint config",
             )
 
         # Build model and generation module

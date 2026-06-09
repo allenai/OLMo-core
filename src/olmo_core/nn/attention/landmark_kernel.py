@@ -37,6 +37,9 @@ try:
 except ImportError:
     triton = None  # type: ignore
     tl = None  # type: ignore
+    # Defined below only when triton is available; expose None fallbacks so importers (e.g.
+    # landmark_fast) don't fail to import on CPU-only / non-triton environments.
+    _fwd_kernel = _bwd_preprocess = _bwd_kernel = None  # type: ignore
 
 
 def has_landmark_kernel() -> bool:
