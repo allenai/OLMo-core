@@ -189,6 +189,7 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
         beaker_workspace="ai2/olmo-instruct",
+        beaker_image="saumyam/olmo-core-old-torch",
         num_nodes=8,
         num_execution_units=1,
         dataset_path=DATASET_PATH,
