@@ -214,18 +214,10 @@ jobs:
                 src/integration_tests/
 
           # The MoE kernels require torch >= 2.10 (torch.nn.functional.grouped_mm,
-          # F.ScalingType/F.SwizzleType); their tests are version-gated and skip on the
-          # torch 2.9 image above, so run them on a torch 2.10 image here.
+          # F.ScalingType/F.SwizzleType) and JIT-build .cu extensions, so they need an
+          # image with both torch 2.10 and the CUDA toolkit (nvcc). Their tests are
+          # version-gated and skip on the torch 2.9 image above.
           - name: Test MoE kernels (GPU, torch 2.10)
-            image: petew/olmo-core-tch2100cu128-2026-01-23
-            gpus: 2
-            run: |
-              pytest -v --color=yes --durations=3 -m gpu \
-                src/test/kernels/
-
-          # Trial run of the MoE kernel tests on an image that ships the CUDA
-          # toolkit (nvcc), which is needed to JIT-build the .cu kernel extensions.
-          - name: Test MoE kernels (GPU, torch 2.10, CUDA toolkit)
             image: tianhuat/olmo-core-torch210-2404-cu128
             gpus: 2
             run: |
