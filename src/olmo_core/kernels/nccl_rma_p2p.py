@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import site
 import sys
 from pathlib import Path
@@ -48,9 +49,48 @@ def _find_nccl_paths() -> tuple[Path, Path]:
     return include_dir, lib_dir
 
 
+# This extension uses NCCL's one-sided RMA "window" API; these symbols only exist
+# in recent NCCL (~2.28+).
+_REQUIRED_NCCL_SYMBOLS = ("ncclPutSignal", "ncclWaitSignal")
+
+
+def _parse_nccl_version(header_text: str) -> str | None:
+    def _macro(name: str) -> int | None:
+        match = re.search(rf"#define\s+{name}\s+(\d+)", header_text)
+        return int(match.group(1)) if match else None
+
+    major = _macro("NCCL_MAJOR")
+    if major is None:
+        return None
+    parts = [major, _macro("NCCL_MINOR"), _macro("NCCL_PATCH")]
+    return ".".join(str(part) for part in parts if part is not None)
+
+
+def _check_nccl_supports_rma(include_dir: Path) -> None:
+    """
+    Fail early (with a clear message) if the NCCL headers lack the RMA window API.
+
+    Without this, a too-old NCCL only fails deep in the nvcc compile with a cryptic
+    "'ncclPutSignal' was not declared" error.
+    """
+    header = include_dir / "nccl.h"
+    text = header.read_text(errors="ignore")
+    missing = [sym for sym in _REQUIRED_NCCL_SYMBOLS if sym not in text]
+    if missing:
+        version = _parse_nccl_version(text)
+        found = f"NCCL {version}" if version else "the NCCL"
+        raise RuntimeError(
+            "nccl_rma_p2p requires NCCL with the one-sided RMA window API "
+            f"({'/'.join(_REQUIRED_NCCL_SYMBOLS)}), but {found} headers at {header} do "
+            f"not declare {', '.join(missing)} (needs a recent NCCL, ~2.28+). Point "
+            "NCCL_HOME / NCCL_INCLUDE_DIR at a newer NCCL install."
+        )
+
+
 def _nccl_build_kwargs() -> dict:
     # Resolved at load time (not import) so the module stays import-safe without NCCL.
     include_dir, lib_dir = _find_nccl_paths()
+    _check_nccl_supports_rma(include_dir)
     return {
         "extra_include_paths": [include_dir],
         "extra_ldflags": [f"-L{lib_dir}", "-lnccl", f"-Wl,-rpath,{lib_dir}"],
