@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
@@ -36,25 +36,52 @@ except AttributeError:
 
 @dataclass(frozen=True)
 class ScaledGroupedMMPrequantizedLHS:
+    """
+    A pre-quantized left-hand side (activations) for the scaled grouped matmul.
+
+    Holds the MXFP8 quantized data and scales so the forward can skip
+    re-quantizing the activations.
+
+    :param mat_a_q: The MXFP8-quantized activations.
+    :param scale_a: The MXFP8 scales for ``mat_a_q``.
+    :param mat_a_shape: The logical (M, K) shape of the original activations.
+    :param scales_are_blocked: Whether ``scale_a`` is already in the blocked
+        (swizzled) layout the kernel expects.
+    """
+
     mat_a_q: Tensor
     scale_a: Tensor
-    mat_a_shape: Tuple[int, ...]  # logically (M, K)
+    mat_a_shape: tuple[int, ...]  # logically (M, K)
     scales_are_blocked: bool = False
 
 
 @dataclass(frozen=True)
 class ScaledGroupedMMPrequantizedRHS:
+    """
+    A pre-quantized right-hand side (expert weights) for the scaled grouped matmul.
+
+    Holds the MXFP8 quantized weights in the column-major layout the grouped
+    GEMM requires, so the weights can be quantized once per optimizer step and
+    reused across microbatches.
+
+    :param mat_b_q: The MXFP8-quantized weights (column-major in the last two dims).
+    :param scale_b: The MXFP8 scales for ``mat_b_q``.
+    :param mat_b_shape: The logical (E, N, K) shape of the original weights.
+    :param mat_b_version: The ``_version`` of the source weight when quantized,
+        or ``-1`` if not tracked; used to detect a stale cache.
+    """
+
     mat_b_q: Tensor
     scale_b: Tensor
-    mat_b_shape: Tuple[int, ...]  # logically (E, N, K)
+    mat_b_shape: tuple[int, ...]  # logically (E, N, K)
     mat_b_version: int = -1
 
 
 def _tensor_version(x: Tensor) -> int:
-    try:
-        return int(x._version)
-    except Exception:
-        return -1
+    # `_version` is present on real tensors; fall back to -1 for anything that
+    # doesn't expose it rather than swallowing unrelated errors.
+    version = getattr(x, "_version", None)
+    return -1 if version is None else int(version)
 
 
 def _prequantized_lhs_tensors_for_backward(

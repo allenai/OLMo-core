@@ -17,7 +17,8 @@ from olmo_core.kernels.scaled_grouped_mm import (
     scaled_grouped_mm_q,
     scaled_grouped_mm_q_fp8_weight,
 )
-from olmo_core.testing import has_torch_grouped_mm
+from olmo_core.testing import has_torch_grouped_mm, requires_gpu
+from olmo_core.testing.utils import requires_compute_capability
 
 # The FP8 scaled-grouped-mm path requires torch >= 2.10 (F.grouped_mm reference +
 # F.ScalingType/F.SwizzleType). Skip the file wholesale on older torch.
@@ -118,9 +119,9 @@ def test_mxfp8_row_quant_dequant_roundtrip():
     assert float(rel_err.item()) < 0.6
 
 
+@requires_gpu
+@requires_compute_capability(min_cc=9)
 def test_mxfp8_row_quant_no_nan_on_cuda():
-    if not torch.cuda.is_available():
-        return
     x = torch.randn(256, 512, device="cuda", dtype=torch.bfloat16)
     qdata, scales = quantize_rows_to_mxfp8(x, block_size=32)
     assert bool(torch.isfinite(qdata.float()).all())
@@ -285,10 +286,8 @@ def test_scaled_grouped_mm_q_fp8_weight_uses_prequantized_lhs_for_wgrad(monkeypa
     torch.testing.assert_close(captured["lhs_for_wgrad"], mat_a_expected)
 
 
+@requires_gpu
 def test_scaled_grouped_mm_q_fp8_weight_accumulates_sink_for_detached_anchor(monkeypatch):
-    if not torch.cuda.is_available():
-        return
-
     monkeypatch.setattr(
         scaled_grouped_mm_module,
         "_forward_scaled_grouped_mm_mxfp8_prequantized_rhs",
@@ -459,9 +458,9 @@ def test_quantize_grouped_2d_to_mxfp8_blocked_keeps_capacity_shape():
     assert scales_blocked.shape[0] >= x.shape[0]
 
 
+@requires_gpu
+@requires_compute_capability(min_cc=9)
 def test_quantize_grouped_2d_to_mxfp8_blocked_fused_matches_two_stage_cuda():
-    if not torch.cuda.is_available():
-        return
     x = torch.randn(64, 512, device="cuda", dtype=torch.bfloat16)
     # Active rows are 41, but input has capacity 64.
     offs = torch.tensor([11, 17, 41], device="cuda", dtype=torch.int32)
@@ -488,9 +487,8 @@ def test_quantize_grouped_weight_3d_to_mxfp8_blocked_returns_col_major_layout():
     assert scales_blocked.dtype == torch.float8_e8m0fnu
 
 
+@requires_gpu
 def test_scaled_grouped_mm_q_forces_mat2_col_major_layout(monkeypatch):
-    if not torch.cuda.is_available():
-        return
     a, b, offs = _build_inputs()
     a = a.to(device="cuda")
     b = b.to(device="cuda")
@@ -564,9 +562,9 @@ def test_scaled_grouped_mm_q_forces_mat2_col_major_layout(monkeypatch):
     assert seen["stride"][-1] == b.shape[-2]
 
 
+@requires_gpu
+@requires_compute_capability(min_cc=9)
 def test_scaled_grouped_mm_q_uses_prequantized_rhs(monkeypatch):
-    if not torch.cuda.is_available():
-        return
     torch.manual_seed(123)
     offs = torch.tensor([3, 5, 9], dtype=torch.int32, device="cuda")
     a = torch.randn(int(offs[-1].item()), 512, dtype=torch.float32, device="cuda")
