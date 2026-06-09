@@ -57,7 +57,7 @@ DEFAULT_ENGRAM_TABLE_DIR = (
     "pilot-2026-06-03-fraction1e-2-n5-prune0-1-3-10-20-v1"
 )
 DEFAULT_ENGRAM_N_MAX = 5
-DEFAULT_ENGRAM_CODE_DIM = 32
+DEFAULT_ENGRAM_CODE_DIM = 16
 DEFAULT_ENGRAM_TOP_M = 32
 DEFAULT_ENGRAM_ALPHA_INIT = 5.0
 DEFAULT_ENGRAM_VOCAB_CHUNK_SIZE = 4096
@@ -164,6 +164,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     )
 
     smoke_1gpu = getattr(args, "smoke_1gpu", False)
+    smoke_run = getattr(args, "smoke_run", False) or smoke_1gpu
     max_devices = 1 if smoke_1gpu else args.max_gpus
     model_construction_kwargs = {"sliding_window": None}
     if getattr(args, "attn_backend", None) is not None:
@@ -194,7 +195,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ),
         run_configurator=(
             _poe._WSDSChinchillaSmoke(chinchilla_multiple=args.chinchilla_multiple)
-            if smoke_1gpu
+            if smoke_run
             else WSDSChinchillaRunConfigurator(
                 chinchilla_multiple=args.chinchilla_multiple
             )
@@ -213,7 +214,7 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         "--engram-table-dir",
         type=str,
         default=DEFAULT_ENGRAM_TABLE_DIR,
-        help="Directory containing forward_index.bin or forward_index_topk.bin.",
+        help="Directory containing raw forward_index.bin.",
     )
     parser.add_argument(
         "--engram-n-max",
@@ -263,6 +264,14 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         choices=("torch", "flash_2", "flash_3", "flash_4", "te"),
         default=None,
         help="Override the automatically selected attention backend.",
+    )
+    parser.add_argument(
+        "--smoke-run",
+        action="store_true",
+        help=(
+            "Use the short smoke-test schedule without forcing the run onto a "
+            "single GPU."
+        ),
     )
     parser.add_argument(
         "--smoke-1gpu",

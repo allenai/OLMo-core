@@ -658,8 +658,9 @@ class NgramTopKSource:
 class NgramContextSource:
     """Lookup observed ngram contexts as learned-memory row IDs.
 
-    This uses the prefix blocks from ``forward_index_topk.bin`` and deliberately
-    ignores the top-k continuation token IDs and log probabilities.
+    This uses the raw prefix blocks from ``forward_index.bin`` and deliberately
+    does not accept top-k continuation indexes. Falling back to a K-specific
+    index would change the baseline being tested.
     """
 
     def __init__(
@@ -672,27 +673,28 @@ class NgramContextSource:
         self.N_max = int(N_max)
         p = Path(table_dir)
         if p.is_dir():
-            raw_path = p / "forward_index.bin"
-            topk_path = p / "forward_index_topk.bin"
-            if raw_path.exists():
-                fwd_path = raw_path
-            elif topk_path.exists():
-                fwd_path = topk_path
-            else:
-                fwd_path = topk_path
-        elif p.name in {"forward_index.bin", "forward_index_topk.bin"}:
+            fwd_path = p / "forward_index.bin"
+        elif p.name == "forward_index.bin":
             fwd_path = p
+        elif p.name == "forward_index_topk.bin":
+            raise ValueError(
+                "Engram context lookup requires the raw forward_index.bin; "
+                f"got top-k index {table_dir}"
+            )
         else:
             raise ValueError(
-                f"table_dir must be a directory containing forward_index.bin or "
-                f"forward_index_topk.bin, or one of those files directly, got {table_dir}"
+                "table_dir must be a directory containing raw forward_index.bin "
+                f"or a forward_index.bin file directly, got {table_dir}"
             )
         if not fwd_path.exists():
-            raise FileNotFoundError(f"context index file not found: {fwd_path}")
+            raise FileNotFoundError(
+                "Engram context lookup requires raw forward_index.bin and does "
+                f"not fall back to top-k indexes; file not found: {fwd_path}"
+            )
         self.forward_index_path = str(fwd_path)
-        self._idx: Optional[Union[ContextForwardIndex, RawContextForwardIndex]] = None
+        self._idx: Optional[RawContextForwardIndex] = None
 
-    def _ensure_open(self) -> Union[ContextForwardIndex, RawContextForwardIndex]:
+    def _ensure_open(self) -> RawContextForwardIndex:
         if self._idx is not None:
             return self._idx
         tag = (
@@ -701,10 +703,7 @@ class NgramContextSource:
         )
         print(f"{tag} _ensure_open: mirroring context index to /dev/shm", flush=True)
         local_path = _mirror_to_shm(self.forward_index_path)
-        if Path(local_path).name == "forward_index.bin":
-            idx = RawContextForwardIndex(local_path, N_max=self.N_max)
-        else:
-            idx = ContextForwardIndex(local_path, N_max=self.N_max)
+        idx = RawContextForwardIndex(local_path, N_max=self.N_max)
         idx._ensure_open()
         self._idx = idx
         print(

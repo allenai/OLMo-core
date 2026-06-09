@@ -2,6 +2,7 @@ import math
 import struct
 
 import numpy as np
+import pytest
 import torch
 import torch.nn as nn
 
@@ -129,6 +130,17 @@ def test_ngram_context_source_uses_raw_prefixes_without_topk(tmp_path):
         source.lookup_batch([(10,), (20,), (30,), (1, 10)]),
         np.asarray([1, 2, 0, 1], dtype=np.int64),
     )
+
+
+def test_ngram_context_source_rejects_topk_fallback(tmp_path):
+    topk = tmp_path / "forward_index_topk.bin"
+    topk.write_bytes(b"not-a-real-index")
+
+    with pytest.raises(FileNotFoundError, match="does not fall back"):
+        NgramContextSource(tmp_path, N_max=2)
+
+    with pytest.raises(ValueError, match="requires the raw forward_index.bin"):
+        NgramContextSource(topk, N_max=2)
 
 
 def test_engram_early_fusion_sparse_decode_uses_learned_topm_distribution():

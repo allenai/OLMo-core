@@ -3,11 +3,11 @@ Wrap a base :class:`InstanceSource` with per-position observed-context IDs.
 
 For each instance, we add ``engram_context_ids`` (S). Each ID points to the
 longest observed ngram context row in a context-key table derived from the
-prefix blocks of ``forward_index.bin`` or ``forward_index_topk.bin``. The
-wrapper does not read KN
+prefix blocks of the raw ``forward_index.bin``. The wrapper does not read KN
 continuation token IDs, continuation counts, log probabilities, or backoff
 weights, so it can feed learned Engram-style memory without leaking the
-corpus-derived continuation distribution.
+corpus-derived continuation distribution. It fails loudly instead of falling
+back to K-specific top-k indexes.
 """
 
 from __future__ import annotations
@@ -30,9 +30,7 @@ class NgramContextInstanceSource(InstanceSource):
     instance with per-position observed-context row IDs.
 
     :param source: The wrapped instance source.
-    :param table_dir: Directory containing ``forward_index.bin`` (FIX1 v=2) or
-        ``forward_index_topk.bin`` (FXTK v=1). The raw forward index is used
-        when both are present.
+    :param table_dir: Directory containing raw ``forward_index.bin`` (FIX1 v=2).
     :param N_max: Highest ngram order to probe. Must be <= the highest order
         present in the index.
     """
