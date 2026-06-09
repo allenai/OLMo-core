@@ -1,7 +1,7 @@
-import pytest
 import torch
 
 from olmo_core.kernels import OlmoMXFP8Tensor
+from olmo_core.testing import requires_gpu
 
 
 def test_olmo_mxfp8_tensor_roundtrip_and_fallback_dispatch():
@@ -123,7 +123,7 @@ def test_olmo_mxfp8_tensor_torch_compile_eager_backend():
     torch.testing.assert_close(x.grad, torch.ones_like(x))
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA inductor smoke test requires CUDA")
+@requires_gpu
 def test_olmo_mxfp8_tensor_torch_compile_inductor_cuda_smoke():
     x = torch.randn(4, 64, device="cuda", dtype=torch.bfloat16, requires_grad=True)
     # The custom Functions below use prefer_triton=False so Dynamo/Inductor can
