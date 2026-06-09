@@ -23,6 +23,30 @@ CANONICAL_BATCH_BY_CX = {
     16: "1M",
 }
 
+CANONICAL_BATCH_BY_MODEL_CX = {
+    "275m": CANONICAL_BATCH_BY_CX,
+    "mid_480m": {
+        1: "256k",
+        2: "512k",
+        4: "512k",
+        8: "768k",
+        16: "1M",
+    },
+    "810m": {
+        1: "256k",
+        2: "512k",
+        4: "512k",
+        8: "768k",
+        16: "1M",
+    },
+    "1p2b": {
+        1: "256k",
+        4: "512k",
+        8: "768k",
+        16: "1M",
+    },
+}
+
 CANONICAL_FAMILY_BY_CX = {
     1: "gpu2-ep1mb16",
     2: "gpu2-ep1mb16",
@@ -108,7 +132,9 @@ def summarize_rows(rows, window_m: int, finished_only: bool, canonical_only: boo
             continue
         if finished_only and row.state != "finished":
             continue
-        if canonical_only and row.spec.batch_label != CANONICAL_BATCH_BY_CX.get(row.spec.cx):
+        model = model_label_from_name(row.name)
+        canonical_batch = CANONICAL_BATCH_BY_MODEL_CX.get(model, CANONICAL_BATCH_BY_CX).get(row.spec.cx)
+        if canonical_only and row.spec.batch_label != canonical_batch:
             continue
         final = row.history[-1]
         avg, count = mean_loss_in_window(row.history, final.tokens, window_m * 1_000_000)
@@ -116,7 +142,7 @@ def summarize_rows(rows, window_m: int, finished_only: bool, canonical_only: boo
             continue
         points.append(
             {
-                "model": model_label_from_name(row.name),
+                "model": model,
                 "cx": row.spec.cx,
                 "batch": row.spec.batch_label,
                 "lr": row.spec.lr,
@@ -329,7 +355,10 @@ def plot_cx_across_models(points, cx: int, out_path: Path, window_m: int) -> Non
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default="ai2-llm/jacobm-olmoe-ladder")
-    parser.add_argument("--name-regex", default="olmoe3-tiny-275m-cx")
+    parser.add_argument(
+        "--name-regex",
+        default="olmoe3-tiny-275m-cx|olmoe3-moe-a0-810m-cx|olmoe3-moe-a0-1p2b-cx|olmoe3-810m-cx|m480-cx",
+    )
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--refresh-cache", action="store_true")
     parser.add_argument("--window-m", type=int, default=250)

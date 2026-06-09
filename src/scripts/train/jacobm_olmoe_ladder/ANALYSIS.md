@@ -97,14 +97,28 @@ LR-rule fits. The aggregate model plot shows only the canonical family for each
 rung.
 
 Plots are written to `src/scripts/train/jacobm_olmoe_ladder/plots/`. The
-committed artifacts include one U-plot per Cx rung and one aggregate U-plot for
-the 275M model. By default the plotter only includes the canonical ladder batch
-for each rung (`256k` for Cx1/Cx2, `512k` for Cx4, `768k` for Cx8, and `1M` for
-Cx16); pass `--include-noncanonical` to include historical batch-size probes.
+committed artifacts include one U-plot per model/Cx, one aggregate U-plot per
+model, and one aggregate U-plot per Cx across model sizes. By default the
+plotter only includes the canonical ladder batch for each model/rung; for
+example, 275M Cx2 uses `256k`, while 480M/810M Cx2 use `512k`. Pass
+`--include-noncanonical` to include historical batch-size probes.
 
 Diagnostic runs with `sanity` in the name are excluded from the standard plotter
 and from LR-rule fits. These are for controlled settings-difference checks, not
 for the ladder sweep itself.
+
+## 2026-06-09 810M Cx2 Status
+
+The first full 810M Cx2 run completed:
+
+| LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
+| ---: | --- | ---: | ---: | ---: | ---: | --- |
+| `3e-4` | finished | 27.603B | 2.3245 | 2.3308 | 2.3291 | `ogp6mrt6` |
+
+Do not fit or launch from the 810M Cx2 curve yet. The `1.5e-4` run is still
+running, and the `6e-4` / `1.2e-3` runs are still queued. Use the completed
+Cx2 curve only after those full runs land, unless a later failure forces a
+separate decision.
 
 ## 2026-06-02 Snapshot
 

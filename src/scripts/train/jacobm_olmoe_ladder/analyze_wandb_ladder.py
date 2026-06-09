@@ -74,6 +74,7 @@ def parse_run_spec(name: str) -> RunSpec | None:
         and "olmoe3-moe-a0-810m-cx" not in name
         and "olmoe3-moe-a0-1p2b-cx" not in name
         and "olmoe3-810m-cx" not in name
+        and "m480-cx" not in name
     ):
         return None
 
