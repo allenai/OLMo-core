@@ -110,30 +110,18 @@ def assign_ids(n: int, id_length: int, rng: random.Random) -> List[str]:
     return out
 
 
-def apply_template(tok, messages: List[dict], add_generation_prompt: bool) -> List[int]:
-    """
-    Tokenize a chat with the Qwen3 template.
+def render_chat(tok, messages: List[dict], add_generation_prompt: bool) -> str:
+    """Render a chat to a string with the Qwen3 template (``enable_thinking`` left at its default)."""
+    return tok.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=add_generation_prompt
+    )
 
-    We use ``enable_thinking=True`` (the Qwen3 default) so the generation prompt is a clean
-    ``...<|im_start|>assistant\\n`` with no injected ``<think>\\n\\n</think>\\n\\n`` block. With
-    ``enable_thinking=False`` Qwen3 injects that empty block *only* into the generation prompt
-    (``add_generation_prompt=True``) and not into a rendered assistant turn, which makes the prompt
-    no longer a prefix of the full conversation and breaks completion-mask derivation. The training
-    target itself is think-free regardless, since the assistant message we supply contains no
-    ``<think>`` tags.
-    """
-    try:
-        return tok.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=add_generation_prompt,
-            enable_thinking=True,
-        )
-    except TypeError:
-        # Older/other templates without the ``enable_thinking`` kwarg.
-        return tok.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=add_generation_prompt
-        )
+
+def apply_template(tok, messages: List[dict], add_generation_prompt: bool) -> List[int]:
+    """Tokenize a chat with the Qwen3 template (token-count estimates only; see :func:`select_docs`)."""
+    return tok.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=add_generation_prompt
+    )
 
 
 def build_user_content(doc_blocks: List[str], query: str) -> str:
@@ -145,36 +133,53 @@ def tokenize_instance(
     tok, doc_blocks: List[str], query: str, answer: str
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """
-    Tokenize one instance and build its (token_ids, labels_mask) arrays, or ``None`` if the
-    assistant prefix can't be located / the body contains the EOS id.
+    Tokenize one instance and build its (token_ids, labels_mask) arrays, or ``None`` if the body
+    contains the EOS id.
+
+    The loss mask is derived from **character offsets** rather than token-prefix matching: we render
+    the prompt (the conversation up to the assistant header) and the full conversation as strings,
+    confirm the prompt is a string prefix, then tokenize the full string once with
+    ``return_offsets_mapping`` and mark every token that *starts* at or after the prompt boundary.
+    This is robust to the Qwen3 template injecting a ``<think>\\n\\n</think>\\n\\n`` block before the
+    final assistant turn (which makes the prompt/full token sequences non-prefix even though the
+    strings are prefix-consistent). Loss therefore covers the whole assistant turn after the header:
+    the (empty) think block, the answer, and the closing ``<|im_end|>``.
     """
     user_content = build_user_content(doc_blocks, query)
     messages = [{"role": "user", "content": user_content}]
-    prompt_ids = apply_template(tok, messages, add_generation_prompt=True)
-    full_ids = apply_template(
+    prompt_str = render_chat(tok, messages, add_generation_prompt=True)
+    full_str = render_chat(
         tok, messages + [{"role": "assistant", "content": answer}], add_generation_prompt=False
     )
 
-    if full_ids[: len(prompt_ids)] != prompt_ids:
-        # Prefix-consistency is required to locate the response span. If this ever fires the chat
-        # template is doing something non-prefix (e.g. injecting a thinking block); fix before use.
+    if not full_str.startswith(prompt_str):
+        # The user turn must render identically with/without the trailing assistant turn; if not,
+        # the chat template is doing something unexpected and the mask can't be derived.
         raise RuntimeError(
-            "Assistant prompt is not a prefix of the full conversation; cannot derive the loss "
-            "mask. Check the tokenizer's chat template / enable_thinking handling."
+            "Rendered prompt is not a string prefix of the full conversation; cannot derive the "
+            "loss mask. Check the tokenizer's chat template."
         )
 
+    if not tok.is_fast:
+        raise RuntimeError("A fast tokenizer is required for offset-based mask derivation.")
+
+    enc = tok(full_str, add_special_tokens=False, return_offsets_mapping=True)
+    ids = enc["input_ids"]
+    offsets = enc["offset_mapping"]
+
     # The appended EOS is the OLMo-core document separator; it must not occur inside the body.
-    if EOS_TOKEN_ID in full_ids:
+    if EOS_TOKEN_ID in ids:
         return None
 
-    n_prompt = len(prompt_ids)
-    n_response = len(full_ids) - n_prompt
-    token_ids = np.asarray(full_ids + [EOS_TOKEN_ID], dtype=TOKEN_DTYPE)
+    boundary = len(prompt_str)
+    token_ids = np.asarray(list(ids) + [EOS_TOKEN_ID], dtype=TOKEN_DTYPE)
     if LANDMARK_TOKEN_ID in token_ids:
         return None
-    # label_mask: loss only on the response tokens; prompt and the trailing separator are masked.
+    # Loss on response tokens (start char >= boundary); prompt and trailing separator are masked.
     mask = np.zeros(token_ids.shape, dtype=MASK_DTYPE)
-    mask[n_prompt : n_prompt + n_response] = True
+    for i, (start, _end) in enumerate(offsets):
+        if start >= boundary:
+            mask[i] = True
     return token_ids, mask
 
 
