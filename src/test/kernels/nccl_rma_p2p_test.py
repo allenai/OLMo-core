@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 import torch.distributed as dist
 
@@ -85,6 +86,13 @@ def _run_put_signal_wait() -> None:
     dist.barrier()
 
 
+# NOTE: skipped until the CI image ships a new enough NCCL. The nccl_rma_p2p
+# extension uses NCCL's one-sided RMA "window" API (ncclPutSignal / ncclWaitSignal /
+# ncclWaitSignalDesc_t), which is only present in recent NCCL (~2.28+). The NCCL
+# bundled with the current torch build is older, so the extension fails to compile
+# ("'ncclPutSignal' was not declared"). Re-enable once the kernels CI image has a
+# new enough NCCL (e.g. via NCCL_HOME pointing at one with the RMA window API).
+@pytest.mark.skip(reason="Requires NCCL with the RMA window API (ncclPutSignal/ncclWaitSignal)")
 @requires_multi_gpu
 def test_nccl_rma_p2p_put_signal_wait():
     # gloo is only the coordination PG (broadcast + barriers); the RMA path uses its
