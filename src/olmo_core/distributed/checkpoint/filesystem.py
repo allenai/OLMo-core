@@ -4,10 +4,8 @@ import logging
 import operator
 import os
 import pickle
-import sys
 import tempfile
 import traceback
-import types
 from concurrent.futures import (
     Executor,
     ProcessPoolExecutor,
@@ -54,42 +52,6 @@ from olmo_core.utils import generate_uuid, get_default_thread_count, get_element
 
 log = logging.getLogger(__name__)
 
-
-def _ensure_float8_compat():
-    # torchao >= 0.7 removed Float8Tensor (and related types like LinearMMConfig,
-    # GemmInputRole) from torchao.float8.float8_tensor. Checkpoints saved with float8
-    # linear layers pickle these classes by name, so torch.load fails on newer torchao.
-    # We register a stub module with a catch-all __getattr__ that auto-creates minimal
-    # classes for any type pickle asks for. Float8Tensor is a torch.Tensor subclass so
-    # the raw float8 storage is preserved; the caller then copies it into a bfloat16 target.
-    if "torchao.float8.float8_tensor" not in sys.modules:
-        try:
-            import torchao.float8.float8_tensor  # noqa: F401
-        except ModuleNotFoundError:
-            class Float8Tensor(torch.Tensor):
-                pass
-
-            _class_cache: dict = {"Float8Tensor": Float8Tensor}
-
-            def _make_compat_class(name: str) -> type:
-                if name not in _class_cache:
-
-                    class _Compat:
-                        def __init__(self, *args, **kwargs):
-                            pass
-
-                        def __reduce__(self):
-                            return (self.__class__, ())
-
-                    _Compat.__name__ = name
-                    _Compat.__qualname__ = name
-                    _class_cache[name] = _Compat
-                return _class_cache[name]
-
-            stub = types.ModuleType("torchao.float8.float8_tensor")
-            stub.Float8Tensor = Float8Tensor
-            stub.__getattr__ = _make_compat_class  # type: ignore[attr-defined]
-            sys.modules["torchao.float8.float8_tensor"] = stub
 
 
 @dataclass
@@ -443,7 +405,6 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 planner.load_bytes(read_item, bytes)
             else:
                 # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
-                _ensure_float8_compat()
                 tensor = cast(
                     torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
                 )
