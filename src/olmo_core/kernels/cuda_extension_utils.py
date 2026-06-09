@@ -15,7 +15,7 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Union
 
 import torch
 
@@ -286,6 +286,12 @@ class LazyCudaExtension:
     :param force_rebuild_env_names: See :func:`load_cuda_extension`.
     :param stale_lock_timeout_env_names: See :func:`load_cuda_extension`.
     :param with_arch_suffix: See :func:`load_cuda_extension`.
+    :param with_cuda: See :func:`load_cuda_extension`.
+    :param dynamic_build_kwargs: Optional callable invoked at :meth:`load` time that
+        returns extra keyword arguments for :func:`load_cuda_extension` (e.g.
+        ``extra_include_paths``/``extra_ldflags`` for a dependency whose paths must be
+        discovered at runtime). Keep filesystem probing in here, not at import time, so
+        the module stays import-safe without the toolchain.
     """
 
     def __init__(
@@ -300,6 +306,8 @@ class LazyCudaExtension:
         force_rebuild_env_names: Sequence[str] = (),
         stale_lock_timeout_env_names: Sequence[str] = ("OLMO_MOE_EXT_STALE_LOCK_TIMEOUT_SEC",),
         with_arch_suffix: bool = True,
+        with_cuda: Optional[bool] = None,
+        dynamic_build_kwargs: Optional[Callable[[], Dict[str, Any]]] = None,
     ) -> None:
         self.name = name
         self.base_name = base_name
@@ -310,6 +318,8 @@ class LazyCudaExtension:
         self.force_rebuild_env_names = tuple(force_rebuild_env_names)
         self.stale_lock_timeout_env_names = tuple(stale_lock_timeout_env_names)
         self.with_arch_suffix = with_arch_suffix
+        self.with_cuda = with_cuda
+        self.dynamic_build_kwargs = dynamic_build_kwargs
         self._extension: Any = None
         self._attempted = False
         self._error: Optional[Exception] = None
@@ -327,16 +337,19 @@ class LazyCudaExtension:
 
         self._attempted = True
         cuda_dir = Path(__file__).resolve().parent / "cuda"
+        dynamic = self.dynamic_build_kwargs() if self.dynamic_build_kwargs is not None else {}
         try:
             self._extension = load_cuda_extension(
                 base_name=self.base_name,
                 sources=[cuda_dir / src for src in self.sources],
                 extra_cflags=self.extra_cflags,
                 extra_cuda_cflags=self.extra_cuda_cflags,
+                with_cuda=self.with_cuda,
                 verbose_env_names=self.verbose_env_names,
                 force_rebuild_env_names=self.force_rebuild_env_names,
                 stale_lock_timeout_env_names=self.stale_lock_timeout_env_names,
                 with_arch_suffix=self.with_arch_suffix,
+                **dynamic,
             )
         except Exception as e:
             self._error = e

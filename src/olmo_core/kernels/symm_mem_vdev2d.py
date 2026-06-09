@@ -76,6 +76,20 @@ def all_to_all_vdev_2d_nblocks(
     major_align: int = 1,
     nblocks: int = 0,
 ) -> None:
+    """
+    Variable-length 2D all-to-all over NVSHMEM symmetric memory.
+
+    Sends each rank's ``input`` rows to peers per ``in_splits`` and writes the
+    received rows into ``out`` at the positions described by ``out_splits_offsets``.
+
+    :param input: This rank's send buffer (symmetric memory).
+    :param out: This rank's receive buffer (symmetric memory).
+    :param in_splits: Per-destination send counts.
+    :param out_splits_offsets: Per-source receive counts + offsets into ``out``.
+    :param group_name: The registered process-group name.
+    :param major_align: Alignment (in rows) for the major dimension of the layout.
+    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
+    """
     ext = _load_cuda_extension()
     ext.all_to_all_vdev_2d_nblocks(
         input,
@@ -98,6 +112,19 @@ def all_to_all_vdev_2d_offset_nblocks(
     *,
     nblocks: int = 0,
 ) -> None:
+    """
+    Like :func:`all_to_all_vdev_2d_nblocks` but with precomputed send offsets.
+
+    Takes ``in_splits_offsets`` (per-destination counts + offsets into ``input``)
+    instead of plain splits, so the caller controls the exact source layout.
+
+    :param input: This rank's send buffer (symmetric memory).
+    :param out: This rank's receive buffer (symmetric memory).
+    :param in_splits_offsets: Per-destination send counts + offsets into ``input``.
+    :param out_splits_offsets: Per-source receive counts + offsets into ``out``.
+    :param group_name: The registered process-group name.
+    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
+    """
     ext = _load_cuda_extension()
     ext.all_to_all_vdev_2d_offset_nblocks(
         input,
@@ -122,6 +149,22 @@ def rowwise_dispatch_put(
     pre_barrier: bool = False,
     post_barrier: bool = True,
 ) -> None:
+    """
+    One-sided per-row dispatch of tokens to experts over NVSHMEM.
+
+    Puts each row of ``input`` to its destination ``(dst_ranks[i], dst_rows[i])``
+    slot in the peer's ``out`` buffer; rows with a negative destination are skipped.
+
+    :param input: Local rows to dispatch.
+    :param out: Destination buffer on the peer (symmetric memory).
+    :param dst_ranks: Per-row destination rank.
+    :param dst_rows: Per-row destination row index within the peer buffer.
+    :param group_name: The registered process-group name.
+    :param probs: Optional per-row routing weights to carry alongside.
+    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
+    :param pre_barrier: Barrier before the puts.
+    :param post_barrier: Barrier after the puts (so receivers see completion).
+    """
     ext = _load_cuda_extension()
     ext.rowwise_dispatch_put(
         input,
@@ -150,6 +193,24 @@ def rowwise_dispatch_put_scaled(
     pre_barrier: bool = False,
     post_barrier: bool = True,
 ) -> None:
+    """
+    MXFP8 variant of :func:`rowwise_dispatch_put`.
+
+    Quantizes ``input_hp`` to rowwise MXFP8 (qdata + e8m0 block scales), then
+    dispatches the quantized data and the scales as two back-to-back rowwise puts
+    (into ``out_q`` and ``out_scales``), barriering only after the second.
+
+    :param input_hp: High-precision local rows to quantize and dispatch.
+    :param out_q: Destination FP8 qdata buffer on the peer.
+    :param out_scales: Destination scales buffer on the peer.
+    :param dst_ranks: Per-row destination rank.
+    :param dst_rows: Per-row destination row index.
+    :param group_name: The registered process-group name.
+    :param block_size: MXFP8 block size (default 32).
+    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
+    :param pre_barrier: Barrier before the first put.
+    :param post_barrier: Barrier after the scales put.
+    """
     # Optional debug safety init for stale-capacity issues; off by default to
     # avoid full-buffer memset overhead in the fp8 hot path.
     if os.getenv("OLMO_ROWWISE_FP8_DISPATCH_INIT_OUT", "0") == "1":
@@ -193,6 +254,23 @@ def rowwise_combine_get(
     pre_barrier: bool = True,
     post_barrier: bool = False,
 ) -> None:
+    """
+    One-sided per-row combine: gather expert outputs back and reduce into ``out``.
+
+    Pulls each token's expert-output rows from ``(src_ranks, src_rows)`` and combines
+    them (optionally weighted by ``probs``) into ``out`` — the inverse of dispatch.
+
+    :param expert_out: Local expert-output buffer peers read from (symmetric memory).
+    :param out: Per-token combined output (this rank).
+    :param src_ranks: Per-row source rank to gather from.
+    :param src_rows: Per-row source row index.
+    :param group_name: The registered process-group name.
+    :param probs: Optional per-row combine weights.
+    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
+    :param gathered_out: Optional buffer to also receive the raw gathered rows.
+    :param pre_barrier: Barrier before the gets (so senders are ready).
+    :param post_barrier: Barrier after the gets.
+    """
     ext = _load_cuda_extension()
     ext.rowwise_combine_get(
         expert_out,
@@ -226,6 +304,29 @@ def rowwise_combine_get_scaled(
     pre_barrier: bool = True,
     post_barrier: bool = False,
 ) -> None:
+    """
+    MXFP8 variant of :func:`rowwise_combine_get` for top-k routing.
+
+    For ``[N, K]`` routing, gathers each token's K expert-output rows in MXFP8
+    (qdata via :func:`rowwise_gather_get`, then the scales), masking invalid/dropped
+    ``(src_ranks, src_rows)`` entries, then dequantizes and reduces the K rows
+    (weighted by ``probs``) into ``out``.
+
+    :param expert_out_q: Local FP8 expert-output qdata peers read from.
+    :param expert_out_scales: Local expert-output block scales peers read from.
+    :param out: Per-token combined high-precision output (this rank).
+    :param src_ranks: ``[N, K]`` per-(token, slot) source rank (negative = dropped).
+    :param src_rows: ``[N, K]`` per-(token, slot) source row index.
+    :param group_name: The registered process-group name.
+    :param probs: Optional ``[N, K]`` combine weights.
+    :param block_size: MXFP8 block size (default 32).
+    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
+    :param gathered_out: Optional buffer for the dequantized gathered rows.
+    :param gathered_q_out: Optional pre-allocated ``[N, K, ·]`` buffer for gathered qdata.
+    :param gathered_scales_out: Optional pre-allocated ``[N, K, ·]`` buffer for gathered scales.
+    :param pre_barrier: Barrier before the first gather.
+    :param post_barrier: Barrier after the scales gather.
+    """
     if src_ranks.ndim != 2 or src_rows.ndim != 2:
         raise ValueError(
             f"src_ranks/src_rows must be [N,K], got {tuple(src_ranks.shape)} and {tuple(src_rows.shape)}"
@@ -343,6 +444,22 @@ def rowwise_combine_get_fused(
     pre_barrier: bool = True,
     post_barrier: bool = False,
 ) -> None:
+    """
+    Fused single-kernel variant of :func:`rowwise_combine_get`.
+
+    Performs the gather and the weighted combine in one kernel launch (rather than a
+    gather followed by a separate reduce), for the bf16/high-precision path.
+
+    :param expert_out: Local expert-output buffer peers read from (symmetric memory).
+    :param out: Per-token combined output (this rank).
+    :param src_ranks: Per-row source rank to gather from.
+    :param src_rows: Per-row source row index.
+    :param group_name: The registered process-group name.
+    :param probs: Optional per-row combine weights.
+    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
+    :param pre_barrier: Barrier before the gets.
+    :param post_barrier: Barrier after the gets.
+    """
     ext = _load_cuda_extension()
     ext.rowwise_combine_get_fused(
         expert_out,
@@ -369,6 +486,22 @@ def rowwise_gather_get(
     pre_barrier: bool = True,
     post_barrier: bool = False,
 ) -> None:
+    """
+    One-sided per-row gather (no combine): pull source rows into ``out``.
+
+    Like :func:`rowwise_combine_get` but only gathers — writes each gathered row to
+    its own slot in ``out`` without reducing across them. Used as the gather half of
+    :func:`rowwise_combine_get_scaled`.
+
+    :param expert_out: Local buffer peers read from (symmetric memory).
+    :param out: Destination buffer for the gathered rows (this rank).
+    :param src_ranks: Per-row source rank.
+    :param src_rows: Per-row source row index.
+    :param group_name: The registered process-group name.
+    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
+    :param pre_barrier: Barrier before the gets.
+    :param post_barrier: Barrier after the gets.
+    """
     ext = _load_cuda_extension()
     ext.rowwise_gather_get(
         expert_out,
@@ -380,3 +513,16 @@ def rowwise_gather_get(
         pre_barrier,
         post_barrier,
     )
+
+
+__all__ = [
+    "nvshmem_world_barrier",
+    "all_to_all_vdev_2d_nblocks",
+    "all_to_all_vdev_2d_offset_nblocks",
+    "rowwise_dispatch_put",
+    "rowwise_dispatch_put_scaled",
+    "rowwise_combine_get",
+    "rowwise_combine_get_scaled",
+    "rowwise_combine_get_fused",
+    "rowwise_gather_get",
+]

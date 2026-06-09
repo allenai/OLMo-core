@@ -200,6 +200,19 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
 
 
 def build_extension(*, inplace: bool, verbose: bool, force: bool, backend: str = "cmake") -> None:
+    """
+    Build the GPU-side NVSHMEM ``symm_mem_vdev2d`` extension ahead of time.
+
+    Called by ``symm_mem_vdev2d``'s loader (when auto-build is enabled) and by the
+    ``python -m olmo_core.kernels.build_symm_mem_vdev2d_ext`` CLI.
+
+    :param inplace: Build the extension in-place (next to the sources).
+    :param verbose: Emit verbose build output.
+    :param force: Clean the build directory before building.
+    :param backend: Build backend, ``"cmake"`` (default) or ``"setuptools"``.
+
+    :raises ValueError: If ``backend`` is not a supported value.
+    """
     backend_norm = backend.strip().lower()
     if backend_norm == "cmake":
         _build_extension_cmake(inplace=inplace, verbose=verbose, force=force)
@@ -211,6 +224,7 @@ def build_extension(*, inplace: bool, verbose: bool, force: bool, backend: str =
 
 
 def main() -> None:
+    """CLI entry point for building the extension (``python -m ...build_symm_mem_vdev2d_ext``)."""
     parser = argparse.ArgumentParser(
         description="Build GPU-side NVSHMEM 2D all_to_all extension with CUDA device-link."
     )

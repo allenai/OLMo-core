@@ -14,6 +14,7 @@ _REGISTERED_GROUPS: set[str] = set()
 
 
 def is_enabled() -> bool:
+    """Whether OLMo's own NVSHMEM symmetric-memory backend is enabled (``OLMO_USE_OWN_SYMM_MEM``, default on)."""
     raw = os.getenv("OLMO_USE_OWN_SYMM_MEM", "1")
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
@@ -47,6 +48,15 @@ def _all_gather_unique_ids(group: dist.ProcessGroup) -> list[list[int]]:
 
 
 def init(group: dist.ProcessGroup, *, device: torch.device | str | int | None = None) -> None:
+    """
+    Bootstrap NVSHMEM for ``group`` (all-gather unique IDs, init the device).
+
+    Idempotent for the same group; raises if called again with a different set of
+    ranks — use a single NVSHMEM bootstrap group per process.
+
+    :param group: The process group whose ranks form the NVSHMEM world.
+    :param device: The CUDA device to bind; defaults to the current device.
+    """
     global _BOOTSTRAP_GLOBAL_RANKS
 
     if not dist.is_available() or not dist.is_initialized():
@@ -77,6 +87,12 @@ def init(group: dist.ProcessGroup, *, device: torch.device | str | int | None = 
 def register_group(
     group: dist.ProcessGroup, *, device: torch.device | str | int | None = None
 ) -> None:
+    """
+    Register ``group`` with the NVSHMEM backend, mapping its ranks to bootstrap PEs.
+
+    Bootstraps via :func:`init` if needed, then registers the group by name (idempotent
+    per group). Raises if the group contains a rank outside the bootstrap world.
+    """
     init(group, device=device)
     assert _BOOTSTRAP_GLOBAL_RANKS is not None
 
@@ -120,6 +136,17 @@ def empty(
     device: torch.device | str | int | None = None,
     group: dist.ProcessGroup,
 ) -> torch.Tensor:
+    """
+    Allocate a symmetric-memory tensor of ``shape``/``dtype`` for ``group``.
+
+    Registers the group first if needed. The returned tensor is backed by NVSHMEM
+    symmetric memory, so peers in the group can target it in one-sided kernels.
+
+    :param shape: The tensor shape.
+    :param dtype: The tensor dtype.
+    :param device: The CUDA device; defaults to the current device.
+    :param group: The process group the allocation is registered for.
+    """
     resolved_device = _ensure_cuda_device(device)
     register_group(group, device=resolved_device)
     ext = _load_cuda_extension()
@@ -141,6 +168,16 @@ def rendezvous(
     group: dist.ProcessGroup,
     barrier: bool = True,
 ) -> None:
+    """
+    Register ``group`` for ``tensor`` and optionally barrier so all ranks are ready.
+
+    :param tensor: A tensor whose device selects the CUDA device for registration.
+    :param group: The process group to register.
+    :param barrier: If true, run a ``dist.barrier`` on the group before returning.
+    """
     register_group(group, device=tensor.device)
     if barrier:
         dist.barrier(group=group)
+
+
+__all__ = ["is_enabled", "init", "register_group", "empty", "barrier", "rendezvous"]
