@@ -1,51 +1,27 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional, Tuple
 
 import torch
 
-from .cuda_extension_utils import load_cuda_extension
+from .cuda_extension_utils import LazyCudaExtension
 
-_CUDA_EXTENSION = None
-_CUDA_EXTENSION_ATTEMPTED = False
-_CUDA_EXTENSION_ERROR: Optional[Exception] = None
+_EXTENSION = LazyCudaExtension(
+    name="moe_unpermute_bwd",
+    base_name="olmo_moe_unpermute_bwd_ext",
+    sources=("moe_unpermute_bwd.cpp", "moe_unpermute_bwd_kernel.cu"),
+    extra_cflags=["-O3"],
+    extra_cuda_cflags=["-O3"],
+    verbose_env_names=("OLMO_MOE_UNPERMUTE_BWD_VERBOSE", "OLMO_MOE_CUDA_EXT_VERBOSE"),
+    force_rebuild_env_names=(
+        "OLMO_MOE_UNPERMUTE_BWD_FORCE_REBUILD",
+        "OLMO_MOE_CUDA_EXT_FORCE_REBUILD",
+    ),
+)
 
 
 def _load_cuda_extension():
-    global _CUDA_EXTENSION
-    global _CUDA_EXTENSION_ATTEMPTED
-    global _CUDA_EXTENSION_ERROR
-    if _CUDA_EXTENSION is not None:
-        return _CUDA_EXTENSION
-    if _CUDA_EXTENSION_ATTEMPTED and _CUDA_EXTENSION is None:
-        raise RuntimeError(
-            "CUDA moe_unpermute_bwd extension is unavailable"
-        ) from _CUDA_EXTENSION_ERROR
-
-    _CUDA_EXTENSION_ATTEMPTED = True
-    try:
-        this_dir = Path(__file__).resolve().parent
-        cpp_src = this_dir / "cuda" / "moe_unpermute_bwd.cpp"
-        cu_src = this_dir / "cuda" / "moe_unpermute_bwd_kernel.cu"
-        _CUDA_EXTENSION = load_cuda_extension(
-            base_name="olmo_moe_unpermute_bwd_ext",
-            sources=[cpp_src, cu_src],
-            extra_cflags=["-O3"],
-            extra_cuda_cflags=["-O3"],
-            verbose_env_names=("OLMO_MOE_UNPERMUTE_BWD_VERBOSE", "OLMO_MOE_CUDA_EXT_VERBOSE"),
-            force_rebuild_env_names=(
-                "OLMO_MOE_UNPERMUTE_BWD_FORCE_REBUILD",
-                "OLMO_MOE_CUDA_EXT_FORCE_REBUILD",
-            ),
-            stale_lock_timeout_env_names=("OLMO_MOE_EXT_STALE_LOCK_TIMEOUT_SEC",),
-            with_arch_suffix=True,
-        )
-    except Exception as e:
-        _CUDA_EXTENSION_ERROR = e
-        raise RuntimeError(f"Failed to build/load CUDA moe_unpermute_bwd extension: {e}") from e
-
-    return _CUDA_EXTENSION
+    return _EXTENSION.load()
 
 
 def _check_inputs(

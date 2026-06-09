@@ -1,48 +1,27 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 import torch
 import torch.nn.functional as F
 
-from .cuda_extension_utils import load_cuda_extension
+from .cuda_extension_utils import LazyCudaExtension
 
-_CUDA_EXTENSION = None
-_CUDA_EXTENSION_ATTEMPTED = False
-_CUDA_EXTENSION_ERROR: Optional[Exception] = None
+_EXTENSION = LazyCudaExtension(
+    name="grouped_mm",
+    base_name="olmo_grouped_mm_out_ext",
+    sources=("grouped_mm_out.cpp",),
+    extra_cflags=["-O3"],
+    verbose_env_names=("OLMO_GROUPED_MM_VERBOSE", "OLMO_MOE_CUDA_EXT_VERBOSE"),
+    force_rebuild_env_names=(
+        "OLMO_GROUPED_MM_FORCE_REBUILD",
+        "OLMO_MOE_CUDA_EXT_FORCE_REBUILD",
+    ),
+)
 
 
 def _load_cuda_extension():
-    global _CUDA_EXTENSION
-    global _CUDA_EXTENSION_ATTEMPTED
-    global _CUDA_EXTENSION_ERROR
-    if _CUDA_EXTENSION is not None:
-        return _CUDA_EXTENSION
-    if _CUDA_EXTENSION_ATTEMPTED and _CUDA_EXTENSION is None:
-        raise RuntimeError("CUDA grouped_mm extension is unavailable") from _CUDA_EXTENSION_ERROR
-
-    _CUDA_EXTENSION_ATTEMPTED = True
-    try:
-        this_dir = Path(__file__).resolve().parent
-        cpp_src = this_dir / "cuda" / "grouped_mm_out.cpp"
-        _CUDA_EXTENSION = load_cuda_extension(
-            base_name="olmo_grouped_mm_out_ext",
-            sources=[cpp_src],
-            extra_cflags=["-O3"],
-            verbose_env_names=("OLMO_GROUPED_MM_VERBOSE", "OLMO_MOE_CUDA_EXT_VERBOSE"),
-            force_rebuild_env_names=(
-                "OLMO_GROUPED_MM_FORCE_REBUILD",
-                "OLMO_MOE_CUDA_EXT_FORCE_REBUILD",
-            ),
-            stale_lock_timeout_env_names=("OLMO_MOE_EXT_STALE_LOCK_TIMEOUT_SEC",),
-            with_arch_suffix=True,
-        )
-    except Exception as e:
-        _CUDA_EXTENSION_ERROR = e
-        raise RuntimeError(f"Failed to build/load CUDA grouped_mm extension: {e}") from e
-
-    return _CUDA_EXTENSION
+    return _EXTENSION.load()
 
 
 @torch.compiler.disable

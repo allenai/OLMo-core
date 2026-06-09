@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional, Tuple
 
 import torch
 
-from .cuda_extension_utils import load_cuda_extension
-
-_CUDA_EXTENSION = None
-_CUDA_EXTENSION_ATTEMPTED = False
-_CUDA_EXTENSION_ERROR: Optional[Exception] = None
+from .cuda_extension_utils import LazyCudaExtension
 
 
 @dataclass
@@ -25,40 +20,22 @@ class _PermuteDropWorkspace:
 _WORKSPACE_BY_DEVICE: dict[Tuple[str, int], _PermuteDropWorkspace] = {}
 
 
+_EXTENSION = LazyCudaExtension(
+    name="moe_permute_drop",
+    base_name="olmo_moe_permute_drop_ext",
+    sources=("moe_permute_drop.cpp", "moe_permute_drop_kernel.cu"),
+    extra_cflags=["-O3"],
+    extra_cuda_cflags=["-O3"],
+    verbose_env_names=("OLMO_MOE_PERMUTE_DROP_VERBOSE", "OLMO_MOE_CUDA_EXT_VERBOSE"),
+    force_rebuild_env_names=(
+        "OLMO_MOE_PERMUTE_DROP_FORCE_REBUILD",
+        "OLMO_MOE_CUDA_EXT_FORCE_REBUILD",
+    ),
+)
+
+
 def _load_cuda_extension():
-    global _CUDA_EXTENSION
-    global _CUDA_EXTENSION_ATTEMPTED
-    global _CUDA_EXTENSION_ERROR
-    if _CUDA_EXTENSION is not None:
-        return _CUDA_EXTENSION
-    if _CUDA_EXTENSION_ATTEMPTED and _CUDA_EXTENSION is None:
-        raise RuntimeError(
-            "CUDA moe_permute_drop extension is unavailable"
-        ) from _CUDA_EXTENSION_ERROR
-
-    _CUDA_EXTENSION_ATTEMPTED = True
-    try:
-        this_dir = Path(__file__).resolve().parent
-        cpp_src = this_dir / "cuda" / "moe_permute_drop.cpp"
-        cu_src = this_dir / "cuda" / "moe_permute_drop_kernel.cu"
-        _CUDA_EXTENSION = load_cuda_extension(
-            base_name="olmo_moe_permute_drop_ext",
-            sources=[cpp_src, cu_src],
-            extra_cflags=["-O3"],
-            extra_cuda_cflags=["-O3"],
-            verbose_env_names=("OLMO_MOE_PERMUTE_DROP_VERBOSE", "OLMO_MOE_CUDA_EXT_VERBOSE"),
-            force_rebuild_env_names=(
-                "OLMO_MOE_PERMUTE_DROP_FORCE_REBUILD",
-                "OLMO_MOE_CUDA_EXT_FORCE_REBUILD",
-            ),
-            stale_lock_timeout_env_names=("OLMO_MOE_EXT_STALE_LOCK_TIMEOUT_SEC",),
-            with_arch_suffix=True,
-        )
-    except Exception as e:
-        _CUDA_EXTENSION_ERROR = e
-        raise RuntimeError(f"Failed to build/load CUDA moe_permute_drop extension: {e}") from e
-
-    return _CUDA_EXTENSION
+    return _EXTENSION.load()
 
 
 def _workspace_key(device: torch.device) -> Tuple[str, int]:
