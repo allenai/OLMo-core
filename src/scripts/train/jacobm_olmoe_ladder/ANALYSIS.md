@@ -156,14 +156,22 @@ remaining 810M/1.2B rungs before drawing a new cross-model conclusion.
 
 ## 2026-06-09 480M Cx2 Status
 
-The first midpoint `mid_480m` Cx2 point has completed:
+The initial midpoint `mid_480m` Cx2 triplet has completed:
 
 | LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
 | ---: | --- | ---: | ---: | ---: | ---: | --- |
 | `3e-4` | finished | 15.216B | 2.4828 | 2.4889 | 2.4874 | `ridb7me5` |
+| `6e-4` | finished | 15.216B | 2.4597 | 2.4658 | 2.4643 | `9bf5s9lf` |
+| `1.2e-3` | finished | 15.216B | 2.4519 | 2.4580 | 2.4567 | `roj7jv11` |
 
-The `6e-4` and `1.2e-3` Cx2 runs are still active. Do not fit or make any
-midpoint Cx2 LR decision until those full runs finish.
+The curve is monotonic over the initial triplet, with best observed avg250M at
+the high-edge `1.2e-3`. Per the ladder policy, launched one factor-of-two
+high-side extension:
+
+- `2.4e-3`: `01KTPWRQD0Z7SN3KEA6EBMTCB2`
+
+Do not fit or make a final midpoint Cx2 LR decision until the `2.4e-3`
+extension finishes.
 
 ## 2026-06-02 Snapshot
 
