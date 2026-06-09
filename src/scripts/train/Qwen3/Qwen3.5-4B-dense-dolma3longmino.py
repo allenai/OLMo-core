@@ -101,7 +101,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=1,
+            # No Ulysses CP here (the GDN recurrence rejects it), so each rank holds the full 64k
+            # activations *and*, with shard_degree=1, the full ~5B params + Adam state (~64GB) -- which
+            # OOMs an 80GB GPU. Shard params/grads/optim 8-way within each node (replicate across the 4
+            # nodes) to free ~56GB/GPU. Mirrors Qwen3-4B-sparse-landmark-dolma3longmino.py.
+            shard_degree=8,
         ),
         # No Ulysses CP: incompatible with the GatedDeltaNet recurrence; each rank handles full 64k.
         # Use FULL activation checkpointing: budget mode requires torch.compile, but compile is off
