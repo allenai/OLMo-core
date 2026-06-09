@@ -80,4 +80,7 @@ def _run_put_signal_wait() -> None:
 
 @requires_multi_gpu
 def test_nccl_rma_p2p_put_signal_wait():
-    run_distributed_test(_run_put_signal_wait, world_size=2, backend="gloo")
+    # gloo is only the coordination PG (broadcast + barriers); the RMA path uses its
+    # own NCCL comm. Force "spawn" though -- the gloo default is "fork", which can't
+    # re-initialize CUDA in the child processes.
+    run_distributed_test(_run_put_signal_wait, world_size=2, backend="gloo", start_method="spawn")
