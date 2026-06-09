@@ -113,14 +113,21 @@ def parse_args(
             "--cluster",
             type=str,
             nargs="+",
-            choices=["ai2/jupiter", "ai2/titan", "ai2/saturn", "ai2/ceres"],
+            choices=[
+                "ai2/jupiter",
+                "ai2/titan",
+                "ai2/saturn",
+                "ai2/ceres",
+                "ai2/neptune",
+            ],
             default=["ai2/jupiter"],
             help=(
                 "Beaker cluster(s) to allow. Pass one or more, separated by "
                 "spaces. Beaker's scheduler picks an available cluster from "
                 "the list and can re-place to another on preemption. "
                 "Single-node runs (≤8 GPUs) work on any cluster regardless of "
-                "InfiniBand availability."
+                "InfiniBand availability. Neptune has L40 GPUs and is intended "
+                "for smaller-batch eval-only repair jobs, not full training."
             ),
         )
         parser.add_argument(
@@ -462,12 +469,11 @@ def get_default_ladder_factory(
                 sequence_length=args.sequence_length,
             ),
         ]
-        # ``args.cluster`` is a list (--cluster has nargs='+'). All H100/B200/A100
+        # ``args.cluster`` is a list (--cluster has nargs='+'). These AI2
         # clusters mount the same Weka root, so picking the first cluster's
         # root_dir is safe. ``device_type`` is used for assertions and an
-        # auto-mbz heuristic; we explicitly pass --rank-mbz so the heuristic
-        # is bypassed and the string just needs to pass the {h100, b200, a100}
-        # assertion in the configurator.
+        # auto-mbz heuristic; we explicitly pass --rank-mbz for smaller eval-only
+        # repair jobs when running on lower-memory L40 nodes such as Neptune.
         primary_cluster = args.cluster[0]
         ladder = ModelLadder(
             name=args.name,
