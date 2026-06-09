@@ -111,13 +111,23 @@ def assign_ids(n: int, id_length: int, rng: random.Random) -> List[str]:
 
 
 def apply_template(tok, messages: List[dict], add_generation_prompt: bool) -> List[int]:
-    """Tokenize a chat with the Qwen3 template, disabling the thinking block when supported."""
+    """
+    Tokenize a chat with the Qwen3 template.
+
+    We use ``enable_thinking=True`` (the Qwen3 default) so the generation prompt is a clean
+    ``...<|im_start|>assistant\\n`` with no injected ``<think>\\n\\n</think>\\n\\n`` block. With
+    ``enable_thinking=False`` Qwen3 injects that empty block *only* into the generation prompt
+    (``add_generation_prompt=True``) and not into a rendered assistant turn, which makes the prompt
+    no longer a prefix of the full conversation and breaks completion-mask derivation. The training
+    target itself is think-free regardless, since the assistant message we supply contains no
+    ``<think>`` tags.
+    """
     try:
         return tok.apply_chat_template(
             messages,
             tokenize=True,
             add_generation_prompt=add_generation_prompt,
-            enable_thinking=False,
+            enable_thinking=True,
         )
     except TypeError:
         # Older/other templates without the ``enable_thinking`` kwarg.
