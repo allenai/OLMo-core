@@ -56,20 +56,39 @@ log = logging.getLogger(__name__)
 
 
 def _ensure_float8_compat():
-    # torchao >= 0.7 removed Float8Tensor from torchao.float8.float8_tensor.
-    # Old checkpoints that were saved with float8 linear layers pickle this class by name,
-    # so we register a minimal stub so torch.load can deserialize them. The resulting tensor
-    # (raw float8 storage) is then copied into the bfloat16 target by the caller.
+    # torchao >= 0.7 removed Float8Tensor (and related types like LinearMMConfig,
+    # GemmInputRole) from torchao.float8.float8_tensor. Checkpoints saved with float8
+    # linear layers pickle these classes by name, so torch.load fails on newer torchao.
+    # We register a stub module with a catch-all __getattr__ that auto-creates minimal
+    # classes for any type pickle asks for. Float8Tensor is a torch.Tensor subclass so
+    # the raw float8 storage is preserved; the caller then copies it into a bfloat16 target.
     if "torchao.float8.float8_tensor" not in sys.modules:
         try:
             import torchao.float8.float8_tensor  # noqa: F401
         except ModuleNotFoundError:
-            stub = types.ModuleType("torchao.float8.float8_tensor")
-
             class Float8Tensor(torch.Tensor):
                 pass
 
+            _class_cache: dict = {"Float8Tensor": Float8Tensor}
+
+            def _make_compat_class(name: str) -> type:
+                if name not in _class_cache:
+
+                    class _Compat:
+                        def __init__(self, *args, **kwargs):
+                            pass
+
+                        def __reduce__(self):
+                            return (self.__class__, ())
+
+                    _Compat.__name__ = name
+                    _Compat.__qualname__ = name
+                    _class_cache[name] = _Compat
+                return _class_cache[name]
+
+            stub = types.ModuleType("torchao.float8.float8_tensor")
             stub.Float8Tensor = Float8Tensor
+            stub.__getattr__ = _make_compat_class  # type: ignore[attr-defined]
             sys.modules["torchao.float8.float8_tensor"] = stub
 
 
