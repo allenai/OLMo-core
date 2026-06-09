@@ -37,6 +37,7 @@ from olmo_core.train import (
     Checkpointer,
     Duration,
     DurationUnit,
+    Trainer,
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
@@ -331,15 +332,16 @@ class ModelLadder(Config):
             if path is not None:
                 log.info(f"Saved LR schedule plot to '{path}'")
 
-    def run(self, size_spec: str, for_benchmarking: bool = False):
+    def _build_trainer(
+        self,
+        size_spec: str,
+        *,
+        for_benchmarking: bool = False,
+        save_folder: PathOrStr | None = None,
+    ) -> Trainer:
         """
-        Execute a particular model run of the experiment locally and store the results.
+        Build the trainer for a particular model size.
         """
-        if size_spec not in self.sizes:
-            raise ValueError(f"Invalid size_spec '{size_spec}', must be one of {self.sizes}")
-        prepare_training_environment(seed=self.seed, backend=self.backend)
-        set_composable_seed(self.seed)
-
         # Configure model.
         model_config = self.get_model_config(size_spec)
         num_params = model_config.num_non_embedding_params
@@ -364,6 +366,10 @@ class ModelLadder(Config):
 
         # Configure trainer.
         trainer_config = self._configure_trainer(size_spec, for_benchmarking=for_benchmarking)
+        if save_folder is not None:
+            trainer_config = dataclasses.replace(
+                trainer_config, save_folder=str(save_folder)
+            )
 
         # Build data loader.
         if self._uses_composable:
@@ -441,10 +447,106 @@ class ModelLadder(Config):
             callbacks.ConfigSaverCallback, trainer.callbacks["config_saver"]
         ).config = config_dict
 
-        # Train.
-        trainer.fit()
+        return trainer
 
-        teardown_training_environment()
+    def run(self, size_spec: str, for_benchmarking: bool = False):
+        """
+        Execute a particular model run of the experiment locally and store the results.
+        """
+        if size_spec not in self.sizes:
+            raise ValueError(f"Invalid size_spec '{size_spec}', must be one of {self.sizes}")
+        prepare_training_environment(seed=self.seed, backend=self.backend)
+        set_composable_seed(self.seed)
+
+        try:
+            trainer = self._build_trainer(size_spec, for_benchmarking=for_benchmarking)
+            trainer.fit()
+        finally:
+            teardown_training_environment()
+
+    def eval_checkpoint(
+        self,
+        size_spec: str,
+        checkpoint_path: PathOrStr,
+        *,
+        output_dir: PathOrStr | None = None,
+        metrics_step: int | None = None,
+        load_trainer_state: bool = True,
+        load_optim_state: bool = False,
+        disable_wandb: bool = True,
+    ):
+        """
+        Run the configured in-loop evals once for a checkpoint and save metrics.
+
+        This is meant for filling missing ``metrics_step*.json`` files after a
+        training job was preempted during eval. It reuses the ladder's normal
+        evaluator callbacks, but does not enter the training loop or save
+        checkpoints.
+        """
+        if size_spec not in self.sizes:
+            raise ValueError(f"Invalid size_spec '{size_spec}', must be one of {self.sizes}")
+        prepare_training_environment(seed=self.seed, backend=self.backend)
+        set_composable_seed(self.seed)
+
+        try:
+            save_folder = output_dir if output_dir is not None else self.get_save_folder(size_spec)
+            trainer = self._build_trainer(size_spec, save_folder=save_folder)
+
+            for callback_name in ("checkpointer", "wandb"):
+                callback = trainer.callbacks.get(callback_name)
+                if callback is not None and (callback_name != "wandb" or disable_wandb):
+                    if hasattr(callback, "enabled"):
+                        setattr(callback, "enabled", False)
+
+            trainer.load_checkpoint(
+                checkpoint_path,
+                load_trainer_state=load_trainer_state,
+                load_optim_state=load_optim_state,
+            )
+            if metrics_step is not None:
+                log.info(
+                    "Overriding metrics step from checkpoint step %s to %s",
+                    trainer.global_step,
+                    metrics_step,
+                )
+                trainer.global_step = metrics_step
+
+            metric_saver = typing.cast(
+                callbacks.MetricSaverCallback, trainer.callbacks["metric_saver"]
+            )
+            metric_saver.enabled = True
+            metric_saver.save_interval = None
+            metric_saver.fixed_steps = [trainer.global_step]
+
+            log.info("Callback order:")
+            for i, callback_name in enumerate(trainer.callbacks.keys()):
+                log.info(f"  - Callback {i + 1}: {callback_name}")
+
+            evaluator_callbacks = [
+                callback
+                for callback in trainer._iter_callbacks()
+                if isinstance(callback, callbacks.EvaluatorCallback)
+            ]
+            if not evaluator_callbacks:
+                raise OLMoConfigurationError("No evaluator callbacks are configured.")
+            for callback in evaluator_callbacks:
+                callback.eval_on_startup = False
+                callback.eval_on_finish = False
+
+            for callback in trainer._iter_callbacks():
+                callback.pre_train()
+            trainer.train_module.pre_train()
+
+            for callback in evaluator_callbacks:
+                callback.perform_eval()
+
+            trainer._shutdown()
+            log.info(
+                "Eval-only checkpoint pass complete; metrics saved in '%s'",
+                trainer.save_folder,
+            )
+        finally:
+            teardown_training_environment()
 
     def run_benchmark(self, size_spec: str):
         """

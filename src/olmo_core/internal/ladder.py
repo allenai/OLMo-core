@@ -269,6 +269,16 @@ def parse_args(
         "Launch a Beaker job to run the ladder for a given model size.",
     )
     add_sub_command(
+        "eval-checkpoint",
+        eval_checkpoint,
+        "Run the in-loop eval callbacks once for a given checkpoint.",
+    )
+    add_sub_command(
+        "launch-eval-checkpoint",
+        launch_eval_checkpoint,
+        "Launch a Beaker job to run in-loop eval callbacks once for a checkpoint.",
+    )
+    add_sub_command(
         "launch-all",
         launch_all,
         "Launch Beaker jobs to run the all model sizes of the ladder.",
@@ -297,7 +307,16 @@ def parse_args(
                 "--size",
                 choices=list(size_enum),
                 required=cmd
-                in {"dry-run", "benchmark", "launch-benchmark", "run", "launch", "metrics"},
+                in {
+                    "dry-run",
+                    "benchmark",
+                    "launch-benchmark",
+                    "run",
+                    "launch",
+                    "eval-checkpoint",
+                    "launch-eval-checkpoint",
+                    "metrics",
+                },
                 help="The model size.",
             )
 
@@ -309,7 +328,7 @@ def parse_args(
                 help="The maximum model size. If not specified, status/metrics for all sizes will be shown.",
             )
 
-        if cmd in {"launch", "launch-benchmark"}:
+        if cmd in {"launch", "launch-benchmark", "launch-eval-checkpoint"}:
             parser.add_argument(
                 "--follow",
                 action=argparse.BooleanOptionalAction,
@@ -355,6 +374,53 @@ def parse_args(
                 action="store_true",
                 help="Show the model config.",
                 default=False,
+            )
+
+        if cmd in {"eval-checkpoint", "launch-eval-checkpoint"}:
+            parser.add_argument(
+                "--checkpoint-path",
+                type=str,
+                required=True,
+                help=(
+                    "Checkpoint directory or run folder to evaluate. If a run folder is given, "
+                    "the latest checkpoint under it is used."
+                ),
+            )
+            parser.add_argument(
+                "--eval-output-dir",
+                type=str,
+                default=None,
+                help=(
+                    "Directory where metrics JSON files should be written. Defaults to the "
+                    "ladder save folder for the selected size."
+                ),
+            )
+            parser.add_argument(
+                "--metrics-step",
+                type=int,
+                default=None,
+                help=(
+                    "Optional step number for the output metrics_step{step}.json filename. "
+                    "Defaults to the checkpoint's restored trainer step."
+                ),
+            )
+            parser.add_argument(
+                "--load-trainer-state",
+                action=argparse.BooleanOptionalAction,
+                default=True,
+                help="Restore trainer state from the checkpoint before evaluating.",
+            )
+            parser.add_argument(
+                "--load-optim-state",
+                action=argparse.BooleanOptionalAction,
+                default=False,
+                help="Restore optimizer state from the checkpoint before evaluating.",
+            )
+            parser.add_argument(
+                "--disable-wandb",
+                action=argparse.BooleanOptionalAction,
+                default=True,
+                help="Disable W&B logging for eval-only runs.",
             )
 
         if "launch" in cmd:
@@ -543,6 +609,19 @@ def run(args: argparse.Namespace):
     ladder.run(args.size)
 
 
+def eval_checkpoint(args: argparse.Namespace):
+    ladder = args.configure_ladder(args)
+    ladder.eval_checkpoint(
+        args.size,
+        args.checkpoint_path,
+        output_dir=args.eval_output_dir,
+        metrics_step=args.metrics_step,
+        load_trainer_state=args.load_trainer_state,
+        load_optim_state=args.load_optim_state,
+        disable_wandb=args.disable_wandb,
+    )
+
+
 def _launch_run(
     ladder: ModelLadder,
     launcher: BeakerLaunchConfig,
@@ -587,6 +666,37 @@ def launch(args: argparse.Namespace):
         slack_notifications=args.slack_notifications,
         dry_run=args.dry_run,
     )
+
+
+def launch_eval_checkpoint(args: argparse.Namespace):
+    prepare_cli_environment()
+    ladder = args.configure_ladder(args)
+    launcher = configure_launcher(args, ladder, "eval-checkpoint")
+    if not args.follow:
+        launcher.step_soft_timeout = None
+
+    if args.dry_run:
+        log.info(f"Launch dry run for checkpoint eval size {args.size}...")
+        log.info(f"Checkpoint path: {args.checkpoint_path}")
+        log.info(
+            "Metrics will be saved to %s",
+            args.eval_output_dir or ladder.get_save_folder(args.size),
+        )
+        launcher.dry_run(
+            follow=args.follow,
+            slack_notifications=args.slack_notifications,
+        )
+    else:
+        log.info(f"Launching checkpoint eval for size {args.size}...")
+        log.info(f"Checkpoint path: {args.checkpoint_path}")
+        log.info(
+            "Metrics will be saved to %s",
+            args.eval_output_dir or ladder.get_save_folder(args.size),
+        )
+        launcher.launch(
+            follow=args.follow,
+            slack_notifications=args.slack_notifications,
+        )
 
 
 def launch_all(args: argparse.Namespace):
