@@ -34,14 +34,17 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-# EXPERIMENTAL: Qwen3.5-4B (hybrid Gated DeltaNet + full attention, 3:1) with LANDMARK attention
+# Qwen3.5-4B (hybrid Gated DeltaNet + full attention, 3:1) with LANDMARK attention (fused kernel)
 # replacing the full-attention layers, at 64k on the 15B-token dolma3_longmino sample.
 #
-# Caveats (this is not an established/tested combination):
+# Gated attention is PRESERVED: the full-attention block keeps its elementwise output gate
+# (gate=GateConfig(elementwise) from qwen3_5_4B). LandmarkAttention now supports the gate, so the
+# attention output is gated (att * sigmoid(w_g(x))) exactly as in the gated Qwen3.5 base, and the
+# gate weights (attention.w_g) load straight from the converted Qwen3.5 checkpoint. The GDN
+# (linear-attention) layers are unchanged.
+#
+# Notes:
 #   * qwen3_5_4B has no `landmark=` option, so we swap the "attn" block's mixer to landmark below.
-#     LandmarkAttention does not support output gating, so the attention layers' gate is dropped
-#     (gate=None) -- loading those layers from a gated Qwen3.5 checkpoint will not map the gate
-#     weights. The GDN (linear-attention) layers are unchanged.
 #   * The data pipeline inserts landmark tokens every MEM_FREQ tokens. The landmark-attention layers
 #     use them (positional is_mem); the GDN layers see them as ordinary tokens (label_mask still
 #     excludes them from the loss).
@@ -61,8 +64,10 @@ GLOBAL_BATCH_SIZE = 65536 * 64  # ~4M tokens
 MAX_TOKENS = 10_000_000_000  # 10B
 LR = 3.2e-4
 
-# TODO: set to your Qwen3.5-4B olmo-core checkpoint, or override with --trainer.load_path=...
-CHECKPOINT_PATH = "FILL_ME"
+# The Qwen3.5-4B olmo-core base checkpoint (gated full attention). Override with --trainer.load_path=
+CHECKPOINT_PATH = (
+    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3.5-4B-olmocore/model_and_optim"
+)
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
@@ -97,7 +102,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     attn_mixer.name = AttentionType.landmark
     attn_mixer.mem_freq = MEM_FREQ
     attn_mixer.landmark_use_kernel = True
-    attn_mixer.gate = None  # LandmarkAttention does not support output gating
+    # NB: keep attn_mixer.gate (the elementwise gate from qwen3_5_4B) -- landmark attention now
+    # applies it, so gated-attention functionality is preserved and w_g loads from the checkpoint.
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,  # 1 sequence per rank per micro-step
@@ -211,9 +217,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    EXPERIMENTAL Qwen3.5-4B (hybrid) with landmark attention on the full-attn layers, at 64k on the
-    15B dolma3_longmino sample (4 nodes, urgent). See the module-level caveats. Set CHECKPOINT_PATH
-    (or --trainer.load_path) first. dry_run must be run on a node (GatedDeltaNet needs `fla`).
+    Qwen3.5-4B (hybrid) with LANDMARK attention (fused kernel) on the full-attn layers (gate
+    preserved), at 64k on the 15B dolma3_longmino sample (4 nodes, urgent). dry_run must be run on a
+    node (GatedDeltaNet needs `fla`, and the fused landmark kernel needs Triton + CUDA).
 
         python src/scripts/train/Qwen3/Qwen3.5-4B-landmark-dolma3longmino.py \\
             launch my-run ai2/jupiter-cirrascale-2 --trainer.load_path=/weka/.../model_and_optim

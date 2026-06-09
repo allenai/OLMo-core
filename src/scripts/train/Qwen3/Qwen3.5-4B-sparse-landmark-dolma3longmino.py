@@ -6,6 +6,7 @@ from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     ConcatAndChunkInstanceSourceConfig,
+    LandmarkInstanceSourceConfig,
     NumpyDocumentSourceConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -13,7 +14,8 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
-from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.attention import AttentionBackendName, AttentionType
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -33,11 +35,28 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-# Qwen3.5-4B DENSE baseline: hybrid Gated DeltaNet (linear attention) + full attention (3:1), at 64k
-# on the 15B-token dolma3_longmino sample. No YaRN (rejected for hybrid; the GDN layers carry
-# long-range state natively) and no Ulysses CP (incompatible with the GDN recurrence) -- each rank
-# processes a full 64k sequence. Paired with Qwen3.5-4B-landmark-dolma3longmino.py.
-SEQUENCE_LENGTH = 65536  # 64k context
+# Qwen3.5-4B (hybrid Gated DeltaNet + full attention, 3:1) with SPARSE LANDMARK attention replacing
+# the full-attention layers, at 64k on the 15B-token dolma3_longmino sample.
+#
+# AttentionType.sparse_landmark: a query attends fully within its own chunk but sees past chunks only
+# through their landmark tokens (sub-quadratic). num_landmarks=1 matches the 1-landmark-per-chunk
+# data from LandmarkInstanceSource.
+#
+# Gated attention is PRESERVED: the full-attention block keeps its elementwise output gate
+# (gate=GateConfig(elementwise) from qwen3_5_4B). SparseLandmarkAttention now supports the gate, so
+# the attention output is gated (att * sigmoid(w_g(x))) exactly as in the gated Qwen3.5 base, and the
+# gate weights (attention.w_g) load straight from the converted Qwen3.5 checkpoint. The GDN
+# (linear-attention) layers are unchanged.
+#
+# No Ulysses CP (incompatible with both the GDN recurrence and SparseLandmarkAttention): each rank
+# processes the full 64k sequence. The data pipeline inserts landmark tokens every MEM_FREQ tokens;
+# the GDN layers see them as ordinary tokens (label_mask still excludes them from the loss).
+MEM_FREQ = 63
+BLOCK_SIZE = MEM_FREQ + 1  # 64 (mem_freq + num_landmarks)
+SEQUENCE_LENGTH = 65536  # 64k (must be divisible by BLOCK_SIZE)
+CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
+
+LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
 
 DATA_DIR = (
     "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen"
@@ -76,14 +95,25 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.qwen3()
 
-    # Qwen3.5-4B: hybrid Gated DeltaNet (linear attention) + full attention, 3:1 ratio.
+    # Qwen3.5-4B hybrid, then swap the full-attention layers to sparse landmark attention while
+    # keeping their elementwise output gate intact.
     model_config = TransformerConfig.qwen3_5_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
         attn_backend=AttentionBackendName.flash_2,
     )
+    attn_mixer = model_config.block["attn"].sequence_mixer  # type: ignore[index]
+    attn_mixer.name = AttentionType.sparse_landmark
+    attn_mixer.mem_freq = MEM_FREQ
+    attn_mixer.num_landmarks = 1
+    # NB: keep attn_mixer.gate (the elementwise gate from qwen3_5_4B) -- landmark attention now
+    # applies it, so gated-attention functionality is preserved and w_g loads from the checkpoint.
+
+    # Fused linear cross-entropy (Liger): never materializes the full 64k x vocab logits, the dominant
+    # memory cost without sequence parallelism (no CP here).
+    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=SEQUENCE_LENGTH,  # 1 sequence per rank per micro-step
+        rank_microbatch_size=SEQUENCE_LENGTH,  # full 64k per rank (no CP)
         max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=LR,
@@ -94,7 +124,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             ],
         ),
         scheduler=LinearWithWarmup(warmup=400, alpha_f=0.0),
-        # GatedDeltaNet layers use custom kernels; keep compile off until verified.
+        # GatedDeltaNet layers use custom kernels; keep compile off.
         compile_model=False,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
@@ -103,7 +133,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=1,
         ),
-        # No Ulysses CP: incompatible with the GatedDeltaNet recurrence; each rank handles full 64k.
+        # No Ulysses CP (GDN recurrence + SparseLandmarkAttention both reject it); each rank handles
+        # the full 64k. Sparse attention keeps that affordable; start with budget activation
+        # checkpointing (as the dense/landmark Qwen3.5 runs) and bump to `full` / raise shard_degree
+        # if the smoke test OOMs.
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.7,
@@ -113,19 +146,24 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         max_grad_norm=1.0,
     )
 
-    # Composable data pipeline on the new dolma3_longmino sample (no landmark insertion):
+    # Composable data pipeline on the new dolma3_longmino sample:
     #   NumpyDocumentSource (part-*.npy, Qwen3 uint32, EOS-separated)
-    #     -> ConcatAndChunkInstanceSource (seq_len=SEQUENCE_LENGTH=65536)
-    instance_source_config = ConcatAndChunkInstanceSourceConfig(
-        sources=[
-            NumpyDocumentSourceConfig(
-                source_paths=[f"{DATA_DIR}/part-*.npy"],
-                tokenizer=tokenizer_config,
-                expand_glob=True,
-                source_group_size=1,
-            )
-        ],
-        sequence_length=SEQUENCE_LENGTH,
+    #     -> ConcatAndChunkInstanceSource (seq_len=CONTENT_SEQUENCE_LENGTH=64512)
+    #     -> LandmarkInstanceSource (insert landmark token every MEM_FREQ tokens -> seq_len=65536)
+    instance_source_config = LandmarkInstanceSourceConfig(
+        source=ConcatAndChunkInstanceSourceConfig(
+            sources=[
+                NumpyDocumentSourceConfig(
+                    source_paths=[f"{DATA_DIR}/part-*.npy"],
+                    tokenizer=tokenizer_config,
+                    expand_glob=True,
+                    source_group_size=1,
+                )
+            ],
+            sequence_length=CONTENT_SEQUENCE_LENGTH,
+        ),
+        mem_freq=MEM_FREQ,
+        mem_id=LANDMARK_TOKEN_ID,
     )
 
     data_loader_config = ComposableDataLoaderConfig(
@@ -189,10 +227,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    Qwen3.5-4B hybrid dense baseline at 64k on the 15B dolma3_longmino sample (4 nodes, urgent).
-    Set CHECKPOINT_PATH (or --trainer.load_path) to a Qwen3.5-4B olmo-core checkpoint first.
+    Qwen3.5-4B (hybrid) with SPARSE LANDMARK attention on the full-attn layers (gate preserved), at
+    64k on the 15B dolma3_longmino sample (4 nodes, urgent). No context parallelism; each rank runs
+    full 64k. dry_run must be run on a node (GatedDeltaNet needs `fla`).
 
-        python src/scripts/train/Qwen3/Qwen3.5-4B-dense-dolma3longmino.py \\
-            launch my-run ai2/jupiter-cirrascale-2 --trainer.load_path=/weka/.../model_and_optim
+        python src/scripts/train/Qwen3/Qwen3.5-4B-sparse-landmark-dolma3longmino.py \\
+            launch my-run ai2/jupiter-cirrascale-2
     """
     main(config_builder=build_experiment_config)

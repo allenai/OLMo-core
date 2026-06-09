@@ -492,12 +492,11 @@ class FastLandmarkAttention(Attention):
     Landmark attention with the fast FA2-style backward -- a standalone :class:`Attention` variant
     (``AttentionType.fast_landmark``). Numerically identical to the original ``LandmarkAttention``
     (fused-kernel path), just much faster to train. Requires the fused Triton kernel (mem_freq >= 15).
-    Supports Ulysses context parallelism.
+    Supports Ulysses context parallelism, and the optional output gate inherited from
+    :class:`Attention` (``att * sigmoid(w_g(x))``), so it drops into gated models like Qwen3.5.
     """
 
     def __init__(self, *, mem_freq: int, softmax_scale: Optional[float] = None, **kwargs):
-        if kwargs.get("gate") is not None:
-            raise OLMoConfigurationError("FastLandmarkAttention does not support attention gating")
         if kwargs.get("window_size") is not None:
             raise OLMoConfigurationError(
                 "FastLandmarkAttention does not support sliding window attention"
@@ -648,6 +647,7 @@ class FastLandmarkAttention(Attention):
             assert self._cp_pg is not None
             att = all_to_all_single_hp2cp(att.contiguous(), self._cp_pg)
         att = att.contiguous().view(B, T_local, -1)
+        att = self._apply_gate(att, x)
         return self.w_out(att)
 
     def _attn_core(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -713,6 +713,7 @@ class FastLandmarkAttention(Attention):
             att = self._prefill(qh, kh, vh)
 
         att = att.transpose(1, 2).contiguous().view(B, T, -1)
+        att = self._apply_gate(att, x)
         return self.w_out(att)
 
     def _prefill(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:

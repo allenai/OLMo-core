@@ -133,7 +133,8 @@ class SparseLandmarkAttention(Attention):
     Sparse landmark-only-across-chunks attention as a drop-in :class:`Attention` variant
     (``AttentionType.sparse_landmark``). Each chunk is ``block_size = mem_freq + num_landmarks``
     tokens, the last ``num_landmarks`` of which are landmarks. Pure-torch (autograd) -- works on
-    CPU/GPU; context parallelism is not yet supported.
+    CPU/GPU; context parallelism is not yet supported. Supports the optional output gate inherited
+    from :class:`Attention` (``att * sigmoid(w_g(x))``), so it drops into gated models like Qwen3.5.
     """
 
     def __init__(
@@ -144,10 +145,6 @@ class SparseLandmarkAttention(Attention):
         softmax_scale: Optional[float] = None,
         **kwargs,
     ):
-        if kwargs.get("gate") is not None:
-            raise OLMoConfigurationError(
-                "SparseLandmarkAttention does not support attention gating"
-            )
         if kwargs.get("window_size") is not None:
             raise OLMoConfigurationError(
                 "SparseLandmarkAttention does not support sliding window attention"
@@ -261,6 +258,7 @@ class SparseLandmarkAttention(Attention):
 
         att = self._attn_core(q, k, v)
         att = att.transpose(1, 2).contiguous().view(B, T, -1)
+        att = self._apply_gate(att, x)
         return self.w_out(att)
 
     def _attn_core(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -329,6 +327,7 @@ class SparseLandmarkAttention(Attention):
             att = self._prefill(qh, kh, vh)
 
         att = att.transpose(1, 2).contiguous().view(B, T, -1)
+        att = self._apply_gate(att, x)
         return self.w_out(att)
 
     def _prefill(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
