@@ -1,6 +1,6 @@
 """
 Stream a ~15B-token proportional sample of the ``allenai/dolma3_longmino_mix-100B-1125``
-HuggingFace dataset, tokenize it with the Qwen3 tokenizer, and write raw uint32 token arrays
+HuggingFace dataset, tokenize it with the Qwen3.5 tokenizer, and write raw uint32 token arrays
 (EOS-separated documents) to weka -- in the same on-disk format the OLMo-core
 ``NumpyDocumentSource`` expects (raw memmap, no header).
 
@@ -22,7 +22,7 @@ Run (via gantry, from the repo root)::
         --workspace ai2/flex2 --budget ai2/oe-other \\
         --cluster ai2/jupiter-cirrascale-2 \\
         --weka oe-training-default:/weka/oe-training-default \\
-        --cpus 64 --gpus 0 --priority high --shared-memory 32GiB \\
+        --cpus 64 --gpus 0 --priority urgent --shared-memory 32GiB \\
         --env-secret HF_TOKEN=amandab_HF_TOKEN \\
         --env HF_HUB_ENABLE_HF_TRANSFER=1 --env TOKENIZERS_PARALLELISM=true \\
         --install "pip install zstandard hf_transfer 'huggingface_hub>=0.24' tokenizers numpy" \\
@@ -50,14 +50,15 @@ logging.basicConfig(
 log = logging.getLogger("tokenize_sample")
 
 DATASET = "allenai/dolma3_longmino_mix-100B-1125"
-# Qwen3 tokenizer (matches olmo_core.data.TokenizerConfig.qwen3(): vocab 151936, eos/bos/pad 151643).
-TOKENIZER = "Qwen/Qwen3-0.6B"
-EOS_TOKEN_ID = 151643
+# Qwen3.5 tokenizer. The EOS id is read from the tokenizer at runtime (see main); this is the
+# fallback used only if the tokenizer doesn't expose one.
+TOKENIZER = "Qwen/Qwen3.5-0.8B"
+DEFAULT_EOS_TOKEN_ID = 151643
 DTYPE = np.uint32
 
 DEFAULT_OUT = (
     "/weka/oe-training-default/ai2-llm/checkpoints/amandab/"
-    "dolma3_longmino_mix_sample15B_qwen"
+    "dolma3_longmino_mix_sample15B_qwen3_5"
 )
 
 
@@ -146,6 +147,9 @@ def main() -> None:
 
     tok = AutoTokenizer.from_pretrained(TOKENIZER)
     assert tok.vocab_size <= np.iinfo(DTYPE).max
+    eos_token_id = tok.eos_token_id if tok.eos_token_id is not None else DEFAULT_EOS_TOKEN_ID
+    assert eos_token_id <= np.iinfo(DTYPE).max
+    log.info(f"Using tokenizer {TOKENIZER!r} (vocab {tok.vocab_size:,}, eos {eos_token_id})")
 
     shards = list_shards(args.seed)
     todo = [s for s in shards if s not in processed]
@@ -213,7 +217,7 @@ def main() -> None:
                     "target_tokens": args.target_tokens,
                     "dataset": DATASET,
                     "tokenizer": TOKENIZER,
-                    "eos_token_id": EOS_TOKEN_ID,
+                    "eos_token_id": eos_token_id,
                     "dtype": "uint32",
                 },
                 f,
@@ -226,7 +230,7 @@ def main() -> None:
         flat: List[int] = []
         for ids in enc:
             flat.extend(ids)
-            flat.append(EOS_TOKEN_ID)
+            flat.append(eos_token_id)
         if flat:
             arr = np.asarray(flat, dtype=DTYPE)
             buffer.append(arr)
@@ -283,7 +287,7 @@ def main() -> None:
                 "target_tokens": args.target_tokens,
                 "dataset": DATASET,
                 "tokenizer": TOKENIZER,
-                "eos_token_id": EOS_TOKEN_ID,
+                "eos_token_id": eos_token_id,
                 "dtype": "uint32",
                 "complete": total_tokens >= args.target_tokens,
             },
