@@ -95,7 +95,12 @@ class NgramEarlyFusionConfigurator(Olmo3ModelConfigurator):
         device_type,
     ) -> TransformerTrainModule:
         device_type = device_type.lower()
-        assert "h100" in device_type or "b200" in device_type or "a100" in device_type
+        assert (
+            "h100" in device_type
+            or "b200" in device_type
+            or "a100" in device_type
+            or "l40" in device_type
+        )
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
 
