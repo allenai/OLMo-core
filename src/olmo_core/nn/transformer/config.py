@@ -16,6 +16,7 @@ from ..attention import (
     AttentionBackendName,
     AttentionConfig,
     AttentionType,
+    AttentionTypePatternConfig,
     GateConfig,
     GateGranularity,
     SlidingWindowAttentionConfig,
@@ -1640,6 +1641,7 @@ class TransformerConfig(ModelConfig):
         fast_landmark: bool = False,
         sparse_landmark: bool = False,
         num_landmarks: Optional[int] = None,
+        layer_types: Optional[AttentionTypePatternConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
@@ -1660,6 +1662,10 @@ class TransformerConfig(ModelConfig):
             :data:`LayerNormType.fused_rms` when ``fused_ops=True``, otherwise
             :data:`LayerNormType.rms`.
         :param block_mods: A dictionary of block indices to functions that take the base block config and return a modified block config.
+        :param layer_types: Optionally select the attention :class:`AttentionType` per layer via an
+            :class:`AttentionTypePatternConfig` (e.g. to mix full attention with landmark variants).
+            Mutually exclusive with the uniform ``landmark`` / ``fast_landmark`` / ``sparse_landmark``
+            flags; shared landmark params (``mem_freq`` / ``num_landmarks``) still apply.
         :param dtype: The default data type to use for all parameters.
         """
         # Resolve hidden size of FFN in blocks.
@@ -1690,7 +1696,35 @@ class TransformerConfig(ModelConfig):
             raise OLMoConfigurationError(
                 "Only one of 'landmark', 'fast_landmark', 'sparse_landmark' may be set."
             )
-        if landmark or fast_landmark or sparse_landmark:
+
+        uses_uniform_landmark = landmark or fast_landmark or sparse_landmark
+        pattern_landmark_types = layer_types.landmark_types() if layer_types is not None else set()
+        pattern_has_plain_landmark = AttentionType.landmark in pattern_landmark_types
+        pattern_has_sparse_landmark = AttentionType.sparse_landmark in pattern_landmark_types
+
+        if layer_types is not None:
+            if uses_uniform_landmark:
+                raise OLMoConfigurationError(
+                    "'layer_types' selects the attention type per layer and cannot be combined "
+                    "with the uniform 'landmark' / 'fast_landmark' / 'sparse_landmark' flags."
+                )
+            if pattern_landmark_types and mem_freq is None:
+                raise OLMoConfigurationError(
+                    "'mem_freq' must be set when 'layer_types' includes a landmark attention variant."
+                )
+            if not pattern_landmark_types and mem_freq is not None:
+                raise OLMoConfigurationError(
+                    "'mem_freq' is only valid when 'layer_types' includes a landmark attention variant."
+                )
+            if pattern_landmark_types and sliding_window is not None:
+                raise OLMoConfigurationError(
+                    "Landmark attention is not compatible with sliding window attention."
+                )
+            if num_landmarks is not None and not pattern_has_sparse_landmark:
+                raise OLMoConfigurationError(
+                    "'num_landmarks' is only valid when 'layer_types' includes 'sparse_landmark'."
+                )
+        elif uses_uniform_landmark:
             if mem_freq is None:
                 raise OLMoConfigurationError(
                     "'mem_freq' must be set for a landmark attention variant."
@@ -1706,13 +1740,20 @@ class TransformerConfig(ModelConfig):
                 if fast_landmark
                 else AttentionType.sparse_landmark
             )
-        elif mem_freq is not None:
-            raise OLMoConfigurationError(
-                "'mem_freq' is only valid with a landmark attention variant "
-                "(landmark / fast_landmark / sparse_landmark)."
-            )
-        if num_landmarks is not None and not sparse_landmark:
-            raise OLMoConfigurationError("'num_landmarks' is only valid when 'sparse_landmark=True'.")
+            if num_landmarks is not None and not sparse_landmark:
+                raise OLMoConfigurationError(
+                    "'num_landmarks' is only valid when 'sparse_landmark=True'."
+                )
+        else:
+            if mem_freq is not None:
+                raise OLMoConfigurationError(
+                    "'mem_freq' is only valid with a landmark attention variant "
+                    "(landmark / fast_landmark / sparse_landmark)."
+                )
+            if num_landmarks is not None:
+                raise OLMoConfigurationError(
+                    "'num_landmarks' is only valid when 'sparse_landmark=True'."
+                )
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
@@ -1740,9 +1781,14 @@ class TransformerConfig(ModelConfig):
                 use_flash=use_flash,
                 backend=attn_backend,
                 sliding_window=sliding_window,
+                layer_types=layer_types,
                 mem_freq=mem_freq,
-                landmark_use_kernel=landmark_use_kernel if landmark else None,
-                num_landmarks=num_landmarks if sparse_landmark else None,
+                landmark_use_kernel=(
+                    landmark_use_kernel if (landmark or pattern_has_plain_landmark) else None
+                ),
+                num_landmarks=(
+                    num_landmarks if (sparse_landmark or pattern_has_sparse_landmark) else None
+                ),
                 dtype=dtype,
             ),
             feed_forward=feed_forward,

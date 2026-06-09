@@ -2,7 +2,7 @@ import logging
 import math
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Set, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SlidingWindowAttentionConfig",
+    "AttentionTypePatternConfig",
     "GateGranularity",
     "GateConfig",
     "AttentionType",
@@ -193,6 +194,67 @@ class AttentionType(StrEnum):
     """
 
 
+@dataclass
+class AttentionTypePatternConfig(Config):
+    """
+    Specifies the :class:`AttentionType` to use on a per-layer basis, mirroring the format of
+    :class:`SlidingWindowAttentionConfig`. The ``pattern`` is repeated to cover all layers, so a
+    single model can mix attention implementations (e.g. full attention with landmark variants).
+
+    The shared attention parameters (``mem_freq``, ``num_landmarks``, etc.) are taken from the
+    enclosing :class:`AttentionConfig`; this pattern only selects the *type* per layer.
+    """
+
+    pattern: List[AttentionType]
+    """
+    The pattern of attention types to use, repeated to cover all layers. For example, a pattern of
+    ``[fast_landmark, fast_landmark, fast_landmark, sparse_landmark]`` means that for each set of 4
+    layers, the first 3 use fast landmark attention and the last uses sparse landmark attention.
+    """
+
+    force_full_attention_on_first_layer: bool = False
+    """
+    If `True`, the first transformer layer will always use :data:`AttentionType.default` (full
+    attention), regardless of the pattern.
+    """
+
+    force_full_attention_on_last_layer: bool = False
+    """
+    If `True`, the last transformer layer will always use :data:`AttentionType.default` (full
+    attention), regardless of the pattern.
+    """
+
+    def get_type(self, layer_idx: int, n_layers: int) -> AttentionType:
+        """
+        Get the :class:`AttentionType` for a given layer.
+        """
+        if self.force_full_attention_on_first_layer and layer_idx == 0:
+            return AttentionType.default
+        if self.force_full_attention_on_last_layer and layer_idx == (n_layers - 1):
+            return AttentionType.default
+
+        # Adjust the layer index if the first layer is special-cased to full attention
+        # (in which case the pattern is applied starting from the second layer).
+        effective_layer_idx = layer_idx
+        if self.force_full_attention_on_first_layer:
+            effective_layer_idx -= 1
+
+        return AttentionType(self.pattern[effective_layer_idx % len(self.pattern)])
+
+    def landmark_types(self) -> Set[AttentionType]:
+        """
+        The set of landmark attention types that appear anywhere in the pattern.
+        """
+        return {t for t in self.pattern if t in _LANDMARK_ATTENTION_TYPES}
+
+
+_LANDMARK_ATTENTION_TYPES = (
+    AttentionType.landmark,
+    AttentionType.fast_landmark,
+    AttentionType.sparse_landmark,
+)
+
+
 @SequenceMixerConfig.register("attention")
 @dataclass
 class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
@@ -219,6 +281,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     backend: Optional[AttentionBackendName] = None
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
+    layer_types: Optional[AttentionTypePatternConfig] = None
+    """
+    Optionally select the :class:`AttentionType` on a per-layer basis. When set, this overrides
+    :data:`name` for each layer (which is then only used as a fallback). The shared landmark
+    parameters below (``mem_freq``, ``num_landmarks``, etc.) apply to whichever layers resolve to a
+    landmark variant.
+    """
     use_head_qk_norm: Optional[bool] = None
     mem_freq: Optional[int] = None
     """
@@ -308,12 +377,40 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
 
+        # Resolve the effective attention type for this layer. When a per-layer pattern is
+        # configured it overrides ``name``; otherwise ``name`` applies to every layer.
+        layer_types_config: Optional[AttentionTypePatternConfig] = kwargs.pop("layer_types", None)
+        if layer_types_config is not None:
+            effective_name = layer_types_config.get_type(layer_idx, n_layers)
+            # The full set of attention types this config may produce across all layers, used for
+            # validating the shared landmark parameters below.
+            possible_types: Set[AttentionType] = {
+                AttentionType(t) for t in layer_types_config.pattern
+            }
+            if (
+                layer_types_config.force_full_attention_on_first_layer
+                or layer_types_config.force_full_attention_on_last_layer
+            ):
+                possible_types.add(AttentionType.default)
+        else:
+            effective_name = self.name
+            possible_types = {self.name}
+
+        is_landmark = effective_name in _LANDMARK_ATTENTION_TYPES
+
         sliding_window_config: Optional[SlidingWindowAttentionConfig] = kwargs.pop(
             "sliding_window", None
         )
-        if sliding_window_config is not None and sliding_window_config.should_use_swa(
+        use_swa = sliding_window_config is not None and sliding_window_config.should_use_swa(
             layer_idx, n_layers
-        ):
+        )
+        if use_swa and is_landmark:
+            raise OLMoConfigurationError(
+                f"layer {layer_idx} resolves to landmark attention ('{effective_name}') but sliding "
+                "window attention is also configured for it; these are mutually exclusive"
+            )
+        if use_swa:
+            assert sliding_window_config is not None
             kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
         else:  # global (non-SWA) layer
             rope_config: Optional[RoPEConfig] = kwargs.get("rope")
@@ -330,75 +427,63 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         mem_freq = kwargs.pop("mem_freq", None)
         landmark_use_kernel = kwargs.pop("landmark_use_kernel", None)
         num_landmarks = kwargs.pop("num_landmarks", None)
-        _landmark_types = (
-            AttentionType.landmark,
-            AttentionType.fast_landmark,
-            AttentionType.sparse_landmark,
-        )
-        if self.name not in _landmark_types and mem_freq is not None:
+        if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
-                f"'mem_freq' is only supported with landmark attention variants (got name='{self.name}')"
+                "'mem_freq' is only supported with landmark attention variants "
+                f"(no landmark layer is configured; got name='{self.name}')"
             )
-        if self.name != AttentionType.landmark and landmark_use_kernel is not None:
+        if landmark_use_kernel is not None and AttentionType.landmark not in possible_types:
             raise OLMoConfigurationError(
                 "'landmark_use_kernel' is only supported with landmark attention "
                 f"(got name='{self.name}')"
             )
-        if self.name != AttentionType.sparse_landmark and num_landmarks is not None:
+        if num_landmarks is not None and AttentionType.sparse_landmark not in possible_types:
             raise OLMoConfigurationError(
                 "'num_landmarks' is only supported with sparse_landmark attention "
                 f"(got name='{self.name}')"
             )
 
         try:
-            if self.name == "default":
+            if effective_name == "default":
                 return Attention(**kwargs)
-            elif self.name == "fused":
+            elif effective_name == "fused":
                 kwargs.pop("use_flash", None)
                 if "window_size" in kwargs:
                     raise OLMoConfigurationError(
                         "'window_size' is not supported with fused attention"
                     )
                 return FusedAttention(**kwargs)
-            elif self.name == "normalized":
+            elif effective_name == "normalized":
                 if "window_size" in kwargs:
                     raise OLMoConfigurationError(
                         "'window_size' is not supported with normalized attention"
                     )
                 return NormalizedAttention(**kwargs)
-            elif self.name == "landmark":
-                if "window_size" in kwargs:
-                    raise OLMoConfigurationError(
-                        "'window_size' (sliding window) is not supported with landmark attention"
-                    )
+            elif effective_name == "landmark":
                 if mem_freq is None:
                     raise OLMoConfigurationError("landmark attention requires 'mem_freq' to be set")
                 if landmark_use_kernel is not None:
                     kwargs["use_kernel"] = landmark_use_kernel
                 return LandmarkAttention(mem_freq=mem_freq, **kwargs)
-            elif self.name == "fast_landmark":
-                if "window_size" in kwargs:
-                    raise OLMoConfigurationError(
-                        "'window_size' is not supported with fast_landmark attention"
-                    )
+            elif effective_name == "fast_landmark":
                 if mem_freq is None:
-                    raise OLMoConfigurationError("fast_landmark attention requires 'mem_freq' to be set")
+                    raise OLMoConfigurationError(
+                        "fast_landmark attention requires 'mem_freq' to be set"
+                    )
                 return FastLandmarkAttention(mem_freq=mem_freq, **kwargs)
-            elif self.name == "sparse_landmark":
-                if "window_size" in kwargs:
-                    raise OLMoConfigurationError(
-                        "'window_size' is not supported with sparse_landmark attention"
-                    )
+            elif effective_name == "sparse_landmark":
                 if mem_freq is None:
-                    raise OLMoConfigurationError("sparse_landmark attention requires 'mem_freq' to be set")
+                    raise OLMoConfigurationError(
+                        "sparse_landmark attention requires 'mem_freq' to be set"
+                    )
                 if num_landmarks is not None:
                     kwargs["num_landmarks"] = num_landmarks
                 return SparseLandmarkAttention(mem_freq=mem_freq, **kwargs)
             else:
-                raise NotImplementedError(self.name)
+                raise NotImplementedError(effective_name)
         except TypeError as e:
             raise OLMoConfigurationError(
-                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+                f"invalid options for '{effective_name}' {self.__class__.__name__}, {e}"
             ) from e
 
 
