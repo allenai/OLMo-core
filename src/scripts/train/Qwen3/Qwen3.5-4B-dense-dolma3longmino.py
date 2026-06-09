@@ -40,7 +40,7 @@ from olmo_core.train.train_module import (
 SEQUENCE_LENGTH = 65536  # 64k context
 
 DATA_DIR = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen"
+    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen3_5"
 )
 
 GLOBAL_BATCH_SIZE = 65536 * 64  # ~4M tokens
@@ -74,7 +74,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
 
-    tokenizer_config = TokenizerConfig.qwen3()
+    tokenizer_config = TokenizerConfig.qwen3_5()
 
     # Qwen3.5-4B: hybrid Gated DeltaNet (linear attention) + full attention, 3:1 ratio.
     model_config = TransformerConfig.qwen3_5_4B(
@@ -116,7 +116,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     # Composable data pipeline on the new dolma3_longmino sample (no landmark insertion):
-    #   NumpyDocumentSource (part-*.npy, Qwen3 uint32, EOS-separated)
+    #   NumpyDocumentSource (part-*.npy, Qwen3.5 uint32, EOS-separated)
     #     -> ConcatAndChunkInstanceSource (seq_len=SEQUENCE_LENGTH=65536)
     instance_source_config = ConcatAndChunkInstanceSourceConfig(
         sources=[

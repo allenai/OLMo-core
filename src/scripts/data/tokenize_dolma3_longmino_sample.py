@@ -50,10 +50,11 @@ logging.basicConfig(
 log = logging.getLogger("tokenize_sample")
 
 DATASET = "allenai/dolma3_longmino_mix-100B-1125"
-# Qwen3.5 tokenizer. The EOS id is read from the tokenizer at runtime (see main); this is the
-# fallback used only if the tokenizer doesn't expose one.
+# Qwen3.5 tokenizer. Documents are separated by the <|endoftext|> token (NOT the tokenizer's chat
+# eos_token <|im_end|>); its id is resolved from the tokenizer at runtime in main(). This matches
+# olmo_core.data.TokenizerConfig.qwen3_5() (eos/bos/pad = 248044 for Qwen3.5-0.8B).
 TOKENIZER = "Qwen/Qwen3.5-0.8B"
-DEFAULT_EOS_TOKEN_ID = 151643
+SEP_TOKEN = "<|endoftext|>"
 DTYPE = np.uint32
 
 DEFAULT_OUT = (
@@ -147,9 +148,15 @@ def main() -> None:
 
     tok = AutoTokenizer.from_pretrained(TOKENIZER)
     assert tok.vocab_size <= np.iinfo(DTYPE).max
-    eos_token_id = tok.eos_token_id if tok.eos_token_id is not None else DEFAULT_EOS_TOKEN_ID
+    eos_token_id = tok.convert_tokens_to_ids(SEP_TOKEN)
+    assert eos_token_id is not None and eos_token_id != tok.unk_token_id, (
+        f"tokenizer {TOKENIZER!r} has no {SEP_TOKEN!r} token"
+    )
     assert eos_token_id <= np.iinfo(DTYPE).max
-    log.info(f"Using tokenizer {TOKENIZER!r} (vocab {tok.vocab_size:,}, eos {eos_token_id})")
+    log.info(
+        f"Using tokenizer {TOKENIZER!r} (vocab {tok.vocab_size:,}, "
+        f"doc separator {SEP_TOKEN!r}={eos_token_id})"
+    )
 
     shards = list_shards(args.seed)
     todo = [s for s in shards if s not in processed]
