@@ -40,15 +40,18 @@ gantry run \
   --workspace "${WORKSPACE}" \
   --budget "${BUDGET}" \
   --cluster "${CLUSTER}" \
+  --python-manager conda \
+  --system-python \
   --weka "${WEKA}:/weka/${WEKA}" \
   --cpus "${CPUS}" \
   --gpus 0 \
   --priority "${PRIORITY}" \
+  --allow-dirty \
   --shared-memory 32GiB \
   --timeout 0 \
   --env-secret "HF_TOKEN=${HF_SECRET}" \
   --env HF_HUB_ENABLE_HF_TRANSFER=1 \
   --env TOKENIZERS_PARALLELISM=true \
-  --install "pip install datasets transformers numpy tqdm 'huggingface_hub>=0.24' hf_transfer" \
+  --install "pip install datasets transformers numpy tqdm jinja2 'huggingface_hub>=0.24' hf_transfer" \
   --yes \
   -- python src/scripts/data/convert_rlhn_to_sft.py "$@"
