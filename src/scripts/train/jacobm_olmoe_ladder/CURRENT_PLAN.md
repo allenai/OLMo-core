@@ -69,10 +69,12 @@ embeddings/head and about 2.6B total before smoke confirmation.
 
 Continue:
 
-- 810M Cx8: `2e-4`, `4e-4`, `8e-4`
-- 810M Cx16: `2e-4`, `4e-4`, `8e-4`
+- 810M Cx8: `2e-4`, `4e-4`, `8e-4` completed and bracketed.
+- 810M Cx16: `2e-4`, `4e-4`, `8e-4` were already queued/launched before
+  the Cx16 pause. Monitor already-launched jobs, but do not launch additional
+  810M or 1.2B Cx16 jobs unless explicitly re-approved.
 - 1.2B Cx4: `1.5e-4`, `3e-4`, `6e-4`
-- 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3`
+- 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed.
 
 Ignore unless explicitly resumed:
 
@@ -106,16 +108,19 @@ Queued Cx1/Cx2/Cx4 together on 2026-06-08:
 | 2 | 524,288 | 64 | 4 | 1 | 8 | `3e-4` (`01KTMMKN716ZSRZN473CV4BC23`), `6e-4` (`01KTMMM35QKDE15XCSKG76Z6ST`), `1.2e-3` (`01KTMMMHBEV4JW3N0X4X3MFHK8`) |
 | 4 | 524,288 | 64 | 4 | 1 | 8 | `4e-4` (`01KTMMMZ1539AV33SHB12S17Q4`), `8e-4` (`01KTMMNC9R56MX1MSGZQ865SXA`), `1.6e-3` (`01KTMMNTA3NN9K4THQXCKGP717`) |
 
-If midpoint Cx1/Cx2/Cx4 bracket cleanly, later launch midpoint Cx8/Cx16 using
-3-point centered sweeps from the refit rule.
+If midpoint Cx1/Cx2/Cx4 bracket cleanly, later launch midpoint Cx8 using a
+3-point centered sweep from the refit rule. Hold off on midpoint Cx16 for now,
+matching the 810M/1.2B policy.
 
 ## Next Baseline Progression
 
-- 810M Cx8 bracketed cleanly around `4e-4`; 810M Cx16 is queued with
-  `2e-4`, `4e-4`, `8e-4`.
+- 810M Cx8 bracketed cleanly around `4e-4`.
 - If 1.2B Cx4 brackets cleanly, prepare/launch 1.2B Cx8 with 3 centered LRs.
 - After midpoint results land, refit size transfer using 275M, midpoint, 810M,
   and 1.2B.
+- For now, baseline expansion for 810M, 1.2B, and midpoint should focus on
+  Cx1/Cx2/Cx4/Cx8. Do not launch new 810M/1.2B/midpoint Cx16 jobs; fill Cx16
+  gaps only after a separate discussion.
 
 ## Autonomy Bounds
 
