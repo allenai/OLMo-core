@@ -111,6 +111,33 @@ uv sync --extra beaker --extra transformers
         * Include `model_and_optim` at the end of your base checkpoint path.
         * **Checkpoint output path**: Checkpoints are saved to `/weka/oe-training-default/checkpoints/{your_beaker_user}/olmo-sft/{MODEL_NAME_HERE}/`. The `MODEL_NAME_HERE` argument in the launch command determines this path. For non-Weka environments, you can override the save location by setting `--trainer.save_folder`.
 
+### MoE V2 SFT smoke test
+
+`OlmoE3-SFT.py` is a supported-architecture MoE V2 SFT entry point intended for
+post-training plumbing before any Qwen-specific import work. It can start from random
+initialization, or from a compatible OLMo-core MoE V2 checkpoint via `--load-path`.
+Its defaults use `flash_4` and packed-document attention masking.
+
+```bash
+PYTHONPATH=/workspace/OLMo-core/src torchrun --standalone --nproc-per-node=1 \
+    src/scripts/train/sft/OlmoE3-SFT.py train moe-sft-smoke local \
+    --dataset-path=/workspace/tasks/june8/scratch/sft_debug_dataset \
+    --seq-len=128 \
+    --global-batch-size=128 \
+    --trainer.max_duration.value=1 \
+    --trainer.no_checkpoints=true \
+    --data_loader.num_workers=0
+```
+
+Use `--attention-backend=flash_3` on H100/H800 systems with flash-attn 3 support.
+On B200, use the default `flash_4` backend.
+
+`OLMoE3-dev-260429-t001-SFT.py` is the checkpoint-specific pilot for
+`OLMoE3-dev-260429-t001`. It mirrors the pretraining architecture so it can load
+`/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step112000`,
+and expects `--dataset-path` to point at a packed SFT dataset containing
+`token_ids_part_*.npy` and `labels_mask_*.npy`.
+
 ## Evaluation
 
 1. Convert the model to a Huggingface model using a command such as:

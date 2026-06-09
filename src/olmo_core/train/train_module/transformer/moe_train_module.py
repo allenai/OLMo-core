@@ -938,6 +938,15 @@ class MoEV2TransformerTrainModule(TrainModule):
                 print(f'[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0')
 
             batch_num_tokens_for_loss = move_to_device(batch_num_tokens_for_loss, self.device)
+            if is_distributed():
+                global_batch_num_tokens_for_loss = batch_num_tokens_for_loss.clone()
+                dist.all_reduce(global_batch_num_tokens_for_loss, group=self.dp_process_group)
+                batch_num_tokens_for_loss = global_batch_num_tokens_for_loss.clamp_min(1)
+                batch_num_tokens_for_loss = batch_num_tokens_for_loss / get_world_size(
+                    self.dp_process_group
+                )
+            else:
+                batch_num_tokens_for_loss = batch_num_tokens_for_loss.clamp_min(1)
 
             # Batch losses to record.
             ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)

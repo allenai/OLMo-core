@@ -116,6 +116,23 @@ RUN pip install --no-cache-dir '.[all]' && \
     pip uninstall -y ai2-olmo-core && \
     rm -rf *
 
+# Install post-training data/tokenization dependencies used by the OLMo-core SFT
+# scripts and the native MoE DPO path in Open Instruct. Keep RLVR-only packages
+# such as ray, vLLM, DeepSpeed, peft, and docker out of this image layer.
+RUN python -c "import torch; print('torch=='+torch.__version__)" > /tmp/torch-constraint.txt && \
+    pip install --no-cache-dir -c /tmp/torch-constraint.txt \
+        "datasets==4.5.0" \
+        "hf-transfer==0.1.9" \
+        "huggingface-hub==1.8.0" \
+        "multiprocess==0.70.17" \
+        "pyarrow==23.0.0" \
+        "sentencepiece==0.2.1" \
+        "tokenizers==0.22.2" \
+        "tqdm==4.67.1" \
+        "transformers==5.4.0" \
+        "wandb==0.23.1" && \
+    rm -f /tmp/torch-constraint.txt
+
 #########################################################################
 # Release image
 #########################################################################
