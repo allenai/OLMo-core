@@ -415,7 +415,7 @@ def all_to_all_async(
     Pairs with :func:`all_to_all_wait` to overlap communication with compute::
 
         x, y, handle = all_to_all_async(x, ...)
-        z = some_independent_compute(x)   # overlaps with the all-to-all
+        z = some_independent_compute(w)   # overlaps; note: NOT on x (see warning)
         y = all_to_all_wait(x, y, handle) # blocks until the transfer is done
 
     :param x: The local input tensor (sharded along dim 0).
@@ -433,6 +433,22 @@ def all_to_all_async(
         autograd edge from :class:`AllToAllWaitOp` to :class:`AllToAllAsyncOp`. If ``x`` has
         more than one consumer, autograd sums the incoming gradients into a fresh tensor that
         drops the stashed handle, breaking the backward pass. This contract is not enforced.
+
+    .. note::
+        The *only* thing this op adds over the existing ``all_to_all(..., async_op=True)``
+        (which already returns a work handle, giving forward comm/compute overlap) is
+        overlap of the **backward** gradient all-to-all, via the paired-``Function`` design.
+        So it pays off only when ``backward()`` runs. The synchronous EP strategies that use
+        it are, in practice, mostly the **eval/inference** path (no-sync configs fall back to
+        them at eval because no-sync can hang on uneven per-rank token counts) — and eval runs
+        no backward, so there this is equivalent to a plain async ``all_to_all`` but with the
+        passthrough footgun above. Production *training* uses the no-sync (symmetric-memory)
+        path, which doesn't use this op at all; only a few sync-training debug/ablation runs
+        actually exercise the backward overlap.
+
+        TODO: revisit whether this op earns its keep. If the sync EP path can use
+        ``all_to_all(..., async_op=True)`` for its forward overlap, consider dropping
+        ``all_to_all_async`` / ``all_to_all_wait`` (and their passthrough footgun) entirely.
     """
     return AllToAllAsyncOp.apply(  # type: ignore
         x,
