@@ -109,16 +109,16 @@ for the ladder sweep itself.
 
 ## 2026-06-09 810M Cx2 Status
 
-The first full 810M Cx2 run completed:
+Two full 810M Cx2 runs have completed:
 
 | LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
 | ---: | --- | ---: | ---: | ---: | ---: | --- |
+| `1.5e-4` | finished | 27.603B | 2.3544 | 2.3608 | 2.3589 | `fcqkb55w` |
 | `3e-4` | finished | 27.603B | 2.3245 | 2.3308 | 2.3291 | `ogp6mrt6` |
 
-Do not fit or launch from the 810M Cx2 curve yet. The `1.5e-4` run is still
-running, and the `6e-4` / `1.2e-3` runs are still queued. Use the completed
-Cx2 curve only after those full runs land, unless a later failure forces a
-separate decision.
+Do not fit or launch from the 810M Cx2 curve yet. The `6e-4` run has started,
+and the `1.2e-3` run is still queued. Use the completed Cx2 curve only after
+those full runs land, unless a later failure forces a separate decision.
 
 ## 2026-06-02 Snapshot
 
