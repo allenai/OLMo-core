@@ -104,9 +104,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             shard_degree=1,
         ),
         # No Ulysses CP: incompatible with the GatedDeltaNet recurrence; each rank handles full 64k.
+        # Use FULL activation checkpointing: budget mode requires torch.compile, but compile is off
+        # for the GDN custom kernels. Full AC recomputes every block (only one block's activations
+        # live at peak), so it is also the most memory-frugal choice for the no-CP full-64k case.
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.7,
+            mode=TransformerActivationCheckpointingMode.full,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,

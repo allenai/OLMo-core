@@ -134,12 +134,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             shard_degree=1,
         ),
         # No Ulysses CP (GDN recurrence + SparseLandmarkAttention both reject it); each rank handles
-        # the full 64k. Sparse attention keeps that affordable; start with budget activation
-        # checkpointing (as the dense/landmark Qwen3.5 runs) and bump to `full` / raise shard_degree
-        # if the smoke test OOMs.
+        # the full 64k. Use FULL activation checkpointing: budget mode requires torch.compile, but
+        # compile is off for the GDN custom kernels. Full AC recomputes every block (only one block's
+        # activations live at peak), the most memory-frugal choice for the no-CP full-64k case.
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.7,
+            mode=TransformerActivationCheckpointingMode.full,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
