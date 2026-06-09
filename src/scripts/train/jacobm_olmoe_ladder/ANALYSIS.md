@@ -109,16 +109,18 @@ for the ladder sweep itself.
 
 ## 2026-06-09 810M Cx2 Status
 
-Two full 810M Cx2 runs have completed:
+Three full 810M Cx2 runs have completed:
 
 | LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
 | ---: | --- | ---: | ---: | ---: | ---: | --- |
 | `1.5e-4` | finished | 27.603B | 2.3544 | 2.3608 | 2.3589 | `fcqkb55w` |
 | `3e-4` | finished | 27.603B | 2.3245 | 2.3308 | 2.3291 | `ogp6mrt6` |
+| `6e-4` | finished | 27.603B | 2.3096 | 2.3160 | 2.3144 | `okb4e1u0` |
 
-Do not fit or launch from the 810M Cx2 curve yet. The `6e-4` run has started,
-and the `1.2e-3` run is still queued. Use the completed Cx2 curve only after
-those full runs land, unless a later failure forces a separate decision.
+Do not fit or launch from the 810M Cx2 curve yet. The best completed point is
+now the high-edge `6e-4`, and the `1.2e-3` hot-side run is still running. Use
+the completed Cx2 curve only after the hot-side full run lands, unless a later
+failure forces a separate decision.
 
 ## 2026-06-09 810M Cx8 Status
 
@@ -151,6 +153,17 @@ only slightly worse on the cold side. A local 3-point quadratic fit can be used
 for the midpoint Cx1 optimum after the plot refresh, but do not update the
 baseline transfer rule from this rung alone. Wait for midpoint Cx2/Cx4 and the
 remaining 810M/1.2B rungs before drawing a new cross-model conclusion.
+
+## 2026-06-09 480M Cx2 Status
+
+The first midpoint `mid_480m` Cx2 point has completed:
+
+| LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
+| ---: | --- | ---: | ---: | ---: | ---: | --- |
+| `3e-4` | finished | 15.216B | 2.4828 | 2.4889 | 2.4874 | `ridb7me5` |
+
+The `6e-4` and `1.2e-3` Cx2 runs are still active. Do not fit or make any
+midpoint Cx2 LR decision until those full runs finish.
 
 ## 2026-06-02 Snapshot
 
