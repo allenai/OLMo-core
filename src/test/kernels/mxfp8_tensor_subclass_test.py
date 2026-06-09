@@ -2,6 +2,7 @@ import torch
 
 from olmo_core.kernels import OlmoMXFP8Tensor
 from olmo_core.testing import requires_gpu
+from olmo_core.testing.utils import requires_compute_capability
 
 
 def test_olmo_mxfp8_tensor_roundtrip_and_fallback_dispatch():
@@ -124,6 +125,9 @@ def test_olmo_mxfp8_tensor_torch_compile_eager_backend():
 
 
 @requires_gpu
+# fp8e4nv (e4m3) Triton codegen requires sm89+; the cc helper is major-only, so
+# gate to 9 (Hopper) -- this skips A100s (cc 8.x), which don't support fp8e4nv.
+@requires_compute_capability(min_cc=9)
 def test_olmo_mxfp8_tensor_torch_compile_inductor_cuda_smoke():
     x = torch.randn(4, 64, device="cuda", dtype=torch.bfloat16, requires_grad=True)
     # The custom Functions below use prefer_triton=False so Dynamo/Inductor can
