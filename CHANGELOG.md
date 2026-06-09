@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `OverrideDecay`, a late-stage decay override usable on both `ComposableScheduler` and `SequentialScheduler` via an `override_decay` field. When `current >= override_decay.start`, the main schedule is interrupted mid-flight and the LR decays from the value the main schedule would have produced at `start` to a target LR over `duration` (linear or cosine). `SequentialScheduler` additionally warns that `t_max` is ignored once the override becomes active.
 - `OLMO_RICH_LOGGING` can now explicitly enable *or* disable rich console logging (`0`/`false`/`no`/`off` disables it); previously setting it to any value only force-enabled rich logging.
 - `init_distributed()` now bootstraps a minimal single-process environment (`RANK=0`, `WORLD_SIZE=1`, `MASTER_ADDR`/`MASTER_PORT`) when launch env vars are absent, so scripts can be run directly (without `torchrun`) for single-process debugging.
+- Added MXFP8 rowwise quantization kernels (`olmo_core.kernels.mxfp8_utils`) with both a Triton fast path and a pure-torch reference, plus the experimental `OlmoMXFP8Tensor` tensor subclass that carries `e4m3` quantized data and `e8m0` per-block scales as a single tensor-like value. Generic torch ops dequantize back to high precision (emitting a warning when they do); the quantized form is consumed directly only on the scaled grouped-matmul path. Marked as a beta feature.
 
 
 ### Fixed
