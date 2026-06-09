@@ -120,6 +120,22 @@ Do not fit or launch from the 810M Cx2 curve yet. The `6e-4` run has started,
 and the `1.2e-3` run is still queued. Use the completed Cx2 curve only after
 those full runs land, unless a later failure forces a separate decision.
 
+## 2026-06-09 810M Cx8 Status
+
+The 810M Cx8 sweep completed as a clean bracket:
+
+| LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
+| ---: | --- | ---: | ---: | ---: | ---: | --- |
+| `2e-4` | finished | 110.410B | 2.1827 | 2.1844 | 2.1879 | `a0k0519k` |
+| `4e-4` | finished | 110.410B | 2.1705 | 2.1721 | 2.1756 | `dkpaicdc` |
+| `8e-4` | finished | 110.410B | 2.1752 | 2.1768 | 2.1803 | `rhtrhhet` |
+
+The Cx8 best observed point is `4e-4`. A local 3-point quadratic fit on
+`avg250M` estimates the Cx8 optimum at about `4.7e-4`. Combining completed 810M
+fits for Cx1, Cx4, and Cx8 gives a shallow LR-vs-Cx rule with Cx16 prediction
+around `4.25e-4`, so the next 810M Cx16 sweep is centered as
+`2e-4`, `4e-4`, `8e-4`.
+
 ## 2026-06-02 Snapshot
 
 Initial read after the first 2M-batch sweep finished and the 256k-batch sweep was
