@@ -87,9 +87,9 @@ unless a smoke test or prior run proves a larger microbatch is healthy.
 Continue:
 
 - 810M Cx8: `2e-4`, `4e-4`, `8e-4` completed and bracketed.
-- 810M Cx16: `2e-4`, `4e-4`, `8e-4` were already queued/launched before
-  the Cx16 pause. Monitor already-launched jobs, but do not launch additional
-  810M or 1.2B Cx16 jobs unless explicitly re-approved.
+- 810M Cx16: `2e-4`, `4e-4`, `8e-4` were stopped intentionally on 2026-06-09
+  after the plan shifted to finish Cx1/Cx2/Cx4/Cx8 first. Ignore unless
+  explicitly resumed later.
 - 1.2B Cx4: `1.5e-4`, `3e-4`, `6e-4`
 - 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed.
 
