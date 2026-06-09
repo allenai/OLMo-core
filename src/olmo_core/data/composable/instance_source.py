@@ -40,6 +40,8 @@ class Instance(TypedDict):
     """Optional per-position top-K ngram token IDs of shape ``(S, K)``."""
     ngram_log_probs: NotRequired[Sequence[Sequence[float]]]
     """Optional per-position top-K ngram log probabilities of shape ``(S, K)``."""
+    engram_context_ids: NotRequired[Sequence[int]]
+    """Optional per-position observed-context row IDs of shape ``(S,)``."""
 
 
 class InstanceSource(SourceABC):

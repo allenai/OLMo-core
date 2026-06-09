@@ -505,6 +505,10 @@ from .ngram_topk_instance_source import (
     NgramTopKInstanceSource,
     NgramTopKInstanceSourceConfig,
 )
+from .ngram_context_instance_source import (
+    NgramContextInstanceSource,
+    NgramContextInstanceSourceConfig,
+)
 from .random_instance_source import RandomInstanceSource, RandomInstanceSourceConfig
 from .sampling_document_source import (
     SamplingDocumentSource,

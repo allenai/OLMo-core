@@ -363,6 +363,17 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     early_fusion_ngram_table_dir: Optional[str] = None
     early_fusion_ngram_K: int = 16
     early_fusion_ngram_N_max: int = 5
+    # Engram-style early fusion. This keeps the embedding-boundary injection
+    # point but replaces KN continuation probabilities with learned static
+    # memory keyed by observed ngram contexts.
+    early_fusion_engram: bool = False
+    early_fusion_engram_alpha_init: float = 5.0
+    early_fusion_engram_alpha_lr: Optional[float] = None
+    early_fusion_engram_table_dir: Optional[str] = None
+    early_fusion_engram_N_max: int = 5
+    early_fusion_engram_code_dim: int = 32
+    early_fusion_engram_top_m: int = 32
+    early_fusion_engram_vocab_chunk_size: int = 4096
 
     # Checkpoint settings.
 

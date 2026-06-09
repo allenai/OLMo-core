@@ -608,6 +608,20 @@ class Transformer(nn.Module):
         """
         early_fusion_ngram_token_ids = kwargs.pop("early_fusion_ngram_token_ids", None)
         early_fusion_ngram_log_probs = kwargs.pop("early_fusion_ngram_log_probs", None)
+        early_fusion_engram_context_ids = kwargs.pop(
+            "early_fusion_engram_context_ids", None
+        )
+        if (
+            early_fusion_engram_context_ids is not None
+            and (
+                early_fusion_ngram_token_ids is not None
+                or early_fusion_ngram_log_probs is not None
+            )
+        ):
+            raise OLMoConfigurationError(
+                "early-fusion Engram context IDs cannot be combined with "
+                "early-fusion KN top-k fields"
+            )
         (
             input_ids,
             labels,
@@ -638,6 +652,11 @@ class Transformer(nn.Module):
             h = h + self._compute_early_fusion_ngram_embedding(
                 early_fusion_ngram_token_ids.to(h.device, non_blocking=True),
                 early_fusion_ngram_log_probs.to(h.device, non_blocking=True),
+                dtype=h.dtype,
+            )
+        if early_fusion_engram_context_ids is not None:
+            h = h + self._compute_early_fusion_engram_embedding(
+                early_fusion_engram_context_ids.to(h.device, non_blocking=True),
                 dtype=h.dtype,
             )
         if self.embedding_norm is not None:
@@ -691,6 +710,72 @@ class Transformer(nn.Module):
             torch.zeros_like(ngram_log_probs, dtype=torch.float32),
         ).to(dtype=token_vectors.dtype)
         prior = (token_vectors * weights.unsqueeze(-1)).sum(dim=-2)
+        alpha = torch.exp(alpha_log).to(device=prior.device, dtype=prior.dtype)
+        return (alpha.view(1, 1, 1) * prior).to(dtype=dtype)
+
+    def _compute_early_fusion_engram_embedding(
+        self,
+        context_ids: torch.Tensor,
+        *,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Build a learned Engram-style unembedding prior for early fusion."""
+        if self.lm_head is None:
+            raise OLMoConfigurationError("early Engram fusion requires an LM head")
+        alpha_log = getattr(self.lm_head, "early_fusion_alpha_log", None)
+        context_codes = getattr(self.lm_head, "early_fusion_engram_context_codes", None)
+        token_decoder = getattr(self.lm_head, "early_fusion_engram_token_decoder", None)
+        top_m = getattr(self.lm_head, "early_fusion_engram_top_m", None)
+        vocab_chunk_size = getattr(
+            self.lm_head, "early_fusion_engram_vocab_chunk_size", None
+        )
+        if alpha_log is None:
+            raise OLMoConfigurationError(
+                "early Engram fusion requires lm_head.early_fusion_alpha_log"
+            )
+        if context_codes is None or token_decoder is None:
+            raise OLMoConfigurationError(
+                "early Engram fusion requires lm_head early-fusion Engram modules"
+            )
+        if top_m is None or vocab_chunk_size is None:
+            raise OLMoConfigurationError(
+                "early Engram fusion requires top_m and vocab_chunk_size attributes"
+            )
+
+        w_out = self.lm_head.w_out.weight
+        codes = F.embedding(context_ids, context_codes.weight)
+        B, S, code_dim = codes.shape
+        flat_codes = codes.reshape(B * S, code_dim).float()
+        decoder_weight = token_decoder.weight
+        vocab_size = decoder_weight.shape[0]
+        top_m = min(int(top_m), int(vocab_size))
+        vocab_chunk_size = int(vocab_chunk_size)
+
+        top_scores = torch.full(
+            (flat_codes.shape[0], top_m),
+            float("-inf"),
+            dtype=torch.float32,
+            device=flat_codes.device,
+        )
+        top_ids = torch.zeros(
+            (flat_codes.shape[0], top_m),
+            dtype=torch.long,
+            device=flat_codes.device,
+        )
+        for start in range(0, vocab_size, vocab_chunk_size):
+            end = min(start + vocab_chunk_size, vocab_size)
+            chunk_scores = flat_codes @ decoder_weight[start:end].float().T
+            chunk_ids = torch.arange(start, end, device=flat_codes.device).view(1, -1)
+            chunk_ids = chunk_ids.expand(flat_codes.shape[0], -1)
+            candidate_scores = torch.cat((top_scores, chunk_scores), dim=-1)
+            candidate_ids = torch.cat((top_ids, chunk_ids), dim=-1)
+            top_scores, top_pos = torch.topk(candidate_scores, k=top_m, dim=-1)
+            top_ids = torch.gather(candidate_ids, dim=-1, index=top_pos)
+
+        weights = torch.softmax(top_scores, dim=-1).to(dtype=w_out.dtype)
+        token_vectors = F.embedding(top_ids, w_out)
+        prior = (token_vectors * weights.unsqueeze(-1)).sum(dim=-2)
+        prior = prior.reshape(B, S, w_out.shape[1])
         alpha = torch.exp(alpha_log).to(device=prior.device, dtype=prior.dtype)
         return (alpha.view(1, 1, 1) * prior).to(dtype=dtype)
 

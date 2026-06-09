@@ -128,6 +128,14 @@ class TransformerTrainModule(TrainModule):
         early_fusion_ngram_table_dir: Optional[str] = None,
         early_fusion_ngram_K: int = 16,
         early_fusion_ngram_N_max: int = 5,
+        early_fusion_engram: bool = False,
+        early_fusion_engram_alpha_init: float = 5.0,
+        early_fusion_engram_alpha_lr: Optional[float] = None,
+        early_fusion_engram_table_dir: Optional[str] = None,
+        early_fusion_engram_N_max: int = 5,
+        early_fusion_engram_code_dim: int = 32,
+        early_fusion_engram_top_m: int = 32,
+        early_fusion_engram_vocab_chunk_size: int = 4096,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -203,17 +211,37 @@ class TransformerTrainModule(TrainModule):
         self._early_fusion_alpha_log_param_name = (
             f"lm_head.{self._early_fusion_alpha_log_name}"
         )
-        if early_fusion_ngram:
-            if early_fusion_alpha_init <= 0:
+        early_fusion_any = bool(early_fusion_ngram or early_fusion_engram)
+        if early_fusion_ngram and early_fusion_engram:
+            raise OLMoConfigurationError(
+                "early_fusion_ngram and early_fusion_engram are mutually exclusive"
+            )
+        if early_fusion_engram_alpha_lr is not None and not early_fusion_engram:
+            raise OLMoConfigurationError(
+                "early_fusion_engram_alpha_lr is only valid when "
+                "early_fusion_engram=True"
+            )
+        effective_early_fusion_alpha_init = (
+            early_fusion_engram_alpha_init
+            if early_fusion_engram
+            else early_fusion_alpha_init
+        )
+        effective_early_fusion_alpha_lr = (
+            early_fusion_engram_alpha_lr
+            if early_fusion_engram
+            else early_fusion_alpha_lr
+        )
+        if early_fusion_any:
+            if effective_early_fusion_alpha_init <= 0:
                 raise OLMoConfigurationError(
-                    "early_fusion_alpha_init must be positive, "
-                    f"got {early_fusion_alpha_init}"
+                    "early-fusion alpha init must be positive, "
+                    f"got {effective_early_fusion_alpha_init}"
                 )
             if model.lm_head is None:
-                raise OLMoConfigurationError("early_fusion_ngram requires a model LM head")
+                raise OLMoConfigurationError("early fusion requires a model LM head")
             alpha_log = torch.log(
                 torch.tensor(
-                    [float(early_fusion_alpha_init)],
+                    [float(effective_early_fusion_alpha_init)],
                     dtype=torch.float32,
                     device=self.device,
                 )
@@ -222,6 +250,67 @@ class TransformerTrainModule(TrainModule):
                 self._early_fusion_alpha_log_name,
                 nn.Parameter(alpha_log),
             )
+        early_fusion_engram_num_contexts: Optional[int] = None
+        if early_fusion_engram:
+            if early_fusion_engram_table_dir is None:
+                raise OLMoConfigurationError(
+                    "early_fusion_engram requires early_fusion_engram_table_dir"
+                )
+            if early_fusion_engram_code_dim <= 0:
+                raise OLMoConfigurationError(
+                    "early_fusion_engram_code_dim must be positive, "
+                    f"got {early_fusion_engram_code_dim}"
+                )
+            if early_fusion_engram_top_m <= 0:
+                raise OLMoConfigurationError(
+                    "early_fusion_engram_top_m must be positive, "
+                    f"got {early_fusion_engram_top_m}"
+                )
+            if early_fusion_engram_top_m > model.vocab_size:
+                raise OLMoConfigurationError(
+                    "early_fusion_engram_top_m cannot exceed model vocab size "
+                    f"({early_fusion_engram_top_m} > {model.vocab_size})"
+                )
+            if early_fusion_engram_vocab_chunk_size <= 0:
+                raise OLMoConfigurationError(
+                    "early_fusion_engram_vocab_chunk_size must be positive, "
+                    f"got {early_fusion_engram_vocab_chunk_size}"
+                )
+            from olmo_core.data.ngram_topk import NgramContextSource
+
+            context_source = NgramContextSource(
+                table_dir=early_fusion_engram_table_dir,
+                N_max=early_fusion_engram_N_max,
+            )
+            early_fusion_engram_num_contexts = context_source.num_contexts
+            context_vocab_size = context_source.vocab_size
+            context_source.close()
+            if context_vocab_size > model.vocab_size:
+                raise OLMoConfigurationError(
+                    "Engram context table vocab size exceeds model vocab size "
+                    f"({context_vocab_size} > {model.vocab_size})"
+                )
+            assert model.lm_head is not None
+            init_device = model.lm_head.w_out.weight.device
+            init_dtype = model.lm_head.w_out.weight.dtype
+            model.lm_head.early_fusion_engram_context_codes = nn.Embedding(
+                early_fusion_engram_num_contexts,
+                early_fusion_engram_code_dim,
+                dtype=init_dtype,
+                device=init_device,
+            )
+            model.lm_head.early_fusion_engram_token_decoder = nn.Embedding(
+                model.vocab_size,
+                early_fusion_engram_code_dim,
+                dtype=init_dtype,
+                device=init_device,
+            )
+            model.lm_head.early_fusion_engram_top_m = int(early_fusion_engram_top_m)
+            model.lm_head.early_fusion_engram_vocab_chunk_size = int(
+                early_fusion_engram_vocab_chunk_size
+            )
+            model.__dict__.pop("num_params", None)
+            model.__dict__.pop("num_non_embedding_params", None)
 
         # Parallelize model.
         self.model = parallelize_model(
@@ -245,10 +334,16 @@ class TransformerTrainModule(TrainModule):
         if poe_lambda_learnable and poe_lambda is not None:
             with torch.no_grad():
                 self._poe_lambda_log_param().fill_(math.log(float(poe_lambda)))
-        if early_fusion_ngram:
+        if early_fusion_any:
             with torch.no_grad():
                 self._early_fusion_alpha_log_param().fill_(
-                    math.log(float(early_fusion_alpha_init))
+                    math.log(float(effective_early_fusion_alpha_init))
+                )
+        if early_fusion_engram:
+            assert early_fusion_engram_num_contexts is not None
+            with torch.no_grad():
+                self._reset_early_fusion_engram_parameters(
+                    code_dim=early_fusion_engram_code_dim
                 )
         self._model_mode: Optional[Literal["train", "eval"]] = None
 
@@ -304,6 +399,21 @@ class TransformerTrainModule(TrainModule):
         self.early_fusion_ngram_table_dir = early_fusion_ngram_table_dir
         self.early_fusion_ngram_K = int(early_fusion_ngram_K)
         self.early_fusion_ngram_N_max = int(early_fusion_ngram_N_max)
+        self.early_fusion_engram = bool(early_fusion_engram)
+        self.early_fusion_engram_alpha_init = early_fusion_engram_alpha_init
+        self.early_fusion_engram_alpha_lr = early_fusion_engram_alpha_lr
+        self.early_fusion_engram_table_dir = early_fusion_engram_table_dir
+        self.early_fusion_engram_N_max = int(early_fusion_engram_N_max)
+        self.early_fusion_engram_code_dim = int(early_fusion_engram_code_dim)
+        self.early_fusion_engram_top_m = int(early_fusion_engram_top_m)
+        self.early_fusion_engram_vocab_chunk_size = int(
+            early_fusion_engram_vocab_chunk_size
+        )
+        self.early_fusion_engram_num_contexts = (
+            None
+            if early_fusion_engram_num_contexts is None
+            else int(early_fusion_engram_num_contexts)
+        )
         if self.early_fusion_ngram:
             if self.poe_lambda is not None:
                 raise OLMoConfigurationError(
@@ -319,21 +429,32 @@ class TransformerTrainModule(TrainModule):
                     "early_fusion_ngram requires early_fusion_ngram_table_dir "
                     "so eval can apply the same embedding prior as train"
                 )
-        if self.early_fusion_alpha_lr is not None:
-            if not self.early_fusion_ngram:
+        if self.early_fusion_engram:
+            if self.poe_lambda is not None:
                 raise OLMoConfigurationError(
-                    "early_fusion_alpha_lr is only valid when early_fusion_ngram=True"
+                    "early_fusion_engram is a replacement for PoE in this "
+                    "experiment; do not set poe_lambda at the same time"
                 )
-            if self.early_fusion_alpha_lr <= 0:
+            if tp_config is not None or cp_config is not None:
                 raise OLMoConfigurationError(
-                    "early_fusion_alpha_lr must be positive, "
-                    f"got {self.early_fusion_alpha_lr}"
+                    "Early Engram fusion is not yet supported with TP or CP"
+                )
+        if effective_early_fusion_alpha_lr is not None:
+            if not early_fusion_any:
+                raise OLMoConfigurationError(
+                    "early-fusion alpha LR is only valid when early fusion is enabled"
+                )
+            if effective_early_fusion_alpha_lr <= 0:
+                raise OLMoConfigurationError(
+                    "early-fusion alpha LR must be positive, "
+                    f"got {effective_early_fusion_alpha_lr}"
                 )
         # Lazy: instantiated on first eval_batch call (per process), so we
         # don't open the mmap on the main coordinator rank that may never
         # actually run an eval.
         self._poe_eval_ngram_source = None
         self._early_fusion_eval_ngram_source = None
+        self._early_fusion_eval_engram_context_source = None
         self.rank_microbatch_size = rank_microbatch_size
         self.eval_rank_microbatch_size = eval_rank_microbatch_size or rank_microbatch_size
         self.max_sequence_length = max_sequence_length
@@ -360,11 +481,11 @@ class TransformerTrainModule(TrainModule):
             )
             optim = replace(optim, group_overrides=group_overrides)
 
-        if self.early_fusion_ngram:
+        if early_fusion_any:
             early_fusion_alpha_opts: Dict[str, Any] = {"weight_decay": 0.0}
-            if self.early_fusion_alpha_lr is not None:
-                early_fusion_alpha_opts["lr"] = self.early_fusion_alpha_lr
-                early_fusion_alpha_opts["initial_lr"] = self.early_fusion_alpha_lr
+            if effective_early_fusion_alpha_lr is not None:
+                early_fusion_alpha_opts["lr"] = effective_early_fusion_alpha_lr
+                early_fusion_alpha_opts["initial_lr"] = effective_early_fusion_alpha_lr
             group_overrides = list(optim.group_overrides or [])
             group_overrides.append(
                 OptimGroupOverride(
@@ -482,6 +603,36 @@ class TransformerTrainModule(TrainModule):
         )
         assert isinstance(param, nn.Parameter)
         return param
+
+    def _early_fusion_enabled(self) -> bool:
+        return bool(self.early_fusion_ngram or self.early_fusion_engram)
+
+    def _early_fusion_engram_context_codes(self) -> nn.Embedding:
+        lm_head = getattr(self.model, "lm_head", None)
+        module = (
+            getattr(lm_head, "early_fusion_engram_context_codes")
+            if lm_head is not None
+            and hasattr(lm_head, "early_fusion_engram_context_codes")
+            else getattr(self.model, "early_fusion_engram_context_codes")
+        )
+        assert isinstance(module, nn.Embedding)
+        return module
+
+    def _early_fusion_engram_token_decoder(self) -> nn.Embedding:
+        lm_head = getattr(self.model, "lm_head", None)
+        module = (
+            getattr(lm_head, "early_fusion_engram_token_decoder")
+            if lm_head is not None
+            and hasattr(lm_head, "early_fusion_engram_token_decoder")
+            else getattr(self.model, "early_fusion_engram_token_decoder")
+        )
+        assert isinstance(module, nn.Embedding)
+        return module
+
+    def _reset_early_fusion_engram_parameters(self, *, code_dim: int) -> None:
+        std = 1.0 / math.sqrt(float(code_dim))
+        self._early_fusion_engram_context_codes().weight.normal_(mean=0.0, std=std)
+        self._early_fusion_engram_token_decoder().weight.normal_(mean=0.0, std=std)
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -685,6 +836,11 @@ class TransformerTrainModule(TrainModule):
                 "early_fusion_ngram requires batches with ngram_token_ids and "
                 "ngram_log_probs; wrap the data source with NgramTopKInstanceSource"
             )
+        if self.early_fusion_engram and "engram_context_ids" not in batch:
+            raise OLMoConfigurationError(
+                "early_fusion_engram requires batches with engram_context_ids; "
+                "wrap the data source with NgramContextInstanceSource"
+            )
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -704,12 +860,17 @@ class TransformerTrainModule(TrainModule):
                 # indices with CUDA logits.
                 ngram_token_ids = micro_batch.pop("ngram_token_ids", None)
                 ngram_log_probs = micro_batch.pop("ngram_log_probs", None)
+                engram_context_ids = micro_batch.pop("engram_context_ids", None)
                 if ngram_token_ids is not None:
                     ngram_token_ids = ngram_token_ids.to(
                         self.device, non_blocking=True
                     )
                 if ngram_log_probs is not None:
                     ngram_log_probs = ngram_log_probs.to(
+                        self.device, non_blocking=True
+                    )
+                if engram_context_ids is not None:
+                    engram_context_ids = engram_context_ids.to(
                         self.device, non_blocking=True
                     )
 
@@ -722,6 +883,13 @@ class TransformerTrainModule(TrainModule):
                         )
                     model_kwargs["early_fusion_ngram_token_ids"] = ngram_token_ids
                     model_kwargs["early_fusion_ngram_log_probs"] = ngram_log_probs
+                if self.early_fusion_engram:
+                    if engram_context_ids is None:
+                        raise OLMoConfigurationError(
+                            "early_fusion_engram requires engram_context_ids "
+                            "in every micro-batch"
+                        )
+                    model_kwargs["early_fusion_engram_context_ids"] = engram_context_ids
 
                 # NOTE on gradient flow: when ``return_logits=True`` is set,
                 # the LMHead returns ``output.ce_loss`` and ``output.z_loss``
@@ -897,7 +1065,7 @@ class TransformerTrainModule(TrainModule):
                     self._poe_lambda_log_for_logging(),
                     namespace="train",
                 )
-        if self.early_fusion_ngram:
+        if self._early_fusion_enabled():
             self.record_metric(
                 "early fusion alpha",
                 self._early_fusion_alpha_for_logging(),
@@ -986,6 +1154,11 @@ class TransformerTrainModule(TrainModule):
             )
             model_kwargs["early_fusion_ngram_token_ids"] = ngram_token_ids
             model_kwargs["early_fusion_ngram_log_probs"] = ngram_log_probs
+        if self.early_fusion_engram:
+            engram_context_ids = self._lookup_early_fusion_eval_engram(
+                input_ids=input_ids,
+            )
+            model_kwargs["early_fusion_engram_context_ids"] = engram_context_ids
 
         with self._eval_batch_context():
             output = self.model_forward(
@@ -1061,6 +1234,40 @@ class TransformerTrainModule(TrainModule):
             log_probs_np.reshape(B, S, K), dtype=torch.float32, device=input_ids.device
         )
         return ngram_token_ids, ngram_log_probs
+
+    def _get_early_fusion_eval_engram_context_source(self):
+        """Lazy-instantiate the context source for eval-time Engram fusion."""
+        if self._early_fusion_eval_engram_context_source is None:
+            assert self.early_fusion_engram_table_dir is not None
+            from olmo_core.data.ngram_topk import NgramContextSource
+
+            self._early_fusion_eval_engram_context_source = NgramContextSource(
+                table_dir=self.early_fusion_engram_table_dir,
+                N_max=self.early_fusion_engram_N_max,
+            )
+        return self._early_fusion_eval_engram_context_source
+
+    def _lookup_early_fusion_eval_engram(
+        self,
+        *,
+        input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Look up per-position context row IDs for eval-time Engram fusion."""
+        prefix_len = self.early_fusion_engram_N_max - 1
+        B, S = input_ids.shape
+        cpu_input_ids = input_ids.detach().to("cpu").numpy()
+        contexts = []
+        for b in range(B):
+            row = cpu_input_ids[b]
+            for s in range(S):
+                start = max(0, s + 1 - prefix_len)
+                contexts.append(tuple(int(t) for t in row[start : s + 1]))
+
+        context_source = self._get_early_fusion_eval_engram_context_source()
+        context_ids_np = context_source.lookup_batch(contexts)
+        return torch.as_tensor(
+            context_ids_np.reshape(B, S), dtype=torch.long, device=input_ids.device
+        )
 
     def _apply_poe_eval_bias(
         self,
@@ -1221,7 +1428,7 @@ class TransformerTrainModule(TrainModule):
                 # still move a parameter with a zero grad via momentum state;
                 # None makes the optimizer skip the learned lambda parameter.
                 lambda_log.grad = None
-        if self.early_fusion_ngram:
+        if self._early_fusion_enabled():
             alpha_log = self._early_fusion_alpha_log_param()
             alpha_log_grad = alpha_log.grad
             self.trainer.record_metric(
@@ -1263,7 +1470,7 @@ class TransformerTrainModule(TrainModule):
                     reduce_type=None,
                     namespace="optim",
                 )
-            if self.early_fusion_ngram:
+            if self._early_fusion_enabled():
                 alpha_log = self._early_fusion_alpha_log_param()
                 alpha_log_grad = alpha_log.grad
                 self.trainer.record_metric(

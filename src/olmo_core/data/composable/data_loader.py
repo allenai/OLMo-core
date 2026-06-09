@@ -502,6 +502,8 @@ class ComposableDataLoader(TextDataLoaderBase):
                     out["ngram_token_ids"] = torch.as_tensor(s_ids)
                 if (s_log_probs := instance.get("ngram_log_probs")) is not None:
                     out["ngram_log_probs"] = torch.as_tensor(s_log_probs)
+                if (context_ids := instance.get("engram_context_ids")) is not None:
+                    out["engram_context_ids"] = torch.as_tensor(context_ids)
 
                 if self.generate_doc_lengths:
                     out["doc_lens"] = get_document_lengths(

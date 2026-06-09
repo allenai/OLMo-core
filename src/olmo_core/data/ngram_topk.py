@@ -97,6 +97,10 @@ _MAGIC = b"FXTK"
 _VERSION = 1
 _HEADER_SIZE = 64
 _SECTION_HEADER_SIZE = 64
+_RAW_MAGIC = b"FIX1"
+_RAW_VERSION = 2
+_RAW_HEADER_SIZE = 64
+_RAW_SECTION_HEADER_SIZE = 48
 
 
 class _OrderSection:
@@ -238,6 +242,265 @@ class TopKForwardIndex:
             os.close(self._fd)
             self._fd = None
         self.sections_by_order.clear()
+
+
+class _ContextOrderSection:
+    """Per-order prefix table for context-ID lookup only."""
+
+    def __init__(
+        self,
+        order: int,
+        prefixes_2d: np.ndarray,
+        global_offset: int,
+    ):
+        self.order = order
+        self.plen = order - 1
+        self.prefixes_2d = prefixes_2d
+        self.global_offset = int(global_offset)
+        if self.plen > 0:
+            struct_dtype = np.dtype([(f"f{j}", "<u4") for j in range(self.plen)])
+            self.prefixes_struct = prefixes_2d.view(struct_dtype).reshape(-1)
+        else:
+            self.prefixes_struct = None
+
+
+class ContextForwardIndex:
+    """Mmap-backed context-key reader for FXTK v=1 indexes.
+
+    This reader intentionally maps only the prefix blocks from
+    ``forward_index_topk.bin``. It does not expose or construct views over the
+    top-k token IDs or log-probability arrays, which keeps Engram-style
+    learned-memory baselines from accidentally using corpus-derived
+    continuation statistics.
+    """
+
+    def __init__(self, path: str, *, N_max: int = 5):
+        self.path = path
+        self.N_max = int(N_max)
+        self._mm: Optional[mmap.mmap] = None
+        self._fd: Optional[int] = None
+        self.K: int = 0
+        self.vocab_size: int = 0
+        self.num_contexts: int = 0
+        self.sections_by_order: dict[int, _ContextOrderSection] = {}
+
+    def _ensure_open(self):
+        if self._mm is not None:
+            return
+        fd = os.open(self.path, os.O_RDONLY)
+        try:
+            mm = mmap.mmap(fd, 0, prot=mmap.PROT_READ)
+        except BaseException:
+            os.close(fd)
+            raise
+        self._fd = fd
+        self._mm = mm
+
+        if mm[:4] != _MAGIC:
+            raise ValueError(
+                f"unexpected magic {bytes(mm[:4])!r} in {self.path} (expected {_MAGIC!r})"
+            )
+        version, K, n_orders, vocab_size = struct.unpack("<IIII", mm[4:20])
+        if version != _VERSION:
+            raise ValueError(
+                f"FXTK version {version} != {_VERSION}; rebuild with current "
+                "data_gen/build_topk_forward_index.py"
+            )
+        self.K = int(K)
+        self.vocab_size = int(vocab_size)
+
+        section_headers = []
+        sh_off = _HEADER_SIZE
+        for _ in range(n_orders):
+            sh = mm[sh_off : sh_off + _SECTION_HEADER_SIZE]
+            order, _pad, n_prefixes, p_off, _tt_off, _tl_off = struct.unpack(
+                "<II QQQQ", sh[:40]
+            )
+            sh_off += _SECTION_HEADER_SIZE
+            section_headers.append((int(order), int(n_prefixes), int(p_off)))
+
+        max_order = max((order for order, _, _ in section_headers), default=0)
+        if max_order < self.N_max:
+            raise ValueError(
+                f"context forward index has max order {max_order} but caller "
+                f"passed N_max={self.N_max}"
+            )
+
+        global_offset = 0
+        for order, n_prefixes, p_off in sorted(section_headers):
+            if order > self.N_max:
+                continue
+            plen = order - 1
+            if plen > 0:
+                prefixes = np.frombuffer(
+                    mm, dtype=np.uint32, count=n_prefixes * plen, offset=p_off
+                ).reshape(n_prefixes, plen)
+            else:
+                prefixes = np.zeros((1, 0), dtype=np.uint32)
+            self.sections_by_order[order] = _ContextOrderSection(
+                order=order,
+                prefixes_2d=prefixes,
+                global_offset=global_offset,
+            )
+            global_offset += n_prefixes
+
+        if 1 not in self.sections_by_order:
+            raise ValueError(f"context forward index {self.path} is missing order 1")
+        self.num_contexts = int(global_offset)
+
+    def lookup_one(self, context: Sequence[int]) -> int:
+        """Return the learned-memory row ID for the longest matching context."""
+        self._ensure_open()
+        ctx_len = len(context)
+        upper = min(max(self.sections_by_order), ctx_len + 1, self.N_max)
+        for n in range(upper, 0, -1):
+            sect = self.sections_by_order.get(n)
+            if sect is None:
+                continue
+            plen = sect.plen
+            if plen == 0:
+                return sect.global_offset
+            if ctx_len < plen:
+                continue
+            query = np.asarray(context[-plen:], dtype=np.uint32).reshape(1, plen)
+            assert sect.prefixes_struct is not None
+            struct_dtype = sect.prefixes_struct.dtype
+            query_view = query.view(struct_dtype).reshape(-1)
+            idx = int(np.searchsorted(sect.prefixes_struct, query_view[0]))
+            if idx < sect.prefixes_struct.shape[0] and (
+                sect.prefixes_struct[idx] == query_view[0]
+            ):
+                return sect.global_offset + idx
+
+        raise RuntimeError(
+            f"context forward index lookup fell through all orders for context "
+            f"of length {ctx_len}; index file may be missing order 1"
+        )
+
+    def close(self):
+        self.sections_by_order.clear()
+        if self._mm is not None:
+            self._mm.close()
+            self._mm = None
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+        self.num_contexts = 0
+
+
+class RawContextForwardIndex:
+    """Mmap-backed context-key reader for FIX1 v=2 raw forward indexes."""
+
+    def __init__(self, path: str, *, N_max: int = 5):
+        self.path = path
+        self.N_max = int(N_max)
+        self._mm: Optional[mmap.mmap] = None
+        self._fd: Optional[int] = None
+        self.vocab_size: int = 0
+        self.num_contexts: int = 0
+        self.sections_by_order: dict[int, _ContextOrderSection] = {}
+
+    def _ensure_open(self):
+        if self._mm is not None:
+            return
+        fd = os.open(self.path, os.O_RDONLY)
+        try:
+            mm = mmap.mmap(fd, 0, prot=mmap.PROT_READ)
+        except BaseException:
+            os.close(fd)
+            raise
+        self._fd = fd
+        self._mm = mm
+
+        if mm[:4] != _RAW_MAGIC:
+            raise ValueError(
+                f"unexpected magic {bytes(mm[:4])!r} in {self.path} "
+                f"(expected {_RAW_MAGIC!r})"
+            )
+        version, n_orders, vocab_size = struct.unpack("<III", mm[4:16])
+        if version != _RAW_VERSION:
+            raise ValueError(
+                f"FIX1 version {version} != {_RAW_VERSION}; rebuild with current "
+                "data_gen/build_forward_index.py"
+            )
+        self.vocab_size = int(vocab_size)
+
+        section_headers = []
+        sh_off = _RAW_HEADER_SIZE
+        for _ in range(n_orders):
+            sh = mm[sh_off : sh_off + _RAW_SECTION_HEADER_SIZE]
+            order, _pad, n_prefixes, _n_continuations, pw_off, _co_off, _c_off = (
+                struct.unpack("<IIQQQQQ", sh)
+            )
+            sh_off += _RAW_SECTION_HEADER_SIZE
+            section_headers.append((int(order), int(n_prefixes), int(pw_off)))
+
+        max_order = max((order for order, _, _ in section_headers), default=1)
+        if max_order < self.N_max:
+            raise ValueError(
+                f"raw context forward index has max order {max_order} but caller "
+                f"passed N_max={self.N_max}"
+            )
+
+        # Raw FIX1 indexes do not contain order 1, so synthesize the empty
+        # context row as global row 0.
+        self.sections_by_order[1] = _ContextOrderSection(
+            order=1,
+            prefixes_2d=np.zeros((1, 0), dtype=np.uint32),
+            global_offset=0,
+        )
+        global_offset = 1
+        for order, n_prefixes, p_off in sorted(section_headers):
+            if order > self.N_max:
+                continue
+            plen = order - 1
+            prefixes = np.frombuffer(
+                mm, dtype=np.uint32, count=n_prefixes * plen, offset=p_off
+            ).reshape(n_prefixes, plen)
+            self.sections_by_order[order] = _ContextOrderSection(
+                order=order,
+                prefixes_2d=prefixes,
+                global_offset=global_offset,
+            )
+            global_offset += n_prefixes
+        self.num_contexts = int(global_offset)
+
+    def lookup_one(self, context: Sequence[int]) -> int:
+        self._ensure_open()
+        ctx_len = len(context)
+        upper = min(max(self.sections_by_order), ctx_len + 1, self.N_max)
+        for n in range(upper, 0, -1):
+            sect = self.sections_by_order.get(n)
+            if sect is None:
+                continue
+            plen = sect.plen
+            if plen == 0:
+                return sect.global_offset
+            if ctx_len < plen:
+                continue
+            query = np.asarray(context[-plen:], dtype=np.uint32).reshape(1, plen)
+            assert sect.prefixes_struct is not None
+            struct_dtype = sect.prefixes_struct.dtype
+            query_view = query.view(struct_dtype).reshape(-1)
+            idx = int(np.searchsorted(sect.prefixes_struct, query_view[0]))
+            if idx < sect.prefixes_struct.shape[0] and (
+                sect.prefixes_struct[idx] == query_view[0]
+            ):
+                return sect.global_offset + idx
+        raise RuntimeError(
+            f"raw context forward index lookup fell through all orders for context "
+            f"of length {ctx_len}; index file may be missing order 1 fallback"
+        )
+
+    def close(self):
+        self.sections_by_order.clear()
+        if self._mm is not None:
+            self._mm.close()
+            self._mm = None
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+        self.num_contexts = 0
 
 
 # ----------------------------------------------------------------------
@@ -390,3 +653,84 @@ class NgramTopKSource:
                 flush=True,
             )
         return ids_out, values_out
+
+
+class NgramContextSource:
+    """Lookup observed ngram contexts as learned-memory row IDs.
+
+    This uses the prefix blocks from ``forward_index_topk.bin`` and deliberately
+    ignores the top-k continuation token IDs and log probabilities.
+    """
+
+    def __init__(
+        self,
+        table_dir: Union[str, Path],
+        *,
+        N_max: int = 5,
+    ):
+        self.table_dir = str(table_dir)
+        self.N_max = int(N_max)
+        p = Path(table_dir)
+        if p.is_dir():
+            raw_path = p / "forward_index.bin"
+            topk_path = p / "forward_index_topk.bin"
+            if raw_path.exists():
+                fwd_path = raw_path
+            elif topk_path.exists():
+                fwd_path = topk_path
+            else:
+                fwd_path = topk_path
+        elif p.name in {"forward_index.bin", "forward_index_topk.bin"}:
+            fwd_path = p
+        else:
+            raise ValueError(
+                f"table_dir must be a directory containing forward_index.bin or "
+                f"forward_index_topk.bin, or one of those files directly, got {table_dir}"
+            )
+        if not fwd_path.exists():
+            raise FileNotFoundError(f"context index file not found: {fwd_path}")
+        self.forward_index_path = str(fwd_path)
+        self._idx: Optional[Union[ContextForwardIndex, RawContextForwardIndex]] = None
+
+    def _ensure_open(self) -> Union[ContextForwardIndex, RawContextForwardIndex]:
+        if self._idx is not None:
+            return self._idx
+        tag = (
+            f"[ngram_context pid={os.getpid()} table={self.forward_index_path} "
+            f"N_max={self.N_max}]"
+        )
+        print(f"{tag} _ensure_open: mirroring context index to /dev/shm", flush=True)
+        local_path = _mirror_to_shm(self.forward_index_path)
+        if Path(local_path).name == "forward_index.bin":
+            idx = RawContextForwardIndex(local_path, N_max=self.N_max)
+        else:
+            idx = ContextForwardIndex(local_path, N_max=self.N_max)
+        idx._ensure_open()
+        self._idx = idx
+        print(
+            f"{tag} opened context index: {idx.num_contexts:,} contexts, "
+            f"vocab={idx.vocab_size}",
+            flush=True,
+        )
+        return idx
+
+    @property
+    def num_contexts(self) -> int:
+        return self._ensure_open().num_contexts
+
+    @property
+    def vocab_size(self) -> int:
+        return self._ensure_open().vocab_size
+
+    def lookup_batch(self, contexts: Sequence[Sequence[int]]) -> np.ndarray:
+        """Return one learned-memory row ID per context."""
+        idx = self._ensure_open()
+        out = np.empty(len(contexts), dtype=np.int64)
+        for i, ctx in enumerate(contexts):
+            out[i] = idx.lookup_one(ctx)
+        return out
+
+    def close(self):
+        if self._idx is not None:
+            self._idx.close()
+            self._idx = None

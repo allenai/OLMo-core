@@ -55,6 +55,7 @@ class DataCollator:
         all_vis_limit = []
         all_ngram_token_ids = []
         all_ngram_log_probs = []
+        all_engram_context_ids = []
         all_indices = []
         all_metadata = []
         all_instance_mask = []
@@ -185,6 +186,22 @@ class DataCollator:
                     )
                 )
 
+            # Engram-style learned context row IDs. Pad with the empty-context
+            # row ID; padded labels are ignored by the loss path.
+            engram_context_ids = (
+                x.get("engram_context_ids") if isinstance(x, dict) else None
+            )
+            if engram_context_ids is not None:
+                if not isinstance(engram_context_ids, torch.Tensor):
+                    engram_context_ids = torch.as_tensor(engram_context_ids)
+                all_engram_context_ids.append(
+                    F.pad(
+                        engram_context_ids.to(dtype=torch.long),
+                        pad_shape,
+                        value=0,
+                    )
+                )
+
             # Indices.
             index = x.get("index") if isinstance(x, dict) else None
             if index is not None:
@@ -234,6 +251,8 @@ class DataCollator:
             out["ngram_token_ids"] = torch.stack(all_ngram_token_ids)
         if all_ngram_log_probs:
             out["ngram_log_probs"] = torch.stack(all_ngram_log_probs)
+        if all_engram_context_ids:
+            out["engram_context_ids"] = torch.stack(all_engram_context_ids)
         if all_indices:
             out["index"] = torch.stack(all_indices)
         if all_instance_mask:
