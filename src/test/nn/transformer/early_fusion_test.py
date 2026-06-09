@@ -1,4 +1,5 @@
 import math
+import pickle
 import struct
 
 import numpy as np
@@ -19,6 +20,11 @@ from olmo_core.nn.transformer import (
 from olmo_core.optim import AdamWConfig
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.data.ngram_topk import NgramContextSource
+from olmo_core.data.composable import (
+    ConcatAndChunkInstanceSource,
+    InMemoryTokenSource,
+    NgramContextInstanceSource,
+)
 
 
 def _tiny_transformer_config() -> TransformerConfig:
@@ -141,6 +147,45 @@ def test_ngram_context_source_rejects_topk_fallback(tmp_path):
 
     with pytest.raises(ValueError, match="requires the raw forward_index.bin"):
         NgramContextSource(topk, N_max=2)
+
+
+def test_opened_ngram_context_source_pickles_without_mmap(tmp_path):
+    _write_raw_context_index(tmp_path)
+    source = NgramContextSource(tmp_path, N_max=2)
+    assert source.num_contexts == 3
+
+    restored = pickle.loads(pickle.dumps(source))
+    assert restored.num_contexts == 3
+    assert source._idx is not None
+    assert restored._idx is not None
+
+
+def test_opened_ngram_context_instance_source_pickles_without_lookup(tmp_path):
+    _write_raw_context_index(tmp_path)
+    base = ConcatAndChunkInstanceSource(
+        InMemoryTokenSource([10, 20, 30, 10], work_dir=tmp_path),
+        sequence_length=4,
+        work_dir=tmp_path,
+    )
+    source = NgramContextInstanceSource(
+        base,
+        table_dir=tmp_path,
+        N_max=2,
+        work_dir=tmp_path,
+    )
+    inst = source[0]
+    np.testing.assert_array_equal(
+        inst["engram_context_ids"],
+        np.asarray([1, 2, 0, 1], dtype=np.int64),
+    )
+    assert source._lookup is not None
+
+    restored = pickle.loads(pickle.dumps(source))
+    assert restored._lookup is None
+    np.testing.assert_array_equal(
+        restored[0]["engram_context_ids"],
+        np.asarray([1, 2, 0, 1], dtype=np.int64),
+    )
 
 
 def test_engram_early_fusion_sparse_decode_uses_learned_topm_distribution():

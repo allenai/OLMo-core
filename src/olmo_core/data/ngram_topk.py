@@ -694,6 +694,14 @@ class NgramContextSource:
         self.forward_index_path = str(fwd_path)
         self._idx: Optional[RawContextForwardIndex] = None
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_idx"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
     def _ensure_open(self) -> RawContextForwardIndex:
         if self._idx is not None:
             return self._idx

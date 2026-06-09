@@ -57,6 +57,14 @@ class NgramContextInstanceSource(InstanceSource):
         self._N_max = int(N_max)
         self._lookup = None
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_lookup"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
     @property
     def source(self) -> InstanceSource:
         return self._source
