@@ -280,6 +280,141 @@ def all_to_all(
     )
 
 
+class AllToAllAsyncOp(torch.autograd.Function):
+    """
+    Autograd function backing :func:`all_to_all_async` / :func:`all_to_all_wait`.
+
+    :func:`all_to_all_async` launches the all-to-all and returns immediately so the
+    caller can overlap unrelated compute with the communication; :func:`all_to_all_wait`
+    later blocks on the handle. The work handle and the metadata needed by the wait /
+    backward passes are stashed as attributes on the output tensor (``_a2a_*``) so they
+    travel through autograd without extra ``ctx`` plumbing across the two ops.
+    """
+
+    @staticmethod
+    def forward(ctx, x, output_split_sizes, input_split_sizes, group):
+        if output_split_sizes is not None:
+            y = torch.empty(
+                (sum(output_split_sizes),) + x.shape[1:], device=x.device, dtype=x.dtype
+            )
+        else:
+            y = torch.empty_like(x)
+
+        ctx.output_split_sizes = output_split_sizes
+        ctx.input_split_sizes = input_split_sizes
+        ctx.group = group
+        y_handle = dist.all_to_all_single(
+            y,
+            x.contiguous(),
+            output_split_sizes=output_split_sizes,
+            input_split_sizes=input_split_sizes,
+            group=group,
+            async_op=True,
+        )
+        # Carry the metadata the matching AllToAllWaitOp needs on the output tensor.
+        setattr(y, "_a2a_input_shape", x.shape)
+        setattr(y, "_a2a_output_split_sizes", output_split_sizes)
+        setattr(y, "_a2a_input_split_sizes", input_split_sizes)
+        setattr(y, "_a2a_group", group)
+
+        return x, y, y_handle
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        x_grad = grad_outputs[0]
+        x_grad_handle = x_grad._a2a_handle
+        x_grad_handle.wait()
+        del x_grad._a2a_handle
+        return x_grad, None, None, None, None
+
+
+class AllToAllWaitOp(torch.autograd.Function):
+    """Completion half of :class:`AllToAllAsyncOp` (see :func:`all_to_all_wait`)."""
+
+    @staticmethod
+    def forward(ctx, x, y, y_handle):
+        # y is the output tensor from AllToAllAsyncOp; read the stashed input shape
+        # rather than y.shape (which is the post-all-to-all shape).
+        ctx.input_shape = y._a2a_input_shape
+        ctx.output_split_sizes = y._a2a_output_split_sizes
+        ctx.input_split_sizes = y._a2a_input_split_sizes
+        ctx.group = y._a2a_group
+        del y._a2a_output_split_sizes
+        del y._a2a_input_split_sizes
+        del y._a2a_group
+        del y._a2a_input_shape
+
+        y_handle.wait()
+        return y
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        y_grad = grad_outputs[0]
+        x_grad = torch.empty(
+            ctx.input_shape,
+            device=y_grad.device,
+            dtype=y_grad.dtype,
+        )
+        x_grad_handle = dist.all_to_all_single(
+            x_grad,
+            y_grad.contiguous(),
+            output_split_sizes=ctx.input_split_sizes,
+            input_split_sizes=ctx.output_split_sizes,
+            group=ctx.group,
+            async_op=True,
+        )
+        # Stash the in-flight handle on the gradient; AllToAllAsyncOp.backward waits on it.
+        setattr(x_grad, "_a2a_handle", x_grad_handle)
+        return x_grad, y_grad, None
+
+
+@torch._dynamo.disable()
+def all_to_all_async(
+    x: torch.Tensor,
+    output_split_sizes: Optional[List[int]] = None,
+    input_split_sizes: Optional[List[int]] = None,
+    group: Optional[dist.ProcessGroup] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, dist.Work]:
+    """
+    Launch a non-blocking all-to-all and return without waiting on it.
+
+    Pairs with :func:`all_to_all_wait` to overlap communication with compute::
+
+        x, y, handle = all_to_all_async(x, ...)
+        z = some_independent_compute(x)   # overlaps with the all-to-all
+        y = all_to_all_wait(x, y, handle) # blocks until the transfer is done
+
+    :param x: The local input tensor (sharded along dim 0).
+    :param output_split_sizes: Per-rank receive counts; ``None`` for an even split.
+    :param input_split_sizes: Per-rank send counts; ``None`` for an even split.
+    :param group: The process group to communicate over.
+
+    :returns: ``(x, y, handle)`` — the (unchanged) input ``x``, the output buffer ``y``
+        (not yet valid until waited on), and the in-flight work ``handle``.
+    """
+    return AllToAllAsyncOp.apply(  # type: ignore
+        x,
+        output_split_sizes,
+        input_split_sizes,
+        group,
+    )
+
+
+@torch._dynamo.disable()
+def all_to_all_wait(x: torch.Tensor, y: torch.Tensor, y_handle: dist.Work) -> torch.Tensor:
+    """
+    Block until the all-to-all launched by :func:`all_to_all_async` completes.
+
+    :param x: The original input tensor returned by :func:`all_to_all_async` (kept in the
+        autograd graph so the backward all-to-all is wired correctly).
+    :param y: The output buffer returned by :func:`all_to_all_async`.
+    :param y_handle: The work handle returned by :func:`all_to_all_async`.
+
+    :returns: The completed output tensor ``y``.
+    """
+    return AllToAllWaitOp.apply(x, y, y_handle)  # type: ignore
+
+
 def sum_tensor(x: torch.Tensor, dim: int = 0) -> torch.Tensor:
     if x.shape[dim] == 1:
         return x.squeeze(dim=dim)
