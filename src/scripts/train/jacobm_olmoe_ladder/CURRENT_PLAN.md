@@ -134,9 +134,12 @@ Queued Cx1/Cx2/Cx4 together on 2026-06-08:
 Follow-ups launched on 2026-06-10:
 
 - Cx4 cold-side sentinel `1e-4`, `gpu4-ep1mb8`:
-  `01KTSC4J4KGTZXY0XP5P0AXQXM`.
+  `01KTSC4J4KGTZXY0XP5P0AXQXM`, W&B `0mvi3nov`. After W&B history repair, the
+  original Cx4 triplet is already bracketed around `8e-4`; treat this as extra
+  insurance.
 - Cx8 hot-side sentinel `3.2e-3`, `gpu8-ep1mb4`:
-  `01KTSC51ZXE3YQAZMANDP15QT7`.
+  `01KTSC51ZXE3YQAZMANDP15QT7`, W&B `fvbz0h7v`. This is still needed because
+  completed Cx8 has `8e-4` as the hot-edge best.
 
 Hold off on midpoint Cx16 for now, matching the 810M/1.2B policy.
 
