@@ -660,7 +660,7 @@ def convert_state_from_hf(
 
     converter = _get_converter_from_hf(model_type=model_type)
 
-    if model_type == "qwen3_5_text":
+    if model_type in {"qwen3_5", "qwen3_5_text"}:
         return convert_qwen3_5_state_from_hf(config, hf_state)
 
     converted_state = _convert_state(config, hf_state, converter)
