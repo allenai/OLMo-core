@@ -15,6 +15,7 @@ from .connector import (
     VisionConnectorConfig,
 )
 from .image_vit import VisionTransformer, ViTAttention, ViTBlock, ViTMLP
+from .molmo2_loader import molmo2_hf_state_dict_to_multimodal_lm
 from .multimodal import MultimodalLM, MultimodalLMConfig
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "VisionConnector",
     "MultimodalLMConfig",
     "MultimodalLM",
+    "molmo2_hf_state_dict_to_multimodal_lm",
 ]
