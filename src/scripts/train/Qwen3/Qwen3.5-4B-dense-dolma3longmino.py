@@ -14,6 +14,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -81,6 +82,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),
         attn_backend=AttentionBackendName.flash_2,
     )
+
+    # Fused linear cross-entropy (Liger): never materializes the full 64k x 248320-vocab logits
+    # (~32GB bf16, ~65GB once cross-entropy upcasts to fp32, plus an equal-sized grad). Without
+    # context parallelism each rank computes the loss over the whole 64k sequence at once, so this
+    # logits spike -- not params/activations -- is what OOMs the 80GB GPU. Matches the sparse/fast
+    # landmark scripts.
+    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,  # 1 sequence per rank per micro-step
