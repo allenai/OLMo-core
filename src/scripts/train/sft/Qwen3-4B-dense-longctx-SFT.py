@@ -102,7 +102,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     root_dir = get_root_dir(cli_context.cluster)
     work_dir = get_work_dir(root_dir)
-    save_dir = f"{root_dir}/checkpoints/{cli_context.run_name}"
+    # Keep all artifacts from these experiments together under the prasanns/ namespace
+    # (never write to the shared top-level checkpoints dir).
+    save_dir = f"{root_dir}/checkpoints/prasanns/{cli_context.run_name}"
 
     beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
         name=cli_context.run_name,
