@@ -90,14 +90,19 @@ Continue:
 - 810M Cx16: `2e-4`, `4e-4`, `8e-4` were stopped intentionally on 2026-06-09
   after the plan shifted to finish Cx1/Cx2/Cx4/Cx8 first. Ignore unless
   explicitly resumed later.
-- 1.2B Cx4: `1.5e-4`, `3e-4`, `6e-4` completed and bracketed around `4e-4`;
-  W&B history for `1.5e-4` is still short and should be refreshed later.
+- 1.2B Cx4: `1.5e-4`, `3e-4`, `6e-4` completed with a center near `4e-4`, but
+  `3e-4`/`6e-4` are too close to claim a strict hot-side bracket. The stopped
+  `1.2e-3` run was resumed on 2026-06-10 as a hot-side completion point under
+  Beaker experiment `01KTHW6ZSXGD1P8NEA7S3KM198`, new job
+  `01KTSB2H1TMF7Z1T2MY40J2QM0`. W&B history for `1.5e-4` is still short and
+  should be refreshed later.
 - 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed.
 
 Ignore unless explicitly resumed:
 
 - Cancelled 810M Cx8 `1e-4`
-- Cancelled 1.2B Cx4 `1.2e-3`
+- 1.2B Cx4 `1.2e-3` was previously stopped but is now resumed; include only
+  after the resumed full run completes.
 
 Midpoint smoke status:
 
@@ -133,9 +138,8 @@ matching the 810M/1.2B policy.
 ## Next Baseline Progression
 
 - 810M Cx8 bracketed cleanly around `4e-4`.
-- 1.2B Cx4 is bracketed around `4e-4`; the natural next 1.2B Cx8 is a
-  3-point centered sweep using the default 32-GPU setting, but the active goal
-  currently requires explicit approval before launching jobs above 8 GPUs.
+- 1.2B Cx4 has an apparent center near `4e-4`, but wait for the resumed
+  `1.2e-3` hot-side point before calling the rung bracketed.
 - After midpoint results land, refit size transfer using 275M, midpoint, 810M,
   and 1.2B.
 - For now, baseline expansion for 810M, 1.2B, and midpoint should focus on

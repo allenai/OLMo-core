@@ -187,21 +187,24 @@ The 1.2B Cx4 sweep finished successfully:
 | `6e-4` | finished | 84.624B history | 2.1574 | 2.1542 | 2.1544 | `1tzma107` |
 
 W&B history is still short for `1.5e-4`, even though the summary and Beaker job
-show the run completed at step 162379 / 85.133B tokens. This does not change the
-current LR decision: the low side is clearly worse, and `3e-4`/`6e-4` are close.
-Local 3-point quadratic fits over log LR estimate the optimum around:
+show the run completed at step 162379 / 85.133B tokens. The low side is clearly
+worse, but `3e-4`/`6e-4` are close enough that this is not a strict hot-side
+bracket. Local 3-point quadratic fits over log LR estimate the optimum around:
 
 - avg100M: `3.6e-4`
 - avg250M: `4.3e-4`
 - avg500M: `4.1e-4`
 
-Treat 1.2B Cx4 as bracketed with a center around `4e-4`. The natural next 1.2B
-Cx8 sweep would be a 3-point centered grid around that transferred/fitted center,
-using the current GPU table. Because the active goal still says to ask before
-jobs above 8 GPUs, get explicit approval before launching the planned 32-GPU
-1.2B Cx8 runs.
+Treat 1.2B Cx4 as weakly centered around `4e-4`, but not fully bracketed until
+there is an actual right-side upturn. The previously stopped `1.2e-3` hot-side
+run was resumed on 2026-06-10 under the same Beaker experiment
+`01KTHW6ZSXGD1P8NEA7S3KM198`; the new attempt is job
+`01KTSB2H1TMF7Z1T2MY40J2QM0`. It should resume from the existing checkpoint
+folder, which still contains `step10500`.
 
-Transfer-rule note: the updated, calibrated rule predicted 1.2B Cx4 well. The
+Transfer-rule note: the updated, calibrated rule predicted the apparent 1.2B Cx4
+center well, but wait for the resumed `1.2e-3` run before calling the rung
+complete. The
 pre-run estimate was about `3.3e-4` from direct size transfer and about `3.9e-4`
 from the 1.2B Cx1 fit times the 810M Cx4/Cx1 ratio. The observed local fits land
 around `3.6e-4` to `4.3e-4`, with `3e-4` and `6e-4` effectively tied. This is
