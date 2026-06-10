@@ -2,7 +2,7 @@
 
 Runs the 11 Molmo2 image-QA benchmarks (ChartQA, VQA v2, DocVQA, InfoVQA,
 TextVQA, RealWorldQA, MMMU, MathVista, CountBench QA, PixMo Count, AI2D)
-with the OLMo-core ``MultimodalTransformer`` and scores them with the
+with the OLMo-core ``MultimodalLM`` and scores them with the
 matching tasks from olmo-eval-internal (prompt construction, metrics, and
 data loading all live there — this script only does inference glue).
 
@@ -290,7 +290,7 @@ def main() -> None:
         default="hf",
         help="Inference backend. 'hf' = the released HF Molmo2 pipeline (KV-cached, "
         "implements bidirectional image attention; reproduces the original eval "
-        "exactly). 'olmo_core' = MultimodalTransformer (supports native .distcp "
+        "exactly). 'olmo_core' = MultimodalLM (supports native .distcp "
         "checkpoints, but currently lacks bidirectional image attention — outputs "
         "can drift from the original eval)",
     )

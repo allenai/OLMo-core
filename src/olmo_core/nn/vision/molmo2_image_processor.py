@@ -95,7 +95,11 @@ def _arange_for_pooling(idx_arr: np.ndarray, pool_h: int, pool_w: int) -> np.nda
     H, W = idx_arr.shape
     ph = H // pool_h
     pw = W // pool_w
-    return idx_arr.reshape(ph, pool_h, pw, pool_w).transpose(0, 2, 1, 3).reshape(ph, pw, pool_h * pool_w)
+    return (
+        idx_arr.reshape(ph, pool_h, pw, pool_w)
+        .transpose(0, 2, 1, 3)
+        .reshape(ph, pw, pool_h * pool_w)
+    )
 
 
 def _batch_pixels_to_patches_cf(array: np.ndarray, patch_size: int) -> np.ndarray:
@@ -134,7 +138,9 @@ def _build_resized_image(
     resized = resized[np.newaxis]  # (1, h, w, 3)
     crop_patch_w = base_hw[1] // patch_size
     crop_patch_h = base_hw[0] // patch_size
-    resize_idx = np.arange(crop_patch_w * crop_patch_h, dtype=np.int32).reshape(crop_patch_h, crop_patch_w)
+    resize_idx = np.arange(crop_patch_w * crop_patch_h, dtype=np.int32).reshape(
+        crop_patch_h, crop_patch_w
+    )
     return resized, resize_idx
 
 
@@ -174,7 +180,10 @@ def _build_overlapping_crops(
 
     src = _resize_image(
         image,
-        [tiling[0] * crop_window_size + total_margin_px, tiling[1] * crop_window_size + total_margin_px],
+        [
+            tiling[0] * crop_window_size + total_margin_px,
+            tiling[1] * crop_window_size + total_margin_px,
+        ],
     )
     src = _normalize_image(src, mean, std)
 
@@ -188,7 +197,9 @@ def _build_overlapping_crops(
         for j in range(tiling[1]):
             x0 = j * crop_window_size
             crop_arr[on_crop] = src[y0 : y0 + crop_size, x0 : x0 + crop_size]
-            patch_idx = np.arange(crop_patch_w * crop_patch_h, dtype=np.int32).reshape(crop_patch_h, crop_patch_w)
+            patch_idx = np.arange(crop_patch_w * crop_patch_h, dtype=np.int32).reshape(
+                crop_patch_h, crop_patch_w
+            )
             patch_idx += on_crop * crop_patch_h * crop_patch_w
             if i != 0:
                 patch_idx[:left_margin, :] = -1
@@ -235,7 +246,9 @@ def _image_to_patches_and_grids(
     crop_patch_h = base_hw[0] // patch_size
     crop_patch_w = base_hw[1] // patch_size
 
-    crop_arr, patch_idx_arr = _build_overlapping_crops(image, max_crops, margins, base_hw, mean, std, patch_size)
+    crop_arr, patch_idx_arr = _build_overlapping_crops(
+        image, max_crops, margins, base_hw, mean, std, patch_size
+    )
 
     pooling_idx = _arange_for_pooling(patch_idx_arr, pool_h, pool_w)
     h, w = pooling_idx.shape[:2]
@@ -277,7 +290,7 @@ def preprocess_image_molmo2(
     std: list = _IMAGE_STD,
 ) -> tuple:
     """
-    Preprocess a PIL image for Molmo2 :class:`~olmo_core.nn.vision.MultimodalTransformer`.
+    Preprocess a PIL image for Molmo2 :class:`~olmo_core.nn.vision.MultimodalLM`.
 
     This replaces ``Molmo2ImageProcessor`` from ``mm_olmo`` with no external
     dependencies beyond numpy, torch, and PIL.

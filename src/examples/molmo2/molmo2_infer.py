@@ -5,7 +5,7 @@ image-QA benchmarks) share one implementation of:
 
 * multi-crop image preprocessing (native OLMo-core, no mm_olmo dependency)
 * image-token sequence construction and prompt building
-* HF / native-``.distcp`` checkpoint loading into ``MultimodalTransformer``
+* HF / native-``.distcp`` checkpoint loading into ``MultimodalLM``
 * greedy decoding (no KV cache)
 * simple atomic JSON prediction caches
 
@@ -213,14 +213,14 @@ def resolve_checkpoint(model_str: str) -> tuple[bool, Path | None]:
 
 
 def _load_model_hf(model_id: str, device: torch.device, dtype: torch.dtype):
-    """Load HF Molmo2 weights → convert → MultimodalTransformer. Returns (model, tokenizer)."""
+    """Load HF Molmo2 weights → convert → MultimodalLM. Returns (model, tokenizer)."""
     from transformers import AutoModelForImageTextToText, AutoTokenizer
 
-    from olmo_core.nn.vision import MultimodalTransformer
+    from olmo_core.nn.vision import MultimodalLM
     from olmo_core.nn.vision.molmo2_loader import (
         ensure_default_rope_registered,
         molmo2_config_from_hf_config,
-        molmo2_hf_state_dict_to_multimodal_transformer,
+        molmo2_hf_state_dict_to_multimodal_lm,
         reinit_rope_buffers,
     )
 
@@ -232,11 +232,11 @@ def _load_model_hf(model_id: str, device: torch.device, dtype: torch.dtype):
 
     logger.info("Converting weights …")
     cfg = molmo2_config_from_hf_config(hf.config)
-    converted = molmo2_hf_state_dict_to_multimodal_transformer(hf.state_dict(), cfg)
+    converted = molmo2_hf_state_dict_to_multimodal_lm(hf.state_dict(), cfg)
     del hf
 
-    logger.info("Loading into MultimodalTransformer …")
-    model = MultimodalTransformer(cfg, init_device="meta")
+    logger.info("Loading into MultimodalLM …")
+    model = MultimodalLM(cfg, init_device="meta")
     model.to_empty(device=torch.device("cpu"))
     missing, _ = model.load_state_dict(converted, strict=False)
     del converted
@@ -281,17 +281,17 @@ def _load_model_olmocore(
     device: torch.device,
     dtype: torch.dtype,
 ):
-    """Load a native mm_olmo ``.distcp`` training checkpoint into MultimodalTransformer."""
+    """Load a native mm_olmo ``.distcp`` training checkpoint into MultimodalLM."""
     import pickle
 
     from transformers import AutoConfig, AutoTokenizer
 
     from olmo_core.distributed.checkpoint import load_state_dict as olmocore_load_sd
-    from olmo_core.nn.vision import MultimodalTransformer
+    from olmo_core.nn.vision import MultimodalLM
     from olmo_core.nn.vision.molmo2_loader import (
         ensure_default_rope_registered,
         molmo2_config_from_hf_config,
-        molmo2_hf_state_dict_to_multimodal_transformer,
+        molmo2_hf_state_dict_to_multimodal_lm,
     )
 
     logger.info("Native mm_olmo .distcp checkpoint at %s", step_dir)
@@ -323,11 +323,11 @@ def _load_model_olmocore(
     hf_config = AutoConfig.from_pretrained(hf_config_id, trust_remote_code=True)
     cfg = molmo2_config_from_hf_config(hf_config)
 
-    logger.info("Converting to OLMo-core format and loading into MultimodalTransformer …")
-    converted = molmo2_hf_state_dict_to_multimodal_transformer(hf_sd, cfg)
+    logger.info("Converting to OLMo-core format and loading into MultimodalLM …")
+    converted = molmo2_hf_state_dict_to_multimodal_lm(hf_sd, cfg)
     del hf_sd
 
-    model = MultimodalTransformer(cfg, init_device="meta")
+    model = MultimodalLM(cfg, init_device="meta")
     model.to_empty(device=torch.device("cpu"))
     missing, _ = model.load_state_dict(converted, strict=False)
     del converted
@@ -348,7 +348,7 @@ def load_model(
     dtype: torch.dtype,
     hf_config_id: str = DEFAULT_MODEL_ID,
 ):
-    """Load Molmo2 into MultimodalTransformer from either an HF model ID or a
+    """Load Molmo2 into MultimodalLM from either an HF model ID or a
     local OLMo-core ``.distcp`` checkpoint directory. Returns (model, tokenizer).
     """
     is_native, step_dir = resolve_checkpoint(model_or_path)
@@ -366,7 +366,7 @@ def load_model(
 def load_hf_pipeline(model_id: str, device: torch.device, dtype: torch.dtype):
     """Load the released HF Molmo2 model + processor.
 
-    Unlike the OLMo-core ``MultimodalTransformer`` path, the HF model
+    Unlike the OLMo-core ``MultimodalLM`` path, the HF model
     implements Molmo2's bidirectional attention over image tokens
     (``token_type_ids`` masking) and KV-cached generation — verified to
     reproduce the original mm_olmo eval predictions exactly.

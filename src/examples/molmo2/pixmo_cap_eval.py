@@ -1,6 +1,6 @@
 """Pixmo-cap dense-caption evaluation using OLMo-core Molmo2.
 
-Loads allenai/Molmo2-4B via the OLMo-core MultimodalTransformer arch,
+Loads allenai/Molmo2-4B via the OLMo-core MultimodalLM arch,
 captions a sample of pixmo-cap images with greedy decoding, then scores
 them with the ``dense_caption`` task from olmo-eval-internal.
 
@@ -27,7 +27,7 @@ Notes / known risks:
     * This script keeps its original prompt layout (image block inside the user
       turn); the image-QA eval uses the native layout — see ``molmo2_infer``.
     * Use Molmo2-4B or Molmo2-8B (not Molmo2-O-7B), as the O-7B variant uses
-      per-layer YaRN attention scaling not yet supported by MultimodalTransformer.
+      per-layer YaRN attention scaling not yet supported by MultimodalLM.
 """
 
 from __future__ import annotations
