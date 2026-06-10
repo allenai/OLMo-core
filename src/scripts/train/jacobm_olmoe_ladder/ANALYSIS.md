@@ -176,6 +176,31 @@ The `9.6e-3` run is an intentionally far hot-side sentinel, not a dense grid
 point. Do not fit or make a final midpoint Cx2 LR decision until the `2.4e-3`
 extension and the far sentinel finish.
 
+## 2026-06-10 1.2B Cx4 Status
+
+The 1.2B Cx4 sweep finished successfully:
+
+| LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
+| ---: | --- | ---: | ---: | ---: | ---: | --- |
+| `1.5e-4` | finished | 85.133B summary / 79.685B history | 2.1743 | 2.1779 | 2.1759 | `5u5iumvr` |
+| `3e-4` | finished | 85.020B history | 2.1505 | 2.1548 | 2.1530 | `rkjs2sze` |
+| `6e-4` | finished | 84.624B history | 2.1574 | 2.1542 | 2.1544 | `1tzma107` |
+
+W&B history is still short for `1.5e-4`, even though the summary and Beaker job
+show the run completed at step 162379 / 85.133B tokens. This does not change the
+current LR decision: the low side is clearly worse, and `3e-4`/`6e-4` are close.
+Local 3-point quadratic fits over log LR estimate the optimum around:
+
+- avg100M: `3.6e-4`
+- avg250M: `4.3e-4`
+- avg500M: `4.1e-4`
+
+Treat 1.2B Cx4 as bracketed with a center around `4e-4`. The natural next 1.2B
+Cx8 sweep would be a 3-point centered grid around that transferred/fitted center,
+using the current GPU table. Because the active goal still says to ask before
+jobs above 8 GPUs, get explicit approval before launching the planned 32-GPU
+1.2B Cx8 runs.
+
 ## 2026-06-02 Snapshot
 
 Initial read after the first 2M-batch sweep finished and the 256k-batch sweep was

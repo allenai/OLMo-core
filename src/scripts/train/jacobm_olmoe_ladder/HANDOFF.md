@@ -250,7 +250,7 @@ Current fitted/observed LR centers, training avg250M:
 | 810M Cx1 | initial `~1.0e-3`, later widened colder | fitted `~6.2e-4` |
 | 810M Cx4 | `4.5e-4` without 275M Cx2, `5.0e-4` with Cx2 | fitted `~5.0e-4` |
 | 1.2B Cx1 | `~4.0e-4` from updated transfer | fitted `~4.8e-4` to `5.0e-4` |
-| 1.2B Cx4 | `~3.3e-4` via size transfer, `~3.9e-4` via 1.2B Cx1 times 810M Cx4/Cx1 ratio | pending |
+| 1.2B Cx4 | `~3.3e-4` via size transfer, `~3.9e-4` via 1.2B Cx1 times 810M Cx4/Cx1 ratio | completed; bracketed around `4e-4`, with `3e-4`/`6e-4` effectively tied |
 | 810M Cx2 | interpolation/extrapolation around `5.1e-4` to `5.6e-4` | pending |
 | 810M Cx8 | extrapolation around `3.5e-4` to `4.5e-4` | pending |
 

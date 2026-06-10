@@ -90,7 +90,8 @@ Continue:
 - 810M Cx16: `2e-4`, `4e-4`, `8e-4` were stopped intentionally on 2026-06-09
   after the plan shifted to finish Cx1/Cx2/Cx4/Cx8 first. Ignore unless
   explicitly resumed later.
-- 1.2B Cx4: `1.5e-4`, `3e-4`, `6e-4`
+- 1.2B Cx4: `1.5e-4`, `3e-4`, `6e-4` completed and bracketed around `4e-4`;
+  W&B history for `1.5e-4` is still short and should be refreshed later.
 - 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed.
 
 Ignore unless explicitly resumed:
@@ -132,7 +133,9 @@ matching the 810M/1.2B policy.
 ## Next Baseline Progression
 
 - 810M Cx8 bracketed cleanly around `4e-4`.
-- If 1.2B Cx4 brackets cleanly, prepare/launch 1.2B Cx8 with 3 centered LRs.
+- 1.2B Cx4 is bracketed around `4e-4`; the natural next 1.2B Cx8 is a
+  3-point centered sweep using the default 32-GPU setting, but the active goal
+  currently requires explicit approval before launching jobs above 8 GPUs.
 - After midpoint results land, refit size transfer using 275M, midpoint, 810M,
   and 1.2B.
 - For now, baseline expansion for 810M, 1.2B, and midpoint should focus on
