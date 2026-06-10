@@ -75,7 +75,11 @@ def resolve_dataset_path(run_name: str) -> str:
         raise ValueError(
             f"Run name '{run_name}' must contain 'oolong' or 'contra' to select the SFT dataset."
         )
-    if "cot" in run_name:
+    if "mix" in run_name:
+        # 50/50 CoT/plain targets in one dataset; the eval-time response prefix
+        # ("Reasoning:" vs "Answer:"/"Contradicting pairs:") selects the mode.
+        task += "_mix"
+    elif "cot" in run_name:
         task += "_cot"
     return f"{DATA_ROOT}/{task}"
 

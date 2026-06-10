@@ -378,6 +378,15 @@ def main() -> None:
         "or 'none' for plain answers.",
     )
     parser.add_argument(
+        "--cot-fraction",
+        type=float,
+        default=1.0,
+        help="When --cot-mode is set, the fraction of examples (chosen by a seeded RNG) that get "
+        "the CoT target; the rest get plain answers. 0.5 gives a 50/50 'cotmix' dataset so one "
+        "model learns both modes and the eval-time response prefix selects between them.",
+    )
+    parser.add_argument("--seed", type=int, default=1234, help="Seed for the CoT-mix RNG.")
+    parser.add_argument(
         "--max-seq-len",
         type=int,
         default=64512,
@@ -433,8 +442,18 @@ def main() -> None:
     n_skipped_too_long = 0
     n_skipped_bad = 0
 
+    import random
+
+    rng = random.Random(args.seed)
+    n_cot = 0
+
     for example in iter_examples(args.input_jsonl, args.limit, args.limit_per_file):
-        user_content, answer = build(example, args.query_position, args.cot_mode)
+        use_cot = args.cot_mode != "none" and rng.random() < args.cot_fraction
+        if use_cot:
+            n_cot += 1
+        user_content, answer = build(
+            example, args.query_position, args.cot_mode if use_cot else "none"
+        )
 
         # Cheap pre-filter: below ~2 chars/token, anything this long can never fit the token
         # budget; skip before paying for a full 100k+-token tokenization.
@@ -480,6 +499,9 @@ def main() -> None:
         "input_jsonl": args.input_jsonl,
         "limit_per_file": args.limit_per_file,
         "cot_mode": args.cot_mode,
+        "cot_fraction": args.cot_fraction,
+        "num_cot_instances": n_cot,
+        "seed": args.seed,
         "query_position": args.query_position,
         "tokenizer": args.tokenizer,
         "eos_token_id": EOS_TOKEN_ID,
