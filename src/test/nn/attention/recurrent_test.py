@@ -78,6 +78,14 @@ def test_gated_delta_net_num_flops_per_token():
     # At long sequence lengths, recurrent layers use fewer FLOPs than quadratic attention.
     gdn_flops = gdn.num_flops_per_token(seq_len)
     attn_flops = attn.num_flops_per_token(seq_len)  # type: ignore
+    linear_flops = 6 * sum(
+        m.weight.numel()
+        for m in (gdn.w_q, gdn.w_k, gdn.w_v, gdn.w_a, gdn.w_b, gdn.w_g, gdn.w_out)
+    )
+    conv_flops = 6 * gdn.conv_size * (gdn.key_dim + gdn.key_dim + gdn.value_dim)
+    recurrent_flops = 24 * gdn.n_v_heads * gdn.head_k_dim * gdn.head_v_dim
+
+    assert gdn_flops == linear_flops + conv_flops + recurrent_flops
     assert 0 < gdn_flops < attn_flops
 
 

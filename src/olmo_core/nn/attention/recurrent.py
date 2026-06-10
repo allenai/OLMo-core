@@ -294,11 +294,12 @@ class GatedDeltaNet(SequenceMixer):
         - Gated RMS normalization
         """
         del seq_len
-        # BUG: This currently counts mostly forward FLOPs. OLMo throughput accounting
-        # uses training FLOPs (2 ops * 3 for forward+backward), so GDN MFU/TFLOPs
-        # are undercounted until this is updated.
+        # Training FLOPs include the forward pass plus backward dgrad and wgrad
+        # work, matching the convention used by the other sequence mixers.
+        training_factor = 3
+
         # Linear projection FLOPs (2 ops per multiply-add)
-        linear_flops = 2 * sum(
+        linear_flops = 2 * training_factor * sum(
             m.weight.numel()
             for m in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g, self.w_out)
         )
@@ -306,6 +307,7 @@ class GatedDeltaNet(SequenceMixer):
         # Short convolution FLOPs (2 ops per multiply-add, kernel_size taps per output)
         conv_flops = (
             2
+            * training_factor
             * self.conv_size
             * (self.key_dim + self.key_dim + self.value_dim)  # q_conv1d  # k_conv1d  # v_conv1d
         )
@@ -317,7 +319,7 @@ class GatedDeltaNet(SequenceMixer):
         # - Query-state matmul: n_v_heads * head_k_dim * head_v_dim
         # Each is 2 FLOPs per element (multiply-add or similar)
         state_size = self.n_v_heads * self.head_k_dim * self.head_v_dim
-        recurrent_flops = 2 * 4 * state_size
+        recurrent_flops = 2 * training_factor * 4 * state_size
 
         return int(linear_flops + conv_flops + recurrent_flops)
 
