@@ -124,8 +124,11 @@ def load_rows(args: argparse.Namespace) -> list[RunRow]:
     api = wandb.Api()
     name_re = re.compile(args.name_regex)
     rows: list[RunRow] = []
+    run_ids = set(getattr(args, "run_ids", None) or [])
 
     for run in api.runs(args.project):
+        if run_ids and run.id not in run_ids:
+            continue
         name = run.display_name
         if not name_re.search(name):
             continue
@@ -147,6 +150,7 @@ def load_rows(args: argparse.Namespace) -> list[RunRow]:
             keys=FIELDS,
             cache_dir=args.cache_dir,
             refresh_cache=args.refresh_cache,
+            refresh_stale_cache=getattr(args, "refresh_stale_cache", False),
         ):
             loss = item.get(LOSS_KEY)
             step = item.get("_step")
@@ -250,7 +254,26 @@ def main() -> None:
     parser.add_argument("--project", default=WANDB_PATH)
     parser.add_argument("--name-regex", default="olmoe3-tiny-275m-cx")
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
-    parser.add_argument("--refresh-cache", action="store_true")
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Force a full W&B history re-download for every selected finished run. Use sparingly.",
+    )
+    parser.add_argument(
+        "--refresh-stale-cache",
+        action="store_true",
+        help=(
+            "Refresh only selected finished runs whose cached history is missing, "
+            "whose W&B summary step changed, or whose cached history is short "
+            "relative to W&B summary tokens."
+        ),
+    )
+    parser.add_argument(
+        "--run-ids",
+        nargs="+",
+        default=None,
+        help="Optional W&B run IDs to analyze, after project listing but before name/state filters.",
+    )
     parser.add_argument("--windows-m", type=int, nargs="+", default=[100, 250, 500])
     parser.add_argument(
         "--mode",

@@ -360,7 +360,16 @@ def main() -> None:
         default="olmoe3-tiny-275m-cx|olmoe3-moe-a0-810m-cx|olmoe3-moe-a0-1p2b-cx|olmoe3-810m-cx|m480-cx",
     )
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
-    parser.add_argument("--refresh-cache", action="store_true")
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Force a full W&B history re-download for every selected finished run. Use sparingly.",
+    )
+    parser.add_argument(
+        "--refresh-stale-cache",
+        action="store_true",
+        help="Refresh only missing/stale/short finished-run histories before plotting.",
+    )
     parser.add_argument("--window-m", type=int, default=250)
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).parent / "plots")
     parser.add_argument("--finished-only", action="store_true")
@@ -376,6 +385,7 @@ def main() -> None:
         name_regex=args.name_regex,
         cache_dir=args.cache_dir,
         refresh_cache=args.refresh_cache,
+        refresh_stale_cache=args.refresh_stale_cache,
         current_family=False,
         exclude_current_family=False,
         states=["finished"] if args.finished_only else None,

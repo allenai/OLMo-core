@@ -83,7 +83,16 @@ def main() -> None:
         help="Final-token averaging windows in millions of tokens.",
     )
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
-    parser.add_argument("--refresh-cache", action="store_true", help="Ignore cached finished-run histories.")
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Force a full W&B history re-download for every selected finished run. Use sparingly.",
+    )
+    parser.add_argument(
+        "--refresh-stale-cache",
+        action="store_true",
+        help="Refresh only missing/stale/short finished-run histories.",
+    )
     args = parser.parse_args()
 
     api = wandb.Api()
@@ -108,6 +117,7 @@ def main() -> None:
             keys=fields,
             cache_dir=args.cache_dir,
             refresh_cache=args.refresh_cache,
+            refresh_stale_cache=args.refresh_stale_cache,
         ):
             loss = row.get(LOSS_KEY)
             step = row.get("_step")

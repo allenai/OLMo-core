@@ -307,6 +307,19 @@ uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_l
   --name-regex 'olmoe3-tiny-275m-cx'
 ```
 
+Use cached histories by default. If a newly completed run family had missing or
+short W&B history, repair just that family:
+
+```bash
+uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_ladder.py \
+  --mode final --finished-only --windows-m 100 250 500 \
+  --name-regex '<specific-finished-run-family>' \
+  --refresh-stale-cache
+```
+
+Avoid broad `--refresh-cache` calls during the loop; that flag intentionally
+re-downloads every selected finished run.
+
 Regenerate completed-run plots after new full runs finish:
 
 ```bash

@@ -94,8 +94,8 @@ Continue:
   `3e-4`/`6e-4` are too close to claim a strict hot-side bracket. The stopped
   `1.2e-3` run was resumed on 2026-06-10 as a hot-side completion point under
   Beaker experiment `01KTHW6ZSXGD1P8NEA7S3KM198`, new job
-  `01KTSB2H1TMF7Z1T2MY40J2QM0`. W&B history for `1.5e-4` is still short and
-  should be refreshed later.
+  `01KTSB2H1TMF7Z1T2MY40J2QM0`. The short W&B history for `1.5e-4` was repaired
+  with `--refresh-stale-cache` on 2026-06-10.
 - 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed.
 
 Ignore unless explicitly resumed:

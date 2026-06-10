@@ -160,8 +160,10 @@ LR selection metric:
 
 The W&B scripts cache run histories, especially for completed runs, because
 there will eventually be many ladder points. Prefer cached plotting for routine
-updates; only use `--refresh-cache` for newly completed runs or when the cache is
-known stale.
+updates. For newly completed runs or runs whose first W&B history scan was
+short, use `--refresh-stale-cache` with the narrowest possible `--name-regex`.
+Only use `--refresh-cache` when intentionally re-downloading every selected
+finished run.
 
 Useful pattern:
 
@@ -191,7 +193,7 @@ Refresh only when needed:
 ```bash
 uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_ladder.py \
   --name-regex '<specific-finished-run-family>' \
-  --mode final --finished-only --windows-m 100 250 500 --refresh-cache
+  --mode final --finished-only --windows-m 100 250 500 --refresh-stale-cache
 ```
 
 ## Laddering philosophy

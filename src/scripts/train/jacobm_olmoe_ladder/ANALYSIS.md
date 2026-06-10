@@ -43,7 +43,11 @@ averages. It infers batch size from run-name tags:
 Finished-run histories are cached under
 `~/.cache/olmoe3_ladder/wandb_histories` by default. The cache key is the W&B run
 id and project, and entries are invalidated if W&B state or summary step changes.
-Use `--refresh-cache` to force a fresh W&B history scan.
+For routine analysis, do not pass a refresh flag; this uses cached finished-run
+histories and only downloads missing/invalidated entries. If W&B history was
+short when a run first finished, use `--refresh-stale-cache` on the narrowest
+possible run family. Reserve `--refresh-cache` for a deliberately full
+re-download of every selected finished run.
 
 For a narrower pull:
 
@@ -88,6 +92,15 @@ Generate completed-run plots:
 uv run --with wandb --with matplotlib python src/scripts/train/jacobm_olmoe_ladder/plot_wandb_ladder.py \
   --window-m 250 \
   --finished-only
+```
+
+If a newly completed family had stale/short W&B history, repair only that family
+before plotting:
+
+```bash
+uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_ladder.py \
+  --name-regex '<specific-finished-run-family>' \
+  --mode final --finished-only --windows-m 100 250 500 --refresh-stale-cache
 ```
 
 Completed-run per-rung plots split lines by run family when a rung contains
@@ -182,18 +195,18 @@ The 1.2B Cx4 sweep finished successfully:
 
 | LR | State | Tokens | avg100M | avg250M | avg500M | W&B |
 | ---: | --- | ---: | ---: | ---: | ---: | --- |
-| `1.5e-4` | finished | 85.133B summary / 79.685B history | 2.1743 | 2.1779 | 2.1759 | `5u5iumvr` |
-| `3e-4` | finished | 85.020B history | 2.1505 | 2.1548 | 2.1530 | `rkjs2sze` |
-| `6e-4` | finished | 84.624B history | 2.1574 | 2.1542 | 2.1544 | `1tzma107` |
+| `1.5e-4` | finished | 85.133B history | 2.1655 | 2.1654 | 2.1679 | `5u5iumvr` |
+| `3e-4` | finished | 85.133B history | 2.1500 | 2.1508 | 2.1531 | `rkjs2sze` |
+| `6e-4` | finished | 85.133B history | 2.1549 | 2.1548 | 2.1573 | `1tzma107` |
 
-W&B history is still short for `1.5e-4`, even though the summary and Beaker job
-show the run completed at step 162379 / 85.133B tokens. The low side is clearly
-worse, but `3e-4`/`6e-4` are close enough that this is not a strict hot-side
-bracket. Local 3-point quadratic fits over log LR estimate the optimum around:
+W&B history was repaired with `--refresh-stale-cache` on 2026-06-10. The low
+side is clearly worse, but `3e-4`/`6e-4` are close enough that this is not a
+strict hot-side bracket. Local 3-point quadratic fits over log LR estimate the
+optimum around:
 
 - avg100M: `3.6e-4`
-- avg250M: `4.3e-4`
-- avg500M: `4.1e-4`
+- avg250M: `3.7e-4`
+- avg500M: `3.6e-4`
 
 Treat 1.2B Cx4 as weakly centered around `4e-4`, but not fully bracketed until
 there is an actual right-side upturn. The previously stopped `1.2e-3` hot-side
@@ -204,10 +217,10 @@ folder, which still contains `step10500`.
 
 Transfer-rule note: the updated, calibrated rule predicted the apparent 1.2B Cx4
 center well, but wait for the resumed `1.2e-3` run before calling the rung
-complete. The
-pre-run estimate was about `3.3e-4` from direct size transfer and about `3.9e-4`
-from the 1.2B Cx1 fit times the 810M Cx4/Cx1 ratio. The observed local fits land
-around `3.6e-4` to `4.3e-4`, with `3e-4` and `6e-4` effectively tied. This is
+complete. The pre-run estimate was about `3.3e-4` from direct size transfer and
+about `3.9e-4` from the 1.2B Cx1 fit times the 810M Cx4/Cx1 ratio. The observed
+local fits land around `3.6e-4` to `3.7e-4`, with `3e-4` and `6e-4` close enough
+that we still need the resumed `1.2e-3` run for a real right-side upturn. This is
 evidence that the useful procedure is to calibrate the model-size shift with
 real larger-model Cx1 data, then transfer across Cx using same-model or
 nearby-model Cx-ratio behavior, rather than relying on the original naive
