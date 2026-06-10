@@ -292,7 +292,11 @@ class SFTConfig(Config):
         )
 
         cp_config = (
-            TransformerContextParallelConfig.ulysses(degree=bs_config.cp_degree)
+            (
+                TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
+                if dataset_config.generate_doc_lengths  # only use llama3 if we're masking docs
+                else TransformerContextParallelConfig.zig_zag(degree=bs_config.cp_degree)
+            )
             if bs_config.cp_degree
             else None
         )
