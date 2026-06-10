@@ -44,6 +44,7 @@ if [[ -z "${INPUT_DATASET:-}" ]]; then
   exit 2
 fi
 
+# Comma-separated list of clusters to try (all must mount the weka bucket).
 CLUSTER="${CLUSTER:-ai2/jupiter-cirrascale-2}"
 WORKSPACE="${WORKSPACE:-ai2/flex2}"
 BUDGET="${BUDGET:-ai2/oe-other}"
@@ -52,12 +53,18 @@ PRIORITY="${PRIORITY:-urgent}"
 CPUS="${CPUS:-16}"
 NAME="${NAME:-longctx-sft-convert}"
 
+CLUSTER_ARGS=()
+IFS=',' read -ra _CLUSTERS <<< "${CLUSTER}"
+for c in "${_CLUSTERS[@]}"; do
+  CLUSTER_ARGS+=(--cluster "$c")
+done
+
 gantry run \
   --name "${NAME}" \
   --description "Convert longctx task data (oolong/contradiction) -> Qwen3 SFT npy (token_ids + labels_mask)" \
   --workspace "${WORKSPACE}" \
   --budget "${BUDGET}" \
-  --cluster "${CLUSTER}" \
+  "${CLUSTER_ARGS[@]}" \
   --python-manager conda \
   --system-python \
   --weka "${WEKA}:/weka/${WEKA}" \
