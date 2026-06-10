@@ -131,11 +131,17 @@ class TransformerTrainModule(TrainModule):
         early_fusion_engram: bool = False,
         early_fusion_engram_alpha_init: float = 5.0,
         early_fusion_engram_alpha_lr: Optional[float] = None,
+        early_fusion_engram_mode: Literal["low_rank_vocab", "hashed_memory"] = "low_rank_vocab",
         early_fusion_engram_table_dir: Optional[str] = None,
         early_fusion_engram_N_max: int = 5,
         early_fusion_engram_code_dim: int = 16,
         early_fusion_engram_top_m: int = 32,
         early_fusion_engram_vocab_chunk_size: int = 4096,
+        early_fusion_engram_ngram_orders: Tuple[int, ...] = (2, 3),
+        early_fusion_engram_heads_per_order: int = 4,
+        early_fusion_engram_head_dim: int = 4,
+        early_fusion_engram_slots_per_table: Optional[int] = None,
+        early_fusion_engram_hash_seed: int = 17,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
@@ -251,64 +257,159 @@ class TransformerTrainModule(TrainModule):
                 nn.Parameter(alpha_log),
             )
         early_fusion_engram_num_contexts: Optional[int] = None
+        early_fusion_engram_computed_slots_per_table: Optional[int] = None
+        early_fusion_engram_hash_memory_params: Optional[int] = None
+        early_fusion_engram_hash_projection_params: Optional[int] = None
         if early_fusion_engram:
-            if early_fusion_engram_table_dir is None:
+            if early_fusion_engram_mode not in {"low_rank_vocab", "hashed_memory"}:
                 raise OLMoConfigurationError(
-                    "early_fusion_engram requires early_fusion_engram_table_dir"
-                )
-            if early_fusion_engram_code_dim <= 0:
-                raise OLMoConfigurationError(
-                    "early_fusion_engram_code_dim must be positive, "
-                    f"got {early_fusion_engram_code_dim}"
-                )
-            if early_fusion_engram_top_m <= 0:
-                raise OLMoConfigurationError(
-                    "early_fusion_engram_top_m must be positive, "
-                    f"got {early_fusion_engram_top_m}"
-                )
-            if early_fusion_engram_top_m > model.vocab_size:
-                raise OLMoConfigurationError(
-                    "early_fusion_engram_top_m cannot exceed model vocab size "
-                    f"({early_fusion_engram_top_m} > {model.vocab_size})"
-                )
-            if early_fusion_engram_vocab_chunk_size <= 0:
-                raise OLMoConfigurationError(
-                    "early_fusion_engram_vocab_chunk_size must be positive, "
-                    f"got {early_fusion_engram_vocab_chunk_size}"
-                )
-            from olmo_core.data.ngram_topk import NgramContextSource
-
-            context_source = NgramContextSource(
-                table_dir=early_fusion_engram_table_dir,
-                N_max=early_fusion_engram_N_max,
-            )
-            early_fusion_engram_num_contexts = context_source.num_contexts
-            context_vocab_size = context_source.vocab_size
-            context_source.close()
-            if context_vocab_size > model.vocab_size:
-                raise OLMoConfigurationError(
-                    "Engram context table vocab size exceeds model vocab size "
-                    f"({context_vocab_size} > {model.vocab_size})"
+                    "early_fusion_engram_mode must be 'low_rank_vocab' or "
+                    f"'hashed_memory', got {early_fusion_engram_mode!r}"
                 )
             assert model.lm_head is not None
             init_device = model.lm_head.w_out.weight.device
             init_dtype = model.lm_head.w_out.weight.dtype
-            model.lm_head.early_fusion_engram_context_codes = nn.Embedding(
-                early_fusion_engram_num_contexts,
-                early_fusion_engram_code_dim,
-                dtype=init_dtype,
-                device=init_device,
-            )
-            model.lm_head.early_fusion_engram_token_decoder = nn.Embedding(
-                model.vocab_size,
-                early_fusion_engram_code_dim,
-                dtype=init_dtype,
-                device=init_device,
-            )
-            model.lm_head.early_fusion_engram_top_m = int(early_fusion_engram_top_m)
-            model.lm_head.early_fusion_engram_vocab_chunk_size = int(
-                early_fusion_engram_vocab_chunk_size
-            )
+            model.lm_head.early_fusion_engram_mode = str(early_fusion_engram_mode)
+            if early_fusion_engram_mode == "low_rank_vocab":
+                if early_fusion_engram_table_dir is None:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram low_rank_vocab mode requires "
+                        "early_fusion_engram_table_dir"
+                    )
+                if early_fusion_engram_code_dim <= 0:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_code_dim must be positive, "
+                        f"got {early_fusion_engram_code_dim}"
+                    )
+                if early_fusion_engram_top_m <= 0:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_top_m must be positive, "
+                        f"got {early_fusion_engram_top_m}"
+                    )
+                if early_fusion_engram_top_m > model.vocab_size:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_top_m cannot exceed model vocab size "
+                        f"({early_fusion_engram_top_m} > {model.vocab_size})"
+                    )
+                if early_fusion_engram_vocab_chunk_size <= 0:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_vocab_chunk_size must be positive, "
+                        f"got {early_fusion_engram_vocab_chunk_size}"
+                    )
+                from olmo_core.data.ngram_topk import NgramContextSource
+
+                context_source = NgramContextSource(
+                    table_dir=early_fusion_engram_table_dir,
+                    N_max=early_fusion_engram_N_max,
+                )
+                early_fusion_engram_num_contexts = context_source.num_contexts
+                context_vocab_size = context_source.vocab_size
+                context_source.close()
+                if context_vocab_size > model.vocab_size:
+                    raise OLMoConfigurationError(
+                        "Engram context table vocab size exceeds model vocab size "
+                        f"({context_vocab_size} > {model.vocab_size})"
+                    )
+                model.lm_head.early_fusion_engram_context_codes = nn.Embedding(
+                    early_fusion_engram_num_contexts,
+                    early_fusion_engram_code_dim,
+                    dtype=init_dtype,
+                    device=init_device,
+                )
+                model.lm_head.early_fusion_engram_token_decoder = nn.Embedding(
+                    model.vocab_size,
+                    early_fusion_engram_code_dim,
+                    dtype=init_dtype,
+                    device=init_device,
+                )
+                model.lm_head.early_fusion_engram_top_m = int(early_fusion_engram_top_m)
+                model.lm_head.early_fusion_engram_vocab_chunk_size = int(
+                    early_fusion_engram_vocab_chunk_size
+                )
+            else:
+                if early_fusion_engram_table_dir is not None:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_table_dir only applies to "
+                        "early_fusion_engram low_rank_vocab mode"
+                    )
+                orders = tuple(int(order) for order in early_fusion_engram_ngram_orders)
+                if not orders:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_ngram_orders must be non-empty"
+                    )
+                if any(order <= 0 for order in orders):
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_ngram_orders must all be positive, "
+                        f"got {orders}"
+                    )
+                if early_fusion_engram_heads_per_order <= 0:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_heads_per_order must be positive, "
+                        f"got {early_fusion_engram_heads_per_order}"
+                    )
+                if early_fusion_engram_head_dim <= 0:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_head_dim must be positive, "
+                        f"got {early_fusion_engram_head_dim}"
+                    )
+                num_hash_tables = len(orders) * int(early_fusion_engram_heads_per_order)
+                retrieved_dim = num_hash_tables * int(early_fusion_engram_head_dim)
+                budget_params = int(model.vocab_size) * int(model.d_model)
+                projection_params = retrieved_dim * int(model.d_model)
+                if budget_params <= projection_params:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram hashed_memory budget is too small for "
+                        f"the projection ({budget_params} <= {projection_params})"
+                    )
+                if early_fusion_engram_slots_per_table is None:
+                    slots_per_table = (
+                        (budget_params - projection_params)
+                        // (num_hash_tables * int(early_fusion_engram_head_dim))
+                    )
+                else:
+                    slots_per_table = int(early_fusion_engram_slots_per_table)
+                if slots_per_table <= 0:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram_slots_per_table must be positive, "
+                        f"got {slots_per_table}"
+                    )
+                hash_memory_params = (
+                    num_hash_tables
+                    * slots_per_table
+                    * int(early_fusion_engram_head_dim)
+                )
+                used_params = hash_memory_params + projection_params
+                if used_params > budget_params:
+                    raise OLMoConfigurationError(
+                        "early_fusion_engram hashed_memory parameters exceed the "
+                        f"V*d_model budget ({used_params} > {budget_params})"
+                    )
+                early_fusion_engram_computed_slots_per_table = slots_per_table
+                early_fusion_engram_hash_memory_params = hash_memory_params
+                early_fusion_engram_hash_projection_params = projection_params
+                model.lm_head.early_fusion_engram_hash_memory = nn.Embedding(
+                    num_hash_tables * slots_per_table,
+                    int(early_fusion_engram_head_dim),
+                    dtype=init_dtype,
+                    device=init_device,
+                )
+                model.lm_head.early_fusion_engram_hash_projection = nn.Linear(
+                    retrieved_dim,
+                    int(model.d_model),
+                    bias=False,
+                    dtype=init_dtype,
+                    device=init_device,
+                )
+                model.lm_head.early_fusion_engram_ngram_orders = orders
+                model.lm_head.early_fusion_engram_heads_per_order = int(
+                    early_fusion_engram_heads_per_order
+                )
+                model.lm_head.early_fusion_engram_slots_per_table = int(
+                    slots_per_table
+                )
+                model.lm_head.early_fusion_engram_hash_seed = int(
+                    early_fusion_engram_hash_seed
+                )
             model.__dict__.pop("num_params", None)
             model.__dict__.pop("num_non_embedding_params", None)
 
@@ -340,11 +441,22 @@ class TransformerTrainModule(TrainModule):
                     math.log(float(effective_early_fusion_alpha_init))
                 )
         if early_fusion_engram:
-            assert early_fusion_engram_num_contexts is not None
             with torch.no_grad():
-                self._reset_early_fusion_engram_parameters(
-                    code_dim=early_fusion_engram_code_dim
-                )
+                if early_fusion_engram_mode == "low_rank_vocab":
+                    assert early_fusion_engram_num_contexts is not None
+                    self._reset_early_fusion_engram_low_rank_parameters(
+                        code_dim=early_fusion_engram_code_dim
+                    )
+                else:
+                    retrieved_dim = (
+                        len(tuple(early_fusion_engram_ngram_orders))
+                        * int(early_fusion_engram_heads_per_order)
+                        * int(early_fusion_engram_head_dim)
+                    )
+                    self._reset_early_fusion_engram_hash_parameters(
+                        head_dim=early_fusion_engram_head_dim,
+                        retrieved_dim=retrieved_dim,
+                    )
         self._model_mode: Optional[Literal["train", "eval"]] = None
 
         self._dp_config = dp_config
@@ -402,12 +514,36 @@ class TransformerTrainModule(TrainModule):
         self.early_fusion_engram = bool(early_fusion_engram)
         self.early_fusion_engram_alpha_init = early_fusion_engram_alpha_init
         self.early_fusion_engram_alpha_lr = early_fusion_engram_alpha_lr
+        self.early_fusion_engram_mode = str(early_fusion_engram_mode)
         self.early_fusion_engram_table_dir = early_fusion_engram_table_dir
         self.early_fusion_engram_N_max = int(early_fusion_engram_N_max)
         self.early_fusion_engram_code_dim = int(early_fusion_engram_code_dim)
         self.early_fusion_engram_top_m = int(early_fusion_engram_top_m)
         self.early_fusion_engram_vocab_chunk_size = int(
             early_fusion_engram_vocab_chunk_size
+        )
+        self.early_fusion_engram_ngram_orders = tuple(
+            int(order) for order in early_fusion_engram_ngram_orders
+        )
+        self.early_fusion_engram_heads_per_order = int(
+            early_fusion_engram_heads_per_order
+        )
+        self.early_fusion_engram_head_dim = int(early_fusion_engram_head_dim)
+        self.early_fusion_engram_slots_per_table = (
+            None
+            if early_fusion_engram_computed_slots_per_table is None
+            else int(early_fusion_engram_computed_slots_per_table)
+        )
+        self.early_fusion_engram_hash_seed = int(early_fusion_engram_hash_seed)
+        self.early_fusion_engram_hash_memory_params = (
+            None
+            if early_fusion_engram_hash_memory_params is None
+            else int(early_fusion_engram_hash_memory_params)
+        )
+        self.early_fusion_engram_hash_projection_params = (
+            None
+            if early_fusion_engram_hash_projection_params is None
+            else int(early_fusion_engram_hash_projection_params)
         )
         self.early_fusion_engram_num_contexts = (
             None
@@ -629,10 +765,44 @@ class TransformerTrainModule(TrainModule):
         assert isinstance(module, nn.Embedding)
         return module
 
-    def _reset_early_fusion_engram_parameters(self, *, code_dim: int) -> None:
+    def _early_fusion_engram_hash_memory(self) -> nn.Embedding:
+        lm_head = getattr(self.model, "lm_head", None)
+        module = (
+            getattr(lm_head, "early_fusion_engram_hash_memory")
+            if lm_head is not None
+            and hasattr(lm_head, "early_fusion_engram_hash_memory")
+            else getattr(self.model, "early_fusion_engram_hash_memory")
+        )
+        assert isinstance(module, nn.Embedding)
+        return module
+
+    def _early_fusion_engram_hash_projection(self) -> nn.Linear:
+        lm_head = getattr(self.model, "lm_head", None)
+        module = (
+            getattr(lm_head, "early_fusion_engram_hash_projection")
+            if lm_head is not None
+            and hasattr(lm_head, "early_fusion_engram_hash_projection")
+            else getattr(self.model, "early_fusion_engram_hash_projection")
+        )
+        assert isinstance(module, nn.Linear)
+        return module
+
+    def _reset_early_fusion_engram_low_rank_parameters(self, *, code_dim: int) -> None:
         std = 1.0 / math.sqrt(float(code_dim))
         self._early_fusion_engram_context_codes().weight.normal_(mean=0.0, std=std)
         self._early_fusion_engram_token_decoder().weight.normal_(mean=0.0, std=std)
+
+    def _reset_early_fusion_engram_hash_parameters(
+        self, *, head_dim: int, retrieved_dim: int
+    ) -> None:
+        memory_std = 1.0 / math.sqrt(float(head_dim))
+        projection_std = 1.0 / math.sqrt(float(retrieved_dim))
+        self._early_fusion_engram_hash_memory().weight.normal_(
+            mean=0.0, std=memory_std
+        )
+        self._early_fusion_engram_hash_projection().weight.normal_(
+            mean=0.0, std=projection_std
+        )
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -836,9 +1006,14 @@ class TransformerTrainModule(TrainModule):
                 "early_fusion_ngram requires batches with ngram_token_ids and "
                 "ngram_log_probs; wrap the data source with NgramTopKInstanceSource"
             )
-        if self.early_fusion_engram and "engram_context_ids" not in batch:
+        if (
+            self.early_fusion_engram
+            and self.early_fusion_engram_mode == "low_rank_vocab"
+            and "engram_context_ids" not in batch
+        ):
             raise OLMoConfigurationError(
-                "early_fusion_engram requires batches with engram_context_ids; "
+                "early_fusion_engram low_rank_vocab mode requires batches with "
+                "engram_context_ids; "
                 "wrap the data source with NgramContextInstanceSource"
             )
 
@@ -884,12 +1059,20 @@ class TransformerTrainModule(TrainModule):
                     model_kwargs["early_fusion_ngram_token_ids"] = ngram_token_ids
                     model_kwargs["early_fusion_ngram_log_probs"] = ngram_log_probs
                 if self.early_fusion_engram:
-                    if engram_context_ids is None:
+                    if self.early_fusion_engram_mode == "low_rank_vocab":
+                        if engram_context_ids is None:
+                            raise OLMoConfigurationError(
+                                "early_fusion_engram low_rank_vocab mode requires "
+                                "engram_context_ids in every micro-batch"
+                            )
+                        model_kwargs["early_fusion_engram_context_ids"] = engram_context_ids
+                    elif engram_context_ids is not None:
                         raise OLMoConfigurationError(
-                            "early_fusion_engram requires engram_context_ids "
-                            "in every micro-batch"
+                            "early_fusion_engram hashed_memory mode must not receive "
+                            "engram_context_ids"
                         )
-                    model_kwargs["early_fusion_engram_context_ids"] = engram_context_ids
+                    else:
+                        model_kwargs["early_fusion_engram_enabled"] = True
 
                 # NOTE on gradient flow: when ``return_logits=True`` is set,
                 # the LMHead returns ``output.ce_loss`` and ``output.z_loss``
@@ -1155,10 +1338,13 @@ class TransformerTrainModule(TrainModule):
             model_kwargs["early_fusion_ngram_token_ids"] = ngram_token_ids
             model_kwargs["early_fusion_ngram_log_probs"] = ngram_log_probs
         if self.early_fusion_engram:
-            engram_context_ids = self._lookup_early_fusion_eval_engram(
-                input_ids=input_ids,
-            )
-            model_kwargs["early_fusion_engram_context_ids"] = engram_context_ids
+            if self.early_fusion_engram_mode == "low_rank_vocab":
+                engram_context_ids = self._lookup_early_fusion_eval_engram(
+                    input_ids=input_ids,
+                )
+                model_kwargs["early_fusion_engram_context_ids"] = engram_context_ids
+            else:
+                model_kwargs["early_fusion_engram_enabled"] = True
 
         with self._eval_batch_context():
             output = self.model_forward(

@@ -369,11 +369,17 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     early_fusion_engram: bool = False
     early_fusion_engram_alpha_init: float = 5.0
     early_fusion_engram_alpha_lr: Optional[float] = None
+    early_fusion_engram_mode: str = "low_rank_vocab"
     early_fusion_engram_table_dir: Optional[str] = None
     early_fusion_engram_N_max: int = 5
     early_fusion_engram_code_dim: int = 16
     early_fusion_engram_top_m: int = 32
     early_fusion_engram_vocab_chunk_size: int = 4096
+    early_fusion_engram_ngram_orders: Tuple[int, ...] = (2, 3)
+    early_fusion_engram_heads_per_order: int = 4
+    early_fusion_engram_head_dim: int = 4
+    early_fusion_engram_slots_per_table: Optional[int] = None
+    early_fusion_engram_hash_seed: int = 17
 
     # Checkpoint settings.
 

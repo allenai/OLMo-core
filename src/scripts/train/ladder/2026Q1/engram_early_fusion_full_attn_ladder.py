@@ -3,18 +3,12 @@ Full-attention ladder with Engram-style learned early fusion.
 
 This is the learned-memory baseline for KN early fusion. It uses the same
 Dolma2 data mix and the same embedding-boundary injection point, but the
-per-position ngram signal is a learned static memory row keyed by the observed
-context instead of a Kneser-Ney-smoothed continuation distribution.
+default mode hashes raw 2/3-token suffixes into a fixed-size learned memory
+budget instead of reading a Kneser-Ney-smoothed continuation distribution.
 
-For context h, the model learns a code c_h and a shared token decoder q_v:
-
-    s_h(v) = dot(c_h, q_v)
-    e_h = sum_{v in top-M(s_h)} softmax(s_h)(v) W_out[v]
-    h_0(t) = h_token(t) + alpha * e_h
-
-The context-key table may come from the same ngram build used by KN early
-fusion, but this baseline must not read KN top-k token IDs, log probabilities,
-continuation counts, or backoff weights.
+The older ``low_rank_vocab`` diagnostic remains available explicitly. That
+mode uses a raw context-key table, but it must not read KN top-k token IDs, log
+probabilities, continuation counts, or backoff weights.
 """
 
 from __future__ import annotations
@@ -61,6 +55,12 @@ DEFAULT_ENGRAM_CODE_DIM = 16
 DEFAULT_ENGRAM_TOP_M = 32
 DEFAULT_ENGRAM_ALPHA_INIT = 5.0
 DEFAULT_ENGRAM_VOCAB_CHUNK_SIZE = 4096
+DEFAULT_ENGRAM_MODE = "hashed_memory"
+DEFAULT_ENGRAM_NGRAM_ORDERS = (2, 3)
+DEFAULT_ENGRAM_HEADS_PER_ORDER = 4
+DEFAULT_ENGRAM_HEAD_DIM = 4
+DEFAULT_ENGRAM_SLOTS_PER_TABLE = None
+DEFAULT_ENGRAM_HASH_SEED = 17
 
 
 @dataclasses.dataclass(kw_only=True, eq=True)
@@ -69,11 +69,17 @@ class EngramEarlyFusionConfigurator(Olmo3ModelConfigurator):
 
     engram_alpha_init: float = DEFAULT_ENGRAM_ALPHA_INIT
     engram_alpha_lr: float | None = None
-    engram_table_dir: str = DEFAULT_ENGRAM_TABLE_DIR
+    engram_mode: str = DEFAULT_ENGRAM_MODE
+    engram_table_dir: str | None = DEFAULT_ENGRAM_TABLE_DIR
     engram_n_max: int = DEFAULT_ENGRAM_N_MAX
     engram_code_dim: int = DEFAULT_ENGRAM_CODE_DIM
     engram_top_m: int = DEFAULT_ENGRAM_TOP_M
     engram_vocab_chunk_size: int = DEFAULT_ENGRAM_VOCAB_CHUNK_SIZE
+    engram_ngram_orders: tuple[int, ...] = DEFAULT_ENGRAM_NGRAM_ORDERS
+    engram_heads_per_order: int = DEFAULT_ENGRAM_HEADS_PER_ORDER
+    engram_head_dim: int = DEFAULT_ENGRAM_HEAD_DIM
+    engram_slots_per_table: int | None = DEFAULT_ENGRAM_SLOTS_PER_TABLE
+    engram_hash_seed: int = DEFAULT_ENGRAM_HASH_SEED
     compile_model: bool = True
     smoke_1gpu: bool = False
 
@@ -130,11 +136,19 @@ class EngramEarlyFusionConfigurator(Olmo3ModelConfigurator):
             early_fusion_engram=True,
             early_fusion_engram_alpha_init=self.engram_alpha_init,
             early_fusion_engram_alpha_lr=self.engram_alpha_lr,
-            early_fusion_engram_table_dir=self.engram_table_dir,
+            early_fusion_engram_mode=self.engram_mode,
+            early_fusion_engram_table_dir=(
+                self.engram_table_dir if self.engram_mode == "low_rank_vocab" else None
+            ),
             early_fusion_engram_N_max=self.engram_n_max,
             early_fusion_engram_code_dim=self.engram_code_dim,
             early_fusion_engram_top_m=self.engram_top_m,
             early_fusion_engram_vocab_chunk_size=self.engram_vocab_chunk_size,
+            early_fusion_engram_ngram_orders=self.engram_ngram_orders,
+            early_fusion_engram_heads_per_order=self.engram_heads_per_order,
+            early_fusion_engram_head_dim=self.engram_head_dim,
+            early_fusion_engram_slots_per_table=self.engram_slots_per_table,
+            early_fusion_engram_hash_seed=self.engram_hash_seed,
             max_grad_norm=1.0,
             scheduler=scheduler,
         )
@@ -157,11 +171,16 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ],
         sequence_length=args.sequence_length,
     )
-    wrapped_source = NgramContextInstanceSourceConfig(  # noqa: F405
-        source=base_source,
-        table_dir=getattr(args, "engram_table_dir", DEFAULT_ENGRAM_TABLE_DIR),
-        N_max=getattr(args, "engram_n_max", DEFAULT_ENGRAM_N_MAX),
-    )
+    engram_mode = getattr(args, "engram_mode", DEFAULT_ENGRAM_MODE)
+    if engram_mode == "low_rank_vocab":
+        instance_source = NgramContextInstanceSourceConfig(  # noqa: F405
+            source=base_source,
+            table_dir=getattr(args, "engram_table_dir", DEFAULT_ENGRAM_TABLE_DIR),
+            N_max=getattr(args, "engram_n_max", DEFAULT_ENGRAM_N_MAX),
+        )
+    else:
+        _reject_low_rank_only_args_for_hashed_mode(args)
+        instance_source = base_source
 
     smoke_1gpu = getattr(args, "smoke_1gpu", False)
     smoke_run = getattr(args, "smoke_run", False) or smoke_1gpu
@@ -172,7 +191,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 
     return ModelLadder(
         name=args.name,
-        dir=str(_poe.io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
+        dir=str(
+            _poe.io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)
+        ),
         sizes=[s for s in TransformerSize if s.approx_num_params <= 1e9],
         max_devices=max_devices,
         device_type=get_gpu_type(args.cluster),
@@ -181,14 +202,30 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             rank_microbatch_size=None
             if args.rank_mbz is None
             else args.rank_mbz * args.sequence_length,
-            engram_alpha_init=getattr(args, "engram_alpha_init", DEFAULT_ENGRAM_ALPHA_INIT),
+            engram_alpha_init=getattr(
+                args, "engram_alpha_init", DEFAULT_ENGRAM_ALPHA_INIT
+            ),
             engram_alpha_lr=getattr(args, "engram_alpha_lr", None),
+            engram_mode=engram_mode,
             engram_table_dir=getattr(args, "engram_table_dir", DEFAULT_ENGRAM_TABLE_DIR),
             engram_n_max=getattr(args, "engram_n_max", DEFAULT_ENGRAM_N_MAX),
             engram_code_dim=getattr(args, "engram_code_dim", DEFAULT_ENGRAM_CODE_DIM),
             engram_top_m=getattr(args, "engram_top_m", DEFAULT_ENGRAM_TOP_M),
             engram_vocab_chunk_size=getattr(
                 args, "engram_vocab_chunk_size", DEFAULT_ENGRAM_VOCAB_CHUNK_SIZE
+            ),
+            engram_ngram_orders=tuple(
+                getattr(args, "engram_ngram_orders", DEFAULT_ENGRAM_NGRAM_ORDERS)
+            ),
+            engram_heads_per_order=getattr(
+                args, "engram_heads_per_order", DEFAULT_ENGRAM_HEADS_PER_ORDER
+            ),
+            engram_head_dim=getattr(args, "engram_head_dim", DEFAULT_ENGRAM_HEAD_DIM),
+            engram_slots_per_table=getattr(
+                args, "engram_slots_per_table", DEFAULT_ENGRAM_SLOTS_PER_TABLE
+            ),
+            engram_hash_seed=getattr(
+                args, "engram_hash_seed", DEFAULT_ENGRAM_HASH_SEED
             ),
             compile_model=getattr(args, "compile_model", True),
             smoke_1gpu=smoke_1gpu,
@@ -202,19 +239,53 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ),
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,
-        instance_sources=[wrapped_source],
+        instance_sources=[instance_source],
         data_loader=ComposableDataLoaderConfig(  # noqa: F405
             num_workers=16, instance_filter_config=InstanceFilterConfig()  # noqa: F405
         ),
     )
 
 
+def _reject_low_rank_only_args_for_hashed_mode(args: argparse.Namespace) -> None:
+    low_rank_only_args = (
+        ("--engram-table-dir", "engram_table_dir", DEFAULT_ENGRAM_TABLE_DIR),
+        ("--engram-n-max", "engram_n_max", DEFAULT_ENGRAM_N_MAX),
+        ("--engram-code-dim", "engram_code_dim", DEFAULT_ENGRAM_CODE_DIM),
+        ("--engram-top-m", "engram_top_m", DEFAULT_ENGRAM_TOP_M),
+        (
+            "--engram-vocab-chunk-size",
+            "engram_vocab_chunk_size",
+            DEFAULT_ENGRAM_VOCAB_CHUNK_SIZE,
+        ),
+    )
+    overridden = [
+        flag
+        for flag, attr, default in low_rank_only_args
+        if getattr(args, attr, default) != default
+    ]
+    if overridden:
+        raise ValueError(
+            "These options only apply with --engram-mode low_rank_vocab and would "
+            f"be ignored in hashed_memory mode: {', '.join(overridden)}"
+        )
+
+
 def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--engram-mode",
+        choices=("hashed_memory", "low_rank_vocab"),
+        default=DEFAULT_ENGRAM_MODE,
+        help=(
+            "Engram baseline mode. hashed_memory hashes raw token suffixes into "
+            "a fixed V*d_model budget; low_rank_vocab keeps the older context-code "
+            "plus vocab-decoder diagnostic."
+        ),
+    )
     parser.add_argument(
         "--engram-table-dir",
         type=str,
         default=DEFAULT_ENGRAM_TABLE_DIR,
-        help="Directory containing raw forward_index.bin.",
+        help="Directory containing raw forward_index.bin for low_rank_vocab mode.",
     )
     parser.add_argument(
         "--engram-n-max",
@@ -251,6 +322,40 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_ENGRAM_VOCAB_CHUNK_SIZE,
         help="Vocabulary chunk size for exact sparse top-M selection.",
+    )
+    parser.add_argument(
+        "--engram-ngram-orders",
+        type=int,
+        nargs="+",
+        default=list(DEFAULT_ENGRAM_NGRAM_ORDERS),
+        help="Ngram suffix orders to hash in hashed_memory mode.",
+    )
+    parser.add_argument(
+        "--engram-heads-per-order",
+        type=int,
+        default=DEFAULT_ENGRAM_HEADS_PER_ORDER,
+        help="Number of independent hash heads per ngram order in hashed_memory mode.",
+    )
+    parser.add_argument(
+        "--engram-head-dim",
+        type=int,
+        default=DEFAULT_ENGRAM_HEAD_DIM,
+        help="Embedding width per hash hit in hashed_memory mode.",
+    )
+    parser.add_argument(
+        "--engram-slots-per-table",
+        type=int,
+        default=DEFAULT_ENGRAM_SLOTS_PER_TABLE,
+        help=(
+            "Slots per order/head hash table. Defaults to the largest value "
+            "that fits the V*d_model parameter budget."
+        ),
+    )
+    parser.add_argument(
+        "--engram-hash-seed",
+        type=int,
+        default=DEFAULT_ENGRAM_HASH_SEED,
+        help="Deterministic hash seed for hashed_memory mode.",
     )
     parser.add_argument(
         "--no-compile-model",

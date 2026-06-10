@@ -611,16 +611,23 @@ class Transformer(nn.Module):
         early_fusion_engram_context_ids = kwargs.pop(
             "early_fusion_engram_context_ids", None
         )
+        early_fusion_engram_enabled = bool(
+            kwargs.pop("early_fusion_engram_enabled", False)
+        )
         if (
-            early_fusion_engram_context_ids is not None
+            (early_fusion_engram_context_ids is not None or early_fusion_engram_enabled)
             and (
                 early_fusion_ngram_token_ids is not None
                 or early_fusion_ngram_log_probs is not None
             )
         ):
             raise OLMoConfigurationError(
-                "early-fusion Engram context IDs cannot be combined with "
-                "early-fusion KN top-k fields"
+                "early-fusion Engram cannot be combined with early-fusion KN top-k fields"
+            )
+        if early_fusion_engram_enabled and early_fusion_engram_context_ids is not None:
+            raise OLMoConfigurationError(
+                "early-fusion Engram hashed-memory mode cannot be combined with "
+                "explicit Engram context IDs"
             )
         (
             input_ids,
@@ -657,6 +664,11 @@ class Transformer(nn.Module):
         if early_fusion_engram_context_ids is not None:
             h = h + self._compute_early_fusion_engram_embedding(
                 early_fusion_engram_context_ids.to(h.device, non_blocking=True),
+                dtype=h.dtype,
+            )
+        elif early_fusion_engram_enabled:
+            h = h + self._compute_early_fusion_engram_hashed_embedding(
+                input_ids.to(h.device, non_blocking=True),
                 dtype=h.dtype,
             )
         if self.embedding_norm is not None:
@@ -776,6 +788,93 @@ class Transformer(nn.Module):
         token_vectors = F.embedding(top_ids, w_out)
         prior = (token_vectors * weights.unsqueeze(-1)).sum(dim=-2)
         prior = prior.reshape(B, S, w_out.shape[1])
+        alpha = torch.exp(alpha_log).to(device=prior.device, dtype=prior.dtype)
+        return (alpha.view(1, 1, 1) * prior).to(dtype=dtype)
+
+    def _compute_early_fusion_engram_hashed_embedding(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Build a learned hashed Engram-style prior from raw token suffixes."""
+        if self.lm_head is None:
+            raise OLMoConfigurationError("early Engram fusion requires an LM head")
+        alpha_log = getattr(self.lm_head, "early_fusion_alpha_log", None)
+        hash_memory = getattr(self.lm_head, "early_fusion_engram_hash_memory", None)
+        hash_projection = getattr(
+            self.lm_head, "early_fusion_engram_hash_projection", None
+        )
+        ngram_orders = getattr(self.lm_head, "early_fusion_engram_ngram_orders", None)
+        heads_per_order = getattr(
+            self.lm_head, "early_fusion_engram_heads_per_order", None
+        )
+        slots_per_table = getattr(
+            self.lm_head, "early_fusion_engram_slots_per_table", None
+        )
+        hash_seed = getattr(self.lm_head, "early_fusion_engram_hash_seed", 0)
+        if alpha_log is None:
+            raise OLMoConfigurationError(
+                "early Engram fusion requires lm_head.early_fusion_alpha_log"
+            )
+        if hash_memory is None or hash_projection is None:
+            raise OLMoConfigurationError(
+                "early Engram hashed-memory fusion requires hash memory and projection"
+            )
+        if ngram_orders is None or heads_per_order is None or slots_per_table is None:
+            raise OLMoConfigurationError(
+                "early Engram hashed-memory fusion requires order/head metadata"
+            )
+
+        orders = tuple(int(order) for order in ngram_orders)
+        heads_per_order = int(heads_per_order)
+        slots_per_table = int(slots_per_table)
+        if heads_per_order <= 0 or slots_per_table <= 0:
+            raise OLMoConfigurationError(
+                "early Engram hashed-memory heads and slots must be positive"
+            )
+
+        input_ids = input_ids.long()
+        B, S = input_ids.shape
+        max_order = max(orders)
+        pad = torch.full(
+            (B, max_order - 1),
+            int(self.vocab_size),
+            dtype=torch.long,
+            device=input_ids.device,
+        )
+        padded_ids = torch.cat((pad, input_ids), dim=1)
+
+        slot_ids = []
+        table_idx = 0
+        for order in orders:
+            if order <= 0:
+                raise OLMoConfigurationError(
+                    f"early Engram ngram orders must be positive, got {order}"
+                )
+            start = max_order - order
+            pieces = [padded_ids[:, start + j : start + j + S] for j in range(order)]
+            for head_idx in range(heads_per_order):
+                h = torch.full(
+                    (B, S),
+                    int(hash_seed) + 104_729 * int(order) + 10_007 * int(head_idx),
+                    dtype=torch.long,
+                    device=input_ids.device,
+                )
+                for j, piece in enumerate(pieces):
+                    h = (
+                        h * 1_000_003
+                        + piece
+                        + 97_409 * (j + 1)
+                        + 8_191 * int(order)
+                    ) % slots_per_table
+                slot_ids.append(h + table_idx * slots_per_table)
+                table_idx += 1
+
+        flat_slot_ids = torch.stack(slot_ids, dim=-1)
+        head_vectors = F.embedding(flat_slot_ids, hash_memory.weight)
+        retrieved = head_vectors.reshape(B, S, -1)
+        prior = hash_projection(retrieved.to(dtype=hash_projection.weight.dtype))
         alpha = torch.exp(alpha_log).to(device=prior.device, dtype=prior.dtype)
         return (alpha.view(1, 1, 1) * prior).to(dtype=dtype)
 

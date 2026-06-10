@@ -27,11 +27,11 @@ from olmo_core.data.composable import (
 )
 
 
-def _tiny_transformer_config() -> TransformerConfig:
+def _tiny_transformer_config(*, vocab_size: int = 6) -> TransformerConfig:
     layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
     return TransformerConfig(
         d_model=8,
-        vocab_size=6,
+        vocab_size=vocab_size,
         n_layers=1,
         block=TransformerBlockConfig(
             name=TransformerBlockType.default,
@@ -238,6 +238,39 @@ def test_engram_early_fusion_sparse_decode_uses_learned_topm_distribution():
     assert model.lm_head.early_fusion_engram_token_decoder.weight.grad is not None
 
 
+def test_engram_hashed_memory_is_deterministic_and_gets_gradients():
+    model = _tiny_transformer_config(vocab_size=16).build(init_device="cpu")
+    assert model.lm_head is not None
+    model.lm_head.register_parameter(
+        "early_fusion_alpha_log",
+        nn.Parameter(torch.tensor([math.log(0.5)], dtype=torch.float32)),
+    )
+    model.lm_head.early_fusion_engram_hash_memory = nn.Embedding(4 * 11, 2)
+    model.lm_head.early_fusion_engram_hash_projection = nn.Linear(8, 8, bias=False)
+    model.lm_head.early_fusion_engram_ngram_orders = (2, 3)
+    model.lm_head.early_fusion_engram_heads_per_order = 2
+    model.lm_head.early_fusion_engram_slots_per_table = 11
+    model.lm_head.early_fusion_engram_hash_seed = 17
+
+    input_ids = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
+    out1 = model._compute_early_fusion_engram_hashed_embedding(
+        input_ids,
+        dtype=torch.float32,
+    )
+    out2 = model._compute_early_fusion_engram_hashed_embedding(
+        input_ids,
+        dtype=torch.float32,
+    )
+
+    assert out1.shape == (1, 4, 8)
+    torch.testing.assert_close(out1, out2)
+
+    out1.sum().backward()
+    assert model.lm_head.early_fusion_engram_hash_memory.weight.grad is not None
+    assert model.lm_head.early_fusion_engram_hash_projection.weight.grad is not None
+    assert model.lm_head.early_fusion_alpha_log.grad is not None
+
+
 def test_train_module_registers_engram_memory_and_alpha_override(tmp_path):
     _write_raw_context_index(tmp_path, vocab_size=6)
     model = _tiny_transformer_config().build(init_device="cpu")
@@ -276,3 +309,39 @@ def test_train_module_registers_engram_memory_and_alpha_override(tmp_path):
     )
     assert alpha_group["lr"] == 1e-4
     assert alpha_group["weight_decay"] == 0.0
+
+
+def test_train_module_registers_fixed_budget_hashed_engram_memory():
+    model = _tiny_transformer_config(vocab_size=32).build(init_device="cpu")
+    train_module = TransformerTrainModuleConfig(
+        rank_microbatch_size=4,
+        max_sequence_length=4,
+        optim=AdamWConfig(lr=1e-3),
+        early_fusion_engram=True,
+        early_fusion_engram_mode="hashed_memory",
+        early_fusion_engram_alpha_init=0.3,
+        early_fusion_engram_ngram_orders=(2, 3),
+        early_fusion_engram_heads_per_order=2,
+        early_fusion_engram_head_dim=2,
+    ).build(model, device=torch.device("cpu"))
+
+    hash_memory = train_module._early_fusion_engram_hash_memory()
+    hash_projection = train_module._early_fusion_engram_hash_projection()
+    assert train_module.early_fusion_engram_slots_per_table == 24
+    assert hash_memory.num_embeddings == 4 * 24
+    assert hash_memory.embedding_dim == 2
+    assert hash_projection.in_features == 8
+    assert hash_projection.out_features == 8
+    assert train_module.early_fusion_engram_hash_memory_params == 192
+    assert train_module.early_fusion_engram_hash_projection_params == 64
+    assert (
+        train_module.early_fusion_engram_hash_memory_params
+        + train_module.early_fusion_engram_hash_projection_params
+        == model.vocab_size * model.d_model
+    )
+
+    alpha_log = train_module._early_fusion_alpha_log_param()
+    torch.testing.assert_close(
+        torch.exp(alpha_log.detach()),
+        torch.tensor([0.3], dtype=torch.float32),
+    )
