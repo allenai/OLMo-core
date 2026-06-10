@@ -3,7 +3,7 @@ from typing import Optional
 
 from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
-from olmo_core.data.composable import ComposableDataLoaderConfig, ConcatAndChunkInstanceSourceConfig
+from olmo_core.data.composable import ComposableDataLoaderConfig, PadToLengthInstanceSourceConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
@@ -47,14 +47,14 @@ from olmo_core.train.train_module import (
 # dense pretraining run. No landmark tokens are inserted.
 #
 # Data pipeline (composable):
-#   ConcatAndChunkInstanceSource(token_ids + labels_mask)  # concat + chunk to SEQUENCE_LENGTH, carry mask
+#   PadToLengthInstanceSource(token_ids + labels_mask)  # ONE example per instance, padded to SEQUENCE_LENGTH
 #
-# DOC MASKING: this dense run leaves generate_doc_lengths=False so the data pipeline matches the
-# fast/sparse landmark SFT runs (landmark attention cannot do intra-document masking), keeping
-# attention type the only variable across the three SFT comparisons -- and matching the dense
-# pretraining regime (ConcatAndChunk, cross-document attention). Dense attention *does* support
-# intra-document masking, so flip generate_doc_lengths=True below if you instead want standard
-# per-conversation SFT masking for the dense baseline.
+# NOTE: we deliberately do NOT pack examples together: the landmark SFT runs can't mask
+# cross-example attention (landmark attention has no intra-document masking), so to keep the
+# data pipeline identical across the dense/fast/sparse comparison -- and to exactly match the
+# eval-time setting where the model sees a single example in its window -- every run trains on
+# one example per padded 64k instance. Padding sits after the answer, so with causal attention
+# the supervised tokens see exactly the eval-time prefix.
 # ---------------------------------------------------------------------------
 
 SEQUENCE_LENGTH = 65536  # 64k context (no landmark insertion)
@@ -161,9 +161,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     # Composable SFT data pipeline (no landmark insertion):
-    #   ConcatAndChunkInstanceSource (token_ids_part_*.npy + labels_mask_*.npy, chunked to SEQUENCE_LENGTH)
+    #   PadToLengthInstanceSource (one EOS-terminated example per instance, padded to SEQUENCE_LENGTH)
     clean_path = resolve_dataset_path(cli_context.run_name)
-    instance_source_config = ConcatAndChunkInstanceSourceConfig.from_npy(
+    instance_source_config = PadToLengthInstanceSourceConfig.from_npy(
         f"{clean_path}/token_ids_part_*.npy",
         tokenizer=tokenizer_config,
         sequence_length=SEQUENCE_LENGTH,
@@ -177,8 +177,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,
         num_workers=4,
-        # generate_doc_lengths left False to match the landmark SFT runs (see module docstring).
-        # Flip to True for standard per-conversation SFT masking (dense attention supports it).
+        # generate_doc_lengths left False: each instance holds a single example (plus padding),
+        # so there is no cross-example attention to mask in the first place.
     )
 
     trainer_config = (

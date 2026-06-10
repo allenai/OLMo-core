@@ -221,7 +221,7 @@ def build_contradiction_instance(
     return user_content, answer
 
 
-def iter_examples(jsonl_patterns: List[str], limit: int) -> Iterator[dict]:
+def iter_examples(jsonl_patterns: List[str], limit: int, limit_per_file: int = 0) -> Iterator[dict]:
     paths: List[str] = []
     for pattern in jsonl_patterns:
         matched = sorted(glob.glob(pattern))
@@ -234,6 +234,7 @@ def iter_examples(jsonl_patterns: List[str], limit: int) -> Iterator[dict]:
 
     n_yielded = 0
     for path in paths:
+        n_from_file = 0
         with open(path) as f:
             for line in f:
                 line = line.strip()
@@ -245,8 +246,11 @@ def iter_examples(jsonl_patterns: List[str], limit: int) -> Iterator[dict]:
                     example = example["ex"]
                 yield example
                 n_yielded += 1
+                n_from_file += 1
                 if limit > 0 and n_yielded >= limit:
                     return
+                if limit_per_file > 0 and n_from_file >= limit_per_file:
+                    break
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +398,13 @@ def main() -> None:
     )
     parser.add_argument("--limit", type=int, default=0, help="Process at most N rows (0 = all).")
     parser.add_argument(
+        "--limit-per-file",
+        type=int,
+        default=0,
+        help="Take at most N rows from each input file (0 = all). Used to subsample e.g. the "
+        "contradiction ladder evenly across context sizes.",
+    )
+    parser.add_argument(
         "--print-examples", type=int, default=2, help="Print the first N assembled instances."
     )
     args = parser.parse_args()
@@ -422,7 +433,7 @@ def main() -> None:
     n_skipped_too_long = 0
     n_skipped_bad = 0
 
-    for example in iter_examples(args.input_jsonl, args.limit):
+    for example in iter_examples(args.input_jsonl, args.limit, args.limit_per_file):
         user_content, answer = build(example, args.query_position, args.cot_mode)
 
         # Cheap pre-filter: below ~2 chars/token, anything this long can never fit the token
@@ -467,6 +478,7 @@ def main() -> None:
     meta = {
         "task": args.task,
         "input_jsonl": args.input_jsonl,
+        "limit_per_file": args.limit_per_file,
         "cot_mode": args.cot_mode,
         "query_position": args.query_position,
         "tokenizer": args.tokenizer,

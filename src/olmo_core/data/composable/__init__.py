@@ -31,6 +31,9 @@ This API consists of a series of simple, composable, elements, including:
 
    * :class:`ConcatAndChunkInstanceSource`: The simplest instance source that chunks up token sources
      without regard for document boundaries, just like the :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset`.
+   * :class:`PadToLengthInstanceSource`: An instance source that emits one document per instance,
+     right-padded to the sequence length. Use when examples must not attend to each other and the
+     attention variant can't mask (e.g. landmark-attention SFT).
    * :class:`PackingInstanceSource`: An instance source that packs documents from one or more document
      sources into instances using an optimized packing algorithm, just like the
      :class:`~olmo_core.data.numpy_dataset.NumpyPackedFSLDataset`.
@@ -498,6 +501,10 @@ from .packing_instance_source import (
     PackingInstanceSource,
     PackingInstanceSourceConfig,
 )
+from .pad_to_length_instance_source import (
+    PadToLengthInstanceSource,
+    PadToLengthInstanceSourceConfig,
+)
 from .random_instance_source import RandomInstanceSource, RandomInstanceSourceConfig
 from .sampling_document_source import SamplingDocumentSource, SamplingDocumentSourceConfig
 from .sampling_instance_source import SamplingInstanceSource, SamplingInstanceSourceConfig
@@ -562,6 +569,8 @@ __all__ = [
     "LandmarkInstanceSourceConfig",
     "PackingInstanceSource",
     "PackingInstanceSourceConfig",
+    "PadToLengthInstanceSource",
+    "PadToLengthInstanceSourceConfig",
     "ConcatenatedInstanceSource",
     "ConcatenatedInstanceSourceConfig",
     "SlicedInstanceSource",

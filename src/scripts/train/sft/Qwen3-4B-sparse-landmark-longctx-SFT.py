@@ -5,8 +5,8 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
-    ConcatAndChunkInstanceSourceConfig,
     LandmarkInstanceSourceConfig,
+    PadToLengthInstanceSourceConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
@@ -46,12 +46,14 @@ from olmo_core.train.train_module import (
 # template, corpus-reasoning prompt formats, query_position=both).
 #
 # Data pipeline (composable):
-#   ConcatAndChunkInstanceSource(token_ids + labels_mask)  # concat + chunk to CONTENT len, carry mask
-#     -> LandmarkInstanceSource(mem_freq, mem_id)           # insert a landmark token every MEM_FREQ
+#   PadToLengthInstanceSource(token_ids + labels_mask)  # ONE example per instance, padded to CONTENT len
+#     -> LandmarkInstanceSource(mem_freq, mem_id)        # insert a landmark token every MEM_FREQ
 #
-# NOTE: we use ConcatAndChunk (not bin-packing) because PackingInstanceSource builds a SegmentTree
-# whose size must be a power of 2, and the landmark content length (a multiple of MEM_FREQ) can never
-# be a power of 2. ConcatAndChunk also matches the landmark pretraining regime exactly.
+# NOTE: we deliberately do NOT pack examples together (no ConcatAndChunk / bin packing): landmark
+# attention cannot do intra-document masking, so packed examples would attend to each other --
+# a train/eval mismatch, since at eval the model sees exactly one example in its window. Padding
+# sits after the answer, so with causal attention the supervised tokens see exactly the eval-time
+# prefix. The cost is padding overhead (every instance is a full 64k forward).
 #
 # PARALLELISM: SparseLandmarkAttention does NOT support Ulysses CP (apply_cp raises), so unlike the
 # dense/fast SFT runs there is no sequence parallelism here -- each rank processes the full 64k
@@ -66,7 +68,7 @@ from olmo_core.train.train_module import (
 MEM_FREQ = 63
 BLOCK_SIZE = MEM_FREQ + 1  # 64
 SEQUENCE_LENGTH = 65536  # final instance length (must be divisible by BLOCK_SIZE)
-# Content length fed to the packer (landmark tokens are inserted afterwards):
+# Content length each example is padded to (landmark tokens are inserted afterwards):
 CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
 
 LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
@@ -179,11 +181,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     # Composable SFT data pipeline:
-    #   ConcatAndChunkInstanceSource (token_ids_part_*.npy + labels_mask_*.npy, chunked to CONTENT len)
+    #   PadToLengthInstanceSource (one EOS-terminated example per instance, padded to CONTENT len)
     #     -> LandmarkInstanceSource (insert landmark token every MEM_FREQ tokens -> SEQUENCE_LENGTH)
     clean_path = resolve_dataset_path(cli_context.run_name)
     instance_source_config = LandmarkInstanceSourceConfig(
-        source=ConcatAndChunkInstanceSourceConfig.from_npy(
+        source=PadToLengthInstanceSourceConfig.from_npy(
             f"{clean_path}/token_ids_part_*.npy",
             tokenizer=tokenizer_config,
             sequence_length=CONTENT_SEQUENCE_LENGTH,
