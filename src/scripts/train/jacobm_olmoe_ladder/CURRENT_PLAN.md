@@ -131,9 +131,14 @@ Queued Cx1/Cx2/Cx4 together on 2026-06-08:
 | 2 | 524,288 | 64 | 4 | 1 | 8 | `3e-4` (`01KTMMKN716ZSRZN473CV4BC23`), `6e-4` (`01KTMMM35QKDE15XCSKG76Z6ST`), `1.2e-3` (`01KTMMMHBEV4JW3N0X4X3MFHK8`) |
 | 4 | 524,288 | 64 | 4 | 1 | 8 | `4e-4` (`01KTMMMZ1539AV33SHB12S17Q4`), `8e-4` (`01KTMMNC9R56MX1MSGZQ865SXA`), `1.6e-3` (`01KTMMNTA3NN9K4THQXCKGP717`) |
 
-If midpoint Cx1/Cx2/Cx4 bracket cleanly, later launch midpoint Cx8 using a
-3-point centered sweep from the refit rule. Hold off on midpoint Cx16 for now,
-matching the 810M/1.2B policy.
+Follow-ups launched on 2026-06-10:
+
+- Cx4 cold-side sentinel `1e-4`, `gpu4-ep1mb8`:
+  `01KTSC4J4KGTZXY0XP5P0AXQXM`.
+- Cx8 hot-side sentinel `3.2e-3`, `gpu8-ep1mb4`:
+  `01KTSC51ZXE3YQAZMANDP15QT7`.
+
+Hold off on midpoint Cx16 for now, matching the 810M/1.2B policy.
 
 ## Next Baseline Progression
 
