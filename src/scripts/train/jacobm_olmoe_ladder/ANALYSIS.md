@@ -201,6 +201,15 @@ using the current GPU table. Because the active goal still says to ask before
 jobs above 8 GPUs, get explicit approval before launching the planned 32-GPU
 1.2B Cx8 runs.
 
+Transfer-rule note: the updated, calibrated rule predicted 1.2B Cx4 well. The
+pre-run estimate was about `3.3e-4` from direct size transfer and about `3.9e-4`
+from the 1.2B Cx1 fit times the 810M Cx4/Cx1 ratio. The observed local fits land
+around `3.6e-4` to `4.3e-4`, with `3e-4` and `6e-4` effectively tied. This is
+evidence that the useful procedure is to calibrate the model-size shift with
+real larger-model Cx1 data, then transfer across Cx using same-model or
+nearby-model Cx-ratio behavior, rather than relying on the original naive
+size-transfer prior.
+
 ## 2026-06-02 Snapshot
 
 Initial read after the first 2M-batch sweep finished and the 256k-batch sweep was
