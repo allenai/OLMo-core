@@ -3,11 +3,11 @@ import torch
 
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.vision import (
-    MultimodalTransformer,
-    MultimodalTransformerConfig,
-    VisionBackboneConfig,
-    VisionBackboneType,
+    MultimodalLM,
+    MultimodalLMConfig,
     VisionConnectorConfig,
+    VisionEncoderConfig,
+    VisionEncoderType,
 )
 
 # ---------------------------------------------------------------------------
@@ -23,10 +23,10 @@ def _tiny_lm_cfg() -> TransformerConfig:
     return TransformerConfig.olmo2_1M(vocab_size=_LM_VOCAB)
 
 
-def _tiny_vision_cfg() -> VisionBackboneConfig:
+def _tiny_vision_cfg() -> VisionEncoderConfig:
     """Tiny CLIP-style ViT: 2×2 patch grid (28px / 14px), 2 layers, emb_dim=32."""
-    return VisionBackboneConfig(
-        name=VisionBackboneType.openai,
+    return VisionEncoderConfig(
+        name=VisionEncoderType.openai,
         image_default_input_size=(28, 28),
         image_patch_size=14,
         image_emb_dim=32,
@@ -40,15 +40,15 @@ def _tiny_vision_cfg() -> VisionBackboneConfig:
     )
 
 
-def _tiny_multimodal_cfg(vit_layers=(-1,)) -> MultimodalTransformerConfig:
+def _tiny_multimodal_cfg(vit_layers=(-1,)) -> MultimodalLMConfig:
     lm_cfg = _tiny_lm_cfg()
     vis_cfg = _tiny_vision_cfg()
-    conn_cfg = VisionConnectorConfig.from_vision_backbone(
+    conn_cfg = VisionConnectorConfig.from_vision_encoder(
         vis_cfg,
         output_dim=_LM_D_MODEL,
         mlp_hidden_size=32,
     )
-    return MultimodalTransformerConfig(
+    return MultimodalLMConfig(
         lm=lm_cfg,
         vision=vis_cfg,
         connector=conn_cfg,
@@ -88,14 +88,14 @@ def _make_inputs(
 
 
 # ---------------------------------------------------------------------------
-# MultimodalTransformerConfig
+# MultimodalLMConfig
 # ---------------------------------------------------------------------------
 
 
-def test_build_returns_multimodal_transformer():
+def test_build_returns_multimodal_lm():
     cfg = _tiny_multimodal_cfg()
     model = cfg.build(init_device="cpu")
-    assert isinstance(model, MultimodalTransformer)
+    assert isinstance(model, MultimodalLM)
 
 
 def test_config_has_expected_fields():
@@ -221,13 +221,13 @@ def test_multi_layer_vit():
     """Two-layer extraction: connector must have num_input_layers=2."""
     lm_cfg = _tiny_lm_cfg()
     vis_cfg = _tiny_vision_cfg()
-    conn_cfg = VisionConnectorConfig.from_vision_backbone(
+    conn_cfg = VisionConnectorConfig.from_vision_encoder(
         vis_cfg,
         output_dim=_LM_D_MODEL,
         num_input_layers=2,
         mlp_hidden_size=32,
     )
-    cfg = MultimodalTransformerConfig(
+    cfg = MultimodalLMConfig(
         lm=lm_cfg,
         vision=vis_cfg,
         connector=conn_cfg,

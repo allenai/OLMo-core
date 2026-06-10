@@ -1,23 +1,46 @@
 import math
-from typing import List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers.activations import get_activation
 
-from .config import VisionBackboneConfig
+from olmo_core.nn.vision.config import VisionEncoderConfig
 
 __all__ = [
+    "ViTAttention",
+    "ViTMLP",
+    "ViTBlock",
     "VisionTransformer",
-    "SiglipVisionTransformer",
 ]
 
 
-class _ViTAttention(nn.Module):
+def _quick_gelu(x: torch.Tensor) -> torch.Tensor:
+    # OpenAI CLIP's "QuickGELU"; not available as a PyTorch built-in.
+    return x * torch.sigmoid(1.702 * x)
+
+
+# Activations used by the supported vision encoders, implemented with plain
+# PyTorch ops. Names follow the HF convention so configs map directly onto
+# HF checkpoint configs.
+_ACTIVATIONS: Dict[str, Callable[[torch.Tensor], torch.Tensor]] = {
+    "quick_gelu": _quick_gelu,
+    "gelu_pytorch_tanh": lambda x: F.gelu(x, approximate="tanh"),
+    "gelu": F.gelu,
+}
+
+
+def _get_activation(name: str) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Resolve an activation function by name."""
+    if name not in _ACTIVATIONS:
+        raise ValueError(f"Unknown activation {name!r}; expected one of {sorted(_ACTIVATIONS)}.")
+    return _ACTIVATIONS[name]
+
+
+class ViTAttention(nn.Module):
     """Multi-head dot-product attention for a vision transformer block."""
 
-    def __init__(self, cfg: VisionBackboneConfig, init_device: str = "cpu"):
+    def __init__(self, cfg: VisionEncoderConfig, init_device: str = "cpu"):
         super().__init__()
         self.embed_dim = cfg.image_emb_dim
         self.num_heads = cfg.image_num_heads
@@ -90,10 +113,10 @@ class _ViTAttention(nn.Module):
         return out
 
 
-class _ViTMLP(nn.Module):
+class ViTMLP(nn.Module):
     """Two-layer feed-forward network used inside each ViT block."""
 
-    def __init__(self, cfg: VisionBackboneConfig, init_device: str = "cpu"):
+    def __init__(self, cfg: VisionEncoderConfig, init_device: str = "cpu"):
         super().__init__()
         dtype = cfg.dtype.as_pt()
         self.w1 = nn.Linear(
@@ -102,7 +125,7 @@ class _ViTMLP(nn.Module):
         self.w2 = nn.Linear(
             cfg.image_mlp_dim, cfg.image_emb_dim, bias=True, device=init_device, dtype=dtype
         )
-        self.act = get_activation(cfg.image_mlp_activations)
+        self.act = _get_activation(cfg.image_mlp_activations)
         self._emb_dim = cfg.image_emb_dim
         self._mlp_dim = cfg.image_mlp_dim
 
@@ -116,10 +139,10 @@ class _ViTMLP(nn.Module):
         return self.w2(self.act(self.w1(x)))
 
 
-class _ViTBlock(nn.Module):
+class ViTBlock(nn.Module):
     """Standard pre-LN ViT residual block (attention + MLP)."""
 
-    def __init__(self, cfg: VisionBackboneConfig, init_device: str = "cpu"):
+    def __init__(self, cfg: VisionEncoderConfig, init_device: str = "cpu"):
         super().__init__()
         dtype = cfg.dtype.as_pt()
         self.attn_norm = nn.LayerNorm(
@@ -128,8 +151,8 @@ class _ViTBlock(nn.Module):
         self.ffn_norm = nn.LayerNorm(
             cfg.image_emb_dim, eps=cfg.image_norm_eps, device=init_device, dtype=dtype
         )
-        self.attn = _ViTAttention(cfg, init_device=init_device)
-        self.ffn = _ViTMLP(cfg, init_device=init_device)
+        self.attn = ViTAttention(cfg, init_device=init_device)
+        self.ffn = ViTMLP(cfg, init_device=init_device)
 
     def reset_parameters(self):
         self.attn_norm.reset_parameters()
@@ -169,43 +192,66 @@ def _interpolate_pos_emb(
 
 class VisionTransformer(nn.Module):
     """
-    OpenAI CLIP-style vision transformer with a prepended CLS token.
+    Configurable vision transformer encoder.
 
-    Matches ``VisionTransformer`` in the Molmo reference implementation and is
-    suitable for weights from OpenAI CLIP ViT-L/14-336.
+    A single implementation that covers the supported encoder families; the
+    architectural variant is selected entirely through :class:`VisionEncoderConfig`:
 
-    The forward pass accepts pre-patchified images and returns the hidden states
-    from every block, so callers can select specific layers (e.g. ``[-2, -9]``).
+    - :attr:`~VisionEncoderConfig.use_cls_token` — prepend a learnable CLS token
+      (CLIP-style) vs. patches only (SigLIP-style).
+    - :attr:`~VisionEncoderConfig.patch_embedding_bias` — whether the patch-embedding
+      projection has a bias term.
+    - :attr:`~VisionEncoderConfig.use_pre_ln` — apply a LayerNorm to the embeddings
+      before the transformer blocks (CLIP-style).
 
-    :param cfg: Vision backbone configuration.
+    The defaults match OpenAI CLIP ViT-L/14-336; the
+    :meth:`VisionEncoderConfig.siglip_so400m` family of factories configures the
+    SigLIP variants. Use whichever factory matches your checkpoint.
+
+    The forward pass accepts pre-patchified images and returns the hidden states from
+    every block, so callers can select specific layers (e.g. ``[-2, -9]``).
+
+    :param cfg: Vision encoder configuration.
     :param init_device: Device on which to initialise parameters.
     """
 
-    def __init__(self, cfg: VisionBackboneConfig, init_device: str = "cpu"):
+    def __init__(self, cfg: VisionEncoderConfig, init_device: str = "cpu"):
         super().__init__()
         self.cfg = cfg
         dtype = cfg.dtype.as_pt()
 
+        self.num_prefix_tokens: int = 1 if cfg.use_cls_token else 0
+
         # Patch embedding: flattened patch pixels → emb_dim.
         patch_pixels = cfg.image_patch_size * cfg.image_patch_size * 3
         self.patch_embedding = nn.Linear(
-            patch_pixels, cfg.image_emb_dim, bias=False, device=init_device, dtype=dtype
+            patch_pixels,
+            cfg.image_emb_dim,
+            bias=cfg.patch_embedding_bias,
+            device=init_device,
+            dtype=dtype,
         )
 
-        # CLS token and positional embeddings.
-        self.num_prefix_tokens: int = 1
-        self.class_embedding = nn.Parameter(
-            torch.zeros(cfg.image_emb_dim, device=init_device, dtype=dtype)
-        )
+        # Optional prepended CLS / prefix token (CLIP-style).
+        self.class_embedding: Optional[nn.Parameter] = None
+        if cfg.use_cls_token:
+            self.class_embedding = nn.Parameter(
+                torch.zeros(cfg.image_emb_dim, device=init_device, dtype=dtype)
+            )
+
         self.positional_embedding = nn.Parameter(
             torch.zeros(cfg.image_num_pos, cfg.image_emb_dim, device=init_device, dtype=dtype)
         )
 
-        self.pre_ln = nn.LayerNorm(
-            cfg.image_emb_dim, eps=cfg.image_norm_eps, device=init_device, dtype=dtype
-        )
+        # Optional pre-LayerNorm applied before the blocks (CLIP-style).
+        self.pre_ln: Optional[nn.LayerNorm] = None
+        if cfg.use_pre_ln:
+            self.pre_ln = nn.LayerNorm(
+                cfg.image_emb_dim, eps=cfg.image_norm_eps, device=init_device, dtype=dtype
+            )
+
         self.blocks = nn.ModuleList(
-            [_ViTBlock(cfg, init_device=init_device) for _ in range(cfg.image_num_layers)]
+            [cfg.block.build(cfg, init_device=init_device) for _ in range(cfg.image_num_layers)]
         )
 
         self.reset_parameters()
@@ -213,10 +259,14 @@ class VisionTransformer(nn.Module):
     def reset_parameters(self):
         """Re-initialise all parameters."""
         scale = self.cfg.image_emb_dim**-0.5
-        nn.init.normal_(self.class_embedding, std=scale)
+        if self.class_embedding is not None:
+            nn.init.normal_(self.class_embedding, std=scale)
         nn.init.normal_(self.positional_embedding, std=scale)
         nn.init.normal_(self.patch_embedding.weight, std=0.02)
-        self.pre_ln.reset_parameters()
+        if self.patch_embedding.bias is not None:
+            nn.init.zeros_(self.patch_embedding.bias)
+        if self.pre_ln is not None:
+            self.pre_ln.reset_parameters()
         for block in self.blocks:
             block.reset_parameters()
 
@@ -236,7 +286,7 @@ class VisionTransformer(nn.Module):
         :param patch_num: Spatial grid ``(H, W)`` of patches. Defaults to
             ``cfg.image_num_patch``.
         :returns: List of length ``image_num_layers``, each element a tensor of shape
-            ``(batch, 1 + n_patches, image_emb_dim)``.
+            ``(batch, num_prefix_tokens + n_patches, image_emb_dim)``.
         """
         if patch_num is None:
             patch_num = self.cfg.image_num_patch
@@ -244,87 +294,15 @@ class VisionTransformer(nn.Module):
         B, N, _ = x.shape
         x = self.patch_embedding(x)
 
-        # Prepend CLS token.
-        cls = self.class_embedding[None, None, :].expand(B, 1, -1).to(x.dtype)
-        x = torch.cat([cls, x], dim=1)  # (B, 1+N, D)
+        # Prepend CLS / prefix token when configured.
+        if self.class_embedding is not None:
+            cls = self.class_embedding[None, None, :].expand(B, 1, -1).to(x.dtype)
+            x = torch.cat([cls, x], dim=1)  # (B, num_prefix + N, D)
+
         x = self._add_pos_emb(x, patch_num)
-        x = self.pre_ln(x)
 
-        hidden_states: List[torch.Tensor] = []
-        for block in self.blocks:
-            x = block(x)
-            hidden_states.append(x)
-        return hidden_states
-
-
-class SiglipVisionTransformer(nn.Module):
-    """
-    SigLIP-style vision transformer without a CLS token.
-
-    Matches ``SiglipVisionTransformer`` in the Molmo reference implementation and is
-    suitable for weights from SigLIP-SO400M-14-378.
-
-    Like :class:`VisionTransformer`, the forward pass returns hidden states from every
-    block. There is no CLS token, so each output tensor has shape
-    ``(batch, n_patches, image_emb_dim)``.
-
-    :param cfg: Vision backbone configuration. Use :meth:`VisionBackboneConfig.siglip_so400m`
-        for the SigLIP-SO400M defaults.
-    :param init_device: Device on which to initialise parameters.
-    """
-
-    def __init__(self, cfg: VisionBackboneConfig, init_device: str = "cpu"):
-        super().__init__()
-        self.cfg = cfg
-        dtype = cfg.dtype.as_pt()
-
-        patch_pixels = cfg.image_patch_size * cfg.image_patch_size * 3
-        self.patch_embedding = nn.Linear(
-            patch_pixels, cfg.image_emb_dim, bias=True, device=init_device, dtype=dtype
-        )
-
-        self.num_prefix_tokens: int = 0  # no CLS token
-        self.positional_embedding = nn.Parameter(
-            torch.zeros(cfg.image_num_pos, cfg.image_emb_dim, device=init_device, dtype=dtype)
-        )
-
-        self.blocks = nn.ModuleList(
-            [_ViTBlock(cfg, init_device=init_device) for _ in range(cfg.image_num_layers)]
-        )
-
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        """Re-initialise all parameters."""
-        scale = self.cfg.image_emb_dim**-0.5
-        nn.init.normal_(self.positional_embedding, std=scale)
-        nn.init.normal_(self.patch_embedding.weight, std=0.02)
-        nn.init.zeros_(self.patch_embedding.bias)
-        for block in self.blocks:
-            block.reset_parameters()
-
-    def _add_pos_emb(self, x: torch.Tensor, patch_num: Tuple[int, int]) -> torch.Tensor:
-        pos_emb = _interpolate_pos_emb(self.positional_embedding, patch_num, num_prefix=0)
-        return x + pos_emb[None, :, :].to(x.dtype)
-
-    def forward(
-        self, x: torch.Tensor, patch_num: Optional[Tuple[int, int]] = None
-    ) -> List[torch.Tensor]:
-        """
-        Encode pre-patchified images.
-
-        :param x: Float tensor of shape ``(batch, n_patches, patch_size**2 * 3)``.
-        :param patch_num: Spatial grid ``(H, W)`` of patches. Defaults to
-            ``cfg.image_num_patch``.
-        :returns: List of length ``image_num_layers``, each element a tensor of shape
-            ``(batch, n_patches, image_emb_dim)``.
-        """
-        if patch_num is None:
-            patch_num = self.cfg.image_num_patch
-
-        B, N, _ = x.shape
-        x = self.patch_embedding(x)
-        x = self._add_pos_emb(x, patch_num)
+        if self.pre_ln is not None:
+            x = self.pre_ln(x)
 
         hidden_states: List[torch.Tensor] = []
         for block in self.blocks:

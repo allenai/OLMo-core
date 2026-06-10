@@ -2,9 +2,8 @@ import pytest
 import torch
 
 from olmo_core.nn.vision import (
-    SiglipVisionTransformer,
-    VisionBackboneConfig,
-    VisionBackboneType,
+    VisionEncoderConfig,
+    VisionEncoderType,
     VisionTransformer,
 )
 
@@ -13,10 +12,10 @@ from olmo_core.nn.vision import (
 # ---------------------------------------------------------------------------
 
 
-def _tiny_clip_cfg(**kwargs) -> VisionBackboneConfig:
+def _tiny_clip_cfg(**kwargs) -> VisionEncoderConfig:
     """Minimal CLIP-style config: 2 layers, small dims."""
-    return VisionBackboneConfig(
-        name=VisionBackboneType.openai,
+    return VisionEncoderConfig(
+        name=VisionEncoderType.openai,
         image_default_input_size=(28, 28),
         image_patch_size=14,
         image_emb_dim=64,
@@ -31,10 +30,13 @@ def _tiny_clip_cfg(**kwargs) -> VisionBackboneConfig:
     )
 
 
-def _tiny_siglip_cfg(**kwargs) -> VisionBackboneConfig:
+def _tiny_siglip_cfg(**kwargs) -> VisionEncoderConfig:
     """Minimal SigLIP-style config: 2 layers, small dims."""
-    return VisionBackboneConfig(
-        name=VisionBackboneType.siglip,
+    return VisionEncoderConfig(
+        name=VisionEncoderType.siglip,
+        use_cls_token=False,
+        patch_embedding_bias=True,
+        use_pre_ln=False,
         image_default_input_size=(28, 28),
         image_patch_size=14,
         image_emb_dim=64,
@@ -50,24 +52,11 @@ def _tiny_siglip_cfg(**kwargs) -> VisionBackboneConfig:
 
 
 # ---------------------------------------------------------------------------
-# VisionBackboneConfig.build()
-# ---------------------------------------------------------------------------
-
-
-def test_clip_build_returns_correct_type():
-    cfg = _tiny_clip_cfg()
-    vit = cfg.build(init_device="cpu")
-    assert isinstance(vit, VisionTransformer)
-
-
-def test_siglip_build_returns_correct_type():
-    cfg = _tiny_siglip_cfg()
-    vit = cfg.build(init_device="cpu")
-    assert isinstance(vit, SiglipVisionTransformer)
-
-
-# ---------------------------------------------------------------------------
 # VisionTransformer (CLIP-style)
+#
+# NOTE: config-layer concerns (factory fields, build() dispatch, CLS-token
+# presence, image_num_patch, serialization round-trip) live in config_test.py.
+# These tests cover only forward-pass behavior of the encoder module.
 # ---------------------------------------------------------------------------
 
 
@@ -115,9 +104,6 @@ class TestVisionTransformer:
         out = vit(x, patch_num=(3, 3))
         assert out[-1].shape == (1, 1 + n_patches, cfg.image_emb_dim)
 
-    def test_num_prefix_tokens(self):
-        assert self.vit.num_prefix_tokens == 1
-
     def test_meta_device_build(self):
         vit = VisionTransformer(_tiny_clip_cfg(), init_device="meta")
         assert next(iter(vit.parameters())).device.type == "meta"
@@ -137,7 +123,7 @@ class TestVisionTransformer:
 class TestSiglipVisionTransformer:
     def setup_method(self):
         self.cfg = _tiny_siglip_cfg()
-        self.vit = SiglipVisionTransformer(self.cfg, init_device="cpu")
+        self.vit = VisionTransformer(self.cfg, init_device="cpu")
 
     def _make_input(self, batch: int = 2) -> torch.Tensor:
         n_patches = 2 * 2
@@ -158,37 +144,6 @@ class TestSiglipVisionTransformer:
         for layer_out in out:
             assert layer_out.shape == expected
 
-    def test_num_prefix_tokens(self):
-        assert self.vit.num_prefix_tokens == 0
-
     def test_meta_device_build(self):
-        vit = SiglipVisionTransformer(_tiny_siglip_cfg(), init_device="meta")
+        vit = VisionTransformer(_tiny_siglip_cfg(), init_device="meta")
         assert next(iter(vit.parameters())).device.type == "meta"
-
-
-# ---------------------------------------------------------------------------
-# VisionBackboneConfig helpers
-# ---------------------------------------------------------------------------
-
-
-def test_siglip_so400m_factory():
-    cfg = VisionBackboneConfig.siglip_so400m()
-    assert cfg.name == VisionBackboneType.siglip
-    assert cfg.image_default_input_size == (378, 378)
-    assert cfg.image_emb_dim == 1152
-    assert cfg.image_num_layers == 27
-    assert cfg.image_num_pos == 729
-
-
-def test_image_num_patch_property():
-    cfg = _tiny_clip_cfg()
-    assert cfg.image_num_patch == (2, 2)
-
-
-def test_config_round_trip_yaml():
-    from olmo_core.config import Config
-
-    cfg = _tiny_clip_cfg()
-    assert isinstance(cfg, Config)
-    dumped = cfg.as_config_dict()
-    assert dumped["name"] == "openai"

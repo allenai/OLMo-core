@@ -1,5 +1,5 @@
 """
-HuggingFace Molmo2 → :class:`~olmo_core.nn.vision.MultimodalTransformer`
+HuggingFace Molmo2 → :class:`~olmo_core.nn.vision.MultimodalLM`
 state-dict converter.
 
 Loads weights from a public Molmo2 checkpoint on HuggingFace (e.g.
@@ -31,11 +31,11 @@ projector, and the LM head all map one-to-one (no per-tensor surgery).
 
 Usage::
 
-    cfg = MultimodalTransformerConfig(lm=olmo3_7B(...), vision=..., connector=...)
-    model = MultimodalTransformer(cfg)
+    cfg = MultimodalLMConfig(lm=olmo3_7B(...), vision=..., connector=...)
+    model = MultimodalLM(cfg)
     from transformers import AutoModelForCausalLM
     hf = AutoModelForCausalLM.from_pretrained("allenai/Molmo2-O-7B", trust_remote_code=True)
-    converted = molmo2_hf_state_dict_to_multimodal_transformer(hf.state_dict(), cfg)
+    converted = molmo2_hf_state_dict_to_multimodal_lm(hf.state_dict(), cfg)
     model.load_state_dict(converted)
 """
 
@@ -45,19 +45,15 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 
 from ...config import DType
+from ..transformer import TransformerConfig
+from .config import VisionEncoderConfig, VisionEncoderType
+from .connector import ImagePoolingType, ImageProjectorType, VisionConnectorConfig
+from .multimodal import MultimodalLMConfig
 
 log = logging.getLogger(__name__)
-from ..transformer import TransformerConfig
-from .config import VisionBackboneConfig, VisionBackboneType
-from .connector import (
-    ImagePoolingType,
-    ImageProjectorType,
-    VisionConnectorConfig,
-)
-from .multimodal import MultimodalTransformerConfig
 
 __all__ = [
-    "molmo2_hf_state_dict_to_multimodal_transformer",
+    "molmo2_hf_state_dict_to_multimodal_lm",
     "molmo2_config_from_hf_config",
     "ensure_default_rope_registered",
     "reinit_rope_buffers",
@@ -88,11 +84,7 @@ def ensure_default_rope_registered() -> None:
             config.hidden_size // config.num_attention_heads
         )
         inv_freq = 1.0 / (
-            base
-            ** (
-                torch.arange(0, head_dim, 2, dtype=torch.float, device=device)
-                / head_dim
-            )
+            base ** (torch.arange(0, head_dim, 2, dtype=torch.float, device=device) / head_dim)
         )
         return inv_freq, 1.0
 
@@ -203,11 +195,11 @@ def _convert_patch_embedding(hf_patch_weight: torch.Tensor, patch_size: int) -> 
 # ---------------------------------------------------------------------------
 
 
-def molmo2_hf_state_dict_to_multimodal_transformer(
+def molmo2_hf_state_dict_to_multimodal_lm(
     hf_state_dict: Dict[str, torch.Tensor],
-    cfg: MultimodalTransformerConfig,
+    cfg: MultimodalLMConfig,
 ) -> Dict[str, torch.Tensor]:
-    """Convert a Molmo2 HF state dict to our :class:`MultimodalTransformer` layout.
+    """Convert a Molmo2 HF state dict to our :class:`MultimodalLM` layout.
 
     :param hf_state_dict: Output of ``hf_model.state_dict()`` where
         ``hf_model`` is a :class:`transformers.AutoModelForCausalLM` /
@@ -217,7 +209,7 @@ def molmo2_hf_state_dict_to_multimodal_transformer(
         dimensions (n_heads, head_dim, n_layers, patch_size) so the converter
         can split fused weights correctly.
     :returns: A new ``Dict[str, Tensor]`` keyed for
-        :meth:`~olmo_core.nn.vision.MultimodalTransformer.load_state_dict`.
+        :meth:`~olmo_core.nn.vision.MultimodalLM.load_state_dict`.
     :raises Molmo2LoaderError: when the HF state dict is missing a required
         key or has an unexpected shape.
     """
@@ -244,9 +236,15 @@ def molmo2_hf_state_dict_to_multimodal_transformer(
     # HF Molmo2's lm_head is sized to the *base* vocab only — image special
     # tokens are inputs-only and never predicted. Our OLMo-core LM uses a
     # single vocab_size for both input and output, so pad the lm_head with
-    # zero rows for the image-token slots. With zero logits at those
-    # positions and the training loss masked on image tokens anyway, the
-    # behaviour matches HF's exactly.
+    # zero rows for the image-token slots.
+    #
+    # NOTE: zero rows give those positions a *finite* logit (0), not -inf, so
+    # they enter the softmax denominator and shift the cross-entropy loss
+    # relative to HF (which has no such columns). Argmax/greedy generation is
+    # unaffected as long as a real token outscores 0, but exact *loss* parity
+    # requires masking the extra output IDs to -inf at the loss/forward layer
+    # (handled where the loss is computed, not in this weight converter). The
+    # logit-parity tests therefore compare only the base-vocab columns.
     hf_lm_head = _require(hf_state_dict, "lm_head.weight")
     extra_rows = lm_cfg.vocab_size - hf_lm_head.shape[0]
     if extra_rows < 0:
@@ -255,7 +253,9 @@ def molmo2_hf_state_dict_to_multimodal_transformer(
             f"vocab_size is only {lm_cfg.vocab_size}"
         )
     if extra_rows > 0:
-        pad = torch.zeros(extra_rows, hf_lm_head.shape[1], dtype=hf_lm_head.dtype)
+        # new_zeros preserves the source tensor's device and dtype, so this
+        # works when the HF state dict is already on CUDA.
+        pad = hf_lm_head.new_zeros((extra_rows, hf_lm_head.shape[1]))
         out["lm.lm_head.w_out.weight"] = torch.cat([hf_lm_head, pad], dim=0)
     else:
         out["lm.lm_head.w_out.weight"] = hf_lm_head
@@ -355,7 +355,7 @@ def molmo2_hf_state_dict_to_multimodal_transformer(
 
 
 # ---------------------------------------------------------------------------
-# HF Molmo2 config → MultimodalTransformerConfig
+# HF Molmo2 config → MultimodalLMConfig
 # ---------------------------------------------------------------------------
 
 
@@ -364,6 +364,14 @@ def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
 
     Dispatches to ``qwen3_4B`` / ``qwen3_8B`` (qk_norm_type="qwen3"),
     ``olmo3_7B`` (default qk_norm), or raises if no factory matches.
+
+    TODO: this dispatch hard-codes a growing ``(qk_norm_type, hidden_size,
+    n_layers)`` lookup table mapping to named factory methods, and ignores most
+    of the HF ``text_config`` fields (intermediate_size, num_attention_heads,
+    head_dim, rms_norm_eps, tie_word_embeddings, etc.). It will be hard to
+    maintain as more checkpoints are added. Replace it with a generic builder
+    that constructs the ``TransformerConfig`` directly from the HF fields rather
+    than matching dimensions to a preset.
     """
     from ..attention import AttentionBackendName
 
@@ -392,14 +400,14 @@ def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
         rope_scaling_layers = getattr(text_cfg, "rope_scaling_layers", None)
         if rope_scaling_layers is not None:
             # Molmo2-O-7B uses per-layer YaRN attention scaling (attention_factor ≈ 1.208)
-            # on a subset of layers.  MultimodalTransformer currently applies a single global
+            # on a subset of layers.  MultimodalLM currently applies a single global
             # RoPE config, so the per-layer attention_factor is silently ignored.  Logit
             # magnitudes will differ from HF's reference by ~3-4 nats for short sequences;
             # predicted argmax still matches for text-only paths.
             log.warning(
                 "Molmo2 text config has 'rope_scaling_layers=%s', indicating per-layer "
                 "YaRN attention scaling (attention_factor=%.4f).  "
-                "MultimodalTransformer does not support per-layer RoPE variants; "
+                "MultimodalLM does not support per-layer RoPE variants; "
                 "logit magnitudes may differ from the HF reference.",
                 rope_scaling_layers[:4],
                 text_cfg.rope_scaling.get("attention_factor", float("nan")),
@@ -426,19 +434,25 @@ def _effective_vit_layers(vit_cfg, vit_layers: list[int]) -> int:
     return min(last_needed, total)
 
 
-def _build_vision_config(vit_cfg, vit_layers: list[int]) -> VisionBackboneConfig:
-    """Build a :class:`VisionBackboneConfig` matching an HF Molmo2 vit_config.
+def _build_vision_config(vit_cfg, vit_layers: list[int]) -> VisionEncoderConfig:
+    """Build a :class:`VisionEncoderConfig` matching an HF Molmo2 vit_config.
 
     Molmo2 ViTs match SigLIP-style (no CLS token, ``gelu_pytorch_tanh``
-    activation), so we use :attr:`VisionBackboneType.siglip`. We also mirror
+    activation), so we use :attr:`VisionEncoderType.siglip`. We also mirror
     HF Molmo2's truncation of unused upper ViT blocks: if
     ``adapter_config.vit_layers`` is ``[-3, -9]``, only layers 0..24 are
     instantiated (saves storage and compute).
     """
     raw_size = vit_cfg.image_default_input_size
     image_size: Tuple[int, int] = (int(raw_size[0]), int(raw_size[1]))
-    return VisionBackboneConfig(
-        name=VisionBackboneType.siglip,
+    return VisionEncoderConfig(
+        name=VisionEncoderType.siglip,
+        # SigLIP-style variant switches: no CLS token, a biased patch projection,
+        # and no pre-LayerNorm. These must be set explicitly — `name` alone no
+        # longer selects the architecture.
+        use_cls_token=False,
+        patch_embedding_bias=True,
+        use_pre_ln=False,
         image_default_input_size=image_size,
         image_patch_size=vit_cfg.image_patch_size,
         image_emb_dim=vit_cfg.hidden_size,
@@ -477,13 +491,13 @@ def _build_connector_config(adapter_cfg, vit_hidden_size: int) -> VisionConnecto
     )
 
 
-def molmo2_config_from_hf_config(hf_config: Any) -> MultimodalTransformerConfig:
-    """Build a :class:`MultimodalTransformerConfig` from a Molmo2 HF config.
+def molmo2_config_from_hf_config(hf_config: Any) -> MultimodalLMConfig:
+    """Build a :class:`MultimodalLMConfig` from a Molmo2 HF config.
 
     :param hf_config: A loaded HF Molmo2 config — typically
         ``transformers.AutoConfig.from_pretrained("allenai/Molmo2-*",
         trust_remote_code=True)``.
-    :returns: A :class:`MultimodalTransformerConfig` whose model architecture
+    :returns: A :class:`MultimodalLMConfig` whose model architecture
         matches the HF Molmo2 layout, ready to receive converted weights.
     """
     text_cfg = hf_config.text_config
@@ -509,7 +523,7 @@ def molmo2_config_from_hf_config(hf_config: Any) -> MultimodalTransformerConfig:
         layer if layer >= 0 else layer + full_vit_layers for layer in adapter_cfg.vit_layers
     )
 
-    return MultimodalTransformerConfig(
+    return MultimodalLMConfig(
         lm=lm_cfg,
         vision=vis_cfg,
         connector=conn_cfg,

@@ -1,5 +1,5 @@
 """
-End-to-end generation test for the HF Molmo2 → :class:`MultimodalTransformer` converter.
+End-to-end generation test for the HF Molmo2 → :class:`MultimodalLM` converter.
 
 Loads Molmo2-4B from the local HF cache, converts its weights with our loader,
 then performs a short greedy-decode run on a synthetic image to verify that:
@@ -26,11 +26,11 @@ import pytest
 import torch
 from PIL import Image
 
-from olmo_core.nn.vision import MultimodalTransformer
+from olmo_core.nn.vision import MultimodalLM
 from olmo_core.nn.vision.molmo2_loader import (
     ensure_default_rope_registered,
     molmo2_config_from_hf_config,
-    molmo2_hf_state_dict_to_multimodal_transformer,
+    molmo2_hf_state_dict_to_multimodal_lm,
     reinit_rope_buffers,
 )
 from olmo_core.testing import requires_gpu
@@ -45,7 +45,7 @@ _N_TOKENS = 8
 
 # ──────────────────────────── preprocessor constants ────────────────────────
 # Taken from Molmo2-4B preprocessor_config.json.  Fixed across all Molmo2
-# variants that use the SigLIP2-SO400M/14 vision backbone.
+# variants that use the SigLIP2-SO400M/14 vision encoder.
 _PATCH_SIZE = 14
 _IMAGE_SIZE = 378  # 27 × 27 patches per crop
 _POOL_H = 2
@@ -237,17 +237,6 @@ def test_molmo2_generation_parity():
     ensure_default_rope_registered()
     from transformers import AutoModelForImageTextToText, AutoTokenizer
 
-    snap_dir = None
-    for root in [
-        os.path.expanduser("~/.cache/huggingface/hub"),
-        os.path.join(os.environ.get("HF_HOME", ""), "hub"),
-    ]:
-        suffix = "models--" + _MODEL_ID.replace("/", "--")
-        candidate = os.path.join(root, suffix)
-        if os.path.isdir(candidate):
-            snap_dir = candidate
-            break
-
     try:
         hf = AutoModelForImageTextToText.from_pretrained(
             _MODEL_ID, trust_remote_code=True, local_files_only=True
@@ -262,13 +251,15 @@ def test_molmo2_generation_parity():
 
     # ── Build our model from converted weights ────────────────────────────────
     cfg = molmo2_config_from_hf_config(hf.config)
-    converted = molmo2_hf_state_dict_to_multimodal_transformer(hf.state_dict(), cfg)
-    ours = MultimodalTransformer(cfg, init_device="meta")
+    converted = molmo2_hf_state_dict_to_multimodal_lm(hf.state_dict(), cfg)
+    ours = MultimodalLM(cfg, init_device="meta")
     ours.to_empty(device=torch.device("cpu"))
     missing, unexpected = ours.load_state_dict(converted, strict=False)
     del converted
     param_keys = {k for k, _ in ours.named_parameters()}
-    assert not (set(missing) & param_keys), f"Missing params: {sorted(set(missing) & param_keys)[:5]}"
+    assert not (
+        set(missing) & param_keys
+    ), f"Missing params: {sorted(set(missing) & param_keys)[:5]}"
     assert not (
         set(unexpected) & param_keys
     ), f"Unexpected params: {sorted(set(unexpected) & param_keys)[:5]}"
@@ -284,8 +275,8 @@ def test_molmo2_generation_parity():
     gradient[:, :, 2] = 100  # flat blue
     pil_img = Image.fromarray(gradient)
 
-    pixel_values_hf, images_ours, pooling_idx, image_grids, image_num_crops = (
-        _preprocess_image_pil(pil_img, dtype=dtype, device=device)
+    pixel_values_hf, images_ours, pooling_idx, image_grids, image_num_crops = _preprocess_image_pil(
+        pil_img, dtype=dtype, device=device
     )
 
     # ── Build shared input_ids ────────────────────────────────────────────────
@@ -295,9 +286,9 @@ def test_molmo2_generation_parity():
     # Sanity: correct number of <im_patch> and <im_end> tokens
     n_im_patch = (input_ids == _IM_PATCH_ID).sum().item()
     n_im_end = (input_ids == _IM_END_ID).sum().item()
-    assert n_im_patch == _GRID_H * _GRID_W, (
-        f"Expected {_GRID_H * _GRID_W} <im_patch> tokens, got {n_im_patch}"
-    )
+    assert (
+        n_im_patch == _GRID_H * _GRID_W
+    ), f"Expected {_GRID_H * _GRID_W} <im_patch> tokens, got {n_im_patch}"
     assert n_im_end == 2, f"Expected 2 <im_end> tokens, got {n_im_end}"
 
     # ── HF greedy decode ─────────────────────────────────────────────────────
@@ -337,6 +328,6 @@ def test_molmo2_generation_parity():
         f"  ours text = {our_text!r}"
     )
     # Check the decoded text is non-trivial (contains at least one alphabetic char).
-    assert any(c.isalpha() for c in our_text), (
-        f"Decoded text looks empty or non-linguistic: {our_text!r}"
-    )
+    assert any(
+        c.isalpha() for c in our_text
+    ), f"Decoded text looks empty or non-linguistic: {our_text!r}"

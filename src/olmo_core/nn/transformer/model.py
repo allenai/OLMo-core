@@ -537,6 +537,13 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        if input_embeddings is not None and self._cp_load_balancer is not None:
+            raise RuntimeError(
+                "`input_embeddings` is not supported with context parallelism: `_prepare_inputs` "
+                "shards `input_ids`/`labels`/RoPE while `input_embeddings` stays full-size, which "
+                "would misalign the hidden states."
+            )
+
         (
             input_ids,
             labels,

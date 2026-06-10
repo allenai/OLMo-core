@@ -2,29 +2,38 @@
 Vision encoder modules for multimodal (VLM) training.
 """
 
-from .config import VisionBackboneConfig, VisionBackboneType
+from .config import (
+    VisionBlockConfig,
+    VisionBlockType,
+    VisionEncoderConfig,
+    VisionEncoderType,
+)
 from .connector import (
     ImagePoolingType,
     ImageProjectorType,
     VisionConnector,
     VisionConnectorConfig,
 )
-from .image_vit import SiglipVisionTransformer, VisionTransformer
+from .image_vit import VisionTransformer, ViTAttention, ViTBlock, ViTMLP
 from .molmo2_image_processor import preprocess_image_molmo2
-from .molmo2_loader import molmo2_hf_state_dict_to_multimodal_transformer
-from .multimodal import MultimodalTransformer, MultimodalTransformerConfig
+from .molmo2_loader import molmo2_hf_state_dict_to_multimodal_lm
+from .multimodal import MultimodalLM, MultimodalLMConfig
 
 __all__ = [
-    "VisionBackboneType",
-    "VisionBackboneConfig",
+    "VisionEncoderType",
+    "VisionEncoderConfig",
+    "VisionBlockType",
+    "VisionBlockConfig",
+    "ViTAttention",
+    "ViTMLP",
+    "ViTBlock",
     "VisionTransformer",
-    "SiglipVisionTransformer",
     "ImagePoolingType",
     "ImageProjectorType",
     "VisionConnectorConfig",
     "VisionConnector",
-    "MultimodalTransformerConfig",
-    "MultimodalTransformer",
-    "molmo2_hf_state_dict_to_multimodal_transformer",
+    "MultimodalLMConfig",
+    "MultimodalLM",
+    "molmo2_hf_state_dict_to_multimodal_lm",
     "preprocess_image_molmo2",
 ]

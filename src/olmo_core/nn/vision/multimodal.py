@@ -4,35 +4,35 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from ...config import Config
-from ..lm_head import LMOutputWithLoss
-from ..transformer.config import TransformerConfig
-from .config import VisionBackboneConfig
-from .connector import VisionConnectorConfig
+from olmo_core.config import Config
+from olmo_core.nn.lm_head import LMOutputWithLoss
+from olmo_core.nn.transformer.config import TransformerConfig
+from olmo_core.nn.vision.config import VisionEncoderConfig
+from olmo_core.nn.vision.connector import VisionConnectorConfig
 
 __all__ = [
-    "MultimodalTransformerConfig",
-    "MultimodalTransformer",
+    "MultimodalLMConfig",
+    "MultimodalLM",
 ]
 
 
 @dataclass
-class MultimodalTransformerConfig(Config):
+class MultimodalLMConfig(Config):
     """
     Configuration for a multimodal (vision-language) transformer.
 
     Composes a language model (:class:`~olmo_core.nn.transformer.TransformerConfig`),
-    a vision encoder (:class:`~olmo_core.nn.vision.VisionBackboneConfig`), and
+    a vision encoder (:class:`~olmo_core.nn.vision.VisionEncoderConfig`), and
     a vision-to-language connector
     (:class:`~olmo_core.nn.vision.VisionConnectorConfig`) into a single module
-    matching Molmo's image-feature splice mechanics.
+    that splices projected image features into the LM embedding stream.
 
     Example::
 
         lm_cfg = TransformerConfig.olmo2_1M(vocab_size=50000)
-        vis_cfg = VisionBackboneConfig()           # CLIP ViT-L/14-336
-        conn_cfg = VisionConnectorConfig.from_vision_backbone(vis_cfg, output_dim=lm_cfg.d_model)
-        cfg = MultimodalTransformerConfig(
+        vis_cfg = VisionEncoderConfig()           # CLIP ViT-L/14-336
+        conn_cfg = VisionConnectorConfig.from_vision_encoder(vis_cfg, output_dim=lm_cfg.d_model)
+        cfg = MultimodalLMConfig(
             lm=lm_cfg, vision=vis_cfg, connector=conn_cfg, image_patch_token_id=49152,
         )
         model = cfg.build()
@@ -41,7 +41,7 @@ class MultimodalTransformerConfig(Config):
     lm: TransformerConfig
     """Language model configuration."""
 
-    vision: VisionBackboneConfig
+    vision: VisionEncoderConfig
     """Vision encoder configuration."""
 
     connector: VisionConnectorConfig
@@ -60,25 +60,25 @@ class MultimodalTransformerConfig(Config):
     """
     Indices of the ViT hidden-state layers to extract and concatenate before
     the connector. Negative indices count from the last layer. For example,
-    ``(-1,)`` uses only the final layer; ``(-2, -9)`` matches Molmo's two-layer
-    extraction and requires :attr:`connector.num_input_layers` to be ``2``.
+    ``(-1,)`` uses only the final layer; a two-layer selection such as ``(-2, -9)``
+    requires :attr:`connector.num_input_layers` to be ``2``.
     """
 
-    def build(self, init_device: str = "cpu") -> "MultimodalTransformer":
+    def build(self, init_device: str = "cpu") -> "MultimodalLM":
         """
         Instantiate the multimodal model on ``init_device``.
 
         :param init_device: Device string (e.g. ``"cpu"``, ``"meta"``).
-        :returns: A :class:`MultimodalTransformer`.
+        :returns: A :class:`MultimodalLM`.
         """
-        return MultimodalTransformer(self, init_device=init_device)
+        return MultimodalLM(self, init_device=init_device)
 
 
-class MultimodalTransformer(nn.Module):
+class MultimodalLM(nn.Module):
     """
     Vision-language model: vision encoder + connector + language model.
 
-    Forward pass flow (matching Molmo's reference implementation):
+    Forward pass flow:
 
     1. Look up LM token embeddings for ``input_ids``.
     2. If images are provided, run them through the vision tower, extract the
@@ -93,7 +93,7 @@ class MultimodalTransformer(nn.Module):
     :param init_device: Device on which to initialise parameters.
     """
 
-    def __init__(self, cfg: MultimodalTransformerConfig, init_device: str = "cpu"):
+    def __init__(self, cfg: MultimodalLMConfig, init_device: str = "cpu"):
         super().__init__()
         self.cfg = cfg
         self.lm = cfg.lm.build(init_device=init_device)
@@ -161,7 +161,12 @@ class MultimodalTransformer(nn.Module):
         """
         assert (
             self.lm.embeddings is not None
-        ), "MultimodalTransformer requires the LM to have an embedding table"
+        ), "MultimodalLM requires the LM to have an embedding table"
+
+        device = self.lm.device
+        input_ids = input_ids.to(device)
+        if labels is not None:
+            labels = labels.to(device)
 
         # Compute LM token embeddings with any configured scale / norm.
         h = self.lm.embeddings(input_ids)
@@ -173,6 +178,9 @@ class MultimodalTransformer(nn.Module):
         if images is not None:
             if pooled_patches_idx is None:
                 raise ValueError("`pooled_patches_idx` is required when `images` is provided")
+
+            images = images.to(device)
+            pooled_patches_idx = pooled_patches_idx.to(device)
 
             image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
 
@@ -187,8 +195,11 @@ class MultimodalTransformer(nn.Module):
                     f"preprocessor must insert exactly one <im_patch> per pooled feature."
                 )
             d = h.shape[-1]
-            h.view(-1, d)[is_image_patch] = h.view(-1, d)[is_image_patch] + image_features.reshape(
-                -1, d
-            )
+            # ``.contiguous()`` guards against a non-contiguous ``h`` (e.g. from a fused
+            # embedding_norm), for which ``.view()`` would raise. ``flat`` is a view of
+            # the contiguous ``h``, so the in-place add below propagates back into ``h``.
+            h = h.contiguous()
+            flat = h.view(-1, d)
+            flat[is_image_patch] = flat[is_image_patch] + image_features.reshape(-1, d)
 
         return self.lm(input_ids, input_embeddings=h, labels=labels, **kwargs)

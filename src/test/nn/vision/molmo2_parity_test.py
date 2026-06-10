@@ -1,5 +1,5 @@
 """
-Numerical-parity tests for the HF Molmo2 → :class:`MultimodalTransformer`
+Numerical-parity tests for the HF Molmo2 → :class:`MultimodalLM`
 state-dict converter.
 
 Loads a real Molmo2 checkpoint from the local HuggingFace cache, runs the
@@ -26,11 +26,11 @@ import os
 import pytest
 import torch
 
-from olmo_core.nn.vision import MultimodalTransformer
+from olmo_core.nn.vision import MultimodalLM
 from olmo_core.nn.vision.molmo2_loader import (
     ensure_default_rope_registered,
     molmo2_config_from_hf_config,
-    molmo2_hf_state_dict_to_multimodal_transformer,
+    molmo2_hf_state_dict_to_multimodal_lm,
     reinit_rope_buffers,
 )
 from olmo_core.testing import requires_gpu
@@ -117,10 +117,10 @@ def test_molmo2_converter_loads_and_vision_matches(model_id: str):
 
     # Build our config from the HF config and convert weights.
     cfg = molmo2_config_from_hf_config(hf.config)
-    converted = molmo2_hf_state_dict_to_multimodal_transformer(hf.state_dict(), cfg)
+    converted = molmo2_hf_state_dict_to_multimodal_lm(hf.state_dict(), cfg)
 
     # Materialize our model on CPU and load the converted state dict.
-    model = MultimodalTransformer(cfg, init_device="meta")
+    model = MultimodalLM(cfg, init_device="meta")
     model.to_empty(device=torch.device("cpu"))
     missing, unexpected = model.load_state_dict(converted, strict=False)
     del converted

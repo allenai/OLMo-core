@@ -5,25 +5,23 @@ Common :class:`torch.nn.Module` implementations.
 from .vision import (
     ImagePoolingType,
     ImageProjectorType,
-    MultimodalTransformer,
-    MultimodalTransformerConfig,
-    SiglipVisionTransformer,
-    VisionBackboneConfig,
-    VisionBackboneType,
+    MultimodalLM,
+    MultimodalLMConfig,
     VisionConnector,
     VisionConnectorConfig,
+    VisionEncoderConfig,
+    VisionEncoderType,
     VisionTransformer,
 )
 
 __all__ = [
-    "VisionBackboneType",
-    "VisionBackboneConfig",
+    "VisionEncoderType",
+    "VisionEncoderConfig",
     "VisionTransformer",
-    "SiglipVisionTransformer",
     "ImagePoolingType",
     "ImageProjectorType",
     "VisionConnectorConfig",
     "VisionConnector",
-    "MultimodalTransformerConfig",
-    "MultimodalTransformer",
+    "MultimodalLMConfig",
+    "MultimodalLM",
 ]

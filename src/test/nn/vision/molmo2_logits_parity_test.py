@@ -1,6 +1,6 @@
 """
 LM and full-pipeline logit parity between HF Molmo2 and our
-:class:`MultimodalTransformer` after loading converted weights.
+:class:`MultimodalLM` after loading converted weights.
 
 Three sub-tests, each peels off another layer of the model:
 
@@ -10,7 +10,7 @@ Three sub-tests, each peels off another layer of the model:
    HF's text transformer and ours; compare last-token logits. Validates
    every LM block (attention + SwiGLU) and the LM head row layout.
 3. **Full multimodal pipeline parity** — random pre-patchified image
-   through the vision backbone, connector, embedding splice, then LM;
+   through the vision encoder, connector, embedding splice, then LM;
    compare last-token logits at a position where image features are
    spliced. Validates the channel-vs-spatial patch-embedding permute and
    the connector indexing semantics end-to-end.
@@ -26,11 +26,11 @@ import os
 import pytest
 import torch
 
-from olmo_core.nn.vision import MultimodalTransformer
+from olmo_core.nn.vision import MultimodalLM
 from olmo_core.nn.vision.molmo2_loader import (
     ensure_default_rope_registered,
     molmo2_config_from_hf_config,
-    molmo2_hf_state_dict_to_multimodal_transformer,
+    molmo2_hf_state_dict_to_multimodal_lm,
     reinit_rope_buffers,
 )
 from olmo_core.testing import requires_gpu
@@ -59,6 +59,7 @@ def _build_ours(model_id: str, device, dtype):
     ensure_default_rope_registered()
     from transformers import AutoModelForImageTextToText
 
+    ensure_default_rope_registered()
     try:
         hf = AutoModelForImageTextToText.from_pretrained(
             model_id, trust_remote_code=True, local_files_only=True
@@ -67,8 +68,8 @@ def _build_ours(model_id: str, device, dtype):
         pytest.skip(f"Could not load {model_id}: {e}")
     reinit_rope_buffers(hf)
     cfg = molmo2_config_from_hf_config(hf.config)
-    converted = molmo2_hf_state_dict_to_multimodal_transformer(hf.state_dict(), cfg)
-    ours = MultimodalTransformer(cfg, init_device="meta")
+    converted = molmo2_hf_state_dict_to_multimodal_lm(hf.state_dict(), cfg)
+    ours = MultimodalLM(cfg, init_device="meta")
     ours.to_empty(device=torch.device("cpu"))
     ours.load_state_dict(converted, strict=False)
     del converted
@@ -96,12 +97,16 @@ def test_molmo2_embedding_parity(model_id: str):
     torch.manual_seed(0)
     # Include some image-extra-vocab IDs so we exercise new_embedding.
     base_vocab = cfg.lm.vocab_size - 128
-    ids = torch.cat(
-        [
-            torch.randint(0, base_vocab, (4,)),
-            torch.tensor([cfg.image_patch_token_id, base_vocab + 5]),
-        ]
-    ).unsqueeze(0).to(device)
+    ids = (
+        torch.cat(
+            [
+                torch.randint(0, base_vocab, (4,)),
+                torch.tensor([cfg.image_patch_token_id, base_vocab + 5]),
+            ]
+        )
+        .unsqueeze(0)
+        .to(device)
+    )
 
     with torch.inference_mode():
         hf_e = hf_emb(ids)
@@ -125,7 +130,7 @@ def test_molmo2_lm_forward_parity(model_id: str):
     .. note::
         Molmo2-O-7B uses per-layer YaRN attention scaling
         (``attention_factor ≈ 1.208``) on 24 of its 32 LM layers.
-        :class:`MultimodalTransformer` applies a single global RoPE config
+        :class:`MultimodalLM` applies a single global RoPE config
         and does not support per-layer attention factors, so the logit
         magnitudes for O-7B differ from HF's reference.  The test is skipped
         for O-7B until per-layer YaRN is implemented.
@@ -135,7 +140,7 @@ def test_molmo2_lm_forward_parity(model_id: str):
     if "O-7B" in model_id:
         pytest.skip(
             f"{model_id} uses per-layer YaRN attention scaling which is not "
-            f"yet implemented in MultimodalTransformer; logit parity skipped."
+            f"yet implemented in MultimodalLM; logit parity skipped."
         )
 
     device = torch.device("cuda")
@@ -184,7 +189,7 @@ def test_molmo2_full_pipeline_logit_parity(model_id: str):
     .. note::
         Molmo2-O-7B uses per-layer YaRN attention scaling
         (``attention_factor ≈ 1.208``) on 24 of its 32 LM layers.
-        :class:`MultimodalTransformer` applies a single global RoPE config
+        :class:`MultimodalLM` applies a single global RoPE config
         and does not support per-layer attention factors, so full-pipeline
         argmax may diverge for O-7B.  The test is skipped for O-7B until
         per-layer YaRN is implemented.
@@ -194,7 +199,7 @@ def test_molmo2_full_pipeline_logit_parity(model_id: str):
     if "O-7B" in model_id:
         pytest.skip(
             f"{model_id} uses per-layer YaRN attention scaling which is not "
-            f"yet implemented in MultimodalTransformer; full-pipeline parity skipped."
+            f"yet implemented in MultimodalLM; full-pipeline parity skipped."
         )
 
     device = torch.device("cuda")
