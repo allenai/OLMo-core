@@ -366,7 +366,7 @@ def load_model_and_optim_state(
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
-    dist_cp.load(
+    dist_cp.state_dict_loader.load(
         state_dict,
         checkpoint_id=dir,
         storage_reader=reader,

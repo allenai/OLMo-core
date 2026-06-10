@@ -1,7 +1,7 @@
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import InitVar, dataclass, field
+from dataclasses import InitVar, dataclass, field, fields
 from fnmatch import fnmatch
 from itertools import cycle, islice
 from typing import TYPE_CHECKING, Dict, List, Optional, cast
@@ -21,13 +21,13 @@ from ..attention import (
 )
 from ..buffer_cache import BufferCache
 from ..config import ModelConfig, ModuleConfig
-from ..feed_forward import ActivationFunction, DenseMoEFeedForwardConfig, FeedForwardConfig, FeedForwardType
+from ..feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
-from .flops import num_floating_point_operations_for_single_layer, num_floating_point_operations_for_logits
+from .flops import num_floating_point_operations_for_logits
 
 
 if TYPE_CHECKING:
@@ -240,6 +240,19 @@ class TransformerBlockConfig(ModuleConfig):
         self.attention = (
             self.sequence_mixer if isinstance(self.sequence_mixer, AttentionConfig) else None
         )
+
+    def replace(self, **changes) -> "TransformerBlockConfig":
+        # Avoid dataclasses.replace() replaying deprecated InitVar compatibility attributes.
+        data = {f.name: getattr(self, f.name) for f in fields(self) if f.init}
+        if "attention" in changes and "sequence_mixer" not in changes:
+            data["sequence_mixer"] = UNSET
+        if "layer_norm" in changes:
+            if "attention_norm" not in changes:
+                data["attention_norm"] = None
+            if "feed_forward_norm" not in changes:
+                data["feed_forward_norm"] = None
+        data.update(changes)
+        return type(self)(**data)
 
     def build(
         self,
@@ -1937,7 +1950,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
-        from .model import MoETransformer, NormalizedTransformer, Transformer
+        from .model import Transformer
 
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "

@@ -6,6 +6,7 @@ import urllib3.exceptions
 
 from olmo_core.io import (
     _s3_get_bytes_range,
+    _s3_retry_condition,
     copy_dir,
     copy_file,
     deserialize_from_tensor,
@@ -21,6 +22,19 @@ from olmo_core.io import (
 def test_serde_from_tensor():
     data = {"a": (1, 2)}
     assert deserialize_from_tensor(serialize_to_tensor(data)) == data
+
+
+def test_s3_retry_condition_includes_ssl_errors():
+    import ssl
+
+    import botocore.exceptions as boto_errors
+
+    # Transient network/SSL errors should be retried.
+    assert _s3_retry_condition(ssl.SSLError("handshake failure")) is True
+    assert _s3_retry_condition(boto_errors.ConnectionError(error="reset")) is True
+
+    # Non-transient errors should not be retried.
+    assert _s3_retry_condition(ValueError("not a network error")) is False
 
 
 def test_local_functionality(tmp_path):

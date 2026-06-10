@@ -608,6 +608,7 @@ class Transformer(nn.Module):
         self,
         input_ids: torch.Tensor,
         *,
+        input_embeddings: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
@@ -621,6 +622,12 @@ class Transformer(nn.Module):
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param input_embeddings: Pre-computed embeddings to use instead of looking up
+            ``input_ids`` in the embedding table, shape
+            ``(batch_size, seq_len, d_model)``.  When provided the embedding lookup,
+            scale, and norm steps are all skipped.  Intended for multimodal use-cases
+            where image features have already been spliced into the embedding sequence.
+            Not supported with context parallelism.
         :param labels: The token labels, shape ``(batch_size, seq_len)``.
         :param ignore_index: The index to ignore in the loss computation. Default is -100.
         :param loss_reduction: The reduction method for the loss. Can be "mean", "sum", or "none".
@@ -632,6 +639,13 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        if input_embeddings is not None and self._cp_load_balancer is not None:
+            raise RuntimeError(
+                "`input_embeddings` is not supported with context parallelism: `_prepare_inputs` "
+                "shards `input_ids`/`labels`/RoPE while `input_embeddings` stays full-size, which "
+                "would misalign the hidden states."
+            )
+
         (
             input_ids,
             labels,
@@ -652,11 +666,14 @@ class Transformer(nn.Module):
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
-        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
-        if self.embeddings is not None and self.embed_scale is not None:
-            h = h * self.embed_scale
-        if self.embedding_norm is not None:
-            h = self.embedding_norm(h)
+        if input_embeddings is not None:
+            h = move_to_device(input_embeddings, self.device)
+        else:
+            h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+            if self.embeddings is not None and self.embed_scale is not None:
+                h = h * self.embed_scale
+            if self.embedding_norm is not None:
+                h = self.embedding_norm(h)
 
         # Run each block.
         for block_key, block in self.blocks.items():
