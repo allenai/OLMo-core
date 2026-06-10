@@ -69,6 +69,7 @@ from olmo_core.train.callbacks import (
     TorchMemoryHistoryCallback
 )
 from olmo_core.train.train_module import (
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -150,6 +151,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 # DP_DIM=2
 EP_DIM=_env_int("OLMOE3_TESTRUN_EP_DIM", 2)
 PP_DIM=_env_int("OLMOE3_TESTRUN_PP_DIM", 2)
+CP_DIM=_env_int("OLMOE3_TESTRUN_CP_DIM", 1)
 
 # ref
 REF_NUM_NODES=8
@@ -229,6 +231,8 @@ PRODUCTION_RUN = True
 TAG=VARIANT_NAME
 if not USE_COMPILE:
     TAG += "_nocompile"
+if CP_DIM > 1:
+    TAG += f"_cp{CP_DIM}"
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -464,6 +468,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             accumulate_grads_in_fp32=GRAD_ACC_IN_FP32,
         ),
         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
+        cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DIM) if CP_DIM > 1 else None,
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             # schedule=PipelineScheduleType.custom_1F1B,

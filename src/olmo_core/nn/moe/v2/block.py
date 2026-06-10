@@ -923,8 +923,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         raise NotImplementedError("TP is not supported in MoEFusedV1TransformerBlock")
 
     def apply_cp(self, cp_mesh: DeviceMesh, ring=None, uly=None):
-        del cp_mesh, ring, uly
-        raise NotImplementedError("CP is not supported in MoEFusedV2TransformerBlock")
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
+        if self.routed_experts_router is not None:
+            self.routed_experts_router.apply_cp(cp_mesh)
+        if self.shared_experts_router is not None:
+            self.shared_experts_router.apply_cp(cp_mesh)
 
     def apply_fsdp(
         self,

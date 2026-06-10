@@ -1,4 +1,5 @@
 import contextlib
+from itertools import product
 import logging
 import os
 from dataclasses import replace
@@ -189,6 +190,9 @@ class MoEV2TransformerTrainModule(TrainModule):
         self.tp_group = None
         self.ep_dp_group = None
         self.ep_mp_group = None
+        self.cp_group = None
+        self.dense_dp_cp_group = None
+        self.expert_param_group = None
         self.ep_mp_high_priority_group = None
         self.ep_mp_high_priority_groups = None
 
@@ -219,7 +223,16 @@ class MoEV2TransformerTrainModule(TrainModule):
             # raise NotImplementedError("Pipeline parallelism is not implemented")
         if cp_config is not None:
             assert cp_config.degree > 1, "Context parallelism requires a degree > 1, otherwise use None"
-            raise NotImplementedError("Context parallelism is not implemented")
+            if getattr(model, "tbo", False):
+                raise OLMoConfigurationError(
+                    "MoEV2TransformerTrainModule does not support context parallelism with "
+                    "two-batch overlap yet"
+                )
+            if ep_config is not None and model.count_non_rowwise_ep_no_sync_blocks() > 0:
+                raise OLMoConfigurationError(
+                    "MoEV2TransformerTrainModule does not support context parallelism with "
+                    "legacy EP no-sync yet; use rowwise EP no-sync for CP"
+                )
         # if ac_config is not None:
         #     raise OLMoConfigurationError("In MoEV2TransformerTrainModule, activation checkpointing is controlled by the model, not the train module.")
         if float8_config is not None:
@@ -409,13 +422,16 @@ class MoEV2TransformerTrainModule(TrainModule):
                 "Data parallel config is required in addition to expert/tensor/context/pipeline parallel configs"
             )
 
-        # Validate parallelism degrees while adjust the DP degree.
+        # Validate parallelism degrees while adjusting the dense DP degree. For MoE
+        # parallel folding, expert parallelism is formed over the folded dense
+        # DP x CP pool for each PP stage, not over dense DP after CP has divided it.
         if pp is not None:
             if pp.degree <= 1 or dp_world_size % pp.degree != 0:
                 raise OLMoConfigurationError(
                     f"{pp.__class__.__name__}.degree must be at least 1 and divide into the world size"
                 )
             dp_world_size //= pp.degree
+        folded_dp_cp_world_size = dp_world_size
         if cp is not None:
             if cp.degree <= 1 or dp_world_size % cp.degree != 0:
                 raise OLMoConfigurationError(
@@ -429,13 +445,14 @@ class MoEV2TransformerTrainModule(TrainModule):
                 )
             dp_world_size //= tp.degree
         if ep is not None:
-            if ep.degree <= 1 or dp_world_size % ep.degree != 0:
+            if ep.degree <= 1 or folded_dp_cp_world_size % ep.degree != 0:
                 raise OLMoConfigurationError(
-                    f"{ep.__class__.__name__}.degree must be at least 1 and divide into the world size"
+                    f"{ep.__class__.__name__}.degree must be at least 1 and divide into the "
+                    f"folded DP x CP world size"
                 )
 
 
-        # Build up dense mesh dimensions. (PP , DP)
+        # Build up dense mesh dimensions. (PP, DP, CP)
         names: List[str] = []
         dims: List[int] = []
 
@@ -452,6 +469,12 @@ class MoEV2TransformerTrainModule(TrainModule):
         # Then data parallel.
         names.append(MeshDimName.dp)
         dims.append(dp_world_size)
+
+        # Context parallel ranks share data-loader batches with the same DP rank,
+        # but participate in dense parameter gradient synchronization.
+        if cp is not None:
+            names.append(MeshDimName.cp)
+            dims.append(cp.degree)
 
         if pp is not None and use_paired_pp:
             names.append('pp_paired')
@@ -480,42 +503,35 @@ class MoEV2TransformerTrainModule(TrainModule):
             log.info(f"Built moe_mesh None")
 
         else:
-            # Build up moe mesh dimensions. (PP , EP_DP, EP_MP)
+            # Build up moe mesh dimensions using MoE parallel folding. The dense
+            # DP x CP pool is reinterpreted as EP_DP x EP_MP so CP does not
+            # multiply the minimum GPU requirement for EP.
             names: List[str] = []
-            dims: List[int] = []
 
             # Pipeline parallel first.
             if pp is not None:
-                    
                 names.append(MeshDimName.pp)
-                if use_paired_pp:
-                    dims.append(pp.degree // 2)
-                else:
-                    dims.append(pp.degree)
 
-            # Then EP data parallel.
-            ep_dp_world_size = dp_world_size // ep.degree
+            ep_dp_world_size = folded_dp_cp_world_size // ep.degree
             names.append(MeshDimName.ep_dp)
-            dims.append(ep_dp_world_size)
-
-            # Then EP model parallel.
-            ep_mp_world_size = ep.degree
             names.append(MeshDimName.ep_mp)
-            dims.append(ep_mp_world_size)
-
-            if pp is not None and use_paired_pp:
-                names.append('pp_paired')
-                dims.append(2)
 
             with torch.device("cpu"):
-                mesh = torch.arange(math.prod(tuple(dims)), dtype=torch.int).view(tuple(dims))
-
-            if pp is not None and use_paired_pp:
-                r = mesh.permute(0, 3, 1, 2).contiguous() # (pp, ep_dp, ep_mp, pp_paired) -> (pp, pp_paired, ep_dp, ep_mp)
-                pp_dim, pp_paired, ep_dp_dim, ep_mp_dim = r.shape
-                r_merged = r.reshape(pp_dim * pp_paired, ep_dp_dim, ep_mp_dim)      # (pp*pp_paired, ep_dp, ep_mp)
-                mesh = r_merged
-                names.remove('pp_paired')
+                dense_rank_grid = self.dense_mesh.mesh.detach().cpu().to(torch.int)
+                if pp is not None:
+                    pp_world_size_for_layout = pp.degree // 2 if use_paired_pp else pp.degree
+                    folded_rank_grid = dense_rank_grid.reshape(
+                        pp_world_size_for_layout,
+                        folded_dp_cp_world_size,
+                    )
+                    mesh = folded_rank_grid.reshape(
+                        pp_world_size_for_layout,
+                        ep_dp_world_size,
+                        ep.degree,
+                    )
+                else:
+                    folded_rank_grid = dense_rank_grid.reshape(folded_dp_cp_world_size)
+                    mesh = folded_rank_grid.reshape(ep_dp_world_size, ep.degree)
             
             device_mesh = DeviceMesh(
                 device_type=device_type,
@@ -534,9 +550,21 @@ class MoEV2TransformerTrainModule(TrainModule):
             self.pp_group = self.dense_mesh['pp'].get_group() # 
             
         self.dp_group = self.dense_mesh['dp'].get_group()
+        if cp is not None:
+            self.cp_group = self.dense_mesh['cp'].get_group()
+            self.dense_dp_cp_group, _dense_dp_cp_groups = self._build_mesh_dim_process_group(
+                self.dense_mesh,
+                (MeshDimName.dp, MeshDimName.cp),
+                group_desc="moe_v2_dense_dp_cp",
+            )
+        else:
+            self.cp_group = None
+            self.dense_dp_cp_group = self.dp_group
         if self.moe_mesh is not None:
             self.ep_dp_group = self.moe_mesh['ep_dp'].get_group()
             self.ep_mp_group = self.moe_mesh['ep_mp'].get_group()
+            # Under parallel folding, CP is already folded into the MoE EP-DP axis.
+            self.expert_param_group = self.ep_dp_group
 
         self.world_mesh = {
             "dense": self.dense_mesh,
@@ -544,6 +572,56 @@ class MoEV2TransformerTrainModule(TrainModule):
             "dense_cpu": cpu_mesh_like(self.dense_mesh),
             "moe_cpu": None if self.moe_mesh is None else cpu_mesh_like(self.moe_mesh),
         }
+
+    @staticmethod
+    def _mesh_dim_rank_groups(device_mesh: DeviceMesh, dims: Sequence[str]) -> List[List[int]]:
+        if device_mesh.mesh_dim_names is None:
+            raise RuntimeError("could not build process groups without mesh dimension names")
+
+        dim_names = tuple(device_mesh.mesh_dim_names)
+        target_dims = tuple(str(dim) for dim in dims)
+        missing_dims = [dim for dim in target_dims if dim not in dim_names]
+        if missing_dims:
+            raise RuntimeError(
+                f"could not build process groups for dimensions {target_dims} from mesh "
+                f"with dimensions {dim_names}"
+            )
+
+        target_dim_indices = [dim_names.index(dim) for dim in target_dims]
+        other_dim_indices = [idx for idx in range(len(dim_names)) if idx not in target_dim_indices]
+
+        rank_grid = device_mesh.mesh.detach().cpu().to(torch.int64)
+        permuted = rank_grid.permute(*(other_dim_indices + target_dim_indices)).contiguous()
+        target_shape = tuple(rank_grid.shape[idx] for idx in target_dim_indices)
+        target_size = math.prod(target_shape)
+
+        if not other_dim_indices:
+            return [[int(rank) for rank in permuted.reshape(target_size).tolist()]]
+
+        rank_groups: List[List[int]] = []
+        other_shape = tuple(rank_grid.shape[idx] for idx in other_dim_indices)
+        for index in product(*(range(size) for size in other_shape)):
+            group = permuted[index].reshape(target_size).tolist()
+            rank_groups.append([int(rank) for rank in group])
+        return rank_groups
+
+    @classmethod
+    def _build_mesh_dim_process_group(
+        cls,
+        device_mesh: DeviceMesh,
+        dims: Sequence[str],
+        *,
+        group_desc: str,
+    ) -> Tuple[ProcessGroup, List[ProcessGroup]]:
+        current_group, all_groups = dist.new_subgroups_by_enumeration(
+            cls._mesh_dim_rank_groups(device_mesh, dims),
+            group_desc=group_desc,
+        )
+        if current_group == dist.GroupMember.NON_GROUP_MEMBER:
+            raise RuntimeError(
+                f"Current rank is not in any process group for mesh dimensions {tuple(dims)}"
+            )
+        return cast(ProcessGroup, current_group), cast(List[ProcessGroup], all_groups)
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -1019,6 +1097,12 @@ class MoEV2TransformerTrainModule(TrainModule):
             # Run pipeline schedule.
             input_ids, labels, model_kwargs = self._prepare_batch(batch, batch['labels'])
             assert labels is not None
+            input_ids, labels, model_kwargs = self._prepare_pipeline_context_parallel_batch(
+                input_ids,
+                labels,
+                model_kwargs,
+            )
+            assert labels is not None
             pp_outputs = self.run_pipeline(
                 input_ids,
                 labels,
@@ -1485,6 +1569,40 @@ class MoEV2TransformerTrainModule(TrainModule):
                 log_once(log, "intra-document masking enabled")
             return input_ids, labels, batch
 
+    def _prepare_pipeline_context_parallel_batch(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        model_kwargs: Dict[str, Any],
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+        if not self.cp_enabled:
+            return input_ids, labels, model_kwargs
+
+        unsupported_doc_keys = {"doc_lens", "max_doc_lens"} & set(model_kwargs)
+        if unsupported_doc_keys:
+            raise OLMoConfigurationError(
+                "context parallelism with pipeline parallelism does not support "
+                f"intra-document masking metadata yet: {sorted(unsupported_doc_keys)}"
+            )
+
+        if labels is None:
+            raise OLMoConfigurationError(
+                "context parallelism with pipeline parallelism requires labels to be sharded "
+                "alongside input_ids"
+            )
+
+        sharding_model = self.model_parts[0]
+        input_ids, labels, original_seq_len = sharding_model.prepare_cp_sequence_inputs(
+            input_ids,
+            labels,
+            ignore_index=self.label_ignore_index,
+        )
+
+        model_kwargs = dict(model_kwargs)
+        model_kwargs["cp_already_sharded"] = True
+        model_kwargs["cp_original_seq_len"] = original_seq_len
+        return input_ids, labels, model_kwargs
+
 
     def parallelize_and_init_model(
         self,
@@ -1505,8 +1623,6 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         if tp_config is not None:
             raise NotImplementedError("TP not supported yet")
-        if cp_config is not None:
-            raise NotImplementedError("CP not supported yet")
 
 
         if pp_config is not None:
@@ -1558,6 +1674,15 @@ class MoEV2TransformerTrainModule(TrainModule):
                 m.apply_fp8(float8_config)
                 log.info("Swapped linear layers to Float8 linear layers\n%s", m)
 
+        if cp_config is not None:
+            assert self.world_mesh["dense"] is not None
+            cp_mesh = self.world_mesh["dense"]["cp"]
+            for m in model_parts:
+                m.apply_cp(cp_mesh, ring=cp_config.ring, uly=cp_config.uly)
+            log.info(
+                "Applied context parallelism to the model with %s",
+                get_device_mesh_info(cp_mesh),
+            )
 
         assert dp_config is not None
 
@@ -1570,6 +1695,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             assert self.world_mesh["dense"] is not None, "Dense mesh must be built before applying expert parallelism"
             ep_mesh = self.world_mesh["moe"]
             dp_mesh = self.world_mesh["dense"]["dp"]
+            dense_param_group = self.dense_dp_cp_group
+            expert_param_group = self.expert_param_group
             ep_mp_group_override: Optional[ProcessGroup] = None
 
             if backend_supports_cuda():
@@ -1651,6 +1778,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             # param_dtype = dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
             dp_mesh = self.world_mesh["dense"]["dp"]
             ep_mesh = None
+            dense_param_group = self.dense_dp_cp_group
+            expert_param_group = None
             # for m in model_parts:
             #     cast(MoEFusedV2Transformer, m).apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model, param_dtype=param_dtype)
             # log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
@@ -1690,6 +1819,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             ddp_m = m.apply_dp(
                 dp_mesh=dp_mesh,
                 ep_mesh=ep_mesh,
+                dense_process_group=dense_param_group,
+                expert_process_group=expert_param_group,
                 accumulate_grads_in_fp32=dp_config.accumulate_grads_in_fp32,
                 reduce_grads_in_fp32=dp_config.reduce_grads_in_fp32,
                 bucket_cap_mb=dp_config.bucket_cap_mb,
@@ -1743,6 +1874,31 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         return
 
+    def _cp_local_rank_microbatch_size(self, rank_microbatch_size: int) -> int:
+        if self._cp_config is None:
+            return rank_microbatch_size
+
+        if rank_microbatch_size % self.max_sequence_length != 0:
+            raise RuntimeError(
+                f"'rank_microbatch_size' ({rank_microbatch_size}) must be divisible by "
+                f"'max_sequence_length' ({self.max_sequence_length})"
+            )
+
+        cp_degree = self._cp_config.degree
+        sequence_batch_size = rank_microbatch_size // self.max_sequence_length
+        length_multiple = cp_degree
+        ring = getattr(self._cp_config, "ring", None)
+        if ring is not None:
+            load_balancer = getattr(ring, "load_balancer", None)
+            load_balancer_name = getattr(load_balancer, "value", load_balancer)
+            if load_balancer_name == "zig_zag":
+                length_multiple = 2 * cp_degree
+
+        padded_sequence_length = (
+            math.ceil(self.max_sequence_length / length_multiple) * length_multiple
+        )
+        return sequence_batch_size * (padded_sequence_length // cp_degree)
+
     def _prewarm_ep_no_sync_symm_buffers(
         self,
         *,
@@ -1758,6 +1914,9 @@ class MoEV2TransformerTrainModule(TrainModule):
         local_counts = [m.count_ep_no_sync_blocks() for m in typed_parts]
         if not any(local_counts):
             return
+        prewarm_rank_microbatch_size = self._cp_local_rank_microbatch_size(
+            rank_microbatch_size
+        )
 
         use_olmo_symm = olmo_symm_mem.is_enabled()
         if not use_olmo_symm and self.pp_enabled:
@@ -1797,7 +1956,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         for model_part_idx, (model_part, max_count) in enumerate(zip(typed_parts, max_counts)):
             model_part.prewarm_ep_no_sync_symm_buffers(
-                max_local_microbatch_size=rank_microbatch_size,
+                max_local_microbatch_size=prewarm_rank_microbatch_size,
                 pad_to_block_count=max_count,
                 rowwise_lifetime_lease_slots=rowwise_slots_by_part[model_part_idx],
             )
@@ -1834,9 +1993,11 @@ class MoEV2TransformerTrainModule(TrainModule):
         assert self.pp_enabled and self._pp_config is not None, "reduce_send_recv is only valid when PP is enabled"
         if self.pp_group_rank == self.pp_final_stage_rank:
             assert x is not None
-            # Reduce across DP process group.
-            dist.all_reduce(x, group=self.dp_process_group)
-            x.div_(self.dp_world_size)
+            # Reduce across the parameter replica group for dense weights. With CP this includes
+            # both DP and CP ranks so scalar losses reflect the full sequence.
+            reduce_group = self.dense_dp_cp_group
+            dist.all_reduce(x, group=reduce_group)
+            x.div_(get_world_size(reduce_group))
         else:
             assert x is None
             x = move_to_device(torch.empty([]), self.device)

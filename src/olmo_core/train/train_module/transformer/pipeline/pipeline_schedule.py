@@ -366,6 +366,8 @@ class CustomScheduleInterleaved1F1B():
                 "loss_reduction",
                 "z_loss_multiplier",
                 "return_logits",
+                "cp_already_sharded",
+                "cp_original_seq_len",
             }
             unexpected_keys = set(kwargs) - supported_keys
             if unexpected_keys:
@@ -412,6 +414,16 @@ class CustomScheduleInterleaved1F1B():
                 elif key == "return_logits":
                     if not isinstance(value, bool):
                         raise TypeError("'return_logits' must be a bool")
+                    for kwarg_mb in kwargs_split:
+                        kwarg_mb[key] = value
+                elif key == "cp_already_sharded":
+                    if not isinstance(value, bool):
+                        raise TypeError("'cp_already_sharded' must be a bool")
+                    for kwarg_mb in kwargs_split:
+                        kwarg_mb[key] = value
+                elif key == "cp_original_seq_len":
+                    if not isinstance(value, int):
+                        raise TypeError("'cp_original_seq_len' must be an int")
                     for kwarg_mb in kwargs_split:
                         kwarg_mb[key] = value
 

@@ -263,6 +263,16 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             and block.ep_no_sync
         )
 
+    def count_non_rowwise_ep_no_sync_blocks(self) -> int:
+        return sum(
+            1
+            for block in self.blocks.values()
+            if block.is_moe
+            and isinstance(block, MoEFusedV2TransformerBlock)
+            and block.ep_no_sync
+            and not block.ep_no_sync_use_rowwise_all_to_all
+        )
+
     @torch.no_grad()
     def refresh_rowwise_fp8_cache(self) -> None:
         for block in self.blocks.values():
@@ -647,6 +657,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         self,
         dp_mesh: DeviceMesh,
         ep_mesh: Optional[DeviceMesh],
+        dense_process_group: Optional[dist.ProcessGroup] = None,
+        expert_process_group: Optional[dist.ProcessGroup] = None,
         accumulate_grads_in_fp32: bool = True,
         reduce_grads_in_fp32: bool = True,
         bucket_cap_mb: Optional[int] = None,
@@ -665,12 +677,16 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         self.to(torch.bfloat16)
         self.disable_mxfp8_expert_anchor_grads()
 
-        dp_group = dp_mesh.get_group()
+        dp_group = dense_process_group if dense_process_group is not None else dp_mesh.get_group()
 
         if ep_mesh is None:
             epdp_group = dp_group
         else:
-            epdp_group = ep_mesh['ep_dp'].get_group()
+            epdp_group = (
+                expert_process_group
+                if expert_process_group is not None
+                else ep_mesh['ep_dp'].get_group()
+            )
 
         def param_process_group_fn(name: str, param: torch.nn.Parameter):
             # MoE params → EP_DP group
@@ -684,7 +700,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             module=self,
             dim=0, # for scatter/gather
             init_sync=True, # meta device
-            process_group=dp_mesh.get_group(),
+            process_group=dp_group,
             param_process_group_fn=param_process_group_fn,
             accumulate_grads_in_fp32=accumulate_grads_in_fp32,
             reduce_grads_in_fp32=reduce_grads_in_fp32,
@@ -943,7 +959,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
                 # with self.offload_context:
-                one_block_kwargs = per_block_kwargs.get(block_key, {})
+                one_block_kwargs = per_block_kwargs.get(int(block_key), {})
                 if self.checkpoint_tbo_dense_layers:
                     h = checkpoint(
                         block,
@@ -1165,14 +1181,14 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
 
 
-    def _forward_blocks(self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[str, Any]) -> torch.Tensor:
+    def _forward_blocks(self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[int, Dict[str, Any]]) -> torch.Tensor:
         # Run each block.
         for block_idx, (block_key, block) in enumerate(self.blocks.items()):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
-                block_kwargs = per_block_kwargs.get(block_key, {})
+                block_kwargs = per_block_kwargs.get(int(block_key), {})
                 combined_kwargs = {**all_block_kwargs, **block_kwargs}
                 do_not_recompute = [] # HACK
                 if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (self.recompute_block_keys and block_key in self.recompute_block_keys):
