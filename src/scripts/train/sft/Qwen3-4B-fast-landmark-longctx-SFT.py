@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 from typing import Optional
 
@@ -130,6 +131,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         beaker_launch_config.priority = "urgent"
 
     tokenizer_config = TokenizerConfig.qwen3()
+    # The SFT shards are separated by SINGLE EOS tokens (see convert_longctx_tasks_to_sft.py).
+    # qwen3 sets bos_token_id == eos_token_id, which makes document-boundary detection require
+    # a doubled EOS (eos followed by bos) and would treat the whole shard as one document, so
+    # drop the BOS for document splitting.
+    doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
 
     # Qwen3-4B with the FAST landmark attention mixer (AttentionType.fast_landmark). No YaRN.
     model_config = TransformerConfig.qwen3_4B(
@@ -177,7 +183,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     instance_source_config = LandmarkInstanceSourceConfig(
         source=PadToLengthInstanceSourceConfig.from_npy(
             f"{clean_path}/token_ids_part_*.npy",
-            tokenizer=tokenizer_config,
+            tokenizer=doc_tokenizer_config,
             sequence_length=CONTENT_SEQUENCE_LENGTH,
             label_mask_paths=[f"{clean_path}/labels_mask_*.npy"],
             expand_glob=True,
