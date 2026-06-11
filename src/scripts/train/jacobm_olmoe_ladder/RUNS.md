@@ -452,3 +452,24 @@ one targeted follow-up after the first three Cx4 jobs finish.
 | `eg-275m-cx4-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7B9XNDT2D578HYR8VBVYA | Finished step 30791, 16.143B tokens, avg100M 2.5577, avg250M 2.5582, avg500M 2.5599. W&B `0vr98te9`. |
 | `eg-275m-cx4-eg96e8k-lr1.6e-3-r1` | `fine_96e_top8` | 1.6e-3 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7BMTTSW6VAY20FM8XKVWB | Finished step 30791, 16.143B tokens, avg100M 2.5516, avg250M 2.5523, avg500M 2.5541. W&B `gsqree2x`. Best fine Cx4 point. |
 | `eg-275m-cx4-eg96e8k-lr3.2e-3-r1` | `fine_96e_top8` | 3.2e-3 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7C0KBTY8TVNC361Z2G3KV | Finished step 30791, 16.143B tokens, avg100M 2.5623, avg250M 2.5629, avg500M 2.5650. W&B `589cgpj0`. Fine Cx4 is bracketed; uses mb8 fallback after mb16 OOM at Cx1 smoke. |
+
+275M Cx2/Cx8 transferred-LR probes:
+
+These were approved after the Cx1/Cx4 curves showed clean LR transfer from the
+baseline 275M optimum region. Cx2 was launched first, then Cx8. The Cx8
+microbatch is `4` so the 96-sequence global batch divides evenly over 8 GPUs.
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-275m-cx2-eg24e2k-lr5e-4-r1` | `coarse_24e_top2` | 5e-4 | 524,288 | 64 | 2 | 1 | 16 | https://beaker.org/ex/01KTVTB301X3KC47AFF6PMDGWH | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg24e2k-lr1e-3-r1` | `coarse_24e_top2` | 1e-3 | 524,288 | 64 | 2 | 1 | 16 | https://beaker.org/ex/01KTVTBEG3E629TDE325DPFQK6 | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg24e2k-lr2e-3-r1` | `coarse_24e_top2` | 2e-3 | 524,288 | 64 | 2 | 1 | 16 | https://beaker.org/ex/01KTVTBRF083397K9V6HM278YC | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg96e8k-lr5e-4-r1` | `fine_96e_top8` | 5e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KTVTC4VB90FP20CSF459VSTX | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KTVTCF42VT40VADJNRQ8DZ3S | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg96e8k-lr2e-3-r1` | `fine_96e_top8` | 2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KTVTCTVEAQ480W38BMGK21C1 | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx8-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTDHG4W7D77KTMK287N36Y | Transferred Cx8 sweep; started at launch check. |
+| `eg-275m-cx8-eg24e2k-lr1.6e-3-r1` | `coarse_24e_top2` | 1.6e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTDXBT5YKA0Z2Q45P2TCNM | Transferred Cx8 sweep; queued/created at launch check. |
+| `eg-275m-cx8-eg24e2k-lr3.2e-3-r1` | `coarse_24e_top2` | 3.2e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTE88FV3A9W5SQRYQ3Q4JP | Transferred Cx8 sweep; queued/created at launch check. |
+| `eg-275m-cx8-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTEMFWXR4N9AW58HFDZ31Y | Transferred Cx8 sweep; queued/created at launch check. |
+| `eg-275m-cx8-eg96e8k-lr1.6e-3-r1` | `fine_96e_top8` | 1.6e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTF04AHCR2VP8DCPERSY7D | Transferred Cx8 sweep; queued/created at launch check. |
+| `eg-275m-cx8-eg96e8k-lr3.2e-3-r1` | `fine_96e_top8` | 3.2e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTFBWY8CPQQNMXBCHFK029 | Transferred Cx8 sweep; queued/created at launch check. |
