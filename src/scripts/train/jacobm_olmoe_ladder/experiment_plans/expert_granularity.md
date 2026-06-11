@@ -234,6 +234,9 @@ Notes:
 - Existing 1.2B Cx4 baseline runs used the older `gpu8-ep1mb2` setting. Future
   comparable launches should use the updated `gpu16-ep1mb2` resource policy
   unless we intentionally need to match those exact historical runs.
+- The 275M fine-grained `96E/top8` Cx1 smoke OOMed at `gpu1-ep1mb16`; use
+  `gpu1-ep1mb8` for that variant unless a later smoke proves a higher
+  microbatch is healthy. The coarse `24E/top2` variant keeps `gpu1-ep1mb16`.
 - Hold off on new 810M/1.2B/midpoint Cx16 jobs until the baseline plan changes.
   The 275M expert-granularity experiment is the exception: run Cx16 for both
   non-baseline variants so the first ablation has a full 275M ladder.

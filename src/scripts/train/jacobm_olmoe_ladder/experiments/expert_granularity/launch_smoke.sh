@@ -9,13 +9,15 @@ JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
 NUM_NODES=1
 GPUS=1
 EP_DIM=1
-MICRO_BSZ=16
+COARSE_MICRO_BSZ="${COARSE_MICRO_BSZ:-16}"
+FINE_MICRO_BSZ="${FINE_MICRO_BSZ:-8}"
 GLOBAL_BATCH_SIZE_SEQ=32
 CHINCHILLA_MULTIPLE="${CHINCHILLA_MULTIPLE:-0.02}"
 LR="${LR:-2e-3}"
 LR_TAG="${LR_TAG:-lr2e-3}"
 SMOKE_SUFFIX="${SMOKE_SUFFIX:-r1}"
 EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
+EXPERT_GEOMETRIES="${EXPERT_GEOMETRIES:-coarse fine}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -35,9 +37,10 @@ common_beaker_args=(
 launch_one() {
   local expert_geometry="$1"
   local eg_tag="$2"
+  local micro_bsz="$3"
   local name="${RUN_PREFIX}-${eg_tag}-${LR_TAG}-${SMOKE_SUFFIX}"
   local log_path="${LOG_DIR}/${name}.log"
-  local systems_tag="b256k-gpu${GPUS}-ep${EP_DIM}mb${MICRO_BSZ}"
+  local systems_tag="b256k-gpu${GPUS}-ep${EP_DIM}mb${micro_bsz}"
 
   local cmd=(
     uv run --extra dev --extra beaker python -m olmo_core.launch.beaker
@@ -56,7 +59,7 @@ launch_one() {
     --global-batch-size-seq="${GLOBAL_BATCH_SIZE_SEQ}"
     --num-nodes="${NUM_NODES}"
     --gpus-per-node="${GPUS}"
-    --micro-batch-size="${MICRO_BSZ}"
+    --micro-batch-size="${micro_bsz}"
     --ep-dim="${EP_DIM}"
     --save-interval=999999999
     --ephemeral-save-interval="${EPHEMERAL_SAVE_INTERVAL}"
@@ -105,5 +108,17 @@ launch_one() {
   return 1
 }
 
-launch_one coarse_24e_top2 eg24e2k
-launch_one fine_96e_top8 eg96e8k
+for variant in ${EXPERT_GEOMETRIES}; do
+  case "${variant}" in
+    coarse|eg24e2k|coarse_24e_top2)
+      launch_one coarse_24e_top2 eg24e2k "${COARSE_MICRO_BSZ}"
+      ;;
+    fine|eg96e8k|fine_96e_top8)
+      launch_one fine_96e_top8 eg96e8k "${FINE_MICRO_BSZ}"
+      ;;
+    *)
+      echo "Unknown expert geometry selector: ${variant}" >&2
+      exit 1
+      ;;
+  esac
+done

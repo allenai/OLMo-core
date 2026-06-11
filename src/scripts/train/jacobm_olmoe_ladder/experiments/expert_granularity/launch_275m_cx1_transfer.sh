@@ -9,7 +9,8 @@ JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
 NUM_NODES=1
 GPUS=1
 EP_DIM=1
-MICRO_BSZ=16
+COARSE_MICRO_BSZ="${COARSE_MICRO_BSZ:-16}"
+FINE_MICRO_BSZ="${FINE_MICRO_BSZ:-8}"
 GLOBAL_BATCH_SIZE_SEQ=32
 CHINCHILLA_MULTIPLE=1
 SWEEP_SUFFIX="${SWEEP_SUFFIX:-r1}"
@@ -36,9 +37,10 @@ launch_one() {
   local eg_tag="$2"
   local lr="$3"
   local lr_tag="$4"
+  local micro_bsz="$5"
   local name="${RUN_PREFIX}-${eg_tag}-${lr_tag}-${SWEEP_SUFFIX}"
   local log_path="${LOG_DIR}/${name}.log"
-  local systems_tag="b256k-gpu${GPUS}-ep${EP_DIM}mb${MICRO_BSZ}"
+  local systems_tag="b256k-gpu${GPUS}-ep${EP_DIM}mb${micro_bsz}"
 
   local cmd=(
     uv run --extra dev --extra beaker python -m olmo_core.launch.beaker
@@ -57,7 +59,7 @@ launch_one() {
     --global-batch-size-seq="${GLOBAL_BATCH_SIZE_SEQ}"
     --num-nodes="${NUM_NODES}"
     --gpus-per-node="${GPUS}"
-    --micro-batch-size="${MICRO_BSZ}"
+    --micro-batch-size="${micro_bsz}"
     --ep-dim="${EP_DIM}"
     --ladder-evals
     --eval-task-set=fast
@@ -111,7 +113,11 @@ launch_one() {
 for spec in coarse_24e_top2:eg24e2k fine_96e_top8:eg96e8k; do
   expert_geometry="${spec%%:*}"
   eg_tag="${spec##*:}"
-  launch_one "${expert_geometry}" "${eg_tag}" 1e-3 lr1e-3
-  launch_one "${expert_geometry}" "${eg_tag}" 2e-3 lr2e-3
-  launch_one "${expert_geometry}" "${eg_tag}" 4e-3 lr4e-3
+  micro_bsz="${COARSE_MICRO_BSZ}"
+  if [[ "${eg_tag}" == "eg96e8k" ]]; then
+    micro_bsz="${FINE_MICRO_BSZ}"
+  fi
+  launch_one "${expert_geometry}" "${eg_tag}" 1e-3 lr1e-3 "${micro_bsz}"
+  launch_one "${expert_geometry}" "${eg_tag}" 2e-3 lr2e-3 "${micro_bsz}"
+  launch_one "${expert_geometry}" "${eg_tag}" 4e-3 lr4e-3 "${micro_bsz}"
 done
