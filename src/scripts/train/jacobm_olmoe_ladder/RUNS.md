@@ -510,5 +510,22 @@ Smoke tests:
 
 | Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| `sp-smoke-sp96e4k-lr2e-3-r1` | `high_total_96e_top4` | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWFC73099P7Y0TVCRGJSZHZ | Total-sparsity smoke from commit `22aeaab`; scheduled at launch status check. |
-| `sp-smoke-sp192e4k-lr2e-3-r1` | `huge_total_192e_top4` | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWFCK6QBQ4QH5X3TBKF98MA | Total-sparsity smoke from commit `22aeaab`; created/queued at launch status check. |
+| `sp-smoke-sp96e4k-lr2e-3-r1` | `high_total_96e_top4` | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWFC73099P7Y0TVCRGJSZHZ | Total-sparsity smoke from commit `22aeaab`; finished cleanly at step 308, skipped steps 0, peak reserved memory 55.9 GiB. |
+| `sp-smoke-sp192e4k-lr2e-3-r1` | `huge_total_192e_top4` | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWFCK6QBQ4QH5X3TBKF98MA | Total-sparsity smoke from commit `22aeaab`; finished cleanly at step 310, skipped steps 0, peak reserved memory 79.3 GiB. |
+
+275M Cx1/Cx4 transferred LR grids:
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx1-sp96e4k-lr1e-3-r1` | `high_total_96e_top4` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGMXVT9N3GSXEBYC2H5KV3 | First-wave total-sparsity Cx1 grid; transferred from baseline optimum. |
+| `sp-275m-cx1-sp96e4k-lr2e-3-r1` | `high_total_96e_top4` | 1 | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGNAEEZZ71FPN3GPGFRW89 | First-wave total-sparsity Cx1 grid; transferred from baseline optimum. |
+| `sp-275m-cx1-sp96e4k-lr4e-3-r1` | `high_total_96e_top4` | 1 | 4e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGNPBFPAJWYPQ0Z2VFN4YY | First-wave total-sparsity Cx1 grid; transferred from baseline optimum. |
+| `sp-275m-cx4-sp96e4k-lr8e-4-r1` | `high_total_96e_top4` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGP25M12KH4YYA9W0FXMFJ | First-wave total-sparsity Cx4 grid; transferred from baseline optimum. |
+| `sp-275m-cx4-sp96e4k-lr1.6e-3-r1` | `high_total_96e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGPDKXH3953BDF61N0G57Q | First-wave total-sparsity Cx4 grid; transferred from baseline optimum. |
+| `sp-275m-cx4-sp96e4k-lr3.2e-3-r1` | `high_total_96e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGPSSMJZ5Z002E57BK64RE | First-wave total-sparsity Cx4 grid; transferred from baseline optimum. |
+| `sp-275m-cx1-sp192e4k-lr1e-3-r1` | `huge_total_192e_top4` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGQ57J8FW4F95CM27ASC99 | First-wave total-sparsity Cx1 grid; transferred from baseline optimum. |
+| `sp-275m-cx1-sp192e4k-lr2e-3-r1` | `huge_total_192e_top4` | 1 | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGQH2M6JDTXZ2VKNYF7Z0E | First-wave total-sparsity Cx1 grid; transferred from baseline optimum. |
+| `sp-275m-cx1-sp192e4k-lr4e-3-r1` | `huge_total_192e_top4` | 1 | 4e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGQWXG9TZAT8SSZ231TM0M | First-wave total-sparsity Cx1 grid; transferred from baseline optimum. |
+| `sp-275m-cx4-sp192e4k-lr8e-4-r1` | `huge_total_192e_top4` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGR9QHSDAS5RCV7NZV5GJ7 | First-wave total-sparsity Cx4 grid; transferred from baseline optimum. |
+| `sp-275m-cx4-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGRN09127CB35E5SGS0B03 | First-wave total-sparsity Cx4 grid; transferred from baseline optimum. |
+| `sp-275m-cx4-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGS0RHZ743VAGKQ9R85JG5 | First-wave total-sparsity Cx4 grid; transferred from baseline optimum. |
