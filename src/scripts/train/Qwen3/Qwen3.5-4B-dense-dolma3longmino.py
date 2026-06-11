@@ -14,6 +14,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -40,7 +41,7 @@ from olmo_core.train.train_module import (
 SEQUENCE_LENGTH = 65536  # 64k context
 
 DATA_DIR = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen"
+    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen3_5"
 )
 
 GLOBAL_BATCH_SIZE = 65536 * 64  # ~4M tokens
@@ -74,13 +75,20 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
 
-    tokenizer_config = TokenizerConfig.qwen3()
+    tokenizer_config = TokenizerConfig.qwen3_5()
 
     # Qwen3.5-4B: hybrid Gated DeltaNet (linear attention) + full attention, 3:1 ratio.
     model_config = TransformerConfig.qwen3_5_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
         attn_backend=AttentionBackendName.flash_2,
     )
+
+    # Fused linear cross-entropy (Liger): never materializes the full 64k x 248320-vocab logits
+    # (~32GB bf16, ~65GB once cross-entropy upcasts to fp32, plus an equal-sized grad). Without
+    # context parallelism each rank computes the loss over the whole 64k sequence at once, so this
+    # logits spike -- not params/activations -- is what OOMs the 80GB GPU. Matches the sparse/fast
+    # landmark scripts.
+    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,  # 1 sequence per rank per micro-step
@@ -101,7 +109,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=1,
+            # No Ulysses CP here (the GDN recurrence rejects it), so each rank holds the full 64k
+            # activations *and*, with shard_degree=1, the full ~5B params + Adam state (~64GB) -- which
+            # OOMs an 80GB GPU. Shard params/grads/optim 8-way within each node (replicate across the 4
+            # nodes) to free ~56GB/GPU. Mirrors Qwen3-4B-sparse-landmark-dolma3longmino.py.
+            shard_degree=8,
         ),
         # No Ulysses CP: incompatible with the GatedDeltaNet recurrence; each rank handles full 64k.
         # Use FULL activation checkpointing: budget mode requires torch.compile, but compile is off
@@ -116,7 +128,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     # Composable data pipeline on the new dolma3_longmino sample (no landmark insertion):
-    #   NumpyDocumentSource (part-*.npy, Qwen3 uint32, EOS-separated)
+    #   NumpyDocumentSource (part-*.npy, Qwen3.5 uint32, EOS-separated)
     #     -> ConcatAndChunkInstanceSource (seq_len=SEQUENCE_LENGTH=65536)
     instance_source_config = ConcatAndChunkInstanceSourceConfig(
         sources=[

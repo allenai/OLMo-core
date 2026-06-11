@@ -47,6 +47,11 @@ class TokenizerName(StrEnum):
     The Qwen3 tokenizer.
     """
 
+    qwen3_5 = "qwen3_5"
+    """
+    The Qwen3.5 tokenizer (``Qwen/Qwen3.5-0.8B``).
+    """
+
 @dataclass
 class TokenizerConfig(Config):
     """
@@ -146,6 +151,24 @@ class TokenizerConfig(Config):
             bos_token_id=151643,
             pad_token_id=151643,
             identifier=TokenizerName.qwen3,
+        )
+
+    @classmethod
+    def qwen3_5(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.qwen3_5` tokenizer config.
+
+        Matches ``Qwen/Qwen3.5-0.8B``: the model embedding vocab is 248320, and ``<|endoftext|>``
+        (token id 248044) is used as the EOS / document separator, bos, and pad token. Note this is
+        *not* the tokenizer's chat ``eos_token`` (``<|im_end|>``, 248046) -- pretraining data is
+        separated by ``<|endoftext|>``.
+        """
+        return cls(
+            vocab_size=248320,
+            eos_token_id=248044,
+            bos_token_id=248044,
+            pad_token_id=248044,
+            identifier=TokenizerName.qwen3_5,
         )
 
     @classmethod

@@ -54,10 +54,10 @@ BLOCK_SIZE = MEM_FREQ + 1  # 64
 SEQUENCE_LENGTH = 65536  # 64k (must be divisible by BLOCK_SIZE)
 CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
 
-LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
+LANDMARK_TOKEN_ID = 248200  # Qwen3.5 unused embedding row (vocab 248320) used as the landmark (memory) token
 
 DATA_DIR = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen"
+    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen3_5"
 )
 
 GLOBAL_BATCH_SIZE = 65536 * 64  # ~4M tokens
@@ -91,7 +91,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
 
-    tokenizer_config = TokenizerConfig.qwen3()
+    tokenizer_config = TokenizerConfig.qwen3_5()
 
     # Qwen3.5-4B hybrid, then swap the full-attention layers to landmark attention.
     model_config = TransformerConfig.qwen3_5_4B(
@@ -124,7 +124,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=1,
+            # No Ulysses CP here (the GDN recurrence rejects it), so each rank holds the full 64k
+            # activations *and*, with shard_degree=1, the full ~5B params + Adam state (~64GB) -- which
+            # OOMs an 80GB GPU. Shard params/grads/optim 8-way within each node (replicate across the 4
+            # nodes) to free ~56GB/GPU. Mirrors Qwen3-4B-sparse-landmark-dolma3longmino.py.
+            shard_degree=8,
         ),
         # No Ulysses CP: incompatible with the GatedDeltaNet recurrence; each rank handles full 64k.
         # Use FULL activation checkpointing: budget mode requires torch.compile, but compile is off
@@ -139,7 +143,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     # Composable data pipeline on the new dolma3_longmino sample:
-    #   NumpyDocumentSource (part-*.npy, Qwen3 uint32, EOS-separated)
+    #   NumpyDocumentSource (part-*.npy, Qwen3.5 uint32, EOS-separated)
     #     -> ConcatAndChunkInstanceSource (seq_len=CONTENT_SEQUENCE_LENGTH=64512)
     #     -> LandmarkInstanceSource (insert landmark token every MEM_FREQ tokens -> seq_len=65536)
     instance_source_config = LandmarkInstanceSourceConfig(
