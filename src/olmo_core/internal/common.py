@@ -195,6 +195,7 @@ CLUSTER_TO_GPU_TYPE = {
     "ai2/ceres": "NVIDIA H100 80GB HBM3",
     "ai2/titan": "NVIDIA B200",
     "ai2/saturn": "NVIDIA A100 80GB",
+    "ai2/neptune": "NVIDIA L40",
 }
 
 
