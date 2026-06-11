@@ -13,7 +13,9 @@ serially, so the backward is badly under-parallelized and dominates the step (~2
 
 Gradients are bit-identical to the original (``dk``/``dv`` same accumulation order; ``dq`` accumulated
 ascending with no atomics), and fwd+bwd is ~17-20x faster at 4k-8k (~1.4x FlashAttention). Tuned
-launch config (H200, head_dim 128): ``num_warps=4, num_stages=2``.
+launch config (H200, head_dim 128): ``num_warps=4, num_stages=2``. Head dims up to 256 (e.g.
+Qwen3.5) are supported: ``head_dim > 128`` switches to ``num_warps=8`` (and 2 fwd stages) to fit
+register/shared-memory budgets, leaving the ``<= 128`` launch configs untouched.
 
 ``FastLandmarkAttention`` is a drop-in :class:`Attention` variant (a *new* sequence mixer, selected
 via ``AttentionType.fast_landmark``); it supports Ulysses context parallelism exactly as the
@@ -34,9 +36,7 @@ from olmo_core.distributed.parallel.context_parallel import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 
-from . import (
-    Attention,  # base mixer (defined before the end-of-module import in __init__)
-)
+from . import Attention  # base mixer (defined before the end-of-module import in __init__)
 from .kv_cache import KVCacheManager
 from .landmark import landmark_grouped_softmax, repeat_kv
 from .landmark_kernel import (
@@ -340,7 +340,7 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         k = k.contiguous()
         v = v.contiguous()
         batch, nheads, seqlen_q, d = q.shape
-        assert d <= 128 and q.dtype == k.dtype == v.dtype and q.is_cuda
+        assert d <= 256 and q.dtype == k.dtype == v.dtype and q.is_cuda
 
         BLOCK = block_size
         o = torch.empty_like(q)
@@ -349,8 +349,15 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         m = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         # Tuned forward launch (H200, head_dim 128): num_warps=4, num_stages=3 (~1.5x over the
         # original 8/2). Env-overridable. Identical numerics to the original forward.
-        num_warps = _env_int("LM_FAST_FWD_WARPS", 4)
-        num_stages = _env_int("LM_FAST_FWD_STAGES", 3)
+        # head_dim > 128 (e.g. Qwen3.5's 256) gets its own defaults: more warps to spread the
+        # (BLOCK, 256) fp32 accumulator across registers, fewer stages so the pipelined K/V tiles
+        # fit in shared memory. The <= 128 defaults are untouched.
+        if d > 128:
+            num_warps = _env_int("LM_FAST_FWD_WARPS", 8)
+            num_stages = _env_int("LM_FAST_FWD_STAGES", 2)
+        else:
+            num_warps = _env_int("LM_FAST_FWD_WARPS", 4)
+            num_stages = _env_int("LM_FAST_FWD_STAGES", 3)
         _fwd_kernel[grid](
             q,
             k,
@@ -454,8 +461,14 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
             k.shape[2],
         )
         const = dict(BLOCK=BLOCK, BLOCK_DMODEL=ctx.BLOCK_DMODEL, N_PREFIX_Q=ctx.N_PREFIX_Q)
-        warps = _env_int("LM_FAST_WARPS", 4)
-        stages = _env_int("LM_FAST_STAGES", 2)
+        # head_dim > 128 needs 8 warps: the dk/dv (and dq) fp32 accumulators are (BLOCK, 256), and
+        # at 4 warps they alone exceed the per-thread register budget. <= 128 defaults untouched.
+        if ctx.BLOCK_DMODEL > 128:
+            warps = _env_int("LM_FAST_WARPS", 8)
+            stages = _env_int("LM_FAST_STAGES", 2)
+        else:
+            warps = _env_int("LM_FAST_WARPS", 4)
+            stages = _env_int("LM_FAST_STAGES", 2)
         n_kv_blocks = triton.cdiv(k.shape[2], BLOCK)
         _bwd_kv_kernel[(ctx.grid[1], n_kv_blocks)](
             *args, **const, num_warps=warps, num_stages=stages
