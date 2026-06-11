@@ -436,3 +436,19 @@ Accidental/ambiguous smoke jobs stopped before use:
 | `eg-275m-cx1-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT69YPF7F1GAQH4ZPM6JT1A | Cx1 LR transfer probe; uses mb8 fallback after mb16 OOM. |
 | `eg-275m-cx1-eg96e8k-lr2e-3-r1` | `fine_96e_top8` | 2e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6A9WYW6Y3RB31X433F87X | Cx1 LR transfer probe; uses mb8 fallback after mb16 OOM. |
 | `eg-275m-cx1-eg96e8k-lr4e-3-r1` | `fine_96e_top8` | 4e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6AN3CMWPT5E9NGWZJH3DX | Cx1 LR transfer probe; uses mb8 fallback after mb16 OOM. |
+
+275M Cx4 baseline-centered probes:
+
+These were queued before the Cx1 probes finished so the overnight queue can keep
+working. They are centered around the 275M baseline Cx4 optimum region. If the
+variant-specific LR multiplier differs from 1.0, extend each curve with at most
+one targeted follow-up after the first three Cx4 jobs finish.
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-275m-cx4-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 8e-4 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7A7ZS7EV70TR3XBJMSAVG | Baseline-centered Cx4 probe. |
+| `eg-275m-cx4-eg24e2k-lr1.6e-3-r1` | `coarse_24e_top2` | 1.6e-3 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7AJT93MT6DW89FE1A04RE | Baseline-centered Cx4 probe. |
+| `eg-275m-cx4-eg24e2k-lr3.2e-3-r1` | `coarse_24e_top2` | 3.2e-3 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7AYPX74Y4QG4C6GWGX3A0 | Baseline-centered Cx4 probe. |
+| `eg-275m-cx4-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7B9XNDT2D578HYR8VBVYA | Baseline-centered Cx4 probe; uses mb8 fallback after mb16 OOM at Cx1 smoke. |
+| `eg-275m-cx4-eg96e8k-lr1.6e-3-r1` | `fine_96e_top8` | 1.6e-3 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7BMTTSW6VAY20FM8XKVWB | Baseline-centered Cx4 probe; uses mb8 fallback after mb16 OOM at Cx1 smoke. |
+| `eg-275m-cx4-eg96e8k-lr3.2e-3-r1` | `fine_96e_top8` | 3.2e-3 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7C0KBTY8TVNC361Z2G3KV | Baseline-centered Cx4 probe; uses mb8 fallback after mb16 OOM at Cx1 smoke. |
