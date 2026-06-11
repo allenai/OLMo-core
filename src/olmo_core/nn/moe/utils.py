@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Tuple, cast
+from typing import Optional, cast
 
 import torch
 
@@ -36,24 +36,29 @@ except Exception:  # pragma: no cover - import guard
     moe_unpermute = None  # type: ignore[assignment]
 
 
-# LAST_STREAM_ID = None
-@torch.compiler.disable  # helper runs eagerly,
+@torch.compiler.disable  # helper runs eagerly
 def async_copy_to_cpu(
     gpu_buf, event=None, return_event=True
-) -> Tuple[torch.Tensor, torch.cuda.Stream, Optional[torch.cuda.Event]]:
-    # *** async copy to CPU for future GroupedGEMM ***
-    # start a new stream for the copy
-    dtoh_stream = get_or_init_stream(id="dtoh", priority=-5)  # TODO: check any id that's not 0?
+) -> tuple[torch.Tensor, torch.cuda.Stream, Optional[torch.cuda.Event]]:
+    """
+    Asynchronously copy ``gpu_buf`` to a pinned CPU buffer on a dedicated stream.
 
-    # global LAST_STREAM_ID
-    # if LAST_STREAM_ID is None:
-    #     LAST_STREAM_ID = id(dtoh_stream)
-    #     print(f"Initialized LAST_STREAM_ID: {LAST_STREAM_ID}")
-    # else:
-    #     assert LAST_STREAM_ID == id(dtoh_stream), f"Expected stream id {LAST_STREAM_ID}, got {id(dtoh_stream)}"
+    Used to bring per-expert split sizes to the host without blocking the default
+    stream; the copy is ordered after work already queued there.
 
-    # Make the copy_stream start after everything already queued on the
-    # current stream (default) that touches batch_size_per_expert.
+    :param gpu_buf: The device tensor to copy.
+    :param event: An optional pre-allocated CUDA event to record completion on.
+    :param return_event: Whether to return the recorded completion event.
+
+    :returns: ``(cpu_buf, copy_stream, event)`` — the pinned CPU tensor, the stream
+        the copy runs on, and the completion event (``None`` if ``return_event`` is
+        ``False``).
+    """
+    # Start the device->host copy on a dedicated low-priority stream.
+    dtoh_stream = get_or_init_stream(id="dtoh", priority=-5)
+
+    # Make the copy stream start after everything already queued on the
+    # current (default) stream that touches the source buffer.
     dtoh_stream.wait_stream(torch.cuda.current_stream())
 
     with torch.cuda.stream(dtoh_stream):
@@ -65,16 +70,15 @@ def async_copy_to_cpu(
     dtoh_event = dtoh_stream.record_event(event)
     dtoh_event = cast(torch.cuda.Event, dtoh_event)
 
-    # cpu_buf = gpu_buf.to(torch.device("cpu"), non_blocking=True)
-    # Keep the source tensor alive until the copy_stream is done
-    # gpu_buf.record_stream(dtoh_stream) # NOTE: does not work with compile
+    # NOTE: gpu_buf.record_stream(dtoh_stream) would keep the source alive until the
+    # copy finishes, but does not work under torch.compile.
     if return_event:
         return cpu_buf, dtoh_stream, dtoh_event
 
     return cpu_buf, dtoh_stream, None
 
 
-@torch.compiler.disable  # helper runs eagerly,
+@torch.compiler.disable  # helper runs eagerly
 def wait_stream_no_compile(this_stream: torch.cuda.Stream, other_stream: torch.cuda.Stream):
     this_stream.wait_stream(other_stream)
 
@@ -90,7 +94,6 @@ def wait_event_no_compile(stream: torch.cuda.Stream, event: torch.cuda.Event):
     stream.wait_event(event)
 
 
-# disable compile for permute
 @torch.compiler.disable
 def moe_permute_no_compile(*args, **kwargs):
     return moe_permute(*args, **kwargs)
@@ -193,6 +196,17 @@ def moe_reorder_rows_permutation(
     inverse_reorder_indices: torch.Tensor,
     out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
+    """
+    Reorder the rows of ``inp`` by ``reorder_indices`` (autograd-aware; backward
+    scatters gradients back via ``inverse_reorder_indices``).
+
+    :param inp: A rank-2 tensor ``(rows, hidden)``.
+    :param reorder_indices: Rank-1 permutation of the rows.
+    :param inverse_reorder_indices: The inverse permutation, used in backward.
+    :param out: Optional pre-allocated output buffer.
+
+    :returns: The row-reordered tensor.
+    """
     if inp.ndim != 2:
         raise ValueError(f"Expected rank-2 input, got shape={tuple(inp.shape)}")
     if reorder_indices.ndim != 1:
@@ -597,14 +611,25 @@ def moe_sort_chunks_by_index_no_compile(*args, **kwargs):
     return moe_sort_chunks_by_index(*args, **kwargs)
 
 
-# build_chunk_te_routing_map(torch.tensor([[3,2,1], [1,2,1]]), rows=12)
-# out = [[0, 0, 0, 1, 1, 2, 0, 1, 1, 2, 2, 2]].T
-# the pad tokens will be assigned to the last local expert so that they can be easily masked out at tail
 def build_chunk_te_routing_map(
     recv_splits_by_src_local: torch.Tensor,
     *,
     rows: int,
 ) -> torch.Tensor:
+    """
+    Build a per-row local-expert index map from per-(source-rank, local-expert) split
+    sizes, for chunk reordering after an expert-parallel all-to-all.
+
+    Padding rows beyond the total received tokens are assigned to the last local expert
+    so they can be masked out at the tail. Construction stays on-device to avoid a host
+    sync. Example: ``recv_splits=[[3,2,1],[1,2,1]], rows=12`` →
+    ``[0,0,0,1,1,2,0,1,1,2,2,2]`` (as a column).
+
+    :param recv_splits_by_src_local: Rank-2 ``(source_rank, local_expert)`` split counts.
+    :param rows: The total number of rows in the destination buffer.
+
+    :returns: A ``(rows, 1)`` int32 tensor of local-expert indices.
+    """
     if recv_splits_by_src_local.ndim != 2:
         raise ValueError(
             "recv_splits_by_src_local must be rank-2 [source_rank, local_expert], "
@@ -617,7 +642,6 @@ def build_chunk_te_routing_map(
 
     # Keep routing-map construction tensorized on CUDA to avoid host sync.
     rows_t = flat_splits_raw.new_full((1,), rows, dtype=torch.long)
-    # flat_splits_nonneg = torch.clamp_min(flat_splits_raw, 0)
     split_starts = torch.zeros_like(flat_splits_raw, dtype=torch.long)
     split_starts[1:] = torch.cumsum(flat_splits_raw[:-1], dim=0, dtype=torch.long)
     split_remaining = torch.clamp(rows_t - split_starts, min=0)
@@ -714,6 +738,25 @@ def moe_chunk_reorder_no_compile(
     backend: str = "auto",
     backward_grad_input_buffer: Optional[torch.Tensor] = None,
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    """
+    Reorder rows into per-local-expert chunks (and back), outside the compiled graph.
+
+    Provide exactly one of ``routing_map`` (forward permute, also returns the row-id map)
+    or ``row_id_map`` (reuse a previously built map). ``backend`` selects the kernel
+    backend (``"auto"`` resolves to the available CUDA implementation).
+
+    :param inp: The rows to reorder.
+    :param routing_map: Per-row local-expert assignment for a forward permute.
+    :param row_id_map: A previously returned row-id map (mutually exclusive with
+        ``routing_map``).
+    :param num_out_tokens: Output row count (defaults to ``inp.shape[0]``).
+    :param out: Optional pre-allocated output buffer.
+    :param backend: Backend selector (``"auto"`` / ``"cuda"``).
+    :param backward_grad_input_buffer: Optional caller-provided gradient buffer for backward.
+
+    :returns: The reordered tensor, or ``(reordered, row_id_map)`` when a ``routing_map``
+        is given.
+    """
     if (routing_map is None) == (row_id_map is None):
         raise ValueError(
             "Exactly one of routing_map or row_id_map must be provided to "
