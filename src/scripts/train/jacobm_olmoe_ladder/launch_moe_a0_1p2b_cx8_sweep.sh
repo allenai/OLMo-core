@@ -6,16 +6,17 @@ RUN_PREFIX="olmoe3-moe-a0-1p2b-cx8"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-moe-a0-1p2b-cx8-launch-logs}"
 JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
-NUM_NODES=4
-GPUS_PER_NODE=8
+NUM_NODES="${NUM_NODES:-4}"
+GPUS_PER_NODE="${GPUS_PER_NODE:-8}"
 TOTAL_GPUS=$((NUM_NODES * GPUS_PER_NODE))
-EP_DIM=1
-MICRO_BSZ=1
-GLOBAL_BATCH_SIZE_SEQ=96
+EP_DIM="${EP_DIM:-1}"
+MICRO_BSZ="${MICRO_BSZ:-1}"
+GLOBAL_BATCH_SIZE_SEQ="${GLOBAL_BATCH_SIZE_SEQ:-96}"
 CHINCHILLA_MULTIPLE="${CHINCHILLA_MULTIPLE:-8}"
 SWEEP_SUFFIX="${SWEEP_SUFFIX:-r1}"
 EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
 EVAL_INTERVAL="${EVAL_INTERVAL:-2000}"
+LR_SPECS="${LR_SPECS:-2e-4:lr2e-4 4e-4:lr4e-4 8e-4:lr8e-4}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -99,6 +100,7 @@ launch_one() {
   return 1
 }
 
-launch_one 2e-4 lr2e-4
-launch_one 4e-4 lr4e-4
-launch_one 8e-4 lr8e-4
+for spec in ${LR_SPECS}; do
+  IFS=: read -r lr lr_tag <<<"${spec}"
+  launch_one "${lr}" "${lr_tag}"
+done

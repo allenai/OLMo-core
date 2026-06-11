@@ -97,6 +97,15 @@ Continue:
   Beaker experiment `01KTHW6ZSXGD1P8NEA7S3KM198`, new job
   `01KTSB2H1TMF7Z1T2MY40J2QM0`. The short W&B history for `1.5e-4` was repaired
   with `--refresh-stale-cache` on 2026-06-10.
+- 1.2B Cx8: the initial `gpu32-ep1mb1` / 4-node jobs showed poor utilization
+  around 300 TFLOPs/GPU. Keep the already-running `4e-4` 4-node job as a systems
+  comparison point, but do not use its systems setting for future 1.2B Cx8
+  launches. The `2e-4` and `8e-4` 4-node attempts were stopped on 2026-06-11 and
+  relaunched as one-node `gpu8-ep1mb4` replacements:
+  - `2e-4`: `01KTWB5V3CBHWS868FKGBX342D`
+  - `8e-4`: `01KTWB65YRYR8K44RYXBZ7T5WJ`
+  Prefer `gpu8-ep1mb4` for future 1.2B Cx8 unless the replacement jobs show
+  memory or throughput trouble.
 - 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed.
 
 Expert granularity:

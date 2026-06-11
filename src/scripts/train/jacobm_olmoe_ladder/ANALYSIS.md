@@ -226,6 +226,32 @@ real larger-model Cx1 data, then transfer across Cx using same-model or
 nearby-model Cx-ratio behavior, rather than relying on the original naive
 size-transfer prior.
 
+## 2026-06-11 1.2B Cx8 Systems Adjustment
+
+The first 1.2B Cx8 sweep used `gpu32-ep1mb1`: 4 nodes x 8 GPUs, EP=1,
+microbatch 1, and the standard 96-sequence Cx8 global batch. Jacob observed
+roughly 300 TFLOPs/GPU, about half of the target utilization. This is likely
+too much inter-node overhead and too small a microbatch for this model/rung.
+
+Decision:
+
+- Keep the already-running `4e-4` 4-node job as a systems comparison point.
+- Stop the non-running/non-canonical 4-node `2e-4` and `8e-4` attempts.
+- Relaunch `2e-4` and `8e-4` as `gpu8-ep1mb4`: 1 node x 8 GPUs, EP=1,
+  microbatch 4, same 96-sequence global batch.
+
+Replacement jobs:
+
+| LR | Setting | Beaker |
+| ---: | --- | --- |
+| `2e-4` | `gpu8-ep1mb4` | `01KTWB5V3CBHWS868FKGBX342D` |
+| `8e-4` | `gpu8-ep1mb4` | `01KTWB65YRYR8K44RYXBZ7T5WJ` |
+
+If the one-node replacements start cleanly and recover expected utilization,
+prefer `gpu8-ep1mb4` for future 1.2B Cx8 launches. Treat stopped 4-node
+`2e-4`/`8e-4` attempts as ignored for canonical LR fits unless explicitly
+resumed and completed later.
+
 ## 2026-06-02 Snapshot
 
 Initial read after the first 2M-batch sweep finished and the 256k-batch sweep was
