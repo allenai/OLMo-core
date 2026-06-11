@@ -8,7 +8,7 @@ try:
     import triton.language as tl  # type: ignore
 
     _HAS_TRITON = True
-except Exception:  # pragma: no cover - import guard
+except ImportError:
     triton = None  # type: ignore[assignment]
     tl = None  # type: ignore[assignment]
     _HAS_TRITON = False
@@ -28,7 +28,7 @@ try:
         moe_sort_chunks_by_index,
         moe_unpermute,
     )
-except Exception:  # pragma: no cover - import guard
+except ImportError:
     tex = None  # type: ignore[assignment]
     TE_DType = None  # type: ignore[assignment]
     moe_permute = None  # type: ignore[assignment]
