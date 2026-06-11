@@ -14,6 +14,11 @@ available. Prefer using the best current expert geometry as the default MoE
 block once it is selected; until then, the clean first version should use the
 baseline 48E/top4 geometry family with only expert count changed.
 
+The first wave should focus on *more* total expert capacity, not less. Our
+baseline is already relatively high-active compared with recent sparse MoEs, so
+the low-total / less-sparse variant is a future diagnostic rather than an
+initial run target.
+
 ## Goal
 
 Test whether adding inactive expert capacity improves pretraining loss at fixed
@@ -55,10 +60,15 @@ part of the design.
 
 | Variant | Experts | `top_k` | `moe_hidden_size` | Total routed capacity | Active routed capacity |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `low_total_24e_top4` | 24 | 4 | `d_model` | `24 * d_model` | `4 * d_model` |
 | `baseline_48e_top4` | 48 | 4 | `d_model` | `48 * d_model` | `4 * d_model` |
 | `high_total_96e_top4` | 96 | 4 | `d_model` | `96 * d_model` | `4 * d_model` |
 | `huge_total_192e_top4` | 192 | 4 | `d_model` | `192 * d_model` | `4 * d_model` |
+
+Future low-total diagnostic, not in the first wave:
+
+| Variant | Experts | `top_k` | `moe_hidden_size` | Total routed capacity | Active routed capacity |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `low_total_24e_top4` | 24 | 4 | `d_model` | `24 * d_model` | `4 * d_model` |
 
 ### Approximate Active Fraction
 
@@ -150,9 +160,12 @@ Recommended first wave:
 
 | Variant | Cx | Purpose |
 | --- | ---: | --- |
-| `low_total_24e_top4` | 1 and 4 | Does less total capacity hurt? |
 | `high_total_96e_top4` | 1 and 4 | Does 2x total capacity help? |
 | `huge_total_192e_top4` | 1 and 4 | Does 4x total capacity help enough to justify cost? |
+
+Do not run `low_total_24e_top4` in the first wave. Save less-sparse variants
+for later only if we need to map the full curve or diagnose whether total
+capacity is actively hurting.
 
 Use current canonical baseline systems settings:
 
