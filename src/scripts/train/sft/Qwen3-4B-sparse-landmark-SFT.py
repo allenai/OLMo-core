@@ -65,8 +65,20 @@ CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
 
 LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
 
-# Tokenized SFT dataset (Qwen3 tokenizer): token_ids_part_*.npy + labels_mask_*.npy.
-DATASET_PATH = "/weka/oe-training-default/ai2-llm/checkpoints/amandab/rlhn_sft_qwen_63k"
+# FAR rung (default): amandab's RLHN doc-ID retrieval SFT. NEAR rung: NQ+HotpotQA RAG-QA SFT
+# (in-distribution with the HELMET RAG eval), selected when the run name contains "rag". The base
+# checkpoint and all hyperparameters are identical either way -- only the data differs -- so any
+# HELMET-RAG delta is attributable to in-distribution-ness (FAR vs NEAR).
+RLHN_DATASET_PATH = "/weka/oe-training-default/ai2-llm/checkpoints/amandab/rlhn_sft_qwen_63k"
+RAG_NEAR_DATASET_PATH = (
+    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/rag_sft_qwen/nq_hotpotqa_near"
+)
+
+
+def resolve_dataset_path(run_name: str) -> str:
+    """NEAR rung (NQ+HotpotQA RAG-QA) when the run name contains 'rag', else the FAR (RLHN) rung."""
+    return RAG_NEAR_DATASET_PATH if "rag" in run_name else RLHN_DATASET_PATH
+
 
 # Sparse-landmark pretrained checkpoint to initialize from (model weights only).
 BASE_CHECKPOINT = "/weka/oe-training-default/ai2-llm/checkpoints/q4b-sparse-landmark-dolma3longmino/step2385/model_and_optim"
@@ -154,7 +166,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     # Composable SFT data pipeline:
     #   ConcatAndChunkInstanceSource (token_ids_part_*.npy + labels_mask_*.npy, chunked to CONTENT len)
     #     -> LandmarkInstanceSource (insert landmark token every MEM_FREQ tokens -> SEQUENCE_LENGTH)
-    clean_path = DATASET_PATH.rstrip("/")
+    clean_path = resolve_dataset_path(cli_context.run_name).rstrip("/")
     instance_source_config = LandmarkInstanceSourceConfig(
         source=ConcatAndChunkInstanceSourceConfig.from_npy(
             f"{clean_path}/token_ids_part_*.npy",
