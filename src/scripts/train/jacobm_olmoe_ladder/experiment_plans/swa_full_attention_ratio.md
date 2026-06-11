@@ -67,7 +67,7 @@ Recommended first family:
 | `attn_1to1_current` | Current 1 SWA : 1 full pattern | Baseline/control. |
 | `attn_3to1` | 3 SWA : 1 full | Intermediate efficiency point; close to several hybrid ratios. |
 | `attn_5to1` | 5 SWA : 1 full | Gemma 3 / MAI-style local/global ratio. |
-| `attn_mostly_swa` | Final full only, plus first full if required | Extreme efficiency sentinel. |
+| `attn_swa_final_full` | SWA everywhere except final full layer, plus first full if required | Extreme efficiency sentinel. |
 
 The exact layer indices should be generated per model size from simple rules
 rather than hand-coded ad hoc lists.
@@ -82,7 +82,7 @@ layer full, matching the current script's final-full behavior.
 | `attn_1to1_current` | `[SWA, full]` | forced full | ~50% |
 | `attn_3to1` | `[SWA, SWA, SWA, full]` | forced full | ~25% |
 | `attn_5to1` | `[SWA, SWA, SWA, SWA, SWA, full]` | forced full | ~17% |
-| `attn_mostly_swa` | all SWA | forced full | `1 / L` |
+| `attn_swa_final_full` | all SWA except final layer | forced full | `1 / L` |
 
 The current implementation sets `force_full_attention_on_first_layer=False` and
 `force_full_attention_on_last_layer=True`. Keep first-layer behavior unchanged
@@ -92,7 +92,7 @@ unless a smoke test shows instability.
 
 Approximate counts under the final-full rule:
 
-| Size | Layers | 1:1 full | 3:1 full | 5:1 full | Mostly-SWA full |
+| Size | Layers | 1:1 full | 3:1 full | 5:1 full | SWA-final-full |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 275M | 12 | 6 | 3 | 2 | 1 |
 | mid_480m | 16 | 8 | 4 | 3 | 1 |
@@ -124,7 +124,7 @@ Add an attention-schedule option to
 Recommended CLI:
 
 ```text
---attention-schedule {attn_1to1_current,attn_3to1,attn_5to1,attn_mostly_swa}
+--attention-schedule {attn_1to1_current,attn_3to1,attn_5to1,attn_swa_final_full}
 ```
 
 Implementation notes:
@@ -138,7 +138,7 @@ Implementation notes:
    - `attn1to1`
    - `attn3to1`
    - `attn5to1`
-   - `attn-mswa`
+   - `attn-swaff`
 
 Do not change existing baseline run names retroactively.
 
@@ -165,7 +165,7 @@ Recommended first wave:
 | --- | ---: | --- |
 | `attn_3to1` | 1 and 4 | Intermediate reduction in full-attention layers. |
 | `attn_5to1` | 1 and 4 | MAI/Gemma-style schedule. |
-| `attn_mostly_swa` | 1 and 4 | Extreme sentinel for how much full attention matters. |
+| `attn_swa_final_full` | 1 and 4 | Extreme sentinel for how much full attention matters. |
 
 Do not run a denser-than-current attention schedule in the first wave. The
 public trend and our systems goals point toward fewer full-attention layers, not
@@ -296,6 +296,6 @@ After completion:
 
 - Inspect the current attention schedule implementation and record exact
   baseline full-attention layer indices for every model size.
-- Decide whether `attn_mostly_swa` keeps first layer full or only final layer full.
+- Decide whether `attn_swa_final_full` keeps first layer full or only final layer full.
 - Decide whether to test this on the baseline 48E/top4 block or the winning
   expert-granularity block.
