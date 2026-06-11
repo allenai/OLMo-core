@@ -12,8 +12,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
 from itertools import cycle, islice
-from queue import Queue
-from threading import Thread
+from queue import Empty, Full, Queue
+from threading import Event, Thread
 from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union, cast
 
 import rich
@@ -587,25 +587,50 @@ def threaded_generator(g, maxsize: int = 16, thread_name: Optional[str] = None):
     q: Queue = Queue(maxsize=maxsize)
 
     sentinel = object()
+    stop = Event()
+
+    def put(item) -> bool:
+        # Put an item on the queue while periodically checking that the consumer is still
+        # around, otherwise an abandoned consumer would leave us blocking on a full queue
+        # forever, leaking this thread.
+        while not stop.is_set():
+            try:
+                q.put(item, timeout=0.1)
+                return True
+            except Full:
+                continue
+        return False
 
     def fill_queue():
         try:
             for value in g:
-                q.put(value)
+                if not put(value):
+                    return
         except Exception as e:
-            q.put(e)
+            put(e)
         finally:
-            q.put(sentinel)
+            put(sentinel)
 
     thread_name = thread_name or repr(g)
     thread = Thread(name=thread_name, target=fill_queue, daemon=True)
     thread.start()
 
-    for x in iter(q.get, sentinel):
-        if isinstance(x, Exception):
-            raise OLMoThreadError(f"generator thread {thread_name} failed") from x
-        else:
-            yield x
+    try:
+        for x in iter(q.get, sentinel):
+            if isinstance(x, Exception):
+                raise OLMoThreadError(f"generator thread {thread_name} failed") from x
+            else:
+                yield x
+    finally:
+        # Runs when the generator is exhausted, but also when the consumer abandons it early
+        # (via ``GeneratorExit``). Signal the thread to shut down and drain the queue to
+        # unblock it right away if it's stuck on a put.
+        stop.set()
+        while True:
+            try:
+                q.get_nowait()
+            except Empty:
+                break
 
 
 def roundrobin(*iterables):
