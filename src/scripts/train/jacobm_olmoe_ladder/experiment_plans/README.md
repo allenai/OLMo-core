@@ -6,6 +6,9 @@ monitor, summarize, and evaluate the experiment without relying on oral context.
 
 Current plans:
 
+- `CONCRETE_RUNBOOK_SUMMARY.md`: short-form index of the concrete first-wave
+  experiment runbooks, shared LR-transfer policy, systems defaults, and launch
+  intent.
 - `expert_granularity.md`: fixed active/total routed-capacity sweep over
   24E/top2, 48E/top4, and 96E/top8.
 - `shared_expert_dense_schedule.md`: shared-expert size/presence and dense/MoE

@@ -190,16 +190,28 @@ First wave:
 | `deep_narrow` | 1 and 4 | Depth preference probe. |
 | `shallow_wide` | 1 and 4 | Width preference probe. |
 
-Use the same baseline systems settings unless dry-run OOM or throughput suggests
-adjustment:
+Use the current canonical systems settings unless dry-run OOM or throughput
+suggests adjustment. GPU counts follow the resource table Jacob shared from
+Yashas. EP stays `1` for all rows.
 
 | Size | Cx | Batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 275M | 1 | 262,144 | 32 | 2 | 1 | 16 |
+| 275M | 1 | 262,144 | 32 | 1 | 1 | 16 |
+| 275M | 2 | 524,288 | 64 | 2 | 1 | 16 |
 | 275M | 4 | 524,288 | 64 | 4 | 1 | 16 |
-| 275M | 8 | 786,432 | 96 | 4 | 1 | 8 |
-| 810M | 1 | 262,144 | 32 | 4 | 1 | 4 |
+| 275M | 8 | 786,432 | 96 | 8 | 1 | 8 |
+| mid_480m | 1 | 262,144 | 32 | 4 | 1 | 8 |
+| mid_480m | 2 | 524,288 | 64 | 4 | 1 | 8 |
+| mid_480m | 4 | 524,288 | 64 | 4 | 1 | 8 |
+| mid_480m | 8 | 786,432 | 96 | 8 | 1 | 4 |
+| 810M | 1 | 262,144 | 32 | 8 | 1 | 4 |
+| 810M | 2 | 524,288 | 64 | 8 | 1 | 4 |
 | 810M | 4 | 524,288 | 64 | 8 | 1 | 4 |
+| 810M | 8 | 786,432 | 96 | 16 | 1 | 4 |
+| 1.2B | 1 | 262,144 | 32 | 8 | 1 | 2 |
+| 1.2B | 2 | 524,288 | 64 | 8 | 1 | 2 |
+| 1.2B | 4 | 524,288 | 64 | 16 | 1 | 2 |
+| 1.2B | 8 | 786,432 | 96 | 32 | 1 | 1 |
 
 Checkpoint/eval settings:
 
