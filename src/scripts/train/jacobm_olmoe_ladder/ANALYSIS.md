@@ -1065,6 +1065,20 @@ Status after the next 2026-06-11 long-cadence check:
   2.5523 respectively. The `3.2e-3` point is running; wait for it before
   deciding whether fine Cx4 needs a follow-up.
 
+Final 275M Cx1/Cx4 expert-granularity status:
+
+- `fine_96e_top8` Cx4 `3.2e-3` finished cleanly with avg250M 2.5629.
+- The fine Cx4 curve is bracketed. Avg250M losses:
+  - `8e-4`: 2.5582
+  - `1.6e-3`: 2.5523
+  - `3.2e-3`: 2.5629
+- The observed fine Cx4 best is `1.6e-3`; a 3-point quadratic fit gives
+  `lr* ~= 1.45e-3`.
+- All expert-granularity Cx1/Cx4 curves are bracketed. No autonomous Cx1/Cx4
+  follow-up is needed under the edge-extension rule.
+- At both Cx1 and Cx4, `fine_96e_top8` is the strongest tested variant by
+  avg250M training loss. Coarse is bracketed but does not beat fine.
+
 Midpoint baseline follow-ups from 2026-06-10:
 
 - `mid_480m` Cx4 cold sentinel `1e-4` finished cleanly with avg250M 2.4689,

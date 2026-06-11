@@ -116,10 +116,11 @@ Expert granularity:
 - 275M Cx4 baseline-centered probes are queued at `8e-4`, `1.6e-3`, `3.2e-3`
   for both non-baseline variants. Coarse uses `gpu4-ep1mb16`; fine uses
   `gpu4-ep1mb8`. Coarse Cx4 has finished and is bracketed with observed best
-  `1.6e-3` and fitted `lr* ~= 1.57e-3`. Fine Cx4 has finished `8e-4` and
-  `1.6e-3`; wait for `3.2e-3`.
-- Do not queue the rest of the 275M expert-granularity ladder until Cx1/Cx4
-  results are reviewed, unless Jacob explicitly approves the next batch.
+  `1.6e-3` and fitted `lr* ~= 1.57e-3`. Fine Cx4 has finished and is bracketed
+  with observed best `1.6e-3` and fitted `lr* ~= 1.45e-3`.
+- All approved expert-granularity 275M Cx1/Cx4 curves are complete and
+  bracketed. Do not queue the rest of the 275M expert-granularity ladder until
+  Jacob reviews the results and explicitly approves the next batch.
 - After Cx1/Cx4 complete, estimate variant LR multipliers relative to the
   baseline and use those multipliers to center later Cx2/Cx8/Cx16 sweeps.
 
