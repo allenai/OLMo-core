@@ -13,7 +13,7 @@ except ImportError:
 try:
     import triton
     import triton.language as tl
-except Exception:  # pragma: no cover - Triton may be unavailable in some test envs.
+except ImportError:
     triton = None
     tl = None
 
@@ -88,7 +88,7 @@ def _get_te_mxfp8_state():
             MXFP8Quantizer,
             MXFP8Tensor,
         )
-    except Exception:
+    except ImportError:
         _TE_MXFP8_STATE = None
         return None
 
