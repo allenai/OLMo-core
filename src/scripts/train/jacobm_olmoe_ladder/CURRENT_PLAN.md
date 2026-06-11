@@ -109,12 +109,15 @@ Expert granularity:
   - Baseline/control remains `baseline_48e_top4`.
 - 275M Cx1 transfer probes were queued at `1e-3`, `2e-3`, `4e-3` for both
   non-baseline variants. Coarse uses `gpu1-ep1mb16`; fine uses `gpu1-ep1mb8`
-  after the `mb16` smoke OOM. Coarse Cx1 has finished and is bracketed with
-  observed best `2e-3` and fitted `lr* ~= 1.86e-3`; do not launch a coarse Cx1
-  follow-up. Fine `1e-3` has finished; wait for fine `2e-3`/`4e-3`.
+  after the `mb16` smoke OOM. Both Cx1 variants have finished and are
+  bracketed. Coarse observed best is `2e-3` with fitted `lr* ~= 1.86e-3`; fine
+  observed best is `2e-3` with fitted `lr* ~= 2.10e-3`. Do not launch Cx1
+  follow-ups before the next human review.
 - 275M Cx4 baseline-centered probes are queued at `8e-4`, `1.6e-3`, `3.2e-3`
   for both non-baseline variants. Coarse uses `gpu4-ep1mb16`; fine uses
-  `gpu4-ep1mb8`.
+  `gpu4-ep1mb8`. Coarse Cx4 has finished and is bracketed with observed best
+  `1.6e-3` and fitted `lr* ~= 1.57e-3`. Fine Cx4 has finished `8e-4` and
+  `1.6e-3`; wait for `3.2e-3`.
 - Do not queue the rest of the 275M expert-granularity ladder until Cx1/Cx4
   results are reviewed, unless Jacob explicitly approves the next batch.
 - After Cx1/Cx4 complete, estimate variant LR multipliers relative to the

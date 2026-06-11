@@ -1045,6 +1045,26 @@ Status after the 2026-06-11 long-cadence check:
 - Cx4 baseline-centered expert-granularity probes are now running except the
   fine `3.2e-3` job, which remains queued/created.
 
+Status after the next 2026-06-11 long-cadence check:
+
+- `fine_96e_top8` Cx1 finished cleanly at all three LRs. Avg250M losses:
+  - `1e-3`: 2.7683
+  - `2e-3`: 2.7641
+  - `4e-3`: 2.7673
+- The fine Cx1 curve is bracketed; the observed best is `2e-3`, and a 3-point
+  quadratic fit vs `log10(lr)` gives `lr* ~= 2.10e-3`.
+- Both expert-granularity Cx1 variants are now bracketed. No Cx1 follow-up is
+  needed before reviewing the broader 275M ladder plan.
+- `coarse_24e_top2` Cx4 finished cleanly at all three LRs. Avg250M losses:
+  - `8e-4`: 2.5796
+  - `1.6e-3`: 2.5713
+  - `3.2e-3`: 2.5805
+- The coarse Cx4 curve is bracketed; the observed best is `1.6e-3`, and a
+  3-point quadratic fit gives `lr* ~= 1.57e-3`.
+- `fine_96e_top8` Cx4 has finished `8e-4` and `1.6e-3` with avg250M 2.5582 and
+  2.5523 respectively. The `3.2e-3` point is running; wait for it before
+  deciding whether fine Cx4 needs a follow-up.
+
 Midpoint baseline follow-ups from 2026-06-10:
 
 - `mid_480m` Cx4 cold sentinel `1e-4` finished cleanly with avg250M 2.4689,

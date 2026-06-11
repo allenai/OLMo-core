@@ -434,8 +434,8 @@ Accidental/ambiguous smoke jobs stopped before use:
 | `eg-275m-cx1-eg24e2k-lr2e-3-r1` | `coarse_24e_top2` | 2e-3 | 262,144 | 32 | 1 | 1 | 16 | https://beaker.org/ex/01KTT697TSG6X0JTD316YN5BD6 | Finished step 15349, 4.024B tokens, avg100M 2.7769, avg250M 2.7814, avg500M 2.7849. W&B `ndkmprhm`. Best coarse Cx1 point. |
 | `eg-275m-cx1-eg24e2k-lr4e-3-r1` | `coarse_24e_top2` | 4e-3 | 262,144 | 32 | 1 | 1 | 16 | https://beaker.org/ex/01KTT69KTCH2FXME9E63T11DM3 | Finished step 15349, 4.024B tokens, avg100M 2.7850, avg250M 2.7904, avg500M 2.7965. W&B `8eoup1kb`. Coarse Cx1 is bracketed. |
 | `eg-275m-cx1-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT69YPF7F1GAQH4ZPM6JT1A | Finished step 15396, 4.036B tokens, avg100M 2.7675, avg250M 2.7683, avg500M 2.7722. W&B `bpdo8b6b`. Uses mb8 fallback after mb16 OOM. |
-| `eg-275m-cx1-eg96e8k-lr2e-3-r1` | `fine_96e_top8` | 2e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6A9WYW6Y3RB31X433F87X | Cx1 LR transfer probe; uses mb8 fallback after mb16 OOM. |
-| `eg-275m-cx1-eg96e8k-lr4e-3-r1` | `fine_96e_top8` | 4e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6AN3CMWPT5E9NGWZJH3DX | Cx1 LR transfer probe; uses mb8 fallback after mb16 OOM. |
+| `eg-275m-cx1-eg96e8k-lr2e-3-r1` | `fine_96e_top8` | 2e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6A9WYW6Y3RB31X433F87X | Finished step 15396, 4.036B tokens, avg100M 2.7628, avg250M 2.7641, avg500M 2.7695. W&B `lyky04e5`. Best fine Cx1 point. |
+| `eg-275m-cx1-eg96e8k-lr4e-3-r1` | `fine_96e_top8` | 4e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6AN3CMWPT5E9NGWZJH3DX | Finished step 15396, 4.036B tokens, avg100M 2.7652, avg250M 2.7673, avg500M 2.7750. W&B `4l7axfwy`. Fine Cx1 is bracketed. |
 
 275M Cx4 baseline-centered probes:
 
@@ -446,9 +446,9 @@ one targeted follow-up after the first three Cx4 jobs finish.
 
 | Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| `eg-275m-cx4-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 8e-4 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7A7ZS7EV70TR3XBJMSAVG | Baseline-centered Cx4 probe. |
-| `eg-275m-cx4-eg24e2k-lr1.6e-3-r1` | `coarse_24e_top2` | 1.6e-3 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7AJT93MT6DW89FE1A04RE | Baseline-centered Cx4 probe. |
-| `eg-275m-cx4-eg24e2k-lr3.2e-3-r1` | `coarse_24e_top2` | 3.2e-3 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7AYPX74Y4QG4C6GWGX3A0 | Baseline-centered Cx4 probe. |
-| `eg-275m-cx4-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7B9XNDT2D578HYR8VBVYA | Baseline-centered Cx4 probe; uses mb8 fallback after mb16 OOM at Cx1 smoke. |
-| `eg-275m-cx4-eg96e8k-lr1.6e-3-r1` | `fine_96e_top8` | 1.6e-3 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7BMTTSW6VAY20FM8XKVWB | Baseline-centered Cx4 probe; uses mb8 fallback after mb16 OOM at Cx1 smoke. |
+| `eg-275m-cx4-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 8e-4 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7A7ZS7EV70TR3XBJMSAVG | Finished step 30698, 16.095B tokens, avg100M 2.5758, avg250M 2.5796, avg500M 2.5822. W&B `5talvqd1`. |
+| `eg-275m-cx4-eg24e2k-lr1.6e-3-r1` | `coarse_24e_top2` | 1.6e-3 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7AJT93MT6DW89FE1A04RE | Finished step 30698, 16.095B tokens, avg100M 2.5676, avg250M 2.5713, avg500M 2.5740. W&B `eq0vqyj9`. Best coarse Cx4 point. |
+| `eg-275m-cx4-eg24e2k-lr3.2e-3-r1` | `coarse_24e_top2` | 3.2e-3 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7AYPX74Y4QG4C6GWGX3A0 | Finished step 30698, 16.095B tokens, avg100M 2.5768, avg250M 2.5805, avg500M 2.5833. W&B `mrpoyk8n`. Coarse Cx4 is bracketed. |
+| `eg-275m-cx4-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7B9XNDT2D578HYR8VBVYA | Finished step 30791, 16.143B tokens, avg100M 2.5577, avg250M 2.5582, avg500M 2.5599. W&B `0vr98te9`. |
+| `eg-275m-cx4-eg96e8k-lr1.6e-3-r1` | `fine_96e_top8` | 1.6e-3 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7BMTTSW6VAY20FM8XKVWB | Finished step 30791, 16.143B tokens, avg100M 2.5516, avg250M 2.5523, avg500M 2.5541. W&B `gsqree2x`. Current best fine Cx4 point; wait for `3.2e-3`. |
 | `eg-275m-cx4-eg96e8k-lr3.2e-3-r1` | `fine_96e_top8` | 3.2e-3 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7C0KBTY8TVNC361Z2G3KV | Baseline-centered Cx4 probe; uses mb8 fallback after mb16 OOM at Cx1 smoke. |
