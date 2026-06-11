@@ -14,20 +14,13 @@ import torch
 _CHECKPOINT_RECOMPUTE_STATE = threading.local()
 _CHECKPOINT_FORWARD_STATE = threading.local()
 
-try:
-    _torch_compile_disable = torch.compiler.disable
-except AttributeError:
 
-    def _torch_compile_disable(fn):
-        return fn
-
-
-@_torch_compile_disable
+@torch.compiler.disable
 def is_checkpoint_forwarding() -> bool:
     return getattr(_CHECKPOINT_FORWARD_STATE, "depth", 0) > 0
 
 
-@_torch_compile_disable
+@torch.compiler.disable
 def is_checkpoint_recomputing() -> bool:
     """Whether execution is inside an activation-checkpoint recompute."""
     if getattr(_CHECKPOINT_RECOMPUTE_STATE, "depth", 0) > 0:
@@ -46,12 +39,12 @@ def is_checkpoint_recomputing() -> bool:
         return False
 
 
-@_torch_compile_disable
+@torch.compiler.disable
 def is_activation_checkpointing() -> bool:
     return is_checkpoint_forwarding() or is_checkpoint_recomputing()
 
 
-@_torch_compile_disable
+@torch.compiler.disable
 def get_rowwise_checkpoint_state() -> tuple[bool, bool]:
     """
     Return ``(checkpointing_active, save_for_recompute)``: whether activation
