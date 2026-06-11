@@ -24,7 +24,8 @@
 # Common overrides (env vars):
 #   PRIORITY, NUM_GPUS, OLMO_CORE_TOKENIZER, OLMO_CORE_BATCH_SIZE,
 #   CLUSTER, WORKSPACE, RULER_DASHBOARD, SKIP_HELMET=1, SKIP_RULER=1,
-#   HELMET_MAX_LENGTH (cap HELMET suite, e.g. 32768 for an un-extended model)
+#   HELMET_MAX_LENGTH (cap HELMET suite, e.g. 32768 for an un-extended model),
+#   HELMET_TIMEOUT (gantry follow timeout; default 0 = submit & detach, -1 = follow)
 
 set -euo pipefail
 
@@ -85,6 +86,7 @@ if [ "${SKIP_HELMET:-0}" != "1" ]; then
     OLMO_CORE_COMMIT="${OLMO_CORE_COMMIT}" \
     USE_CHAT_TEMPLATE="${HELMET_USE_CHAT_TEMPLATE}" \
     EVAL_NAME_SUFFIX="${HELMET_NAME_SUFFIX}" \
+    TIMEOUT="${HELMET_TIMEOUT:-0}" \
     bash ./gantry_eval.sh )
 fi
 

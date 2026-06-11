@@ -39,7 +39,11 @@ YARN_SUFFIX=""
 YARN_FLAG=""
 if [ -n "${YARN_FACTOR}" ]; then
   YARN_SUFFIX="-yarn${YARN_FACTOR%.*}"              # 2.0 -> -yarn2
-  YARN_FLAG="--yarn-factor ${YARN_FACTOR}"
+  # Skip validation for YaRN: the converter compares the olmo-core forward pass against the
+  # vanilla HF model (no scaling), so the intentional RoPE remapping makes logits diverge. The
+  # weight conversion is identical to the (already-validated) no-yarn path; only runtime RoPE
+  # inv_freqs differ, so there is nothing extra to validate here.
+  YARN_FLAG="--yarn-factor ${YARN_FACTOR} --skip-validation"
 fi
 
 WEKA_ROOT="/weka/${WEKA}"
