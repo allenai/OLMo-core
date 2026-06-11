@@ -6,6 +6,8 @@ monitor, summarize, and evaluate the experiment without relying on oral context.
 
 Current plans:
 
+- `REMAINING_V0_ABLATION_PLAN.md`: succinct plan for the three independent V0
+  ablations to finish before the first integrated run.
 - `CONCRETE_RUNBOOK_SUMMARY.md`: short-form index of the concrete first-wave
   experiment runbooks, shared LR-transfer policy, systems defaults, and launch
   intent.

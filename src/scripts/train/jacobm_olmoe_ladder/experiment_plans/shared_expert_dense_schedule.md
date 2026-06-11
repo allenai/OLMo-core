@@ -1,42 +1,80 @@
-# Shared Expert And Dense Schedule Experiment Plan
+# Dense Layers And Shared Expert Experiment Plan
 
-This runbook specifies the shared-expert and dense/MoE layer-schedule ablation.
-It is designed to run after the baseline ladder is settled and preferably after
-the expert-granularity experiment identifies whether the current 48E/top4 block
-remains the standard MoE geometry.
+This runbook specifies the V0 dense-layer / shared-expert ablation. The old
+version mixed dense schedule and shared-expert removal in the same variants; the
+current plan splits them into cleaner sub-experiments so results are easier to
+interpret.
 
 ## Status
 
 Planned, not yet implemented or launched.
 
-Do not launch until:
-
-- the current baseline has stable LR centers for the target Cx rungs;
-- the expert-granularity plan has either completed or Jacob decides this axis is
-  more urgent;
-- we have decided whether to use the baseline 48E/top4 geometry or a new
-  granularity winner as the default MoE block.
+Run independently against the MoE A0 baseline, not on top of the
+expert-granularity or total-sparsity winner. The integration run comes later,
+after each V0 axis has a candidate winner.
 
 ## Goal
 
-Understand whether the current shared expert is genuinely useful, and whether
-its usefulness depends on having only one dense prefix layer.
+Answer two separate questions:
+
+1. How many dense prefix layers does this MoE family want if the shared expert
+   stays fixed?
+2. Is the shared expert useful when dense prefix depth is held fixed at the
+   baseline?
 
 Current baseline:
 
 ```text
-dense_prefix_layers = 1
+dense layers = [0]
 num_shared_experts = 1
 shared_mlp_hidden_size = d_model / 2
-MoE layers after the dense prefix
+moe_hidden_size = d_model
 ```
 
-## Matching Policy
+## Sub-Experiment A: Dense Count With Shared Expert Fixed
 
-Changing shared expert size cannot keep both active and total expert capacity
-exactly fixed if `num_experts`, `top_k`, and routed `moe_hidden_size` are all
-held fixed. For this experiment, the primary no-shared variants are therefore
-**active-matched**:
+Hold fixed:
+
+- 48 experts;
+- top-4 routing;
+- `moe_hidden_size = d_model`;
+- `num_shared_experts = 1`;
+- `shared_mlp_hidden_size = d_model / 2`;
+- attention schedule;
+- model width/depth.
+
+Vary only dense prefix depth.
+
+| Variant | Dense layers | Shared expert | Routed hidden | Purpose |
+| --- | --- | --- | ---: | --- |
+| `dense0_shared` | none | `d_model / 2` | `d_model` | Is the dense prefix needed? |
+| `dense1_shared` | `[0]` | `d_model / 2` | `d_model` | Current control. |
+| `dense2_shared` | `[0, 1]` | `d_model / 2` | `d_model` | Does a larger dense prefix help? |
+| `dense4_shared` | `[0, 1, 2, 3]` | `d_model / 2` | `d_model` | Larger dense-prefix sentinel. |
+
+This changes the number of dense versus MoE layers, so active/total parameters
+will move. Report those changes explicitly rather than claiming exact parameter
+matching.
+
+## Sub-Experiment B: Shared Expert Ablation With Dense Count Fixed
+
+Hold fixed:
+
+- dense layer `[0]`;
+- 48 experts;
+- top-4 routing;
+- attention schedule;
+- model width/depth.
+
+Compare shared expert presence.
+
+| Variant | Dense layers | Shared expert | `moe_hidden_size` | Purpose |
+| --- | --- | --- | ---: | --- |
+| `dense1_shared` | `[0]` | `d_model / 2` | `d_model` | Current control. |
+| `dense1_no_shared_am` | `[0]` | none | `9/8 * d_model` | Active-matched quality comparison. |
+| `dense1_no_shared_unmatched` | `[0]` | none | `d_model` | Optional cheaper/simpler-model comparison. |
+
+The active-matched no-shared variant uses:
 
 ```text
 baseline active MLP hidden = 4 * d_model + d_model / 2 = 4.5 * d_model
@@ -44,36 +82,30 @@ no-shared active MLP hidden = 4 * moe_hidden_size
 moe_hidden_size = 9/8 * d_model
 ```
 
-This matches active MLP capacity per MoE layer while increasing routed total
-expert capacity. Treat the total-parameter increase as part of the no-shared
-active-matched design and report it explicitly.
+The unmatched no-shared variant is not part of the minimal first wave. Add it
+only if compute is abundant or if we care about the practical "remove shared
+expert and save params/compute" question.
 
-Always report active and total params for each variant. Do not claim exact
-fixed-total matching for this experiment.
+## First-Wave Variants
 
-## Variants
+Run at 275M Cx1/Cx4 first:
 
-### Core Configs
+| Variant | Sub-experiment | Cx | Role |
+| --- | --- | ---: | --- |
+| `dense0_shared` | Dense count | 1 and 4 | No-dense-prefix test. |
+| `dense2_shared` | Dense count | 1 and 4 | More dense prefix. |
+| `dense4_shared` | Dense count | 1 and 4 | Dense-prefix sentinel. |
+| `dense1_no_shared_am` | Shared ablation | 1 and 4 | Active-matched no-shared test. |
 
-Use the current baseline 48E/top4 expert geometry for shared variants. Use
-active-matched routed hidden size for no-shared variants.
+Optional if compute is abundant:
 
-| Variant | Dense schedule | Shared expert | Routed hidden | Purpose |
-| --- | --- | --- | --- | --- |
-| `baseline_1dense_shared` | Dense layer 0 only | `d_model / 2` | `d_model` | Current control. |
-| `1dense_no_shared_am` | Dense layer 0 only | none | `9/8 * d_model` | Isolates shared expert removal while active-matching. |
-| `2dense_no_shared_am` | Dense layers 0-1 | none | `9/8 * d_model` | Tests whether one extra dense prefix helps replace shared expert. |
-| `alternating_no_shared_am` | Dense even layers, MoE odd layers | none | `9/8 * d_model` | Tests dense/MoE interleaving without shared expert. |
-| `alternating_shared` | Dense even layers, MoE odd layers | `d_model / 2` | `d_model` | Optional follow-up if interleaving is promising. |
+| Variant | Cx | Role |
+| --- | ---: | --- |
+| `dense1_no_shared_unmatched` | 1 and 4 | Cheaper no-shared practical comparison. |
 
-This is too many to launch all at once. First launch:
-
-1. `1dense_no_shared_am`
-2. `2dense_no_shared_am`
-3. `alternating_no_shared_am`
-
-Keep `baseline_1dense_shared` as the existing control. Add `alternating_shared`
-only if `alternating_no_shared_am` looks promising or ambiguous.
+Defer alternating dense/MoE schedules. They mix dense schedule and shared-expert
+semantics too strongly for the first clean pass. Revisit after the dense-count
+and shared-ablation sub-experiments are understood separately.
 
 ## Exact Baseline Fields By Size
 
@@ -82,55 +114,29 @@ Use these as fixed backbone fields unless the plan is updated:
 | Size | `d_model` | `d_attn` | Layers | Heads | KV heads | Experts | `top_k` | `moe_hidden_size` | Shared hidden | Dense MLP |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 275M | 768 | 1024 | 12 | 8 | 4 | 48 | 4 | 768 | 384 | 3456 |
+| mid_480m | 1024 | 1024 | 16 | 8 | 4 | 48 | 4 | 1024 | 512 | 4608 |
 | 810M | 1280 | 1536 | 20 | 12 | 6 | 48 | 4 | 1280 | 640 | 5760 |
 | 1.2B | 1536 | 2048 | 22 | 16 | 8 | 48 | 4 | 1536 | 768 | 6912 |
 
-For no-shared primary variants:
+### Exact 275M First-Wave Configs
+
+| Variant | Dense layers | Experts | `top_k` | `moe_hidden_size` | Shared hidden | Dense MLP |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `dense0_shared` | `[]` | 48 | 4 | 768 | 384 | 3456 |
+| `dense1_shared` | `[0]` | 48 | 4 | 768 | 384 | 3456 |
+| `dense2_shared` | `[0, 1]` | 48 | 4 | 768 | 384 | 3456 |
+| `dense4_shared` | `[0, 1, 2, 3]` | 48 | 4 | 768 | 384 | 3456 |
+| `dense1_no_shared_am` | `[0]` | 48 | 4 | 864 | 0 | 3456 |
+| `dense1_no_shared_unmatched` | `[0]` | 48 | 4 | 768 | 0 | 3456 |
+
+Derived fields for other sizes:
 
 ```text
-num_shared_experts = 0
-shared_mlp_hidden_size = 0
-moe_hidden_size = 9/8 * d_model
-dense_layer_mlp = 9/2 * d_model
+dense MLP = 4 * d_model + d_model / 2 for shared variants
+dense MLP = 4.5 * d_model for active-matched no-shared variants
+moe_hidden_size = d_model for shared and no-shared-unmatched variants
+moe_hidden_size = 9/8 * d_model for active-matched no-shared variants
 ```
-
-For shared variants:
-
-```text
-num_shared_experts = 1
-shared_mlp_hidden_size = d_model / 2
-dense_layer_mlp = 4 * d_model + shared_mlp_hidden_size
-```
-
-### Exact 275M Configs
-
-| Variant | `d_model` | `d_attn` | Layers | Dense layers | Experts | `top_k` | `moe_hidden_size` | Shared hidden | Dense MLP |
-| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| `baseline_1dense_shared` | 768 | 1024 | 12 | `[0]` | 48 | 4 | 768 | 384 | 3456 |
-| `1dense_no_shared_am` | 768 | 1024 | 12 | `[0]` | 48 | 4 | 864 | 0 | 3456 |
-| `2dense_no_shared_am` | 768 | 1024 | 12 | `[0, 1]` | 48 | 4 | 864 | 0 | 3456 |
-| `alternating_no_shared_am` | 768 | 1024 | 12 | `[0, 2, 4, 6, 8, 10]` | 48 | 4 | 864 | 0 | 3456 |
-| `alternating_shared` | 768 | 1024 | 12 | `[0, 2, 4, 6, 8, 10]` | 48 | 4 | 768 | 384 | 3456 |
-
-### Exact 810M Configs
-
-| Variant | `d_model` | `d_attn` | Layers | Dense layers | Experts | `top_k` | `moe_hidden_size` | Shared hidden | Dense MLP |
-| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| `baseline_1dense_shared` | 1280 | 1536 | 20 | `[0]` | 48 | 4 | 1280 | 640 | 5760 |
-| `1dense_no_shared_am` | 1280 | 1536 | 20 | `[0]` | 48 | 4 | 1440 | 0 | 5760 |
-| `2dense_no_shared_am` | 1280 | 1536 | 20 | `[0, 1]` | 48 | 4 | 1440 | 0 | 5760 |
-| `alternating_no_shared_am` | 1280 | 1536 | 20 | even layers | 48 | 4 | 1440 | 0 | 5760 |
-| `alternating_shared` | 1280 | 1536 | 20 | even layers | 48 | 4 | 1280 | 640 | 5760 |
-
-### Exact 1.2B Configs
-
-| Variant | `d_model` | `d_attn` | Layers | Dense layers | Experts | `top_k` | `moe_hidden_size` | Shared hidden | Dense MLP |
-| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| `baseline_1dense_shared` | 1536 | 2048 | 22 | `[0]` | 48 | 4 | 1536 | 768 | 6912 |
-| `1dense_no_shared_am` | 1536 | 2048 | 22 | `[0]` | 48 | 4 | 1728 | 0 | 6912 |
-| `2dense_no_shared_am` | 1536 | 2048 | 22 | `[0, 1]` | 48 | 4 | 1728 | 0 | 6912 |
-| `alternating_no_shared_am` | 1536 | 2048 | 22 | even layers | 48 | 4 | 1728 | 0 | 6912 |
-| `alternating_shared` | 1536 | 2048 | 22 | even layers | 48 | 4 | 1536 | 768 | 6912 |
 
 ## Required Code Changes
 
@@ -140,23 +146,25 @@ Add a dense/shared schedule option to
 Recommended CLI:
 
 ```text
---dense-schedule {baseline_1dense_shared,1dense_no_shared_am,2dense_no_shared_am,alternating_no_shared_am,alternating_shared}
+--dense-schedule {dense1_shared,dense0_shared,dense2_shared,dense4_shared,dense1_no_shared_am,dense1_no_shared_unmatched}
 ```
 
 Implementation notes:
 
-- Current script raises unless `dense_prefix_layers == 1`; this must be
-  generalized.
-- Layer construction must support:
-  - first `N` layers dense, rest MoE;
-  - alternating dense/MoE layers.
-- Dense layer MLP size must be set explicitly from the schedule.
-- Run names should include a compact schedule segment:
-  - `ds1d-sh`
-  - `ds1d-nosh-am`
-  - `ds2d-nosh-am`
-  - `dsalt-sh`
-  - `dsalt-nosh-am`
+1. Generalize the current hard-coded dense block override at layer 0.
+2. Support arbitrary dense-prefix layer lists for `[]`, `[0]`, `[0, 1]`, and
+   `[0, 1, 2, 3]`.
+3. Keep alternating dense/MoE schedules out of the first implementation unless
+   the plan changes.
+4. Set shared expert fields and `moe_hidden_size` from the selected
+   dense-schedule variant.
+5. Add compact run-name tags:
+   - `ds0-sh`
+   - `ds1-sh`
+   - `ds2-sh`
+   - `ds4-sh`
+   - `ds1-nosh-am`
+   - `ds1-nosh`
 
 Do not change existing baseline run names retroactively.
 
@@ -178,17 +186,8 @@ not for redesigning the experiment.
 
 Start at 275M.
 
-Recommended first wave:
-
-| Variant | Cx | Purpose |
-| --- | ---: | --- |
-| `1dense_no_shared_am` | 1 and 4 | Shared expert ablation. |
-| `2dense_no_shared_am` | 1 and 4 | Dense prefix replacement. |
-| `alternating_no_shared_am` | 1 and 4 | Dense/MoE interleaving replacement. |
-
 Use the current canonical systems settings unless a smoke test shows memory
-trouble. GPU counts follow the resource table Jacob shared from Yashas. EP stays
-`1` for all rows.
+trouble. EP stays `1` for all rows.
 
 | Size | Cx | Batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -228,9 +227,6 @@ and promotion decisions use final-window training CE loss.
 
 Use powers-of-two around the baseline fitted LR.
 
-Because dense/shared changes can affect optimization more than expert
-granularity, use a three-point transfer probe at the first rung:
-
 ### Stage 1: 275M Cx1
 
 For each first-wave variant, run:
@@ -239,7 +235,7 @@ For each first-wave variant, run:
 0.5x, 1x, 2x
 ```
 
-around the current baseline 275M Cx1 fitted LR. If the baseline is still about
+around the current baseline 275M Cx1 fitted LR. If the baseline remains about
 `2e-3`, use:
 
 ```text
@@ -257,40 +253,33 @@ Compute an architecture LR multiplier from Cx1:
 m_variant = lr*_variant_Cx1 / lr*_baseline_Cx1
 ```
 
-Predict:
+Run exactly three Cx4 LRs around:
 
 ```text
-lr_variant_Cx4 = m_variant * lr_baseline_Cx4
+m_variant * lr_baseline_275m_Cx4
 ```
-
-Run exactly three LRs:
-
-```text
-0.5x, 1x, 2x
-```
-
-around the predicted LR so each confirmation rung has a fit-able curve.
 
 ### Stage 3: Higher Cx / Scale
 
 Promote promising variants to 275M Cx8. If still competitive, backfill Cx16.
 
-Promote at most one or two variants to 810M Cx1/Cx4 unless this axis becomes the
-main project focus.
+Promote at most one dense/shared variant to 810M Cx1/Cx4 unless this axis
+becomes the main project focus.
 
 ## Monitoring
 
 Check:
 
-- W&B run appears.
-- loss is finite and decreasing;
-- `optim/step skipped == 0`;
-- throughput is comparable to the baseline family;
-- dense/MoE layer counts are logged or inferable from run config;
+- W&B run appears;
+- loss finite and decreasing;
+- skipped steps remain zero;
+- throughput and memory relative to baseline;
+- dense layer count logged correctly;
+- shared expert configuration logged correctly;
 - checkpoint path matches run name.
 
-Alternating variants may have different throughput. Record actual TFLOPs/GPU and
-tokens/sec before comparing wall-clock.
+For no-shared variants, inspect whether removing the shared route changes router
+load balance or dead/overused experts.
 
 ## Analysis
 
@@ -304,8 +293,20 @@ Also report:
 - `avg500M`;
 - final step loss;
 - throughput;
-- active/total params;
+- active params;
+- total params;
+- dense layer count;
+- MoE layer count;
+- shared expert setting;
 - eval metrics as observational context only.
+
+Recommended plots:
+
+- dense-count U-plots by Cx;
+- shared-ablation U-plots by Cx;
+- selected-LR baseline-vs-variant ladder plot;
+- loss vs dense layer count;
+- throughput vs dense layer count.
 
 Plot outputs should live under:
 
@@ -313,46 +314,25 @@ Plot outputs should live under:
 src/scripts/train/jacobm_olmoe_ladder/plots/shared_expert_dense_schedule/
 ```
 
-Recommended plots:
-
-- per-Cx U-plots by variant;
-- baseline-vs-variant selected-LR comparison across Cx;
-- active-param-adjusted comparison if active params differ materially.
-
 ## Promotion Criteria
 
 Promote if:
 
-- variant beats or closely matches baseline while simplifying architecture, e.g.
-  no shared expert;
-- variant improves with Cx even if Cx1 is close;
-- variant gives a clear speed or implementation advantage without loss damage.
+- the variant beats or clearly matches baseline after LR adjustment;
+- the result is robust across Cx1 and Cx4;
+- throughput/memory cost is acceptable;
+- the result gives an interpretable design decision for the integration run.
 
 Do not promote if:
 
-- it loses clearly at both Cx1 and Cx4;
-- LR sensitivity is unusually fragile;
-- throughput or memory makes the comparison unattractive.
+- it wins only because of an unbracketed LR edge;
+- it clearly hurts Cx1 and Cx4;
+- throughput/memory cost overwhelms a tiny loss gain;
+- it introduces obvious instability or routing pathology.
 
-## Documentation Requirements
+## Integration Notes
 
-After launch:
-
-- append all runs to `RUNS.md`;
-- add rationale and LR grids to `ANALYSIS.md`;
-- commit code/script changes before relying on launchers.
-
-After completion:
-
-- refresh W&B cache for this run family;
-- update final-window summaries;
-- regenerate plots in the experiment-specific directory;
-- push docs and plots.
-
-## Open TODOs
-
-- Decide exact active/total parameter matching policy for shared/no-shared
-  comparisons.
-- Decide validation-loss use for LR choice and promotion.
-- Decide whether to run active-matched no-shared diagnostic in the first wave or
-  only after primary no-shared looks promising.
+Use the dense/shared winner independently in the integration run together with
+the expert-granularity and total-sparsity winners. If the winner comes from
+dense-count and the shared ablation also helps, combine them only in the
+integration confirmation run, not inside this independent ablation.

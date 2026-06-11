@@ -146,6 +146,12 @@ class ExpertGeometrySpec:
     tag: str
 
 
+@dataclass(frozen=True)
+class TotalSparsitySpec:
+    num_experts: int
+    tag: str
+
+
 MODEL_SIZE_SPECS = {
     "275m": ModelSizeSpec(
         d_model=768,
@@ -236,6 +242,14 @@ EXPERT_GEOMETRY_SPECS = {
 }
 
 
+TOTAL_SPARSITY_SPECS = {
+    "baseline_48e_top4": TotalSparsitySpec(num_experts=48, tag="sp48e4k"),
+    "low_total_24e_top4": TotalSparsitySpec(num_experts=24, tag="sp24e4k"),
+    "high_total_96e_top4": TotalSparsitySpec(num_experts=96, tag="sp96e4k"),
+    "huge_total_192e_top4": TotalSparsitySpec(num_experts=192, tag="sp192e4k"),
+}
+
+
 def prepare_s3_environment(opts: argparse.Namespace) -> None:
     if (
         str(opts.data_root).startswith("s3://")
@@ -258,6 +272,15 @@ def get_parser() -> argparse.ArgumentParser:
         choices=sorted(EXPERT_GEOMETRY_SPECS),
         default="baseline_48e_top4",
         help="Expert granularity variant. Baseline preserves the existing MoE A0 geometry.",
+    )
+    parser.add_argument(
+        "--total-sparsity",
+        choices=sorted(TOTAL_SPARSITY_SPECS),
+        default="baseline_48e_top4",
+        help=(
+            "Total expert capacity variant at fixed active routed compute. "
+            "Use only with baseline expert geometry."
+        ),
     )
     parser.add_argument(
         "--lr",
@@ -441,11 +464,21 @@ def configure_model_size(opts: argparse.Namespace) -> None:
 
     spec = MODEL_SIZE_SPECS[opts.model_size]
     expert_geometry = EXPERT_GEOMETRY_SPECS[opts.expert_geometry]
+    total_sparsity = TOTAL_SPARSITY_SPECS[opts.total_sparsity]
     if spec.dense_prefix_layers != 1:
         raise ValueError("Only one dense prefix layer is currently implemented")
+    if (
+        opts.expert_geometry != "baseline_48e_top4"
+        and opts.total_sparsity != "baseline_48e_top4"
+    ):
+        raise ValueError("--expert-geometry and --total-sparsity are independent ablation axes")
 
     NUM_EXPERTS = expert_geometry.num_experts
     TOP_K = expert_geometry.top_k
+    if opts.total_sparsity != "baseline_48e_top4":
+        NUM_EXPERTS = total_sparsity.num_experts
+        TOP_K = 4
+
     D_MODEL = spec.d_model
     D_ATTN = spec.d_attn
     HEAD_DIM = spec.head_dim
@@ -458,7 +491,11 @@ def configure_model_size(opts: argparse.Namespace) -> None:
     MLP_RATIO = EFFECTIVE_MLP / D_MODEL
     DENSE_LAYER_MLP = spec.dense_layer_mlp
     NUM_LAYERS = spec.n_layers
-    EXPERT_GEOMETRY_TAG = expert_geometry.tag
+    EXPERT_GEOMETRY_TAG = (
+        total_sparsity.tag
+        if opts.total_sparsity != "baseline_48e_top4"
+        else expert_geometry.tag
+    )
 
     if PP_DIM > 1:
         _, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=1)
@@ -476,11 +513,16 @@ def consume_script_overrides(opts: argparse.Namespace, overrides: List[str]) -> 
         if override.startswith("expert_geometry="):
             opts.expert_geometry = override.split("=", 1)[1]
             continue
+        if override.startswith("total_sparsity="):
+            opts.total_sparsity = override.split("=", 1)[1]
+            continue
         filtered_overrides.append(override)
     if opts.model_size not in MODEL_SIZE_SPECS:
         raise ValueError(f"--model-size must be one of {sorted(MODEL_SIZE_SPECS)}")
     if opts.expert_geometry not in EXPERT_GEOMETRY_SPECS:
         raise ValueError(f"--expert-geometry must be one of {sorted(EXPERT_GEOMETRY_SPECS)}")
+    if opts.total_sparsity not in TOTAL_SPARSITY_SPECS:
+        raise ValueError(f"--total-sparsity must be one of {sorted(TOTAL_SPARSITY_SPECS)}")
     return filtered_overrides
 
 

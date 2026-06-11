@@ -17,7 +17,8 @@ baseline 48E/top4 geometry family with only expert count changed.
 The first wave should focus on *more* total expert capacity, not less. Our
 baseline is already relatively high-active compared with recent sparse MoEs, so
 the low-total / less-sparse variant is a future diagnostic rather than an
-initial run target.
+initial run target. Do not launch `low_total_24e_top4` / `sp24e4k` in the first
+wave.
 
 ## Goal
 
@@ -70,12 +71,22 @@ Future low-total diagnostic, not in the first wave:
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `low_total_24e_top4` | 24 | 4 | `d_model` | `24 * d_model` | `4 * d_model` |
 
+The compact run-name tags are:
+
+| Variant | Tag | First wave? |
+| --- | --- | --- |
+| `low_total_24e_top4` | `sp24e4k` | No; less sparse than baseline. |
+| `baseline_48e_top4` | `sp48e4k` | Control only. |
+| `high_total_96e_top4` | `sp96e4k` | Yes. |
+| `huge_total_192e_top4` | `sp192e4k` | Yes. |
+
 ### Approximate Active Fraction
 
 These estimates use the measured baseline active/total counts and assume the
 non-expert static parameter block stays fixed while routed expert total
 capacity scales linearly. Exact dry-run counts must replace these before final
-launch decisions.
+launch decisions. Always report active params, total params, and active/total
+percentage next to loss and throughput for this experiment.
 
 | Size | Variant | Approx active params | Approx total params | Active / total |
 | --- | --- | ---: | ---: | ---: |
@@ -95,6 +106,16 @@ launch decisions.
 | 1.2B | `baseline_48e_top4` | 1.22B | 7.76B | 16% |
 | 1.2B | `high_total_96e_top4` | 1.22B | 14.90B | 8% |
 | 1.2B | `huge_total_192e_top4` | 1.22B | 29.17B | 4% |
+
+### Exact 275M Dry-Run Counts
+
+Verified locally on 2026-06-11 by building the 275M config with
+`--total-sparsity`.
+
+| Variant | Active params incl emb/head | Total params | Active / total |
+| --- | ---: | ---: | ---: |
+| `high_total_96e_top4` / `sp96e4k` | 278,856,192 | 2,069,561,856 | 13.47% |
+| `huge_total_192e_top4` / `sp192e4k` | 279,667,200 | 3,938,935,296 | 7.10% |
 
 ## Exact Configs
 
@@ -167,11 +188,14 @@ Do not run `low_total_24e_top4` in the first wave. Save less-sparse variants
 for later only if we need to map the full curve or diagnose whether total
 capacity is actively hurting.
 
-Use current canonical baseline systems settings:
+Use current canonical baseline systems settings as the starting point, but note
+that total/optimizer memory grows with expert count even when active compute is
+fixed. For the 275M first wave, use 4 GPUs for Cx1/Cx4 and 8 GPUs for Cx8 unless
+smokes prove a smaller setting is healthy and worth using.
 
 | Size | Cx1 | Cx2 | Cx4 | Cx8 |
 | --- | ---: | ---: | ---: | ---: |
-| 275M | 1-2 GPUs | 2 GPUs | 4 GPUs | 8 GPUs |
+| 275M total-sparsity first wave | 4 GPUs | 4 GPUs | 4 GPUs | 8 GPUs |
 | mid_480m | 4 GPUs | 4 GPUs | 4 GPUs | 8 GPUs |
 | 810M | 8 GPUs | 8 GPUs | 8 GPUs | 16 GPUs |
 | 1.2B | 8 GPUs | 8 GPUs | 16 GPUs | 32 GPUs |
@@ -179,6 +203,14 @@ Use current canonical baseline systems settings:
 EP stays `1` unless memory forces a smoke-tested fallback. Higher-total variants
 may need lower microbatch or more GPUs for memory even though active compute is
 fixed; smoke `high_total_96e_top4` and `huge_total_192e_top4` before full runs.
+
+Implemented launchers:
+
+```text
+src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_smoke.sh
+src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx1_cx4.sh
+src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx8.sh
+```
 
 Checkpoint/eval settings:
 
