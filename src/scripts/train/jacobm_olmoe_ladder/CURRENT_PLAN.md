@@ -138,6 +138,31 @@ Expert granularity:
 - After Cx1/Cx4 complete, estimate variant LR multipliers relative to the
   baseline and use those multipliers to center later Cx2/Cx8/Cx16 sweeps.
 
+Total sparsity:
+
+- This is the second approved V0 ablation axis. Track it separately from
+  baseline and expert granularity in docs, W&B tags, launchers, cache entries,
+  and plots.
+- Variants under test:
+  - `sp96e4k`: 96 experts, top-4, `moe_hidden_size=d_model`; exact 275M
+    dry-run active/total is 278,856,192 / 2,069,561,856 = 13.47%.
+  - `sp192e4k`: 192 experts, top-4, `moe_hidden_size=d_model`; exact 275M
+    dry-run active/total is 279,667,200 / 3,938,935,296 = 7.10%.
+  - Do not launch `sp24e4k` in the first wave; it is less sparse than baseline.
+- Smoke tests launched on 2026-06-11 at 4 GPUs, EP=1, microbatch=4:
+  - `sp96e4k`: `01KTWFC73099P7Y0TVCRGJSZHZ`
+  - `sp192e4k`: `01KTWFCK6QBQ4QH5X3TBKF98MA`
+- If both smokes finish cleanly with finite decreasing loss, skipped steps 0,
+  and acceptable throughput/memory, launch 275M Cx1/Cx4 using
+  `src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx1_cx4.sh`.
+  Use the default 3-point transferred grids:
+  - Cx1: `1e-3`, `2e-3`, `4e-3`.
+  - Cx4: `8e-4`, `1.6e-3`, `3.2e-3`.
+- If Cx1/Cx4 are promising and bracketed, launch 275M Cx8 with
+  `src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx8.sh`.
+  Default Cx8 grid is `8e-4`, `1.6e-3`, `3.2e-3`, adjusted if the Cx1/Cx4
+  multiplier says otherwise.
+
 Ignore unless explicitly resumed:
 
 - Cancelled 810M Cx8 `1e-4`

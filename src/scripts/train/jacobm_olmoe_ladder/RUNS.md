@@ -491,3 +491,24 @@ small probes, not automatic full-ladder variants.
 | `eg-275m-cx1-eg384e32k-lr1e-3-r1` | `ultra_384e_top32` | 1e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV6EZ981F8YJ8B2M6X1S57 | Ultra granularity probe; running at launch status check. |
 | `eg-275m-cx1-eg384e32k-lr2e-3-r1` | `ultra_384e_top32` | 2e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV6TWVNSJGTMHPWY9JS4Y6 | Ultra granularity probe; pending at launch status check. |
 | `eg-275m-cx1-eg384e32k-lr4e-3-r1` | `ultra_384e_top32` | 4e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV76SNY7XF5AER7ST06F04 | Ultra granularity probe; pending at launch status check. |
+
+## 2026-06-11 Total Sparsity Experiment
+
+First-wave variants:
+
+- `sp96e4k`: 96 experts, top-4, `moe_hidden_size=d_model`; exact 275M dry-run
+  count is 278,856,192 active params / 2,069,561,856 total params = 13.47%
+  active/total.
+- `sp192e4k`: 192 experts, top-4, `moe_hidden_size=d_model`; exact 275M dry-run
+  count is 279,667,200 active params / 3,938,935,296 total params = 7.10%
+  active/total.
+
+The first wave intentionally does not include `sp24e4k`, because that is less
+sparse than the baseline and is reserved for a later diagnostic only.
+
+Smoke tests:
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-smoke-sp96e4k-lr2e-3-r1` | `high_total_96e_top4` | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWFC73099P7Y0TVCRGJSZHZ | Total-sparsity smoke from commit `22aeaab`; scheduled at launch status check. |
+| `sp-smoke-sp192e4k-lr2e-3-r1` | `huge_total_192e_top4` | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWFCK6QBQ4QH5X3TBKF98MA | Total-sparsity smoke from commit `22aeaab`; created/queued at launch status check. |
