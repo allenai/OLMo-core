@@ -1,7 +1,8 @@
 # Current MoE A0 Ladder Plan
 
-This is the active operating plan for the JacobM MoE A0 baseline ladder. Use it
-with `HANDOFF.md`, `LADDER_PROCESS.md`, `RUNS.md`, and `ANALYSIS.md`.
+This is the active operating plan for the JacobM MoE A0 baseline ladder and the
+approved first post-baseline ablation, expert granularity. Use it with
+`HANDOFF.md`, `LADDER_PROCESS.md`, `RUNS.md`, and `ANALYSIS.md`.
 
 ## Cadence
 
@@ -98,6 +99,25 @@ Continue:
   with `--refresh-stale-cache` on 2026-06-10.
 - 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed.
 
+Expert granularity:
+
+- This is the approved first post-baseline ablation. Track it separately from
+  the baseline in docs, W&B tags, launchers, cache entries, and plots.
+- Variants under test:
+  - `coarse_24e_top2`: 24 experts, top-2, `moe_hidden_size=2*d_model`.
+  - `fine_96e_top8`: 96 experts, top-8, `moe_hidden_size=d_model/2`.
+  - Baseline/control remains `baseline_48e_top4`.
+- 275M Cx1 transfer probes are queued/running at `1e-3`, `2e-3`, `4e-3` for
+  both non-baseline variants. Coarse uses `gpu1-ep1mb16`; fine uses
+  `gpu1-ep1mb8` after the `mb16` smoke OOM.
+- 275M Cx4 baseline-centered probes are queued at `8e-4`, `1.6e-3`, `3.2e-3`
+  for both non-baseline variants. Coarse uses `gpu4-ep1mb16`; fine uses
+  `gpu4-ep1mb8`.
+- Do not queue the rest of the 275M expert-granularity ladder until Cx1/Cx4
+  results are reviewed, unless Jacob explicitly approves the next batch.
+- After Cx1/Cx4 complete, estimate variant LR multipliers relative to the
+  baseline and use those multipliers to center later Cx2/Cx8/Cx16 sweeps.
+
 Ignore unless explicitly resumed:
 
 - Cancelled 810M Cx8 `1e-4`
@@ -165,13 +185,18 @@ Allowed without asking:
 - Launch midpoint Cx1/Cx2/Cx4 after smoke passes.
 - Launch agreed next baseline sweeps when LRs are determined by completed,
   bracketed fits under the active goal.
+- Monitor the approved expert-granularity Cx1/Cx4 jobs.
+- Update, commit, and push expert-granularity docs/plots/bookkeeping.
+- Launch at most one targeted expert-granularity Cx1 or Cx4 follow-up per
+  variant if the completed three-point curve lands on an edge.
 
 Ask before:
 
-- Changing architecture beyond the agreed `mid_480m` config.
+- Changing baseline architecture beyond the agreed `mid_480m` config.
+- Starting any new ablation family beyond expert granularity.
+- Launching expert-granularity Cx2/Cx8/Cx16 or larger-model promotions.
 - Changing data mix, tokenizer, optimizer family, or schedule shape.
 - Launching beyond Cx16.
 - Using more than 8 GPUs for one job.
 - Cancelling healthy non-duplicate full runs.
 - Using validation/eval metrics for LR selection.
-- Starting ablation experiments beyond the baseline ladder.
