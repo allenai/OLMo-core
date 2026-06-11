@@ -242,6 +242,14 @@ Why it may be later:
 - We should avoid changing attention and MoE shape simultaneously in the first
   standardization wave.
 
+Concrete runbook:
+
+- `experiment_plans/swa_full_attention_ratio.md`
+
+This is narrower than the later hybrid-attention question: it keeps the current
+attention mechanisms and varies only the ratio / placement of full-attention
+layers versus SWA layers.
+
 ### 6. More Total Params At Fixed Active Params
 
 Question:
@@ -266,6 +274,10 @@ Why this is important:
 Why it should wait:
 
 - We should first know whether our fixed-total expert geometry is sane.
+
+Concrete runbook:
+
+- `experiment_plans/total_sparsity_fixed_active.md`
 
 ### 7. Hybrid Attention Instead Of SWA
 

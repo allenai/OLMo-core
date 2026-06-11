@@ -12,6 +12,10 @@ Current plans:
   schedule interactions.
 - `width_depth_geometry.md`: deeper/narrower vs shallower/wider backbone shapes
   at controlled active/total parameter budgets.
+- `total_sparsity_fixed_active.md`: total routed expert capacity sweep at fixed
+  active routed compute.
+- `swa_full_attention_ratio.md`: sliding-window versus full-attention layer
+  ratio sweep, separate from larger hybrid-attention changes.
 
 Plan template:
 
