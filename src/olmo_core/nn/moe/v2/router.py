@@ -1,7 +1,6 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, Optional, Union, cast
 
-import nvtx
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -9,6 +8,11 @@ import torch.nn.functional as F
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
+
+try:
+    import nvtx
+except ImportError:
+    from olmo_core._nvtx import nvtx
 
 import olmo_core.ops.moe as ops
 from olmo_core.config import Config, DType
@@ -21,7 +25,9 @@ from olmo_core.distributed.utils import (
     unhide_from_torch,
 )
 
-from ...output_discard_checkpoint import OutputDiscardCheckpoint
+# OutputDiscardCheckpoint is provided by a separate change; the fp32-cast recompute
+# optimization that uses it is disabled below until it lands.
+# from ...output_discard_checkpoint import OutputDiscardCheckpoint
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 from ..router import MoERouterGatingFunction, _uniform_expert_assignment
 
@@ -326,7 +332,7 @@ class MoERouterV2(nn.Module):
             return x * (low + noise * (high - low))
 
     @nvtx.annotate("MoERouter.get_top_k", color="blue")
-    def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_top_k(self, scores: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
         if self.bias_gamma is None:
@@ -356,10 +362,10 @@ class MoERouterV2(nn.Module):
     @torch.no_grad()
     def compute_metrics(
         self, reset: bool = True
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+    ) -> Dict[str, tuple[torch.Tensor, Optional["ReduceType"]]]:
         from olmo_core.train.common import ReduceType
 
-        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        out: Dict[str, tuple[torch.Tensor, Optional["ReduceType"]]] = {}
 
         # Load imbalance.
         batch_size_per_expert = self.batch_size_per_expert
@@ -439,7 +445,7 @@ class MoERouterV2(nn.Module):
         scores_only: bool,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-    ) -> Tuple[
+    ) -> tuple[
         torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]
     ]:
         """
@@ -455,18 +461,21 @@ class MoERouterV2(nn.Module):
 
         # Keep activation in bf16/fp16 in forward graph, and only materialize fp32
         # router input through OutputDiscardCheckpoint so backward can recompute it.
-        cast_checkpoint: Optional[OutputDiscardCheckpoint] = None
-        if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_fp32_cast:
-            cast_checkpoint = OutputDiscardCheckpoint()
-            x_fp32 = cast(torch.Tensor, cast_checkpoint.checkpoint(_cast_to_fp32, x))
-        else:
-            x_fp32 = x.float()
+        # NOTE: OutputDiscardCheckpoint is provided by a separate change; the fp32-cast
+        # recompute optimization is disabled here. Restore the commented path when it lands.
+        # cast_checkpoint: Optional[OutputDiscardCheckpoint] = None
+        # if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_fp32_cast:
+        #     cast_checkpoint = OutputDiscardCheckpoint()
+        #     x_fp32 = cast(torch.Tensor, cast_checkpoint.checkpoint(_cast_to_fp32, x))
+        # else:
+        #     x_fp32 = x.float()
+        x_fp32 = x.float()
 
         # shape: (batch_size, seq_len, num_experts)
         logits = self.get_expert_logits(x_fp32).float()
-        if cast_checkpoint is not None:
-            # Recompute fp32 cast before linear backward consumes the saved input.
-            cast_checkpoint.discard_output_and_register_recompute(logits)
+        # if cast_checkpoint is not None:
+        #     # Recompute fp32 cast before linear backward consumes the saved input.
+        #     cast_checkpoint.discard_output_and_register_recompute(logits)
 
         # shape: (batch_size, seq_len, num_experts)
         if self.gating_function == MoERouterGatingFunction.softmax:
