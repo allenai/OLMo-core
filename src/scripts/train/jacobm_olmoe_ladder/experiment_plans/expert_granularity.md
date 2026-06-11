@@ -158,23 +158,85 @@ variants at 275M and 810M. Record:
 
 Add the table to `ABLATION_AND_RESEARCH_PLAN.md` or this file once generated.
 
+### 275M Dry-Run Counts
+
+Verified locally on 2026-06-11 with `--dry-run`.
+
+| Variant | Active params incl emb/head | Active non-embedding params | Total params | Routed active hidden | Routed total hidden |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `baseline_48e_top4` | ~0.28B | ~0.20B | ~1.13B | 3,072 | 36,864 |
+| `coarse_24e_top2` | ~0.28B | ~0.20B | ~1.13B | 3,072 | 36,864 |
+| `fine_96e_top8` | ~0.28B | ~0.20B | ~1.14B | 3,072 | 36,864 |
+
+The fine variant has slightly more total parameters because the router output
+dimension scales with expert count. This is expected and is the known minor
+mismatch in the otherwise fixed routed-capacity family.
+
 ## Launch Settings
 
 Use the same systems settings as the corresponding baseline size/rung unless a
 smoke test shows memory trouble.
 
-Current preferred settings:
+For this first architecture experiment, intentionally run the full 275M ladder
+for both non-baseline variants. This is more than the minimum needed for a
+screen, but it builds the operational muscle for future ablations and gives us a
+clean baseline-vs-variant comparison across the same Cx range.
+
+The first launched full-ladder wave is:
+
+- `coarse_24e_top2`, 275M, Cx1/Cx2/Cx4/Cx8/Cx16.
+- `fine_96e_top8`, 275M, Cx1/Cx2/Cx4/Cx8/Cx16.
+
+Recommended launch order:
+
+1. Implement `--expert-geometry`.
+2. Smoke test both non-baseline variants.
+3. Launch the 275M Cx1 transfer probes for both variants.
+4. Fit each variant's Cx1 LR multiplier.
+5. Queue the remaining 275M Cx2/Cx4/Cx8/Cx16 runs for both variants, using
+   three LRs per rung centered on the transferred baseline optimum.
+
+If we decide that wall-clock matters more than learning the multiplier first, a
+reasonable fallback is to queue the whole 275M ladder immediately using
+`m_variant = 1.0` for the initial centers, then extend any unbracketed rungs.
+
+Use the settings below for future launches unless a smoke test shows memory
+trouble or Jacob explicitly changes the resource policy. GPU counts follow the
+resource table Jacob shared from Yashas: 275M uses `1/2/4/8` GPUs for
+Cx1/Cx2/Cx4/Cx8, 810M uses `8/8/8/16`, and the largest rung uses
+`8/8/16/32`. EP stays `1` for all rows. Batch tokens are derived from
+`global_batch_size_seq * 8192`.
+
+### Canonical Systems Settings
 
 | Size | Cx | Batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 275M | 1 | 262,144 | 32 | 2 | 1 | 16 |
+| 275M | 1 | 262,144 | 32 | 1 | 1 | 16 |
+| 275M | 2 | 524,288 | 64 | 2 | 1 | 16 |
 | 275M | 4 | 524,288 | 64 | 4 | 1 | 16 |
-| 275M | 8 | 786,432 | 96 | 4 | 1 | 8 |
+| 275M | 8 | 786,432 | 96 | 8 | 1 | 8 |
 | 275M | 16 | 1,048,576 | 128 | 8 | 1 | 16 |
-| 810M | 1 | 262,144 | 32 | 4 | 1 | 4 |
+| mid_480m | 1 | 262,144 | 32 | 4 | 1 | 8 |
+| mid_480m | 2 | 524,288 | 64 | 4 | 1 | 8 |
+| mid_480m | 4 | 524,288 | 64 | 4 | 1 | 8 |
+| mid_480m | 8 | 786,432 | 96 | 8 | 1 | 4 |
+| 810M | 1 | 262,144 | 32 | 8 | 1 | 4 |
+| 810M | 2 | 524,288 | 64 | 8 | 1 | 4 |
 | 810M | 4 | 524,288 | 64 | 8 | 1 | 4 |
+| 810M | 8 | 786,432 | 96 | 16 | 1 | 4 |
 | 1.2B | 1 | 262,144 | 32 | 8 | 1 | 2 |
-| 1.2B | 4 | 524,288 | 64 | 8 | 1 | 2 |
+| 1.2B | 2 | 524,288 | 64 | 8 | 1 | 2 |
+| 1.2B | 4 | 524,288 | 64 | 16 | 1 | 2 |
+| 1.2B | 8 | 786,432 | 96 | 32 | 1 | 1 |
+
+Notes:
+
+- Existing 1.2B Cx4 baseline runs used the older `gpu8-ep1mb2` setting. Future
+  comparable launches should use the updated `gpu16-ep1mb2` resource policy
+  unless we intentionally need to match those exact historical runs.
+- Hold off on new 810M/1.2B/midpoint Cx16 jobs until the baseline plan changes.
+  The 275M expert-granularity experiment is the exception: run Cx16 for both
+  non-baseline variants so the first ablation has a full 275M ladder.
 
 Checkpoint/eval settings:
 
@@ -215,6 +277,7 @@ Run three LRs around the 275M baseline Cx1 fitted optimum:
 0.5x, 1x, 2x
 ```
 
+This uses the measured 275M baseline Cx1 optimum, not a hand-picked LR list.
 Using the current approximate baseline Cx1 optimum `~2e-3`, the initial grid is:
 
 ```text
@@ -258,11 +321,28 @@ Round to powers-of-two style values, not arbitrary linear spacing.
 
 ### Stage 3: 275M Higher-Cx Promotion
 
-If a variant is not clearly worse at both Cx1 and Cx4, run 275M Cx8. If it is
-competitive or better at Cx8, backfill Cx16.
+For this first experiment, do not treat Cx8/Cx16 as optional promotion rungs.
+Run the whole 275M ladder for both variants once the Cx1 transfer probe has
+given us a usable architecture LR multiplier.
 
-Do not claim a new standard architecture from only Cx1/Cx4. Cx1/Cx4 are
-screening rungs; Cx8/Cx16 provide higher-data-scale confidence.
+For each higher-Cx rung:
+
+```text
+lr_variant(Cx) = m_variant * lr_baseline_275m(Cx)
+```
+
+Launch three powers-of-two-spaced LRs:
+
+- `0.5x` predicted LR;
+- `1x` predicted LR;
+- `2x` predicted LR.
+
+If the best completed point is on an edge, launch a bounded extension in the
+improving direction. If the curve is monotonically improving at the hot edge,
+include a farther sentinel rather than only walking by repeated 2x steps.
+
+Do not claim a new standard architecture from only Cx1/Cx4. The full 275M
+Cx1/Cx2/Cx4/Cx8/Cx16 ladder is the first comparison surface for this ablation.
 
 ### Stage 4: 810M Transfer Check
 
@@ -358,6 +438,52 @@ Recommended plot families:
 - Baseline-vs-variant comparison plots should show final-window training loss
   at each Cx using each variant's selected/fitted LR.
 - For early analysis, make comparison plots from training loss only. Validation
+  losses remain observational until we explicitly decide how to use them.
+
+## File And Run Organization
+
+Keep experiment-specific artifacts separate from the baseline ladder.
+
+Recommended layout:
+
+```text
+src/scripts/train/jacobm_olmoe_ladder/experiments/expert_granularity/
+  launch_smoke.sh
+  launch_275m_cx1.sh
+  launch_275m_cx2.sh
+  launch_275m_cx4.sh
+  launch_275m_cx8.sh
+  launch_275m_cx16.sh
+  reproduce_*.sh
+```
+
+Keep docs and plots in the existing planning tree:
+
+```text
+src/scripts/train/jacobm_olmoe_ladder/experiment_plans/expert_granularity.md
+src/scripts/train/jacobm_olmoe_ladder/plots/expert_granularity/
+```
+
+Run naming should be compact. The Beaker/W&B run name should encode only the
+pieces needed to identify the scientific condition:
+
+```text
+eg-275m-cx1-24e2k-lr2e-3-r1
+eg-275m-cx1-96e8k-lr2e-3-r1
+```
+
+Use W&B tags and `RUNS.md` for the longer metadata:
+
+- experiment: `exp_expert_granularity`
+- variant: `eg24e2k` or `eg96e8k`
+- size: `275m`
+- Cx: `cx1`, `cx2`, ...
+- LR tag
+- systems tag: `b256k-gpu1-ep1mb16`, etc.
+
+Do not include stable systems settings in every run name unless they differ from
+the canonical table above. This keeps checkpoint paths and W&B group names from
+getting too long.
   overlays can be added later after the validation-selection policy is decided.
 
 ## Promotion Criteria

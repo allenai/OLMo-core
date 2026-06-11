@@ -138,6 +138,14 @@ class ModelSizeSpec:
     dense_layer_mlp: int
 
 
+@dataclass(frozen=True)
+class ExpertGeometrySpec:
+    num_experts: int
+    top_k: int
+    moe_hidden_mult: float
+    tag: str
+
+
 MODEL_SIZE_SPECS = {
     "275m": ModelSizeSpec(
         d_model=768,
@@ -194,6 +202,28 @@ MODEL_SIZE_SPECS = {
 }
 
 
+EXPERT_GEOMETRY_SPECS = {
+    "baseline_48e_top4": ExpertGeometrySpec(
+        num_experts=48,
+        top_k=4,
+        moe_hidden_mult=1.0,
+        tag="eg48e4k",
+    ),
+    "coarse_24e_top2": ExpertGeometrySpec(
+        num_experts=24,
+        top_k=2,
+        moe_hidden_mult=2.0,
+        tag="eg24e2k",
+    ),
+    "fine_96e_top8": ExpertGeometrySpec(
+        num_experts=96,
+        top_k=8,
+        moe_hidden_mult=0.5,
+        tag="eg96e8k",
+    ),
+}
+
+
 def prepare_s3_environment(opts: argparse.Namespace) -> None:
     if (
         str(opts.data_root).startswith("s3://")
@@ -210,6 +240,12 @@ def get_parser() -> argparse.ArgumentParser:
         choices=sorted(MODEL_SIZE_SPECS),
         default="275m",
         help="MoE A0 active-parameter scale to train.",
+    )
+    parser.add_argument(
+        "--expert-geometry",
+        choices=sorted(EXPERT_GEOMETRY_SPECS),
+        default="baseline_48e_top4",
+        help="Expert granularity variant. Baseline preserves the existing MoE A0 geometry.",
     )
     parser.add_argument(
         "--lr",
@@ -316,6 +352,12 @@ def get_parser() -> argparse.ArgumentParser:
         default=TAG,
         help="Short tag appended to WandB run/group names.",
     )
+    parser.add_argument(
+        "--wandb-tag",
+        action="append",
+        default=[],
+        help="Additional W&B tag. May be passed multiple times.",
+    )
     return parser
 
 
@@ -383,25 +425,28 @@ def configure_model_size(opts: argparse.Namespace) -> None:
     global NUM_EXPERTS, TOP_K, D_MODEL, D_ATTN, HEAD_DIM, NUM_HEAD, NUM_KV_HEAD
     global MOE_HIDDEN_SIZE, NUM_SHARED_EXPERTS, SHARED_MLP_HIDDEN_SIZE
     global EFFECTIVE_MLP, MLP_RATIO, DENSE_LAYER_MLP, NUM_LAYERS, SPLIT_POINTS
+    global EXPERT_GEOMETRY_TAG
 
     spec = MODEL_SIZE_SPECS[opts.model_size]
+    expert_geometry = EXPERT_GEOMETRY_SPECS[opts.expert_geometry]
     if spec.dense_prefix_layers != 1:
         raise ValueError("Only one dense prefix layer is currently implemented")
 
-    NUM_EXPERTS = spec.num_experts
-    TOP_K = spec.top_k
+    NUM_EXPERTS = expert_geometry.num_experts
+    TOP_K = expert_geometry.top_k
     D_MODEL = spec.d_model
     D_ATTN = spec.d_attn
     HEAD_DIM = spec.head_dim
     NUM_HEAD = D_ATTN // HEAD_DIM
     NUM_KV_HEAD = NUM_HEAD // 2
-    MOE_HIDDEN_SIZE = spec.moe_hidden_size
+    MOE_HIDDEN_SIZE = int(spec.d_model * expert_geometry.moe_hidden_mult)
     NUM_SHARED_EXPERTS = spec.num_shared_experts
     SHARED_MLP_HIDDEN_SIZE = spec.shared_mlp_hidden_size
     EFFECTIVE_MLP = MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS
     MLP_RATIO = EFFECTIVE_MLP / D_MODEL
     DENSE_LAYER_MLP = spec.dense_layer_mlp
     NUM_LAYERS = spec.n_layers
+    EXPERT_GEOMETRY_TAG = expert_geometry.tag
 
     if PP_DIM > 1:
         _, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=1)
@@ -416,9 +461,14 @@ def consume_script_overrides(opts: argparse.Namespace, overrides: List[str]) -> 
         if override.startswith("model_size="):
             opts.model_size = override.split("=", 1)[1]
             continue
+        if override.startswith("expert_geometry="):
+            opts.expert_geometry = override.split("=", 1)[1]
+            continue
         filtered_overrides.append(override)
     if opts.model_size not in MODEL_SIZE_SPECS:
         raise ValueError(f"--model-size must be one of {sorted(MODEL_SIZE_SPECS)}")
+    if opts.expert_geometry not in EXPERT_GEOMETRY_SPECS:
+        raise ValueError(f"--expert-geometry must be one of {sorted(EXPERT_GEOMETRY_SPECS)}")
     return filtered_overrides
 
 
@@ -527,6 +577,7 @@ USE_PERI_NORM = True
 PRODUCTION_RUN = True
 
 TAG = "cx1"
+EXPERT_GEOMETRY_TAG = "eg48e4k"
 
 MONKEY_PATCH_DECAY_START_TOKENS = None
 MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
@@ -814,6 +865,7 @@ def build_trainer_config(
                 name=opts.name,
                 entity="ai2-llm",
                 project="jacobm-olmoe-ladder",
+                tags=opts.wandb_tag,
                 enabled=PRODUCTION_RUN,
                 cancel_check_interval=cancel_check_interval,
             ),
@@ -931,10 +983,14 @@ def finalize_config(config: ExperimentConfig, opts: argparse.Namespace) -> None:
     assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"
     wandb_original_name = wandb_cb.name
     wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
-    wandb_cb.name += f"_{opts.model_size}_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
+    wandb_cb.name += (
+        f"_{opts.model_size}_{EXPERT_GEOMETRY_TAG}_{NUM_LAYERS}L"
+        f"{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
+    )
     wandb_cb.group = (
         f"{wandb_original_name}_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
-        f"_{opts.model_size}_{NUM_LAYERS}L{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
+        f"_{opts.model_size}_{EXPERT_GEOMETRY_TAG}_{NUM_LAYERS}L"
+        f"{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
     )
 
 
