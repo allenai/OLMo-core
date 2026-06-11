@@ -1029,3 +1029,27 @@ the Cx1 probes finish, because they are short, use the already known baseline
 Cx4 optimum region, and can be extended by one targeted follow-up per variant if
 the architecture LR multiplier differs from 1.0. The queued Cx4 grid is
 `8e-4`, `1.6e-3`, `3.2e-3` for each variant.
+
+Status after the 2026-06-11 long-cadence check:
+
+- `coarse_24e_top2` Cx1 finished cleanly at all three LRs. Avg250M losses:
+  - `1e-3`: 2.7873
+  - `2e-3`: 2.7814
+  - `4e-3`: 2.7904
+- The coarse Cx1 curve is bracketed; the observed best is `2e-3`, and a
+  3-point quadratic fit vs `log10(lr)` gives `lr* ~= 1.86e-3`.
+- No coarse Cx1 follow-up is needed before reviewing Cx4.
+- `fine_96e_top8` Cx1 `1e-3` finished cleanly with avg250M 2.7683. This is
+  notably better than the baseline Cx1 `1e-3` avg250M 2.7852, but wait for the
+  fine `2e-3` and `4e-3` completions before interpreting the fine LR curve.
+- Cx4 baseline-centered expert-granularity probes are now running except the
+  fine `3.2e-3` job, which remains queued/created.
+
+Midpoint baseline follow-ups from 2026-06-10:
+
+- `mid_480m` Cx4 cold sentinel `1e-4` finished cleanly with avg250M 2.4689,
+  much worse than the existing Cx4 best `8e-4` avg250M 2.3788. This confirms
+  the cold side but should not change the Cx4 LR center.
+- `mid_480m` Cx8 hot sentinel `3.2e-3` finished cleanly with avg250M 2.3486,
+  worse than the existing Cx8 best `8e-4` avg250M 2.3076. This brackets Cx8 on
+  the hot side; no additional midpoint Cx8 hot extension is needed.

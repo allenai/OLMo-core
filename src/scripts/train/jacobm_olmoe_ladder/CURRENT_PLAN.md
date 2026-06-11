@@ -107,9 +107,11 @@ Expert granularity:
   - `coarse_24e_top2`: 24 experts, top-2, `moe_hidden_size=2*d_model`.
   - `fine_96e_top8`: 96 experts, top-8, `moe_hidden_size=d_model/2`.
   - Baseline/control remains `baseline_48e_top4`.
-- 275M Cx1 transfer probes are queued/running at `1e-3`, `2e-3`, `4e-3` for
-  both non-baseline variants. Coarse uses `gpu1-ep1mb16`; fine uses
-  `gpu1-ep1mb8` after the `mb16` smoke OOM.
+- 275M Cx1 transfer probes were queued at `1e-3`, `2e-3`, `4e-3` for both
+  non-baseline variants. Coarse uses `gpu1-ep1mb16`; fine uses `gpu1-ep1mb8`
+  after the `mb16` smoke OOM. Coarse Cx1 has finished and is bracketed with
+  observed best `2e-3` and fitted `lr* ~= 1.86e-3`; do not launch a coarse Cx1
+  follow-up. Fine `1e-3` has finished; wait for fine `2e-3`/`4e-3`.
 - 275M Cx4 baseline-centered probes are queued at `8e-4`, `1.6e-3`, `3.2e-3`
   for both non-baseline variants. Coarse uses `gpu4-ep1mb16`; fine uses
   `gpu4-ep1mb8`.
@@ -154,12 +156,13 @@ Queued Cx1/Cx2/Cx4 together on 2026-06-08:
 Follow-ups launched on 2026-06-10:
 
 - Cx4 cold-side sentinel `1e-4`, `gpu4-ep1mb8`:
-  `01KTSC4J4KGTZXY0XP5P0AXQXM`, W&B `0mvi3nov`. After W&B history repair, the
-  original Cx4 triplet is already bracketed around `8e-4`; treat this as extra
-  insurance.
+  `01KTSC4J4KGTZXY0XP5P0AXQXM`, W&B `0mvi3nov`. Finished cleanly with avg250M
+  2.4689, much worse than the existing Cx4 best `8e-4` avg250M 2.3788. Treat
+  this as extra cold-side insurance only.
 - Cx8 hot-side sentinel `3.2e-3`, `gpu8-ep1mb4`:
-  `01KTSC51ZXE3YQAZMANDP15QT7`, W&B `fvbz0h7v`. This is still needed because
-  completed Cx8 has `8e-4` as the hot-edge best.
+  `01KTSC51ZXE3YQAZMANDP15QT7`, W&B `fvbz0h7v`. Finished cleanly with avg250M
+  2.3486, worse than the existing Cx8 best `8e-4` avg250M 2.3076. Midpoint Cx8
+  is now bracketed on the hot side; no additional Cx8 hot extension is needed.
 
 Hold off on midpoint Cx16 for now, matching the 810M/1.2B policy.
 
