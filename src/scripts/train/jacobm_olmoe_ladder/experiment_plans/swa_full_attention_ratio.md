@@ -29,6 +29,24 @@ More full-attention layers may improve quality but cost more wall-clock and
 memory. Since LR selection is currently training-loss-only, validation/eval
 metrics should be logged but not used for LR choice.
 
+## Public Architecture Anchors
+
+Recent non-hybrid local/global attention schedules motivate testing sparser
+full-attention ratios than our current alternating pattern:
+
+| Model family | Reported schedule | Notes |
+| --- | --- | --- |
+| Current MoE A0 | 1:1 SWA/full plus final full | Implemented as `pattern=[WINDOW_SIZE, -1]`, `force_full_attention_on_last_layer=True`. |
+| GPT-OSS / GPT-3-style sparse attention | Alternating local/full | Public GPT-OSS description says alternating dense and locally banded sparse attention. |
+| Gemma 3 | 5 local : 1 global | Google reports repeating 5 local attention layers and 1 global attention layer. |
+| MAI-Thinking-1 | 5 local : 1 global | Microsoft report says it follows Gemma 3 periodic attention with 5 local layers and 1 global layer. |
+| Qwen3-Next | 3 cheap layers : 1 attention layer | Hybrid Gated DeltaNet/attention, useful as ratio inspiration but not a pure SWA/full control. |
+
+Qwen3 standard MoE does not provide the same clear public local/global SWA
+ratio; Hugging Face's Qwen3 config documentation exposes SWA options but
+defaults `use_sliding_window` to false. Treat Qwen3-Next as a hybrid-attention
+anchor, not a standard SWA/full-attention datapoint.
+
 ## Variants
 
 Keep fixed:
@@ -46,28 +64,40 @@ Recommended first family:
 
 | Variant | Schedule concept | Interpretation |
 | --- | --- | --- |
-| `attn_current` | Current SWA/full pattern | Baseline/control. |
-| `attn_sparse_full` | Fewer full-attention layers than current | Efficiency-biased. |
-| `attn_dense_full` | More full-attention layers than current | Quality-biased. |
-| `attn_all_swa` | No periodic full attention except any required boundary layer | Extreme efficiency sentinel. |
+| `attn_1to1_current` | Current 1 SWA : 1 full pattern | Baseline/control. |
+| `attn_3to1` | 3 SWA : 1 full | Intermediate efficiency point; close to several hybrid ratios. |
+| `attn_5to1` | 5 SWA : 1 full | Gemma 3 / MAI-style local/global ratio. |
+| `attn_mostly_swa` | Final full only, plus first full if required | Extreme efficiency sentinel. |
 
 The exact layer indices should be generated per model size from simple rules
 rather than hand-coded ad hoc lists.
 
 ### Proposed Layer Rules
 
-Let `L = n_layers`.
+Let `L = n_layers`. Generate repeating SWA/full patterns and force the final
+layer full, matching the current script's final-full behavior.
 
-| Variant | Full-attention layers |
-| --- | --- |
-| `attn_current` | Existing script behavior. |
-| `attn_sparse_full` | Layer `0`, final layer, and every 8th layer. |
-| `attn_dense_full` | Layer `0`, final layer, and every 2nd layer. |
-| `attn_all_swa` | Final layer only, unless the first layer must remain full for stability. |
+| Variant | Pattern | Final layer | Approx full fraction |
+| --- | --- | --- | ---: |
+| `attn_1to1_current` | `[SWA, full]` | forced full | ~50% |
+| `attn_3to1` | `[SWA, SWA, SWA, full]` | forced full | ~25% |
+| `attn_5to1` | `[SWA, SWA, SWA, SWA, SWA, full]` | forced full | ~17% |
+| `attn_mostly_swa` | all SWA | forced full | `1 / L` |
 
-TODO: Confirm whether the current implementation forces full attention on the
-first and/or final layer through `SlidingWindowAttentionConfig` flags. The exact
-rule should respect those constraints or make the override explicit.
+The current implementation sets `force_full_attention_on_first_layer=False` and
+`force_full_attention_on_last_layer=True`. Keep first-layer behavior unchanged
+unless a smoke test shows instability.
+
+### Full-Layer Counts By Size
+
+Approximate counts under the final-full rule:
+
+| Size | Layers | 1:1 full | 3:1 full | 5:1 full | Mostly-SWA full |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 275M | 12 | 6 | 3 | 2 | 1 |
+| mid_480m | 16 | 8 | 4 | 3 | 1 |
+| 810M | 20 | 10 | 5 | 4 | 1 |
+| 1.2B | 22 | 11 | 6 | 4 | 1 |
 
 ## Exact Configs
 
@@ -94,21 +124,21 @@ Add an attention-schedule option to
 Recommended CLI:
 
 ```text
---attention-schedule {attn_current,attn_sparse_full,attn_dense_full,attn_all_swa}
+--attention-schedule {attn_1to1_current,attn_3to1,attn_5to1,attn_mostly_swa}
 ```
 
 Implementation notes:
 
-1. Keep the current behavior as `attn_current`.
+1. Keep the current behavior as `attn_1to1_current`.
 2. Add a helper that maps `(attention_schedule, n_layers)` to a list or pattern
    of full-attention layers.
 3. Keep SWA window size unchanged.
 4. Log the selected full-attention layer indices in W&B config or run notes.
 5. Add compact run-name tags:
-   - `attn-cur`
-   - `attn-sparse`
-   - `attn-dense`
-   - `attn-allswa`
+   - `attn1to1`
+   - `attn3to1`
+   - `attn5to1`
+   - `attn-mswa`
 
 Do not change existing baseline run names retroactively.
 
@@ -133,9 +163,13 @@ Recommended first wave:
 
 | Variant | Cx | Purpose |
 | --- | ---: | --- |
-| `attn_sparse_full` | 1 and 4 | Can we reduce full attention cheaply? |
-| `attn_dense_full` | 1 and 4 | Does more full attention improve quality? |
-| `attn_all_swa` | 1 and 4 | Extreme sentinel for how much full attention matters. |
+| `attn_3to1` | 1 and 4 | Intermediate reduction in full-attention layers. |
+| `attn_5to1` | 1 and 4 | MAI/Gemma-style schedule. |
+| `attn_mostly_swa` | 1 and 4 | Extreme sentinel for how much full attention matters. |
+
+Do not run a denser-than-current attention schedule in the first wave. The
+public trend and our systems goals point toward fewer full-attention layers, not
+more. If all sparse variants underperform badly, revisit denser schedules later.
 
 Use current canonical systems settings:
 
@@ -262,6 +296,6 @@ After completion:
 
 - Inspect the current attention schedule implementation and record exact
   baseline full-attention layer indices for every model size.
-- Decide whether `attn_all_swa` keeps first layer full or only final layer full.
+- Decide whether `attn_mostly_swa` keeps first layer full or only final layer full.
 - Decide whether to test this on the baseline 48E/top4 block or the winning
   expert-granularity block.
