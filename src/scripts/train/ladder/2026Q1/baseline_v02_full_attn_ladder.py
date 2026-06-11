@@ -85,6 +85,22 @@ DOLMA2_BASELINE_PATHS = [
     "/weka/oe-training-default/ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/wikipedia/**/*.npy",
 ]
 
+DOLMA2_BASELINE_SOURCE_NAMES = [
+    "all-dressed-snazzy2-fixed",
+    "arxiv",
+    "finemath-3plus",
+    "s2pdf",
+    "stack-edu",
+    "wikipedia",
+]
+
+
+def _source_paths_from_root(data_root: str | None) -> list[str]:
+    if data_root is None:
+        return DOLMA2_BASELINE_PATHS
+    root = data_root.rstrip("/")
+    return [f"{root}/{source_name}/**/*.npy" for source_name in DOLMA2_BASELINE_SOURCE_NAMES]
+
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
@@ -96,7 +112,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         ConcatAndChunkInstanceSourceConfig(
             sources=[
                 NumpyDocumentSourceConfig(
-                    source_paths=DOLMA2_BASELINE_PATHS,
+                    source_paths=_source_paths_from_root(args.data_root),
                     tokenizer=tokenizer,
                 ),
             ],
@@ -171,6 +187,16 @@ def add_additional_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         help=(
             "Override the automatically selected attention backend. Useful for "
             "working around backend-specific kernel compile failures."
+        ),
+    )
+    parser.add_argument(
+        "--data-root",
+        type=str,
+        default=None,
+        help=(
+            "Tokenizer root containing the six Dolma2 baseline source directories. "
+            "Defaults to the full-data v02 baseline mix paths; pass the 8k "
+            "subsample root to train on the fixed sampled instances."
         ),
     )
 
