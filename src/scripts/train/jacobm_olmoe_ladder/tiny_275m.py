@@ -221,6 +221,18 @@ EXPERT_GEOMETRY_SPECS = {
         moe_hidden_mult=0.5,
         tag="eg96e8k",
     ),
+    "extreme_192e_top16": ExpertGeometrySpec(
+        num_experts=192,
+        top_k=16,
+        moe_hidden_mult=0.25,
+        tag="eg192e16k",
+    ),
+    "ultra_384e_top32": ExpertGeometrySpec(
+        num_experts=384,
+        top_k=32,
+        moe_hidden_mult=0.125,
+        tag="eg384e32k",
+    ),
 }
 
 

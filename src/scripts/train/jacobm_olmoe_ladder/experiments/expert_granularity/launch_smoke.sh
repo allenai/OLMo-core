@@ -11,6 +11,8 @@ GPUS=1
 EP_DIM=1
 COARSE_MICRO_BSZ="${COARSE_MICRO_BSZ:-16}"
 FINE_MICRO_BSZ="${FINE_MICRO_BSZ:-8}"
+EXTREME_MICRO_BSZ="${EXTREME_MICRO_BSZ:-4}"
+ULTRA_MICRO_BSZ="${ULTRA_MICRO_BSZ:-2}"
 GLOBAL_BATCH_SIZE_SEQ=32
 CHINCHILLA_MULTIPLE="${CHINCHILLA_MULTIPLE:-0.02}"
 LR="${LR:-2e-3}"
@@ -115,6 +117,12 @@ for variant in ${EXPERT_GEOMETRIES}; do
       ;;
     fine|eg96e8k|fine_96e_top8)
       launch_one fine_96e_top8 eg96e8k "${FINE_MICRO_BSZ}"
+      ;;
+    extreme|eg192e16k|extreme_192e_top16)
+      launch_one extreme_192e_top16 eg192e16k "${EXTREME_MICRO_BSZ}"
+      ;;
+    ultra|eg384e32k|ultra_384e_top32)
+      launch_one ultra_384e_top32 eg384e32k "${ULTRA_MICRO_BSZ}"
       ;;
     *)
       echo "Unknown expert geometry selector: ${variant}" >&2

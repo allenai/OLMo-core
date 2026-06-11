@@ -83,6 +83,10 @@ def expert_variant_name(name: str) -> str | None:
         return "coarse_24e_top2"
     if "eg96e8k" in name:
         return "fine_96e_top8"
+    if "eg192e16k" in name:
+        return "extreme_192e_top16"
+    if "eg384e32k" in name:
+        return "ultra_384e_top32"
     return None
 
 
@@ -163,8 +167,16 @@ def plot_cx(points: list[Point], cx: int, out_path: Path, window_m: int) -> None
         "baseline_48e_top4": "baseline 48E/top4",
         "coarse_24e_top2": "coarse 24E/top2",
         "fine_96e_top8": "fine 96E/top8",
+        "extreme_192e_top16": "extreme 192E/top16",
+        "ultra_384e_top32": "ultra 384E/top32",
     }
-    variants = ["baseline_48e_top4", "coarse_24e_top2", "fine_96e_top8"]
+    variants = [
+        "baseline_48e_top4",
+        "coarse_24e_top2",
+        "fine_96e_top8",
+        "extreme_192e_top16",
+        "ultra_384e_top32",
+    ]
     for variant in variants:
         group = sorted([p for p in points if p.cx == cx and p.variant == variant], key=lambda p: p.lr)
         if not group:

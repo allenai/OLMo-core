@@ -55,10 +55,14 @@ changes with expert count; record this as a known minor mismatch.
 | `coarse_24e_top2` | 24 | 2 | `2 * d_model` | Coarser Phi-style endpoint. |
 | `baseline_48e_top4` | 48 | 4 | `d_model` | Current MoE A0 baseline. |
 | `fine_96e_top8` | 96 | 8 | `d_model / 2` | Finer DeepSeek/Qwen-style endpoint. |
+| `extreme_192e_top16` | 192 | 16 | `d_model / 4` | Very fine-grained diagnostic probe. |
+| `ultra_384e_top32` | 384 | 32 | `d_model / 8` | Extreme granularity stress test. |
 
 Do not add the 144E/top12 variant in the first official wave. It is useful as a
 future exploratory sentinel, but the 24/48/96 triangle is cleaner and scales
-across all three model sizes.
+across all three model sizes. The 192E/top16 and 384E/top32 variants are a later
+diagnostic extension after the 96E/top8 variant looked strongest at Cx1/Cx4;
+run them as small 275M probes first, not as automatic full-ladder variants.
 
 ## Exact Configs
 
@@ -82,6 +86,8 @@ Keep these fields fixed within each size:
 | `coarse_24e_top2` | 768 | 1024 | 12 | 8 | 4 | 24 | 2 | 1536 | 384 | 3456 |
 | `baseline_48e_top4` | 768 | 1024 | 12 | 8 | 4 | 48 | 4 | 768 | 384 | 3456 |
 | `fine_96e_top8` | 768 | 1024 | 12 | 8 | 4 | 96 | 8 | 384 | 384 | 3456 |
+| `extreme_192e_top16` | 768 | 1024 | 12 | 8 | 4 | 192 | 16 | 192 | 384 | 3456 |
+| `ultra_384e_top32` | 768 | 1024 | 12 | 8 | 4 | 384 | 32 | 96 | 384 | 3456 |
 
 ### 810M
 
@@ -90,6 +96,8 @@ Keep these fields fixed within each size:
 | `coarse_24e_top2` | 1280 | 1536 | 20 | 12 | 6 | 24 | 2 | 2560 | 640 | 5760 |
 | `baseline_48e_top4` | 1280 | 1536 | 20 | 12 | 6 | 48 | 4 | 1280 | 640 | 5760 |
 | `fine_96e_top8` | 1280 | 1536 | 20 | 12 | 6 | 96 | 8 | 640 | 640 | 5760 |
+| `extreme_192e_top16` | 1280 | 1536 | 20 | 12 | 6 | 192 | 16 | 320 | 640 | 5760 |
+| `ultra_384e_top32` | 1280 | 1536 | 20 | 12 | 6 | 384 | 32 | 160 | 640 | 5760 |
 
 ### 1.2B
 
@@ -98,6 +106,8 @@ Keep these fields fixed within each size:
 | `coarse_24e_top2` | 1536 | 2048 | 22 | 16 | 8 | 24 | 2 | 3072 | 768 | 6912 |
 | `baseline_48e_top4` | 1536 | 2048 | 22 | 16 | 8 | 48 | 4 | 1536 | 768 | 6912 |
 | `fine_96e_top8` | 1536 | 2048 | 22 | 16 | 8 | 96 | 8 | 768 | 768 | 6912 |
+| `extreme_192e_top16` | 1536 | 2048 | 22 | 16 | 8 | 192 | 16 | 384 | 768 | 6912 |
+| `ultra_384e_top32` | 1536 | 2048 | 22 | 16 | 8 | 384 | 32 | 192 | 768 | 6912 |
 
 ## Required Code Changes
 
@@ -114,13 +124,15 @@ EXPERT_GEOMETRY_SPECS = {
     "baseline_48e_top4": dict(num_experts=48, top_k=4, moe_hidden_mult=1.0),
     "coarse_24e_top2": dict(num_experts=24, top_k=2, moe_hidden_mult=2.0),
     "fine_96e_top8": dict(num_experts=96, top_k=8, moe_hidden_mult=0.5),
+    "extreme_192e_top16": dict(num_experts=192, top_k=16, moe_hidden_mult=0.25),
+    "ultra_384e_top32": dict(num_experts=384, top_k=32, moe_hidden_mult=0.125),
 }
 ```
 
 3. Add CLI option:
 
 ```text
---expert-geometry {baseline_48e_top4,coarse_24e_top2,fine_96e_top8}
+--expert-geometry {baseline_48e_top4,coarse_24e_top2,fine_96e_top8,extreme_192e_top16,ultra_384e_top32}
 ```
 
 4. In `configure_model_size`, apply the selected expert-geometry variant after
@@ -140,6 +152,8 @@ MOE_HIDDEN_SIZE = int(spec.d_model * geom["moe_hidden_mult"])
 eg24e2k
 eg48e4k
 eg96e8k
+eg192e16k
+eg384e32k
 ```
 
 Do not change the existing baseline run names retroactively. New runs should
@@ -147,8 +161,8 @@ encode the expert geometry explicitly.
 
 ## Parameter Check
 
-Before launching training, run a local parameter-count dry check for all three
-variants at 275M and 810M. Record:
+Before launching training, run a local parameter-count dry check for every
+candidate variant at 275M and 810M. Record:
 
 - active params including embeddings/head;
 - active non-embedding params;
@@ -167,10 +181,13 @@ Verified locally on 2026-06-11 with `--dry-run`.
 | `baseline_48e_top4` | ~0.28B | ~0.20B | ~1.13B | 3,072 | 36,864 |
 | `coarse_24e_top2` | ~0.28B | ~0.20B | ~1.13B | 3,072 | 36,864 |
 | `fine_96e_top8` | ~0.28B | ~0.20B | ~1.14B | 3,072 | 36,864 |
+| `extreme_192e_top16` | ~0.28B | ~0.20B | ~1.14B | 3,072 | 36,864 |
+| `ultra_384e_top32` | ~0.28B | ~0.20B | ~1.14B | 3,072 | 36,864 |
 
-The fine variant has slightly more total parameters because the router output
+The finer variants have slightly more total parameters because the router output
 dimension scales with expert count. This is expected and is the known minor
-mismatch in the otherwise fixed routed-capacity family.
+mismatch in the otherwise fixed routed-capacity family. The 192E/top16 and
+384E/top32 rows were dry-run checked locally on 2026-06-11.
 
 ## Launch Settings
 

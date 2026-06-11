@@ -82,6 +82,8 @@ The three core variants are:
 | `coarse_24e_top2` | 24 | 2 | `2 * d_model` | Phi-style coarse top-2 endpoint. |
 | `baseline_48e_top4` | 48 | 4 | `1 * d_model` | Current MoE A0 baseline. |
 | `fine_96e_top8` | 96 | 8 | `d_model / 2` | DeepSeek/Qwen-style fine-grained endpoint. |
+| `extreme_192e_top16` | 192 | 16 | `d_model / 4` | Very fine-grained diagnostic probe. |
+| `ultra_384e_top32` | 384 | 32 | `d_model / 8` | Extreme granularity stress test. |
 
 Exact 275M configs:
 
@@ -90,6 +92,8 @@ Exact 275M configs:
 | `coarse_24e_top2` | 768 | 1024 | 12 | 8 | 4 | 24 | 2 | 1536 | 1 | 384 | 1 | 3456 |
 | `baseline_48e_top4` | 768 | 1024 | 12 | 8 | 4 | 48 | 4 | 768 | 1 | 384 | 1 | 3456 |
 | `fine_96e_top8` | 768 | 1024 | 12 | 8 | 4 | 96 | 8 | 384 | 1 | 384 | 1 | 3456 |
+| `extreme_192e_top16` | 768 | 1024 | 12 | 8 | 4 | 192 | 16 | 192 | 1 | 384 | 1 | 3456 |
+| `ultra_384e_top32` | 768 | 1024 | 12 | 8 | 4 | 384 | 32 | 96 | 1 | 384 | 1 | 3456 |
 
 Exact 810M configs:
 
@@ -98,6 +102,8 @@ Exact 810M configs:
 | `coarse_24e_top2` | 1280 | 1536 | 20 | 12 | 6 | 24 | 2 | 2560 | 1 | 640 | 1 | 5760 |
 | `baseline_48e_top4` | 1280 | 1536 | 20 | 12 | 6 | 48 | 4 | 1280 | 1 | 640 | 1 | 5760 |
 | `fine_96e_top8` | 1280 | 1536 | 20 | 12 | 6 | 96 | 8 | 640 | 1 | 640 | 1 | 5760 |
+| `extreme_192e_top16` | 1280 | 1536 | 20 | 12 | 6 | 192 | 16 | 320 | 1 | 640 | 1 | 5760 |
+| `ultra_384e_top32` | 1280 | 1536 | 20 | 12 | 6 | 384 | 32 | 160 | 1 | 640 | 1 | 5760 |
 
 Exact 1.2B configs:
 
@@ -106,6 +112,8 @@ Exact 1.2B configs:
 | `coarse_24e_top2` | 1536 | 2048 | 22 | 16 | 8 | 24 | 2 | 3072 | 1 | 768 | 1 | 6912 |
 | `baseline_48e_top4` | 1536 | 2048 | 22 | 16 | 8 | 48 | 4 | 1536 | 1 | 768 | 1 | 6912 |
 | `fine_96e_top8` | 1536 | 2048 | 22 | 16 | 8 | 96 | 8 | 768 | 1 | 768 | 1 | 6912 |
+| `extreme_192e_top16` | 1536 | 2048 | 22 | 16 | 8 | 192 | 16 | 384 | 1 | 768 | 1 | 6912 |
+| `ultra_384e_top32` | 1536 | 2048 | 22 | 16 | 8 | 384 | 32 | 192 | 1 | 768 | 1 | 6912 |
 
 Code-style config fragments:
 
@@ -114,6 +122,8 @@ EXPERT_GEOMETRY_VARIANTS = {
     "coarse_24e_top2": dict(num_experts=24, top_k=2, moe_hidden_mult=2.0),
     "baseline_48e_top4": dict(num_experts=48, top_k=4, moe_hidden_mult=1.0),
     "fine_96e_top8": dict(num_experts=96, top_k=8, moe_hidden_mult=0.5),
+    "extreme_192e_top16": dict(num_experts=192, top_k=16, moe_hidden_mult=0.25),
+    "ultra_384e_top32": dict(num_experts=384, top_k=32, moe_hidden_mult=0.125),
 }
 ```
 
@@ -123,6 +133,8 @@ Important controls:
 - Keep total params approximately fixed for the first wave.
 - Keep layer count, width, attention schedule, dense prefix count, and batch
   rules fixed.
+- Treat 192E/top16 and 384E/top32 as diagnostic extensions after the 96E/top8
+  result, beginning with small 275M probes before any full-ladder promotion.
 - Re-tune LR coarsely for each serious variant; do not assume the baseline LR
   transfers perfectly.
 
