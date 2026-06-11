@@ -773,6 +773,8 @@ def moe_chunk_reorder_no_compile(
         )
 
         if resolved_backend == "te":
+            # TODO: revisit — the TE chunk-reorder backend is currently deprecated; the
+            # dead call below is kept for reference until we re-enable or remove it.
             raise RuntimeError("TE backend Deprecated.")
             return _moe_chunk_permute_te(
                 inp=inp,
@@ -801,6 +803,8 @@ def moe_chunk_reorder_no_compile(
     )
 
     if resolved_backend == "te":
+        # TODO: revisit — the TE chunk-reorder backend is currently deprecated; the
+        # dead call below is kept for reference until we re-enable or remove it.
         raise RuntimeError("TE backend Deprecated.")
         return _moe_chunk_unpermute_te(
             inp=inp,
