@@ -506,6 +506,7 @@ class Transformer(nn.Module):
         self,
         input_ids: torch.Tensor,
         *,
+        input_embeddings: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
@@ -519,6 +520,12 @@ class Transformer(nn.Module):
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param input_embeddings: Pre-computed embeddings to use instead of looking up
+            ``input_ids`` in the embedding table, shape
+            ``(batch_size, seq_len, d_model)``.  When provided the embedding lookup,
+            scale, and norm steps are all skipped.  Intended for multimodal use-cases
+            where image features have already been spliced into the embedding sequence.
+            Not supported with context parallelism.
         :param labels: The token labels, shape ``(batch_size, seq_len)``.
         :param ignore_index: The index to ignore in the loss computation. Default is -100.
         :param loss_reduction: The reduction method for the loss. Can be "mean", "sum", or "none".
@@ -530,6 +537,13 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        if input_embeddings is not None and self._cp_load_balancer is not None:
+            raise RuntimeError(
+                "`input_embeddings` is not supported with context parallelism: `_prepare_inputs` "
+                "shards `input_ids`/`labels`/RoPE while `input_embeddings` stays full-size, which "
+                "would misalign the hidden states."
+            )
+
         (
             input_ids,
             labels,
@@ -550,11 +564,14 @@ class Transformer(nn.Module):
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
-        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
-        if self.embeddings is not None and self.embed_scale is not None:
-            h = h * self.embed_scale
-        if self.embedding_norm is not None:
-            h = self.embedding_norm(h)
+        if input_embeddings is not None:
+            h = move_to_device(input_embeddings, self.device)
+        else:
+            h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+            if self.embeddings is not None and self.embed_scale is not None:
+                h = h * self.embed_scale
+            if self.embedding_norm is not None:
+                h = self.embedding_norm(h)
 
         # Run each block.
         for block_key, block in self.blocks.items():
@@ -678,6 +695,7 @@ class Transformer(nn.Module):
         block_interval: Optional[int] = None,
         modules: Optional[List[str]] = None,
         activation_memory_budget: Optional[float] = None,
+        determinism_check: str = "default",
     ):
         """
         Apply activation checkpointing to the model.
@@ -691,6 +709,8 @@ class Transformer(nn.Module):
             [0, 1]. 0 corresponds to the memory usage when recomputing all activations, and 1
             corresponds to the memory usage when recomputing no activations (which is the default).
             Requires compilation to be enabled.
+        :param determinism_check: Passed through to torch's ``checkpoint_wrapper``. "default" compares
+            forward vs. recompute tensor metadata; "none" skips the check.
         """
 
         if mode == TransformerActivationCheckpointingMode.budget:
@@ -741,7 +761,11 @@ class Transformer(nn.Module):
                     continue
 
                 parent = self if not parent_name else self.get_submodule(parent_name)
-                module = ptd_checkpoint_wrapper(module, preserve_rng_state=preserve_rng_state)
+                module = ptd_checkpoint_wrapper(
+                    module,
+                    preserve_rng_state=preserve_rng_state,
+                    determinism_check=determinism_check,
+                )
                 parent.register_module(name.split(".")[-1], module)
                 log.info(f"Wrapped '{name}' for activation checkpointing")
                 wrapped_modules.add(name)
@@ -754,18 +778,27 @@ class Transformer(nn.Module):
                             raise OLMoConfigurationError(
                                 "Wrapping MoE blocks for activation checkpointing is not supported."
                             )
-                        block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                        block = ptd_checkpoint_wrapper(
+                            block,
+                            preserve_rng_state=preserve_rng_state,
+                            determinism_check=determinism_check,
+                        )
                 elif mode == TransformerActivationCheckpointingMode.full:
                     if isinstance(block, MoETransformerBlock):
                         raise OLMoConfigurationError(
                             "Wrapping MoE blocks for activation checkpointing is not supported."
                         )
-                    block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                    block = ptd_checkpoint_wrapper(
+                        block,
+                        preserve_rng_state=preserve_rng_state,
+                        determinism_check=determinism_check,
+                    )
                 elif mode == TransformerActivationCheckpointingMode.selected_ops:
                     block = ptd_checkpoint_wrapper(
                         block,
                         context_fn=selective_checkpointing_context_fn,
                         preserve_rng_state=preserve_rng_state,
+                        determinism_check=determinism_check,
                     )
 
                 self.blocks.register_module(str(block_idx), block)
