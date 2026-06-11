@@ -121,6 +121,11 @@ Expert granularity:
 - All approved expert-granularity 275M Cx1/Cx4 curves are complete and
   bracketed. Do not queue the rest of the 275M expert-granularity ladder until
   Jacob reviews the results and explicitly approves the next batch.
+- Jacob approved the next expert-granularity batch on 2026-06-11: queue Cx2
+  first, then Cx8, for both non-baseline variants. Use transferred baseline
+  centers with three LRs per rung:
+  - Cx2: `5e-4`, `1e-3`, `2e-3`, `gpu2-ep1`; coarse `mb16`, fine `mb8`.
+  - Cx8: `8e-4`, `1.6e-3`, `3.2e-3`, `gpu8-ep1mb4`.
 - After Cx1/Cx4 complete, estimate variant LR multipliers relative to the
   baseline and use those multipliers to center later Cx2/Cx8/Cx16 sweeps.
 
@@ -201,7 +206,7 @@ Ask before:
 
 - Changing baseline architecture beyond the agreed `mid_480m` config.
 - Starting any new ablation family beyond expert granularity.
-- Launching expert-granularity Cx2/Cx8/Cx16 or larger-model promotions.
+- Launching expert-granularity Cx16 or larger-model promotions.
 - Changing data mix, tokenizer, optimizer family, or schedule shape.
 - Launching beyond Cx16.
 - Using more than 8 GPUs for one job.

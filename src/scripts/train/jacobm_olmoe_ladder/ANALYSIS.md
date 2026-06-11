@@ -1078,6 +1078,11 @@ Final 275M Cx1/Cx4 expert-granularity status:
   follow-up is needed under the edge-extension rule.
 - At both Cx1 and Cx4, `fine_96e_top8` is the strongest tested variant by
   avg250M training loss. Coarse is bracketed but does not beat fine.
+- Next approved wave: queue Cx2 and Cx8 for both non-baseline variants using
+  clean LR transfer from the baseline 275M optima. Cx2 LRs are `5e-4`, `1e-3`,
+  `2e-3`; Cx8 LRs are `8e-4`, `1.6e-3`, `3.2e-3`. Cx2 uses 2 GPUs with coarse
+  `mb16` and fine `mb8`; Cx8 uses 8 GPUs with `mb4` so the 96-sequence global
+  batch divides evenly across ranks and microbatches.
 
 Midpoint baseline follow-ups from 2026-06-10:
 

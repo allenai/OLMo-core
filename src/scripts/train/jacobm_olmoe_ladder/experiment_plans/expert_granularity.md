@@ -207,6 +207,14 @@ for both non-baseline variants. If Cx1 later shows imperfect LR transfer or Cx4
 lands on an edge, extend the Cx4 curve by one targeted run per variant under the
 usual bracketing rules.
 
+After Cx1/Cx4 completed, Jacob approved the next 275M wave:
+
+- Cx2 for both non-baseline variants with LRs `5e-4`, `1e-3`, `2e-3`.
+- Cx8 for both non-baseline variants with LRs `8e-4`, `1.6e-3`, `3.2e-3`.
+- Use 2 GPUs for Cx2; coarse uses `mb16`, fine uses `mb8`.
+- Use 8 GPUs for Cx8 with `mb4`; `mb8` does not divide the 96-sequence global
+  batch evenly across 8 GPUs.
+
 Use the settings below for future launches unless a smoke test shows memory
 trouble or Jacob explicitly changes the resource policy. GPU counts follow the
 resource table Jacob shared from Yashas: 275M uses `1/2/4/8` GPUs for
