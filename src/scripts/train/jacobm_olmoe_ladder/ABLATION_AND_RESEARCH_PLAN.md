@@ -272,7 +272,283 @@ they are likely more interesting academically. A useful shared framing:
 Can sparse models become adaptive computation systems, rather than just cheaper
 dense models?
 
-### 1. Progressive / Growing MoE
+The ideas currently split into two rough families:
+
+- Adaptive compute:
+  - conditional compute / variable `top_k`;
+  - expert path dropout / routing robustness;
+  - adaptive expert depth / early-exit MoE;
+  - router as learned curriculum.
+- Adaptive modularity and capacity:
+  - progressive / growing MoE;
+  - expert lifecycle / birth-death;
+  - document/token expert pools and emergent modularity;
+  - universal expert pools.
+
+The current discussion focus is the adaptive-compute family, especially adaptive
+numbers of experts per token or sequence and expert dropout for robustness.
+
+### 1. Conditional Compute / Variable Expert Count
+
+Core idea:
+
+Different tokens or sequences use different numbers of experts. Easy tokens
+spend less compute; hard or uncertain tokens spend more. This could either save
+compute at similar quality or improve quality at matched average compute by
+allocating extra experts to the tokens that most need them.
+
+Related work:
+
+- [AdaMoE: Token-Adaptive Routing with Null Experts](https://arxiv.org/abs/2406.13233)
+- [Mixture-of-Experts with Expert Choice Routing](https://arxiv.org/abs/2202.09368)
+- [Route Experts by Sequence, not by Token](https://arxiv.org/abs/2511.06494)
+- [DynMoE: Towards Resource-Efficient Mixture of Experts for Multitask Learning](https://arxiv.org/abs/2405.14297)
+- [DynaMoE: Dynamic Token-wise Expert Activation](https://arxiv.org/abs/2603.01697)
+
+Related-work takeaways:
+
+- Null experts are a clean way to express "up to `k` real experts" while
+  preserving a fixed router top-k interface. If a selected expert is null and
+  returns zero, the token effectively uses fewer real experts.
+- Expert Choice Routing lets experts choose tokens rather than tokens choosing
+  experts, which naturally creates variable token fan-in and strong load
+  control. For autoregressive LM pretraining, the main caveat is avoiding
+  sequence/batch-level future-token leakage.
+- Sequence-level top-k budgets are especially relevant. A sequence can receive a
+  fixed total number of token-expert assignments, e.g. `T * K`, while individual
+  tokens receive fewer or more experts. This directly tests "work harder on
+  harder tokens" at fixed average compute.
+
+Implementation notes for this codebase:
+
+- The current MoE v2 path is fixed-shape around `top_k`: the router returns
+  `[B, S, K]`, permute duplicates exactly `tokens * K`, and combine expects
+  `[tokens, K]` weights.
+- Null experts are therefore mostly a modeling interface unless dispatch can
+  skip null slots. Dispatching null slots like real experts preserves shape but
+  does not save compute.
+- Actual compute savings require filtering null or pruned slots before expert
+  dispatch, then combining a variable number of routes per token or using a
+  compacted fixed-shape representation.
+- Starting from a higher `k_max`, such as the `top_k = 8` small-expert geometry,
+  is attractive because the marginal later experts may be lower-value and easier
+  to replace with null/skip decisions.
+
+Null-expert semantics to test:
+
+- Renormalized null experts:
+  - route among real plus null experts;
+  - remove null slots before expert compute;
+  - renormalize selected real expert weights;
+  - interpretation: fewer mixture components at roughly matched MoE output
+    scale.
+- Non-renormalized null experts:
+  - keep null probability mass as zero output;
+  - interpretation: fewer experts and possibly a smaller MoE update.
+
+Why tokens would choose null experts:
+
+- Without an incentive, null selection may be weak. If null mass is renormalized
+  away and there is no compute penalty, choosing a null only helps if the
+  marginal real expert would hurt loss.
+- More reliable incentives include:
+  - a compute penalty on real expert count;
+  - a target average real expert count;
+  - a learned or scheduled null bias;
+  - pruning selected experts whose normalized weights are below a threshold;
+  - allowing null mass to reduce MoE output scale.
+
+Candidate policies:
+
+- Router entropy controls real `top_k`.
+- Token loss proxy controls real `top_k`.
+- Sequence-level budget chooses `T * K_avg` assignments across a sequence.
+- Prune selected experts whose normalized weights fall below a threshold.
+- Learned compute budget with an auxiliary compute penalty.
+- Null experts with an average-real-expert target.
+
+First runnable versions:
+
+- Diagnostic fixed-shape version:
+  - route top `k_max`, e.g. 8;
+  - compute all selected experts;
+  - log how many experts would survive threshold/null rules;
+  - use this to estimate potential compute savings without changing kernels.
+- Simple adaptive-compute version:
+  - route top `k_max`;
+  - prune slots below a normalized-weight threshold;
+  - renormalize surviving weights;
+  - compact dispatch so null/pruned slots are not computed;
+  - compare to fixed top-`k_max` and fixed top-4 at matched average compute.
+- Null-expert version:
+  - add `N_null` router outputs with no corresponding expert MLP;
+  - train with a target average real expert count;
+  - test renormalized vs non-renormalized null semantics.
+
+Metrics:
+
+- Loss at matched average FLOPs and matched total tokens.
+- Average real experts per token and per layer.
+- Distribution of real expert count by token type, position, domain, document,
+  and token loss.
+- Whether high-compute tokens actually correspond to harder examples.
+- Potential versus realized wall-clock savings.
+- Inference behavior under the same pruning/null policy used during training.
+
+Open questions:
+
+- Should inference use the same threshold/null policy, or should it use a fixed
+  budget chosen to hit a latency target?
+- Does pruning low-weight experts during training make the model robust to using
+  fewer experts at inference, or does it mostly train around the specific
+  threshold?
+- Are sequence-level budgets easier to make efficient than per-token ragged
+  budgets?
+
+### 2. Expert Path Dropout / Routing Robustness
+
+Core idea:
+
+Randomly perturb or drop routed experts during training so tokens cannot depend
+on a brittle expert path. This is a robustness and regularization idea rather
+than primarily a compute-savings idea.
+
+Why it may matter:
+
+- It discourages permanent route lock-in.
+- It makes backup expert paths stronger.
+- It may reduce forgetting when old paths are masked or stale.
+- It may reduce overfitting in multi-epoch settings by preventing repeated
+  examples from always training through the exact same expert path.
+- It pairs well with document expert pools, expert growth, pruning, and
+  continual learning.
+
+Related work:
+
+- [Gating Dropout: Communication-Efficient Regularization for Sparsely Activated Transformers](https://arxiv.org/abs/2205.14336)
+- [Taming Sparsely Activated Transformer with Stochastic Experts](https://arxiv.org/abs/2110.04260)
+- [ST-MoE: Designing Stable and Transferable Sparse Expert Models](https://arxiv.org/abs/2202.08906)
+- [Sparse MoE as the New Dropout: Scaling Dense and Self-Slimmable Transformers](https://arxiv.org/abs/2303.01610)
+
+Related-work takeaways:
+
+- Routing perturbations can act as regularization, but the evidence is mixed.
+- ST-MoE is an important caution: some dropout/noise choices improve stability
+  or fine-tuning generalization but hurt pretraining quality.
+- Stochastic expert methods suggest that learned routing is not always
+  necessary for strong sparse models, but they are more radical than the first
+  experiment needed here.
+
+Dropout variants:
+
+- Chosen-path dropout with replacement:
+  - compute top `k + r` candidates;
+  - normally use top `k`;
+  - with probability `p`, drop one selected expert and replace it with the
+    next-best backup;
+  - renormalize weights;
+  - active compute remains exactly `k`.
+- Chosen-path dropout without replacement:
+  - compute top `k`;
+  - drop one selected expert;
+  - use `k - 1` real experts;
+  - useful later for compute reduction, but confounds robustness with lower
+    active compute.
+- Pool dropout with replacement:
+  - mask a subset of the available expert pool before routing;
+  - route top `k` among the remaining experts;
+  - active compute remains exactly `k`;
+  - tests global redundancy and pruning/fault tolerance.
+
+Recommended first sequence:
+
+1. Start with chosen-path dropout with replacement, because it directly tests
+   backup-path robustness with constant per-token compute.
+2. Compare dropping the lowest-weight selected expert versus dropping a uniform
+   selected expert.
+3. Add pool dropout with replacement if chosen-path dropout shows any useful
+   robustness or overfitting signal.
+
+Initial experiment matrix:
+
+| Variant | Description | Compute confound? |
+| --- | --- | --- |
+| Baseline | Normal fixed top-`k` routing | No |
+| Chosen dropout `p=0.05` | Drop one selected expert, replace with next-best | No |
+| Chosen dropout `p=0.10` | Same, stronger perturbation | No |
+| Pool dropout `p=0.05` | Mask available experts before routing, still choose top-`k` | No |
+
+Metrics:
+
+- Normal training and validation CE.
+- Loss under evaluation-time route perturbation.
+- Loss under expert pruning or expert masking.
+- Expert load entropy, dead experts, and overused experts.
+- Router entropy and route stability for a fixed probe set across checkpoints.
+- Backup quality: loss delta when replacing the top, random, or lowest-weight
+  chosen expert with the next-best candidate.
+
+Multi-epoch overfitting test:
+
+- Choose a fixed subset of the data, e.g. 50B-100B unique tokens.
+- Train for multiple epochs over the same subset, e.g. `1x`, `2x`, `4x`, and
+  possibly `8x`.
+- Track both unique tokens and total tokens seen.
+- Compare baseline, chosen-path dropout, and pool dropout.
+- Evaluate on held-out data from the same mix and on the normal broad
+  validation/eval suite.
+
+The specific hypothesis is that repeated exposure may cause the router to
+memorize stable token/domain-to-expert paths. If so, assignments on a fixed
+probe set should become sharper and more stable across epochs, and route
+perturbation should hurt more. Expert dropout should reduce that brittleness or
+at least reduce the eval-time degradation under route perturbation.
+
+### 3. Adaptive Expert Depth / Early-Exit MoE
+
+Core idea:
+
+Some tokens may not need all layers or all expert passes. Attach intermediate
+prediction or halting heads and let tokens decide whether to continue spending
+expert compute.
+
+Related older ideas:
+
+- Early-exit transformers.
+- Deep supervision with auxiliary layer-wise LM heads.
+- Adaptive computation time / pondering.
+- Self-speculative decoding with useful intermediate predictions.
+
+MoE-specific version:
+
+- Every few layers, predict whether a token is "done."
+- Easy tokens skip later MoE computation.
+- Hard tokens continue, use more experts, or recurse through a universal expert
+  pool.
+
+First runnable version:
+
+- Add auxiliary LM heads at a few intermediate layers.
+- Train with a small auxiliary loss.
+- Analyze which layers produce usable predictions before adding learned halting.
+
+### 4. Router As Learned Curriculum
+
+Core idea:
+
+Use router uncertainty and expert usage to decide where the model should spend
+more training compute or replay.
+
+Possible signals:
+
+- High router entropy.
+- High token loss.
+- Unstable expert assignment across epochs.
+- Rare-domain expert concentration.
+
+This links conditional compute to data selection and continual learning.
+
+### 5. Progressive / Growing MoE
 
 Related paper:
 
@@ -308,63 +584,7 @@ Hard parts:
 - Checkpoint compatibility.
 - Whether to briefly warm up LR or router loss after growth.
 
-### 2. Conditional Compute / Variable `top_k`
-
-Core idea:
-
-Different tokens or sequences use different numbers of experts. Easy tokens
-spend less compute; hard or uncertain tokens spend more.
-
-Possible policies:
-
-- Router entropy controls `top_k`.
-- Token loss proxy controls `top_k`.
-- Sequence/document type controls `top_k`.
-- Learned compute budget with an auxiliary compute penalty.
-
-First runnable version:
-
-- Fixed average compute target.
-- Let tokens choose among `top_k in {2, 4, 8}` by a simple entropy rule.
-- Compare against fixed top-4 with matched average active params.
-
-Metrics:
-
-- Loss at matched average FLOPs.
-- Distribution of `top_k` by token type, position, domain, and loss.
-- Whether high-compute tokens actually correspond to harder examples.
-
-### 3. Universal Expert Pools
-
-Related paper:
-
-- [Mixture of Universal Experts: Scaling Virtual Width via Depth-Width Transformation](https://arxiv.org/abs/2603.04971)
-
-Core idea:
-
-Reuse a layer-agnostic expert pool across multiple layers, creating a form of
-virtual width by sharing expert capacity across depth.
-
-First runnable version:
-
-- Current per-layer experts vs grouped universal pools.
-- Example: layers 0-3 share one expert pool, layers 4-7 share another, etc.
-- Keep active and total params approximately fixed.
-
-Questions:
-
-- Does cross-layer sharing improve parameter efficiency?
-- Does it hurt specialization because the same experts see different depth
-  distributions?
-- Do we need depth-aware load balancing or routing state?
-
-Longer-term version:
-
-- A model made mostly from a universal expert pool.
-- Tokens can recurse through the pool a variable number of times.
-- Expert computation becomes an iterative workspace.
-
-### 4. Expert Lifecycle / Birth-Death
+### 6. Expert Lifecycle / Birth-Death
 
 Core idea:
 
@@ -394,7 +614,7 @@ First runnable version:
   - redundancy between experts
 - Then a simple online split rule for overused experts.
 
-### 5. Document/Token Expert Pools And Emergent Modularity
+### 7. Document/Token Expert Pools And Emergent Modularity
 
 Related paper:
 
@@ -421,72 +641,37 @@ Why it matters:
   subsets.
 - It pairs naturally with growth and expert dropout.
 
-### 6. Expert Path Dropout / Routing Robustness
+### 8. Universal Expert Pools
+
+Related paper:
+
+- [Mixture of Universal Experts: Scaling Virtual Width via Depth-Width Transformation](https://arxiv.org/abs/2603.04971)
 
 Core idea:
 
-Randomly perturb or drop routed experts during training so tokens cannot depend
-on a brittle expert path.
-
-This may be especially useful with multiple data epochs or continual learning:
-
-- It discourages permanent route lock-in.
-- It makes backup expert paths stronger.
-- It may reduce forgetting when old paths are masked or stale.
-- It pairs well with document expert pools and expert growth.
+Reuse a layer-agnostic expert pool across multiple layers, creating a form of
+virtual width by sharing expert capacity across depth.
 
 First runnable version:
 
-- During training, occasionally mask one selected routed expert and force the
-  router to choose a backup.
-- Keep average active compute matched.
-- Evaluate robustness to expert pruning or route perturbation.
+- Current per-layer experts vs grouped universal pools.
+- Example: layers 0-3 share one expert pool, layers 4-7 share another, etc.
+- Keep active and total params approximately fixed.
 
-### 7. Adaptive Expert Depth / Early-Exit MoE
+Questions:
 
-Core idea:
+- Does cross-layer sharing improve parameter efficiency?
+- Does it hurt specialization because the same experts see different depth
+  distributions?
+- Do we need depth-aware load balancing or routing state?
 
-Some tokens may not need all layers or all expert passes. Attach intermediate
-prediction or halting heads and let tokens decide whether to continue spending
-expert compute.
+Longer-term version:
 
-Related older ideas:
+- A model made mostly from a universal expert pool.
+- Tokens can recurse through the pool a variable number of times.
+- Expert computation becomes an iterative workspace.
 
-- Early-exit transformers.
-- Deep supervision with auxiliary layer-wise LM heads.
-- Adaptive computation time / pondering.
-- Self-speculative decoding with useful intermediate predictions.
-
-MoE-specific version:
-
-- Every few layers, predict whether a token is "done."
-- Easy tokens skip later MoE computation.
-- Hard tokens continue, use more experts, or recurse through a universal expert
-  pool.
-
-First runnable version:
-
-- Add auxiliary LM heads at a few intermediate layers.
-- Train with a small auxiliary loss.
-- Analyze which layers produce usable predictions before adding learned halting.
-
-### 8. Router As Learned Curriculum
-
-Core idea:
-
-Use router uncertainty and expert usage to decide where the model should spend
-more training compute or replay.
-
-Possible signals:
-
-- High router entropy.
-- High token loss.
-- Unstable expert assignment across epochs.
-- Rare-domain expert concentration.
-
-This links conditional compute to data selection and continual learning.
-
-## Suggested Priority
+## Suggested Planning Order
 
 ### Standardization Wave
 
@@ -498,13 +683,18 @@ This links conditional compute to data selection and continual learning.
 
 ### Research Wave
 
-1. Document expert pools / emergent modularity.
-2. Expert path dropout and pruning robustness.
-3. Progressive/growing MoE.
-4. Universal expert pools.
-5. Expert lifecycle / birth-death.
-6. Adaptive expert depth and recurrent universal experts.
-7. Router-as-curriculum.
+This list is not currently prioritized. The research ideas should be ordered
+after the standardization wave based on which baseline architectures perform
+well and which implementation paths are cheapest to test first.
+
+- Adaptive expert count / conditional compute.
+- Expert path dropout and pruning robustness.
+- Document expert pools / emergent modularity.
+- Progressive/growing MoE.
+- Universal expert pools.
+- Expert lifecycle / birth-death.
+- Adaptive expert depth and recurrent universal experts.
+- Router-as-curriculum.
 
 ## Next Concrete Planning Task
 
