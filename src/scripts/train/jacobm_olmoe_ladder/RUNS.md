@@ -394,3 +394,45 @@ checkpoint backfills are copied back to the source training W&B summaries with
 | `eval-810m-cx4-lr4e-4-r1` | https://beaker.org/ex/01KTFFMFKM2D7FR4EMRKEWXGFP | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr4e-4-r1/step105295` |
 | `eval-810m-cx4-lr8e-4-r1` | https://beaker.org/ex/01KTFK9M9SP2EZ7DRY4VHZCHSA | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr8e-4-r1/step105295` |
 | `eval-810m-cx4-lr1.6e-3-r1` | https://beaker.org/ex/01KTG4AXWFBSNYPTAK4JE9FFTS | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr1.6e-3-r1/step105295` |
+
+## Expert Granularity Experiment Launched 2026-06-11
+
+Experiment plan:
+`src/scripts/train/jacobm_olmoe_ladder/experiment_plans/expert_granularity.md`.
+
+Code support:
+
+- `--expert-geometry={baseline_48e_top4,coarse_24e_top2,fine_96e_top8}`
+- launchers under
+  `src/scripts/train/jacobm_olmoe_ladder/experiments/expert_granularity/`
+
+Dry-run counts at 275M:
+
+- `coarse_24e_top2`: ~0.28B active / ~0.20B active non-embedding / ~1.13B total
+- `fine_96e_top8`: ~0.28B active / ~0.20B active non-embedding / ~1.14B total
+
+Smoke tests:
+
+| Name | Beaker experiment | W&B | Status | Notes |
+| --- | --- | --- | --- | --- |
+| `eg-smoke-eg24e2k-lr2e-3-r2` | https://beaker.org/ex/01KTT5PNBZ3THN3CF1R729PB18 | `deu60y28` | finished cleanly | 275M Cx1 smoke, batch 262,144 / 32 seqs, 1 GPU, EP=1, microbatch=16, skipped steps 0. |
+| `eg-smoke-eg96e8k-lr2e-3-r2` | https://beaker.org/ex/01KTT5Q0E969CCFESR0SNJ4QE6 | `8cheit54` | failed | OOM during trainer dry-run at 1 GPU, EP=1, microbatch=16. Exclude from analysis. |
+| `eg-smoke-eg96e8k-lr2e-3-r4` | https://beaker.org/ex/01KTT5ZNZ3Z748YXGSNZHSEXC2 | `hh2qh4i9` | running at launch time | Retry with 1 GPU, EP=1, microbatch=8. At first startup check: step 73, skipped steps 0, finite loss. |
+
+Accidental/ambiguous smoke jobs stopped before use:
+
+- `01KTT5KMH3JD0QV1R1ETB6F1PZ`: launched before expert-geometry code was committed.
+- `01KTT5M01CG1DF523DVJZFKZ0H`: launched before expert-geometry code was committed.
+- `01KTT5VBMDWBCR3085PZHQ71ZB`: accidental duplicate coarse smoke; stopped.
+- `01KTT5VQ2V955SZ5033FMHGH4W`: accidental fine smoke still using mb16; stopped.
+
+275M Cx1 transfer probes:
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-275m-cx1-eg24e2k-lr1e-3-r1` | `coarse_24e_top2` | 1e-3 | 262,144 | 32 | 1 | 1 | 16 | https://beaker.org/ex/01KTT68X1E45RNN2M5N250NNE1 | Cx1 LR transfer probe. |
+| `eg-275m-cx1-eg24e2k-lr2e-3-r1` | `coarse_24e_top2` | 2e-3 | 262,144 | 32 | 1 | 1 | 16 | https://beaker.org/ex/01KTT697TSG6X0JTD316YN5BD6 | Cx1 LR transfer probe. |
+| `eg-275m-cx1-eg24e2k-lr4e-3-r1` | `coarse_24e_top2` | 4e-3 | 262,144 | 32 | 1 | 1 | 16 | https://beaker.org/ex/01KTT69KTCH2FXME9E63T11DM3 | Cx1 LR transfer probe. |
+| `eg-275m-cx1-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT69YPF7F1GAQH4ZPM6JT1A | Cx1 LR transfer probe; uses mb8 fallback after mb16 OOM. |
+| `eg-275m-cx1-eg96e8k-lr2e-3-r1` | `fine_96e_top8` | 2e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6A9WYW6Y3RB31X433F87X | Cx1 LR transfer probe; uses mb8 fallback after mb16 OOM. |
+| `eg-275m-cx1-eg96e8k-lr4e-3-r1` | `fine_96e_top8` | 4e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6AN3CMWPT5E9NGWZJH3DX | Cx1 LR transfer probe; uses mb8 fallback after mb16 OOM. |

@@ -990,3 +990,42 @@ src/scripts/train/jacobm_olmoe_ladder/reproduce_moe_a0_1p2b_cx1_sweep.sh
 
 These require `LR_SPECS="lr:tag ..."` at launch time. Do not fill the 1.2B LR
 list until the completed 810M Cx4 fit has updated the transfer rule.
+
+## Expert Granularity Experiment
+
+The first post-baseline experiment is now underway. It tests the fixed routed
+capacity triangle:
+
+- `coarse_24e_top2`: 24 experts, top-2, `moe_hidden_size=2*d_model`
+- `baseline_48e_top4`: existing control
+- `fine_96e_top8`: 96 experts, top-8, `moe_hidden_size=d_model/2`
+
+The active routed hidden units and routed total hidden units are fixed across
+the triangle. The fine variant has slightly more total parameters because router
+output dimension grows with expert count.
+
+Smoke results:
+
+- `coarse_24e_top2` passed at 275M Cx1, `gpu1-ep1mb16`.
+- `fine_96e_top8` OOMed at `gpu1-ep1mb16`, then passed startup at
+  `gpu1-ep1mb8` with skipped steps 0 and finite loss at the first check.
+
+Cx1 LR transfer probes launched on 2026-06-11:
+
+- `coarse_24e_top2`: `1e-3`, `2e-3`, `4e-3`, all `gpu1-ep1mb16`.
+- `fine_96e_top8`: `1e-3`, `2e-3`, `4e-3`, all `gpu1-ep1mb8`.
+
+Do not queue the full 275M expert-granularity ladder until these Cx1 probes
+finish and we have reviewed:
+
+- whether Cx1 brackets cleanly for each variant;
+- fitted `m_variant = lr*_variant / lr*_baseline`;
+- whether the mb8 fine-variant fallback is acceptable for Cx1 comparisons;
+- whether the experiment-specific tracking and plots are clean enough to use
+  for the rest of the ladder.
+
+Overnight exception: the 275M Cx4 baseline-centered probes may be queued before
+the Cx1 probes finish, because they are short, use the already known baseline
+Cx4 optimum region, and can be extended by one targeted follow-up per variant if
+the architecture LR multiplier differs from 1.0. The queued Cx4 grid is
+`8e-4`, `1.6e-3`, `3.2e-3` for each variant.

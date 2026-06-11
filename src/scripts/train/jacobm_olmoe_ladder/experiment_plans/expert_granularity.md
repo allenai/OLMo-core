@@ -200,6 +200,13 @@ If we decide that wall-clock matters more than learning the multiplier first, a
 reasonable fallback is to queue the whole 275M ladder immediately using
 `m_variant = 1.0` for the initial centers, then extend any unbracketed rungs.
 
+Operational overnight exception: if the Cx1 transfer probes will complete when
+no human is available to approve the next rung, queue the 275M Cx4 jobs centered
+on the existing 275M baseline Cx4 optimum. Use `8e-4`, `1.6e-3`, and `3.2e-3`
+for both non-baseline variants. If Cx1 later shows imperfect LR transfer or Cx4
+lands on an edge, extend the Cx4 curve by one targeted run per variant under the
+usual bracketing rules.
+
 Use the settings below for future launches unless a smoke test shows memory
 trouble or Jacob explicitly changes the resource policy. GPU counts follow the
 resource table Jacob shared from Yashas: 275M uses `1/2/4/8` GPUs for
@@ -454,7 +461,7 @@ src/scripts/train/jacobm_olmoe_ladder/experiments/expert_granularity/
   launch_smoke.sh
   launch_275m_cx1.sh
   launch_275m_cx2.sh
-  launch_275m_cx4.sh
+  launch_275m_cx4_baseline_centered.sh
   launch_275m_cx8.sh
   launch_275m_cx16.sh
   reproduce_*.sh
