@@ -6,7 +6,7 @@ import torch
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.hf.convert import convert_state_from_hf
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.testing.utils import requires_fla
+from olmo_core.testing.utils import requires_fla, requires_gpu
 
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
@@ -29,6 +29,7 @@ def _get_qwen3_5_config(hf_config) -> TransformerConfig:
 
 @pytest.mark.skipif(not HF_TOKEN, reason="HF_TOKEN not set")
 @pytest.mark.skipif(not _has_qwen3_5_transformers(), reason="transformers lacks Qwen3.5 support")
+@requires_gpu
 @requires_fla
 def test_qwen3_5_matches_huggingface():
     import transformers
