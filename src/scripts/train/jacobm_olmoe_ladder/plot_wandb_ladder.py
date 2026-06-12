@@ -49,7 +49,7 @@ CANONICAL_BATCH_BY_MODEL_CX = {
 
 CANONICAL_FAMILY_BY_CX = {
     1: "gpu2-ep1mb16",
-    2: "gpu2-ep1mb8",
+    2: "b384k-gpu2-ep1mb8",
     4: "gpu4-ep1mb16",
     8: "gpu4-ep1mb8",
     16: "gpu8-ep1mb16",
