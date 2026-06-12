@@ -1,0 +1,16 @@
+# Conda env for running the BM25 (pyserini) RAG data generators on a CPU Beaker node
+# (NQ + HotpotQA unified JSONL). pyserini needs a JDK; openjdk 21 from conda-forge supplies it.
+name: ragdatagen
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - openjdk=21
+  - pip
+  - pip:
+      - pyserini
+      - faiss-cpu
+      - datasets
+      - transformers
+      - numpy<2
+      - tqdm
