@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `OutputDiscardCheckpoint`, an activation-recompute primitive for cases where the output of a checkpointed region dominates memory rather than its intermediates (e.g. precision casts, FFN up-projections). Forward runs under `no_grad`, the output's storage can be freed after downstream consumption, and a backward hook recomputes and rebinds the freed storage in place via a C++ `share_storage` extension (with a Python fallback for environments without a C++ toolchain).
+- Added a configurable vision transformer encoder (`VisionTransformer`, configured via `VisionEncoderConfig`), vision-to-LM connector (`VisionConnector`), and `MultimodalLM` — a composite vision-language model that fuses image patch tokens into the LM token stream. Supports OpenAI CLIP, SigLIP, and SigLIP2 encoder variants with factory configs for all standard Molmo2 checkpoints.
 - Added `HFConverterCallback`, which can be used to convert models to huggingface format at the end of the training run.
 - Trainer now records checkpoint save and load durations as `train/checkpoint_save_duration_s` and `train/checkpoint_load_duration_s` metrics.
 - Added `PowerLR`, a power-law learning rate scheduler with linear warmup, power-decay phase (`lr = initial_lr * (current / warmup) ** b` for negative `b`, making the LR independent of the training horizon), and an optional linear decay tail. Registered as `"power_lr"`.
@@ -17,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `OverrideDecay`, a late-stage decay override usable on both `ComposableScheduler` and `SequentialScheduler` via an `override_decay` field. When `current >= override_decay.start`, the main schedule is interrupted mid-flight and the LR decays from the value the main schedule would have produced at `start` to a target LR over `duration` (linear or cosine). `SequentialScheduler` additionally warns that `t_max` is ignored once the override becomes active.
 - `OLMO_RICH_LOGGING` can now explicitly enable *or* disable rich console logging (`0`/`false`/`no`/`off` disables it); previously setting it to any value only force-enabled rich logging.
 - `init_distributed()` now bootstraps a minimal single-process environment (`RANK=0`, `WORLD_SIZE=1`, `MASTER_ADDR`/`MASTER_PORT`) when launch env vars are absent, so scripts can be run directly (without `torchrun`) for single-process debugging.
+- Added a configurable `determinism_check` option to activation checkpointing (default `"default"`); set it to `"none"` to skip torch's recompute metadata check for opaque linear-attention kernels under `torch.compile`.
 
 
 ### Fixed
@@ -27,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Distributed checkpoint writes now clone each tensor before serialization to avoid accidentally writing the full backing storage of a view/shared tensor, with a guard that raises `OLMoCheckpointError` if a written tensor is unexpectedly larger than its `nbytes`.
 - Fixed LM in-loop evaluator data-order drift across repeated runs by resetting loader bookkeeping before each pass and making deterministic reshuffling the default.
 - Fixed Qwen3 implementation to match HuggingFace by applying RoPE in the input dtype (bf16) rather than upcasting to fp32.
+- Fixed HF model conversion for Llama, Qwen3, and Gemma so that converted checkpoints roundtrip correctly.
 - Fixed Beaker secret existence check to use the case-insensitive HTTP endpoint, avoiding spurious "secret not found" errors when secret names differ only in case.
 - Fixed `Transformer.init_weights` so that under interleaved pipeline parallelism (e.g. `Interleaved1F1B`, `InterleavedZeroBubble`) the multiple model chunks owned by a single rank no longer initialize to identical parameters. Adds a `model_part_idx` kwarg incorporated into the seed as `model_part_idx * pp_size`.
 - Disabled `torch.compile` tracing through `TEAttentionBackend.forward`, whose Python/pybind setup is not Dynamo-safe.
