@@ -13,6 +13,9 @@ export PYTHONPATH="$PWD"
 # which raises without OPENAI_API_KEY. We only use BM25/Lucene, never OpenAI, so a dummy key just
 # satisfies the import. (Beaker rejects setting OPENAI_API_KEY via gantry --env, so set it here.)
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dummy-bm25-only-not-used}"
+# Cache the ~2.5GB pyserini BM25 index on weka so re-runs reuse it instead of re-downloading (~30 min).
+export PYSERINI_CACHE="${PYSERINI_CACHE:-/weka/oe-training-default/ai2-llm/checkpoints/prasanns/pyserini_cache}"
+mkdir -p "$PYSERINI_CACHE"
 OUT=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/rag_jsonl
 mkdir -p "$OUT"
 

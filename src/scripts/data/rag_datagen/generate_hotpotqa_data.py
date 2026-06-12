@@ -351,7 +351,9 @@ def main():
 
     for split_name, num_wanted in splits_to_process:
         print(f"\nLoading hotpotqa/hotpot_qa distractor ({split_name})...")
-        ds = load_dataset("hotpotqa/hotpot_qa", "distractor", split=split_name)
+        ds = load_dataset(
+            "hotpotqa/hotpot_qa", "distractor", split=split_name, trust_remote_code=True
+        )
         print(f"  Loaded {len(ds)} examples")
 
         if args.question_type != "all":

@@ -163,7 +163,7 @@ def main():
             continue
 
         print(f"\nLoading nq_open ({split_name})...")
-        ds = load_dataset("nq_open", split=split_name)
+        ds = load_dataset("google-research-datasets/nq_open", split=split_name)
         print(f"  Loaded {len(ds)} questions")
 
         examples = _generate_split(

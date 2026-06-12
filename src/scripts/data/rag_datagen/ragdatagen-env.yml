@@ -10,7 +10,9 @@ dependencies:
   - pip:
       - pyserini
       - faiss-cpu
-      - datasets
+      # datasets<3: the generators load the canonical "nq_open" and the script-based
+      # "hotpotqa/hotpot_qa" (distractor), which datasets 3.x no longer resolves.
+      - datasets==2.21.0
       - transformers
       - numpy<2
       - tqdm
