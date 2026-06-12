@@ -64,11 +64,21 @@ class MoERouterConfigV2(Config):
     )
     z_loss_weight: Optional[float] = None
     orth_loss_weight: Optional[float] = None
-    restore_weight_scale: bool = False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
-    original_top_k: Optional[
-        int
-    ] = None  # for restoring weight scales to match a model trained with a different top_k
-    use_recompute_fp32_cast: bool = False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
+    restore_weight_scale: bool = False
+    """
+    If ``True``, multiply the expert weights by ``top_k`` so the scores have a
+    similar scale to dense models.
+    """
+    original_top_k: Optional[int] = None
+    """
+    Restore expert-weight scales to match a model trained with a different ``top_k``.
+    """
+    use_recompute_fp32_cast: bool = False
+    """
+    Save the fp32 cast of the router input through an ``OutputDiscardCheckpoint`` and
+    recompute it in backward, trading extra backward compute for memory. (Currently a
+    no-op: the path is disabled until ``OutputDiscardCheckpoint`` is available.)
+    """
 
     def num_params(self) -> int:
         """
