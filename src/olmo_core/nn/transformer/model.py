@@ -46,7 +46,7 @@ from ..attention import (
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
-from ..lm_head import LMHeadConfig, LMOutputWithLoss
+from ..lm_head import LMHeadConfig, LMLossImplementation, LMOutputWithLoss
 from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
@@ -117,6 +117,7 @@ class Transformer(nn.Module):
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
         block_pattern: Optional[List[str]] = None,
         embed_scale: Optional[float] = None,
+        tie_word_embeddings: bool = False,
     ):
         super().__init__()
 
@@ -160,6 +161,10 @@ class Transformer(nn.Module):
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
 
+        self.tie_word_embeddings = tie_word_embeddings
+        if tie_word_embeddings:
+            self._tie_weights()
+
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
@@ -182,6 +187,15 @@ class Transformer(nn.Module):
         # later, like for pipeline parallelism.
         self.num_params
         self.num_non_embedding_params
+
+    def _tie_weights(self) -> None:
+        if self.embeddings is None or self.lm_head is None:
+            raise OLMoConfigurationError(
+                "Cannot tie word embeddings without both embeddings and an LM head"
+            )
+        if self.lm_head.w_out.bias is not None:
+            raise OLMoConfigurationError("Cannot tie word embeddings when the LM head uses a bias")
+        self.lm_head.w_out.weight = self.embeddings.weight
 
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         return block
@@ -295,6 +309,10 @@ class Transformer(nn.Module):
                 generator=generator,
             )
 
+        # Re-establish weight tying since `to_empty` above allocates fresh storage.
+        if self.tie_word_embeddings:
+            self._tie_weights()
+
         for block in self.blocks.values():
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
@@ -345,7 +363,7 @@ class Transformer(nn.Module):
                 if max_seq_len is not None and att.rope is not None:
                     att.rope.warmup_cache(max_seq_len, device)
 
-        if self.lm_head is not None:
+        if self.lm_head is not None and not self.tie_word_embeddings:
             self.init_method.init_final_w_out(
                 self.lm_head.w_out,
                 d_model=self.d_model,
@@ -633,6 +651,16 @@ class Transformer(nn.Module):
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
+        if self.tie_word_embeddings and (
+            self.lm_head is None
+            or self.lm_head.loss_implementation == LMLossImplementation.fused_linear
+        ):
+            raise NotImplementedError(
+                "Tensor parallelism with tied word embeddings requires the default loss "
+                "implementation; the fused-linear loss replicates the LM head weight, which is "
+                "incompatible with the vocab-sharded embedding."
+            )
+
         if float8_enabled is None:
             float8_enabled = self.fp8_enabled
         elif not float8_enabled and self.fp8_enabled:
@@ -662,6 +690,12 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
+
+        # The embedding (RowwiseParallel) and the LM head (ColwiseParallel) both shard their
+        # weight along the vocab dimension, so re-point the head at the embedding's sharded
+        # parameter to restore the tie that `parallelize_module` broke.
+        if self.tie_word_embeddings and self.embeddings is not None and self.lm_head is not None:
+            self._tie_weights()
 
         self._tp_enabled = True
         self._tp_mesh = tp_mesh
@@ -864,7 +898,9 @@ class Transformer(nn.Module):
                 mp_policy=mp_policy,
             )
 
-        if self.embeddings is not None:
+        # When weights are tied the embeddings and LM head share a parameter, so they must
+        # stay in the same FSDP group (the root) rather than being sharded separately.
+        if self.embeddings is not None and not self.tie_word_embeddings:
             fully_shard(
                 self.embeddings,
                 reshard_after_forward=reshard_after_forward,
@@ -876,7 +912,7 @@ class Transformer(nn.Module):
         if wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks:
             if self.embedding_norm is not None:
                 fully_shard(self.embedding_norm, **fsdp_config)
-            if self.lm_head is not None:
+            if self.lm_head is not None and not self.tie_word_embeddings:
                 fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)

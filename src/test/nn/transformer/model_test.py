@@ -20,6 +20,7 @@ from olmo_core.distributed.parallel import (
     build_world_mesh,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
@@ -56,6 +57,9 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.testing.utils import FLA_MARKS, has_fla
+from olmo_core.train.train_module.transformer.config import (
+    TransformerPipelineParallelConfig,
+)
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
@@ -679,3 +683,119 @@ def test_qwen3_builder_configs(config_builder, expected_d_model):
     num_actual_params = sum(p.numel() for p in model.parameters())
     assert config.num_params == num_actual_params
     assert model.num_params == num_actual_params
+
+
+@pytest.mark.parametrize(
+    "config_builder, expected_tie",
+    [
+        pytest.param(TransformerConfig.qwen3_0_6B, True, id="qwen3_0_6B"),
+        pytest.param(TransformerConfig.qwen3_1_7B, True, id="qwen3_1_7B"),
+        pytest.param(TransformerConfig.qwen3_4B, True, id="qwen3_4B"),
+        pytest.param(TransformerConfig.qwen3_8B, False, id="qwen3_8B"),
+        pytest.param(TransformerConfig.qwen3_14B, False, id="qwen3_14B"),
+        pytest.param(TransformerConfig.qwen3_32B, False, id="qwen3_32B"),
+    ],
+)
+def test_qwen3_small_sizes_tie_word_embeddings(config_builder, expected_tie):
+    assert config_builder(vocab_size=128, n_layers=2).tie_word_embeddings == expected_tie
+
+
+def test_qwen3_tie_word_embeddings_can_be_overridden():
+    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2, tie_word_embeddings=False)
+    assert not config.tie_word_embeddings
+
+
+def test_tied_word_embeddings_share_weight_after_init():
+    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2)
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"))
+
+    assert model.tie_word_embeddings
+    # The tie must survive `init_weights`, which calls `to_empty`.
+    assert model.lm_head.w_out.weight is model.embeddings.weight
+
+    # The shared weight is only counted once.
+    num_actual_params = sum(p.numel() for p in model.parameters())
+    assert config.num_params == num_actual_params
+    assert model.num_params == num_actual_params
+
+
+def test_normalized_transformer_rejects_tied_word_embeddings():
+    with pytest.raises(OLMoConfigurationError):
+        TransformerConfig.ngpt_271M(vocab_size=128, n_layers=2, tie_word_embeddings=True)
+
+
+def test_pipeline_parallel_rejects_tied_word_embeddings():
+    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2)
+    model = config.build(init_device="cpu")
+    pp_config = TransformerPipelineParallelConfig(degree=1, split_points=[1])
+
+    with pytest.raises(NotImplementedError, match="tied word embeddings"):
+        pp_config.split_model(model, pp_mesh=None, device=torch.device("cpu"))
+
+
+def run_tensor_parallel_tied_word_embeddings():
+    device = get_default_device()
+    config = TransformerConfig.llama2_271M(
+        vocab_size=16_000, n_layers=2, fused_ops=False, tie_word_embeddings=True
+    )
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("tp",))
+
+    model = config.build()
+    model.apply_tp(mesh["tp"])
+    model.init_weights(device=device, max_seq_len=512)
+
+    assert model.tie_word_embeddings
+    assert isinstance(model.embeddings.weight, DTensor)
+    # The tie survives `apply_tp` (which converts the weight to a sharded DTensor) and
+    # `init_weights` (which calls `to_empty`): both modules share one parameter.
+    assert model.lm_head.w_out.weight is model.embeddings.weight
+
+    input_ids = get_transformer_inputs().to(device)
+    logits = model(input_ids=input_ids)
+    logits.sum().backward()
+
+    # Gradients from the embedding lookup and the output projection accumulate into the single
+    # shared parameter.
+    assert model.embeddings.weight.grad is not None
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_tensor_parallel_tied_word_embeddings(backend: str):
+    run_distributed_test(
+        run_tensor_parallel_tied_word_embeddings,
+        backend=backend,
+        start_method="spawn",
+    )
+
+
+def run_fsdp_tied_word_embeddings():
+    device = get_default_device()
+    config = TransformerConfig.llama2_271M(
+        vocab_size=16_000, n_layers=2, fused_ops=False, tie_word_embeddings=True
+    )
+
+    model = config.build(init_device="meta")
+    model.apply_fsdp()
+    model.init_weights(device=device, max_seq_len=512)
+
+    assert model.tie_word_embeddings
+    assert isinstance(model.embeddings.weight, DTensor)
+    # The embeddings and LM head are not sharded into separate FSDP groups when tied, so they
+    # stay in the root group and keep sharing one parameter.
+    assert model.lm_head.w_out.weight is model.embeddings.weight
+
+    input_ids = get_transformer_inputs().to(device)
+    logits = model(input_ids=input_ids)
+    logits.sum().backward()
+
+    assert model.embeddings.weight.grad is not None
+
+
+@requires_multi_gpu
+def test_fsdp_tied_word_embeddings():
+    run_distributed_test(
+        run_fsdp_tied_word_embeddings,
+        backend="nccl",
+        start_method="spawn",
+    )

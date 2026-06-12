@@ -309,7 +309,53 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
             f"model.layers.{LAYER}.mlp.gate.weight",
             unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
         ),
-    }
+    },
+    "llama": {
+        f"blocks.{LAYER}.attention_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.attention_norm.weight",
+            f"model.layers.{LAYER}.input_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        f"blocks.{LAYER}.feed_forward_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_norm.weight",
+            f"model.layers.{LAYER}.post_attention_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+    },
+    "qwen3": {
+        f"blocks.{LAYER}.attention_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.attention_norm.weight",
+            f"model.layers.{LAYER}.input_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        f"blocks.{LAYER}.feed_forward_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_norm.weight",
+            f"model.layers.{LAYER}.post_attention_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+    },
+    "gemma3_text": {
+        f"blocks.{LAYER}.attention_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.attention_norm.weight",
+            f"model.layers.{LAYER}.input_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        f"blocks.{LAYER}.post_attention_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.post_attention_norm.weight",
+            f"model.layers.{LAYER}.post_attention_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        f"blocks.{LAYER}.feed_forward_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_norm.weight",
+            f"model.layers.{LAYER}.pre_feedforward_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        f"blocks.{LAYER}.post_feed_forward_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.post_feed_forward_norm.weight",
+            f"model.layers.{LAYER}.post_feedforward_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+    },
 }
 
 
@@ -427,6 +473,9 @@ def convert_state_from_hf(
     if model_type == "gemma3_text":
         converted_state = _apply_gemma3_norm_transform(converted_state)
 
+    if config.tie_word_embeddings:
+        converted_state["lm_head.w_out.weight"] = converted_state["embeddings.weight"]
+
     return converted_state
 
 
@@ -456,6 +505,29 @@ def get_converter_to_hf(model_type: str | None = None) -> StateConverter:
     return _get_converter_to_hf(model_type)
 
 
+def _apply_gemma3_norm_inverse_transform(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Inverse of :func:`_apply_gemma3_norm_transform`: subtracts 1 from norm weights
+    so that an OLMo-core checkpoint can be exported back into HF Gemma 3 format.
+    """
+    norm_patterns = [
+        "input_layernorm.weight",
+        "post_attention_layernorm.weight",
+        "pre_feedforward_layernorm.weight",
+        "post_feedforward_layernorm.weight",
+        "model.norm.weight",
+        "q_norm.weight",
+        "k_norm.weight",
+    ]
+
+    for key, value in state.items():
+        if any(pattern in key for pattern in norm_patterns):
+            if isinstance(value, torch.Tensor):
+                state[key] = value - 1.0
+
+    return state
+
+
 @beta_feature
 def convert_state_to_hf(
     config: PretrainedConfig, olmo_core_state: Dict[str, Any]
@@ -468,9 +540,14 @@ def convert_state_to_hf(
         :class:`DTensor` or :class:`ShardedTensor`
     """
 
-    converter = _get_converter_to_hf(getattr(config, "model_type", None))
+    converter = _get_converter_to_hf(config.model_type)
 
-    return _convert_state(config, olmo_core_state, converter)
+    converted_state = _convert_state(config, olmo_core_state, converter)
+
+    if config.model_type == "gemma3_text":
+        converted_state = _apply_gemma3_norm_inverse_transform(converted_state)
+
+    return converted_state
 
 
 # ---------------------------------------------------------------------------
