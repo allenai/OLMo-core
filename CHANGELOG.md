@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Set transformers version to >= 5.4.0 for Qwen 3.5 and in sync with open-instruct
 - Added a documented `deterministic` option to `LMEvaluator` and `LMEvaluatorCallbackConfig` so callers can opt out of fixed eval ordering when desired.
 
 ## [v2.5.0](https://github.com/allenai/OLMo-core/releases/tag/v2.5.0) - 2026-04-01
