@@ -278,6 +278,12 @@ prefer `gpu8-ep1mb4` for future 1.2B Cx8 launches. Treat stopped 4-node
 `2e-4`/`8e-4` attempts as ignored for canonical LR fits unless explicitly
 resumed and completed later.
 
+2026-06-12 follow-up: both one-node replacements started cleanly. W&B summaries
+show `~700` instantaneous TFLOPs/GPU and `~624-626` actual-average TFLOPs/GPU,
+so the one-node `gpu8-ep1mb4` setting recovers the target utilization range and
+should remain the preferred 1.2B Cx8 setting unless later stability issues show
+up.
+
 ## 2026-06-02 Snapshot
 
 Initial read after the first 2M-batch sweep finished and the 256k-batch sweep was
