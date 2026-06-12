@@ -89,12 +89,10 @@ Current operating state as of 2026-06-12:
 
 - Do not queue additional jobs right now. The active/queued surface is already
   sufficient for the next long-cadence loop.
-- Monitor the existing baseline repair runs, remaining baseline runs, expert
-  granularity runs, and any already-queued total-sparsity runs.
-- If total-sparsity jobs for both approved variants through Cx8 are already
-  queued externally, treat them as approved to monitor. Do not launch additional
-  total-sparsity jobs from this session unless Jacob explicitly says something
-  is missing.
+- Monitor the existing baseline repair runs, remaining baseline runs, and
+  expert-granularity runs. Monitor any already-queued total-sparsity jobs if
+  they are later found, but do not launch additional total-sparsity jobs from
+  this session unless Jacob explicitly says something is missing.
 - Current Cx2 repair policy supersedes older Cx2 notes:
   - 275M baseline, `eg24e2k`, and `eg96e8k`: `b384k`, 2 GPUs, EP=1, mb8,
     LRs `9e-4`, `1.8e-3`, `3.6e-3`.
@@ -175,9 +173,12 @@ Total sparsity:
   `src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx1_cx4.sh`.
   On 2026-06-12 Jacob temporarily paused sparsity work; one `sp96e4k` Cx1
   `1e-3` run finished before the pause and the other early jobs were stopped
-  intentionally. Later on 2026-06-12, Jacob indicated that the already-planned
-  total-sparsity work through Cx8 for both approved variants is part of the
-  current queue surface. Monitor those jobs if present, but do not add more.
+  intentionally. Later on 2026-06-12, Jacob indicated that already-queued
+  total-sparsity work through Cx8 for both approved variants would be part of
+  the current queue surface. A subsequent status check found no tracked Cx8
+  sparsity IDs and confirmed that all tracked Cx1/Cx4 sparsity jobs except
+  `sp96e4k` Cx1 `1e-3` were manually canceled. Monitor any sparsity jobs if new
+  IDs are found, but do not add more.
   The transferred grids are:
   - Cx1: `1e-3`, `2e-3`, `4e-3`.
   - Cx4: `8e-4`, `1.6e-3`, `3.2e-3`.

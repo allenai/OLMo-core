@@ -280,8 +280,8 @@ Use `CURRENT_PLAN.md` as the active source of truth. The short version:
 - Do not queue more jobs right now.
 - Re-enter the loop with a long cadence, about 4 hours unless a job is near
   completion or a just-started job needs startup/OOM checks.
-- Monitor existing baseline repair runs, remaining baseline runs, expert
-  granularity runs, and any total-sparsity jobs that are already queued.
+- Monitor existing baseline repair runs, remaining baseline runs, and expert
+  granularity runs. Monitor total-sparsity jobs only if new tracked IDs appear.
 - Cx2 repair is now the main cleanup thread:
   - 275M baseline + `eg24e2k` + `eg96e8k`: `b384k`, 2 GPUs, EP=1, mb8,
     LRs `9e-4`, `1.8e-3`, `3.6e-3`.
@@ -290,9 +290,10 @@ Use `CURRENT_PLAN.md` as the active source of truth. The short version:
   - 1.2B Cx2 has not been launched and remains low priority.
 - Expert granularity currently has Cx1/Cx4 completed for the main two variants,
   Cx8 in progress/queued, and repaired Cx2 queued.
-- Total sparsity may have up-to-Cx8 work for both approved variants in the
-  queue. If those jobs are found, monitor and record them; do not queue more
-  from this session without explicit confirmation.
+- Total sparsity currently has only one confirmed completed full run:
+  `sp96e4k` Cx1 `1e-3`. The other tracked Cx1/Cx4 sparsity jobs were manually
+  canceled, and no tracked Cx8 sparsity IDs were found. Do not queue more from
+  this session without explicit confirmation.
 - When full runs finish, refresh only their stale/missing W&B histories,
   regenerate plots, update docs, commit, and push.
 - LR selection still uses training loss only. Evals are observational.

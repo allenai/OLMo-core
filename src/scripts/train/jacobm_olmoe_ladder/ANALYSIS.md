@@ -1118,3 +1118,21 @@ Midpoint baseline follow-ups from 2026-06-10:
 - `mid_480m` Cx8 hot sentinel `3.2e-3` finished cleanly with avg250M 2.3486,
   worse than the existing Cx8 best `8e-4` avg250M 2.3076. This brackets Cx8 on
   the hot side; no additional midpoint Cx8 hot extension is needed.
+
+2026-06-12 long-cadence update:
+
+- `coarse_24e_top2` Cx8 now has two completed points:
+  - `8e-4`: avg250M 2.5035
+  - `1.6e-3`: avg250M 2.4990
+- The observed best coarse Cx8 point so far is `1.6e-3`, but this is not a
+  completed bracket yet. Wait for the running `3.2e-3` full run before fitting
+  or launching any follow-up. Its partial history looked worse, but partial
+  runs remain non-decision data.
+- `fine_96e_top8` Cx8 has only just started at `8e-4`; `1.6e-3` and `3.2e-3`
+  are still queued. No fine Cx8 decision yet.
+- Total-sparsity status was clarified after inspecting Beaker job status fields
+  and W&B. Beaker jobs with both `finalized` and `canceled` must be treated as
+  canceled, not finished. The only confirmed full total-sparsity result is
+  `sp96e4k` Cx1 `1e-3`, avg250M 2.7587. The other tracked Cx1/Cx4 sparsity
+  jobs were manually canceled, and no tracked total-sparsity Cx8 IDs were found
+  in `RUNS.md` or the local launch logs.

@@ -109,17 +109,18 @@ Variants:
 - `sp96e4k`: 96 experts, top-4, higher total params than baseline.
 - `sp192e4k`: 192 experts, top-4, much higher total params than baseline.
 
-The first Cx1/Cx4 wave was temporarily paused on 2026-06-12, but the current
-operating plan is to monitor any already-queued total-sparsity jobs through Cx8
-for both approved variants. Do not launch additional sparsity jobs unless Jacob
+The first Cx1/Cx4 wave was temporarily paused on 2026-06-12. A later status
+check confirmed only `sp96e4k` Cx1 `1e-3` completed as a full run; the other
+tracked Cx1/Cx4 sparsity jobs were manually canceled, and no tracked Cx8
+sparsity IDs were found. Do not launch additional sparsity jobs unless Jacob
 explicitly confirms a missing row.
 
 | Variant(s) | Cx | Total batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch | Notes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | `sp96e4k`, `sp192e4k` | 0.02 smoke | 262,144 | 32 | 4 | 1 | 4 | Smoke tests. |
-| `sp96e4k`, `sp192e4k` | 1 | 262,144 | 32 | 4 | 1 | 4 | Approved first-wave setting. Earlier stopped jobs remain diagnostic unless resumed/requeued. |
-| `sp96e4k`, `sp192e4k` | 4 | 524,288 | 64 | 4 | 1 | 4 | Approved first-wave setting. Earlier stopped jobs remain diagnostic unless resumed/requeued. |
-| `sp96e4k`, `sp192e4k` | 8 | 786,432 | 96 | 8 | 1 | 4 | Approved first-wave setting. Monitor if already queued; do not add more without confirmation. |
+| `sp96e4k`, `sp192e4k` | 1 | 262,144 | 32 | 4 | 1 | 4 | Approved first-wave setting. Only `sp96e4k` `1e-3` completed; the other tracked Cx1 jobs were canceled. |
+| `sp96e4k`, `sp192e4k` | 4 | 524,288 | 64 | 4 | 1 | 4 | Approved first-wave setting. Tracked Cx4 jobs were canceled before completion. |
+| `sp96e4k`, `sp192e4k` | 8 | 786,432 | 96 | 8 | 1 | 4 | Approved first-wave setting, but no tracked Cx8 job IDs are currently known. |
 
 ## Drift / Mismatch Notes
 
