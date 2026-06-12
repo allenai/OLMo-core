@@ -1,10 +1,13 @@
 from dataclasses import dataclass
-from typing import Tuple
 
-import nvtx
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+try:
+    import nvtx
+except ImportError:
+    from olmo_core._nvtx import nvtx
 
 from olmo_core.config import Config, DType
 
@@ -17,24 +20,14 @@ def _swiglu(up: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
 
 @dataclass
 class SharedExpertsConfig(Config):
-
     """
     Configuration for shared experts in a MoE block.
     """
 
-    # Input (and output) dimension of the experts
     d_model: int
-
-    # Hidden (intermediate) dimension of the experts
     hidden_size: int
-
-    # Number of shared experts (can be >= 1)
     num_experts: int
-
-    # Whether to use bias in the experts
     bias: bool
-
-    # default dtype for the experts
     dtype: DType
 
     def build(self, init_device: str = "cpu") -> "SharedExperts":
@@ -134,7 +127,7 @@ class SharedExperts(nn.Module):
         return out.view(E, B, S, D)
 
     @nvtx.annotate("SharedExperts.forward1", color="purple")
-    def forward1(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward1(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Split the forward pass into two parts for better overlap in EP.
         """
