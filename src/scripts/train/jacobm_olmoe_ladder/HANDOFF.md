@@ -117,17 +117,23 @@ Canonical settings currently in use:
 
 | Model | Cx | Batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch | Notes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 275M | 1/2 | 262,144 | 32 | 2 | 1 | 16 | Canonical final family for low Cx. |
+| 275M | 1 | 262,144 | 32 | 1-2 | 1 | 16 | Canonical final family for Cx1. |
+| 275M | 2 | 393,216 | 48 | 2 | 1 | 8 | Canonical Cx2 repair family as of 2026-06-12. Old `b256k` baseline and `b512k` EG runs are diagnostic. |
 | 275M | 4 | 524,288 | 64 | 4 | 1 | 16 | Canonical final family. |
-| 275M | 8 | 786,432 | 96 | 4 | 1 | 8 | Used after increasing Cx8 GPU count. |
+| 275M | 8 | 786,432 | 96 | 8 | 1 | 4 | Forward policy. Historical baseline used 4 GPUs / mb8. |
 | 275M | 16 | 1,048,576 | 128 | 8 | 1 | 16 | Used to finish Cx16 faster. |
-| Midpoint | 1 | 262,144 | 32 | 4 | 1 | 8 | Planned smoke/launch setting; fall back to mbz=4 if needed. |
-| Midpoint | 2/4 | 524,288 | 64 | 4 | 1 | 8 | Planned Cx2/Cx4 setting after smoke. |
-| 810M | 1 | 262,144 | 32 | 4 | 1 | 4 | Completed Cx1 family. |
-| 810M | 2/4 | 524,288 | 64 | 8 | 1 | 4 | Cx2 queued; Cx4 completed. |
-| 810M | 8 | 786,432 | 96 | 8 | 1 | 4 | Currently running. |
+| Midpoint | 1 | 262,144 | 32 | 4 | 1 | 8 | Completed/validated family. |
+| Midpoint | 2 | 393,216 | 48 | 4 | 1 | 4 | Canonical Cx2 repair family as of 2026-06-12. Old `b512k` runs are diagnostic. |
+| Midpoint | 4 | 524,288 | 64 | 4 | 1 | 8 | Completed/validated family. |
+| Midpoint | 8 | 786,432 | 96 | 8 | 1 | 4 | Completed/validated family. |
+| 810M | 1 | 262,144 | 32 | 4-8 | 1 | 4 | Completed Cx1 family. |
+| 810M | 2 | 393,216 | 48 | 8 | 1 | 2 | Canonical Cx2 repair family as of 2026-06-12. Old `b512k` runs are diagnostic. |
+| 810M | 4 | 524,288 | 64 | 8 | 1 | 4 | Completed Cx4 family. |
+| 810M | 8 | 786,432 | 96 | 8-16 | 1 | 4 | Completed at 8 GPUs; forward policy prefers 16 GPUs when launching fresh. |
 | 1.2B | 1 | 262,144 | 32 | 8 | 1 | 2 | Completed Cx1 family. |
-| 1.2B | 4 | 524,288 | 64 | 8 | 1 | 2 | Currently running/queued. |
+| 1.2B | 2 | 524,288 | 64 | 8 | 1 | 2 | Not launched yet; low priority. |
+| 1.2B | 4 | 524,288 | 64 | 8-16 | 1 | 2 | Completed at 8 GPUs; forward policy prefers 16 GPUs when launching fresh. |
+| 1.2B | 8 | 786,432 | 96 | 8 | 1 | 4 | Preferred one-node replacement setting after 32-GPU/mb1 underperformed. |
 
 ## Run tracking and analysis
 
@@ -267,9 +273,35 @@ Validation/eval policy:
 - We still need a future discussion on how validation losses should affect
   checkpoint/LR selection. For now, ignore evals for LR choice.
 
-## 2026-06-07 pause state
+## 2026-06-12 current state
 
-This is the current state at pause, after commit `4ddca365` was pushed.
+Use `CURRENT_PLAN.md` as the active source of truth. The short version:
+
+- Do not queue more jobs right now.
+- Re-enter the loop with a long cadence, about 4 hours unless a job is near
+  completion or a just-started job needs startup/OOM checks.
+- Monitor existing baseline repair runs, remaining baseline runs, expert
+  granularity runs, and any total-sparsity jobs that are already queued.
+- Cx2 repair is now the main cleanup thread:
+  - 275M baseline + `eg24e2k` + `eg96e8k`: `b384k`, 2 GPUs, EP=1, mb8,
+    LRs `9e-4`, `1.8e-3`, `3.6e-3`.
+  - `mid_480m`: `b384k`, 4 GPUs, EP=1, mb4, LRs `4.5e-4`, `9e-4`, `1.8e-3`.
+  - 810M: `b384k`, 8 GPUs, EP=1, mb2, LRs `2.8e-4`, `5.6e-4`, `1.12e-3`.
+  - 1.2B Cx2 has not been launched and remains low priority.
+- Expert granularity currently has Cx1/Cx4 completed for the main two variants,
+  Cx8 in progress/queued, and repaired Cx2 queued.
+- Total sparsity may have up-to-Cx8 work for both approved variants in the
+  queue. If those jobs are found, monitor and record them; do not queue more
+  from this session without explicit confirmation.
+- When full runs finish, refresh only their stale/missing W&B histories,
+  regenerate plots, update docs, commit, and push.
+- LR selection still uses training loss only. Evals are observational.
+
+## 2026-06-07 historical pause state
+
+This was the state at pause, after commit `4ddca365` was pushed.
+It is retained for provenance and is superseded by the 2026-06-12 current state
+above.
 
 Recently completed:
 

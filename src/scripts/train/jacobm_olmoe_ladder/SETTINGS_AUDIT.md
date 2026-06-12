@@ -70,9 +70,9 @@ canonical repair is the smoother midpoint 393,216 tokens / 48 sequences.
 
 ## Forward Resource Policy
 
-This is the policy we had written down before this audit. It should be revised
-after we settle the dense-ladder comparison and decide whether 275M Cx2 should
-be `b256k` or `b512k`.
+This is the current resource policy for new comparable runs. Cx2 uses the
+2026-06-12 repair setting (`b384k`) for 275M, `mid_480m`, and 810M until Jacob
+decides otherwise.
 
 | Model | Cx1 | Cx2 | Cx4 | Cx8 |
 | --- | ---: | ---: | ---: | ---: |
@@ -102,27 +102,32 @@ Variants:
 | `eg96e8k` | 4 | 524,288 | 64 | 4 | 1 | 8 | Batch-matched to 275M baseline Cx4. |
 | `eg24e2k`, `eg96e8k` | 8 | 786,432 | 96 | 8 | 1 | 4 | Batch-matched to 275M baseline Cx8, but not systems-matched: baseline used 4 GPUs / mb8. |
 
-## Total Sparsity: Actual Started Settings
+## Total Sparsity: Actual / Approved Settings
 
 Variants:
 
 - `sp96e4k`: 96 experts, top-4, higher total params than baseline.
 - `sp192e4k`: 192 experts, top-4, much higher total params than baseline.
 
-These jobs are currently paused/cancelled pending the plan reset.
+The first Cx1/Cx4 wave was temporarily paused on 2026-06-12, but the current
+operating plan is to monitor any already-queued total-sparsity jobs through Cx8
+for both approved variants. Do not launch additional sparsity jobs unless Jacob
+explicitly confirms a missing row.
 
 | Variant(s) | Cx | Total batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch | Notes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | `sp96e4k`, `sp192e4k` | 0.02 smoke | 262,144 | 32 | 4 | 1 | 4 | Smoke tests. |
-| `sp96e4k`, `sp192e4k` | 1 | 262,144 | 32 | 4 | 1 | 4 | Cx1 jobs were started; only one finished before pause. |
-| `sp96e4k`, `sp192e4k` | 4 | 524,288 | 64 | 4 | 1 | 4 | Cx4 jobs were started/queued and then paused. |
-| `sp96e4k`, `sp192e4k` | 8 | 786,432 | 96 | 8 | 1 | 4 | Script exists but these should be treated as planned, not part of the completed started set. |
+| `sp96e4k`, `sp192e4k` | 1 | 262,144 | 32 | 4 | 1 | 4 | Approved first-wave setting. Earlier stopped jobs remain diagnostic unless resumed/requeued. |
+| `sp96e4k`, `sp192e4k` | 4 | 524,288 | 64 | 4 | 1 | 4 | Approved first-wave setting. Earlier stopped jobs remain diagnostic unless resumed/requeued. |
+| `sp96e4k`, `sp192e4k` | 8 | 786,432 | 96 | 8 | 1 | 4 | Approved first-wave setting. Monitor if already queued; do not add more without confirmation. |
 
 ## Drift / Mismatch Notes
 
-1. The most important mismatch is 275M Cx2:
-   - baseline canonical family: 262,144 tokens, `global_batch_size_seq=32`;
-   - expert-granularity Cx2: 524,288 tokens, `global_batch_size_seq=64`.
+1. The previous 275M Cx2 mismatch is being repaired:
+   - old baseline family: 262,144 tokens, `global_batch_size_seq=32`;
+   - old expert-granularity Cx2: 524,288 tokens, `global_batch_size_seq=64`;
+   - repaired canonical family: 393,216 tokens, `global_batch_size_seq=48`.
+   Treat the old Cx2 families as diagnostic only.
 2. The 275M Cx8 baseline and expert-granularity runs are optimizer-batch
    matched but systems-different:
    - baseline: 4 GPUs, mb8;
@@ -146,16 +151,16 @@ started for that model/Cx pair.
 | Model | Cx | Baseline batch | Baseline GPUs / EP / mbz | EG batch | EG GPUs / EP / mbz | Sparsity batch | Sparsity GPUs / EP / mbz | Difference notes |
 | --- | ---: | --- | --- | --- | --- | --- | --- | --- |
 | 275M | 1 | 262,144 tok / 32 seq | 1 / 1 / 16 | 262,144 tok / 32 seq | `eg24e2k`: 1 / 1 / 16; `eg96e8k`: 1 / 1 / 8; `eg192e16k`: 1 / 1 / 4; `eg384e32k`: 1 / 1 / 2 | 262,144 tok / 32 seq | 4 / 1 / 4 | Same optimizer batch. EG and sparsity differ in systems/memory settings. |
-| 275M | 2 | 262,144 tok / 32 seq | 2 / 1 / 16 | **DIFF:** 524,288 tok / 64 seq | `eg24e2k`: 2 / 1 / 16; `eg96e8k`: 2 / 1 / 8 |  |  | EG Cx2 is not batch-matched to baseline Cx2. |
+| 275M | 2 | repaired: 393,216 tok / 48 seq | 2 / 1 / 8 | repaired: 393,216 tok / 48 seq | `eg24e2k`: 2 / 1 / 8; `eg96e8k`: 2 / 1 / 8 |  |  | Old baseline `b256k` and old EG `b512k` are diagnostic only. |
 | 275M | 4 | 524,288 tok / 64 seq | 4 / 1 / 16 | 524,288 tok / 64 seq | `eg24e2k`: 4 / 1 / 16; `eg96e8k`: 4 / 1 / 8 | 524,288 tok / 64 seq | 4 / 1 / 4 | Same optimizer batch. EG fine and sparsity differ in microbatch. |
 | 275M | 8 | 786,432 tok / 96 seq | 4 / 1 / 8 | 786,432 tok / 96 seq | **DIFF systems:** 8 / 1 / 4 | planned only: 786,432 tok / 96 seq | planned: 8 / 1 / 4 | Same optimizer batch, but EG uses different GPUs/mbz from baseline. |
 | 275M | 16 | 1,048,576 tok / 128 seq | 8 / 1 / 16 | planned only | planned |  |  | EG doc intends full 275M ladder, but no Cx16 EG launch yet in this audit. |
 | mid_480m | 1 | 262,144 tok / 32 seq | 4 / 1 / 8 |  |  |  |  | Baseline only. |
-| mid_480m | 2 | 524,288 tok / 64 seq | 4 / 1 / 8 |  |  |  |  | Baseline only. |
+| mid_480m | 2 | repaired: 393,216 tok / 48 seq | 4 / 1 / 4 |  |  |  |  | Old `b512k` run is diagnostic only. |
 | mid_480m | 4 | 524,288 tok / 64 seq | 4 / 1 / 8 |  |  |  |  | Baseline only. |
 | mid_480m | 8 | 786,432 tok / 96 seq | 8 / 1 / 4 |  |  |  |  | Baseline only. |
 | 810M | 1 | 262,144 tok / 32 seq | 4 / 1 / 4; one sentinel 8 / 1 / 4 |  |  |  |  | Baseline only. |
-| 810M | 2 | 524,288 tok / 64 seq | 8 / 1 / 4 |  |  |  |  | Baseline only. |
+| 810M | 2 | repaired: 393,216 tok / 48 seq | 8 / 1 / 2 |  |  |  |  | Old `b512k` run is diagnostic only. |
 | 810M | 4 | 524,288 tok / 64 seq | 8 / 1 / 4 |  |  |  |  | Baseline only. |
 | 810M | 8 | 786,432 tok / 96 seq | 8 / 1 / 4 |  |  |  |  | Baseline only; forward policy later suggested 16 GPUs. |
 | 810M | 16 | 1,048,576 tok / 128 seq | 8 / 1 / 4 |  |  |  |  | Started/stopped, not canonical complete. |
@@ -164,13 +169,12 @@ started for that model/Cx pair.
 | 1.2B | 4 | 524,288 tok / 64 seq | 8 / 1 / 2 |  |  |  |  | Baseline only; forward policy later suggested 16 GPUs. |
 | 1.2B | 8 | 786,432 tok / 96 seq | initial 32 / 1 / 1; replacements 8 / 1 / 4 |  |  |  |  | Same optimizer batch, mixed systems settings. |
 
-## Dense-Ladder Comparison To Fill In
+## Dense-Ladder Comparison Notes
 
-We still need the dense-ladder source-of-truth batch table before making new
-launch decisions. W&B runs I found in `ai2-llm/hybrid-small-suite` include
-450M Cx2 runs with a 4,194,304-token global batch and older 1.4B Cx2 runs with
-a 2,097,152-token global batch, but those may not be the dense ladder rows Jacob
-is looking for. Treat those as observations, not settled policy.
+The most useful external comparison found so far is the `ai2-llm/olmo-hybrid-pe`
+workspace summarized below. Those actual-run settings motivated the 2026-06-12
+Cx2 repair. Older observations from `ai2-llm/hybrid-small-suite` may correspond
+to other experiment families and should not override the repaired local policy.
 
 ## External Reference: `ai2-llm/olmo-hybrid-pe`
 

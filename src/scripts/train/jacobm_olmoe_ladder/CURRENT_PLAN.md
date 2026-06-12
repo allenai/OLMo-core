@@ -85,7 +85,24 @@ unless a smoke test or prior run proves a larger microbatch is healthy.
 
 ## Current Jobs
 
-Continue:
+Current operating state as of 2026-06-12:
+
+- Do not queue additional jobs right now. The active/queued surface is already
+  sufficient for the next long-cadence loop.
+- Monitor the existing baseline repair runs, remaining baseline runs, expert
+  granularity runs, and any already-queued total-sparsity runs.
+- If total-sparsity jobs for both approved variants through Cx8 are already
+  queued externally, treat them as approved to monitor. Do not launch additional
+  total-sparsity jobs from this session unless Jacob explicitly says something
+  is missing.
+- Current Cx2 repair policy supersedes older Cx2 notes:
+  - 275M baseline, `eg24e2k`, and `eg96e8k`: `b384k`, 2 GPUs, EP=1, mb8,
+    LRs `9e-4`, `1.8e-3`, `3.6e-3`.
+  - `mid_480m`: `b384k`, 4 GPUs, EP=1, mb4, LRs `4.5e-4`, `9e-4`, `1.8e-3`.
+  - 810M: `b384k`, 8 GPUs, EP=1, mb2, LRs `2.8e-4`, `5.6e-4`, `1.12e-3`.
+  - 1.2B Cx2 is still not launched and remains low priority.
+
+Baseline:
 
 - 810M Cx8: `2e-4`, `4e-4`, `8e-4` completed and bracketed.
 - 810M Cx16: `2e-4`, `4e-4`, `8e-4` were stopped intentionally on 2026-06-09
@@ -106,7 +123,9 @@ Continue:
   - `8e-4`: `01KTWB65YRYR8K44RYXBZ7T5WJ`
   Prefer `gpu8-ep1mb4` for future 1.2B Cx8 unless the replacement jobs show
   memory or throughput trouble.
-- 810M Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed.
+- 810M old Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed
+  under the old `b512k` setting. Treat this as diagnostic now that the `b384k`
+  repair sweep has been queued.
 
 Expert granularity:
 
@@ -130,11 +149,10 @@ Expert granularity:
 - All approved expert-granularity 275M Cx1/Cx4 curves are complete and
   bracketed. Do not queue the rest of the 275M expert-granularity ladder until
   Jacob reviews the results and explicitly approves the next batch.
-- Jacob approved the next expert-granularity batch on 2026-06-11: queue Cx2
-  first, then Cx8, for both non-baseline variants. Use transferred baseline
-  centers with three LRs per rung:
-  - Cx2: `5e-4`, `1e-3`, `2e-3`, `gpu2-ep1`; coarse `mb16`, fine `mb8`.
-  - Cx8: `8e-4`, `1.6e-3`, `3.2e-3`, `gpu8-ep1mb4`.
+- Jacob approved the next expert-granularity batch on 2026-06-11. Cx8 remains
+  on the transferred baseline grid `8e-4`, `1.6e-3`, `3.2e-3`,
+  `gpu8-ep1mb4`. Cx2 was later replaced by the `b384k` repair grid above; the
+  old `b512k` Cx2 runs are diagnostic only.
 - After Cx1/Cx4 complete, estimate variant LR multipliers relative to the
   baseline and use those multipliers to center later Cx2/Cx8/Cx16 sweeps.
 
@@ -155,16 +173,16 @@ Total sparsity:
   - `sp192e4k`: `01KTWFCK6QBQ4QH5X3TBKF98MA`
 - 275M Cx1/Cx4 were launched on 2026-06-11 using
   `src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx1_cx4.sh`.
-  On 2026-06-12 Jacob paused sparsity work to focus on finishing expert
-  granularity. One `sp96e4k` Cx1 `1e-3` run finished before the pause; the
-  other Cx1/Cx4 jobs were stopped intentionally. Treat the finished point as
-  diagnostic-only for now, ignore stopped sparsity jobs for analysis, and do
-  not resume or launch new sparsity jobs until explicitly re-approved.
-  The paused default 3-point transferred grids were:
+  On 2026-06-12 Jacob temporarily paused sparsity work; one `sp96e4k` Cx1
+  `1e-3` run finished before the pause and the other early jobs were stopped
+  intentionally. Later on 2026-06-12, Jacob indicated that the already-planned
+  total-sparsity work through Cx8 for both approved variants is part of the
+  current queue surface. Monitor those jobs if present, but do not add more.
+  The transferred grids are:
   - Cx1: `1e-3`, `2e-3`, `4e-3`.
   - Cx4: `8e-4`, `1.6e-3`, `3.2e-3`.
-  Beaker IDs are recorded in `RUNS.md`.
-- Do not launch 275M sparsity Cx8 yet.
+  Beaker IDs for launched/stopped runs are recorded in `RUNS.md`; add any
+  externally queued Cx8 IDs there when they are confirmed.
 
 Ignore unless explicitly resumed:
 
@@ -230,19 +248,16 @@ Allowed without asking:
 - Inspect Beaker/W&B.
 - Update, commit, and push docs/plots/bookkeeping.
 - Stop clearly accidental duplicate jobs.
-- Monitor and debug the queued `mid_480m` smoke.
-- Launch midpoint Cx1/Cx2/Cx4 after smoke passes.
-- Launch agreed next baseline sweeps when LRs are determined by completed,
-  bracketed fits under the active goal.
-- Monitor the approved expert-granularity Cx1/Cx4 jobs.
-- Update, commit, and push expert-granularity docs/plots/bookkeeping.
-- Launch at most one targeted expert-granularity Cx1 or Cx4 follow-up per
-  variant if the completed three-point curve lands on an edge.
+- Monitor current baseline repair, baseline, expert-granularity, and
+  total-sparsity jobs.
+- Update, commit, and push experiment docs/plots/bookkeeping.
+- Refresh W&B caches narrowly for newly completed full runs.
 
 Ask before:
 
 - Changing baseline architecture beyond the agreed `mid_480m` config.
-- Starting any new ablation family beyond expert granularity.
+- Starting any new ablation family.
+- Launching new jobs not already described in the current operating state.
 - Launching expert-granularity Cx16 or larger-model promotions.
 - Changing data mix, tokenizer, optimizer family, or schedule shape.
 - Launching beyond Cx16.
