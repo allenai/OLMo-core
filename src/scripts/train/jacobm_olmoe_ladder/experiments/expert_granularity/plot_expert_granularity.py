@@ -104,7 +104,7 @@ def expert_variant_name(name: str) -> str | None:
     return None
 
 
-def load_points(project: str, window_m: int) -> list[Point]:
+def load_points(project: str, window_m: int, include_running: bool = False) -> list[Point]:
     api = wandb.Api(timeout=90)
     points: list[Point] = []
     runs = list(
@@ -123,6 +123,8 @@ def load_points(project: str, window_m: int) -> list[Point]:
         )
     )
     for run in runs:
+        if not include_running and run.state != "finished":
+            continue
         name = run.display_name or run.name
         if any(marker in name.lower() for marker in ("smoke", "sanity", "evaltest")):
             continue
@@ -277,9 +279,14 @@ def main() -> None:
         type=Path,
         default=Path(__file__).parents[2] / "plots" / "expert_granularity",
     )
+    parser.add_argument(
+        "--include-running",
+        action="store_true",
+        help="Include running/incomplete runs. Default is completed runs only to keep U-plot axes stable.",
+    )
     args = parser.parse_args()
 
-    points = load_points(args.project, args.window_m)
+    points = load_points(args.project, args.window_m, include_running=args.include_running)
     for cx in sorted({point.cx for point in points}):
         plot_cx(points, cx, args.output_dir / f"275m_cx{cx}_uplot.png", args.window_m)
 

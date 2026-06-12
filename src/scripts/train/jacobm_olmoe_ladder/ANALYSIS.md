@@ -123,8 +123,7 @@ Generate completed-run plots:
 
 ```bash
 uv run --with wandb --with matplotlib python src/scripts/train/jacobm_olmoe_ladder/plot_wandb_ladder.py \
-  --window-m 250 \
-  --finished-only
+  --window-m 250
 ```
 
 If a newly completed family had stale/short W&B history, repair only that family

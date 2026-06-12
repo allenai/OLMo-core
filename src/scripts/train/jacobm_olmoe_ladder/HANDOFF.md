@@ -191,7 +191,7 @@ Regenerate plots from cached histories:
 ```bash
 uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/plot_wandb_ladder.py \
   --name-regex 'olmoe3-(tiny-275m|moe-a0-810m|moe-a0-1p2b)-cx' \
-  --finished-only --window-m 250
+  --window-m 250
 ```
 
 Refresh only when needed:

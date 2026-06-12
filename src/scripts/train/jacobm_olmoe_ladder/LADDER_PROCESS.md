@@ -324,8 +324,7 @@ Regenerate completed-run plots after new full runs finish:
 
 ```bash
 uv run --with wandb --with matplotlib python src/scripts/train/jacobm_olmoe_ladder/plot_wandb_ladder.py \
-  --window-m 250 \
-  --finished-only
+  --window-m 250
 ```
 
 Commit and push docs/plot updates when full-run results change.

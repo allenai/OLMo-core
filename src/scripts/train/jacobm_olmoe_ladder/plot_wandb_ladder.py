@@ -390,7 +390,11 @@ def main() -> None:
     )
     parser.add_argument("--window-m", type=int, default=250)
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).parent / "plots")
-    parser.add_argument("--finished-only", action="store_true")
+    parser.add_argument(
+        "--include-running",
+        action="store_true",
+        help="Include running/incomplete runs. Default is completed runs only to keep U-plot axes stable.",
+    )
     parser.add_argument(
         "--include-noncanonical",
         action="store_true",
@@ -406,10 +410,10 @@ def main() -> None:
         refresh_stale_cache=args.refresh_stale_cache,
         current_family=False,
         exclude_current_family=False,
-        states=["finished"] if args.finished_only else None,
+        states=None if args.include_running else ["finished"],
     )
     rows = load_rows(loader_args)
-    points = summarize_rows(rows, args.window_m, args.finished_only, not args.include_noncanonical)
+    points = summarize_rows(rows, args.window_m, not args.include_running, not args.include_noncanonical)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     for model in sorted({p["model"] for p in points}):
