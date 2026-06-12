@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -84,7 +84,7 @@ def _rowwise_debug_sync(label: str, device: torch.device) -> None:
 
 
 def _logical_rank2_tensor(
-    shape: Tuple[int, ...], *, dtype: torch.dtype, device: torch.device
+    shape: tuple[int, ...], *, dtype: torch.dtype, device: torch.device
 ) -> torch.Tensor:
     # FP8 rowwise comm exposes a high-precision-shaped autograd edge, but the
     # actual payload lives in q/scales. Use one scalar of storage instead of a
@@ -96,7 +96,7 @@ def _rowwise_fp8_prequantized_lhs(
     qdata: torch.Tensor,
     scales: torch.Tensor,
     *,
-    shape: Tuple[int, ...],
+    shape: tuple[int, ...],
     scales_are_blocked: bool = False,
 ) -> ScaledGroupedMMPrequantizedLHS:
     return ScaledGroupedMMPrequantizedLHS(
@@ -1631,7 +1631,7 @@ class _DispatchVDevAutograd(torch.autograd.Function):
         symm_tmp_rank_splits_offsets: torch.Tensor,
         group_name: str,
         group: dist.ProcessGroup,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         source_rows = source_input.shape[0]
         if source_rows != symm_input.shape[0]:
             raise RuntimeError(
@@ -1754,7 +1754,7 @@ class _CombineVDevAutograd(torch.autograd.Function):
         symm_tmp_rank_splits_offsets: torch.Tensor,
         group_name: str,
         group: dist.ProcessGroup,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         input_rows = input.shape[0]
         if input_rows != symm_input.shape[0]:
             raise RuntimeError(
