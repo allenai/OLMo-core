@@ -155,14 +155,16 @@ Total sparsity:
   - `sp192e4k`: `01KTWFCK6QBQ4QH5X3TBKF98MA`
 - 275M Cx1/Cx4 were launched on 2026-06-11 using
   `src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx1_cx4.sh`.
-  Monitor the default 3-point transferred grids:
+  On 2026-06-12 Jacob paused sparsity work to focus on finishing expert
+  granularity. One `sp96e4k` Cx1 `1e-3` run finished before the pause; the
+  other Cx1/Cx4 jobs were stopped intentionally. Treat the finished point as
+  diagnostic-only for now, ignore stopped sparsity jobs for analysis, and do
+  not resume or launch new sparsity jobs until explicitly re-approved.
+  The paused default 3-point transferred grids were:
   - Cx1: `1e-3`, `2e-3`, `4e-3`.
   - Cx4: `8e-4`, `1.6e-3`, `3.2e-3`.
   Beaker IDs are recorded in `RUNS.md`.
-- If Cx1/Cx4 are promising and bracketed, launch 275M Cx8 with
-  `src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx8.sh`.
-  Default Cx8 grid is `8e-4`, `1.6e-3`, `3.2e-3`, adjusted if the Cx1/Cx4
-  multiplier says otherwise.
+- Do not launch 275M sparsity Cx8 yet.
 
 Ignore unless explicitly resumed:
 
