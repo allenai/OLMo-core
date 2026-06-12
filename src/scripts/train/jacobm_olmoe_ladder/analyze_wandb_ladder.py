@@ -31,7 +31,9 @@ TOKENS_KEY = "throughput/total tokens"
 FIELDS = ["_step", LOSS_KEY, TOKENS_KEY]
 
 CURRENT_FAMILY_MARKERS = (
+    "b384k-gpu2-ep1mb8",
     "gpu2-ep1mb16",
+    "gpu2-ep1mb8",
     "gpu4-ep1mb4",
     "gpu4-ep1mb8",
     "gpu4-ep1mb16",
@@ -87,6 +89,8 @@ def parse_run_spec(name: str) -> RunSpec | None:
         batch_label, batch_tokens = "128k", 131_072
     elif "b256k" in name:
         batch_label, batch_tokens = "256k", 262_144
+    elif "b384k" in name:
+        batch_label, batch_tokens = "384k", 393_216
     elif "b512k" in name:
         batch_label, batch_tokens = "512k", 524_288
     elif "b768k" in name:

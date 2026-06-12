@@ -71,10 +71,12 @@ def cx_from_name(name: str) -> int | None:
 def baseline_variant_name(name: str) -> str | None:
     if "olmoe3-tiny-275m-cx" not in name:
         return None
+    if "b384k" in name and "gpu2-ep1mb8" in name and "cx2" in name:
+        return "baseline_48e_top4_b384k"
     if "gpu2-ep1mb16" in name and "cx1" in name:
         return "baseline_48e_top4"
     if "gpu2-ep1mb16" in name and "cx2" in name:
-        return "baseline_48e_top4"
+        return "baseline_48e_top4_b256k"
     if "gpu4-ep1mb16" in name and "cx4" in name:
         return "baseline_48e_top4"
     if "gpu4-ep1mb8" in name and "cx8" in name:
@@ -84,8 +86,16 @@ def baseline_variant_name(name: str) -> str | None:
 
 def expert_variant_name(name: str) -> str | None:
     if "eg24e2k" in name:
+        if "cx2" in name and "b384k" in name:
+            return "coarse_24e_top2_b384k"
+        if "cx2" in name:
+            return "coarse_24e_top2_b512k"
         return "coarse_24e_top2"
     if "eg96e8k" in name:
+        if "cx2" in name and "b384k" in name:
+            return "fine_96e_top8_b384k"
+        if "cx2" in name:
+            return "fine_96e_top8_b512k"
         return "fine_96e_top8"
     if "eg192e16k" in name:
         return "extreme_192e_top16"
@@ -173,8 +183,14 @@ def plot_cx(points: list[Point], cx: int, out_path: Path, window_m: int) -> None
     fig, ax = plt.subplots(figsize=(8.2, 5.2))
     labels = {
         "baseline_48e_top4": "baseline 48E/top4",
+        "baseline_48e_top4_b256k": "baseline 48E/top4 (b256k)",
+        "baseline_48e_top4_b384k": "baseline 48E/top4 (b384k)",
         "coarse_24e_top2": "coarse 24E/top2",
+        "coarse_24e_top2_b512k": "coarse 24E/top2 (b512k)",
+        "coarse_24e_top2_b384k": "coarse 24E/top2 (b384k)",
         "fine_96e_top8": "fine 96E/top8",
+        "fine_96e_top8_b512k": "fine 96E/top8 (b512k)",
+        "fine_96e_top8_b384k": "fine 96E/top8 (b384k)",
         "extreme_192e_top16": "extreme 192E/top16",
         "ultra_384e_top32": "ultra 384E/top32",
     }

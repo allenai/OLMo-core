@@ -17,7 +17,7 @@ from wandb_cache import DEFAULT_CACHE_DIR
 
 CANONICAL_BATCH_BY_CX = {
     1: "256k",
-    2: "256k",
+    2: "384k",
     4: "512k",
     8: "768k",
     16: "1M",
@@ -49,7 +49,7 @@ CANONICAL_BATCH_BY_MODEL_CX = {
 
 CANONICAL_FAMILY_BY_CX = {
     1: "gpu2-ep1mb16",
-    2: "gpu2-ep1mb16",
+    2: "gpu2-ep1mb8",
     4: "gpu4-ep1mb16",
     8: "gpu4-ep1mb8",
     16: "gpu8-ep1mb16",
@@ -104,6 +104,8 @@ def model_label_from_name(name: str) -> str:
 
 
 def family_label_from_name(name: str) -> str:
+    if "b384k" in name and "gpu2-ep1mb8" in name:
+        return "b384k-gpu2-ep1mb8"
     if "gpu8-ep1mb16" in name:
         return "gpu8-ep1mb16"
     if "gpu8-ep1mb4" in name:
@@ -118,6 +120,8 @@ def family_label_from_name(name: str) -> str:
         return "gpu4-ep1mb4"
     if "gpu2-ep1mb16" in name:
         return "gpu2-ep1mb16"
+    if "gpu2-ep1mb8" in name:
+        return "gpu2-ep1mb8"
     if "-n2-" in name or "-n2_" in name:
         return "n2"
     return "original"
