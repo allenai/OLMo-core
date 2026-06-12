@@ -13,6 +13,8 @@ MICRO_BSZ=4
 SWEEP_SUFFIX="${SWEEP_SUFFIX:-r1}"
 EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
 EVAL_INTERVAL="${EVAL_INTERVAL:-2000}"
+EXPERT_VARIANTS="${EXPERT_VARIANTS:-coarse fine}"
+CX_LIST="${CX_LIST:-1 4}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -110,9 +112,37 @@ launch_one() {
   return 1
 }
 
-for spec in coarse_24e_top2:eg24e2k fine_96e_top8:eg96e8k; do
+variant_specs=()
+for variant in ${EXPERT_VARIANTS}; do
+  case "${variant}" in
+    coarse|eg24e2k|coarse_24e_top2)
+      variant_specs+=("coarse_24e_top2:eg24e2k")
+      ;;
+    fine|eg96e8k|fine_96e_top8)
+      variant_specs+=("fine_96e_top8:eg96e8k")
+      ;;
+    *)
+      echo "Unknown expert-geometry selector: ${variant}" >&2
+      exit 1
+      ;;
+  esac
+done
+
+for spec in "${variant_specs[@]}"; do
   expert_geometry="${spec%%:*}"
   eg_tag="${spec##*:}"
-  launch_one "${expert_geometry}" "${eg_tag}" 1 b256k 32 6e-4 lr6e-4
-  launch_one "${expert_geometry}" "${eg_tag}" 4 b512k 64 4e-4 lr4e-4
+  for cx in ${CX_LIST}; do
+    case "${cx}" in
+      1)
+        launch_one "${expert_geometry}" "${eg_tag}" 1 b256k 32 6e-4 lr6e-4
+        ;;
+      4)
+        launch_one "${expert_geometry}" "${eg_tag}" 4 b512k 64 4e-4 lr4e-4
+        ;;
+      *)
+        echo "Unsupported Cx for this launcher: ${cx}" >&2
+        exit 1
+        ;;
+    esac
+  done
 done
