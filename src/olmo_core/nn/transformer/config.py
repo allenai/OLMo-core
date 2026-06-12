@@ -330,8 +330,13 @@ class TransformerConfig(ModelConfig):
     block_pattern: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
+    tie_word_embeddings: bool = False
 
     def __post_init__(self):
+        if self.tie_word_embeddings and self.name == TransformerType.normalized:
+            raise OLMoConfigurationError(
+                "Tying word embeddings is not supported with the normalized transformer"
+            )
         validate_block_resolution_config(
             n_layers=self.n_layers,
             block=self.block,
@@ -382,6 +387,7 @@ class TransformerConfig(ModelConfig):
                 block_overrides=self.block_overrides,
                 block_pattern=self.block_pattern,
                 embed_scale=self.embed_scale,
+                tie_word_embeddings=self.tie_word_embeddings,
             )
         elif self.name == TransformerType.normalized:
             assert self.embedding_norm is None
@@ -416,6 +422,7 @@ class TransformerConfig(ModelConfig):
                 embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
                 block_pattern=self.block_pattern,
+                tie_word_embeddings=self.tie_word_embeddings,
             )
         else:
             raise NotImplementedError(self.name)
@@ -468,6 +475,10 @@ class TransformerConfig(ModelConfig):
         # LM head.
         num_params += self.lm_head.num_params(self.d_model, self.vocab_size)
 
+        # The LM head weight is shared with the embeddings when tied.
+        if self.tie_word_embeddings:
+            num_params -= self.d_model * self.vocab_size
+
         return num_params
 
     @property
@@ -488,6 +499,10 @@ class TransformerConfig(ModelConfig):
 
         # LM head.
         num_active_params += self.lm_head.num_params(self.d_model, self.vocab_size)
+
+        # The LM head weight is shared with the embeddings when tied.
+        if self.tie_word_embeddings:
+            num_active_params -= self.d_model * self.vocab_size
 
         return num_active_params
 
@@ -1303,6 +1318,7 @@ class TransformerConfig(ModelConfig):
             feed_forward=FeedForwardConfig(
                 hidden_size=3072, bias=False, dtype=kwargs.get("dtype", DType.float32)
             ),
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             **kwargs,
         )
 
@@ -1339,6 +1355,7 @@ class TransformerConfig(ModelConfig):
             feed_forward=FeedForwardConfig(
                 hidden_size=6144, bias=False, dtype=kwargs.get("dtype", DType.float32)
             ),
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             **kwargs,
         )
 
@@ -1375,6 +1392,7 @@ class TransformerConfig(ModelConfig):
             feed_forward=FeedForwardConfig(
                 hidden_size=9728, bias=False, dtype=kwargs.get("dtype", DType.float32)
             ),
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             **kwargs,
         )
 

@@ -22,6 +22,7 @@ env:
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
   GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
 jobs:
   checks:
