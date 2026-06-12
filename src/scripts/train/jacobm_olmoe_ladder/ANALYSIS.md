@@ -26,6 +26,13 @@ This is a valid full training point but uses the intentionally deprecated
 4-node low-throughput setting. Keep it visible as a systems comparison; prefer
 the one-node `gpu8-ep1mb4` replacements for canonical 1.2B Cx8 LR selection.
 
+The first 810M repaired Cx2 retry (`r2`) failed before training because the
+generated W&B group name exceeded the 128-character `GroupName` limit. The root
+cause was in `tiny_275m.py`: the script appended params/architecture/tag to both
+the run display name and the group. Commit `07df5ad` keeps descriptive display
+names but sets the group to a compact capped original run name. The 810M Cx2
+repair grid was relaunched as `r3` from that commit.
+
 ## W&B Loss Pulls
 
 Project:
