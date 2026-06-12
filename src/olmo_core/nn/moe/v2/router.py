@@ -25,9 +25,7 @@ from olmo_core.distributed.utils import (
     unhide_from_torch,
 )
 
-# OutputDiscardCheckpoint is provided by a separate change; the fp32-cast recompute
-# optimization that uses it is disabled below until it lands.
-# from ...output_discard_checkpoint import OutputDiscardCheckpoint
+from ...output_discard_checkpoint import OutputDiscardCheckpoint
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 from ..router import MoERouterGatingFunction, _uniform_expert_assignment
 
@@ -76,8 +74,7 @@ class MoERouterConfigV2(Config):
     use_recompute_fp32_cast: bool = False
     """
     Save the fp32 cast of the router input through an ``OutputDiscardCheckpoint`` and
-    recompute it in backward, trading extra backward compute for memory. (Currently a
-    no-op: the path is disabled until ``OutputDiscardCheckpoint`` is available.)
+    recompute it in backward, trading extra backward compute for memory.
     """
 
     def num_params(self) -> int:
@@ -471,21 +468,18 @@ class MoERouterV2(nn.Module):
 
         # Keep activation in bf16/fp16 in forward graph, and only materialize fp32
         # router input through OutputDiscardCheckpoint so backward can recompute it.
-        # NOTE: OutputDiscardCheckpoint is provided by a separate change; the fp32-cast
-        # recompute optimization is disabled here. Restore the commented path when it lands.
-        # cast_checkpoint: Optional[OutputDiscardCheckpoint] = None
-        # if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_fp32_cast:
-        #     cast_checkpoint = OutputDiscardCheckpoint()
-        #     x_fp32 = cast(torch.Tensor, cast_checkpoint.checkpoint(_cast_to_fp32, x))
-        # else:
-        #     x_fp32 = x.float()
-        x_fp32 = x.float()
+        cast_checkpoint: Optional[OutputDiscardCheckpoint] = None
+        if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_fp32_cast:
+            cast_checkpoint = OutputDiscardCheckpoint()
+            x_fp32 = cast(torch.Tensor, cast_checkpoint.checkpoint(_cast_to_fp32, x))
+        else:
+            x_fp32 = x.float()
 
         # shape: (batch_size, seq_len, num_experts)
         logits = self.get_expert_logits(x_fp32).float()
-        # if cast_checkpoint is not None:
-        #     # Recompute fp32 cast before linear backward consumes the saved input.
-        #     cast_checkpoint.discard_output_and_register_recompute(logits)
+        if cast_checkpoint is not None:
+            # Recompute fp32 cast before linear backward consumes the saved input.
+            cast_checkpoint.discard_output_and_register_recompute(logits)
 
         # shape: (batch_size, seq_len, num_experts)
         if self.gating_function == MoERouterGatingFunction.softmax:
