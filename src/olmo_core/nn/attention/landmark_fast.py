@@ -11,8 +11,10 @@ serially, so the backward is badly under-parallelized and dominates the step (~2
   * :func:`_bwd_kv_kernel` -- one program per ``(key-block, head)``, computes ``dk``/``dv``.
   * :func:`_bwd_q_kernel`  -- one program per ``(query-block, head)``, computes ``dq`` (causal half).
 
-Gradients are bit-identical to the original (``dk``/``dv`` same accumulation order; ``dq`` accumulated
-ascending with no atomics), and fwd+bwd is ~17-20x faster at 4k-8k (~1.4x FlashAttention). Tuned
+``dk``/``dv`` are bit-identical to the original (same accumulation order); ``dq`` is accumulated
+ascending with no atomics and matches up to last-ulp reassociation (the two backwards use different
+``num_warps``, which retiles the ``tl.dot`` reduction). fwd+bwd is ~17-20x faster at 4k-8k (~1.4x
+FlashAttention). Tuned
 launch config (H200, head_dim 128): ``num_warps=4, num_stages=2``. Head dims up to 256 (e.g.
 Qwen3.5) are supported: ``head_dim > 128`` switches to ``num_warps=8`` (and 2 fwd stages) to fit
 register/shared-memory budgets, leaving the ``<= 128`` launch configs untouched.
@@ -462,10 +464,12 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         )
         const = dict(BLOCK=BLOCK, BLOCK_DMODEL=ctx.BLOCK_DMODEL, N_PREFIX_Q=ctx.N_PREFIX_Q)
         # head_dim > 128 needs 8 warps: the dk/dv (and dq) fp32 accumulators are (BLOCK, 256), and
-        # at 4 warps they alone exceed the per-thread register budget. <= 128 defaults untouched.
+        # at 4 warps they alone exceed the per-thread register budget. It also needs num_stages=1:
+        # at 2 stages the pipelined (BLOCK, 256) Q/DO tiles of _bwd_kv_kernel overflow H100 shared
+        # memory (279KB required vs 232KB available at BLOCK=64, fp32). <= 128 defaults untouched.
         if ctx.BLOCK_DMODEL > 128:
             warps = _env_int("LM_FAST_WARPS", 8)
-            stages = _env_int("LM_FAST_STAGES", 2)
+            stages = _env_int("LM_FAST_STAGES", 1)
         else:
             warps = _env_int("LM_FAST_WARPS", 4)
             stages = _env_int("LM_FAST_STAGES", 2)
