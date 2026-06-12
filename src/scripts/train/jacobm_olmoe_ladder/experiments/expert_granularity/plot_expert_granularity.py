@@ -73,7 +73,11 @@ def baseline_variant_name(name: str) -> str | None:
         return None
     if "gpu2-ep1mb16" in name and "cx1" in name:
         return "baseline_48e_top4"
+    if "gpu2-ep1mb16" in name and "cx2" in name:
+        return "baseline_48e_top4"
     if "gpu4-ep1mb16" in name and "cx4" in name:
+        return "baseline_48e_top4"
+    if "gpu4-ep1mb8" in name and "cx8" in name:
         return "baseline_48e_top4"
     return None
 
@@ -99,7 +103,11 @@ def load_points(project: str, window_m: int) -> list[Point]:
             filters={
                 "$or": [
                     {"tags": {"$all": ["exp_expert_granularity"]}},
-                    {"display_name": {"$regex": "olmoe3-tiny-275m-cx(1|4).*gpu(2|4)-ep1mb16"}},
+                    {
+                        "display_name": {
+                            "$regex": "olmoe3-tiny-275m-cx(1|2|4|8).*gpu(2|4)-ep1mb(8|16)"
+                        }
+                    },
                 ]
             },
         )
@@ -114,7 +122,7 @@ def load_points(project: str, window_m: int) -> list[Point]:
             continue
         cx = cx_from_name(name)
         lr_info = lr_from_name(name)
-        if cx not in {1, 4} or lr_info is None:
+        if cx not in {1, 2, 4, 8} or lr_info is None:
             continue
 
         loss_info = history_loss(run, window_m)
