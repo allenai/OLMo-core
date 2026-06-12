@@ -196,8 +196,14 @@ def plot_cx(points: list[Point], cx: int, out_path: Path, window_m: int) -> None
     }
     variants = [
         "baseline_48e_top4",
+        "baseline_48e_top4_b256k",
+        "baseline_48e_top4_b384k",
         "coarse_24e_top2",
+        "coarse_24e_top2_b512k",
+        "coarse_24e_top2_b384k",
         "fine_96e_top8",
+        "fine_96e_top8_b512k",
+        "fine_96e_top8_b384k",
         "extreme_192e_top16",
         "ultra_384e_top32",
     ]

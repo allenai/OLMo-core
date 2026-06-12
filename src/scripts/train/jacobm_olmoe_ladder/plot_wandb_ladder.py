@@ -323,10 +323,12 @@ def plot_cx_across_models(points, cx: int, out_path: Path, window_m: int) -> Non
         for p in points
         if p["cx"] == cx and p["state"] == "finished" and is_canonical_family(p)
     ]
+    plotted = False
     for model in sorted({p["model"] for p in cx_points}, key=lambda m: MODEL_SORT_ORDER.get(m, 98)):
         model_points = sorted([p for p in cx_points if p["model"] == model], key=lambda p: p["lr"])
         if not model_points:
             continue
+        plotted = True
         (line,) = ax.plot(
             [p["lr"] for p in model_points],
             [p["loss"] for p in model_points],
@@ -350,7 +352,19 @@ def plot_cx_across_models(points, cx: int, out_path: Path, window_m: int) -> Non
     ax.set_ylabel(f"train CE avg{window_m}M")
     ax.set_title(f"Cx{cx} LR sweeps by model size")
     ax.grid(True, which="both", alpha=0.25)
-    ax.legend(loc="best")
+    if plotted:
+        ax.legend(loc="best")
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No completed canonical runs yet",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=11,
+            alpha=0.7,
+        )
     fig.tight_layout()
     fig.savefig(out_path, dpi=180)
     plt.close(fig)

@@ -537,12 +537,12 @@ small probes, not automatic full-ladder variants.
 
 | Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| `eg-275m-cx1-eg192e16k-lr1e-3-r1` | `extreme_192e_top16` | 1e-3 | 262,144 | 32 | 1 | 1 | 4 | https://beaker.org/ex/01KTVV5B6ZWBR64FACMZH96TMQ | Extreme granularity probe; running at launch status check. |
-| `eg-275m-cx1-eg192e16k-lr2e-3-r1` | `extreme_192e_top16` | 2e-3 | 262,144 | 32 | 1 | 1 | 4 | https://beaker.org/ex/01KTVV5QVXKG7D0MJC304SVSDM | Extreme granularity probe; running at launch status check. |
-| `eg-275m-cx1-eg192e16k-lr4e-3-r1` | `extreme_192e_top16` | 4e-3 | 262,144 | 32 | 1 | 1 | 4 | https://beaker.org/ex/01KTVV63GS5WFC8VVFYDY24183 | Extreme granularity probe; running at launch status check. |
-| `eg-275m-cx1-eg384e32k-lr1e-3-r1` | `ultra_384e_top32` | 1e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV6EZ981F8YJ8B2M6X1S57 | Ultra granularity probe; running at launch status check. |
-| `eg-275m-cx1-eg384e32k-lr2e-3-r1` | `ultra_384e_top32` | 2e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV6TWVNSJGTMHPWY9JS4Y6 | Ultra granularity probe; pending at launch status check. |
-| `eg-275m-cx1-eg384e32k-lr4e-3-r1` | `ultra_384e_top32` | 4e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV76SNY7XF5AER7ST06F04 | Ultra granularity probe; pending at launch status check. |
+| `eg-275m-cx1-eg192e16k-lr1e-3-r1` | `extreme_192e_top16` | 1e-3 | 262,144 | 32 | 1 | 1 | 4 | https://beaker.org/ex/01KTVV5B6ZWBR64FACMZH96TMQ | Extreme granularity probe; finalized by 2026-06-12 status check. |
+| `eg-275m-cx1-eg192e16k-lr2e-3-r1` | `extreme_192e_top16` | 2e-3 | 262,144 | 32 | 1 | 1 | 4 | https://beaker.org/ex/01KTVV5QVXKG7D0MJC304SVSDM | Extreme granularity probe; finalized by 2026-06-12 status check. |
+| `eg-275m-cx1-eg192e16k-lr4e-3-r1` | `extreme_192e_top16` | 4e-3 | 262,144 | 32 | 1 | 1 | 4 | https://beaker.org/ex/01KTVV63GS5WFC8VVFYDY24183 | Extreme granularity probe; finalized by 2026-06-12 status check. |
+| `eg-275m-cx1-eg384e32k-lr1e-3-r1` | `ultra_384e_top32` | 1e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV6EZ981F8YJ8B2M6X1S57 | Ultra granularity probe; finalized by 2026-06-12 status check. |
+| `eg-275m-cx1-eg384e32k-lr2e-3-r1` | `ultra_384e_top32` | 2e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV6TWVNSJGTMHPWY9JS4Y6 | Ultra granularity probe; running at 2026-06-12 status check. |
+| `eg-275m-cx1-eg384e32k-lr4e-3-r1` | `ultra_384e_top32` | 4e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV76SNY7XF5AER7ST06F04 | Ultra granularity probe; running at 2026-06-12 status check. |
 
 ## 2026-06-11 Total Sparsity Experiment
 
