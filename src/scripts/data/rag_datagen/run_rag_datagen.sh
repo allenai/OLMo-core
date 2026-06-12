@@ -9,6 +9,10 @@
 set -ex
 cd "$(dirname "$0")"
 export PYTHONPATH="$PWD"
+# pyserini's `pyserini.search.lucene` import eagerly constructs an OpenAI client (pyserini.encode),
+# which raises without OPENAI_API_KEY. We only use BM25/Lucene, never OpenAI, so a dummy key just
+# satisfies the import. (Beaker rejects setting OPENAI_API_KEY via gantry --env, so set it here.)
+export OPENAI_API_KEY="${OPENAI_API_KEY:-dummy-bm25-only-not-used}"
 OUT=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/rag_jsonl
 mkdir -p "$OUT"
 
