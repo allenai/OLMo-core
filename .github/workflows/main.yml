@@ -207,11 +207,6 @@ jobs:
               pytest -v --color=yes -m gpu \
                 src/integration_tests/
 
-          - name: ODC benchmark (GPU, temporary - revert before merge)
-            image: *gpu_test_image
-            gpus: 1
-            run: |
-              python src/scripts/benchmark_odc.py --layers 1 4 8 --dtype bf16 fp32 --iters 5
     steps:
       - uses: actions/checkout@v5
         with:
