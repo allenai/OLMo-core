@@ -93,6 +93,15 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device
     ) -> Tuple[List[PipelineStage], List[Transformer]]:
         split_points = self.get_split_points(model.n_layers)
+        num_stages = len(split_points) + 1
+
+        if num_stages > 1 and model.tie_word_embeddings:
+            raise NotImplementedError(
+                "Pipeline parallelism with tied word embeddings is not supported: the input "
+                "embeddings and LM head are placed on different pipeline stages, so they cannot "
+                "share a weight."
+            )
+
         pp_rank = pp_mesh.get_local_rank()
 
         def build_stage(
@@ -128,7 +137,6 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             )
             return stage, model_chunk
 
-        num_stages = len(split_points) + 1
         stage_idx = pp_rank
 
         stages = []
@@ -258,6 +266,13 @@ class TransformerActivationCheckpointingConfig(Config):
     0 = recompute all activations, 1 = recompute none (default). Requires compilation to be enabled.
 
     See https://pytorch.org/blog/activation-checkpointing-techniques/ for more details.
+    """
+
+    determinism_check: str = "default"
+    """
+    Passed through to torch's ``checkpoint_wrapper``. "default" compares forward vs. recompute
+    tensor metadata; set to "none" to skip the check. Needed for models whose recompute produces
+    spurious metadata mismatches (e.g. opaque linear-attention kernels under ``torch.compile``).
     """
 
     def __post_init__(self):

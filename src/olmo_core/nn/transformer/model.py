@@ -46,7 +46,7 @@ from ..attention import (
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
-from ..lm_head import LMHeadConfig, LMOutputWithLoss
+from ..lm_head import LMHeadConfig, LMLossImplementation, LMOutputWithLoss
 from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
@@ -117,6 +117,7 @@ class Transformer(nn.Module):
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
         block_pattern: Optional[List[str]] = None,
         embed_scale: Optional[float] = None,
+        tie_word_embeddings: bool = False,
     ):
         super().__init__()
 
@@ -160,6 +161,10 @@ class Transformer(nn.Module):
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
 
+        self.tie_word_embeddings = tie_word_embeddings
+        if tie_word_embeddings:
+            self._tie_weights()
+
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
         self.init_seed = init_seed
@@ -182,6 +187,15 @@ class Transformer(nn.Module):
         # later, like for pipeline parallelism.
         self.num_params
         self.num_non_embedding_params
+
+    def _tie_weights(self) -> None:
+        if self.embeddings is None or self.lm_head is None:
+            raise OLMoConfigurationError(
+                "Cannot tie word embeddings without both embeddings and an LM head"
+            )
+        if self.lm_head.w_out.bias is not None:
+            raise OLMoConfigurationError("Cannot tie word embeddings when the LM head uses a bias")
+        self.lm_head.w_out.weight = self.embeddings.weight
 
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         return block
@@ -295,6 +309,10 @@ class Transformer(nn.Module):
                 generator=generator,
             )
 
+        # Re-establish weight tying since `to_empty` above allocates fresh storage.
+        if self.tie_word_embeddings:
+            self._tie_weights()
+
         for block in self.blocks.values():
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
@@ -345,7 +363,7 @@ class Transformer(nn.Module):
                 if max_seq_len is not None and att.rope is not None:
                     att.rope.warmup_cache(max_seq_len, device)
 
-        if self.lm_head is not None:
+        if self.lm_head is not None and not self.tie_word_embeddings:
             self.init_method.init_final_w_out(
                 self.lm_head.w_out,
                 d_model=self.d_model,
@@ -506,6 +524,7 @@ class Transformer(nn.Module):
         self,
         input_ids: torch.Tensor,
         *,
+        input_embeddings: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
@@ -519,6 +538,12 @@ class Transformer(nn.Module):
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param input_embeddings: Pre-computed embeddings to use instead of looking up
+            ``input_ids`` in the embedding table, shape
+            ``(batch_size, seq_len, d_model)``.  When provided the embedding lookup,
+            scale, and norm steps are all skipped.  Intended for multimodal use-cases
+            where image features have already been spliced into the embedding sequence.
+            Not supported with context parallelism.
         :param labels: The token labels, shape ``(batch_size, seq_len)``.
         :param ignore_index: The index to ignore in the loss computation. Default is -100.
         :param loss_reduction: The reduction method for the loss. Can be "mean", "sum", or "none".
@@ -530,6 +555,13 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        if input_embeddings is not None and self._cp_load_balancer is not None:
+            raise RuntimeError(
+                "`input_embeddings` is not supported with context parallelism: `_prepare_inputs` "
+                "shards `input_ids`/`labels`/RoPE while `input_embeddings` stays full-size, which "
+                "would misalign the hidden states."
+            )
+
         (
             input_ids,
             labels,
@@ -550,11 +582,14 @@ class Transformer(nn.Module):
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
-        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
-        if self.embeddings is not None and self.embed_scale is not None:
-            h = h * self.embed_scale
-        if self.embedding_norm is not None:
-            h = self.embedding_norm(h)
+        if input_embeddings is not None:
+            h = move_to_device(input_embeddings, self.device)
+        else:
+            h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+            if self.embeddings is not None and self.embed_scale is not None:
+                h = h * self.embed_scale
+            if self.embedding_norm is not None:
+                h = self.embedding_norm(h)
 
         # Run each block.
         for block_key, block in self.blocks.items():
@@ -616,6 +651,16 @@ class Transformer(nn.Module):
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
+        if self.tie_word_embeddings and (
+            self.lm_head is None
+            or self.lm_head.loss_implementation == LMLossImplementation.fused_linear
+        ):
+            raise NotImplementedError(
+                "Tensor parallelism with tied word embeddings requires the default loss "
+                "implementation; the fused-linear loss replicates the LM head weight, which is "
+                "incompatible with the vocab-sharded embedding."
+            )
+
         if float8_enabled is None:
             float8_enabled = self.fp8_enabled
         elif not float8_enabled and self.fp8_enabled:
@@ -645,6 +690,12 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
+
+        # The embedding (RowwiseParallel) and the LM head (ColwiseParallel) both shard their
+        # weight along the vocab dimension, so re-point the head at the embedding's sharded
+        # parameter to restore the tie that `parallelize_module` broke.
+        if self.tie_word_embeddings and self.embeddings is not None and self.lm_head is not None:
+            self._tie_weights()
 
         self._tp_enabled = True
         self._tp_mesh = tp_mesh
@@ -678,6 +729,7 @@ class Transformer(nn.Module):
         block_interval: Optional[int] = None,
         modules: Optional[List[str]] = None,
         activation_memory_budget: Optional[float] = None,
+        determinism_check: str = "default",
     ):
         """
         Apply activation checkpointing to the model.
@@ -691,6 +743,8 @@ class Transformer(nn.Module):
             [0, 1]. 0 corresponds to the memory usage when recomputing all activations, and 1
             corresponds to the memory usage when recomputing no activations (which is the default).
             Requires compilation to be enabled.
+        :param determinism_check: Passed through to torch's ``checkpoint_wrapper``. "default" compares
+            forward vs. recompute tensor metadata; "none" skips the check.
         """
 
         if mode == TransformerActivationCheckpointingMode.budget:
@@ -741,7 +795,11 @@ class Transformer(nn.Module):
                     continue
 
                 parent = self if not parent_name else self.get_submodule(parent_name)
-                module = ptd_checkpoint_wrapper(module, preserve_rng_state=preserve_rng_state)
+                module = ptd_checkpoint_wrapper(
+                    module,
+                    preserve_rng_state=preserve_rng_state,
+                    determinism_check=determinism_check,
+                )
                 parent.register_module(name.split(".")[-1], module)
                 log.info(f"Wrapped '{name}' for activation checkpointing")
                 wrapped_modules.add(name)
@@ -754,18 +812,27 @@ class Transformer(nn.Module):
                             raise OLMoConfigurationError(
                                 "Wrapping MoE blocks for activation checkpointing is not supported."
                             )
-                        block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                        block = ptd_checkpoint_wrapper(
+                            block,
+                            preserve_rng_state=preserve_rng_state,
+                            determinism_check=determinism_check,
+                        )
                 elif mode == TransformerActivationCheckpointingMode.full:
                     if isinstance(block, MoETransformerBlock):
                         raise OLMoConfigurationError(
                             "Wrapping MoE blocks for activation checkpointing is not supported."
                         )
-                    block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                    block = ptd_checkpoint_wrapper(
+                        block,
+                        preserve_rng_state=preserve_rng_state,
+                        determinism_check=determinism_check,
+                    )
                 elif mode == TransformerActivationCheckpointingMode.selected_ops:
                     block = ptd_checkpoint_wrapper(
                         block,
                         context_fn=selective_checkpointing_context_fn,
                         preserve_rng_state=preserve_rng_state,
+                        determinism_check=determinism_check,
                     )
 
                 self.blocks.register_module(str(block_idx), block)
@@ -831,7 +898,9 @@ class Transformer(nn.Module):
                 mp_policy=mp_policy,
             )
 
-        if self.embeddings is not None:
+        # When weights are tied the embeddings and LM head share a parameter, so they must
+        # stay in the same FSDP group (the root) rather than being sharded separately.
+        if self.embeddings is not None and not self.tie_word_embeddings:
             fully_shard(
                 self.embeddings,
                 reshard_after_forward=reshard_after_forward,
@@ -843,7 +912,7 @@ class Transformer(nn.Module):
         if wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks:
             if self.embedding_norm is not None:
                 fully_shard(self.embedding_norm, **fsdp_config)
-            if self.lm_head is not None:
+            if self.lm_head is not None and not self.tie_word_embeddings:
                 fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)

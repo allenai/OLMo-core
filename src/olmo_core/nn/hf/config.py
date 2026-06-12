@@ -79,7 +79,7 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
         rms_norm_eps=block.feed_forward_norm.eps,
         num_experts_per_tok=block.feed_forward_moe.router.top_k,
         num_experts=block.feed_forward_moe.router.num_experts,
-        tie_word_embeddings=False,
+        tie_word_embeddings=model.tie_word_embeddings,
     )
 
 
@@ -133,7 +133,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         "bos_token_id": None,
         "eos_token_id": None,
         "rms_norm_eps": first_block.feed_forward_norm.eps,
-        "tie_word_embeddings": False,
+        "tie_word_embeddings": model.tie_word_embeddings,
     }
 
     # The OLMo 3 model family is identical to the OLMo 2 model family, except:
@@ -387,7 +387,7 @@ def get_hybrid_hf_config(
         "attention_bias": attn.w_out.bias is not None,
         "attention_dropout": 0.0,
         "rms_norm_eps": attn_block.feed_forward_norm.eps,  # todo: revisit
-        "tie_word_embeddings": False,
+        "tie_word_embeddings": model.tie_word_embeddings,
         # Hybrid layer configuration
         "layer_types": layer_types,
         # GDN (linear attention) parameters
