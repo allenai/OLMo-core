@@ -268,6 +268,13 @@ class TransformerActivationCheckpointingConfig(Config):
     See https://pytorch.org/blog/activation-checkpointing-techniques/ for more details.
     """
 
+    determinism_check: str = "default"
+    """
+    Passed through to torch's ``checkpoint_wrapper``. "default" compares forward vs. recompute
+    tensor metadata; set to "none" to skip the check. Needed for models whose recompute produces
+    spurious metadata mismatches (e.g. opaque linear-attention kernels under ``torch.compile``).
+    """
+
     def __post_init__(self):
         if (
             self.mode == TransformerActivationCheckpointingMode.selected_blocks
