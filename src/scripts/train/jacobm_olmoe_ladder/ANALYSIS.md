@@ -1,5 +1,31 @@
 # Tiny MoE Analysis Notes
 
+## 2026-06-12 Repaired Cx2 and 1.2B Cx8 Update
+
+The repaired canonical 275M Cx2 baseline grid (`b384k`, 393,216 tokens / 48
+seqs, 2 GPUs, EP=1, mb8) completed and is bracketed:
+
+| LR | avg100M | avg250M | avg500M |
+| ---: | ---: | ---: | ---: |
+| `9e-4` | 2.6613 | 2.6605 | 2.6619 |
+| `1.8e-3` | 2.6546 | 2.6541 | 2.6560 |
+| `3.6e-3` | 2.6612 | 2.6610 | 2.6637 |
+
+The best observed repaired Cx2 LR is `1.8e-3`, matching the transfer-rule
+prediction (`~1.75e-3` to `1.8e-3`) much better than the older mixed-family Cx2
+plot. Treat the older 275M Cx2 families as diagnostic/settings-comparison data,
+not canonical baseline data.
+
+The 1.2B Cx8 `4e-4` 4-node systems-comparison run also completed:
+
+| LR | Setting | avg100M | avg250M | avg500M |
+| ---: | --- | ---: | ---: | ---: |
+| `4e-4` | `gpu32-ep1mb1` | 2.0871 | 2.0835 | 2.0852 |
+
+This is a valid full training point but uses the intentionally deprecated
+4-node low-throughput setting. Keep it visible as a systems comparison; prefer
+the one-node `gpu8-ep1mb4` replacements for canonical 1.2B Cx8 LR selection.
+
 ## W&B Loss Pulls
 
 Project:
