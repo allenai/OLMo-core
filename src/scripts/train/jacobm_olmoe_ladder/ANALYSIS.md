@@ -1121,13 +1121,12 @@ Midpoint baseline follow-ups from 2026-06-10:
 
 2026-06-12 long-cadence update:
 
-- `coarse_24e_top2` Cx8 now has two completed points:
+- `coarse_24e_top2` Cx8 is now complete and bracketed:
   - `8e-4`: avg250M 2.5035
   - `1.6e-3`: avg250M 2.4990
-- The observed best coarse Cx8 point so far is `1.6e-3`, but this is not a
-  completed bracket yet. Wait for the running `3.2e-3` full run before fitting
-  or launching any follow-up. Its partial history looked worse, but partial
-  runs remain non-decision data.
+  - `3.2e-3`: avg250M 2.5092
+- The observed best coarse Cx8 point is `1.6e-3`. The hot-side `3.2e-3` point
+  is clearly worse, so no coarse Cx8 extension is needed.
 - `fine_96e_top8` Cx8 has only just started at `8e-4`; `1.6e-3` and `3.2e-3`
   are still queued. No fine Cx8 decision yet.
 - Total-sparsity status was clarified after inspecting Beaker job status fields
