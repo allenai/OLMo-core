@@ -1623,6 +1623,7 @@ class TransformerConfig(ModelConfig):
             block_pattern=["gdn", "gdn", "gdn", "attn"],
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
             dtype=dtype,
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             **kwargs,
         )
 

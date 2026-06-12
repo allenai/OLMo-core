@@ -21,9 +21,11 @@ def _has_qwen3_5_transformers() -> bool:
 
 
 def _get_qwen3_5_config(hf_config) -> TransformerConfig:
+    text_config = getattr(hf_config, "text_config", hf_config)
     return TransformerConfig.qwen3_5_0_8B(
         vocab_size=hf_config.vocab_size,
         attn_backend=AttentionBackendName.torch,
+        tie_word_embeddings=text_config.tie_word_embeddings,
     )
 
 

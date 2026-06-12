@@ -701,6 +701,7 @@ def test_qwen3_5_builder_configs(
     assert config.d_model == expected_d_model
     assert config.n_layers == 4
     assert config.block_pattern == ["gdn", "gdn", "gdn", "attn"]
+    assert config.tie_word_embeddings
 
     assert isinstance(config.block, dict)
     gdn_block = config.block["gdn"]
@@ -764,6 +765,15 @@ def test_qwen3_small_sizes_tie_word_embeddings(config_builder, expected_tie):
 
 def test_qwen3_tie_word_embeddings_can_be_overridden():
     config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2, tie_word_embeddings=False)
+    assert not config.tie_word_embeddings
+
+
+def test_qwen3_5_tie_word_embeddings_can_be_overridden():
+    config = TransformerConfig.qwen3_5_0_8B(
+        vocab_size=128,
+        n_layers=4,
+        tie_word_embeddings=False,
+    )
     assert not config.tie_word_embeddings
 
 
