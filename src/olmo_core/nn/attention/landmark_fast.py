@@ -537,25 +537,38 @@ class FastLandmarkAttention(Attention):
         # :meth:`set_landmark_eval_decode`.
         self._eval_prompt_len: Optional[int] = None
         self._eval_decode_mode: str = "extend_last_block"
+        self._eval_top_k: Optional[int] = None
 
-    def set_landmark_eval_decode(self, prompt_len: int, mode: str = "extend_last_block") -> None:
+    def set_landmark_eval_decode(
+        self, prompt_len: int, mode: str = "extend_last_block", top_k: Optional[int] = None
+    ) -> None:
         """Enable "one long local block" decoding (see :class:`GenerationConfig.landmark_decode_mode`).
 
         :param prompt_len: Length of the (landmark-inserted) prompt. Generated tokens occupy absolute
             positions ``>= prompt_len`` and are never treated as landmarks.
         :param mode: ``"extend_last_block"`` or ``"generation_only"``.
+        :param top_k: If set, decode uses hard top-k landmark block retrieval as in the landmark
+            attention paper's inference procedure (Mohtashami & Jaggi 2023, section 3.2): each head
+            scores the query against the cached landmark keys, keeps the ``top_k`` highest-scoring
+            blocks, and gives every other past block exactly zero attention weight (the grouped
+            softmax renormalizes over the local block plus the retrieved blocks' landmarks). ``None``
+            keeps the dense soft gating over all past blocks. Prefill is unaffected either way.
         """
         if mode not in ("extend_last_block", "generation_only"):
             raise OLMoConfigurationError(
                 f"Unknown landmark decode mode {mode!r} "
                 "(expected 'extend_last_block' or 'generation_only')."
             )
+        if top_k is not None and top_k < 1:
+            raise OLMoConfigurationError(f"top_k must be >= 1 or None (got {top_k})")
         self._eval_prompt_len = prompt_len
         self._eval_decode_mode = mode
+        self._eval_top_k = top_k
 
     def clear_landmark_eval_decode(self) -> None:
         """Disable "one long local block" decoding, restoring the default per-block decode."""
         self._eval_prompt_len = None
+        self._eval_top_k = None
 
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         # Fast landmark attention implements its own cached prefill/decode in ``_forward_generate``
@@ -748,6 +761,34 @@ class FastLandmarkAttention(Attention):
         att = self._attn_core(q, k, v)
         return att[:, :, :T]
 
+    def _apply_topk_landmark_retrieval(
+        self, scores: torch.Tensor, is_mem: torch.Tensor
+    ) -> torch.Tensor:
+        """Hard top-k landmark block retrieval (the paper's inference procedure, section 3.2).
+
+        Masks the scores of all but the ``top_k`` highest-scoring landmark keys (independently per
+        batch/head) to ``-inf``. A masked landmark gets zero probability in the grouped softmax's
+        top-level group, so its block's content is gated to exactly zero weight and the remaining
+        mass renormalizes over the local section plus the retrieved blocks -- matching the paper's
+        retrieve-then-``GroupedSoftmax`` order. Content scores are left untouched: a retrieved
+        block's within-block softmax is unchanged.
+
+        :param scores: Attention logits of shape ``(B, H, 1, total)``.
+        :param is_mem: Boolean landmark-key mask of shape ``(1, 1, 1, total)``.
+        """
+        top_k = self._eval_top_k
+        if top_k is None:
+            return scores
+        lm_idx = is_mem.view(-1).nonzero(as_tuple=True)[0]  # (n_lm,)
+        if lm_idx.numel() <= top_k:
+            return scores
+        lm_scores = scores[..., lm_idx]  # (B, H, 1, n_lm)
+        keep = torch.zeros_like(lm_scores, dtype=torch.bool)
+        keep.scatter_(-1, lm_scores.topk(top_k, dim=-1).indices, True)
+        scores = scores.clone()
+        scores[..., lm_idx] = lm_scores.masked_fill(~keep, float("-inf"))
+        return scores
+
     def _decode_one(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, qpos: int
     ) -> torch.Tensor:
@@ -772,6 +813,7 @@ class FastLandmarkAttention(Attention):
         last_section = ((j // Lb) == (qpos // Lb)).view(1, 1, 1, total)
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
+        scores = self._apply_topk_landmark_retrieval(scores, is_mem)
         Bsz, Hn = scores.shape[0], scores.shape[1]
         probs = landmark_grouped_softmax(
             scores,
@@ -805,6 +847,7 @@ class FastLandmarkAttention(Attention):
         last_section = (j >= section_start).view(1, 1, 1, total)
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
+        scores = self._apply_topk_landmark_retrieval(scores, is_mem)
         Bsz, Hn = scores.shape[0], scores.shape[1]
         probs = landmark_grouped_softmax(
             scores,

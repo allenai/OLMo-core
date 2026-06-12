@@ -166,25 +166,36 @@ class SparseLandmarkAttention(Attention):
         # :meth:`set_landmark_eval_decode`.
         self._eval_prompt_len: Optional[int] = None
         self._eval_decode_mode: str = "extend_last_block"
+        self._eval_top_k: Optional[int] = None
 
-    def set_landmark_eval_decode(self, prompt_len: int, mode: str = "extend_last_block") -> None:
+    def set_landmark_eval_decode(
+        self, prompt_len: int, mode: str = "extend_last_block", top_k: Optional[int] = None
+    ) -> None:
         """Enable "one long local block" decoding (see :class:`GenerationConfig.landmark_decode_mode`).
 
         :param prompt_len: Length of the (landmark-inserted) prompt. Generated tokens occupy absolute
             positions ``>= prompt_len`` and are never treated as landmarks.
         :param mode: ``"extend_last_block"`` or ``"generation_only"``.
+        :param top_k: If set, decode restricts past-chunk access to the ``top_k`` highest-scoring
+            chunks per head (a chunk's score is the max over its landmark keys' scores); all other
+            past chunks' landmarks are masked out and the softmax renormalizes over the local block
+            plus the retrieved chunks' landmarks. ``None`` keeps all past chunks' landmarks visible.
         """
         if mode not in ("extend_last_block", "generation_only"):
             raise OLMoConfigurationError(
                 f"Unknown landmark decode mode {mode!r} "
                 "(expected 'extend_last_block' or 'generation_only')."
             )
+        if top_k is not None and top_k < 1:
+            raise OLMoConfigurationError(f"top_k must be >= 1 or None (got {top_k})")
         self._eval_prompt_len = prompt_len
         self._eval_decode_mode = mode
+        self._eval_top_k = top_k
 
     def clear_landmark_eval_decode(self) -> None:
         """Disable "one long local block" decoding, restoring the default per-block decode."""
         self._eval_prompt_len = None
+        self._eval_top_k = None
 
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         # Sparse landmark attention implements its own cached prefill/decode in ``_forward_generate``
@@ -370,5 +381,45 @@ class SparseLandmarkAttention(Attention):
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
         scores = scores.masked_fill(~allowed.view(1, 1, 1, total), float("-inf"))
+        if self._eval_prompt_len is not None:
+            retrievable = allowed & is_lm & (j < section_start)
+        else:
+            retrievable = allowed & is_lm & (ck < cq)
+        scores = self._apply_topk_landmark_retrieval(scores, retrievable)
         p = torch.softmax(scores, dim=-1)
         return torch.matmul(p, v)
+
+    def _apply_topk_landmark_retrieval(
+        self, scores: torch.Tensor, retrievable: torch.Tensor
+    ) -> torch.Tensor:
+        """Hard top-k chunk retrieval at decode time (landmark-paper-style inference).
+
+        Keeps only the ``top_k`` highest-scoring past chunks per batch/head -- a chunk's score is
+        the max over its (already position-allowed) landmark keys' scores -- and masks the landmark
+        keys of every other past chunk to ``-inf``. Since past chunks are reachable *only* through
+        their landmark values here, masked chunks get exactly zero attention weight and the softmax
+        renormalizes over the local block plus the retrieved chunks' landmarks.
+
+        :param scores: Attention logits of shape ``(B, H, 1, total)`` (already position-masked).
+        :param retrievable: Boolean mask of shape ``(total,)`` marking past-chunk landmark keys.
+        """
+        top_k = self._eval_top_k
+        if top_k is None:
+            return scores
+        lm_idx = retrievable.nonzero(as_tuple=True)[0]  # (n_lm,)
+        if lm_idx.numel() == 0:
+            return scores
+        chunk_ids = (lm_idx // self.block_size).view(1, 1, 1, -1)
+        n_chunks = int(chunk_ids.max().item()) + 1
+        if n_chunks <= top_k:
+            return scores
+        lm_scores = scores[..., lm_idx]  # (B, H, 1, n_lm)
+        chunk_ids = chunk_ids.expand_as(lm_scores)
+        chunk_scores = lm_scores.new_full((*lm_scores.shape[:-1], n_chunks), float("-inf"))
+        chunk_scores.scatter_reduce_(-1, chunk_ids, lm_scores, reduce="amax", include_self=True)
+        keep_chunks = torch.zeros_like(chunk_scores, dtype=torch.bool)
+        keep_chunks.scatter_(-1, chunk_scores.topk(top_k, dim=-1).indices, True)
+        keep = keep_chunks.gather(-1, chunk_ids)
+        scores = scores.clone()
+        scores[..., lm_idx] = lm_scores.masked_fill(~keep, float("-inf"))
+        return scores

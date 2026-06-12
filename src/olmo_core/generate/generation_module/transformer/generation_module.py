@@ -188,9 +188,9 @@ class TransformerGenerationModule(GenerationModule):
                 layers.append(cast(Attention, attn))
         return layers
 
-    def _set_landmark_eval_decode(self, prompt_len: int, mode: str):
+    def _set_landmark_eval_decode(self, prompt_len: int, mode: str, top_k: Optional[int] = None):
         for attn in self._landmark_attention_layers():
-            attn.set_landmark_eval_decode(prompt_len, mode)  # type: ignore[attr-defined]
+            attn.set_landmark_eval_decode(prompt_len, mode, top_k=top_k)  # type: ignore[attr-defined]
 
     def _clear_landmark_eval_decode(self):
         for attn in self._landmark_attention_layers():
@@ -291,7 +291,11 @@ class TransformerGenerationModule(GenerationModule):
 
         batch_size, prompt_len = input_ids.shape
         if landmark_active:
-            self._set_landmark_eval_decode(prompt_len, generation_config.landmark_decode_mode)
+            self._set_landmark_eval_decode(
+                prompt_len,
+                generation_config.landmark_decode_mode,
+                top_k=generation_config.landmark_top_k_blocks,
+            )
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         stop_tokens = (
             torch.tensor(generation_config.stop_token_ids, device=self.device, dtype=torch.int32)
@@ -602,8 +606,13 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         # Broadcast config and work_dir to all ranks
-        transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id = (
-            broadcast_object((transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id))
+        (
+            transformer_config,
+            work_dir,
+            tokenizer_config,
+            checkpoint_landmark_mem_id,
+        ) = broadcast_object(
+            (transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id)
         )
 
         if transformer_config is None:
