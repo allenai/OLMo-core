@@ -513,6 +513,21 @@ The canonical `r3` grid is centered on the fitted 275M Cx2 prediction
 | `eg-275m-cx2-b384k-eg96e8k-lr1.8e-3-r3` | `fine_96e_top8` | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSWN0F4QTW6DMYHG0GY1VV | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
 | `eg-275m-cx2-b384k-eg96e8k-lr3.6e-3-r3` | `fine_96e_top8` | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSX298YRHX43R7SA55T9PY | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
 
+mid_480m and 810M Cx2 `b384k` batch-repair reruns:
+
+These extend the smoother Cx2 batch repair to larger baseline sizes. 1.2B Cx2
+is intentionally not launched yet. Treat the older `b512k` Cx2 curves for
+mid_480m and 810M as diagnostic once these finish.
+
+| Name | Model | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `m480-cx2-b384k-gpu4-ep1mb4-lr4.5e-4-r1` | `mid_480m` | 4.5e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTWV11QM0BKFWXZ8QGPQXHTP | Cx2 repair sweep centered at predicted LR `9e-4`; queued/created at launch check. |
+| `m480-cx2-b384k-gpu4-ep1mb4-lr9e-4-r1` | `mid_480m` | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTWV1E704BPEXJK95HPJ22T4 | Cx2 repair sweep centered at predicted LR `9e-4`; queued/created at launch check. |
+| `m480-cx2-b384k-gpu4-ep1mb4-lr1.8e-3-r1` | `mid_480m` | 1.8e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTWV1TRD9BQG0JFB5BXYZ2C6 | Cx2 repair sweep centered at predicted LR `9e-4`; queued/created at launch check. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr2.8e-4-r1` | `810m` | 2.8e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTWV28D8KFYH2KJ9835S3C48 | Cx2 repair sweep centered at predicted LR `5.6e-4`; queued/created at launch check. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r1` | `810m` | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTWV2PB16G6R4JP34CHY9NC3 | Cx2 repair sweep centered at predicted LR `5.6e-4`; queued/created at launch check. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr1.12e-3-r1` | `810m` | 1.12e-3 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTWV33CYVNDPZ3FGWSXWYXPA | Cx2 repair sweep centered at predicted LR `5.6e-4`; queued/created at launch check. |
+
 275M extreme-granularity Cx1 probes:
 
 These diagnostic probes test whether the `fine_96e_top8` improvement continues

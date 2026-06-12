@@ -27,14 +27,14 @@ CANONICAL_BATCH_BY_MODEL_CX = {
     "275m": CANONICAL_BATCH_BY_CX,
     "mid_480m": {
         1: "256k",
-        2: "512k",
+        2: "384k",
         4: "512k",
         8: "768k",
         16: "1M",
     },
     "810m": {
         1: "256k",
-        2: "512k",
+        2: "384k",
         4: "512k",
         8: "768k",
         16: "1M",
@@ -59,14 +59,14 @@ CANONICAL_FAMILY_BY_MODEL_CX = {
     "275m": CANONICAL_FAMILY_BY_CX,
     "mid_480m": {
         1: "gpu4-ep1mb8",
-        2: "gpu4-ep1mb8",
+        2: "gpu4-ep1mb4",
         4: "gpu4-ep1mb8",
         8: "gpu4-ep1mb8",
         16: "gpu4-ep1mb8",
     },
     "810m": {
         1: ("gpu4-ep1mb4", "gpu8-ep1mb4"),
-        2: "gpu8-ep1mb4",
+        2: "gpu8-ep1mb2",
         4: "gpu8-ep1mb4",
         8: "gpu8-ep1mb4",
     },

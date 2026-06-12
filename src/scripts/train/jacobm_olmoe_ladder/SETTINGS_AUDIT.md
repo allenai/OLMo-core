@@ -32,11 +32,11 @@ canonical repair is the smoother midpoint 393,216 tokens / 48 sequences.
 | 275M | 8 | 786,432 | 96 | 8 | 1 | 4 | Use 8 GPUs going forward; historical baseline used 4 GPUs / mb8. |
 | 275M | 16 | 1,048,576 | 128 | 8 | 1 | 16 | Keep unless throughput or queue pressure says otherwise. |
 | mid_480m | 1 | 262,144 | 32 | 4 | 1 | 8 | Baseline policy. |
-| mid_480m | 2 | 524,288 | 64 | 4 | 1 | 8 | Baseline policy. |
+| mid_480m | 2 | 393,216 | 48 | 4 | 1 | 4 | Repaired Cx2 setting centered at LR `9e-4`. Old 524,288-token Cx2 is diagnostic. |
 | mid_480m | 4 | 524,288 | 64 | 4 | 1 | 8 | Baseline policy. |
 | mid_480m | 8 | 786,432 | 96 | 8 | 1 | 4 | Baseline policy. |
 | 810M | 1 | 262,144 | 32 | 8 | 1 | 4 | Some completed pilots used 4 GPUs. Prefer 8 GPUs going forward. |
-| 810M | 2 | 524,288 | 64 | 8 | 1 | 4 | Baseline policy. |
+| 810M | 2 | 393,216 | 48 | 8 | 1 | 2 | Repaired Cx2 setting centered at LR `5.6e-4`. Old 524,288-token Cx2 is diagnostic. |
 | 810M | 4 | 524,288 | 64 | 8 | 1 | 4 | Baseline policy. |
 | 810M | 8 | 786,432 | 96 | 16 | 1 | 4 | Forward policy; historical completed runs used 8 GPUs. |
 | 1.2B | 1 | 262,144 | 32 | 8 | 1 | 2 | Baseline policy. |
