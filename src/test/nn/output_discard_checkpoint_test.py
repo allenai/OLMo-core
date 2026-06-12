@@ -129,7 +129,7 @@ def test_output_discard_checkpoint_python_fallback(monkeypatch):
     produces correct grads and restored storage. Exercises the path used on
     machines without a working C++ toolchain even when one is available in CI.
     """
-    monkeypatch.setattr(odc_module._shared_storage_loader, "_load", lambda: None)
+    monkeypatch.setattr(odc_module._SHARED_STORAGE_LOADER, "_load", lambda: None)
 
     torch.manual_seed(13)
 

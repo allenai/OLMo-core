@@ -12,7 +12,7 @@ configurations end-to-end:
 3. ODC (C++ if available) -- :class:`OutputDiscardCheckpoint` with the C++
    ``share_storage`` extension when it builds, otherwise the Python fallback.
 4. ODC (python fallback)  -- :class:`OutputDiscardCheckpoint` with the Python
-   fallback forced via monkey-patching ``_shared_storage_loader._load``.
+   fallback forced via monkey-patching ``_SHARED_STORAGE_LOADER._load``.
 
 Reports peak GPU memory and forward / backward / total wall time.
 
@@ -289,7 +289,7 @@ def _benchmark_one(
 
 def _force_python_fallback() -> Callable[[], None]:
     """Monkey-patch ODC to use the Python fallback. Returns a restorer."""
-    loader = odc_module._shared_storage_loader
+    loader = odc_module._SHARED_STORAGE_LOADER
     original = loader._load
     loader._load = lambda: None  # type: ignore[method-assign]
     return lambda: setattr(loader, "_load", original)
@@ -449,7 +449,7 @@ def main() -> int:
     # Touch ODC once so any C++ build cost is excluded from timings.
     _warm = OutputDiscardCheckpoint()
     del _warm
-    odc_module._shared_storage_loader._load()
+    odc_module._SHARED_STORAGE_LOADER._load()
 
     if args.layers is None:
         layer_counts = sorted({1, args.n_layers})

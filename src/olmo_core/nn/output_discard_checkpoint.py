@@ -24,7 +24,7 @@ class _SharedStorageLoader:
     Lazily builds and caches the C++ ``share_storage`` extension, falling back
     to a pure-Python implementation on machines without a working C++ toolchain.
 
-    A single module-level instance (:data:`_shared_storage_loader`) holds the
+    A single module-level instance (:data:`_SHARED_STORAGE_LOADER`) holds the
     build state so it is shared across all :class:`OutputDiscardCheckpoint`
     objects without leaning on module globals.
     """
@@ -106,10 +106,11 @@ class _SharedStorageLoader:
             self._fallback_warned = True
 
 
-_shared_storage_loader = _SharedStorageLoader()
+_SHARED_STORAGE_LOADER = _SharedStorageLoader()
 
 
 def _collect_tensor_outputs(outputs: Any) -> tuple[torch.Tensor, ...]:
+    """Normalize ``fn`` outputs to a flat tuple of tensors, rejecting non-tensor outputs."""
     items = outputs if isinstance(outputs, (tuple, list)) else (outputs,)
     if not all(isinstance(out, torch.Tensor) for out in items):
         raise TypeError(
@@ -121,7 +122,7 @@ def _collect_tensor_outputs(outputs: Any) -> tuple[torch.Tensor, ...]:
 class _OutputDiscardCheckpointFunction(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
-        ctx,
+        ctx: Any,
         run_function: Callable[..., Any],
         checkpoint_obj: "OutputDiscardCheckpoint",
         *args: Any,
@@ -329,7 +330,7 @@ class OutputDiscardCheckpoint:
             )
 
         for output, recomputation_output in zip(self.outputs, recompute_outputs_tensors):
-            _shared_storage_loader.share(output, recomputation_output)
+            _SHARED_STORAGE_LOADER.share(output, recomputation_output)
 
         ctx.outputs = recompute_outputs_tensors
         ctx.inputs = tuple(recompute_tensor_inputs)
