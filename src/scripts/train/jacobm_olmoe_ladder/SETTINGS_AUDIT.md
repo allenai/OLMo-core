@@ -209,7 +209,9 @@ canonical Cx2 setting:
 
 - total batch: 393,216 tokens / 48 sequences;
 - systems: 2 GPUs, EP=1, microbatch=8;
-- LRs: `5e-4`, `1e-3`, `2e-3`;
+- predicted LR center: about `1.75e-3` to `1.8e-3` from completed 275M
+  Cx1/Cx4/Cx8/Cx16 fits, excluding the old mismatched Cx2;
+- canonical LRs: `9e-4`, `1.8e-3`, `3.6e-3`;
 - families: baseline A0, `eg24e2k`, `eg96e8k`;
 - launcher: `launch_275m_cx2_b384k_comparison.sh`.
 

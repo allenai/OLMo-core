@@ -482,19 +482,36 @@ These rerun the three comparable 275M Cx2 curves after discovering that the
 original baseline Cx2 used 262,144 tokens / 32 seqs while the first
 expert-granularity Cx2 jobs used 524,288 tokens / 64 seqs. The new canonical
 Cx2 setting is 393,216 tokens / 48 seqs, 2 GPUs, EP=1, microbatch=8.
-Treat the older Cx2 curves as diagnostic until these finish.
+Treat the older Cx2 curves as diagnostic until these finish. The first two
+`b384k` attempts were stopped before meaningful training:
+
+- `r1`, LRs `5e-4`, `1e-3`, `2e-3`, Beaker IDs:
+  `01KTWRZERD6B0AMVFFVM9S8NQB`, `01KTWRZTRYS6ZNY7JA0BQ104KF`,
+  `01KTWS072YT07TW1GBWK7GT8FN`, `01KTWS0KBHE36Z442JHESC5ME8`,
+  `01KTWS0YRMJ6YS7A68R5Z9N4KW`, `01KTWS1BRBPCMNYFMMG45J4EN2`,
+  `01KTWS1R4QG212PVE1SDG5ZDKX`, `01KTWS2448JWCTHSQTSEJHEFQM`,
+  `01KTWS2GJFBH1NJZ59JGA8DYZ9`.
+- `r2`, LRs `8e-4`, `1.6e-3`, `3.2e-3`, Beaker IDs:
+  `01KTWSNHBWR13VH3MNMEP3GSQ6`, `01KTWSNW9M0J8PM844036DWT9Z`,
+  `01KTWSP8D5X4922FGAFNT3HFAC`, `01KTWSPM8W068K9R879H1K5H8J`,
+  `01KTWSQ08PYQJ42HF8DPSPKJ1X`, `01KTWSQC03WSA1VZJQK0M1SQF1`,
+  `01KTWSQQG44CKZNMG09VPPZEDD`, `01KTWSR3GJF9TNM12TBX6XG918`,
+  `01KTWSRF3XZ8M981H3JRHAWGBQ`.
+
+The canonical `r3` grid is centered on the fitted 275M Cx2 prediction
+(`~1.75e-3` to `1.8e-3`) using `9e-4`, `1.8e-3`, and `3.6e-3`.
 
 | Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr5e-4-r1` | baseline A0 | 5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWRZERD6B0AMVFFVM9S8NQB | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
-| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1e-3-r1` | baseline A0 | 1e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWRZTRYS6ZNY7JA0BQ104KF | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
-| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr2e-3-r1` | baseline A0 | 2e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS072YT07TW1GBWK7GT8FN | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
-| `eg-275m-cx2-b384k-eg24e2k-lr5e-4-r1` | `coarse_24e_top2` | 5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS0KBHE36Z442JHESC5ME8 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
-| `eg-275m-cx2-b384k-eg24e2k-lr1e-3-r1` | `coarse_24e_top2` | 1e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS0YRMJ6YS7A68R5Z9N4KW | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
-| `eg-275m-cx2-b384k-eg24e2k-lr2e-3-r1` | `coarse_24e_top2` | 2e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS1BRBPCMNYFMMG45J4EN2 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
-| `eg-275m-cx2-b384k-eg96e8k-lr5e-4-r1` | `fine_96e_top8` | 5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS1R4QG212PVE1SDG5ZDKX | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
-| `eg-275m-cx2-b384k-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS2448JWCTHSQTSEJHEFQM | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
-| `eg-275m-cx2-b384k-eg96e8k-lr2e-3-r1` | `fine_96e_top8` | 2e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS2GJFBH1NJZ59JGA8DYZ9 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr9e-4-r3` | baseline A0 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSSSBRVT08888H1QA5ZAMA | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1.8e-3-r3` | baseline A0 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWST9K76CKHW8PJEJNATKBE | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr3.6e-3-r3` | baseline A0 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSTTHAPYKGXHACBYQ4AH9T | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg24e2k-lr9e-4-r3` | `coarse_24e_top2` | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSV732H19AQCQVNTW3MF86 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg24e2k-lr1.8e-3-r3` | `coarse_24e_top2` | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSVGQD9TPX9ERFPXXYESF5 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg24e2k-lr3.6e-3-r3` | `coarse_24e_top2` | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSVW0JAJSVFQ1Q9FCS4FQ0 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg96e8k-lr9e-4-r3` | `fine_96e_top8` | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSW8G04HREZK5W7W8FF43Y | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg96e8k-lr1.8e-3-r3` | `fine_96e_top8` | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSWN0F4QTW6DMYHG0GY1VV | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg96e8k-lr3.6e-3-r3` | `fine_96e_top8` | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSX298YRHX43R7SA55T9PY | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
 
 275M extreme-granularity Cx1 probes:
 
