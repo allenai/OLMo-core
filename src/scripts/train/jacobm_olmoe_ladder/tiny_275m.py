@@ -1041,11 +1041,10 @@ def finalize_config(config: ExperimentConfig, opts: argparse.Namespace) -> None:
         f"_{opts.model_size}_{EXPERT_GEOMETRY_TAG}_{NUM_LAYERS}L"
         f"{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
     )
-    wandb_cb.group = (
-        f"{wandb_original_name}_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
-        f"_{opts.model_size}_{EXPERT_GEOMETRY_TAG}_{NUM_LAYERS}L"
-        f"{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
-    )
+    # W&B enforces a 128-character limit on group names. Keep display names
+    # descriptive, but use a compact group so long ladder run names cannot fail
+    # before training starts.
+    wandb_cb.group = wandb_original_name[:120]
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
