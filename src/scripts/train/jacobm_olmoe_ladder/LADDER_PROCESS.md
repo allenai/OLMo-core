@@ -12,19 +12,18 @@ The live project state is split across three files:
 
 ## Goals
 
-The near-term goal is to tune the MoE A0 architecture at 275M active parameters
-through Cx16 before scaling token counts or moving fully to larger model sizes.
-The larger-model work is a baseline-transfer check, not a new architecture
-search.
+The near-term goal is to maintain a baseline MoE A0 ladder across the current
+model sizes and Chinchilla multiples while using the first approved ablation,
+expert granularity, to test architecture changes against that baseline.
 
 Model sizes in this lineage:
 
 - `275m`: current architecture search scale, about 278M active params.
-- `mid_480m`: planned midpoint rung, estimated around 480M active params and
-  about 2.6B total params before smoke-test confirmation.
+- `mid_480m`: implemented midpoint rung, about 480M active params and about
+  2.6B total params; smoke passed at `gpu4-ep1mb8`.
 - `810m`: first larger baseline, same MoE structure, EP=1 preferred.
-- `1p2b`: prepared and smoke-tested, but do not launch full LR probes without
-  explicit approval.
+- `1p2b`: larger baseline rung; Cx1/Cx4 completed and Cx8 canonical one-node
+  replacements are running.
 
 ## Run Families
 
@@ -35,7 +34,8 @@ Important families so far:
 
 - `original`: early runs before the throughput fixes.
 - `n2`: early two-node high-side Cx1 probes.
-- `gpu2-ep1mb16`: current canonical Cx1/Cx2 family.
+- `gpu2-ep1mb16`: current canonical Cx1 family.
+- `b384k-gpu2-ep1mb8`: repaired canonical 275M Cx2 family.
 - `gpu4-ep1mb16`: current canonical Cx4 family.
 - `gpu4-ep1mb8`: current canonical Cx8 family.
 - `gpu8-ep1mb16`: current canonical Cx16 family.
@@ -141,32 +141,21 @@ Then transfer the 275M LR estimate to a larger model with:
 lr_large(Cx) = lr_275m(Cx) * (N_large / N_275m)^alpha
 ```
 
-Use `alpha = -0.25` as the working model-size transfer exponent. This is a
-deliberately mild model-size correction: it lowers LR for larger active models
-without assuming the exact dense-ladder scaling law transfers perfectly to this
-MoE architecture.
+The initial `alpha=-0.25` prior was useful as a cautious first guess, but it was
+too warm once real 810M points landed. Current 275M-to-810M evidence implies a
+cooler model-size transfer, roughly `alpha ~= -1.0` when using active params
+including embeddings, or `alpha ~= -0.9` with active non-embedding params.
 
-Current 810M Cx1 estimate, using completed canonical Cx1-Cx4 275M brackets:
+Current practice:
 
-- Cx1 fitted 275M optimum: about `2.0e-3` to `2.1e-3`.
-- Cx2 fitted 275M optimum: about `1.1e-3`.
-- Cx4 fitted 275M optimum: about `1.5e-3`.
-- A log-log Cx rule over Cx1-Cx4 gives a 275M Cx1 center around
-  `1.7e-3` to `1.8e-3`.
-- Applying `alpha = -0.25` gives an 810M Cx1 center around `1.2e-3` to
-  `1.4e-3` depending on whether the active-size ratio uses non-embedding active
-  params or active params including embeddings.
-
-For practical launch grids, round this to a nearby coarse center rather than
-pretending the estimate is exact. The first 810M Cx1 pilot uses `1.6e-3`; final
-810M sweep choices can ignore or include that pilot depending on when the 275M
-Cx8/Cx16 brackets finish.
-
-The initial `alpha=-0.25` prior was too warm once the real 810M points landed.
-Current 275M-to-810M evidence implies a cooler model-size transfer, roughly
-`alpha ~= -1.0` when using active params including embeddings, or `alpha ~= -0.9`
-with active non-embedding params. Continue using the measured larger-model
-points to update transfer before launching dependent rungs.
+- Use measured larger-model Cx1/Cx4 points to calibrate transfer before
+  launching dependent larger-model rungs.
+- Check fits both with and without any known oddball Cx2 family until repaired
+  Cx2 curves are complete.
+- Round launch grids to clean factor-spaced values; do not pretend the fitted
+  point is exact.
+- For a credible transferred optimum, start with three LRs centered around it.
+  Use four points only when the prediction is weak or bracketing risk is high.
 
 ## Moving To The Next Rung
 
@@ -287,10 +276,12 @@ loss to choose LRs or architecture winners.
 
 When actively monitoring:
 
-- Wait a real 20 minutes between monitoring cycles.
+- Wait a real 4 hours between monitoring cycles while current jobs are
+  long-running.
 - Do not poll Beaker/W&B every few seconds unless debugging immediate startup,
   OOM, or launch validity.
-- If interrupted, stop any background `sleep 1200` before doing interactive work.
+- If interrupted, stop any background `sleep 14400` before doing interactive
+  work.
 
 Useful status pattern:
 
@@ -327,6 +318,17 @@ uv run --with wandb --with matplotlib python src/scripts/train/jacobm_olmoe_ladd
   --window-m 250
 ```
 
+Regenerate expert-granularity plots after new full expert runs finish:
+
+```bash
+uv run --with wandb --with matplotlib python \
+  src/scripts/train/jacobm_olmoe_ladder/experiments/expert_granularity/plot_expert_granularity.py \
+  --window-m 250
+```
+
+Both plotters use cached W&B histories and exclude running jobs by default. Use
+`--include-running` only for explicit live-run debugging.
+
 Commit and push docs/plot updates when full-run results change.
 
 Plot both comparison directions:
@@ -345,17 +347,17 @@ Allowed without asking, under the active goal:
 - Inspect Beaker/W&B.
 - Update docs and plots.
 - Commit and push docs/plot/bookkeeping updates.
-- Launch bounded 275M Cx8/Cx16 follow-ups under the LR-selection rules.
-- Launch 810M Cx1/Cx4 coarse probes once the prerequisites are met.
 - Stop clearly accidental duplicate jobs.
 
 Ask before:
 
-- Launching full 1.2B probes.
+- Launching new jobs not already described in `CURRENT_PLAN.md`.
+- Launching full 1.2B Cx2 or Cx16 probes.
 - Changing architecture, tokenizer, data mix, optimizer family, or schedule
   shape.
 - Launching beyond Cx16.
-- Using more than 8 GPUs for one job.
+- Using more GPUs than the approved setting in the current default job-settings
+  table.
 - Cancelling healthy non-duplicate full runs.
 - Pushing code/script changes that are not docs, plots, or bookkeeping.
 

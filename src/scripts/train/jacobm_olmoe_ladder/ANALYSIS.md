@@ -1,5 +1,31 @@
 # Tiny MoE Analysis Notes
 
+## 2026-06-12 Handoff / Plotting State
+
+Current monitoring loop is paused for handoff. Resume with a real 4-hour
+cadence unless doing startup/OOM checks.
+
+Recent plotting/tooling updates:
+
+- `plot_wandb_ladder.py` and
+  `experiments/expert_granularity/plot_expert_granularity.py` both use W&B
+  history caching and exclude running jobs by default.
+- Use `--include-running` only for deliberate live-run debugging.
+- `275m_all_cx_uplot.png` includes the repaired 275M Cx2 curve and direct
+  line-end labels for all Cx curves.
+- Expert-granularity plots now include 810M outputs in addition to 275M.
+
+Active jobs at handoff:
+
+- 810M Cx2 repaired `r3`: `2.8e-4` and `5.6e-4` are running cleanly; `1.12e-3`
+  is queued.
+- 810M expert-granularity Cx1/Cx4 transfer checks are running.
+- midpoint Cx2 `b384k`, 275M expert-granularity Cx2 repair, and 1.2B Cx8
+  one-node replacement jobs are running.
+
+Do not launch additional jobs until Jacob restarts the loop or gives explicit
+next-step instructions.
+
 ## 2026-06-12 Repaired Cx2 and 1.2B Cx8 Update
 
 The repaired canonical 275M Cx2 baseline grid (`b384k`, 393,216 tokens / 48

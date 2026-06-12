@@ -19,6 +19,52 @@ git pull --ff-only
 
 Do not revert unrelated local changes. `beaker-docs/` may exist as an untracked directory on the laptop checkout; it was intentionally left uncommitted.
 
+## Immediate Resume Snapshot
+
+Last updated: 2026-06-12 after the plot/cache update commit `b05441de`.
+The documentation-only handoff commit may be newer.
+
+The loop is currently paused for handoff. If Jacob asks to resume monitoring,
+use a real 4-hour cadence unless a just-started job needs a short startup check.
+Do not start a tight polling loop.
+
+Currently active/queued jobs to watch:
+
+| Area | LR / variant | Beaker | Status at handoff |
+| --- | --- | --- | --- |
+| 810M Cx2 `b384k` repair | `2.8e-4`, `r3` | `01KTYEJH9S58TDA837YZANCJ9C` | started; W&B `uh4el1df`; reached step 100+ cleanly |
+| 810M Cx2 `b384k` repair | `5.6e-4`, `r3` | `01KTYEJWXR7X0KFBFQ57G9YC9V` | started; W&B `v5puakhq`; reached step 29+ cleanly |
+| 810M Cx2 `b384k` repair | `1.12e-3`, `r3` | `01KTYEK7S5MXJYSJMGB3BNR1HE` | queued/created |
+| 810M expert granularity | coarse Cx1 `6e-4` | `01KTX8DY64MRW5DCWAJZPQY1YR` | started |
+| 810M expert granularity | coarse Cx4 `4e-4` | `01KTXR4J7FN4ERB9BYDKC261F5` | started |
+| 810M expert granularity | fine Cx1 `6e-4` | `01KTXR7563GGMW6FE57TTVACSY` | started |
+| 810M expert granularity | fine Cx4 `4e-4` | `01KTXR9YA2QAR7HB1XS1R0FTBW` | started |
+| midpoint Cx2 `b384k` repair | `4.5e-4`, `9e-4`, `1.8e-3` | `01KTWV11...`, `01KTWV1E...`, `01KTWV1T...` | all started |
+| 275M expert-granularity Cx2 repair | coarse/fine `9e-4`, `1.8e-3`, `3.6e-3` | see `RUNS.md` | all started |
+| 1.2B Cx8 canonical replacements | `2e-4`, `8e-4` | `01KTWB5V3...`, `01KTWB65Y...` | both started |
+
+Known failed/ignored recent attempts:
+
+- 810M Cx2 `r1`: failed before training with distributed startup/checkpointer
+  errors. Treat as infrastructure/startup failure.
+- 810M Cx2 `r2`: failed before training because W&B rejected an overlong group
+  name: `invalid parameters: 128 limit exceeded for GroupName`.
+- Commit `07df5ad` fixed W&B group names in `tiny_275m.py`; the `r3` jobs use
+  that commit and have passed W&B init.
+- Accidental midpoint Cx2 `r2` duplicate jobs were stopped immediately; ignore.
+
+Latest plotting state:
+
+- Baseline plotter: `plot_wandb_ladder.py`.
+- Expert-granularity plotter: `experiments/expert_granularity/plot_expert_granularity.py`.
+- Both use W&B history caching and exclude running jobs by default.
+- Use `--include-running` only for debugging live runs.
+- `275m_all_cx_uplot.png` now includes the repaired 275M Cx2 curve and has
+  direct line-end labels.
+- Expert-granularity plots now include 810M output files as well as 275M:
+  `plots/expert_granularity/810m_cx1_uplot.png`,
+  `810m_cx4_uplot.png`, and `810m_cx8_uplot.png`.
+
 ## Remote control session
 
 Hammond is being used as a CPU-only control plane for launching and analyzing Beaker/W&B experiments.
@@ -74,10 +120,8 @@ Despite the filename, this script now supports all current baseline sizes:
 
 - `275m`: current tiny MoE baseline, about 278M active including embeddings
   and about 1.13B total params.
-- `mid_480m`: planned midpoint baseline rung, not yet implemented/smoked. The
-  intended shape is 16 layers at `d_model=1024`, with the same 48E/top-4 MoE A0
-  recipe. Estimated counts before smoke-test confirmation are about 480M active
-  including embeddings/head and about 2.6B total params.
+- `mid_480m`: implemented midpoint baseline rung, about 480M active including
+  embeddings/head and about 2.6B total params. Smoke passed at `gpu4-ep1mb8`.
 - `810m`: about 817M active including embeddings and about 4.93B total params.
 - `1p2b`: about 1.22B active including embeddings and about 7.76B total params.
 
@@ -148,6 +192,7 @@ W&B tooling:
 - `src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_ladder.py`
 - `src/scripts/train/jacobm_olmoe_ladder/plot_wandb_ladder.py`
 - `src/scripts/train/jacobm_olmoe_ladder/plot_cx1_uplot.py`
+- `src/scripts/train/jacobm_olmoe_ladder/experiments/expert_granularity/plot_expert_granularity.py`
 - `src/scripts/train/jacobm_olmoe_ladder/wandb_cache.py`
 
 Loss metric:
@@ -182,7 +227,7 @@ Useful current summaries:
 
 ```bash
 uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_ladder.py \
-  --name-regex 'olmoe3-(tiny-275m|moe-a0-810m|moe-a0-1p2b)-cx' \
+  --name-regex '(olmoe3-tiny-275m-cx|m480-cx|olmoe3-moe-a0-810m-cx|olmoe3-moe-a0-1p2b-cx)' \
   --mode final --finished-only --windows-m 100 250 500
 ```
 
@@ -190,9 +235,19 @@ Regenerate plots from cached histories:
 
 ```bash
 uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/plot_wandb_ladder.py \
-  --name-regex 'olmoe3-(tiny-275m|moe-a0-810m|moe-a0-1p2b)-cx' \
   --window-m 250
 ```
+
+Regenerate expert-granularity plots from cached histories:
+
+```bash
+uv run --with wandb --with matplotlib python \
+  src/scripts/train/jacobm_olmoe_ladder/experiments/expert_granularity/plot_expert_granularity.py \
+  --window-m 250
+```
+
+Both plotters exclude running jobs by default to avoid distorted axes. Add
+`--include-running` only when deliberately debugging in-flight runs.
 
 Refresh only when needed:
 
@@ -260,7 +315,7 @@ Current fitted/observed LR centers, training avg250M:
 | 1.2B Cx1 | `~4.0e-4` from updated transfer | fitted `~4.8e-4` to `5.0e-4` |
 | 1.2B Cx4 | `~3.3e-4` via size transfer, `~3.9e-4` via 1.2B Cx1 times 810M Cx4/Cx1 ratio | completed; bracketed around `4e-4`, with `3e-4`/`6e-4` effectively tied |
 | 810M Cx2 | interpolation/extrapolation around `5.1e-4` to `5.6e-4` | pending |
-| 810M Cx8 | extrapolation around `3.5e-4` to `4.5e-4` | pending |
+| 810M Cx8 | extrapolation around `3.5e-4` to `4.5e-4` | completed; bracketed around `4e-4` |
 
 Validation/eval policy:
 
@@ -418,6 +473,14 @@ Current pushed plot files:
 
 ## Recent important implementation commits
 
+- `b05441de` expand cached expert-granularity plots to 810M and add line-end
+  labels to all-Cx baseline plots
+- `e943eec4` include repaired 275M Cx2 in aggregate plots
+- `f7d1788e` exclude running jobs from ladder plots by default
+- `07df5ad7` shorten W&B group names to avoid the 128-character `GroupName`
+  failure
+- `ff4ef56a` track Cx2 repair retries and add launch selectors for midpoint vs
+  810M Cx2 repairs
 - `4ddca365` launch 1.2B Cx4 and 810M Cx2 sweeps; add 1.2B plotting support
 - `2d7917a0` queue 810M Cx8 ladder sweep
 - `11d1c46a` record 810M Cx4 fit and 1.2B Cx1 launch
