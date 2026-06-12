@@ -19,9 +19,16 @@ CHINCHILLA_MULTIPLE=2
 SWEEP_SUFFIX="${SWEEP_SUFFIX:-r1}"
 EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
 EVAL_INTERVAL="${EVAL_INTERVAL:-2000}"
+LAUNCH_MID_480M="${LAUNCH_MID_480M:-1}"
+LAUNCH_810M="${LAUNCH_810M:-1}"
 
 MID_480M_LR_SPECS="${MID_480M_LR_SPECS:-4.5e-4:lr4.5e-4 9e-4:lr9e-4 1.8e-3:lr1.8e-3}"
 M810_LR_SPECS="${M810_LR_SPECS:-2.8e-4:lr2.8e-4 5.6e-4:lr5.6e-4 1.12e-3:lr1.12e-3}"
+
+if [[ "${LAUNCH_MID_480M}" != "1" && "${LAUNCH_810M}" != "1" ]]; then
+  echo "Nothing to launch: set LAUNCH_MID_480M=1 and/or LAUNCH_810M=1."
+  exit 1
+fi
 
 mkdir -p "${LOG_DIR}"
 
@@ -122,10 +129,14 @@ launch_one() {
   wait_for_job_created "${name}" "${log_path}" "${pid}"
 }
 
-for lr_spec in ${MID_480M_LR_SPECS}; do
-  launch_one mid_480m m480 4 4 "${lr_spec%%:*}" "${lr_spec##*:}"
-done
+if [[ "${LAUNCH_MID_480M}" == "1" ]]; then
+  for lr_spec in ${MID_480M_LR_SPECS}; do
+    launch_one mid_480m m480 4 4 "${lr_spec%%:*}" "${lr_spec##*:}"
+  done
+fi
 
-for lr_spec in ${M810_LR_SPECS}; do
-  launch_one 810m olmoe3-moe-a0-810m 8 2 "${lr_spec%%:*}" "${lr_spec##*:}"
-done
+if [[ "${LAUNCH_810M}" == "1" ]]; then
+  for lr_spec in ${M810_LR_SPECS}; do
+    launch_one 810m olmoe3-moe-a0-810m 8 2 "${lr_spec%%:*}" "${lr_spec##*:}"
+  done
+fi
