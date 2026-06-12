@@ -476,6 +476,26 @@ microbatch is `4` so the 96-sequence global batch divides evenly over 8 GPUs.
 | `eg-275m-cx8-eg96e8k-lr1.6e-3-r1` | `fine_96e_top8` | 1.6e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTF04AHCR2VP8DCPERSY7D | Transferred Cx8 sweep; queued/created at launch check. |
 | `eg-275m-cx8-eg96e8k-lr3.2e-3-r1` | `fine_96e_top8` | 3.2e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTFBWY8CPQQNMXBCHFK029 | Transferred Cx8 sweep; queued/created at launch check. |
 
+275M Cx2 `b384k` batch-repair reruns:
+
+These rerun the three comparable 275M Cx2 curves after discovering that the
+original baseline Cx2 used 262,144 tokens / 32 seqs while the first
+expert-granularity Cx2 jobs used 524,288 tokens / 64 seqs. The new canonical
+Cx2 setting is 393,216 tokens / 48 seqs, 2 GPUs, EP=1, microbatch=8.
+Treat the older Cx2 curves as diagnostic until these finish.
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr5e-4-r1` | baseline A0 | 5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWRZERD6B0AMVFFVM9S8NQB | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1e-3-r1` | baseline A0 | 1e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWRZTRYS6ZNY7JA0BQ104KF | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr2e-3-r1` | baseline A0 | 2e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS072YT07TW1GBWK7GT8FN | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg24e2k-lr5e-4-r1` | `coarse_24e_top2` | 5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS0KBHE36Z442JHESC5ME8 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg24e2k-lr1e-3-r1` | `coarse_24e_top2` | 1e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS0YRMJ6YS7A68R5Z9N4KW | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg24e2k-lr2e-3-r1` | `coarse_24e_top2` | 2e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS1BRBPCMNYFMMG45J4EN2 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg96e8k-lr5e-4-r1` | `fine_96e_top8` | 5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS1R4QG212PVE1SDG5ZDKX | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS2448JWCTHSQTSEJHEFQM | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg96e8k-lr2e-3-r1` | `fine_96e_top8` | 2e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWS2GJFBH1NJZ59JGA8DYZ9 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+
 275M extreme-granularity Cx1 probes:
 
 These diagnostic probes test whether the `fine_96e_top8` improvement continues
