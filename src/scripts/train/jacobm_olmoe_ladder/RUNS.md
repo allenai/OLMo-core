@@ -476,6 +476,21 @@ microbatch is `4` so the 96-sequence global batch divides evenly over 8 GPUs.
 | `eg-275m-cx8-eg96e8k-lr1.6e-3-r1` | `fine_96e_top8` | 1.6e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTF04AHCR2VP8DCPERSY7D | Transferred Cx8 sweep; queued/created at launch check. |
 | `eg-275m-cx8-eg96e8k-lr3.2e-3-r1` | `fine_96e_top8` | 3.2e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTFBWY8CPQQNMXBCHFK029 | Transferred Cx8 sweep; queued/created at launch check. |
 
+810M Cx1/Cx4 best-observed baseline LR transfer checks:
+
+These runs test whether the expert-granularity LR transfer observed at 275M
+continues to hold at 810M. They use the best observed trained baseline LRs,
+not a fresh LR sweep: Cx1 `6e-4` and Cx4 `4e-4`. Launches use the canonical
+810M settings from `SETTINGS_AUDIT.md`: EP=1, microbatch=4, 8 GPUs, with
+Cx1 batch 262,144 / 32 seqs and Cx4 batch 524,288 / 64 seqs.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-810m-cx1-eg24e2k-lr6e-4-r1` | `coarse_24e_top2` | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KTX8DY64MRW5DCWAJZPQY1YR | Created from `launch_810m_cx1_cx4_best_observed.sh`; monitor startup. |
+| `eg-810m-cx4-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR4J7FN4ERB9BYDKC261F5 | Created after a 4-hour Beaker 429 backoff; monitor startup. |
+| `eg-810m-cx1-eg96e8k-lr6e-4-r1` | `fine_96e_top8` | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR7563GGMW6FE57TTVACSY | Created after a 4-hour Beaker 429 backoff; monitor startup. |
+| `eg-810m-cx4-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR9YA2QAR7HB1XS1R0FTBW | Created after a 4-hour Beaker 429 backoff; monitor startup. |
+
 275M Cx2 `b384k` batch-repair reruns:
 
 These rerun the three comparable 275M Cx2 curves after discovering that the
