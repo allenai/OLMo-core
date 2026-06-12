@@ -238,6 +238,10 @@ jobs:
           echo "COMMIT_SHA=$GITHUB_SHA" >> $GITHUB_ENV
           echo "BRANCH_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
 
+      # The '--weka' mount + 'HF_HOME' below point HuggingFace at a checkpoint cache on Weka so
+      # the Qwen3.5 comparison test reads the official weights from the mount instead of
+      # downloading them and timing out. Populate the cache once from a Weka-mounted machine via:
+      #   HF_HOME=/weka/oe-training-default/test-fixtures/hf hf download Qwen/Qwen3.5-0.8B
       - name: GPU Tests
         if: env.BEAKER_TOKEN != ''
         run: |
@@ -259,9 +263,11 @@ jobs:
             --gpu-type a100 \
             --system-python \
             --dataset-secret 'GOOGLE_CREDENTIALS:/.google/credentials.json' \
+            --weka 'oe-training-default:/weka/oe-training-default' \
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
             --env 'TOKENIZERS_PARALLELISM=false' \
             --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
+            --env 'HF_HOME=/weka/oe-training-default/test-fixtures/hf' \
             --env-secret 'AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID' \
             --env-secret 'AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY' \
             -- ${{ matrix.task.run }}

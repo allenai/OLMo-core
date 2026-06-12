@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Qwen3.5 GPU comparison test now validates against the real official `Qwen/Qwen3.5-0.8B` checkpoint instead of a synthetic random-weight config. The GPU CI job reads it from an `HF_HOME` cache on a mounted Weka folder so it doesn't download (and time out) on every run.
 - Excluded `mark_dynamic` from `torch.compile` tracing (`@torch.compiler.disable`).
 - Clearer error messages (now include the offending values) when a rank batch size isn't divisible by the sequence length, or `max_target_sequence_length` isn't a multiple of `sequence_length`.
 - S3 uploads/downloads now also retry on transient SSL errors (`ssl.SSLError`, botocore/urllib3 `SSLError`).
