@@ -742,6 +742,12 @@ def test_qwen3_5_builder_configs(
 def test_qwen3_5_param_count(config_builder):
     config = config_builder(vocab_size=248320, n_layers=4)
     model = config.build(init_device="meta")
+    num_actual_params = sum(p.numel() for p in model.parameters())
+    assert config.num_params == num_actual_params
+    assert model.num_params == num_actual_params
+
+
+@pytest.mark.parametrize(
     "config_builder, expected_tie",
     [
         pytest.param(TransformerConfig.qwen3_0_6B, True, id="qwen3_0_6B"),
@@ -790,6 +796,8 @@ def test_qwen3_5_forward():
     with torch.no_grad():
         logits = model(input_ids)
     assert logits.shape == (2, 16, 1000)
+
+
 def test_normalized_transformer_rejects_tied_word_embeddings():
     with pytest.raises(OLMoConfigurationError):
         TransformerConfig.ngpt_271M(vocab_size=128, n_layers=2, tie_word_embeddings=True)
