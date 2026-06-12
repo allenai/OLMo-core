@@ -305,6 +305,17 @@ def plot_model(points, model: str, out_path: Path, window_m: int) -> None:
                 label=label,
             )
             annotate_fitted_lr(ax, group, f"Cx{cx}", line.get_color())
+            last = group[-1]
+            ax.annotate(
+                f"Cx{cx}",
+                (last["lr"], last["loss"]),
+                textcoords="offset points",
+                xytext=(8, 0),
+                ha="left",
+                va="center",
+                fontsize=8,
+                color=line.get_color(),
+            )
     ax.set_xscale("log")
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"train CE avg{window_m}M")

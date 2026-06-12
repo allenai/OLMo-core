@@ -7,12 +7,19 @@ import argparse
 import math
 import re
 import statistics
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import wandb
+
+LADDER_DIR = Path(__file__).parents[2]
+if str(LADDER_DIR) not in sys.path:
+    sys.path.insert(0, str(LADDER_DIR))
+
+from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
 
 
 PROJECT = "ai2-llm/jacobm-olmoe-ladder"
@@ -24,6 +31,7 @@ LR_RE = re.compile(r"lr([0-9]+(?:\.[0-9]+)?e-[0-9]+)")
 
 @dataclass(frozen=True)
 class Point:
+    model: str
     variant: str
     cx: int
     lr: float
@@ -40,9 +48,25 @@ def mean_loss(points: list[tuple[float, float]], end_tokens: float, window_token
     return statistics.mean(vals) if vals else math.nan
 
 
-def history_loss(run, window_m: int) -> tuple[float, float] | None:
+def history_loss(
+    run,
+    *,
+    project: str,
+    cache_dir: Path,
+    window_m: int,
+    refresh_cache: bool = False,
+    refresh_stale_cache: bool = False,
+) -> tuple[float, float] | None:
     points: list[tuple[float, float]] = []
-    for row in run.scan_history(keys=FIELDS, page_size=10000):
+    for row in scan_history_cached(
+        run,
+        project=project,
+        keys=FIELDS,
+        cache_dir=cache_dir,
+        refresh_cache=refresh_cache,
+        refresh_stale_cache=refresh_stale_cache,
+        page_size=10000,
+    ):
         tokens = row.get(TOKENS_KEY)
         loss = row.get(LOSS_KEY)
         if tokens is None or loss is None:
@@ -68,19 +92,55 @@ def cx_from_name(name: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def model_from_name(name: str) -> str | None:
+    if "tiny-275m" in name or "eg-275m" in name:
+        return "275m"
+    if "mid_480m" in name or "mid-480m" in name or "m480-cx" in name:
+        return "mid_480m"
+    if "810m" in name:
+        return "810m"
+    if "1p2b" in name:
+        return "1p2b"
+    return None
+
+
 def baseline_variant_name(name: str) -> str | None:
-    if "olmoe3-tiny-275m-cx" not in name:
+    if "olmoe3-tiny-275m-cx" in name:
+        if "b384k" in name and "gpu2-ep1mb8" in name and "cx2" in name:
+            return "baseline_48e_top4_b384k"
+        if "gpu2-ep1mb16" in name and "cx1" in name:
+            return "baseline_48e_top4"
+        if "gpu2-ep1mb16" in name and "cx2" in name:
+            return "baseline_48e_top4_b256k"
+        if "gpu4-ep1mb16" in name and "cx4" in name:
+            return "baseline_48e_top4"
+        if "gpu4-ep1mb8" in name and "cx8" in name:
+            return "baseline_48e_top4"
         return None
-    if "b384k" in name and "gpu2-ep1mb8" in name and "cx2" in name:
-        return "baseline_48e_top4_b384k"
-    if "gpu2-ep1mb16" in name and "cx1" in name:
+
+    if "olmoe3-moe-a0-810m-cx" in name:
+        if "cx1" in name and ("gpu4-ep1mb4" in name or "gpu8-ep1mb4" in name):
+            return "baseline_48e_top4"
+        if "cx4" in name and "gpu8-ep1mb4" in name:
+            return "baseline_48e_top4"
+        if "cx8" in name and "gpu8-ep1mb4" in name:
+            return "baseline_48e_top4"
+        if "cx2" in name and "b384k" in name and "gpu8-ep1mb2" in name:
+            return "baseline_48e_top4_b384k"
+        return None
+
+    if "olmoe3-moe-a0-1p2b-cx" in name:
+        if "cx1" in name and "gpu8-ep1mb2" in name:
+            return "baseline_48e_top4"
+        if "cx4" in name and "gpu8-ep1mb2" in name:
+            return "baseline_48e_top4"
+        if "cx8" in name and "gpu8-ep1mb4" in name:
+            return "baseline_48e_top4"
+        return None
+
+    if "m480-cx" in name:
         return "baseline_48e_top4"
-    if "gpu2-ep1mb16" in name and "cx2" in name:
-        return "baseline_48e_top4_b256k"
-    if "gpu4-ep1mb16" in name and "cx4" in name:
-        return "baseline_48e_top4"
-    if "gpu4-ep1mb8" in name and "cx8" in name:
-        return "baseline_48e_top4"
+
     return None
 
 
@@ -104,7 +164,14 @@ def expert_variant_name(name: str) -> str | None:
     return None
 
 
-def load_points(project: str, window_m: int, include_running: bool = False) -> list[Point]:
+def load_points(
+    project: str,
+    cache_dir: Path,
+    window_m: int,
+    include_running: bool = False,
+    refresh_cache: bool = False,
+    refresh_stale_cache: bool = False,
+) -> list[Point]:
     api = wandb.Api(timeout=90)
     points: list[Point] = []
     runs = list(
@@ -118,6 +185,17 @@ def load_points(project: str, window_m: int, include_running: bool = False) -> l
                             "$regex": "olmoe3-tiny-275m-cx(1|2|4|8).*gpu(2|4)-ep1mb(8|16)"
                         }
                     },
+                    {
+                        "display_name": {
+                            "$regex": "olmoe3-moe-a0-810m-cx(1|2|4|8).*gpu(4|8)-ep1mb(2|4)"
+                        }
+                    },
+                    {
+                        "display_name": {
+                            "$regex": "olmoe3-moe-a0-1p2b-cx(1|4|8).*gpu8-ep1mb(2|4)"
+                        }
+                    },
+                    {"display_name": {"$regex": "m480-cx(1|2|4|8)"}},
                 ]
             },
         )
@@ -129,21 +207,30 @@ def load_points(project: str, window_m: int, include_running: bool = False) -> l
         if any(marker in name.lower() for marker in ("smoke", "sanity", "evaltest")):
             continue
 
+        model = model_from_name(name)
         variant = expert_variant_name(name) or baseline_variant_name(name)
-        if variant is None:
+        if model is None or variant is None:
             continue
         cx = cx_from_name(name)
         lr_info = lr_from_name(name)
         if cx not in {1, 2, 4, 8} or lr_info is None:
             continue
 
-        loss_info = history_loss(run, window_m)
+        loss_info = history_loss(
+            run,
+            project=project,
+            cache_dir=cache_dir,
+            window_m=window_m,
+            refresh_cache=refresh_cache,
+            refresh_stale_cache=refresh_stale_cache,
+        )
         if loss_info is None or math.isnan(loss_info[0]):
             continue
         lr_tag, lr = lr_info
         loss, tokens_b = loss_info
         points.append(
             Point(
+                model=model,
                 variant=variant,
                 cx=cx,
                 lr=lr,
@@ -156,7 +243,8 @@ def load_points(project: str, window_m: int, include_running: bool = False) -> l
             )
         )
 
-    points.sort(key=lambda p: (p.cx, p.variant, p.lr, p.name))
+    model_order = {"275m": 0, "mid_480m": 1, "810m": 2, "1p2b": 3}
+    points.sort(key=lambda p: (model_order.get(p.model, 99), p.cx, p.variant, p.lr, p.name))
     return points
 
 
@@ -181,7 +269,7 @@ def fit_lr(group: list[Point]) -> tuple[float, float] | None:
     return opt_lr, opt_loss
 
 
-def plot_cx(points: list[Point], cx: int, out_path: Path, window_m: int) -> None:
+def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: int) -> None:
     fig, ax = plt.subplots(figsize=(8.2, 5.2))
     labels = {
         "baseline_48e_top4": "baseline 48E/top4",
@@ -210,7 +298,7 @@ def plot_cx(points: list[Point], cx: int, out_path: Path, window_m: int) -> None
         "ultra_384e_top32",
     ]
     for variant in variants:
-        group = sorted([p for p in points if p.cx == cx and p.variant == variant], key=lambda p: p.lr)
+        group = sorted([p for p in points if p.model == model and p.cx == cx and p.variant == variant], key=lambda p: p.lr)
         if not group:
             continue
         finished = [p for p in group if p.state == "finished"]
@@ -261,7 +349,7 @@ def plot_cx(points: list[Point], cx: int, out_path: Path, window_m: int) -> None
     ax.set_xscale("log")
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"train CE avg{window_m}M")
-    ax.set_title(f"Expert granularity 275M Cx{cx}")
+    ax.set_title(f"Expert granularity {model} Cx{cx}")
     ax.grid(True, which="both", alpha=0.25)
     ax.legend(loc="best")
     fig.tight_layout()
@@ -273,7 +361,18 @@ def plot_cx(points: list[Point], cx: int, out_path: Path, window_m: int) -> None
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default=PROJECT)
+    parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--window-m", type=int, default=250)
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Force a full W&B history re-download for every selected finished run. Use sparingly.",
+    )
+    parser.add_argument(
+        "--refresh-stale-cache",
+        action="store_true",
+        help="Refresh only missing/stale/short finished-run histories before plotting.",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -286,9 +385,22 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    points = load_points(args.project, args.window_m, include_running=args.include_running)
-    for cx in sorted({point.cx for point in points}):
-        plot_cx(points, cx, args.output_dir / f"275m_cx{cx}_uplot.png", args.window_m)
+    points = load_points(
+        args.project,
+        args.cache_dir,
+        args.window_m,
+        include_running=args.include_running,
+        refresh_cache=args.refresh_cache,
+        refresh_stale_cache=args.refresh_stale_cache,
+    )
+    models_with_expert_runs = {
+        point.model for point in points if not point.variant.startswith("baseline_")
+    }
+    points = [point for point in points if point.model in models_with_expert_runs]
+    model_order = {"275m": 0, "mid_480m": 1, "810m": 2, "1p2b": 3}
+    for model in sorted({point.model for point in points}, key=lambda m: model_order.get(m, 99)):
+        for cx in sorted({point.cx for point in points if point.model == model}):
+            plot_cx(points, model, cx, args.output_dir / f"{model}_cx{cx}_uplot.png", args.window_m)
 
 
 if __name__ == "__main__":
