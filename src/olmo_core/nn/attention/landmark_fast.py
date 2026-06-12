@@ -11,13 +11,15 @@ serially, so the backward is badly under-parallelized and dominates the step (~2
   * :func:`_bwd_kv_kernel` -- one program per ``(key-block, head)``, computes ``dk``/``dv``.
   * :func:`_bwd_q_kernel`  -- one program per ``(query-block, head)``, computes ``dq`` (causal half).
 
-``dk``/``dv`` are bit-identical to the original (same accumulation order); ``dq`` is accumulated
-ascending with no atomics and matches up to last-ulp reassociation (the two backwards use different
-``num_warps``, which retiles the ``tl.dot`` reduction). fwd+bwd is ~17-20x faster at 4k-8k (~1.4x
-FlashAttention). Tuned
-launch config (H200, head_dim 128): ``num_warps=4, num_stages=2``. Head dims up to 256 (e.g.
-Qwen3.5) are supported: ``head_dim > 128`` switches to ``num_warps=8`` (and 2 fwd stages) to fit
-register/shared-memory budgets, leaving the ``<= 128`` launch configs untouched.
+Gradients follow the original's accumulation order (``dk``/``dv`` per key block; ``dq`` ascending
+with no atomics) and match it up to last-ulp reassociation noise (the two backwards use different
+``num_warps``, which retiles the ``tl.dot`` reductions); the forward output is bit-identical.
+fwd+bwd is ~17-20x faster at 4k-8k (~1.4x FlashAttention). Tuned launch config (H200, head_dim
+128): ``num_warps=4, num_stages=2``. Head dims up to 256 (e.g. Qwen3.5) are supported:
+``head_dim > 128`` switches to ``num_warps=8`` (and fewer stages) to fit register/shared-memory
+budgets, leaving the ``<= 128`` launch configs untouched. Note that at head_dim 256 with the usual
+``block_size=64``, the *fp32* backward exceeds H100 shared memory (the dot/trans operand tiles
+alone need ~278KB); bf16/fp16 -- what training uses -- fit fine.
 
 ``FastLandmarkAttention`` is a drop-in :class:`Attention` variant (a *new* sequence mixer, selected
 via ``AttentionType.fast_landmark``); it supports Ulysses context parallelism exactly as the
