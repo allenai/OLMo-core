@@ -65,36 +65,45 @@ Keep fixed:
 Implemented sizes:
 
 - `275m`
-- `mid_480m`
+- `480m`
 - `810m`
 - `1p2b`
 
-`mid_480m` is newly added and estimated at about 480M active params including
-embeddings/head and about 2.6B total before smoke confirmation.
+`480m` is implemented and smoke validated at about 480M active params including
+embeddings/head and about 2.6B total.
 
 ## Default Job Settings
 
-For future baseline launches, use this GPU allocation table unless a run needs
-a smoke-tested memory fallback or the cluster is temporarily constrained:
+Prefer compute-efficient settings over pure wall-clock efficiency. Use the
+smallest node/GPU count that has healthy memory, throughput, and queue behavior;
+scale out only when the wall-clock gain is worth the extra compute or when memory
+requires it. For larger jobs such as 1.2B Cx8, prefer one- or two-node settings
+over four-node settings when they are healthy.
 
-| Model | Cx1 | Cx2 | Cx4 | Cx8 |
-| --- | ---: | ---: | ---: | ---: |
-| 275M | 1-2 GPUs | 2 GPUs | 4 GPUs | 8 GPUs |
-| mid_480m | 4 GPUs | 4 GPUs | 4 GPUs | 8 GPUs |
-| 810M | 8 GPUs | 8 GPUs | 8 GPUs | 16 GPUs |
-| 1.2B | 8 GPUs | 8 GPUs | 16 GPUs | 32 GPUs |
+Keep EP=1 by default. Preserve the intended optimizer batch for each Cx; changing
+GPU count, node count, or microbatch should not silently change the optimizer
+batch or LR-comparability surface. Record systems settings in W&B/Beaker tags and
+config, not in new experiment names.
 
-Keep EP=1 by default. Preserve the intended dense-ladder global batch rule for
-each Cx; increasing GPU count should primarily reduce wall-clock, not silently
-change the optimizer batch. Use the known-good microbatch for each model size
-unless a smoke test or prior run proves a larger microbatch is healthy.
+
+## Naming And Resume Policy
+
+New experiment names should be semantic and stable across systems-only changes.
+Include model size, variant, Cx/data scale, batch policy when it affects the
+optimizer surface, LR, and attempt id. Do not include node count, GPU count, EP,
+microbatch, cluster, or other systems-only settings in new names.
+
+Store systems details in W&B/Beaker tags and config instead, for example
+`nodes1`, `gpu8`, `ep1`, `mb4`, `compute-efficient`, or `systems-comparison`.
+If a run is resumed with different systems settings but the same optimizer and
+checkpoint semantics, keep the same `--name` and checkpoint path so resume works
+naturally. Use a new attempt suffix only for an intentionally fresh rerun.
 
 ## Current Jobs
 
-Current operating state as of 2026-06-12:
+Current operating state as of 2026-06-13 17:12 UTC status check:
 
-- Do not queue additional jobs right now. The active/queued surface is already
-  sufficient for the next long-cadence loop.
+- `SETTINGS_AUDIT.md` is confirmed by Jacob. Queue additional jobs only from an explicit approved bundle.
 - Monitor the existing baseline repair runs, remaining baseline runs, and
   expert-granularity runs. Monitor any already-queued total-sparsity jobs if
   they are later found, but do not launch additional total-sparsity jobs from
@@ -102,19 +111,21 @@ Current operating state as of 2026-06-12:
 - Current Cx2 repair policy supersedes older Cx2 notes:
   - 275M baseline, `eg24e2k`, and `eg96e8k`: `b384k`, 2 GPUs, EP=1, mb8,
     LRs `9e-4`, `1.8e-3`, `3.6e-3`.
-  - `mid_480m`: `b384k`, 4 GPUs, EP=1, mb4, LRs `4.5e-4`, `9e-4`, `1.8e-3`.
+  - `480m`: `b384k`, 4 GPUs, EP=1, mb4, LRs `4.5e-4`, `9e-4`, `1.8e-3`.
   - 810M: `b384k`, 8 GPUs, EP=1, mb2, LRs `2.8e-4`, `5.6e-4`, `1.12e-3`.
-  - 1.2B Cx2 is still not launched and remains low priority.
+  - 1.2B Cx2 should use the same canonical `b384k` policy and is the next baseline gap to queue after settings confirmation.
 
 Active/queued job snapshot at handoff:
 
 | Area | Jobs |
 | --- | --- |
-| 810M Cx2 `b384k` repair | `2.8e-4 r3` (`01KTYEJH9S58TDA837YZANCJ9C`) and `5.6e-4 r3` (`01KTYEJWXR7X0KFBFQ57G9YC9V`) are running cleanly; `1.12e-3 r3` (`01KTYEK7S5MXJYSJMGB3BNR1HE`) is queued/created. |
-| 810M expert granularity | coarse/fine Cx1/Cx4 transfer checks are running: `01KTX8DY64MRW5DCWAJZPQY1YR`, `01KTXR4J7FN4ERB9BYDKC261F5`, `01KTXR7563GGMW6FE57TTVACSY`, `01KTXR9YA2QAR7HB1XS1R0FTBW`. |
-| midpoint Cx2 `b384k` repair | `4.5e-4`, `9e-4`, `1.8e-3` are running: `01KTWV11QM0BKFWXZ8QGPQXHTP`, `01KTWV1E704BPEXJK95HPJ22T4`, `01KTWV1TRD9BQG0JFB5BXYZ2C6`. |
-| 275M expert-granularity Cx2 repair | coarse/fine `9e-4`, `1.8e-3`, `3.6e-3` are running; Beaker IDs are in `RUNS.md`. |
-| 1.2B Cx8 one-node replacements | `2e-4` (`01KTWB5V3CBHWS868FKGBX342D`) and `8e-4` (`01KTWB65YRYR8K44RYXBZ7T5WJ`) are running. |
+| 1.2B Cx2 `b384k` baseline | `1.5e-4` is running at 15.639B tokens, W&B `dtd8qeiv`; `6e-4` is running at 14.950B tokens, W&B `54pt8zj7`; `3e-4` had one failed job on a B200 node with `ModuleNotFoundError: olmo_core` before training and now has a fresh pending retry under the same experiment `01KTZ163MP8B3VFGGY7YWHSFB6`. Do not intervene unless the retry also fails. |
+| 480M expert granularity full ladder | Finished: coarse Cx1 `2.5817` avg250M (`rcgxm5qv`), coarse Cx2 `2.4767` avg250M (`ksfrmhct`), fine Cx1 `2.5546` avg250M (`nvndg2tr`). Running: fine Cx2 7.058B tokens (`fzk2affn`), coarse Cx4 18.315B (`wq8gib5l`), fine Cx4 7.711B (`ezokso90`), coarse Cx8 29.148B (`epx7o7ty`), fine Cx8 10.789B (`8676ezla`). |
+| 810M Cx2 `b384k` repair | All three r3 jobs succeeded. Results: `2.8e-4` avg250M `2.3333` (`uh4el1df`), `5.6e-4` avg250M `2.3204` (`v5puakhq`, best observed), `1.12e-3` avg250M `2.3268` (`sxivrph5`); fitted optimum from plotted results is about `6.29e-4`. |
+| 810M expert granularity | All Cx1/Cx4 checks succeeded. Cx1: coarse `2.4191` avg250M (`1nqxk9iw`), fine `2.3985` (`wjto6qtp`), baseline `2.4104`. Cx4: coarse `2.2585` (`q50qk891`), fine `2.2353` (`7cbm4c9b`), baseline `2.2424`. Fine beats baseline at both checked Cx values; coarse is worse at both. Additional 810M expert-granularity full-ladder promotions are waiting for idle compute. |
+| 480M Cx2 `b384k` repair | `4.5e-4`, `9e-4`, `1.8e-3` all finished cleanly; plotted canonical b384k summary has best observed `9e-4` avg250M `2.4630`, fit LR about `9.73e-4`. Historical wider Cx2 rows remain visible in expert plots for context. |
+| 275M expert-granularity Cx2 repair | Coarse/fine `9e-4`, `1.8e-3`, `3.6e-3` all finished cleanly; Beaker IDs are in `RUNS.md`. |
+| 1.2B Cx8 one-node replacements | `2e-4` (`01KTWB5V3CBHWS868FKGBX342D`) and `8e-4` (`01KTWB65YRYR8K44RYXBZ7T5WJ`) are running, both around 66B tokens. W&B live summaries: `2e-4` at 66.141B / CE `2.1968` (`jdrvfvfn`), `8e-4` at 66.415B / CE `2.3780` (`ja7yu1c3`). These are live summaries, not final-window decisions. |
 
 Baseline:
 
@@ -128,15 +139,13 @@ Baseline:
   Beaker experiment `01KTHW6ZSXGD1P8NEA7S3KM198`, new job
   `01KTSB2H1TMF7Z1T2MY40J2QM0`. The short W&B history for `1.5e-4` was repaired
   with `--refresh-stale-cache` on 2026-06-10.
-- 1.2B Cx8: the initial `gpu32-ep1mb1` / 4-node jobs showed poor utilization
-  around 300 TFLOPs/GPU. Keep the already-running `4e-4` 4-node job as a systems
-  comparison point, but do not use its systems setting for future 1.2B Cx8
-  launches. The `2e-4` and `8e-4` 4-node attempts were stopped on 2026-06-11 and
-  relaunched as one-node `gpu8-ep1mb4` replacements:
+- 1.2B Cx8: the initial 4-node jobs showed poor utilization around
+  300 TFLOPs/GPU. Keep the already-running old `4e-4` 4-node job as a systems
+  comparison point, but prefer compute-efficient one- or two-node settings for
+  future 1.2B Cx8 launches when healthy. The `2e-4` and `8e-4` attempts were
+  relaunched as one-node replacements:
   - `2e-4`: `01KTWB5V3CBHWS868FKGBX342D`
   - `8e-4`: `01KTWB65YRYR8K44RYXBZ7T5WJ`
-  Prefer `gpu8-ep1mb4` for future 1.2B Cx8 unless the replacement jobs show
-  memory or throughput trouble.
 - 810M old Cx2: `1.5e-4`, `3e-4`, `6e-4`, `1.2e-3` completed and bracketed
   under the old `b512k` setting. Treat this as diagnostic now that the `b384k`
   repair sweep has been queued.
@@ -144,7 +153,7 @@ Baseline:
   - `r1` failed before training with distributed startup/checkpointer errors.
   - `r2` failed before training because the generated W&B group exceeded the
     128-character `GroupName` limit.
-  - Commit `07df5ad` changed `tiny_275m.py` to keep descriptive display names
+  - Commit `07df5ad` changed the ladder train script to keep descriptive display names
     while using a compact W&B group.
   - `r3` is the current valid retry family.
 
@@ -168,14 +177,17 @@ Expert granularity:
   `1.6e-3` and fitted `lr* ~= 1.57e-3`. Fine Cx4 has finished and is bracketed
   with observed best `1.6e-3` and fitted `lr* ~= 1.45e-3`.
 - All approved expert-granularity 275M Cx1/Cx4 curves are complete and
-  bracketed. Do not queue the rest of the 275M expert-granularity ladder until
-  Jacob reviews the results and explicitly approves the next batch.
+  bracketed. The earlier pause-before-expansion gate is superseded by the
+  current full-ladder policy below.
 - Jacob approved the next expert-granularity batch on 2026-06-11. Cx8 remains
   on the transferred baseline grid `8e-4`, `1.6e-3`, `3.2e-3`,
   `gpu8-ep1mb4`. Cx2 was later replaced by the `b384k` repair grid above; the
   old `b512k` Cx2 runs are diagnostic only.
-- After Cx1/Cx4 complete, estimate variant LR multipliers relative to the
-  baseline and use those multipliers to center later Cx2/Cx8/Cx16 sweeps.
+- Current policy for serious expert-granularity variants is now a full
+  Cx1/Cx2/Cx4/Cx8 ladder across `275m`, `480m`, `810m`, and `1p2b`. Use 275M
+  to tune/verify LR multipliers, then launch larger sizes at predicted LRs only
+  unless transfer looks broken or Jacob explicitly asks for more bracketing.
+  Cx16 is not part of the default grid.
 - Expert-granularity plots now include 810M outputs once finished:
   `plots/expert_granularity/810m_cx1_uplot.png`,
   `810m_cx4_uplot.png`, and `810m_cx8_uplot.png`.
@@ -195,6 +207,9 @@ Total sparsity:
   finished cleanly with skipped steps 0:
   - `sp96e4k`: `01KTWFC73099P7Y0TVCRGJSZHZ`
   - `sp192e4k`: `01KTWFCK6QBQ4QH5X3TBKF98MA`
+- Current policy for approved total/model-sparsity variants is also a full
+  Cx1/Cx2/Cx4/Cx8 ladder across `275m`, `480m`, `810m`, and `1p2b`. Use 275M
+  to tune/verify LRs, then use predicted LRs only for larger sizes.
 - 275M Cx1/Cx4 were launched on 2026-06-11 using
   `src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx1_cx4.sh`.
   On 2026-06-12 Jacob temporarily paused sparsity work; one `sp96e4k` Cx1
@@ -217,7 +232,7 @@ Ignore unless explicitly resumed:
 - 1.2B Cx4 `1.2e-3` was previously stopped but is now resumed; include only
   after the resumed full run completes.
 
-Midpoint smoke status:
+480M smoke status:
 
 - Original long-name smoke `01KTMJY87YW09KHB4H6ERGZQ4K` failed before
   training because the W&B group name exceeded 128 characters.
@@ -227,16 +242,18 @@ Midpoint smoke status:
 - The validated setting is `gpu4-ep1mb8`: skipped steps 0, loss decreasing,
   and roughly 632-644 TFLOPs/GPU after warmup.
 
-## Midpoint / `mid_480m`
+## 480M
 
-Validated settings:
+Validated Cx1 settings:
 
 - `gpu4-ep1mb8`
 - EP=1
 - batch 262,144 tokens / `global_batch_size_seq=32`
 - full jobs use in-loop fast evals every 2000 steps
 
-Queued Cx1/Cx2/Cx4 together on 2026-06-08:
+Queued Cx1/Cx2/Cx4 together on 2026-06-08. The Cx2 row below is an
+old `b512k` historical run family and is superseded by the repaired `b384k`
+policy listed near the top of this file:
 
 | Cx | Batch tokens | `global_batch_size_seq` | GPUs | EP | Microbatch | LR grid |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
@@ -252,20 +269,20 @@ Follow-ups launched on 2026-06-10:
   this as extra cold-side insurance only.
 - Cx8 hot-side sentinel `3.2e-3`, `gpu8-ep1mb4`:
   `01KTSC51ZXE3YQAZMANDP15QT7`, W&B `fvbz0h7v`. Finished cleanly with avg250M
-  2.3486, worse than the existing Cx8 best `8e-4` avg250M 2.3076. Midpoint Cx8
+  2.3486, worse than the existing Cx8 best `8e-4` avg250M 2.3076. 480M Cx8
   is now bracketed on the hot side; no additional Cx8 hot extension is needed.
 
-Hold off on midpoint Cx16 for now, matching the 810M/1.2B policy.
+Hold off on 480M Cx16 for now, matching the 810M/1.2B policy.
 
 ## Next Baseline Progression
 
 - 810M Cx8 bracketed cleanly around `4e-4`.
 - 1.2B Cx4 has an apparent center near `4e-4`, but wait for the resumed
   `1.2e-3` hot-side point before calling the rung bracketed.
-- After midpoint results land, refit size transfer using 275M, midpoint, 810M,
+- After 480M results land, refit size transfer using 275M, 480M, 810M,
   and 1.2B.
-- For now, baseline expansion for 810M, 1.2B, and midpoint should focus on
-  Cx1/Cx2/Cx4/Cx8. Do not launch new 810M/1.2B/midpoint Cx16 jobs; fill Cx16
+- For now, baseline expansion for 810M, 1.2B, and 480M should focus on
+  Cx1/Cx2/Cx4/Cx8. Do not launch new 810M/1.2B/480M Cx16 jobs; fill Cx16
   gaps only after a separate discussion.
 
 ## Autonomy Bounds
@@ -282,7 +299,7 @@ Allowed without asking:
 
 Ask before:
 
-- Changing baseline architecture beyond the agreed `mid_480m` config.
+- Changing baseline architecture beyond the agreed `480m` config.
 - Starting any new ablation family.
 - Launching new jobs not already described in the current operating state.
 - Launching expert-granularity Cx16 or larger-model promotions.

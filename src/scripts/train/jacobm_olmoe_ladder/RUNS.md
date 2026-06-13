@@ -486,10 +486,10 @@ Cx1 batch 262,144 / 32 seqs and Cx4 batch 524,288 / 64 seqs.
 
 | Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| `eg-810m-cx1-eg24e2k-lr6e-4-r1` | `coarse_24e_top2` | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KTX8DY64MRW5DCWAJZPQY1YR | Created from `launch_810m_cx1_cx4_best_observed.sh`; monitor startup. |
-| `eg-810m-cx4-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR4J7FN4ERB9BYDKC261F5 | Created after a 4-hour Beaker 429 backoff; monitor startup. |
-| `eg-810m-cx1-eg96e8k-lr6e-4-r1` | `fine_96e_top8` | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR7563GGMW6FE57TTVACSY | Created after a 4-hour Beaker 429 backoff; monitor startup. |
-| `eg-810m-cx4-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR9YA2QAR7HB1XS1R0FTBW | Created after a 4-hour Beaker 429 backoff; monitor startup. |
+| `eg-810m-cx1-eg24e2k-lr6e-4-r1` | `coarse_24e_top2` | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KTX8DY64MRW5DCWAJZPQY1YR | Finished successfully by 2026-06-13 status check. W&B `1nqxk9iw`, 13.790B tokens, avg250M `2.4191`; worse than baseline Cx1 `2.4104`. |
+| `eg-810m-cx4-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR4J7FN4ERB9BYDKC261F5 | Finished successfully by 2026-06-13 status check. W&B `q50qk891`, 55.158B tokens, avg250M `2.2585`; worse than baseline Cx4 `2.2424`. |
+| `eg-810m-cx1-eg96e8k-lr6e-4-r1` | `fine_96e_top8` | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR7563GGMW6FE57TTVACSY | Finished successfully by 2026-06-13 status check. W&B `wjto6qtp`, 13.825B tokens, avg250M `2.3985`; better than baseline Cx1 `2.4104`. |
+| `eg-810m-cx4-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR9YA2QAR7HB1XS1R0FTBW | Finished successfully by 2026-06-13 status check. W&B `7cbm4c9b`, 55.299B tokens, avg250M `2.2353`; better than baseline Cx4 `2.2424`. |
 
 275M Cx2 `b384k` batch-repair reruns:
 
@@ -548,9 +548,9 @@ mid_480m and 810M as diagnostic once these finish.
 | `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr2.8e-4-r2` | `810m` | 2.8e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTXRMPNEYF37JVNREN6WZV5K | Failed before training on 2026-06-12 because W&B rejected the generated group name: `invalid parameters: 128 limit exceeded for GroupName`. Code fix `07df5ad` shortens W&B groups; retried as `r3`. Ignore for analysis. |
 | `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r2` | `810m` | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTXRN76Y3J0TXX9HZN7YNMQX | Failed before training on 2026-06-12 with the same W&B `GroupName` length error as the other `r2` jobs. Code fix `07df5ad` shortens W&B groups; retried as `r3`. Ignore for analysis. |
 | `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr1.12e-3-r2` | `810m` | 1.12e-3 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTXRNNPV1134T95XAKC2HJWE | Failed before training on 2026-06-12 with the same W&B `GroupName` length error as the other `r2` jobs. Code fix `07df5ad` shortens W&B groups; retried as `r3`. Ignore for analysis. |
-| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr2.8e-4-r3` | `810m` | 2.8e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTYEJH9S58TDA837YZANCJ9C | Retry of failed `r2` W&B group-name attempt, launched on fixed commit `07df5ad`. Started cleanly, W&B `uh4el1df`; passed W&B init and reached step 100+ with skipped steps 0. |
-| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r3` | `810m` | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTYEJWXR7X0KFBFQ57G9YC9V | Retry of failed `r2` W&B group-name attempt, launched on fixed commit `07df5ad`. Started cleanly, W&B `v5puakhq`; passed W&B init and reached step 29+ with skipped steps 0. |
-| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr1.12e-3-r3` | `810m` | 1.12e-3 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTYEK7S5MXJYSJMGB3BNR1HE | Retry of failed `r2` W&B group-name attempt, launched on fixed commit `07df5ad`; queued/created on 2026-06-12. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr2.8e-4-r3` | `810m` | 2.8e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTYEJH9S58TDA837YZANCJ9C | Finished successfully by 2026-06-13 status check. W&B `uh4el1df`, 27.603B tokens, avg250M `2.3333`. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r3` | `810m` | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTYEJWXR7X0KFBFQ57G9YC9V | Finished successfully by 2026-06-13 status check. W&B `v5puakhq`, 27.603B tokens, avg250M `2.3204`; best observed repaired 810M Cx2 point. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr1.12e-3-r3` | `810m` | 1.12e-3 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTYEK7S5MXJYSJMGB3BNR1HE | Finished successfully by 2026-06-13 status check. W&B `sxivrph5`, 27.603B tokens, avg250M `2.3268`; hot side is worse than `5.6e-4`, so repaired 810M Cx2 is bracketed. |
 
 275M extreme-granularity Cx1 probes:
 
@@ -605,3 +605,42 @@ Smoke tests:
 | `sp-275m-cx4-sp192e4k-lr8e-4-r1` | `huge_total_192e_top4` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGR9QHSDAS5RCV7NZV5GJ7 | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
 | `sp-275m-cx4-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGRN09127CB35E5SGS0B03 | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
 | `sp-275m-cx4-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGS0RHZ743VAGKQ9R85JG5 | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+
+## 2026-06-12 Stable-Name Launch Bundle
+
+This bundle uses semantic, resume-stable names: model/variant, Cx, batch policy
+when optimizer-relevant, LR, and attempt id. Node count, GPU count, EP, and
+microbatch are recorded in W&B/Beaker tags/config and in this ledger, not in the
+new run names. The Beaker runtime still uses the committed compatibility script
+`src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py`; local docs/scripts may
+refer to the preferred `moe_a0_ladder.py` name after that file is committed.
+
+An initial launch attempt used the local-only `moe_a0_ladder.py` path before it
+was present in the remote commit used by Beaker. These experiments were stopped
+immediately and should be ignored: `01KTZ0WKC2KM7YMBFJRG3SEJ3H`,
+`01KTZ0WZD0EGG8JBAQTW8RWTX6`, `01KTZ0XBA98Z2HSVMWP4355PNA`,
+`01KTZ0Y0GDH21QDKNK61Q7DZDT`, `01KTZ0YC8NEE1GEFMDX9Y4DAZ9`,
+`01KTZ0YR3VBQ8PN4SBQ34DDEMV`, `01KTZ0Z26Q4QK3HC0RXM9ZFYJ0`,
+`01KTZ0ZE3018K63YY9XDXZJG16`, `01KTZ0ZRJGZFF8YG0N8B2T9GDS`,
+`01KTZ104BRE6X8HKNQR42BZFXE`, `01KTZ10FXNJ555R9S2EDENDRGG`.
+
+1.2B Cx2 `b384k` baseline:
+
+| Name | Model | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr1.5e-4-r1` | `1p2b` | 1.5e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTZ15R9Q87WDSPN6740YQX06 | Running at 2026-06-13 status check. W&B `dtd8qeiv`, 15.639B tokens, live CE summary `2.5166`. Stable run name; systems settings in tags. |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr3e-4-r1` | `1p2b` | 3e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTZ163MP8B3VFGGY7YWHSFB6 | First job failed before training on 2026-06-13 with `ModuleNotFoundError: olmo_core` on a B200 node after Gantry setup; experiment now has a fresh pending retry. Do not treat as model/LR signal. |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr6e-4-r1` | `1p2b` | 6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTZ16ETE4R5XZYHKSB8SXDXM | Running at 2026-06-13 status check. W&B `54pt8zj7`, 14.950B tokens, live CE summary `2.3018`. Stable run name; systems settings in tags. |
+
+480M expert-granularity full ladder at predicted LRs:
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-480m-cx1-eg24e2k-lr9e-4-r1` | `coarse_24e_top2` | 1 | 9e-4 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KTZ17462R909ZKQB3X6SXDH8 | Finished by 2026-06-13 status check. W&B `rcgxm5qv`, 7.601B tokens, avg250M `2.5817`. Runtime argument uses `--model-size=mid_480m` for compatibility; name/docs use canonical `480m`. |
+| `eg-480m-cx2-eg24e2k-lr1e-3-r1` | `coarse_24e_top2` | 2 | 1e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTZ17FZN0J2F45HRYPP8R0R2 | Finished by 2026-06-13 status check. W&B `ksfrmhct`, 15.201B tokens, avg250M `2.4767`. Predicted-LR full-ladder run with repaired `b384k` Cx2. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx4-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTZ17W6A94BW60A8DS1C9CXA | Running at 2026-06-13 status check. W&B `wq8gib5l`, 18.315B tokens, live CE summary `2.5611`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx8-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTZ187DS1DCVR3F67HTMPGWF | Running at 2026-06-13 status check. W&B `epx7o7ty`, 29.148B tokens, live CE summary `2.4715`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx1-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KTZ18KQDJ02P9B7C074Q5S86 | Finished by 2026-06-13 status check. W&B `nvndg2tr`, 7.623B tokens, avg250M `2.5546`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx2-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 2 | 1e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTZ18Z8EK00WCE2G3AVCFCNM | Running at 2026-06-13 status check. W&B `fzk2affn`, 7.058B tokens, live CE summary `2.7996`. Predicted-LR full-ladder run with repaired `b384k` Cx2. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx4-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTZ19B5WKD9EEMGWYRH3HQ7B | Running at 2026-06-13 status check. W&B `ezokso90`, 7.711B tokens, live CE summary `2.6682`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx8-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTZ19QVD4G1MJN612YENYA7T | Running at 2026-06-13 status check. W&B `8676ezla`, 10.789B tokens, live CE summary `2.7340`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
