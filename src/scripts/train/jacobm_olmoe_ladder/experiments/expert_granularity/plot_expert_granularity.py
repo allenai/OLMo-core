@@ -139,6 +139,10 @@ def baseline_variant_name(name: str) -> str | None:
         return None
 
     if "m480-cx" in name:
+        if "cx2" in name and "b384k" in name:
+            return "baseline_48e_top4_b384k"
+        if "cx2" in name and "b512k" in name:
+            return "baseline_48e_top4_b512k"
         return "baseline_48e_top4"
 
     return None
@@ -275,6 +279,7 @@ def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: 
         "baseline_48e_top4": "baseline 48E/top4",
         "baseline_48e_top4_b256k": "baseline 48E/top4 (b256k)",
         "baseline_48e_top4_b384k": "baseline 48E/top4 (b384k)",
+        "baseline_48e_top4_b512k": "baseline 48E/top4 (b512k)",
         "coarse_24e_top2": "coarse 24E/top2",
         "coarse_24e_top2_b512k": "coarse 24E/top2 (b512k)",
         "coarse_24e_top2_b384k": "coarse 24E/top2 (b384k)",
@@ -288,6 +293,7 @@ def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: 
         "baseline_48e_top4",
         "baseline_48e_top4_b256k",
         "baseline_48e_top4_b384k",
+        "baseline_48e_top4_b512k",
         "coarse_24e_top2",
         "coarse_24e_top2_b512k",
         "coarse_24e_top2_b384k",

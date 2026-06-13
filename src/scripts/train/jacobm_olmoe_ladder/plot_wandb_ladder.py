@@ -63,7 +63,7 @@ CANONICAL_FAMILY_BY_MODEL_CX = {
         1: "gpu4-ep1mb8",
         2: "gpu4-ep1mb4",
         4: "gpu4-ep1mb8",
-        8: "gpu4-ep1mb8",
+        8: "gpu8-ep1mb4",
         16: "gpu4-ep1mb8",
     },
     "810m": {
