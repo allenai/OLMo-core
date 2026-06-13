@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from analyze_wandb_ladder import load_rows, mean_loss_in_window
+from ladder_run_metadata import family_label_from_name, is_analysis_run, model_label_from_name
 from wandb_cache import DEFAULT_CACHE_DIR
 
 
@@ -25,7 +26,7 @@ CANONICAL_BATCH_BY_CX = {
 
 CANONICAL_BATCH_BY_MODEL_CX = {
     "275m": CANONICAL_BATCH_BY_CX,
-    "mid_480m": {
+    "480m": {
         1: "256k",
         2: "384k",
         4: "512k",
@@ -41,6 +42,7 @@ CANONICAL_BATCH_BY_MODEL_CX = {
     },
     "1p2b": {
         1: "256k",
+        2: "384k",
         4: "512k",
         8: "768k",
         16: "1M",
@@ -57,7 +59,7 @@ CANONICAL_FAMILY_BY_CX = {
 
 CANONICAL_FAMILY_BY_MODEL_CX = {
     "275m": CANONICAL_FAMILY_BY_CX,
-    "mid_480m": {
+    "480m": {
         1: "gpu4-ep1mb8",
         2: "gpu4-ep1mb4",
         4: "gpu4-ep1mb8",
@@ -72,59 +74,18 @@ CANONICAL_FAMILY_BY_MODEL_CX = {
     },
     "1p2b": {
         1: "gpu8-ep1mb2",
+        2: "b384k",
         4: "gpu8-ep1mb2",
     },
 }
 
 MODEL_SORT_ORDER = {
     "275m": 0,
-    "mid_480m": 1,
+    "480m": 1,
     "810m": 2,
     "1p2b": 3,
     "unknown": 99,
 }
-
-
-def is_analysis_run(name: str) -> bool:
-    lowered = name.lower()
-    ignored_markers = ("smoke", "smoketest", "sanity", "pilot")
-    return not any(marker in lowered for marker in ignored_markers)
-
-
-def model_label_from_name(name: str) -> str:
-    if "tiny-275m" in name:
-        return "275m"
-    if "mid-480m" in name or "mid_480m" in name or "480m" in name:
-        return "mid_480m"
-    if "810m" in name:
-        return "810m"
-    if "1p2b" in name:
-        return "1p2b"
-    return "unknown"
-
-
-def family_label_from_name(name: str) -> str:
-    if "b384k" in name and "gpu2-ep1mb8" in name:
-        return "b384k-gpu2-ep1mb8"
-    if "gpu8-ep1mb16" in name:
-        return "gpu8-ep1mb16"
-    if "gpu8-ep1mb4" in name:
-        return "gpu8-ep1mb4"
-    if "gpu8-ep1mb2" in name:
-        return "gpu8-ep1mb2"
-    if "gpu4-ep1mb16" in name:
-        return "gpu4-ep1mb16"
-    if "gpu4-ep1mb8" in name:
-        return "gpu4-ep1mb8"
-    if "gpu4-ep1mb4" in name:
-        return "gpu4-ep1mb4"
-    if "gpu2-ep1mb16" in name:
-        return "gpu2-ep1mb16"
-    if "gpu2-ep1mb8" in name:
-        return "gpu2-ep1mb8"
-    if "-n2-" in name or "-n2_" in name:
-        return "n2"
-    return "original"
 
 
 def summarize_rows(rows, window_m: int, finished_only: bool, canonical_only: bool):
@@ -233,6 +194,21 @@ def is_canonical_family(point) -> bool:
     if isinstance(family, tuple):
         return point["family"] in family
     return point["family"] == family
+
+
+def should_load_canonical_history(name: str, spec) -> bool:
+    if not is_analysis_run(name):
+        return False
+    model = model_label_from_name(name)
+    canonical_batch = CANONICAL_BATCH_BY_MODEL_CX.get(model, CANONICAL_BATCH_BY_CX).get(spec.cx)
+    if spec.batch_label != canonical_batch:
+        return False
+    point = {
+        "model": model,
+        "cx": spec.cx,
+        "family": family_label_from_name(name),
+    }
+    return is_canonical_family(point)
 
 
 def plot_cx(points, model: str, cx: int, out_path: Path, window_m: int) -> None:
@@ -422,6 +398,7 @@ def main() -> None:
         current_family=False,
         exclude_current_family=False,
         states=None if args.include_running else ["finished"],
+        spec_filter=None if args.include_noncanonical else should_load_canonical_history,
     )
     rows = load_rows(loader_args)
     points = summarize_rows(rows, args.window_m, not args.include_running, not args.include_noncanonical)

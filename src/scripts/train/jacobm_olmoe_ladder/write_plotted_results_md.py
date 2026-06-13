@@ -37,7 +37,7 @@ BASELINE_NAME_REGEX = (
 )
 MODEL_LABELS = {
     "275m": "275M",
-    "mid_480m": "480M",
+    "480m": "480M",
     "810m": "810M",
     "1p2b": "1.2B",
 }

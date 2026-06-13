@@ -95,8 +95,8 @@ def cx_from_name(name: str) -> int | None:
 def model_from_name(name: str) -> str | None:
     if "tiny-275m" in name or "eg-275m" in name:
         return "275m"
-    if "mid_480m" in name or "mid-480m" in name or "m480-cx" in name:
-        return "mid_480m"
+    if "mid_480m" in name or "mid-480m" in name or "m480-cx" in name or "eg-480m" in name:
+        return "480m"
     if "810m" in name:
         return "810m"
     if "1p2b" in name:
@@ -146,13 +146,13 @@ def baseline_variant_name(name: str) -> str | None:
 
 def expert_variant_name(name: str) -> str | None:
     if "eg24e2k" in name:
-        if "cx2" in name and "b384k" in name:
+        if "cx2" in name and ("b384k" in name or "eg-480m" in name):
             return "coarse_24e_top2_b384k"
         if "cx2" in name:
             return "coarse_24e_top2_b512k"
         return "coarse_24e_top2"
     if "eg96e8k" in name:
-        if "cx2" in name and "b384k" in name:
+        if "cx2" in name and ("b384k" in name or "eg-480m" in name):
             return "fine_96e_top8_b384k"
         if "cx2" in name:
             return "fine_96e_top8_b512k"
@@ -243,7 +243,7 @@ def load_points(
             )
         )
 
-    model_order = {"275m": 0, "mid_480m": 1, "810m": 2, "1p2b": 3}
+    model_order = {"275m": 0, "480m": 1, "810m": 2, "1p2b": 3}
     points.sort(key=lambda p: (model_order.get(p.model, 99), p.cx, p.variant, p.lr, p.name))
     return points
 
@@ -397,7 +397,7 @@ def main() -> None:
         point.model for point in points if not point.variant.startswith("baseline_")
     }
     points = [point for point in points if point.model in models_with_expert_runs]
-    model_order = {"275m": 0, "mid_480m": 1, "810m": 2, "1p2b": 3}
+    model_order = {"275m": 0, "480m": 1, "810m": 2, "1p2b": 3}
     for model in sorted({point.model for point in points}, key=lambda m: model_order.get(m, 99)):
         for cx in sorted({point.cx for point in points if point.model == model}):
             plot_cx(points, model, cx, args.output_dir / f"{model}_cx{cx}_uplot.png", args.window_m)

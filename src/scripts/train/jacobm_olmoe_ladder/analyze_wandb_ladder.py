@@ -22,6 +22,7 @@ from typing import Iterable
 
 import wandb
 
+from ladder_run_metadata import RunSpec, parse_run_spec
 from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
 
 
@@ -29,28 +30,6 @@ WANDB_PATH = "ai2-llm/jacobm-olmoe-ladder"
 LOSS_KEY = "train/CE loss"
 TOKENS_KEY = "throughput/total tokens"
 FIELDS = ["_step", LOSS_KEY, TOKENS_KEY]
-
-CURRENT_FAMILY_MARKERS = (
-    "b384k-gpu2-ep1mb8",
-    "gpu2-ep1mb16",
-    "gpu2-ep1mb8",
-    "gpu4-ep1mb4",
-    "gpu4-ep1mb8",
-    "gpu4-ep1mb16",
-    "gpu8-ep1mb4",
-    "gpu8-ep1mb16",
-)
-LR_TAG_RE = re.compile(r"lr([0-9]+(?:\.[0-9]+)?e-[0-9]+)")
-
-
-@dataclass(frozen=True)
-class RunSpec:
-    cx: int
-    batch_label: str
-    batch_tokens: int
-    lr_tag: str
-    lr: float
-    current_family: bool
 
 
 @dataclass(frozen=True)
@@ -70,49 +49,6 @@ class RunRow:
     history: list[HistoryPoint]
 
 
-def parse_run_spec(name: str) -> RunSpec | None:
-    if (
-        "olmoe3-tiny-275m-cx" not in name
-        and "olmoe3-moe-a0-810m-cx" not in name
-        and "olmoe3-moe-a0-1p2b-cx" not in name
-        and "olmoe3-810m-cx" not in name
-        and "m480-cx" not in name
-    ):
-        return None
-
-    cx_match = re.search(r"cx([0-9]+)", name)
-    lr_match = LR_TAG_RE.search(name)
-    if cx_match is None or lr_match is None:
-        return None
-
-    if "b128k" in name:
-        batch_label, batch_tokens = "128k", 131_072
-    elif "b256k" in name:
-        batch_label, batch_tokens = "256k", 262_144
-    elif "b384k" in name:
-        batch_label, batch_tokens = "384k", 393_216
-    elif "b512k" in name:
-        batch_label, batch_tokens = "512k", 524_288
-    elif "b768k" in name:
-        batch_label, batch_tokens = "768k", 786_432
-    elif "b1m" in name:
-        batch_label, batch_tokens = "1M", 1_048_576
-    elif "cx1-lr" in name:
-        batch_label, batch_tokens = "2M", 2_097_152
-    else:
-        return None
-
-    lr_tag = lr_match.group(1)
-    return RunSpec(
-        cx=int(cx_match.group(1)),
-        batch_label=batch_label,
-        batch_tokens=batch_tokens,
-        lr_tag=lr_tag,
-        lr=float(lr_tag),
-        current_family=any(marker in name for marker in CURRENT_FAMILY_MARKERS),
-    )
-
-
 def mean_loss_in_window(history: list[HistoryPoint], end_tokens: int, window_tokens: int) -> tuple[float, int]:
     start_tokens = end_tokens - window_tokens
     vals = [point.loss for point in history if start_tokens <= point.tokens <= end_tokens]
@@ -125,12 +61,13 @@ def matched_point(history: list[HistoryPoint], target_tokens: int) -> HistoryPoi
 
 
 def load_rows(args: argparse.Namespace) -> list[RunRow]:
-    api = wandb.Api()
+    api = wandb.Api(timeout=90)
     name_re = re.compile(args.name_regex)
     rows: list[RunRow] = []
     run_ids = set(getattr(args, "run_ids", None) or [])
+    filters = None if run_ids else {"display_name": {"$regex": args.name_regex}}
 
-    for run in api.runs(args.project):
+    for run in api.runs(args.project, filters=filters):
         if run_ids and run.id not in run_ids:
             continue
         name = run.display_name
@@ -145,6 +82,9 @@ def load_rows(args: argparse.Namespace) -> list[RunRow]:
         if args.exclude_current_family and spec.current_family:
             continue
         if args.states and run.state not in args.states:
+            continue
+        spec_filter = getattr(args, "spec_filter", None)
+        if spec_filter is not None and not spec_filter(name, spec):
             continue
 
         history: list[HistoryPoint] = []

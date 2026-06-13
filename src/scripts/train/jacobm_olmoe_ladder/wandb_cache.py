@@ -6,15 +6,18 @@ from typing import Any
 
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "olmoe3_ladder" / "wandb_histories"
+CACHE_VERSION = 2
 
 
 def run_cache_key(project: str, run_id: str) -> str:
     return f"{project.replace('/', '__')}__{run_id}.json"
 
 
-def run_cache_metadata(run: Any) -> dict[str, Any]:
+def run_cache_metadata(run: Any, keys: list[str] | None = None) -> dict[str, Any]:
     summary = dict(run.summary)
     return {
+        "cache_version": CACHE_VERSION,
+        "history_keys": list(keys) if keys is not None else None,
         "run_id": run.id,
         "state": run.state,
         "summary_step": summary.get("_step"),
@@ -63,6 +66,7 @@ def read_history_from_cache(
     allow_stale: bool = False,
     require_complete: bool = False,
     tokens_key: str = "throughput/total tokens",
+    keys: list[str] | None = None,
 ) -> list[dict[str, Any]] | None:
     cache_path = cache_dir / run_cache_key(project, run.id)
     if not cache_path.exists():
@@ -72,7 +76,13 @@ def read_history_from_cache(
         cached = json.load(f)
 
     cached_meta = cached.get("metadata", {})
-    current_meta = run_cache_metadata(run)
+    current_meta = run_cache_metadata(run, keys)
+    if cached_meta.get("cache_version") != CACHE_VERSION:
+        return None
+    if keys is not None:
+        cached_keys = cached_meta.get("history_keys")
+        if cached_keys is None or not set(keys).issubset(set(cached_keys)):
+            return None
     if cached_meta.get("state") != current_meta["state"]:
         return None
     if not allow_stale and cached_meta.get("summary_step") != current_meta["summary_step"]:
@@ -85,11 +95,18 @@ def read_history_from_cache(
     return history
 
 
-def write_history_to_cache(cache_dir: Path, project: str, run: Any, history: list[dict[str, Any]]) -> None:
+def write_history_to_cache(
+    cache_dir: Path,
+    project: str,
+    run: Any,
+    history: list[dict[str, Any]],
+    *,
+    keys: list[str] | None = None,
+) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / run_cache_key(project, run.id)
     payload = {
-        "metadata": run_cache_metadata(run),
+        "metadata": run_cache_metadata(run, keys),
         "display_name": run.display_name,
         "url": run.url,
         "history": history,
@@ -120,13 +137,15 @@ def scan_history_cached(
             cache_dir,
             project,
             run,
+            allow_stale=not refresh_stale_cache,
             require_complete=refresh_stale_cache,
             tokens_key=tokens_key,
+            keys=keys,
         )
         if cached is not None:
             return cached
 
     history = [dict(row) for row in run.scan_history(keys=keys, page_size=page_size)]
     if run.state == "finished":
-        write_history_to_cache(cache_dir, project, run, history)
+        write_history_to_cache(cache_dir, project, run, history, keys=keys)
     return history
