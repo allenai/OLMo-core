@@ -16,6 +16,7 @@ EVAL_INTERVAL="${EVAL_INTERVAL:-2000}"
 SPARSITY_VARIANTS="${SPARSITY_VARIANTS:-high huge}"
 CX_LIST="${CX_LIST:-1 4}"
 CX1_LR_SPECS="${CX1_LR_SPECS:-1e-3:lr1e-3 2e-3:lr2e-3 4e-3:lr4e-3}"
+CX2_LR_SPECS="${CX2_LR_SPECS:-9e-4:lr9e-4 1.8e-3:lr1.8e-3 3.6e-3:lr3.6e-3}"
 CX4_LR_SPECS="${CX4_LR_SPECS:-8e-4:lr8e-4 1.6e-3:lr1.6e-3 3.2e-3:lr3.2e-3}"
 
 mkdir -p "${LOG_DIR}"
@@ -138,6 +139,11 @@ for spec in "${variant_specs[@]}"; do
       1)
         for lr_spec in ${CX1_LR_SPECS}; do
           launch_one "${total_sparsity}" "${sp_tag}" 1 b256k 32 "${lr_spec%%:*}" "${lr_spec##*:}"
+        done
+        ;;
+      2)
+        for lr_spec in ${CX2_LR_SPECS}; do
+          launch_one "${total_sparsity}" "${sp_tag}" 2 b384k 48 "${lr_spec%%:*}" "${lr_spec##*:}"
         done
         ;;
       4)

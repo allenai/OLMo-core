@@ -606,6 +606,29 @@ Smoke tests:
 | `sp-275m-cx4-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGRN09127CB35E5SGS0B03 | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
 | `sp-275m-cx4-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGS0RHZ743VAGKQ9R85JG5 | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
 
+
+275M Cx1/Cx2 LR-transfer checks resumed on 2026-06-13:
+
+This resumes the total-sparsity LR-transfer evidence set before any larger
+cluster flood. The previously completed `sp-275m-cx1-sp96e4k-lr1e-3-r1` counts
+as the low-LR high-total Cx1 point; the old stopped r1 jobs remain ignored.
+Fresh Cx1 relaunches use `r2`, while the repaired canonical Cx2 `b384k` runs
+start at `r1`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx1-sp96e4k-lr2e-3-r2` | `high_total_96e_top4` | 1 | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15EK0R6DYBCS0TA3NX5J07 | Queued/created on 2026-06-13. Completes high-total Cx1 grid alongside the finished `lr1e-3-r1` point. |
+| `sp-275m-cx1-sp96e4k-lr4e-3-r2` | `high_total_96e_top4` | 1 | 4e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15EZWFKD0KRMGEZ4DR85MH | Queued/created on 2026-06-13. Completes high-total Cx1 grid alongside the finished `lr1e-3-r1` point. |
+| `sp-275m-cx1-sp192e4k-lr1e-3-r2` | `huge_total_192e_top4` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15FXW5R6Y06XY494A1MXB1 | Queued/created on 2026-06-13 after old r1 was stopped before useful training. |
+| `sp-275m-cx1-sp192e4k-lr2e-3-r2` | `huge_total_192e_top4` | 1 | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15G9J3NZQ7X8T76G0FCN5D | Queued/created on 2026-06-13 after old r1 was stopped before useful training. |
+| `sp-275m-cx1-sp192e4k-lr4e-3-r2` | `huge_total_192e_top4` | 1 | 4e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15GMWKFHEPJP7MWWK253RZ | Queued/created on 2026-06-13 after old r1 was stopped before useful training. |
+| `sp-275m-cx2-sp96e4k-lr9e-4-r1` | `high_total_96e_top4` | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15HAHX96M7CKMD38ZJNQWT | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp96e4k-lr1.8e-3-r1` | `high_total_96e_top4` | 2 | 1.8e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15HP581N11XB2BTWH46P0G | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp96e4k-lr3.6e-3-r1` | `high_total_96e_top4` | 2 | 3.6e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15J23VG0CCGZZJTN7MADZF | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp192e4k-lr9e-4-r1` | `huge_total_192e_top4` | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15JE1H1ZM8XA31256RPY5A | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp192e4k-lr1.8e-3-r1` | `huge_total_192e_top4` | 2 | 1.8e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15JSXHYXWVJ9AFDH3H5QJ8 | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp192e4k-lr3.6e-3-r1` | `huge_total_192e_top4` | 2 | 3.6e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15K5KX4JYW4VSZD8NJV4GG | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
+
 ## 2026-06-12 Stable-Name Launch Bundle
 
 This bundle uses semantic, resume-stable names: model/variant, Cx, batch policy

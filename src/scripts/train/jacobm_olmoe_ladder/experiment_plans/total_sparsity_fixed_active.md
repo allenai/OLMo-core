@@ -198,12 +198,14 @@ we explicitly need a resume-stable control rerun.
 There was a partial early total-sparsity wave. Treat it as noncanonical except
 where explicitly useful for sanity checking:
 
-- `sp96e4k` 275M Cx1 `1e-3` completed and can be inspected as a smoke/sanity
-  result.
-- Most other tracked total-sparsity Cx1/Cx4 jobs were manually canceled.
+- `sp96e4k` 275M Cx1 `1e-3` completed and now counts as the low-LR
+  high-total Cx1 point.
+- Most other tracked total-sparsity Cx1/Cx4 r1 jobs were manually canceled;
+  stopped Cx1 points were relaunched as r2 on 2026-06-13.
+- Cx1 and repaired `b384k` Cx2 LR-transfer checks were queued on 2026-06-13.
 - No complete tracked Cx8 sparsity result should be used as a final point.
 
-For the real experiment, relaunch the full matrix below with repaired Cx2 and
+For the real experiment, continue the full matrix below with repaired Cx2 and
 stable semantic names.
 
 ### LR Policy
@@ -233,10 +235,10 @@ four Cx values, three LRs each.
 
 | Model | Variant | Cx | LRs | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Notes |
 | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| 275M | `sp96e4k` | 1 | `1e-3`, `2e-3`, `4e-3` | 262,144 | 32 | 4 | 1 | 4 | Conservative high-total setting; old partial Cx1 result is sanity only. |
-| 275M | `sp192e4k` | 1 | `1e-3`, `2e-3`, `4e-3` | 262,144 | 32 | 4 | 1 | 4 | Smoke first if memory pressure is unknown. |
-| 275M | `sp96e4k` | 2 | `9e-4`, `1.8e-3`, `3.6e-3` | 393,216 | 48 | 4 | 1 | 4 | Repaired canonical `b384k`; add/update launcher before queueing. |
-| 275M | `sp192e4k` | 2 | `9e-4`, `1.8e-3`, `3.6e-3` | 393,216 | 48 | 4 | 1 | 4 | Repaired canonical `b384k`; add/update launcher before queueing. |
+| 275M | `sp96e4k` | 1 | `1e-3`, `2e-3`, `4e-3` | 262,144 | 32 | 4 | 1 | 4 | Queued/covered; `1e-3-r1` finished, `2e-3/4e-3` relaunched as r2. |
+| 275M | `sp192e4k` | 1 | `1e-3`, `2e-3`, `4e-3` | 262,144 | 32 | 4 | 1 | 4 | Queued as r2 on 2026-06-13 after old r1 jobs were stopped. |
+| 275M | `sp96e4k` | 2 | `9e-4`, `1.8e-3`, `3.6e-3` | 393,216 | 48 | 4 | 1 | 4 | Queued on 2026-06-13 with repaired canonical `b384k`. |
+| 275M | `sp192e4k` | 2 | `9e-4`, `1.8e-3`, `3.6e-3` | 393,216 | 48 | 4 | 1 | 4 | Queued on 2026-06-13 with repaired canonical `b384k`. |
 | 275M | `sp96e4k` | 4 | `8e-4`, `1.6e-3`, `3.2e-3` | 524,288 | 64 | 4 | 1 | 4 | Matches existing launcher shape. |
 | 275M | `sp192e4k` | 4 | `8e-4`, `1.6e-3`, `3.2e-3` | 524,288 | 64 | 4 | 1 | 4 | Matches existing launcher shape. |
 | 275M | `sp96e4k` | 8 | `8e-4`, `1.6e-3`, `3.2e-3` | 786,432 | 96 | 8 | 1 | 4 | Existing Cx8 launcher shape. |
@@ -276,8 +278,9 @@ If compute arrives in a burst, use this order:
 1. Smoke `sp96e4k` and `sp192e4k` at the largest memory-pressure cell we plan to
    launch immediately. For 275M-only launch, smoke 275M Cx1/Cx2 is enough; for
    broad launch, smoke 480M or 810M too.
-2. Queue the full 275M LR-tuning matrix above. This is the most important
-   sparsity work because it calibrates LR transfer.
+2. Queue the full 275M LR-tuning matrix above. Cx1/Cx2 were queued on
+   2026-06-13; Cx4/Cx8 remain next when compute allows. This is the most
+   important sparsity work because it calibrates LR transfer.
 3. If 275M Cx1/Cx4 complete first and look normal, queue 480M Cx1/Cx4 single
    points for both variants while waiting for 275M Cx2/Cx8.
 4. After all 275M real Cx values finish, queue the full 480M and 810M
@@ -352,11 +355,9 @@ Record the systems change in tags and `RUNS.md`, not by renaming the run.
 
 The current scripts are useful but not sufficient for the new full plan:
 
-- `experiments/total_sparsity/launch_275m_cx1_cx4.sh` covers Cx1/Cx4 only and
-  uses the right LR grids for those Cx values.
+- `experiments/total_sparsity/launch_275m_cx1_cx4.sh` now covers Cx1/Cx2/Cx4
+  and uses the repaired `b384k` Cx2 LR grid.
 - `experiments/total_sparsity/launch_275m_cx8.sh` covers Cx8 only.
-- Add a repaired Cx2 launcher or replace these with one explicit full-ladder
-  launcher that supports `CX_LIST="1 2 4 8"` and the `b384k` Cx2 grid.
 - Add 480M, 810M, and 1.2B promotion launchers that use the semantic names and
   systems tags above.
 
