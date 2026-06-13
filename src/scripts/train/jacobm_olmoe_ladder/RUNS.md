@@ -644,3 +644,16 @@ immediately and should be ignored: `01KTZ0WKC2KM7YMBFJRG3SEJ3H`,
 | `eg-480m-cx2-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 2 | 1e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTZ18Z8EK00WCE2G3AVCFCNM | Running at 2026-06-13 status check. W&B `fzk2affn`, 7.058B tokens, live CE summary `2.7996`. Predicted-LR full-ladder run with repaired `b384k` Cx2. Runtime argument uses `--model-size=mid_480m` for compatibility. |
 | `eg-480m-cx4-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTZ19B5WKD9EEMGWYRH3HQ7B | Running at 2026-06-13 status check. W&B `ezokso90`, 7.711B tokens, live CE summary `2.6682`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
 | `eg-480m-cx8-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTZ19QVD4G1MJN612YENYA7T | Running at 2026-06-13 status check. W&B `8676ezla`, 10.789B tokens, live CE summary `2.7340`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+
+810M and 1.2B expert-granularity baseline-best LR promotions:
+
+These are single-point promoted checks for the two main expert-granularity variants. They use the best observed baseline LR at the same size/Cx because the fitted EG architecture LR multipliers are effectively 1. Systems settings follow the repaired canonical policy: Cx2 uses `b384k`; systems settings are tags/config, not name components.
+
+| Name | Variant | Model | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-810m-cx2-eg24e2k-lr5.6e-4-r1` | `coarse_24e_top2` | `810m` | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KV12PKBDP6AKDJKP8CPA4R6P | Queued/created on 2026-06-13. Uses repaired canonical `b384k` Cx2 and baseline best observed 810M Cx2 LR. |
+| `eg-810m-cx2-eg96e8k-lr5.6e-4-r1` | `fine_96e_top8` | `810m` | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KV12XM4AQ2JPT8BCEKYZWSXS | Queued/created on 2026-06-13. Uses repaired canonical `b384k` Cx2 and baseline best observed 810M Cx2 LR. |
+| `eg-810m-cx8-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `810m` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV12XYVN3MPGN7MMBAGWAV2N | Queued/created on 2026-06-13. Uses baseline best observed 810M Cx8 LR. |
+| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `810m` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV12YBA3E82W81TTP2TBGGJ7 | Queued/created on 2026-06-13. Uses baseline best observed 810M Cx8 LR. |
+| `eg-1p2b-cx1-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KV12YPMFZA0QA35RGNRVSAC8 | Queued/created on 2026-06-13. Uses baseline best observed 1.2B Cx1 LR. |
+| `eg-1p2b-cx1-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KV12Z1ZNT7TR9814FRT7MR9W | Queued/created on 2026-06-13. Uses baseline best observed 1.2B Cx1 LR. |
