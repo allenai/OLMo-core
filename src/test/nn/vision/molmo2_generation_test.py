@@ -331,3 +331,116 @@ def test_molmo2_generation_parity():
     assert any(
         c.isalpha() for c in our_text
     ), f"Decoded text looks empty or non-linguistic: {our_text!r}"
+
+
+@requires_gpu
+def test_molmo2_image_bidirectional_attention_parity():
+    """Pin HF Molmo2's bidirectional image-token attention.
+
+    With multiple image tokens, HF attends **bidirectionally** among them
+    (driven by ``token_type_ids``) while text stays causal. This test feeds the
+    same 196-image-token input to HF and to our converted model and checks the
+    last-token logits:
+
+    * passing ``token_type_ids`` reproduces HF's logits (bidirectional), and
+    * omitting it (pure causal) is measurably *worse* — which is exactly the gap
+      this feature closes. The second assertion guards against the test silently
+      regressing to a causal-vs-causal comparison (the blind spot of the
+      single-image-token full-pipeline parity test).
+    """
+    if not _hf_cache_has(_MODEL_ID):
+        pytest.skip(f"{_MODEL_ID} not in HF cache")
+
+    device = torch.device("cuda")
+    dtype = torch.bfloat16
+
+    ensure_default_rope_registered()
+    from transformers import AutoModelForImageTextToText, AutoTokenizer
+
+    try:
+        hf = AutoModelForImageTextToText.from_pretrained(
+            _MODEL_ID, trust_remote_code=True, local_files_only=True
+        )
+        tok = AutoTokenizer.from_pretrained(
+            _MODEL_ID, trust_remote_code=True, local_files_only=True
+        )
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"Could not load {_MODEL_ID}: {e}")
+
+    reinit_rope_buffers(hf)
+
+    cfg = molmo2_config_from_hf_config(hf.config)
+    ours = MultimodalLM(cfg, init_device="meta")
+    ours.to_empty(device=torch.device("cpu"))
+    ours.load_state_dict(molmo2_hf_state_dict_to_multimodal_lm(hf.state_dict(), cfg), strict=False)
+    hf = hf.to(device=device, dtype=dtype).eval()
+    ours = ours.to(device=device, dtype=dtype).eval()
+
+    # Synthetic image + prompt → 196 <im_patch> tokens.
+    np.random.seed(42)
+    gradient = np.zeros((64, 64, 3), dtype=np.uint8)
+    gradient[:, :, 0] = np.linspace(0, 255, 64, dtype=np.uint8)
+    gradient[:, :, 1] = np.linspace(0, 200, 64, dtype=np.uint8)[np.newaxis, :].T
+    gradient[:, :, 2] = 100
+    pil_img = Image.fromarray(gradient)
+    pixel_values_hf, images_ours, pooling_idx, image_grids, image_num_crops = _preprocess_image_pil(
+        pil_img, dtype=dtype, device=device
+    )
+    input_ids = _build_input_ids(tok, _build_image_token_ids(), device=device)
+
+    # token_type_ids: 1 for image structural tokens (matches HF's image_token_ids
+    # set), 0 for text. This is what triggers HF's bidirectional image mask.
+    image_id_set = torch.tensor(
+        [_IM_PATCH_ID, _IM_COL_ID, _IM_START_ID, _LOW_RES_IM_START_ID, _IM_END_ID],
+        device=device,
+    )
+    token_type_ids = torch.isin(input_ids, image_id_set).long()
+    assert int(token_type_ids.sum()) > 1, "need >1 image token to exercise bidirectionality"
+
+    # HF reference WITH bidirectional image attention.
+    with torch.inference_mode():
+        hf_logits = (
+            hf(
+                input_ids=input_ids,
+                pixel_values=pixel_values_hf,
+                image_token_pooling=pooling_idx.squeeze(0),
+                image_grids=image_grids,
+                image_num_crops=image_num_crops,
+                token_type_ids=token_type_ids,
+                use_cache=False,
+            )
+            .logits[0, -1]
+            .float()
+        )
+    base_vocab = hf_logits.shape[0]
+
+    with torch.inference_mode():
+        our_bidir = ours(
+            input_ids=input_ids,
+            images=images_ours,
+            pooled_patches_idx=pooling_idx,
+            token_type_ids=token_type_ids,
+            logits_to_keep=1,
+        )[0, -1].float()[:base_vocab]
+        our_causal = ours(
+            input_ids=input_ids,
+            images=images_ours,
+            pooled_patches_idx=pooling_idx,
+            logits_to_keep=1,
+        )[0, -1].float()[:base_vocab]
+
+    bidir_diff = (hf_logits - our_bidir).abs().max().item()
+    causal_diff = (hf_logits - our_causal).abs().max().item()
+
+    # (1) Bidirectional reproduces HF.
+    assert bidir_diff < 5.0, (
+        f"bidirectional logits diverge from HF: max abs diff = {bidir_diff:.3e} "
+        f"(threshold 5.0 in bf16)"
+    )
+    # (2) The gap is real: pure-causal is measurably worse than bidirectional.
+    #     If this fails, the test has regressed to causal-vs-causal and no longer
+    #     exercises image-token bidirectional attention.
+    assert causal_diff > bidir_diff, (
+        f"causal logits match HF as well as bidirectional (causal={causal_diff:.3e}, "
+        f"bidir={bidir_diff:.3e}); test no longer pins the bidirectional gap"
+    )

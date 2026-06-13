@@ -532,6 +532,7 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        or_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -561,6 +562,11 @@ class Transformer(nn.Module):
                 "shards `input_ids`/`labels`/RoPE while `input_embeddings` stays full-size, which "
                 "would misalign the hidden states."
             )
+        if or_mask is not None and self._cp_load_balancer is not None:
+            raise RuntimeError(
+                "`or_mask` is not supported with context parallelism: the full-size "
+                "(seq, seq) mask would misalign with the sequence-sharded hidden states."
+            )
 
         (
             input_ids,
@@ -579,6 +585,12 @@ class Transformer(nn.Module):
             logits_to_keep=logits_to_keep,
             **kwargs,
         )
+
+        # Bidirectional / custom attention allow-mask (e.g. for image tokens),
+        # OR'd onto the causal base inside each block's attention. Passed through
+        # to every block; only the dense SDPA backend honors it.
+        if or_mask is not None:
+            all_block_kwargs["or_mask"] = move_to_device(or_mask, self.device)
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
