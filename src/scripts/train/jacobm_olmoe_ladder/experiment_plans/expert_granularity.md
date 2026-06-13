@@ -7,11 +7,30 @@ additional context.
 
 ## Status
 
-Planned, not yet implemented or launched.
+In progress. The core 275M ladder is complete for the serious variants, 480M is
+partly running, and 810M / 1.2B promotions are queued or partially complete.
+Older launch-gating language in this file is historical; use this status block,
+`../RUNS.md`, and `../PLOTTED_RESULTS.md` for current state.
 
-Baseline runs are still in progress as of 2026-06-07. Do not launch this
-experiment until the current baseline ladder has enough completed evidence to
-define baseline LR centers and compare against current A0.
+### Current Remaining Main EG Work, 2026-06-13
+
+After the 2026-06-13 promotion launch, the main expert-granularity matrix has
+these queued or running pieces:
+
+- 480M predicted-LR full ladder jobs are still running for several Cx/variant
+  cells.
+- 810M Cx2 and Cx8 single-point promotions are queued for both serious
+  variants, using the baseline best observed LR at the same size/Cx.
+- 1.2B Cx1 single-point promotions are queued for both serious variants, using
+  the 1.2B Cx1 baseline best observed LR `4e-4`.
+
+If these runs look normal and the current 1.2B baseline anchors settle as
+expected, the remaining main expert-granularity work should be only 1.2B
+Cx2/Cx4/Cx8 for both serious variants (`coarse_24e_top2` and
+`fine_96e_top8`). Use baseline best observed LRs when the architecture LR
+multipliers remain effectively 1, because this gives the cleanest same-LR
+architecture comparison. Keep Cx16 reserved for important or unclear cases.
+See `../RUNS.md` for the exact Beaker IDs.
 
 ## Goal
 

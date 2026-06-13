@@ -7,12 +7,15 @@ expert granularity.
 
 ## Status
 
-Planned, not yet implemented or launched.
+Launch-ready after a small launcher refresh. The code supports
+`--total-sparsity`; the stale part is mostly launch orchestration and old Cx2
+batch assumptions in early notes/scripts.
 
-Run after, or alongside, the first expert-granularity wave if extra compute is
-available. Prefer using the best current expert geometry as the default MoE
-block once it is selected; until then, the clean first version should use the
-baseline 48E/top4 geometry family with only expert count changed.
+Run after the current expert-granularity queue drains, or alongside it if new
+compute appears. Treat this as an independent architecture ablation on top of
+the baseline 48E/top4 geometry: keep `top_k=4` and `moe_hidden_size=d_model`,
+change only total expert count, and do not stack it on the expert-granularity
+winner until a later integration run.
 
 The first wave should focus on *more* total expert capacity, not less. Our
 baseline is already relatively high-active compared with recent sparse MoEs, so
@@ -126,35 +129,30 @@ Baseline size fields:
 | Size | `d_model` | `d_attn` | Layers | Heads | KV heads | `top_k` | `moe_hidden_size` | Shared hidden | Dense MLP |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 275M | 768 | 1024 | 12 | 8 | 4 | 4 | 768 | 384 | 3456 |
-| mid_480m | 1024 | 1024 | 16 | 8 | 4 | 4 | 1024 | 512 | 4608 |
+| 480M (`mid_480m` code alias) | 1024 | 1024 | 16 | 8 | 4 | 4 | 1024 | 512 | 4608 |
 | 810M | 1280 | 1536 | 20 | 12 | 6 | 4 | 1280 | 640 | 5760 |
 | 1.2B | 1536 | 2048 | 22 | 16 | 8 | 4 | 1536 | 768 | 6912 |
 
-The `mid_480m` row matches the implemented `MODEL_SIZE_SPECS` in
-`tiny_275m.py`.
+The 480M row uses the implemented `mid_480m` code alias in
+`tiny_275m.py` / `moe_a0_ladder.py`.
 
-## Required Code Changes
+## Implemented Code Support
 
-Add a total-sparsity variant option to
-`src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py`.
-
-Recommended CLI:
+The training script already supports this axis:
 
 ```text
---total-sparsity {baseline_48e_top4,low_total_24e_top4,high_total_96e_top4,huge_total_192e_top4}
+--total-sparsity {baseline_48e_top4,high_total_96e_top4,huge_total_192e_top4,low_total_24e_top4}
 ```
 
-Recommended implementation:
+Implementation notes:
 
-1. Keep `MODEL_SIZE_SPECS` as the size/backbone table.
-2. Add a total-sparsity spec table that overrides `num_experts` only.
-3. Keep `top_k`, `moe_hidden_size`, shared expert, dense prefix, and attention
+1. `MODEL_SIZE_SPECS` remains the size/backbone table.
+2. `TOTAL_SPARSITY_SPECS` overrides `num_experts` only.
+3. `top_k`, `moe_hidden_size`, shared expert, dense prefix, and attention stay
    unchanged.
-4. Add compact run-name tags:
-   - `sp24e4k`
-   - `sp48e4k`
-   - `sp96e4k`
-   - `sp192e4k`
+4. Compact tags are `sp24e4k`, `sp48e4k`, `sp96e4k`, and `sp192e4k`.
+5. `--expert-geometry` and `--total-sparsity` are independent ablation axes;
+   do not combine them in a first-wave run.
 
 Do not change existing baseline run names retroactively.
 
@@ -170,49 +168,199 @@ Before launch, instantiate each variant locally and record:
 - routed active hidden units;
 - routed total hidden units.
 
-Replace the approximate table above with exact dry-run counts after
-implementation.
+Keep the approximate table above as planning context, but replace it with exact
+dry-run counts for 480M, 810M, and 1.2B before launching those sizes.
 
-## Launch Settings
+## Launch-Ready Run Plan, 2026-06-13
 
-Start at 275M.
+This is the current source of truth for what to queue when sparsity becomes the
+next active experiment. It supersedes older partial-wave notes and old Cx2
+`b512k` references.
 
-Recommended first wave:
+### Scientific Conditions
 
-| Variant | Cx | Purpose |
-| --- | ---: | --- |
-| `high_total_96e_top4` | 1 and 4 | Does 2x total capacity help? |
-| `huge_total_192e_top4` | 1 and 4 | Does 4x total capacity help enough to justify cost? |
+Run the two serious higher-total variants:
 
-Do not run `low_total_24e_top4` in the first wave. Save less-sparse variants
-for later only if we need to map the full curve or diagnose whether total
-capacity is actively hurting.
+| Variant | Tag | Experts | `top_k` | `moe_hidden_size` | First-wave role |
+| --- | --- | ---: | ---: | ---: | --- |
+| `high_total_96e_top4` | `sp96e4k` | 96 | 4 | `d_model` | Main 2x-total-capacity point. |
+| `huge_total_192e_top4` | `sp192e4k` | 192 | 4 | `d_model` | Main 4x-total-capacity point. |
 
-Use current canonical baseline systems settings as the starting point, but note
-that total/optimizer memory grows with expert count even when active compute is
-fixed. For the 275M first wave, use 4 GPUs for Cx1/Cx4 and 8 GPUs for Cx8 unless
-smokes prove a smaller setting is healthy and worth using.
+Do not launch `low_total_24e_top4` / `sp24e4k` in the first real wave. It is a
+less-sparse diagnostic, not part of the initial decision surface.
 
-| Size | Cx1 | Cx2 | Cx4 | Cx8 |
-| --- | ---: | ---: | ---: | ---: |
-| 275M total-sparsity first wave | 4 GPUs | 4 GPUs | 4 GPUs | 8 GPUs |
-| mid_480m | 4 GPUs | 4 GPUs | 4 GPUs | 8 GPUs |
-| 810M | 8 GPUs | 8 GPUs | 8 GPUs | 16 GPUs |
-| 1.2B | 8 GPUs | 8 GPUs | 16 GPUs | 32 GPUs |
+The baseline comparison is the existing `baseline_48e_top4` ladder at the same
+model size and Cx. Do not create new baseline runs under `sp48e4k` names unless
+we explicitly need a resume-stable control rerun.
 
-EP stays `1` unless memory forces a smoke-tested fallback. Higher-total variants
-may need lower microbatch or more GPUs for memory even though active compute is
-fixed; smoke `high_total_96e_top4` and `huge_total_192e_top4` before full runs.
+### Current Historical Sparsity Runs
 
-Implemented launchers:
+There was a partial early total-sparsity wave. Treat it as noncanonical except
+where explicitly useful for sanity checking:
+
+- `sp96e4k` 275M Cx1 `1e-3` completed and can be inspected as a smoke/sanity
+  result.
+- Most other tracked total-sparsity Cx1/Cx4 jobs were manually canceled.
+- No complete tracked Cx8 sparsity result should be used as a final point.
+
+For the real experiment, relaunch the full matrix below with repaired Cx2 and
+stable semantic names.
+
+### LR Policy
+
+At 275M, run full three-point U-curves for both variants and every real Cx:
+Cx1/Cx2/Cx4/Cx8. Center on the current 275M baseline best/fitted LR and use
+factor-of-two spacing. Use repaired `b384k` for Cx2.
+
+After 275M completes, fit each variant's local LR multiplier per Cx if the
+curve brackets cleanly:
 
 ```text
-src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_smoke.sh
-src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx1_cx4.sh
-src/scripts/train/jacobm_olmoe_ladder/experiments/total_sparsity/launch_275m_cx8.sh
+m_variant(Cx) = lr*_variant_275m(Cx) / lr*_baseline_275m(Cx)
+lr_variant(size, Cx) = m_variant(Cx) * lr_baseline(size, Cx)
 ```
 
-Checkpoint/eval settings:
+If the multipliers are effectively 1, use the baseline best observed LR for
+larger-size single-point promotions. That keeps the comparison directly
+interpretable: same size, same Cx, same LR, only total expert capacity changes.
+If a 275M curve lands on an edge, launch one bounded extension before promoting
+that Cx to larger sizes.
+
+### 275M Full LR-Tuning Matrix
+
+Queue these when compute is available. This is 24 jobs total: two variants,
+four Cx values, three LRs each.
+
+| Model | Variant | Cx | LRs | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Notes |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 275M | `sp96e4k` | 1 | `1e-3`, `2e-3`, `4e-3` | 262,144 | 32 | 4 | 1 | 4 | Conservative high-total setting; old partial Cx1 result is sanity only. |
+| 275M | `sp192e4k` | 1 | `1e-3`, `2e-3`, `4e-3` | 262,144 | 32 | 4 | 1 | 4 | Smoke first if memory pressure is unknown. |
+| 275M | `sp96e4k` | 2 | `9e-4`, `1.8e-3`, `3.6e-3` | 393,216 | 48 | 4 | 1 | 4 | Repaired canonical `b384k`; add/update launcher before queueing. |
+| 275M | `sp192e4k` | 2 | `9e-4`, `1.8e-3`, `3.6e-3` | 393,216 | 48 | 4 | 1 | 4 | Repaired canonical `b384k`; add/update launcher before queueing. |
+| 275M | `sp96e4k` | 4 | `8e-4`, `1.6e-3`, `3.2e-3` | 524,288 | 64 | 4 | 1 | 4 | Matches existing launcher shape. |
+| 275M | `sp192e4k` | 4 | `8e-4`, `1.6e-3`, `3.2e-3` | 524,288 | 64 | 4 | 1 | 4 | Matches existing launcher shape. |
+| 275M | `sp96e4k` | 8 | `8e-4`, `1.6e-3`, `3.2e-3` | 786,432 | 96 | 8 | 1 | 4 | Existing Cx8 launcher shape. |
+| 275M | `sp192e4k` | 8 | `8e-4`, `1.6e-3`, `3.2e-3` | 786,432 | 96 | 8 | 1 | 4 | Existing Cx8 launcher shape. |
+
+Cx16 is intentionally excluded. Reserve it for important or unclear cases after
+Cx1/Cx2/Cx4/Cx8 are interpreted.
+
+### Larger-Size Promotion Matrix
+
+Once 275M multipliers are known, run single-point promotions for both variants
+at all four model sizes and Cx1/Cx2/Cx4/Cx8. For 480M/810M/1.2B, do not run
+full LR sweeps unless the 275M transfer clearly fails or a promoted point looks
+surprisingly bad.
+
+If the 275M multipliers are effectively 1, the default LR table is:
+
+| Model | Cx1 LR | Cx2 LR | Cx4 LR | Cx8 LR | Notes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 480M | `1.2e-3` | `9e-4` | `8e-4` | `8e-4` | Use repaired `b384k` Cx2 and completed 480M baseline best observed LRs. |
+| 810M | `6e-4` | `5.6e-4` | `4e-4` | `4e-4` | Use repaired `b384k` Cx2; Cx8 baseline completed on 8 GPUs. |
+| 1.2B | `4e-4` | TBD | `3e-4` | TBD | Cx2 and one-node Cx8 baselines are still settling; fill in from best observed before launch. |
+
+Provisional 1.2B notes:
+
+- Cx2 baseline candidates are currently `1.5e-4`, `3e-4`, `6e-4`; choose the
+  best observed after the baseline jobs finish.
+- Cx8 should use the one-node `gpu8-ep1mb4` baseline family once the `2e-4` and
+  `8e-4` replacements finish. The old 4-node `4e-4` result is useful but should
+  not silently define the canonical systems setting if the one-node sweep lands
+  differently.
+
+### Promotion Queue Order
+
+If compute arrives in a burst, use this order:
+
+1. Smoke `sp96e4k` and `sp192e4k` at the largest memory-pressure cell we plan to
+   launch immediately. For 275M-only launch, smoke 275M Cx1/Cx2 is enough; for
+   broad launch, smoke 480M or 810M too.
+2. Queue the full 275M LR-tuning matrix above. This is the most important
+   sparsity work because it calibrates LR transfer.
+3. If 275M Cx1/Cx4 complete first and look normal, queue 480M Cx1/Cx4 single
+   points for both variants while waiting for 275M Cx2/Cx8.
+4. After all 275M real Cx values finish, queue the full 480M and 810M
+   Cx1/Cx2/Cx4/Cx8 single-point matrices for both variants.
+5. Queue 1.2B Cx1 as soon as 275M transfer looks sane; queue 1.2B Cx2/Cx4/Cx8
+   after the baseline anchors are settled.
+
+### Launch Names And Tags
+
+Use semantic, resume-stable names. Do not encode GPU count, node count, EP, or
+microbatch in the run name; put systems details in W&B tags and in `RUNS.md`.
+
+Name pattern:
+
+```text
+sp-{model}-cx{cx}-{sp_tag}-{lr_tag}-r{attempt}
+```
+
+Examples:
+
+```text
+sp-275m-cx2-sp96e4k-lr1.8e-3-r1
+sp-480m-cx8-sp192e4k-lr8e-4-r1
+sp-810m-cx2-sp96e4k-lr5.6e-4-r1
+sp-1p2b-cx1-sp192e4k-lr4e-4-r1
+```
+
+Required W&B tags:
+
+```text
+exp_total_sparsity
+sp96e4k or sp192e4k
+{model}
+cx{cx}
+batch tag: b256k, b384k, b512k, or b768k
+lr tag
+baseline-transferred for 275M tuning points
+baseline-best-observed or predicted-lr for larger promotions
+nodes{n}, gpu{g}, ep1, mb{microbatch}
+```
+
+### Systems Settings
+
+Use EP=1 throughout unless a smoke test proves we need a fallback. Keep the
+optimizer-relevant batch fixed exactly as below.
+
+| Model | Cx | Batch tokens | Batch seqs | Default GPUs | EP | Default microbatch |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 275M | 1 | 262,144 | 32 | 4 | 1 | 4 |
+| 275M | 2 | 393,216 | 48 | 4 | 1 | 4 |
+| 275M | 4 | 524,288 | 64 | 4 | 1 | 4 |
+| 275M | 8 | 786,432 | 96 | 8 | 1 | 4 |
+| 480M | 1 | 262,144 | 32 | 4 | 1 | 4 |
+| 480M | 2 | 393,216 | 48 | 4 | 1 | 4 |
+| 480M | 4 | 524,288 | 64 | 4 | 1 | 4 |
+| 480M | 8 | 786,432 | 96 | 8 | 1 | 4 |
+| 810M | 1 | 262,144 | 32 | 8 | 1 | 4 |
+| 810M | 2 | 393,216 | 48 | 8 | 1 | 2 |
+| 810M | 4 | 524,288 | 64 | 8 | 1 | 4 |
+| 810M | 8 | 786,432 | 96 | 8 | 1 | 4 |
+| 1.2B | 1 | 262,144 | 32 | 8 | 1 | 2 |
+| 1.2B | 2 | 393,216 | 48 | 8 | 1 | 2 |
+| 1.2B | 4 | 524,288 | 64 | 8-16 | 1 | 2 |
+| 1.2B | 8 | 786,432 | 96 | 8 | 1 | 4 |
+
+These settings are intentionally compute-efficient and optimizer-batch-matched.
+If a run OOMs, first lower microbatch if divisibility allows; if that is not
+enough, increase GPU count while preserving the same global batch and run name.
+Record the systems change in tags and `RUNS.md`, not by renaming the run.
+
+### Launcher Work Needed Before Big Queue
+
+The current scripts are useful but not sufficient for the new full plan:
+
+- `experiments/total_sparsity/launch_275m_cx1_cx4.sh` covers Cx1/Cx4 only and
+  uses the right LR grids for those Cx values.
+- `experiments/total_sparsity/launch_275m_cx8.sh` covers Cx8 only.
+- Add a repaired Cx2 launcher or replace these with one explicit full-ladder
+  launcher that supports `CX_LIST="1 2 4 8"` and the `b384k` Cx2 grid.
+- Add 480M, 810M, and 1.2B promotion launchers that use the semantic names and
+  systems tags above.
+
+Checkpoint/eval settings for all runs:
 
 ```text
 --ladder-evals
@@ -223,36 +371,8 @@ Checkpoint/eval settings:
 --no-pre-train-checkpoint
 ```
 
-TODO: Decide how validation losses should influence LR choice and promotion.
-Current policy: validation/eval metrics are observational only; LR choice uses
-final-window training CE.
-
-## LR Transfer Protocol
-
-Use powers-of-two around the baseline fitted LR.
-
-Because total expert count changes memory/routing behavior but keeps active MLP
-capacity fixed, assume LR transfer is plausible but not guaranteed.
-
-Stage 1: 275M Cx1
-
-- Run three LRs per variant: `0.5x`, `1x`, `2x` around the baseline Cx1 fitted
-  LR.
-- If baseline Cx1 remains near `2e-3`, use `1e-3`, `2e-3`, `4e-3`.
-- If the best point is on an edge, launch one factor-of-two extension.
-
-Stage 2: 275M Cx4
-
-- Compute `m_variant = lr*_variant_Cx1 / lr*_baseline_Cx1`.
-- Center Cx4 on `m_variant * lr_baseline_275m_Cx4`.
-- Run exactly three powers-of-two-spaced LRs.
-
-Stage 3: Higher Cx / Scale
-
-- Promote promising variants to 275M Cx8.
-- Promote at most one high-total variant to 810M Cx1/Cx4 initially.
-- Promote to 1.2B only if the higher-total variant clearly improves the
-  baseline or expert-granularity winner.
+Validation/eval metrics remain observational. LR choice and promotion decisions
+use final-window training CE until we explicitly change that policy.
 
 ## Monitoring
 
