@@ -133,6 +133,11 @@ class AttentionBackend(nn.Module):
     Encapsulates a backend for the scaled dot-product attention (SDPA) operation.
     """
 
+    SUPPORTS_OR_MASK: bool = False
+    """Whether :meth:`forward` honors the ``or_mask`` argument (a boolean allow-mask
+    OR'd onto the causal/sliding base, e.g. for bidirectional image-token attention).
+    Only the dense SDPA backend supports it; flash/TE backends do not."""
+
     def __init__(
         self,
         *,
@@ -231,6 +236,7 @@ class AttentionBackend(nn.Module):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the attention operation.
@@ -263,6 +269,8 @@ class TorchAttentionBackend(AttentionBackend):
     """
     PyTorch's built-in scaled dot-product attention (SDPA) backend.
     """
+
+    SUPPORTS_OR_MASK = True
 
     @classmethod
     def assert_supported(cls):
@@ -307,6 +315,7 @@ class TorchAttentionBackend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 
@@ -326,6 +335,17 @@ class TorchAttentionBackend(AttentionBackend):
                 device=q.device,
                 window_size=self.window_size,
             )
+
+        if or_mask is not None:
+            # OR an extra boolean allow-mask (e.g. bidirectional attention among
+            # image tokens) onto the causal/sliding-window base, mirroring HF's
+            # `or_mask_function`. ``True`` entries are additionally allowed to
+            # attend regardless of causal order. Build an explicit causal base
+            # when we don't already have a sliding-window one.
+            base = attn_mask
+            if base is None:
+                base = torch.ones(q.shape[1], k.shape[1], device=q.device, dtype=torch.bool).tril()
+            attn_mask = base | or_mask.to(device=q.device, dtype=torch.bool)
 
         if any(
             opt is not None
@@ -490,6 +510,7 @@ class FlashAttention2Backend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -714,6 +735,7 @@ class FlashAttention3Backend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -910,6 +932,7 @@ class FlashAttention4Backend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
         assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
@@ -1097,6 +1120,7 @@ class TEAttentionBackend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 

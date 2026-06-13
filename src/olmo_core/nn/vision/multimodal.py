@@ -140,6 +140,7 @@ class MultimodalLM(nn.Module):
         images: Optional[torch.Tensor] = None,
         pooled_patches_idx: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -156,6 +157,11 @@ class MultimodalLM(nn.Module):
             ``None``. ``n_pooled`` must equal the number of
             ``<im_patch>`` tokens per sequence.
         :param labels: Target token IDs, shape ``(B, seq_len)``.
+        :param token_type_ids: Optional ``(B, seq_len)`` tensor marking image tokens
+            (non-zero) vs. text tokens (zero). When provided, image tokens attend to
+            each other **bidirectionally** (causal order is ignored among image
+            tokens) while text stays causal, matching HF Molmo2's attention mask.
+            Requires the dense (``"torch"``) attention backend.
         :returns: Logits or loss (same as
             :meth:`~olmo_core.nn.transformer.Transformer.forward`).
         """
@@ -202,4 +208,13 @@ class MultimodalLM(nn.Module):
             flat = h.view(-1, d)
             flat[is_image_patch] = flat[is_image_patch] + image_features.reshape(-1, d)
 
-        return self.lm(input_ids, input_embeddings=h, labels=labels, **kwargs)
+        # Build a bidirectional allow-mask among image tokens (causal elsewhere),
+        # matching HF Molmo2's `token_type_ids`-based mask. ``or_mask[b, 1, q, k]``
+        # is True where both q and k are image tokens, so they attend regardless of
+        # causal order; it is OR'd onto the causal base inside each attention block.
+        or_mask: Optional[torch.Tensor] = None
+        if token_type_ids is not None:
+            is_image = token_type_ids.to(device) != 0  # (B, S)
+            or_mask = (is_image[:, :, None] & is_image[:, None, :]).unsqueeze(1)  # (B, 1, S, S)
+
+        return self.lm(input_ids, input_embeddings=h, labels=labels, or_mask=or_mask, **kwargs)

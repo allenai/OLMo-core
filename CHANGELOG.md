@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added a configurable vision transformer encoder (`VisionTransformer`, configured via `VisionEncoderConfig`), vision-to-LM connector (`VisionConnector`), and `MultimodalLM` — a composite vision-language model that fuses image patch tokens into the LM token stream. Supports OpenAI CLIP, SigLIP, and SigLIP2 encoder variants with factory configs for all standard Molmo2 checkpoints.
+- Added bidirectional image-token attention to `MultimodalLM` via a `token_type_ids` forward argument: image tokens attend to each other bidirectionally while text stays causal, matching HF Molmo2. Implemented as an `or_mask` threaded through `Transformer.forward` and the dense (`torch`) attention backend (OR'd onto the causal/sliding base); flash/TE backends raise rather than silently ignore it.
 - Added `HFConverterCallback`, which can be used to convert models to huggingface format at the end of the training run.
 - Trainer now records checkpoint save and load durations as `train/checkpoint_save_duration_s` and `train/checkpoint_load_duration_s` metrics.
 - Added `PowerLR`, a power-law learning rate scheduler with linear warmup, power-decay phase (`lr = initial_lr * (current / warmup) ** b` for negative `b`, making the LR independent of the training horizon), and an optional linear decay tail. Registered as `"power_lr"`.

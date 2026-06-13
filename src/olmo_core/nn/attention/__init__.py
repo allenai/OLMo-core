@@ -497,9 +497,15 @@ class Attention(SequenceMixer):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
+        if or_mask is not None and not self.backend.SUPPORTS_OR_MASK:
+            raise NotImplementedError(
+                f"'{type(self.backend).__name__}' does not support `or_mask` "
+                "(e.g. bidirectional image-token attention); use the 'torch' attention backend."
+            )
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.backend(
             (q, k, v),
@@ -511,6 +517,7 @@ class Attention(SequenceMixer):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             kv_cache_manager=self.kv_cache_manager,
+            or_mask=or_mask,
         )
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.update_seqlen(q.shape[1])
@@ -560,6 +567,7 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -631,6 +639,7 @@ class Attention(SequenceMixer):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             cache_leftpad=cache_leftpad,
+            or_mask=or_mask,
         )
 
         if self.gate is not None:
@@ -879,6 +888,7 @@ class NormalizedAttention(Attention):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if cache_leftpad:
             raise NotImplementedError(
@@ -932,6 +942,7 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             cache_leftpad=cache_leftpad,
+            or_mask=or_mask,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -1045,6 +1056,7 @@ class FusedAttention(SequenceMixer):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
+        or_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1066,6 +1078,12 @@ class FusedAttention(SequenceMixer):
         if cu_doc_lens is not None and self.rope is not None:
             raise NotImplementedError(
                 "Intra-document RoPE (cu_doc_lens) is not yet supported by FusedAttention"
+            )
+
+        if or_mask is not None:
+            raise NotImplementedError(
+                "FusedAttention (flash-attn) does not support `or_mask` "
+                "(e.g. bidirectional image-token attention); use the 'torch' attention backend."
             )
 
         B, T, _ = x.shape
