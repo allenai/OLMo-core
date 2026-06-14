@@ -1,3 +1,5 @@
+> Historical note: this file is dated analysis history. When it conflicts with `PROJECT_OVERVIEW.md`, `CURRENT_PLAN.md`, `SETTINGS_AUDIT.md`, or `PLOTTED_RESULTS.md`, treat the newer source-of-truth docs as authoritative.
+
 # Tiny MoE Analysis Notes
 
 ## 2026-06-12 Handoff / Plotting State

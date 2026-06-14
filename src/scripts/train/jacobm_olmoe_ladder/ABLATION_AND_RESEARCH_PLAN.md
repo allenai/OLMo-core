@@ -1,3 +1,5 @@
+> Planning note: this file contains broad research planning. Some details predate the current `480m` naming, explicit-queue workflow, and canonical Cx2 `b384k` policy. Confirm settings against `SETTINGS_AUDIT.md` before launching.
+
 # MoE A0 Ablation And Research Plan
 
 This document is the forward-looking plan for experiments after the v0 baseline
