@@ -6,7 +6,7 @@ set -euo pipefail
 # 810M Cx4 transfer rule is finalized, for example:
 #   LR_SPECS="2e-4:lr2e-4 4e-4:lr4e-4" ./launch_moe_a0_1p2b_cx1_sweep.sh
 
-SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
+SCRIPT="src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py"
 RUN_PREFIX="olmoe3-moe-a0-1p2b-cx1"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-moe-a0-1p2b-cx1-sweep-launch-logs}"

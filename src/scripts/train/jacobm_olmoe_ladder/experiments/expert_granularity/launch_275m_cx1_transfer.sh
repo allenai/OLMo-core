@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
+SCRIPT="src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py"
 RUN_PREFIX="eg-275m-cx1"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/expert_granularity}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-expert-granularity-275m-cx1-launch-logs}"

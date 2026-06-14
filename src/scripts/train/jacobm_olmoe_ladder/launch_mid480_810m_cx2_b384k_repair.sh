@@ -8,7 +8,7 @@ set -euo pipefail
 #
 # 1.2B Cx2 is intentionally not launched here.
 
-SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
+SCRIPT="src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-mid480-810m-cx2-b384k-repair-launch-logs}"
 JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
@@ -131,7 +131,7 @@ launch_one() {
 
 if [[ "${LAUNCH_MID_480M}" == "1" ]]; then
   for lr_spec in ${MID_480M_LR_SPECS}; do
-    launch_one mid_480m m480 4 4 "${lr_spec%%:*}" "${lr_spec##*:}"
+    launch_one 480m m480 4 4 "${lr_spec%%:*}" "${lr_spec##*:}"
   done
 fi
 

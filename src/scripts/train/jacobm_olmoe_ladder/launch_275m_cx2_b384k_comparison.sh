@@ -9,7 +9,7 @@ set -euo pipefail
 # - expert granularity coarse, 24E/top2;
 # - expert granularity fine, 96E/top8.
 
-SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
+SCRIPT="src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py"
 BASE_CHECKPOINT_ROOT="${BASE_CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 EG_CHECKPOINT_ROOT="${EG_CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/expert_granularity}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-275m-cx2-b384k-comparison-launch-logs}"

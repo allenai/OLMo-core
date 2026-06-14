@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
+SCRIPT="src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py"
 RUN_PREFIX="m480"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-moe-a0-mid-480m-cx2-followup-launch-logs}"
@@ -46,7 +46,7 @@ launch_one() {
     "${common_beaker_args[@]}"
     --
     python "${SCRIPT}"
-    --model-size=mid_480m
+    --model-size=480m
     --save-folder="${CHECKPOINT_ROOT}/${name}"
     --name="${name}"
     --data-root=s3://ai2-llm

@@ -12,59 +12,17 @@ import argparse
 import math
 import re
 import statistics
-from dataclasses import dataclass
 from pathlib import Path
 
 import wandb
 
+from ladder_run_metadata import parse_run_spec
 from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
 
 
 WANDB_PATH = "ai2-llm/jacobm-olmoe-ladder"
 LOSS_KEY = "train/CE loss"
 TOKENS_KEY = "throughput/total tokens"
-
-
-@dataclass(frozen=True)
-class RunSpec:
-    chinchilla: str
-    batch_label: str
-    batch_tokens: int
-    lr: str
-
-
-def parse_run_spec(name: str) -> RunSpec | None:
-    if "olmoe3-tiny-275m-cx" not in name:
-        return None
-
-    chinchilla_match = re.search(r"cx([0-9]+)", name)
-    if chinchilla_match is None:
-        return None
-
-    if "b128k" in name:
-        batch_label, batch_tokens = "128k", 131_072
-    elif "b256k" in name:
-        batch_label, batch_tokens = "256k", 262_144
-    elif "b512k" in name:
-        batch_label, batch_tokens = "512k", 524_288
-    elif "cx1-lr" in name:
-        batch_label, batch_tokens = "2M", 2_097_152
-    else:
-        return None
-
-    match = re.search(
-        r"lr(8e-3|5e-3|3\.5e-3|3e-3|2\.5e-3|1\.2e-3|1\.5e-3|2e-3|1e-3|8e-4|7e-4|6e-4|5e-4|4e-4|3e-4|1e-4)",
-        name,
-    )
-    if match is None:
-        return None
-
-    return RunSpec(
-        chinchilla=chinchilla_match.group(1),
-        batch_label=batch_label,
-        batch_tokens=batch_tokens,
-        lr=match.group(1),
-    )
 
 
 def lr_sort_key(lr: str) -> float:
@@ -134,9 +92,9 @@ def main() -> None:
         history.sort(key=lambda item: item[1])
         final_step, final_tokens, final_loss = history[-1]
         out: dict[str, object] = {
-            "cx": spec.chinchilla,
+            "cx": str(spec.cx),
             "batch": spec.batch_label,
-            "lr": spec.lr,
+            "lr": spec.lr_tag,
             "state": run.state,
             "step": final_step,
             "tokens": final_tokens,

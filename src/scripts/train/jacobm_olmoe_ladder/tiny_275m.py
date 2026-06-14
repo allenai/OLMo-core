@@ -207,6 +207,8 @@ MODEL_SIZE_SPECS = {
     ),
 }
 
+# Canonical name is now 480m; keep mid_480m as a compatibility alias for older launch records.
+MODEL_SIZE_SPECS["480m"] = MODEL_SIZE_SPECS["mid_480m"]
 
 EXPERT_GEOMETRY_SPECS = {
     "baseline_48e_top4": ExpertGeometrySpec(
