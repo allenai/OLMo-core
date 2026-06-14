@@ -653,6 +653,24 @@ tracked compatibility entrypoint from commit `fabfbc7`.
 | `sp-275m-cx8-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 8 | 1.6e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B7SVC1SEGHT2SQ9F0N9MF | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; centered on the 275M Cx8 baseline-best LR. |
 | `sp-275m-cx8-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 8 | 3.2e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B858VQ1W3CS7W9TYHAW0K | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; high LR bracket around the 275M Cx8 baseline-best center. |
 
+275M shared-expert no-shared matched-active LR checks queued on 2026-06-14:
+
+These are the first shared-expert ablation probes. They use
+`--shared-expert-config=no_shared_matched_active`, which removes the shared
+expert and sets routed expert hidden size to `9/8 * d_model` so the active MoE
+hidden ratio remains `4.5d`, matching the baseline active allocation. LR grids
+are centered on current 275M baseline best observed/fitted centers: Cx1 around
+`2e-3`, repaired Cx2 around `1.8e-3`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `se-275m-cx1-se0m9-lr1e-3-r1` | `no_shared_matched_active` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E5MNF7PADNAATH0Y8SPZH | Queued on 2026-06-14 as `b256k-gpu2-ep1mb8`; low LR bracket around the 275M Cx1 baseline-best center. |
+| `se-275m-cx1-se0m9-lr2e-3-r1` | `no_shared_matched_active` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E5ZPEQTPZCV1ZP25TZ8KK | Queued on 2026-06-14 as `b256k-gpu2-ep1mb8`; centered on the 275M Cx1 baseline best observed LR. |
+| `se-275m-cx1-se0m9-lr4e-3-r1` | `no_shared_matched_active` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E6BF8RWNCFZFMR1DNXKEH | Queued on 2026-06-14 as `b256k-gpu2-ep1mb8`; high LR bracket around the 275M Cx1 baseline-best center. |
+| `se-275m-cx2-se0m9-lr9e-4-r1` | `no_shared_matched_active` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E6Q6NW9T6HAP7SFQSX6MD | Queued on 2026-06-14 as repaired `b384k-gpu2-ep1mb8`; low LR bracket around the 275M Cx2 baseline-best center. |
+| `se-275m-cx2-se0m9-lr1.8e-3-r1` | `no_shared_matched_active` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E732HD94M1NB65QWKG4D3 | Queued on 2026-06-14 as repaired `b384k-gpu2-ep1mb8`; centered on the 275M Cx2 baseline best observed LR. |
+| `se-275m-cx2-se0m9-lr3.6e-3-r1` | `no_shared_matched_active` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E7F2WJPBFVPK2VXTZAG01 | Queued on 2026-06-14 as repaired `b384k-gpu2-ep1mb8`; high LR bracket around the 275M Cx2 baseline-best center. |
+
 ## 2026-06-12 Stable-Name Launch Bundle
 
 This bundle uses semantic, resume-stable names: model/variant, Cx, batch policy
