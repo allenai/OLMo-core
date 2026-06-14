@@ -14,7 +14,9 @@ from typing import Iterable
 
 LADDER_DIR = Path(__file__).parent
 EXPERT_DIR = LADDER_DIR / "experiments" / "expert_granularity"
-for path in (LADDER_DIR, EXPERT_DIR):
+TOTAL_SPARSITY_DIR = LADDER_DIR / "experiments" / "total_sparsity"
+SHARED_EXPERT_DIR = LADDER_DIR / "experiments" / "shared_expert"
+for path in (LADDER_DIR, EXPERT_DIR, TOTAL_SPARSITY_DIR, SHARED_EXPERT_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -28,6 +30,8 @@ from plot_wandb_ladder import (
 from wandb_cache import DEFAULT_CACHE_DIR
 
 import plot_expert_granularity as eg
+import plot_shared_expert as se
+import plot_total_sparsity as ts
 
 
 BASELINE_PROJECT = "ai2-llm/jacobm-olmoe-ladder"
@@ -40,6 +44,10 @@ MODEL_LABELS = {
     "480m": "480M",
     "810m": "810M",
     "1p2b": "1.2B",
+}
+EXPERIMENT_MODULES = {
+    "Total Sparsity": ts,
+    "Shared Expert": se,
 }
 VARIANT_LABELS = {
     "baseline_48e_top4": "baseline 48E/top4",
@@ -54,6 +62,11 @@ VARIANT_LABELS = {
     "fine_96e_top8_b384k": "fine 96E/top8 (b384k)",
     "extreme_192e_top16": "extreme 192E/top16",
     "ultra_384e_top32": "ultra 384E/top32",
+    "low_total_24e_top4": "low total 24E/top4",
+    "high_total_96e_top4": "high total 96E/top4",
+    "huge_total_192e_top4": "huge total 192E/top4",
+    "baseline_48e_top4_sparsity_tag": "sparsity baseline 48E/top4",
+    "no_shared_matched_active": "no shared, routed 9/8 d",
 }
 
 
@@ -95,7 +108,7 @@ def row_sort_key(point: dict) -> tuple[int, int, str, float, str]:
     )
 
 
-def expert_sort_key(point: eg.Point) -> tuple[int, int, str, float, str]:
+def experiment_sort_key(point) -> tuple[int, int, str, float, str]:
     return (
         MODEL_SORT_ORDER.get(point.model, 98),
         point.cx,
@@ -147,7 +160,26 @@ def expert_points(args: argparse.Namespace) -> list[eg.Point]:
         point.model for point in points if not point.variant.startswith("baseline_")
     }
     points = [point for point in points if point.model in models_with_expert_runs]
-    points.sort(key=expert_sort_key)
+    points.sort(key=experiment_sort_key)
+    return points
+
+
+def ablation_points(args: argparse.Namespace, module) -> list:
+    points = module.load_points(
+        args.project,
+        args.cache_dir,
+        args.window_m,
+        include_running=False,
+        refresh_cache=args.refresh_cache,
+        refresh_stale_cache=args.refresh_stale_cache,
+    )
+    experiment_keys = {
+        (point.model, point.cx)
+        for point in points
+        if not point.variant.startswith("baseline_")
+    }
+    points = [point for point in points if (point.model, point.cx) in experiment_keys]
+    points.sort(key=experiment_sort_key)
     return points
 
 
@@ -285,6 +317,74 @@ def write_expert_section(lines: list[str], points: list[eg.Point]) -> None:
     lines.append("")
 
 
+def write_experiment_section(lines: list[str], title: str, points: list, fit_fn) -> None:
+    if not points:
+        return
+
+    groups: dict[tuple[str, int, str], list] = defaultdict(list)
+    for point in points:
+        groups[(point.model, point.cx, point.variant)].append(point)
+
+    summary_rows: list[list[str]] = []
+    for (model, cx, variant), group in sorted(
+        groups.items(), key=lambda item: (model_sort_key(item[0][0]), item[0][1], item[0][2])
+    ):
+        best = min(group, key=lambda point: point.loss)
+        fit = fit_fn(group)
+        fit_lr = fit[0] if fit is not None else None
+        fit_loss = fit[1] if fit is not None else None
+        summary_rows.append(
+            [
+                MODEL_LABELS.get(model, model),
+                f"Cx{cx}",
+                VARIANT_LABELS.get(variant, variant),
+                best.lr_tag,
+                fmt_float(best.loss),
+                fmt_lr(fit_lr),
+                fmt_float(fit_loss),
+                str(len(group)),
+            ]
+        )
+
+    lines.extend(
+        [
+            f"## {title}",
+            "",
+            f"These are the completed points used by the {title.lower()} plots. Baseline rows are included only for model/Cx settings that also have completed experiment variants.",
+            "",
+        ]
+    )
+    lines.extend(
+        markdown_table(
+            ["model", "Cx", "variant", "best observed LR", "best avg250M", "fit LR", "fit avg250M", "points"],
+            summary_rows,
+        )
+    )
+    lines.append("")
+
+    detail_rows: list[list[str]] = []
+    for point in points:
+        url = f"https://wandb.ai/{BASELINE_PROJECT}/runs/{point.run_id}"
+        detail_rows.append(
+            [
+                MODEL_LABELS.get(point.model, point.model),
+                f"Cx{point.cx}",
+                VARIANT_LABELS.get(point.variant, point.variant),
+                point.lr_tag,
+                fmt_tokens(point.tokens_b),
+                fmt_float(point.loss),
+                md_link(point.run_id, url),
+            ]
+        )
+    lines.extend(
+        markdown_table(
+            ["model", "Cx", "variant", "LR", "tokensB", "avg250M", "W&B"],
+            detail_rows,
+        )
+    )
+    lines.append("")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default=BASELINE_PROJECT)
@@ -298,6 +398,7 @@ def main() -> None:
 
     baseline, run_links = baseline_points(args)
     expert = expert_points(args)
+    ablations = {title: ablation_points(args, module) for title, module in EXPERIMENT_MODULES.items()}
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     lines = [
@@ -317,6 +418,9 @@ def main() -> None:
     ]
     write_baseline_section(lines, baseline, run_links)
     write_expert_section(lines, expert)
+    for title, points in ablations.items():
+        module = EXPERIMENT_MODULES[title]
+        write_experiment_section(lines, title, points, module.fit_lr)
     args.output.write_text("\n".join(lines).rstrip() + "\n")
     print(f"Wrote {args.output}")
 
