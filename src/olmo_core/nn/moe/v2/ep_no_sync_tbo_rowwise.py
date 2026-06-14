@@ -17,7 +17,10 @@ from ...moe.utils import (
 )
 from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
 from .checkpointing import is_activation_checkpointing
-from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
+from .ep_no_sync_common import (
+    padded_local_expert_splits_for_capacity,
+    sync_tail_drop_allowed_splits_single_a2a,
+)
 from .ep_no_sync_buffers import (
     _NoSyncSymmBuffers,
     compute_ep_no_sync_rank_capacity,
@@ -312,9 +315,9 @@ def ep_no_sync_rowwise_tbo_stage_a(
     ).int()
 
     with torch.no_grad():
-        padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
-            dim=0,
-            dtype=torch.long,
+        padded_batch_size_per_local_expert = padded_local_expert_splits_for_capacity(
+            recv_splits_by_src_local,
+            rank_capacity=rank_capacity,
         )
         dst_ranks, dst_rows = build_rowwise_route_maps(
             self,
@@ -451,15 +454,11 @@ def ep_no_sync_rowwise_tbo_stage_shared_launch(
         # )
         # _tbo_debug_print(self, f"E{a_state.lane_id}:shared-forward-enter", moe_inp_3d=moe_inp_3d)
         shared_out = self.shared_experts(moe_inp_3d)
-        if self.shared_experts_router:
-            assert local_x_global_shared_expert_weights is not None
-            _, _, E_s = local_x_global_shared_expert_weights.shape
-            mixed_shared_out = torch.bmm(
-                local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
-                shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-            ).squeeze(1).view(B, S, D)
-        else:
-            mixed_shared_out = shared_out.squeeze(0)
+        mixed_shared_out = self._mix_shared_out(
+            shared_out,
+            local_x_global_shared_expert_weights,
+            a_state.attn_res_out.shape,
+        )
         # _tbo_debug_print(self, f"E{a_state.lane_id}:shared-forward-exit", mixed_shared_out=mixed_shared_out)
         a_state.mixed_shared_out = mixed_shared_out
         a_state.shared_done_event = record_stream_event_no_compile(dense_stream)

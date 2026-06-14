@@ -88,14 +88,120 @@ def wait_event_no_compile(stream: torch.cuda.Stream, event: torch.cuda.Event):
     stream.wait_event(event)
 
 
+def _torch_moe_permute_index_map(
+    *,
+    inp: torch.Tensor,
+    routing_map: torch.Tensor,
+    num_out_tokens: int,
+    out: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if inp.ndim != 2:
+        raise ValueError(f"Expected rank-2 input, got shape={tuple(inp.shape)}")
+    if routing_map.ndim != 2:
+        raise ValueError(f"Expected rank-2 routing_map, got shape={tuple(routing_map.shape)}")
+    if routing_map.shape[0] != inp.shape[0]:
+        raise ValueError(
+            f"routing_map rows ({routing_map.shape[0]}) must equal input rows ({inp.shape[0]})"
+        )
+    if out is not None:
+        if out.shape != (num_out_tokens, inp.shape[-1]):
+            raise ValueError(f"out shape mismatch: out={tuple(out.shape)}")
+        if out.dtype != inp.dtype:
+            raise ValueError(f"out dtype mismatch: out={out.dtype} inp={inp.dtype}")
+        if out.device != inp.device:
+            raise ValueError(f"out device mismatch: out={out.device} inp={inp.device}")
+
+    flat_expert_idx = routing_map.reshape(-1)
+    row_id_map = torch.argsort(flat_expert_idx, stable=True).to(dtype=torch.int32)
+    real_tokens = row_id_map.numel()
+    token_idx = torch.div(row_id_map.to(dtype=torch.long), routing_map.shape[1], rounding_mode="floor")
+    permuted = inp.index_select(0, token_idx)
+
+    if num_out_tokens != real_tokens:
+        if num_out_tokens < real_tokens:
+            permuted = permuted[:num_out_tokens]
+            row_id_map = row_id_map[:num_out_tokens]
+        else:
+            pad_rows = num_out_tokens - real_tokens
+            permuted = torch.cat([permuted, torch.zeros(pad_rows, inp.shape[-1], dtype=inp.dtype, device=inp.device)])
+            row_id_map = torch.cat([row_id_map, torch.full((pad_rows,), -1, dtype=torch.int32, device=inp.device)])
+
+    if out is not None:
+        out.copy_(permuted)
+        permuted = out
+    return permuted, row_id_map
+
+
+def _torch_moe_unpermute_index_map(
+    *,
+    inp: torch.Tensor,
+    row_id_map: torch.Tensor,
+    restore_shape: torch.Size | tuple[int, ...],
+    merging_probs: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if inp.ndim != 2:
+        raise ValueError(f"Expected rank-2 input, got shape={tuple(inp.shape)}")
+    if row_id_map.ndim != 1:
+        raise ValueError(f"Expected rank-1 row_id_map, got shape={tuple(row_id_map.shape)}")
+    if row_id_map.numel() != inp.shape[0]:
+        raise ValueError(f"row_id_map size ({row_id_map.numel()}) must equal input rows ({inp.shape[0]})")
+    if len(restore_shape) != 2:
+        raise ValueError(f"Expected rank-2 restore_shape, got {tuple(restore_shape)}")
+    if restore_shape[-1] != inp.shape[-1]:
+        raise ValueError(f"restore hidden dim ({restore_shape[-1]}) must equal input dim ({inp.shape[-1]})")
+
+    valid = row_id_map >= 0
+    safe_row_id = torch.where(valid, row_id_map, torch.zeros_like(row_id_map)).to(dtype=torch.long)
+    if merging_probs is None:
+        top_k = 1
+        flat_probs = None
+    else:
+        if merging_probs.ndim != 2:
+            raise ValueError(f"Expected rank-2 merging_probs, got shape={tuple(merging_probs.shape)}")
+        top_k = merging_probs.shape[1]
+        flat_probs = merging_probs.reshape(-1)
+
+    token_idx = torch.div(safe_row_id, top_k, rounding_mode="floor")
+    values = inp
+    if flat_probs is not None:
+        values = values * flat_probs.index_select(0, safe_row_id).to(dtype=inp.dtype)[:, None]
+    values = torch.where(valid[:, None], values, torch.zeros_like(values))
+
+    output = torch.zeros(tuple(restore_shape), dtype=inp.dtype, device=inp.device)
+    output.index_add_(0, token_idx, values)
+    return output
+
+
 # disable compile for permute
 @torch.compiler.disable
 def moe_permute_no_compile(*args, **kwargs):
+    if moe_permute is None:
+        if args:
+            raise TypeError("OLMo torch fallback for moe_permute requires keyword arguments")
+        if kwargs.get("map_type", "index") != "index":
+            raise ValueError("OLMo torch fallback only supports map_type='index'")
+        return _torch_moe_permute_index_map(
+            inp=kwargs["inp"],
+            routing_map=kwargs["routing_map"],
+            num_out_tokens=kwargs["num_out_tokens"],
+            out=kwargs.get("out"),
+        )
     return moe_permute(*args, **kwargs)
 
 
 @torch.compiler.disable
 def moe_unpermute_no_compile(*args, **kwargs):
+    if moe_unpermute is None:
+        if args:
+            raise TypeError("OLMo torch fallback for moe_unpermute requires keyword arguments")
+        if kwargs.get("map_type", "index") != "index":
+            raise ValueError("OLMo torch fallback only supports map_type='index'")
+        return _torch_moe_unpermute_index_map(
+            inp=kwargs["inp"],
+            row_id_map=kwargs["row_id_map"],
+            restore_shape=kwargs["restore_shape"],
+            merging_probs=kwargs.get("merging_probs"),
+        )
     return moe_unpermute(*args, **kwargs)
 
 

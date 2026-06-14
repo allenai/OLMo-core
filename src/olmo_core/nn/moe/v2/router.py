@@ -49,6 +49,7 @@ class MoERouterConfigV2(Config):
     num_experts: int
 
     top_k: int
+    bias: bool = False
     jitter_eps: Optional[float] = None
     normalize_expert_weights: Optional[float] = None
     uniform_expert_assignment: bool = False
@@ -63,8 +64,13 @@ class MoERouterConfigV2(Config):
     orth_loss_weight: Optional[float] = None
     record_routing_batch_size: bool = False
     restore_weight_scale: bool = False # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+    expert_weight_scale: Optional[float] = None
     original_top_k: Optional[int] = None # for restoring weight scales to match a model trained with a different top_k
     use_recompute_fp32_cast: bool = False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
+    score_correction_bias: bool = False
+    n_group: Optional[int] = None
+    topk_group: Optional[int] = None
+    sigmoid_stability_epsilon: float = 1e-7
     
     def num_params(self) -> int:
         """
@@ -75,6 +81,8 @@ class MoERouterConfigV2(Config):
         num_params = 0
 
         num_params += self.d_model * self.num_experts
+        if self.bias:
+            num_params += self.num_experts
 
         return num_params
 
@@ -118,6 +126,7 @@ class MoERouterV2(nn.Module):
         d_model: int,
         num_experts: int,
         top_k: int,
+        bias: bool = False,
         jitter_eps: Optional[float] = None,
         normalize_expert_weights: Optional[float] = None,
         uniform_expert_assignment: bool = False,
@@ -131,8 +140,13 @@ class MoERouterV2(nn.Module):
         init_device: str = "cpu",
         record_routing_batch_size: bool = False,
         restore_weight_scale: bool = False,
+        expert_weight_scale: Optional[float] = None,
         original_top_k: Optional[int] = None,
         use_recompute_fp32_cast = False,
+        score_correction_bias: bool = False,
+        n_group: Optional[int] = None,
+        topk_group: Optional[int] = None,
+        sigmoid_stability_epsilon: float = 1e-7,
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
@@ -140,6 +154,7 @@ class MoERouterV2(nn.Module):
         self.num_experts = num_experts
 
         self.top_k = top_k
+        self.use_bias = bias
         self.jitter_eps = jitter_eps
         self.normalize_expert_weights = normalize_expert_weights
         self.uniform_expert_assignment = uniform_expert_assignment
@@ -155,11 +170,17 @@ class MoERouterV2(nn.Module):
         self.tp_mesh: Optional[DeviceMesh] = None
         self.record_routing_batch_size = record_routing_batch_size
         self.restore_weight_scale = restore_weight_scale
+        self.expert_weight_scale = expert_weight_scale
         self.original_top_k = original_top_k
         self.use_recompute_fp32_cast = use_recompute_fp32_cast
+        self.score_correction_bias = score_correction_bias
+        self.n_group = n_group
+        self.topk_group = topk_group
+        self.sigmoid_stability_epsilon = sigmoid_stability_epsilon
 
-        if self.bias_gamma is not None:
-            assert self.bias_gamma > 0
+        if self.bias_gamma is not None or self.score_correction_bias:
+            if self.bias_gamma is not None:
+                assert self.bias_gamma > 0
             self.register_buffer("score_bias", torch.zeros(self.num_experts, device=init_device))
         else:
             self.register_buffer("score_bias", None)
@@ -179,6 +200,11 @@ class MoERouterV2(nn.Module):
         self.weight = nn.Parameter(
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
+        self.bias = (
+            nn.Parameter(torch.empty(self.num_experts, device=init_device, dtype=dtype))
+            if bias
+            else None
+        )
         self.reset_parameters()
 
         self._debug_index = None
@@ -190,10 +216,12 @@ class MoERouterV2(nn.Module):
             torch.zeros(self.num_experts, device=self.device)
         )
 
-        if self.bias_gamma is not None:
-            assert self.score_bias is not None
+        if self.score_bias is not None:
             score_bias = cast(torch.Tensor, self.score_bias)
             score_bias.zero_()
+
+        if self.bias_gamma is not None:
+            assert self.score_bias is not None
             self._score_bias_batch_size_per_expert = hide_from_torch(
                 torch.zeros(self.num_experts, device=self.device)
             )
@@ -208,6 +236,8 @@ class MoERouterV2(nn.Module):
             self._orth_loss = hide_from_torch(torch.zeros([], device=self.device))
             
         nn.init.trunc_normal_(self.weight, std=0.02, a=-3 * 0.02, b=3 * 0.02)
+        if self.bias is not None:
+            nn.init.trunc_normal_(self.bias, std=0.02, a=-3 * 0.02, b=3 * 0.02)
 
     @property
     def device(self) -> torch.device:
@@ -330,18 +360,41 @@ class MoERouterV2(nn.Module):
     def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
-        if self.bias_gamma is None:
-            if self.top_k == 1:
-                expert_weights, expert_indices = scores.max(dim=-1, keepdim=True)
-            else:
-                expert_weights, expert_indices = torch.topk(scores, self.top_k, dim=-1)
-        else:
-            assert self.score_bias is not None
-            with torch.no_grad():
-                _, expert_indices = torch.topk(
-                    scores + self.score_bias.unsqueeze(0), self.top_k, dim=-1  # type: ignore
+        selection_scores = scores
+        if self.score_bias is not None:
+            selection_scores = scores + self.score_bias.unsqueeze(0)  # type: ignore[union-attr]
+
+        if self.n_group is not None and self.topk_group is not None:
+            if self.num_experts % self.n_group != 0:
+                raise OLMoConfigurationError(
+                    f"num_experts ({self.num_experts}) must be divisible by n_group ({self.n_group})"
                 )
-            expert_weights = scores.gather(-1, expert_indices)
+            if not (0 < self.topk_group <= self.n_group):
+                raise OLMoConfigurationError(
+                    f"topk_group ({self.topk_group}) must be in [1, n_group={self.n_group}]"
+                )
+            experts_per_group = self.num_experts // self.n_group
+            group_scores = (
+                selection_scores.view(*selection_scores.shape[:-1], self.n_group, experts_per_group)
+                .topk(min(2, experts_per_group), dim=-1)[0]
+                .sum(dim=-1)
+            )
+            group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]
+            group_mask = torch.zeros_like(group_scores, dtype=torch.bool)
+            group_mask.scatter_(-1, group_idx, True)
+            score_mask = (
+                group_mask.unsqueeze(-1)
+                .expand(*selection_scores.shape[:-1], self.n_group, experts_per_group)
+                .reshape_as(selection_scores)
+            )
+            selection_scores = selection_scores.masked_fill(~score_mask, float("-inf"))
+
+        with torch.no_grad() if self.score_bias is not None else torch.enable_grad():
+            if self.top_k == 1:
+                _, expert_indices = selection_scores.max(dim=-1, keepdim=True)
+            else:
+                _, expert_indices = torch.topk(selection_scores, self.top_k, dim=-1)
+        expert_weights = scores.gather(-1, expert_indices)
 
         if self.uniform_expert_assignment:
             expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
@@ -351,7 +404,9 @@ class MoERouterV2(nn.Module):
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(
-            x.float(), get_local_tensor(self.weight).view(self.num_experts, self.d_model).float()
+            x.float(),
+            get_local_tensor(self.weight).view(self.num_experts, self.d_model).float(),
+            None if self.bias is None else get_local_tensor(self.bias).float(),
         )
 
     @torch.no_grad()
@@ -466,13 +521,17 @@ class MoERouterV2(nn.Module):
             cast_checkpoint.discard_output_and_register_recompute(logits)
 
         # shape: (batch_size, seq_len, num_experts)
-        if self.gating_function == MoERouterGatingFunction.softmax:
+        if self.gating_function in (
+            MoERouterGatingFunction.softmax,
+            MoERouterGatingFunction.topk_softmax,
+        ):
             scores = logits.softmax(dim=-1)
         elif self.gating_function == MoERouterGatingFunction.sigmoid:
             scores = F.sigmoid(logits)
             # to avoid NaNs in the load balancing loss
             # if all logits of a token are very negative for all experts, sigmoid gives 0 for all experts, causing NaNs when we div by the sum.
-            scores = scores + 1e-7  
+            if self.sigmoid_stability_epsilon:
+                scores = scores + self.sigmoid_stability_epsilon
         else:
             raise NotImplementedError(self.gating_function)
 
@@ -509,6 +568,18 @@ class MoERouterV2(nn.Module):
             # weights from original scores/logits (not quantized), to keep smooth grads
             expert_weights = scores.gather(-1, expert_indices)
 
+        elif self.gating_function == MoERouterGatingFunction.topk_softmax:
+            selection_logits = logits
+            if self.score_bias is not None:
+                selection_logits = logits + self.score_bias.unsqueeze(0)  # type: ignore[union-attr]
+
+            with torch.no_grad() if self.score_bias is not None else torch.enable_grad():
+                _, expert_indices = torch.topk(selection_logits, self.top_k, dim=-1)
+            if self.uniform_expert_assignment:
+                expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
+
+            expert_logits = logits.gather(-1, expert_indices)
+            expert_weights = expert_logits.softmax(dim=-1, dtype=expert_logits.dtype)
         else:
             # shape: (batch_size, seq_len, top_k)
             expert_weights, expert_indices = self.get_top_k(scores)
@@ -541,6 +612,9 @@ class MoERouterV2(nn.Module):
         # then the weights for each token sum to TOP_K instead of 1.0
         if self.restore_weight_scale:
             expert_weights = expert_weights * self.top_k
+
+        if self.expert_weight_scale is not None:
+            expert_weights = expert_weights * self.expert_weight_scale
 
         if self.original_top_k is not None and self.top_k != self.original_top_k:
             expert_weights = expert_weights * (
@@ -692,6 +766,10 @@ class MoERouterV2(nn.Module):
         self.register_parameter(
             "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
+        if self.bias is not None:
+            self.register_parameter(
+                "bias", nn.Parameter(distribute_tensor(self.bias, tp_mesh, [Replicate()]))
+            )
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         self.cp_mesh = cp_mesh

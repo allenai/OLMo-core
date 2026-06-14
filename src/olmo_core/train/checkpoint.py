@@ -250,6 +250,7 @@ class Checkpointer:
                 pre_download=is_url(dir) and self.pre_download,
                 work_dir=self.work_dir,
                 thread_count=self.load_thread_count,
+                load_optim_state=load_optim_state,
             )
         else:
             state_dict = train_module.state_dict_to_load(metadata, optim=load_optim_state)

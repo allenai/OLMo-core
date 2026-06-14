@@ -839,6 +839,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         pre_download: bool = False,
         work_dir: Optional[PathOrStr] = None,
         thread_count: Optional[int] = None,
+        load_optim_state: Optional[bool] = True,
     ):
         from olmo_core.io import normalize_path
 
@@ -863,12 +864,47 @@ class MoEV2TransformerTrainModule(TrainModule):
             optim = self._require_optimizer()
             sd_to_load = optim.state_dict()
             checkpoint_keys = set(metadata.state_dict_metadata.keys())
+            has_optimizer_moments = any(
+                key.endswith((".exp_avg", ".exp_avg_sq", ".muon_momentum", ".step"))
+                for key in checkpoint_keys
+            )
+            has_optimizer_main_params = any(key.endswith(".main") for key in checkpoint_keys)
+            has_model_params = any(key.startswith("model.") for key in checkpoint_keys)
+            if load_optim_state is None:
+                load_optim_state = has_optimizer_moments
             reset_optimizer_states_on_load = self.reset_optimizer_states_on_load
             reset_optimizer_moments_on_load = getattr(
                 optim, "reset_optimizer_moments_on_load", False
             )
+            loaded_model_directly = False
 
-            if reset_optimizer_states_on_load:
+            if not load_optim_state and has_model_params:
+                log.info(
+                    "Skipping optimizer state during checkpoint load; loading model weights directly"
+                )
+                sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
+                dist_cp.state_dict_loader.load(
+                    sd_to_load,
+                    checkpoint_id=dir,
+                    storage_reader=reader,
+                    process_group=process_group,
+                )
+                optim._copy_model_params_to_main_params()
+                optim._copy_main_params_to_mxfp8_weights()
+                optim._refresh_rowwise_fp8_caches_from_model_params()
+                loaded_model_directly = True
+            elif not load_optim_state:
+                if not has_optimizer_main_params:
+                    raise RuntimeError(
+                        "Checkpoint does not contain model weights or optimizer main params"
+                    )
+                log.info(
+                    "Skipping optimizer state during checkpoint load; loading only optimizer main params"
+                )
+                sd_to_load = {
+                    key: value for key, value in sd_to_load.items() if key.endswith(".main")
+                }
+            elif reset_optimizer_states_on_load:
                 log.info(
                     "Resetting optimizer states during checkpoint load; loading only optimizer main params"
                 )
@@ -883,6 +919,8 @@ class MoEV2TransformerTrainModule(TrainModule):
                 ):
                     if optional_key not in checkpoint_keys:
                         sd_to_load.pop(optional_key, None)
+                    elif isinstance(metadata.state_dict_metadata[optional_key], BytesStorageMetadata):
+                        sd_to_load[optional_key] = []
 
                 if reset_optimizer_moments_on_load:
                     log.info("Resetting optimizer exp_avg and exp_avg_sq buffers during checkpoint load")
@@ -890,18 +928,19 @@ class MoEV2TransformerTrainModule(TrainModule):
                         if key.endswith(".exp_avg") or key.endswith(".exp_avg_sq"):
                             sd_to_load.pop(key)
 
-            dist_cp.state_dict_loader.load(
-                sd_to_load,
-                checkpoint_id=dir,
-                storage_reader=reader,
-                process_group=process_group,
-                # planner=FlatLoadPlanner(),
-            )
+            if not loaded_model_directly:
+                dist_cp.state_dict_loader.load(
+                    sd_to_load,
+                    checkpoint_id=dir,
+                    storage_reader=reader,
+                    process_group=process_group,
+                    # planner=FlatLoadPlanner(),
+                )
 
-            optim.load_state_dict(sd_to_load)
+                optim.load_state_dict(sd_to_load)
 
-            # load into model params
-            optim._copy_main_params_to_model_params()
+                # load into model params
+                optim._copy_main_params_to_model_params()
 
         torch.cuda.empty_cache()
 
@@ -920,11 +959,13 @@ class MoEV2TransformerTrainModule(TrainModule):
                 tensor_meta = metadata.state_dict_metadata[checkpoint_key]
                 assert isinstance(tensor_meta, TensorStorageMetadata)
                 global_numel = tensor_meta.size.numel()
-                local_flat = param.data.view(-1)
-                local_numel = local_flat.numel()
+                is_optimizer_main_param = checkpoint_key.endswith(".main")
+                local_tensor = param.data.view(-1) if is_optimizer_main_param else param.data
+                local_numel = local_tensor.numel()
+                global_shape = (global_numel,) if is_optimizer_main_param else tuple(tensor_meta.size)
 
                 if local_numel == global_numel:
-                    model_state[checkpoint_key] = local_flat
+                    model_state[checkpoint_key] = local_tensor
                 else:
                     moe_mesh = self.world_mesh["moe"]
                     if moe_mesh is None:
@@ -951,11 +992,11 @@ class MoEV2TransformerTrainModule(TrainModule):
                         )
 
                     model_state[checkpoint_key] = DTensor.from_local(
-                        local_flat,
+                        local_tensor,
                         device_mesh=moe_mesh["ep_dp", "ep_mp"],
                         placements=[Replicate(), Shard(0)],
-                        shape=(global_numel,),
-                        stride=(1,),
+                        shape=global_shape,
+                        stride=self._contiguous_stride(global_shape),
                         run_check=False,
                     )
 
@@ -964,13 +1005,44 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         return model_state
 
+    @staticmethod
+    def _contiguous_stride(shape: Sequence[int]) -> Tuple[int, ...]:
+        stride: List[int] = []
+        running = 1
+        for dim in reversed(shape):
+            stride.append(running)
+            running *= int(dim)
+        return tuple(reversed(stride))
+
     def _resolve_model_checkpoint_key(
         self, param_name: str, checkpoint_keys: Sequence[str]
     ) -> Optional[str]:
-        candidates = (
-            f"{param_name}.main",
-            f"module.{param_name}.main",
-        )
+        def strip_wrapper_prefixes(name: str) -> str:
+            while True:
+                for prefix in ("module.", "_orig_mod."):
+                    if name.startswith(prefix):
+                        name = name[len(prefix):]
+                        break
+                else:
+                    return name
+
+        param_names: List[str] = []
+        for candidate_name in (param_name, strip_wrapper_prefixes(param_name)):
+            if candidate_name not in param_names:
+                param_names.append(candidate_name)
+
+        candidates: List[str] = []
+        for candidate_name in param_names:
+            candidates.extend(
+                (
+                    f"model.{candidate_name}",
+                    f"model.module.{candidate_name}",
+                    candidate_name,
+                    f"module.{candidate_name}",
+                    f"{candidate_name}.main",
+                    f"module.{candidate_name}.main",
+                )
+            )
         for key in candidates:
             if key in checkpoint_keys:
                 return key

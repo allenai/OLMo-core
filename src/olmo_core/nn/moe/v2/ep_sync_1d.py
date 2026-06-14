@@ -284,15 +284,11 @@ def combined_forward_ep_1d(
         with nvtx.annotate("merge_shared", color="purple"):
             with torch.cuda.stream(self.get_dense_stream()):
                 shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
-                if self.shared_experts_router:
-                    assert local_x_global_shared_expert_weights is not None
-                    _, _, E_s = local_x_global_shared_expert_weights.shape
-                    mixed_shared_out = torch.bmm(
-                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
-                        shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                    ).squeeze(1).view(B, S, D)
-                else:
-                    mixed_shared_out = shared_out.squeeze(0)
+                mixed_shared_out = self._mix_shared_out(
+                    shared_out,
+                    local_x_global_shared_expert_weights,
+                    attn_res_out.shape,
+                )
     else:
         mixed_shared_out = None
 

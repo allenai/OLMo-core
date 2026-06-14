@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
@@ -14,7 +15,10 @@ from .comm import (
     _RowwiseCombineWeightedFP8Autograd,
 )
 from .checkpointing import get_rowwise_checkpoint_state
-from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
+from .ep_no_sync_common import (
+    padded_local_expert_splits_for_capacity,
+    sync_tail_drop_allowed_splits_single_a2a,
+)
 from .ep_no_sync_buffers import (
     acquire_ep_no_sync_fp8_dispatch_out_lease,
     acquire_ep_no_sync_rowwise_lifetime_leases,
@@ -40,6 +44,15 @@ from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
+
+
+def _debug_tensors_enabled() -> bool:
+    return os.getenv("OLMO_MOE_ROWWISE_DEBUG_TENSORS", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def combined_forward_ep_no_sync_rowwise(
@@ -318,9 +331,9 @@ def combined_forward_ep_no_sync_rowwise(
     ).int()
 
     with torch.no_grad():
-        padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
-            dim=0,
-            dtype=torch.long,
+        padded_batch_size_per_local_expert = padded_local_expert_splits_for_capacity(
+            recv_splits_by_src_local,
+            rank_capacity=rank_capacity,
         )
         routed_expert_offsets = torch.cumsum(
             padded_batch_size_per_local_expert.to(dtype=torch.int32),
@@ -452,6 +465,14 @@ def combined_forward_ep_no_sync_rowwise(
         )
 
     if not use_fused_rowwise_fp8:
+        if _debug_tensors_enabled() and self.block_idx == 0:
+            self._debug_rowwise_dispatch_rank_major = dispatch_rank_major.detach()
+            self._debug_rowwise_padded_batch_size_per_local_expert = (
+                padded_batch_size_per_local_expert.detach()
+            )
+            self._debug_rowwise_recv_splits_by_src_local = recv_splits_by_src_local.detach()
+            self._debug_rowwise_dst_ranks = dst_ranks.detach()
+            self._debug_rowwise_dst_rows = dst_rows.detach()
         dispatch_rank_major = self.routed_experts(
             dispatch_rank_major,
             padded_batch_size_per_local_expert,
@@ -461,6 +482,8 @@ def combined_forward_ep_no_sync_rowwise(
             rowwise_fp8_input_q=(dispatch_out_q if use_rowwise_fp8 else None),
             rowwise_fp8_input_scales=(dispatch_out_scales if use_rowwise_fp8 else None),
         )
+        if _debug_tensors_enabled() and self.block_idx == 0:
+            self._debug_rowwise_expert_out_rank_major = dispatch_rank_major.detach()
 
     wait_stream_no_compile(
         this_stream=self.get_dense_stream(),
@@ -487,7 +510,11 @@ def combined_forward_ep_no_sync_rowwise(
         )
     else:
         assert buffers is not None
-        expert_out_aliases_symm_expert_out = True
+        expert_out_aliases_symm_expert_out = (
+            dispatch_rank_major.data_ptr() == buffers.combine_in.data_ptr()
+            and dispatch_rank_major.storage_offset() == buffers.combine_in.storage_offset()
+            and tuple(dispatch_rank_major.shape) == tuple(buffers.combine_in.shape)
+        )
         local_x = _RowwiseCombineWeightedAutograd.apply(
             dispatch_rank_major,
             buffers.combine_in,
@@ -505,6 +532,8 @@ def combined_forward_ep_no_sync_rowwise(
             True,
             False,
         )
+    if _debug_tensors_enabled() and self.block_idx == 0:
+        self._debug_rowwise_combined_local_x = local_x.detach()
 
     if self.shared_experts is not None:
         assert shared_out_up is not None
@@ -522,15 +551,11 @@ def combined_forward_ep_no_sync_rowwise(
                 )
             else:
                 shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
-            if self.shared_experts_router:
-                assert local_x_global_shared_expert_weights is not None
-                _, _, E_s = local_x_global_shared_expert_weights.shape
-                mixed_shared_out = torch.bmm(
-                    local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
-                    shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                ).squeeze(1).view(B, S, D)
-            else:
-                mixed_shared_out = shared_out.squeeze(0)
+            mixed_shared_out = self._mix_shared_out(
+                shared_out,
+                local_x_global_shared_expert_weights,
+                attn_res_out.shape,
+            )
     else:
         mixed_shared_out = None
 

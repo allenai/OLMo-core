@@ -9,12 +9,18 @@ import nvtx
 import torch.nn.functional as F
 from typing import Tuple, Optional, TYPE_CHECKING, cast
 
+from .routed_experts import ExpertActivation
+
 
 
 def _swiglu(up: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
     gate = F.silu(gate)
     hidden = up * gate        
     return hidden
+
+
+def _relu2(up: torch.Tensor) -> torch.Tensor:
+    return F.relu(up).square()
 
 
 @dataclass
@@ -35,16 +41,18 @@ class SharedExpertsConfig(Config):
     
     # Whether to use bias in the experts
     bias: bool
-    
+
     # default dtype for the experts
     dtype: DType
-    
+
+    activation: ExpertActivation = ExpertActivation.swiglu
+
 
     def build(self, init_device: str = "cpu") -> "SharedExperts":
         kwargs = self.as_dict()
-        
+
         return SharedExperts(init_device=init_device, **kwargs)
-    
+
     def num_params(self) -> int:
         """
         The number of params that the module will have once built.
@@ -52,9 +60,10 @@ class SharedExpertsConfig(Config):
         :param d_model: The model dimensionality.
         """
 
-        params = 3 * self.d_model * self.hidden_size # up, gate, down
+        up_factor = 2 if self.activation == ExpertActivation.swiglu else 1
+        params = (up_factor + 1) * self.d_model * self.hidden_size # up[/gate], down
         if self.bias:
-            params += 2 * self.hidden_size # up and gate bias
+            params += up_factor * self.hidden_size # up[/gate] bias
             params += self.d_model  # down bias
 
         params *= self.num_experts # for each expert
@@ -76,19 +85,22 @@ class SharedExperts(nn.Module):
                  num_experts: int, 
                  bias: bool, 
                  dtype: DType,
+                 activation: ExpertActivation = ExpertActivation.swiglu,
                  init_device: str = "cpu" 
     ):
         super().__init__()
         self.d_model = d_model
         self.hidden_size = hidden_size
         self.num_experts = num_experts
+        self.activation = ExpertActivation(activation)
 
         assert bias == False, "Shared experts do not support bias for now."
 
         E, D, H = num_experts, d_model, hidden_size
+        up_factor = 2 if self.activation == ExpertActivation.swiglu else 1
 
-        # One big column-packed weight for up+gate: (D, E*2H)
-        self.w_up_gate = nn.Parameter(torch.empty(D, E * 2 * H, device=init_device, dtype=dtype.as_pt()))
+        # One big column-packed weight for up(+gate): (D, E*up_factor*H)
+        self.w_up_gate = nn.Parameter(torch.empty(D, E * up_factor * H, device=init_device, dtype=dtype.as_pt()))
         # Per-expert down: (E, H, D)
         self.w_down = nn.Parameter(torch.empty(E, H, D, device=init_device, dtype=dtype.as_pt()))
 
@@ -120,12 +132,15 @@ class SharedExperts(nn.Module):
 
         # 2) Reshape to separate experts and [up|gate], then make per-expert leading dim
         #    Shapes: (BS, E, 2, H) -> (E, BS, 2, H)
-        up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
-
-        # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
-        up, gate = up_gate.unbind(dim=2)                       # each (E, BS, H) views
-
-        hidden = _swiglu(up, gate)                             # (E, BS, H)
+        if self.activation == ExpertActivation.swiglu:
+            up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
+            up, gate = up_gate.unbind(dim=2)                   # each (E, BS, H) views
+            hidden = _swiglu(up, gate)                         # (E, BS, H)
+        elif self.activation == ExpertActivation.relu2:
+            up = up_gate.view(BS, E, H).permute(1, 0, 2)
+            hidden = _relu2(up)
+        else:
+            raise NotImplementedError(self.activation)
 
         # 4) Per-expert down-proj as grouped GEMM
         #    hidden: (E, BS, H), w_down: (E, H, D) -> out: (E, BS, D)
@@ -149,12 +164,14 @@ class SharedExperts(nn.Module):
 
         # 2) Reshape to separate experts and [up|gate], then make per-expert leading dim
         #    Shapes: (BS, E, 2, H) -> (E, BS, 2, H)
-        up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
-
-        # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
-        up, gate = up_gate.unbind(dim=2)                       # each (E, BS, H) views
-
-        return up, gate
+        if self.activation == ExpertActivation.swiglu:
+            up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
+            up, gate = up_gate.unbind(dim=2)                   # each (E, BS, H) views
+            return up, gate
+        if self.activation == ExpertActivation.relu2:
+            up = up_gate.view(BS, E, H).permute(1, 0, 2)
+            return up, up.new_empty(0)
+        raise NotImplementedError(self.activation)
 
     @nvtx.annotate("SharedExperts.forward2", color='purple')
     def forward2(self, up: torch.Tensor, gate: torch.Tensor, xshape: torch.Size) -> torch.Tensor:
@@ -166,7 +183,12 @@ class SharedExperts(nn.Module):
         B, S, D = xshape
         # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
 
-        hidden = _swiglu(up, gate)                             # (E, BS, H)
+        if self.activation == ExpertActivation.swiglu:
+            hidden = _swiglu(up, gate)                         # (E, BS, H)
+        elif self.activation == ExpertActivation.relu2:
+            hidden = _relu2(up)
+        else:
+            raise NotImplementedError(self.activation)
 
         # 4) Per-expert down-proj as grouped GEMM
         #    hidden: (E, BS, H), w_down: (E, H, D) -> out: (E, BS, D)

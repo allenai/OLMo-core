@@ -244,6 +244,9 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
     old_context_len: int = 8192
     """Maximum sequence length that the *base* model was originally trained with."""
 
+    truncate: bool = True
+    """Whether to floor/ceil the YaRN correction range bounds."""
+
     _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = ("attention_rescale_factor",)
 
     def compute_scaled_inv_freq(
@@ -264,8 +267,13 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
                 / (2.0 * math.log(theta))
             )
 
-        low = max(int(math.floor(_dim_from_rot(self.beta_fast))), 0)
-        high = min(int(math.ceil(_dim_from_rot(self.beta_slow))), half_dim - 1)
+        low = _dim_from_rot(self.beta_fast)
+        high = _dim_from_rot(self.beta_slow)
+        if self.truncate:
+            low = math.floor(low)
+            high = math.ceil(high)
+        low = max(low, 0)
+        high = min(high, half_dim - 1)
         span = max(high - low, 1e-3)  # avoid division-by-zero
         ramp = ((idx - low) / span).clamp_(0, 1)  # 0 → extrapolation, 1 → interpolation
 
@@ -287,6 +295,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
             "beta_fast": self.beta_fast,
             "beta_slow": self.beta_slow,
             "attention_factor": self.get_attention_rescale_factor(),
+            "truncate": self.truncate,
         }
 
 
@@ -308,6 +317,9 @@ class RoPEConfig(ModuleConfig):
 
     full_precision: bool = True
     """Whether to always apply RoPE in full precision regardless of the input data type."""
+
+    rotary_dim: Optional[int] = None
+    """If set, apply RoPE to only the first ``rotary_dim`` dimensions of each attention head."""
 
     no_global_rope: bool = False
     """Whether to disable RoPE on global (non-SWA) attention layers."""
@@ -368,16 +380,24 @@ class RotaryEmbeddingBase(nn.Module):
         head_size: int,
         theta: int = 500_000,
         full_precision: bool = True,
+        rotary_dim: Optional[int] = None,
         cache: Optional[BufferCache] = None,
         scaling: Optional[RoPEScalingConfig] = None,
     ):
         super().__init__()
-        self.dim = head_size
+        self.head_size = head_size
+        self.dim = rotary_dim if rotary_dim is not None else head_size
+        if self.dim > self.head_size:
+            raise OLMoConfigurationError(
+                f"rotary_dim ({self.dim}) cannot exceed head_size ({self.head_size})"
+            )
+        if self.dim % 2 != 0:
+            raise OLMoConfigurationError(f"rotary_dim must be even (got {self.dim})")
         self.theta = theta
         self.full_precision = full_precision
         self.scaling = scaling
         self._cache = (cache or BufferCache()).with_namespace(
-            f"RoPE_theta={self.theta}_scaling={repr(self.scaling)}"
+            f"RoPE_theta={self.theta}_rotary_dim={self.dim}_scaling={repr(self.scaling)}"
         )
 
     @abstractmethod
@@ -467,7 +487,12 @@ class RotaryEmbedding(RotaryEmbeddingBase):
     def _apply_rotary_pos_emb(
         self, pos_sin: torch.Tensor, pos_cos: torch.Tensor, t: torch.Tensor
     ) -> torch.Tensor:
-        return ((t * pos_cos) + (self._rotate_half(t) * pos_sin)).to(t.dtype)
+        rotary_dim = pos_sin.size(-1)
+        if rotary_dim == t.size(-1):
+            return ((t * pos_cos) + (self._rotate_half(t) * pos_sin)).to(t.dtype)
+        t_rot, t_pass = t[..., :rotary_dim], t[..., rotary_dim:]
+        t_rot = ((t_rot * pos_cos) + (self._rotate_half(t_rot) * pos_sin)).to(t.dtype)
+        return torch.cat((t_rot, t_pass), dim=-1)
 
     def forward(
         self,
@@ -583,6 +608,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
         head_size: int,
         theta: int = 500_000,
         full_precision: bool = True,
+        rotary_dim: Optional[int] = None,
         cache: Optional[BufferCache] = None,
         scaling: Optional[RoPEScalingConfig] = None,
     ):
@@ -592,6 +618,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
             head_size=head_size,
             theta=theta,
             full_precision=full_precision,
+            rotary_dim=rotary_dim,
             cache=cache,
             scaling=scaling,
         )
@@ -700,6 +727,7 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         head_size: int,
         theta: int = 500_000,
         full_precision: bool = True,
+        rotary_dim: Optional[int] = None,
         cache: Optional[BufferCache] = None,
         scaling: Optional[RoPEScalingConfig] = None,
     ):
@@ -710,6 +738,7 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
             head_size=head_size,
             theta=theta,
             full_precision=full_precision,
+            rotary_dim=rotary_dim,
             cache=cache,
             scaling=scaling,
         )
@@ -742,7 +771,14 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         return freqs_cis
 
     def _apply_rotary_pos_emb(self, freqs_cis: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        return torch.view_as_real(x * freqs_cis).flatten(3)
+        rotary_complex_dim = freqs_cis.size(-1)
+        x_rot = x[..., :rotary_complex_dim]
+        x_pass = x[..., rotary_complex_dim:]
+        x_rot = torch.view_as_real(x_rot * freqs_cis).flatten(3)
+        if not x_pass.numel():
+            return x_rot
+        x_pass = torch.view_as_real(x_pass).flatten(3)
+        return torch.cat((x_rot, x_pass), dim=-1)
 
     def forward(
         self,

@@ -58,6 +58,13 @@ from olmo_core.kernels.mxfp8_utils import (
     swiglu_quantize_rows_to_mxfp8,
 )
 
+
+class ExpertActivation(StrEnum):
+    swiglu = "swiglu"
+    relu2 = "relu2"
+    gpt_oss_swiglu = "gpt_oss_swiglu"
+
+
 def _debug_is_inf_or_nan(x):
     return torch.logical_or(~torch.isfinite(x), torch.isnan(x))
 
@@ -381,6 +388,9 @@ class RoutedExpertsConfig(Config):
 
     # Optional FP8 config used by rowwise EP no-sync path.
     rowwise_fp8: Optional[MoERowwiseFP8Config] = None
+    activation: ExpertActivation = ExpertActivation.swiglu
+    activation_alpha: float = 1.702
+    activation_limit: Optional[float] = None
     
 
     def build(self, init_device: str = "cpu",) -> "RoutedExperts":
@@ -394,9 +404,10 @@ class RoutedExpertsConfig(Config):
         :param d_model: The model dimensionality.
         """
 
-        params = 3 * self.d_model * self.hidden_size # up, gate, down
+        up_factor = 2 if self.activation in (ExpertActivation.swiglu, ExpertActivation.gpt_oss_swiglu) else 1
+        params = (up_factor + 1) * self.d_model * self.hidden_size # up[/gate], down
         if self.bias:
-            params += 2 * self.hidden_size # up and gate bias
+            params += up_factor * self.hidden_size # up[/gate] bias
             params += self.d_model  # down bias
 
         params *= self.num_experts # for each expert
@@ -414,9 +425,10 @@ class RoutedExpertsConfig(Config):
         if top_k > self.num_experts:
             raise ValueError(f"top_k ({top_k}) cannot be greater than num_experts ({self.num_experts})")
         
-        params = 3 * self.d_model * self.hidden_size # up, gate, down
+        up_factor = 2 if self.activation in (ExpertActivation.swiglu, ExpertActivation.gpt_oss_swiglu) else 1
+        params = (up_factor + 1) * self.d_model * self.hidden_size # up[/gate], down
         if self.bias:
-            params += 2 * self.hidden_size # up and gate bias
+            params += up_factor * self.hidden_size # up[/gate] bias
             params += self.d_model  # down bias
 
         params *= top_k # for each expert
@@ -432,17 +444,24 @@ class RoutedExperts(nn.Module):
         bias: bool,
         dtype: DType,
         rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
+        activation: ExpertActivation = ExpertActivation.swiglu,
+        activation_alpha: float = 1.702,
+        activation_limit: Optional[float] = None,
         init_device: str = "cpu",
     ):
         super().__init__()
         self.d_model = d_model
         self.hidden_size = hidden_size
         self.num_experts = num_experts
-        assert bias == False, "Routed experts do not support bias for now."
+        self.activation = ExpertActivation(activation)
+        self.activation_alpha = float(activation_alpha)
+        self.activation_limit = None if activation_limit is None else float(activation_limit)
+        self.bias = bias
+        up_factor = 2 if self.activation in (ExpertActivation.swiglu, ExpertActivation.gpt_oss_swiglu) else 1
         self.w_up_gate =nn.Parameter(
             torch.empty(
                 num_experts,
-                2 * hidden_size,
+                up_factor * hidden_size,
                 d_model,
                 dtype=dtype.as_pt(),
                 device=init_device
@@ -457,6 +476,30 @@ class RoutedExperts(nn.Module):
                 dtype=dtype.as_pt(),
                 device=init_device
             ),
+        )
+        self.b_up_gate = (
+            nn.Parameter(
+                torch.empty(
+                    num_experts,
+                    up_factor * hidden_size,
+                    dtype=dtype.as_pt(),
+                    device=init_device,
+                ),
+            )
+            if bias
+            else None
+        )
+        self.b_down = (
+            nn.Parameter(
+                torch.empty(
+                    num_experts,
+                    d_model,
+                    dtype=dtype.as_pt(),
+                    device=init_device,
+                ),
+            )
+            if bias
+            else None
         )
         owner_ref = weakref.ref(self)
         self.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
@@ -661,6 +704,10 @@ class RoutedExperts(nn.Module):
         prequantized_input_q: Optional[torch.Tensor] = None,
         prequantized_input_scales: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if self.activation != ExpertActivation.swiglu:
+            raise RuntimeError("rowwise FP8 routed experts currently require swiglu activation")
+        if self.b_up_gate is not None or self.b_down is not None:
+            raise RuntimeError("rowwise FP8 routed experts do not support expert biases")
         cfg = self.rowwise_fp8
         assert cfg is not None
         
@@ -766,6 +813,8 @@ class RoutedExperts(nn.Module):
             return x
 
         if self._use_rowwise_fp8(x, enabled=use_rowwise_fp8):
+            if self.activation != ExpertActivation.swiglu:
+                raise RuntimeError("rowwise FP8 routed experts currently require swiglu activation")
             return self._forward_rowwise_fp8(
                 x,
                 batch_size_per_expert_tensor,
@@ -789,7 +838,7 @@ class RoutedExperts(nn.Module):
         w_up_gate = self.w_up_gate # (E, H, 2D)
         w_down = self.w_down # (E, H, D)
 
-        # up + gate projection
+        # up (+ gate) projection
         up_gate = gmm(
             x,
             w_up_gate,
@@ -799,6 +848,12 @@ class RoutedExperts(nn.Module):
         ) # -> (BS, 2H)
 
         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
+        if self.b_up_gate is not None:
+            up_gate = up_gate + self._expand_expert_bias(
+                self.b_up_gate,
+                batch_size_per_expert_tensor,
+                output_size=up_gate.shape[0],
+            )
 
         h = self.chunk_and_activate(up_gate) # -> (BS, H)
         
@@ -810,16 +865,44 @@ class RoutedExperts(nn.Module):
             trans_b=False,
             out=down_proj_out,
         ) # -> (BS, D)
+        if self.b_down is not None:
+            down = cast(torch.Tensor, down) + self._expand_expert_bias(
+                self.b_down,
+                batch_size_per_expert_tensor,
+                output_size=down.shape[0],
+            )
 
         return cast(torch.Tensor, down)  # ensure type is Tensor
 
     def act_and_down(self, up_gate: torch.Tensor, batch_size_per_expert_tensor: torch.Tensor) -> torch.Tensor:
         # swiglu + down projection
         # so that it apply activation checkpointing if needed
+        if self.b_up_gate is not None:
+            up_gate = up_gate + self._expand_expert_bias(
+                self.b_up_gate,
+                batch_size_per_expert_tensor,
+                output_size=up_gate.shape[0],
+            )
         h = self.chunk_and_activate(up_gate) # -> (BS, H)
         
         down = gmm(h, self.w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
+        if self.b_down is not None:
+            down = down + self._expand_expert_bias(
+                self.b_down,
+                batch_size_per_expert_tensor,
+                output_size=down.shape[0],
+            )
         return down
+
+    @staticmethod
+    def _expand_expert_bias(
+        bias: torch.Tensor,
+        batch_size_per_expert_tensor: torch.Tensor,
+        *,
+        output_size: Optional[int] = None,
+    ) -> torch.Tensor:
+        repeats = batch_size_per_expert_tensor.to(device=bias.device, dtype=torch.long)
+        return torch.repeat_interleave(bias, repeats, dim=0, output_size=output_size)
 
     def chunk_and_activate(self, up_gate: torch.Tensor) -> torch.Tensor:
         # NOTE: this might include pad tokens, but I decide not to exlude pads:
@@ -827,8 +910,20 @@ class RoutedExperts(nn.Module):
         # 2 Excluding tail pads without sync is hard with stock PyTorch ops; 
         #   true compute-skipping usually needs dynamic slicing (.item() sync) or a custom kernel.
         # 3 Extra pad-handling ops can cost more than just doing SiLU on full buffer.
-        up, gate = up_gate.chunk(2, dim=-1)  
-        h = up * F.silu(gate) # -> (BS, H)
+        if self.activation == ExpertActivation.swiglu:
+            up, gate = up_gate.chunk(2, dim=-1)
+            h = up * F.silu(gate) # -> (BS, H)
+        elif self.activation == ExpertActivation.gpt_oss_swiglu:
+            gate = up_gate[..., ::2]
+            up = up_gate[..., 1::2]
+            if self.activation_limit is not None:
+                gate = gate.clamp(max=self.activation_limit)
+                up = up.clamp(min=-self.activation_limit, max=self.activation_limit)
+            h = (up + 1.0) * gate * torch.sigmoid(gate * self.activation_alpha)
+        elif self.activation == ExpertActivation.relu2:
+            h = F.relu(up_gate).square()
+        else:
+            raise NotImplementedError(self.activation)
         return h
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
@@ -841,10 +936,11 @@ class RoutedExperts(nn.Module):
         assert self.num_experts % self.ep_dim == 0, "num_experts must be divisible by the number of expert partitions"
         self.num_local_experts = self.num_experts // self.ep_dim
 
+        up_factor = 2 if self.activation in (ExpertActivation.swiglu, ExpertActivation.gpt_oss_swiglu) else 1
         self.w_up_gate = nn.Parameter(
             torch.empty(
                 self.num_local_experts,
-                2 * self.hidden_size,
+                up_factor * self.hidden_size,
                 self.d_model,
                 dtype=self.w_up_gate.dtype,
                 device=self.w_up_gate.device
@@ -860,6 +956,24 @@ class RoutedExperts(nn.Module):
                 device=self.w_down.device
             ),
         )
+        if self.bias:
+            assert self.b_up_gate is not None and self.b_down is not None
+            self.b_up_gate = nn.Parameter(
+                torch.empty(
+                    self.num_local_experts,
+                    up_factor * self.hidden_size,
+                    dtype=self.b_up_gate.dtype,
+                    device=self.b_up_gate.device,
+                ),
+            )
+            self.b_down = nn.Parameter(
+                torch.empty(
+                    self.num_local_experts,
+                    self.d_model,
+                    dtype=self.b_down.dtype,
+                    device=self.b_down.device,
+                ),
+            )
         owner_ref = weakref.ref(self)
         self.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
         self.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]

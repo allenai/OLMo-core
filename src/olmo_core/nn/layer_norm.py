@@ -16,6 +16,7 @@ __all__ = [
     "LayerNorm",
     "RMSNorm",
     "QwenRMSNorm",
+    "NemotronRMSNorm",
     "CuTeRMSNorm",
     "FusedRMSNorm",
     "L2Norm",
@@ -38,6 +39,11 @@ class LayerNormType(StrEnum):
     qwen_rms = "qwen_rms"
     """
     ➡️ :class:`QwenRMSNorm`
+    """
+
+    nemotron_rms = "nemotron_rms"
+    """
+    ➡️ :class:`NemotronRMSNorm`
     """
     cute_rms = "cute_rms"
     """
@@ -109,6 +115,8 @@ class LayerNormConfig(ModuleConfig):
                 return RMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.qwen_rms:
                 return QwenRMSNorm(size=size, init_device=init_device, **kwargs)
+            elif self.name == LayerNormType.nemotron_rms:
+                return NemotronRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.cute_rms:
                 return CuTeRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.fused_rms:
@@ -238,10 +246,18 @@ class RMSNorm(LayerNorm):
 
 class QwenRMSNorm(RMSNorm):
     """
-    RMSNorm variant matching HuggingFace's ``Qwen3RMSNorm`` rounding order: the input is
-    cast back to its original dtype before being multiplied by the affine weight, so the
-    weight multiply happens in the input dtype rather than fp32.
+    RMSNorm variant matching HuggingFace's Qwen3.5 MoE norm.
+
+    Qwen stores the affine parameter as a delta from one, i.e. the normalized
+    activations are multiplied by ``1 + weight``. HF initializes this parameter
+    to zero.
     """
+
+    def reset_parameters(self):
+        if self.weight is not None:
+            torch.nn.init.zeros_(self.weight)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         with torch.autocast(enabled=False, device_type=x.device.type):
@@ -252,14 +268,33 @@ class QwenRMSNorm(RMSNorm):
 
             variance = x.pow(2).mean(-1, keepdim=True)
             x = x * torch.rsqrt(variance + self.eps)
-            x = x.to(og_dtype)
 
             if self.weight is not None:
-                x = x * self.weight.type_as(x)
+                x = x * (1.0 + self.weight.float())
             if self.bias is not None:
                 x = x + self.bias.type_as(x)
 
-            return x
+            return x.to(og_dtype)
+
+
+class NemotronRMSNorm(RMSNorm):
+    """
+    RMSNorm variant matching HuggingFace's Nemotron-H norm.
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        with torch.autocast(enabled=False, device_type=x.device.type):
+            input_dtype = x.dtype
+            y = x.to(torch.float32)
+            variance = y.pow(2).mean(-1, keepdim=True)
+            y = y * torch.rsqrt(variance + self.eps)
+            if self.weight is not None:
+                y = self.weight * y.to(input_dtype)
+            else:
+                y = y.to(input_dtype)
+            if self.bias is not None:
+                y = y + self.bias
+            return y
 
 
 class CuTeRMSNorm(RMSNorm):

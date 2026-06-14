@@ -18,6 +18,27 @@ if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
+def padded_local_expert_splits_for_capacity(
+    recv_splits_by_src_local: torch.Tensor,
+    *,
+    rank_capacity: int,
+) -> torch.Tensor:
+    local_splits = recv_splits_by_src_local.sum(dim=0, dtype=torch.long)
+    if local_splits.numel() == 0:
+        return local_splits
+
+    # No-sync dispatch buffers are padded to the receiving rank capacity. The
+    # row layout keeps real expert chunks first and puts tail padding in the
+    # final local expert chunk, matching build_chunk_te_routing_map().
+    pad = torch.clamp(
+        local_splits.new_full((), rank_capacity) - local_splits.sum(dtype=torch.long),
+        min=0,
+    )
+    padded_splits = local_splits.clone()
+    padded_splits[-1] = padded_splits[-1] + pad
+    return padded_splits
+
+
 def _ep_sync_debug_enabled() -> bool:
     if os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0").strip().lower() not in {
         "1",

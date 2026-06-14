@@ -77,6 +77,7 @@ class MoERouterType(StrEnum):
 
 class MoERouterGatingFunction(StrEnum):
     softmax = "softmax"
+    topk_softmax = "topk_softmax"
     sigmoid = "sigmoid"
 
 

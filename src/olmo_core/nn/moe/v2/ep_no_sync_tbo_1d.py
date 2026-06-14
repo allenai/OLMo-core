@@ -20,6 +20,7 @@ from ..utils import (
 from .comm import _CombineVDevAutograd, _DispatchVDevAutograd
 from .ep_no_sync_common import (
     build_keep_reorder,
+    padded_local_expert_splits_for_capacity,
     restore_drop_unpermute_1d,
     sync_tail_drop_allowed_splits_single_a2a,
 )
@@ -109,15 +110,11 @@ def ep_no_sync_stage_a(
 
         if self.shared_experts is not None:
             shared_out = self.shared_experts(moe_inp)
-            if self.shared_experts_router:
-                assert local_x_global_shared_expert_weights is not None
-                _, _, E_s = local_x_global_shared_expert_weights.shape
-                mixed_shared_out = torch.bmm(
-                    local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
-                    shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                ).squeeze(1).view(B, S, D)
-            else:
-                mixed_shared_out = shared_out.squeeze(0)
+            mixed_shared_out = self._mix_shared_out(
+                shared_out,
+                local_x_global_shared_expert_weights,
+                attn_res_out.shape,
+            )
             shared_done_event = record_stream_event_no_compile(dense_stream)
         else:
             mixed_shared_out = None
@@ -250,9 +247,9 @@ def ep_no_sync_stage_e(block: MoEFusedV2TransformerBlock, d_state: _NoSyncStageD
     dispatch_rank_major = d_state.dispatch_out
 
     with torch.no_grad():
-        padded_batch_size_per_local_expert = a_state.recv_splits_by_src_local.sum(
-            dim=0,
-            dtype=torch.long,
+        padded_batch_size_per_local_expert = padded_local_expert_splits_for_capacity(
+            a_state.recv_splits_by_src_local,
+            rank_capacity=dispatch_rank_major.shape[0],
         )
 
     with nvtx.annotate("E-PermuteGlobal", color="green"):

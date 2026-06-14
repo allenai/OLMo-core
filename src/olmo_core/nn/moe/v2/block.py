@@ -120,7 +120,19 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
 
     routed_experts_router: Optional[MoERouterConfigV2] = None
 
+    # TODO: These booleans overload the meaning of attention_norm and
+    # feed_forward_norm. With use_pre_norm=True they are input/pre norms, while
+    # the default/reordered path uses them as post-sublayer branch norms; peri
+    # norm then adds separate *_input_norm modules for the pre norms. This makes
+    # checkpoint conversion fragile across model families. Consider replacing
+    # this with explicit placement fields, e.g.
+    # attention_norm_placement/feed_forward_norm_placement in:
+    #   {"none", "pre", "branch_post", "pre_and_branch_post"}
+    # and stable module names like pre_attention_norm, post_attention_norm,
+    # pre_feed_forward_norm, and post_feed_forward_norm, with compatibility
+    # aliases for existing checkpoints.
     use_peri_norm: bool = False
+    use_pre_norm: bool = False
     checkpoint_attn: bool = False
     checkpoint_permute_moe_unpermute: bool = False
     checkpoint_combined_ep_tbo: bool = False
@@ -279,6 +291,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         routed_experts: Optional[RoutedExpertsConfig],
         feed_forward_norm: LayerNormConfig,
         use_peri_norm: bool = False,
+        use_pre_norm: bool = False,
         dropout: float = 0.0,
         attention_residual_alpha: Optional[float] = None,
         feed_forward_residual_alpha: Optional[float] = None,
@@ -327,7 +340,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._shared_rowwise_fp8_weight_versions: Optional[Tuple[int, int]] = None
         self._shared_rowwise_fp8_up_gate_weight: Optional[FP8WeightStore] = None
         self._shared_rowwise_fp8_down_weight: Optional[FP8WeightStore] = None
+        if use_peri_norm and use_pre_norm:
+            raise OLMoConfigurationError("use_peri_norm and use_pre_norm are mutually exclusive")
         self.use_peri_norm = use_peri_norm
+        self.use_pre_norm = use_pre_norm
 
         ######## START: Attention ########
         self.attention = sequence_mixer.build(
@@ -395,13 +411,13 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 ),
             )
             # Shared Experts Router
-            if shared_experts.num_experts > 1:
-                # Need router if more than one experts
-                assert shared_experts_router is not None, "Need shared_experts_router when using shared experts with more than one expert"
+            if shared_experts_router is not None:
                 self.shared_experts_router = shared_experts_router.build(init_device=init_device)
             else:
-                assert shared_experts_router is None, "Should not set shared_experts_router when using only one shared expert"
-                # No router if just one
+                if shared_experts.num_experts > 1:
+                    raise OLMoConfigurationError(
+                        "Need shared_experts_router when using more than one shared expert"
+                    )
                 self.shared_experts_router = None
         else:
             # Shared Experts not enabled
@@ -1139,6 +1155,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if self.use_peri_norm:
             assert self.feed_forward_input_norm is not None
             return self.feed_forward_input_norm(x)
+        if self.use_pre_norm:
+            return self.feed_forward_norm(x)
         return x
 
     def _merge_routed_and_shared(
@@ -1152,7 +1170,30 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             raise RuntimeError("shared_experts is enabled but mixed_shared_out is missing")
         return routed_out + mixed_shared_out
 
+    def _mix_shared_out(
+        self,
+        shared_out: torch.Tensor,
+        shared_expert_weights: Optional[torch.Tensor],
+        output_shape: torch.Size,
+    ) -> torch.Tensor:
+        assert self.shared_experts is not None
+        B, S, D = output_shape
+        if self.shared_experts_router is None:
+            if self.shared_experts.num_experts != 1:
+                raise RuntimeError("shared_experts_router is required for multiple shared experts")
+            return shared_out.squeeze(0)
+
+        if shared_expert_weights is None:
+            raise RuntimeError("shared_experts_router is enabled but shared expert weights are missing")
+        _, _, E_s = shared_expert_weights.shape
+        return torch.bmm(
+            shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
+            shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
+        ).squeeze(1).view(B, S, D)
+
     def _res_norm_mlp(self, residual: torch.Tensor, mlp_out: torch.Tensor) -> torch.Tensor:
+        if self.use_pre_norm:
+            return residual + mlp_out
         return residual + self.feed_forward_norm(mlp_out)
 
     def _res_norm_attn(
@@ -1164,6 +1205,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if self.use_peri_norm:
             assert self.attention_input_norm is not None
             attn_in = self.attention_input_norm(block_inp)
+        elif self.use_pre_norm:
+            attn_in = self.attention_norm(block_inp)
+            return block_inp + self.attention(attn_in, **kwargs)
         attn_res_out = block_inp + self.attention_norm(self.attention(attn_in, **kwargs))
         return attn_res_out
 

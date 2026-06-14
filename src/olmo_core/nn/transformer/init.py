@@ -304,6 +304,16 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
+            if b.shared_experts_router.bias is not None:
+                _apply_init(
+                    nn.init.trunc_normal_,
+                    b.shared_experts_router.bias,
+                    mean=0.0,
+                    std=std,
+                    a=-3 * std,
+                    b=3 * std,
+                    generator=generator,
+                )
         if b.routed_experts_router:
             _apply_init(
                 nn.init.trunc_normal_,
@@ -314,6 +324,16 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
+            if b.routed_experts_router.bias is not None:
+                _apply_init(
+                    nn.init.trunc_normal_,
+                    b.routed_experts_router.bias,
+                    mean=0.0,
+                    std=std,
+                    a=-3 * std,
+                    b=3 * std,
+                    generator=generator,
+                )
         # routed experts
         if b.routed_experts:
             _apply_init(
@@ -340,6 +360,10 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=ep_generator, # might be sharded, use ep_generator
             )
+            if b.routed_experts.b_up_gate is not None:
+                nn.init.zeros_(b.routed_experts.b_up_gate)
+            if b.routed_experts.b_down is not None:
+                nn.init.zeros_(b.routed_experts.b_down)
             # assert b.routed_experts_router is not None
             # _apply_init(
             #     kaiming_fan_in_uniform_,

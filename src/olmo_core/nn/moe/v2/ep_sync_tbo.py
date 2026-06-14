@@ -157,20 +157,11 @@ def combined_forward_ep_tbo(
         if self.shared_experts is not None:
             shared_out = self.shared_experts.forward(moe_inp)
             with nvtx.annotate("merge_shared", color='purple'):
-                # shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
-                if self.shared_experts_router:
-                    assert local_x_global_shared_expert_weights is not None
-                    # weighted sum of the shared experts by router weights
-                    # local_x_global_shared_expert_weights -> (B, S, E_shared)
-                    # shared_out -> (E_shared, B, S, D)
-                    _, _, E_s = local_x_global_shared_expert_weights.shape
-                    local_x_global_shared_expert_weights.shape
-                    mixed_shared_out = torch.bmm(
-                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B*S, 1, E_s),            # (BS, 1, E),
-                        shared_out.permute(1, 2, 0, 3).contiguous().view(B*S, E_s, D)              # (BS, E, D)
-                    ).squeeze(1).view(B, S, D)
-                else:
-                    mixed_shared_out = shared_out.squeeze(0)
+                mixed_shared_out = self._mix_shared_out(
+                    shared_out,
+                    local_x_global_shared_expert_weights,
+                    attn_res_out.shape,
+                )
         else:
             mixed_shared_out = None
 
@@ -359,19 +350,11 @@ def combined_forward_ep_tbo(
             shared_out1 = self.shared_experts.forward(moe_inp1)
 
             with nvtx.annotate("merge_shared", color='purple'):
-                if self.shared_experts_router:
-                    assert local_x_global_shared_expert_weights1 is not None
-                    # weighted sum of the shared experts by router weights
-                    # local_x_global_shared_expert_weights -> (B, S, E_shared)
-                    # shared_out -> (E_shared, B, S, D)
-                    _, _, E_s1 = local_x_global_shared_expert_weights1.shape
-                    local_x_global_shared_expert_weights1.shape
-                    mixed_shared_out1 = torch.bmm(
-                        local_x_global_shared_expert_weights1.to(shared_out1.dtype).reshape(B*S, 1, E_s1),            # (BS, 1, E),
-                        shared_out1.permute(1, 2, 0, 3).contiguous().view(B*S, E_s1, D)              # (BS, E, D)
-                    ).squeeze(1).view(B, S, D)
-                else:
-                    mixed_shared_out1 = shared_out1.squeeze(0)
+                mixed_shared_out1 = self._mix_shared_out(
+                    shared_out1,
+                    local_x_global_shared_expert_weights1,
+                    attn_res_out1.shape,
+                )
         else:
             mixed_shared_out1 = None
 

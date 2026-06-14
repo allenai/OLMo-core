@@ -782,11 +782,7 @@ class MoEFusedV2Optimizer:
             self._init_flat_model_param_buffers()
 
         # copy model params to main params
-        if self.should_maintain_fp32_main_param:
-            for param_group in param_groups:
-                for name, param in param_group['named_params'].items():
-                    main_param = self.states[f'{name}.main']
-                    assign_full_tensor_to_dtensor(dst=main_param, src=param.data.float().reshape(-1))
+        self._copy_model_params_to_main_params()
 
         if self.should_maintain_fp32_main_param:
             self._check_model_param_main_param_the_same()
@@ -897,6 +893,18 @@ class MoEFusedV2Optimizer:
         print_str += f'[MoEFusedV2Optimizer] Total estimated static memory (GB): {total_static:.4f} GB\n'
 
         log.info(print_str)
+
+    @torch.no_grad()
+    def _copy_model_params_to_main_params(self):
+        if not self.should_maintain_fp32_main_param:
+            return
+
+        for param_group in self.param_groups:
+            for name, param in param_group['named_params'].items():
+                if not param.requires_grad:
+                    continue
+                main_param = self.states[f'{name}.main']
+                assign_full_tensor_to_dtensor(dst=main_param, src=param.data.float().reshape(-1))
 
     def _init_flat_model_param_buffers(self) -> None:
         groups_by_tag: "OrderedDict[str, List[Tuple[str, torch.nn.Parameter]]]" = OrderedDict()
@@ -2289,9 +2297,13 @@ class MoEFusedV2Optimizer:
             f"State dict keys do not match live states: {set(sd.keys()) ^ set(self.states.keys())}"
         )
 
-        # Store rolling skip-step statistics as plain lists so they can be checkpointed as a single BYTE_IO entry.
-        sd[self.LOSSES_STATE_DICT_KEY] = [float(v.detach().cpu().item()) for v in self._losses]
-        sd[self.GRAD_NORMS_STATE_DICT_KEY] = [float(v.detach().cpu().item()) for v in self._grad_norms]
+        def rolling_stats_tensor(values: List[torch.Tensor]) -> torch.Tensor:
+            if not values:
+                return torch.empty(0, dtype=torch.float32, device=self.device)
+            return torch.stack([v.detach().reshape(()).to(dtype=torch.float32) for v in values])
+
+        sd[self.LOSSES_STATE_DICT_KEY] = rolling_stats_tensor(self._losses)
+        sd[self.GRAD_NORMS_STATE_DICT_KEY] = rolling_stats_tensor(self._grad_norms)
 
         return sd       
     

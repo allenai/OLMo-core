@@ -339,6 +339,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
     d_attn: Optional[int] = None
+    attention_sinks: bool = False
     mxfp8_projections: Optional[bool] = None
     """
     Backward-compatible shorthand for using MXFP8Linear for both of
@@ -408,6 +409,9 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         if bias:
             params += d_model
 
+        if self.attention_sinks:
+            params += n_heads
+
         # Block attention gate projection.
         if self.gate is not None:
             if self.gate.granularity == GateGranularity.headwise:
@@ -443,6 +447,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        if not kwargs.get("attention_sinks", False):
+            kwargs.pop("attention_sinks", None)
+        elif self.name != AttentionType.default:
+            raise OLMoConfigurationError("attention_sinks are only supported by default attention")
 
         sliding_window_config: Optional[SlidingWindowAttentionConfig] = kwargs.pop(
             "sliding_window", None
@@ -587,6 +595,7 @@ class Attention(SequenceMixer):
         cache: Optional[BufferCache] = None,
         use_head_qk_norm: bool = False,
         d_attn: Optional[int] = None,
+        attention_sinks: bool = False,
         use_recompute_qkv_prep: bool = False,
         mxfp8_save_qkv_for_backward: bool = False,
     ):
@@ -615,6 +624,11 @@ class Attention(SequenceMixer):
         )
         self.w_out = nn.Linear(
             n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device
+        )
+        self.sinks = (
+            nn.Parameter(torch.empty(n_heads, dtype=dtype, device=init_device))
+            if attention_sinks
+            else None
         )
 
         self.gate = gate
@@ -731,9 +745,12 @@ class Attention(SequenceMixer):
     ) -> torch.Tensor:
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
+        if self.sinks is not None and self.backend.__class__.__name__ != "TorchAttentionBackend":
+            raise OLMoConfigurationError(
+                "attention_sinks are currently supported only by the torch attention backend"
+            )
         # shape: (batch_size, seq_len, n_heads, head_dim)
-        att = self.backend(
-            (q, k, v),
+        backend_kwargs = dict(
             cu_doc_lens=cu_doc_lens,
             cu_doc_lens_q=cu_doc_lens_q,
             cu_doc_lens_k=cu_doc_lens_k,
@@ -743,6 +760,9 @@ class Attention(SequenceMixer):
             local_k_slice=local_k_slice,
             kv_cache_manager=self.kv_cache_manager,
         )
+        if self.sinks is not None:
+            backend_kwargs["sinks"] = self.sinks
+        att = self.backend((q, k, v), **backend_kwargs)
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.update_seqlen(q.shape[1])
         return att
@@ -1057,6 +1077,9 @@ class Attention(SequenceMixer):
             else:
                 g_std = std
             init_linear(self.w_g, std=g_std, generator=generator)
+
+        if self.sinks is not None:
+            nn.init.normal_(self.sinks, mean=0.0, std=std, generator=generator)
 
         # Compute std for w_out initialization
         if init_method == InitMethod.fan_in:

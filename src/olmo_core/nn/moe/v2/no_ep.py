@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Optional, Union, cast
 
 import nvtx
@@ -11,6 +12,15 @@ from .routed_experts import requires_host_side_split_sizes
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
+
+
+def _debug_tensors_enabled() -> bool:
+    return os.getenv("OLMO_MOE_ROWWISE_DEBUG_TENSORS", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def combined_forward_no_ep(
@@ -80,15 +90,11 @@ def combined_forward_no_ep(
 
         with torch.cuda.stream(self.get_dense_stream()):
             shared_out = self.shared_experts(moe_inp)
-            if self.shared_experts.num_experts == 1:
-                mixed_shared_out = shared_out.squeeze(0)
-            else:
-                assert local_x_global_shared_expert_weights is not None
-                _, _, E_s = local_x_global_shared_expert_weights.shape
-                mixed_shared_out = torch.bmm(
-                    local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
-                    shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                ).squeeze(1).view(B, S, D)
+            mixed_shared_out = self._mix_shared_out(
+                shared_out,
+                local_x_global_shared_expert_weights,
+                attn_res_out.shape,
+            )
 
     moe_inp = moe_inp.view(-1, in_shape[-1])
 
@@ -113,6 +119,11 @@ def combined_forward_no_ep(
         mlp_x = self.routed_experts(permutated_input_tokens, local_batch_size_per_global_routed_expert_cpu)
     else:
         mlp_x = self.routed_experts(permutated_input_tokens, local_batch_size_per_global_routed_expert)
+    if _debug_tensors_enabled() and self.block_idx == 0:
+        self._debug_no_ep_expert_out = mlp_x.detach()
+        self._debug_no_ep_batch_size_per_expert = (
+            local_batch_size_per_global_routed_expert.detach()
+        )
 
     with nvtx.annotate("Unpermute", color="green"):
         unpermutated_x: torch.Tensor = moe_unpermute_no_compile(
@@ -122,6 +133,8 @@ def combined_forward_no_ep(
             map_type="index",
             merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
         )
+    if _debug_tensors_enabled() and self.block_idx == 0:
+        self._debug_no_ep_combined_local_x = unpermutated_x.detach()
 
     x_moe = unpermutated_x.view(in_shape)
 
