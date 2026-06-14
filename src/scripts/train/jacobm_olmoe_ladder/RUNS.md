@@ -617,17 +617,41 @@ start at `r1`.
 
 | Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| `sp-275m-cx1-sp96e4k-lr2e-3-r2` | `high_total_96e_top4` | 1 | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15EK0R6DYBCS0TA3NX5J07 | Queued/created on 2026-06-13. Completes high-total Cx1 grid alongside the finished `lr1e-3-r1` point. |
-| `sp-275m-cx1-sp96e4k-lr4e-3-r2` | `high_total_96e_top4` | 1 | 4e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15EZWFKD0KRMGEZ4DR85MH | Queued/created on 2026-06-13. Completes high-total Cx1 grid alongside the finished `lr1e-3-r1` point. |
-| `sp-275m-cx1-sp192e4k-lr1e-3-r2` | `huge_total_192e_top4` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15FXW5R6Y06XY494A1MXB1 | Queued/created on 2026-06-13 after old r1 was stopped before useful training. |
-| `sp-275m-cx1-sp192e4k-lr2e-3-r2` | `huge_total_192e_top4` | 1 | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15G9J3NZQ7X8T76G0FCN5D | Queued/created on 2026-06-13 after old r1 was stopped before useful training. |
-| `sp-275m-cx1-sp192e4k-lr4e-3-r2` | `huge_total_192e_top4` | 1 | 4e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KV15GMWKFHEPJP7MWWK253RZ | Queued/created on 2026-06-13 after old r1 was stopped before useful training. |
-| `sp-275m-cx2-sp96e4k-lr9e-4-r1` | `high_total_96e_top4` | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15HAHX96M7CKMD38ZJNQWT | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
-| `sp-275m-cx2-sp96e4k-lr1.8e-3-r1` | `high_total_96e_top4` | 2 | 1.8e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15HP581N11XB2BTWH46P0G | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
-| `sp-275m-cx2-sp96e4k-lr3.6e-3-r1` | `high_total_96e_top4` | 2 | 3.6e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15J23VG0CCGZZJTN7MADZF | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
-| `sp-275m-cx2-sp192e4k-lr9e-4-r1` | `huge_total_192e_top4` | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15JE1H1ZM8XA31256RPY5A | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
-| `sp-275m-cx2-sp192e4k-lr1.8e-3-r1` | `huge_total_192e_top4` | 2 | 1.8e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15JSXHYXWVJ9AFDH3H5QJ8 | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
-| `sp-275m-cx2-sp192e4k-lr3.6e-3-r1` | `huge_total_192e_top4` | 2 | 3.6e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV15K5KX4JYW4VSZD8NJV4GG | Queued/created on 2026-06-13. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx1-sp96e4k-lr2e-3-r2` | `high_total_96e_top4` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XRZ26YZMGK569RAPN2VVG | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU attempt `01KV15EK0R6DYBCS0TA3NX5J07`. Stable run/save name retained; previous attempt had started, so this may resume from a partial checkpoint if one was written. |
+| `sp-275m-cx1-sp96e4k-lr4e-3-r2` | `high_total_96e_top4` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XSA4VW4HTSM49XBSNKCBW | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15EZWFKD0KRMGEZ4DR85MH`. Completes high-total Cx1 grid alongside the finished `lr1e-3-r1` point. |
+| `sp-275m-cx1-sp192e4k-lr1e-3-r2` | `huge_total_192e_top4` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XT2440PKB6GFP7FHEP0S7 | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15FXW5R6Y06XY494A1MXB1`. |
+| `sp-275m-cx1-sp192e4k-lr2e-3-r2` | `huge_total_192e_top4` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XTDSPHDGQV7ZYYXSTTT7K | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15G9J3NZQ7X8T76G0FCN5D`. |
+| `sp-275m-cx1-sp192e4k-lr4e-3-r2` | `huge_total_192e_top4` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XTT5DNDJA724MQW7YY9S3 | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15GMWKFHEPJP7MWWK253RZ`. |
+| `sp-275m-cx2-sp96e4k-lr9e-4-r1` | `high_total_96e_top4` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XVM1K7X6X61EHN1H0S3NG | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15HAHX96M7CKMD38ZJNQWT`. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp96e4k-lr1.8e-3-r1` | `high_total_96e_top4` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XW04NPE3HV7Q2D8SC8SHH | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15HP581N11XB2BTWH46P0G`. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp96e4k-lr3.6e-3-r1` | `high_total_96e_top4` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XWBC6TZW3NZ1MTKG97541 | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15J23VG0CCGZZJTN7MADZF`. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp192e4k-lr9e-4-r1` | `huge_total_192e_top4` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XWMSSDZKRZDZ7JBWGXBP3 | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15JE1H1ZM8XA31256RPY5A`. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp192e4k-lr1.8e-3-r1` | `huge_total_192e_top4` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XWYR2V2CYPRF78R51STBC | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15JSXHYXWVJ9AFDH3H5QJ8`. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp192e4k-lr3.6e-3-r1` | `huge_total_192e_top4` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XX9ASC00EDZ7XYSKR5H8F | Requeued on 2026-06-14 as `gpu2-ep1mb8` after stopping old 4-GPU queued attempt `01KV15K5KX4JYW4VSZD8NJV4GG`. Repaired canonical `b384k` Cx2 LR-transfer check. |
+
+275M Cx4/Cx8 sparsity LR-transfer checks resumed on 2026-06-14:
+
+These complete the initial 275M total-sparsity LR verification grid across
+Cx1/Cx2/Cx4/Cx8. They use the same current compute-efficient systems policy as
+the Cx1/Cx2 relaunches: `gpu2-ep1mb8`, with systems settings kept in tags rather
+than run names. The launchers were updated afterward to use the committed
+`moe_a0_ladder.py` entrypoint going forward; these submitted jobs used the
+tracked compatibility entrypoint from commit `fabfbc7`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx4-sp96e4k-lr8e-4-r1` | `high_total_96e_top4` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B3VJD8KDZ4HKZNXKSMHX7 | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; low LR bracket around the 275M Cx4 baseline-best center. |
+| `sp-275m-cx4-sp96e4k-lr1.6e-3-r1` | `high_total_96e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B46SQHXX2ZMSFRJZZ6JAW | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; centered on the 275M Cx4 baseline-best LR. |
+| `sp-275m-cx4-sp96e4k-lr3.2e-3-r1` | `high_total_96e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B4J3PKZD6SNX027NYPWPZ | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; high LR bracket around the 275M Cx4 baseline-best center. |
+| `sp-275m-cx4-sp192e4k-lr8e-4-r1` | `huge_total_192e_top4` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B4Y0MRJYPWFE16Z72HVP9 | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; low LR bracket around the 275M Cx4 baseline-best center. |
+| `sp-275m-cx4-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B59K1JMDQ9WMBQ1GYJ5QX | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; centered on the 275M Cx4 baseline-best LR. |
+| `sp-275m-cx4-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B5NRNE74GEY4PSZZY2D21 | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; high LR bracket around the 275M Cx4 baseline-best center. |
+| `sp-275m-cx8-sp96e4k-lr8e-4-r1` | `high_total_96e_top4` | 8 | 8e-4 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B6D04XAHH2WDA16CE5BZY | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; low LR bracket around the 275M Cx8 baseline-best center. |
+| `sp-275m-cx8-sp96e4k-lr1.6e-3-r1` | `high_total_96e_top4` | 8 | 1.6e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B6R1WK12RJK9PB32ADC2F | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; centered on the 275M Cx8 baseline-best LR. |
+| `sp-275m-cx8-sp96e4k-lr3.2e-3-r1` | `high_total_96e_top4` | 8 | 3.2e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B72630DRVYDDWZV8KVJE8 | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; high LR bracket around the 275M Cx8 baseline-best center. |
+| `sp-275m-cx8-sp192e4k-lr8e-4-r1` | `huge_total_192e_top4` | 8 | 8e-4 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B7DQ28K6ZKTTVAPGKQSC9 | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; low LR bracket around the 275M Cx8 baseline-best center. |
+| `sp-275m-cx8-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 8 | 1.6e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B7SVC1SEGHT2SQ9F0N9MF | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; centered on the 275M Cx8 baseline-best LR. |
+| `sp-275m-cx8-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 8 | 3.2e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B858VQ1W3CS7W9TYHAW0K | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; high LR bracket around the 275M Cx8 baseline-best center. |
 
 ## 2026-06-12 Stable-Name Launch Bundle
 
@@ -674,9 +698,11 @@ These are single-point promoted checks for the two main expert-granularity varia
 
 | Name | Variant | Model | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| `eg-810m-cx2-eg24e2k-lr5.6e-4-r1` | `coarse_24e_top2` | `810m` | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KV12PKBDP6AKDJKP8CPA4R6P | Queued/created on 2026-06-13. Uses repaired canonical `b384k` Cx2 and baseline best observed 810M Cx2 LR. |
-| `eg-810m-cx2-eg96e8k-lr5.6e-4-r1` | `fine_96e_top8` | `810m` | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KV12XM4AQ2JPT8BCEKYZWSXS | Queued/created on 2026-06-13. Uses repaired canonical `b384k` Cx2 and baseline best observed 810M Cx2 LR. |
-| `eg-810m-cx8-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `810m` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV12XYVN3MPGN7MMBAGWAV2N | Queued/created on 2026-06-13. Uses baseline best observed 810M Cx8 LR. |
-| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `810m` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV12YBA3E82W81TTP2TBGGJ7 | Queued/created on 2026-06-13. Uses baseline best observed 810M Cx8 LR. |
-| `eg-1p2b-cx1-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KV12YPMFZA0QA35RGNRVSAC8 | Queued/created on 2026-06-13. Uses baseline best observed 1.2B Cx1 LR. |
-| `eg-1p2b-cx1-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KV12Z1ZNT7TR9814FRT7MR9W | Queued/created on 2026-06-13. Uses baseline best observed 1.2B Cx1 LR. |
+| `eg-810m-cx2-eg24e2k-lr5.6e-4-r1` | `coarse_24e_top2` | `810m` | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 6 | https://beaker.org/ex/01KV1XP9TRQ9DRCW8YD8Y6V1AD | Requeued on 2026-06-14 with `mb6` after stopping old queued `mb2` experiment `01KV12PKBDP6AKDJKP8CPA4R6P`. Uses repaired canonical `b384k` Cx2 and baseline best observed 810M Cx2 LR. |
+| `eg-810m-cx2-eg96e8k-lr5.6e-4-r1` | `fine_96e_top8` | `810m` | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 6 | https://beaker.org/ex/01KV1XQ9SQ4X2HCPRB8BGMRW3Q | Requeued on 2026-06-14 with `mb6` after stopping old queued `mb2` experiment `01KV12XM4AQ2JPT8BCEKYZWSXS`. Uses repaired canonical `b384k` Cx2 and baseline best observed 810M Cx2 LR. |
+| `eg-810m-cx8-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `810m` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 6 | https://beaker.org/ex/01KV1XPMWWFHH6BT5SVEPG107G | Requeued on 2026-06-14 with `mb6` after stopping old queued `mb4` experiment `01KV12XYVN3MPGN7MMBAGWAV2N`. Uses baseline best observed 810M Cx8 LR. |
+| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `810m` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 6 | https://beaker.org/ex/01KV1XQMPM62PXBRPGX1MYD059 | Requeued on 2026-06-14 with `mb6` after stopping old queued `mb4` experiment `01KV12YBA3E82W81TTP2TBGGJ7`. Uses baseline best observed 810M Cx8 LR. |
+| `eg-1p2b-cx1-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KV1XPYR4NCYB9E4GA1YX4HQ0 | Requeued on 2026-06-14 with `mb4` after stopping old queued `mb2` experiment `01KV12YPMFZA0QA35RGNRVSAC8`. Uses baseline best observed 1.2B Cx1 LR. |
+| `eg-1p2b-cx1-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KV1XQZZNEANQ47WX1TZ1YSHE | Requeued on 2026-06-14 with `mb4` after stopping old queued `mb2` experiment `01KV12Z1ZNT7TR9814FRT7MR9W`. Uses baseline best observed 1.2B Cx1 LR. |
+| `eg-1p2b-cx4-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KV299VFSQ8879TGTB56T8PW1 | Queued on 2026-06-14 with one-node `gpu8-ep1mb4`. Uses baseline best observed/center 1.2B Cx4 LR. |
+| `eg-1p2b-cx4-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KV29A65FTV4YHJACBMZB6TVG | Queued on 2026-06-14 with one-node `gpu8-ep1mb4`. Uses baseline best observed/center 1.2B Cx4 LR. |
