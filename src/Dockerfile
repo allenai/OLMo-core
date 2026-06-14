@@ -47,13 +47,19 @@ ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
 ARG TORCHAUDIO_VERSION=2.11.0
+# Optional cuBLAS override for package mismatches. For example, TE cu13 wheels
+# reference cublasLtGroupedMatrixLayoutInit_internal, which is not in cuBLAS 13.1.
+ARG NVIDIA_CUBLAS_VERSION=""
 ARG INSTALL_CHANNEL=whl
 RUN set -eux; \
     torch_packages="torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION}"; \
     if [ -n "${TORCHAUDIO_VERSION}" ]; then \
         torch_packages="${torch_packages} torchaudio==${TORCHAUDIO_VERSION}"; \
     fi; \
-    pip install --no-cache-dir --index-url "https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/" ${torch_packages}
+    pip install --no-cache-dir --index-url "https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/" ${torch_packages}; \
+    if [ -n "${NVIDIA_CUBLAS_VERSION}" ]; then \
+        pip install --no-cache-dir --no-deps --upgrade "nvidia-cublas==${NVIDIA_CUBLAS_VERSION}"; \
+    fi
 
 ARG TORCH_CUDA_ARCH_LIST
 ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
@@ -208,19 +214,24 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 COPY --from=build /opt/conda /opt/conda
 
 # Keep these for non-interactive processes (docker run / docker exec / VS Code server)
+ARG PYTHON_VERSION
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+# Prefer CUDA libraries bundled with PyTorch wheels over the base image's
+# /usr/local/cuda libraries so extension wheels resolve against matching libs.
+ENV PYTORCH_NVIDIA_LIB=/opt/conda/lib/python${PYTHON_VERSION}/site-packages/nvidia
+ENV LD_LIBRARY_PATH=${PYTORCH_NVIDIA_LIB}/cu13/lib:${PYTORCH_NVIDIA_LIB}/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
 ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:$PATH
 
 # One canonical env script (login shells) + source it for interactive non-login bash shells (VS Code terminal)
 RUN set -eux; \
-  cat > /etc/profile.d/99-container-env.sh <<'EOF'
+  cat > /etc/profile.d/99-container-env.sh <<EOF
 # Container-wide env for login shells (SSH, su -) and (via bash.bashrc below) interactive shells.
-export PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:${PATH}
-export LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+export PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:\${PATH}
+export PYTORCH_NVIDIA_LIB=/opt/conda/lib/python${PYTHON_VERSION}/site-packages/nvidia
+export LD_LIBRARY_PATH=\${PYTORCH_NVIDIA_LIB}/cu13/lib:\${PYTORCH_NVIDIA_LIB}/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:\${LD_LIBRARY_PATH}
 export UV_SYSTEM_PYTHON=1
 export UV_BREAK_SYSTEM_PACKAGES=1
 EOF
