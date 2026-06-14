@@ -3,6 +3,7 @@ ARG TARGET_PLATFORM=x86_64
 ARG CUDA_VERSION=12.8.1
 ARG CUDA_VERSION_PATH=cu128
 ARG PYTHON_VERSION=3.12
+ARG TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 ARG BASE_IMAGE=ubuntu:${UBUNTU_VERSION}
 ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu${UBUNTU_VERSION}
 
@@ -44,11 +45,18 @@ RUN chmod +x ~/miniconda.sh && \
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.11.0
+ARG TORCHVISION_VERSION=0.26.0
+ARG TORCHAUDIO_VERSION=2.11.0
 ARG INSTALL_CHANNEL=whl
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
-    torch==${TORCH_VERSION} torchvision torchaudio
+RUN set -eux; \
+    torch_packages="torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION}"; \
+    if [ -n "${TORCHAUDIO_VERSION}" ]; then \
+        torch_packages="${torch_packages} torchaudio==${TORCHAUDIO_VERSION}"; \
+    fi; \
+    pip install --no-cache-dir --index-url "https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/" ${torch_packages}
 
-ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
+ARG TORCH_CUDA_ARCH_LIST
+ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
 
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
@@ -59,7 +67,8 @@ RUN unset GROUPED_GEMM_CUTLASS && pip install --no-build-isolation --no-cache-di
 
 # Install flash-attn 2
 ARG FLASH_ATTN_VERSION=2.8.2
-RUN FLASH_ATTN_CUDA_ARCHS="90;100" pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+ARG FLASH_ATTN_CUDA_ARCHS="90;100"
+RUN FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS}" pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install flash-attn 3.
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
@@ -87,8 +96,9 @@ RUN cd /opt/conda/lib/python${PYTHON_VERSION}/site-packages/ && \
 
 # Install flash-attn 4.
 ARG FLASH_ATTN_4_VERSION=4.0.0b12
+ARG FLASH_ATTN_4_EXTRAS=""
 RUN python -c "import torch; print('torch=='+torch.__version__)" > /tmp/torch-constraint.txt && \
-    python -m pip install --no-cache-dir -c /tmp/torch-constraint.txt "flash-attn-4==${FLASH_ATTN_4_VERSION}" && \
+    python -m pip install --no-cache-dir -c /tmp/torch-constraint.txt "flash-attn-4${FLASH_ATTN_4_EXTRAS}==${FLASH_ATTN_4_VERSION}" && \
     rm -f /tmp/torch-constraint.txt
 
 # Install transformer-engine.
