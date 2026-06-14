@@ -155,6 +155,7 @@ RUN python -c "import torch; print('torch=='+torch.__version__)" > /tmp/torch-co
 
 # FROM ${BASE_IMAGE} AS release
 FROM ${DEVEL_BASE_IMAGE} AS release
+ARG NVIDIA_CUBLAS_VERSION=""
 
 # Install system dependencies.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -263,3 +264,11 @@ RUN set -eux; \
 RUN wget https://beaker.org/install -O /tmp/install-beaker.sh && \
     bash /tmp/install-beaker.sh && \
     rm /tmp/install-beaker.sh
+
+# Keep this after all release-stage Python installs. PyTorch's cu13 wheel
+# currently constrains nvidia-cublas to 13.1.x, but TE cu13 needs a symbol
+# from newer cuBLAS.
+RUN set -eux; \
+    if [ -n "${NVIDIA_CUBLAS_VERSION}" ]; then \
+        pip install --no-cache-dir --no-deps --upgrade "nvidia-cublas==${NVIDIA_CUBLAS_VERSION}"; \
+    fi
