@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT="src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py"
+SCRIPT="src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py"
 RUN_PREFIX="sp-275m-cx8"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/total_sparsity}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-total-sparsity-275m-cx8-launch-logs}"
 JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
 NUM_NODES=1
-GPUS="${GPUS:-8}"
+GPUS="${GPUS:-2}"
 EP_DIM=1
-MICRO_BSZ="${MICRO_BSZ:-4}"
+MICRO_BSZ="${MICRO_BSZ:-8}"
 GLOBAL_BATCH_SIZE_SEQ=96
 CHINCHILLA_MULTIPLE=8
 SWEEP_SUFFIX="${SWEEP_SUFFIX:-r1}"
