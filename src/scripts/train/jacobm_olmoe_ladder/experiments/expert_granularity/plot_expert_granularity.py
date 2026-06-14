@@ -20,6 +20,7 @@ if str(LADDER_DIR) not in sys.path:
     sys.path.insert(0, str(LADDER_DIR))
 
 from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
+from experiment_summary_plots import SummaryVariant, plot_observed_best_summary
 
 
 PROJECT = "ai2-llm/jacobm-olmoe-ladder"
@@ -27,6 +28,26 @@ LOSS_KEY = "train/CE loss"
 TOKENS_KEY = "throughput/total tokens"
 FIELDS = ["_step", TOKENS_KEY, LOSS_KEY]
 LR_RE = re.compile(r"lr([0-9]+(?:\.[0-9]+)?e-[0-9]+)")
+
+SUMMARY_VARIANTS = [
+    SummaryVariant(
+        "baseline",
+        ("baseline_48e_top4", "baseline_48e_top4_b384k"),
+        "baseline 48E/top4",
+        color="black",
+        linestyle="--",
+    ),
+    SummaryVariant(
+        "coarse_24e_top2",
+        ("coarse_24e_top2", "coarse_24e_top2_b384k"),
+        "coarse 24E/top2",
+    ),
+    SummaryVariant(
+        "fine_96e_top8",
+        ("fine_96e_top8", "fine_96e_top8_b384k"),
+        "fine 96E/top8",
+    ),
+]
 
 
 @dataclass(frozen=True)
@@ -407,6 +428,13 @@ def main() -> None:
     for model in sorted({point.model for point in points}, key=lambda m: model_order.get(m, 99)):
         for cx in sorted({point.cx for point in points if point.model == model}):
             plot_cx(points, model, cx, args.output_dir / f"{model}_cx{cx}_uplot.png", args.window_m)
+    plot_observed_best_summary(
+        points,
+        out_path=args.output_dir / "summary_observed_best.png",
+        title="Expert granularity observed best",
+        variants=SUMMARY_VARIANTS,
+        window_m=args.window_m,
+    )
 
 
 if __name__ == "__main__":

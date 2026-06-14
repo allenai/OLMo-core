@@ -20,6 +20,7 @@ if str(LADDER_DIR) not in sys.path:
     sys.path.insert(0, str(LADDER_DIR))
 
 from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
+from experiment_summary_plots import SummaryVariant, plot_observed_best_summary
 
 
 PROJECT = "ai2-llm/jacobm-olmoe-ladder"
@@ -33,6 +34,18 @@ OUTPUT_SUBDIR = "total_sparsity"
 PLOT_TITLE = "Total sparsity"
 VARIANT_LABELS = {'baseline_48e_top4': 'baseline 48E/top4', 'baseline_48e_top4_b256k': 'baseline 48E/top4 (b256k)', 'baseline_48e_top4_b384k': 'baseline 48E/top4 (b384k)', 'baseline_48e_top4_b512k': 'baseline 48E/top4 (b512k)', 'baseline_48e_top4_sparsity_tag': 'sparsity baseline 48E/top4', 'low_total_24e_top4': 'low total 24E/top4', 'high_total_96e_top4': 'high total 96E/top4', 'huge_total_192e_top4': 'huge total 192E/top4'}
 VARIANT_ORDER = ['baseline_48e_top4', 'baseline_48e_top4_b256k', 'baseline_48e_top4_b384k', 'baseline_48e_top4_b512k', 'baseline_48e_top4_sparsity_tag', 'low_total_24e_top4', 'high_total_96e_top4', 'huge_total_192e_top4']
+SUMMARY_VARIANTS = [
+    SummaryVariant(
+        "baseline",
+        ("baseline_48e_top4", "baseline_48e_top4_b384k", "baseline_48e_top4_sparsity_tag"),
+        "baseline 48E/top4",
+        color="black",
+        linestyle="--",
+    ),
+    SummaryVariant("low_total_24e_top4", ("low_total_24e_top4",), "low total 24E/top4"),
+    SummaryVariant("high_total_96e_top4", ("high_total_96e_top4",), "high total 96E/top4"),
+    SummaryVariant("huge_total_192e_top4", ("huge_total_192e_top4",), "huge total 192E/top4"),
+]
 
 
 @dataclass(frozen=True)
@@ -361,6 +374,13 @@ def main() -> None:
     model_order = {"275m": 0, "480m": 1, "810m": 2, "1p2b": 3}
     for model, cx in sorted(experiment_keys, key=lambda key: (model_order.get(key[0], 99), key[1])):
         plot_cx(points, model, cx, args.output_dir / f"{model}_cx{cx}_uplot.png", args.window_m)
+    plot_observed_best_summary(
+        points,
+        out_path=args.output_dir / "summary_observed_best.png",
+        title="Total sparsity observed best",
+        variants=SUMMARY_VARIANTS,
+        window_m=args.window_m,
+    )
 
 
 if __name__ == "__main__":

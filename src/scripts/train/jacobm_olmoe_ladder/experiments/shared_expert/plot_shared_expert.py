@@ -20,6 +20,7 @@ if str(LADDER_DIR) not in sys.path:
     sys.path.insert(0, str(LADDER_DIR))
 
 from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
+from experiment_summary_plots import SummaryVariant, plot_observed_best_summary
 
 
 PROJECT = "ai2-llm/jacobm-olmoe-ladder"
@@ -33,6 +34,16 @@ OUTPUT_SUBDIR = "shared_expert"
 PLOT_TITLE = "Shared expert"
 VARIANT_LABELS = {'baseline_48e_top4': 'baseline shared d/2', 'baseline_48e_top4_b256k': 'baseline shared d/2 (b256k)', 'baseline_48e_top4_b384k': 'baseline shared d/2 (b384k)', 'baseline_48e_top4_b512k': 'baseline shared d/2 (b512k)', 'no_shared_matched_active': 'no shared, routed 9/8 d'}
 VARIANT_ORDER = ['baseline_48e_top4', 'baseline_48e_top4_b256k', 'baseline_48e_top4_b384k', 'baseline_48e_top4_b512k', 'no_shared_matched_active']
+SUMMARY_VARIANTS = [
+    SummaryVariant(
+        "baseline",
+        ("baseline_48e_top4", "baseline_48e_top4_b384k"),
+        "baseline shared d/2",
+        color="black",
+        linestyle="--",
+    ),
+    SummaryVariant("no_shared_matched_active", ("no_shared_matched_active",), "no shared, routed 9/8 d"),
+]
 
 
 @dataclass(frozen=True)
@@ -355,6 +366,13 @@ def main() -> None:
     model_order = {"275m": 0, "480m": 1, "810m": 2, "1p2b": 3}
     for model, cx in sorted(experiment_keys, key=lambda key: (model_order.get(key[0], 99), key[1])):
         plot_cx(points, model, cx, args.output_dir / f"{model}_cx{cx}_uplot.png", args.window_m)
+    plot_observed_best_summary(
+        points,
+        out_path=args.output_dir / "summary_observed_best.png",
+        title="Shared expert observed best",
+        variants=SUMMARY_VARIANTS,
+        window_m=args.window_m,
+    )
 
 
 if __name__ == "__main__":
