@@ -24,9 +24,7 @@ Do not revert unrelated local changes. `beaker-docs/` may exist as an untracked 
 Last updated: 2026-06-12 after the plot/cache update commit `b05441de`.
 The documentation-only handoff commit may be newer.
 
-The loop is currently paused for handoff. If Jacob asks to resume monitoring,
-use a real 4-hour cadence unless a just-started job needs a short startup check.
-Do not start a tight polling loop.
+The loop is currently paused for handoff. Prefer explicit queue bundles and poll on request or at natural milestones. If Jacob asks for monitoring, use a real 4-hour cadence unless a just-started job needs a short startup check.
 
 Currently active/queued jobs to watch:
 
@@ -39,7 +37,7 @@ Currently active/queued jobs to watch:
 | 810M expert granularity | coarse Cx4 `4e-4` | `01KTXR4J7FN4ERB9BYDKC261F5` | started |
 | 810M expert granularity | fine Cx1 `6e-4` | `01KTXR7563GGMW6FE57TTVACSY` | started |
 | 810M expert granularity | fine Cx4 `4e-4` | `01KTXR9YA2QAR7HB1XS1R0FTBW` | started |
-| midpoint Cx2 `b384k` repair | `4.5e-4`, `9e-4`, `1.8e-3` | `01KTWV11...`, `01KTWV1E...`, `01KTWV1T...` | all started |
+| 480M Cx2 `b384k` repair | `4.5e-4`, `9e-4`, `1.8e-3` | `01KTWV11...`, `01KTWV1E...`, `01KTWV1T...` | all started |
 | 275M expert-granularity Cx2 repair | coarse/fine `9e-4`, `1.8e-3`, `3.6e-3` | see `RUNS.md` | all started |
 | 1.2B Cx8 canonical replacements | `2e-4`, `8e-4` | `01KTWB5V3...`, `01KTWB65Y...` | both started |
 
@@ -49,9 +47,9 @@ Known failed/ignored recent attempts:
   errors. Treat as infrastructure/startup failure.
 - 810M Cx2 `r2`: failed before training because W&B rejected an overlong group
   name: `invalid parameters: 128 limit exceeded for GroupName`.
-- Commit `07df5ad` fixed W&B group names in `tiny_275m.py`; the `r3` jobs use
+- Commit `07df5ad` fixed W&B group names in the ladder train script; the `r3` jobs use
   that commit and have passed W&B init.
-- Accidental midpoint Cx2 `r2` duplicate jobs were stopped immediately; ignore.
+- Accidental 480M Cx2 `r2` duplicate jobs were stopped immediately; ignore.
 
 Latest plotting state:
 
@@ -112,15 +110,17 @@ secret for this project.
 
 ## Training script and model sizes
 
-The main train script is:
+The main train script for new launches is:
 
-- `src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py`
+- `src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py`
 
-Despite the filename, this script now supports all current baseline sizes:
+The old `tiny_275m.py` path is kept as a historical copy for reproducing older launch records. `mid_480m` remains accepted as a compatibility alias for `480m`.
+
+This script supports all current baseline sizes:
 
 - `275m`: current tiny MoE baseline, about 278M active including embeddings
   and about 1.13B total params.
-- `mid_480m`: implemented midpoint baseline rung, about 480M active including
+- `480m`: implemented 480M baseline rung, about 480M active including
   embeddings/head and about 2.6B total params. Smoke passed at `gpu4-ep1mb8`.
 - `810m`: about 817M active including embeddings and about 4.93B total params.
 - `1p2b`: about 1.22B active including embeddings and about 7.76B total params.
@@ -166,16 +166,16 @@ Canonical settings currently in use:
 | 275M | 4 | 524,288 | 64 | 4 | 1 | 16 | Canonical final family. |
 | 275M | 8 | 786,432 | 96 | 8 | 1 | 4 | Forward policy. Historical baseline used 4 GPUs / mb8. |
 | 275M | 16 | 1,048,576 | 128 | 8 | 1 | 16 | Used to finish Cx16 faster. |
-| Midpoint | 1 | 262,144 | 32 | 4 | 1 | 8 | Completed/validated family. |
-| Midpoint | 2 | 393,216 | 48 | 4 | 1 | 4 | Canonical Cx2 repair family as of 2026-06-12. Old `b512k` runs are diagnostic. |
-| Midpoint | 4 | 524,288 | 64 | 4 | 1 | 8 | Completed/validated family. |
-| Midpoint | 8 | 786,432 | 96 | 8 | 1 | 4 | Completed/validated family. |
+| 480M | 1 | 262,144 | 32 | 4 | 1 | 8 | Completed/validated family. |
+| 480M | 2 | 393,216 | 48 | 4 | 1 | 4 | Canonical Cx2 repair family as of 2026-06-12. Old `b512k` runs are diagnostic. |
+| 480M | 4 | 524,288 | 64 | 4 | 1 | 8 | Completed/validated family. |
+| 480M | 8 | 786,432 | 96 | 8 | 1 | 4 | Completed/validated family. |
 | 810M | 1 | 262,144 | 32 | 4-8 | 1 | 4 | Completed Cx1 family. |
 | 810M | 2 | 393,216 | 48 | 8 | 1 | 2 | Canonical Cx2 repair family as of 2026-06-12. Old `b512k` runs are diagnostic. |
 | 810M | 4 | 524,288 | 64 | 8 | 1 | 4 | Completed Cx4 family. |
 | 810M | 8 | 786,432 | 96 | 8-16 | 1 | 4 | Completed at 8 GPUs; forward policy prefers 16 GPUs when launching fresh. |
 | 1.2B | 1 | 262,144 | 32 | 8 | 1 | 2 | Completed Cx1 family. |
-| 1.2B | 2 | 524,288 | 64 | 8 | 1 | 2 | Not launched yet; low priority. |
+| 1.2B | 2 | 393,216 | 48 | 8 | 1 | 2 | Not launched yet; next baseline gap after settings confirmation. |
 | 1.2B | 4 | 524,288 | 64 | 8-16 | 1 | 2 | Completed at 8 GPUs; forward policy prefers 16 GPUs when launching fresh. |
 | 1.2B | 8 | 786,432 | 96 | 8 | 1 | 4 | Preferred one-node replacement setting after 32-GPU/mb1 underperformed. |
 
@@ -261,20 +261,22 @@ uv run --with wandb python src/scripts/train/jacobm_olmoe_ladder/analyze_wandb_l
 
 We are building a MoE ladder foundation before committing to larger architecture choices.
 
-The v0 baseline goal is to establish comparable LR-tuned baselines across three
-active-parameter rungs (`275m`, `810m`, `1p2b`) and useful Chinchilla multiples.
+The v0 baseline goal is to establish comparable LR-tuned baselines across the
+active-parameter rungs (`275m`, `480m`, `810m`, `1p2b`) and useful Chinchilla multiples.
 This gives us a baseline ladder for judging later architecture interventions
 such as alternate sparsity choices.
 
 Dense-ladder context from coworkers:
 
 - Their batch-size rule was roughly `B = 0.6 * D ** 0.6`.
-- Example batch schedule:
+- Historical example batch schedule before the repaired Cx2 policy:
   - Cx1: 262,144 tokens
   - Cx2: 524,288 tokens
   - Cx4: 524,288 tokens
   - Cx8: 786,432 tokens
   - Cx16: 1,048,576 tokens
+- Current canonical MoE Cx2 policy uses `b384k`: 393,216 tokens /
+  `global_batch_size_seq=48` for all model sizes.
 - They fit U-plots over log LR vs final-stage train loss.
 - They sometimes fit linear trends over the final 1k steps, but averaging over
   final token windows is acceptable for our current use.
@@ -333,16 +335,15 @@ Validation/eval policy:
 Use `CURRENT_PLAN.md` as the active source of truth. The short version:
 
 - Do not queue more jobs right now.
-- Re-enter the loop with a long cadence, about 4 hours unless a job is near
-  completion or a just-started job needs startup/OOM checks.
+- Use explicit queue bundles rather than an autonomous monitoring loop. Poll on request, near completion, or for startup/OOM checks.
 - Monitor existing baseline repair runs, remaining baseline runs, and expert
   granularity runs. Monitor total-sparsity jobs only if new tracked IDs appear.
 - Cx2 repair is now the main cleanup thread:
   - 275M baseline + `eg24e2k` + `eg96e8k`: `b384k`, 2 GPUs, EP=1, mb8,
     LRs `9e-4`, `1.8e-3`, `3.6e-3`.
-  - `mid_480m`: `b384k`, 4 GPUs, EP=1, mb4, LRs `4.5e-4`, `9e-4`, `1.8e-3`.
+  - `480m`: `b384k`, 4 GPUs, EP=1, mb4, LRs `4.5e-4`, `9e-4`, `1.8e-3`.
   - 810M: `b384k`, 8 GPUs, EP=1, mb2, LRs `2.8e-4`, `5.6e-4`, `1.12e-3`.
-  - 1.2B Cx2 has not been launched and remains low priority.
+  - 1.2B Cx2 has not been launched; prepare a `b384k` queue after settings confirmation.
 - Expert granularity currently has Cx1/Cx4 completed for the main two variants,
   Cx8 in progress/queued, and repaired Cx2 queued.
 - Total sparsity currently has only one confirmed completed full run:
@@ -479,7 +480,7 @@ Current pushed plot files:
 - `f7d1788e` exclude running jobs from ladder plots by default
 - `07df5ad7` shorten W&B group names to avoid the 128-character `GroupName`
   failure
-- `ff4ef56a` track Cx2 repair retries and add launch selectors for midpoint vs
+- `ff4ef56a` track Cx2 repair retries and add launch selectors for 480M vs
   810M Cx2 repairs
 - `4ddca365` launch 1.2B Cx4 and 810M Cx2 sweeps; add 1.2B plotting support
 - `2d7917a0` queue 810M Cx8 ladder sweep
@@ -506,8 +507,8 @@ ssh jacobm@hammond-cs-aus-452.reviz.ai2.in \
   "beaker session exec <SESSION_ID> -- bash -l"
 ```
 
-- When launching training, preserve the current naming convention: experiment names encode Cx, batch, EP/MB, LR, and a short git hash.
-- Checkpoint paths are derived from experiment names under `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3`.
+- For new launches, use semantic resume-stable names: model, variant, Cx/data scale, batch policy when relevant, LR, and attempt id. Do not encode node count, GPU count, EP, microbatch, cluster, or other systems-only settings in new names; put those in W&B/Beaker tags and config.
+- Checkpoint paths are derived from experiment names under `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3`; keeping names stable is what lets systems-only resumes work.
 - Use `uv run ...` locally and remotely unless there is a strong reason not to.
 - Use `rg` first for search.
 - Use `apply_patch` for manual file edits.

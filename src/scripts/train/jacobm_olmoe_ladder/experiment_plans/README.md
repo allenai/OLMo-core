@@ -1,3 +1,5 @@
+> Planning note: these runbooks are useful implementation references, but some tables predate the current `480m` naming and canonical Cx2 `b384k` policy. Confirm launch settings against `../SETTINGS_AUDIT.md` and queue priority against `../LAUNCH_QUEUE.md`.
+
 # Experiment Plans
 
 This folder contains detailed runbooks for post-baseline MoE A0 experiments.

@@ -202,7 +202,7 @@ where explicitly useful for sanity checking:
   high-total Cx1 point.
 - Most other tracked total-sparsity Cx1/Cx4 r1 jobs were manually canceled;
   stopped Cx1 points were relaunched as r2 on 2026-06-13.
-- Cx1 and repaired `b384k` Cx2 LR-transfer checks were queued on 2026-06-13.
+- Cx1 and repaired `b384k` Cx2 LR-transfer checks were first queued on 2026-06-13, then stopped and requeued on 2026-06-14 as `gpu2-ep1mb8` after memory plots suggested enough headroom. The stable run names and checkpoint folders were retained; see `RUNS.md` for replacement Beaker IDs and old stopped IDs.
 - No complete tracked Cx8 sparsity result should be used as a final point.
 
 For the real experiment, continue the full matrix below with repaired Cx2 and
@@ -278,8 +278,8 @@ If compute arrives in a burst, use this order:
 1. Smoke `sp96e4k` and `sp192e4k` at the largest memory-pressure cell we plan to
    launch immediately. For 275M-only launch, smoke 275M Cx1/Cx2 is enough; for
    broad launch, smoke 480M or 810M too.
-2. Queue the full 275M LR-tuning matrix above. Cx1/Cx2 were queued on
-   2026-06-13; Cx4/Cx8 remain next when compute allows. This is the most
+2. Queue the full 275M LR-tuning matrix above. Cx1/Cx2 were requeued on
+   2026-06-14 as `gpu2-ep1mb8`; Cx4/Cx8 remain next when compute allows. This is the most
    important sparsity work because it calibrates LR transfer.
 3. If 275M Cx1/Cx4 complete first and look normal, queue 480M Cx1/Cx4 single
    points for both variants while waiting for 275M Cx2/Cx8.

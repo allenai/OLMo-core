@@ -101,13 +101,10 @@ naturally. Use a new attempt suffix only for an intentionally fresh rerun.
 
 ## Current Jobs
 
-Current operating state as of 2026-06-13 17:12 UTC status check:
+Current operating state as of 2026-06-14 02:05 UTC relaunch pass:
 
 - `SETTINGS_AUDIT.md` is confirmed by Jacob. Queue additional jobs only from an explicit approved bundle.
-- Monitor the existing baseline repair runs, remaining baseline runs, and
-  expert-granularity runs. Monitor any already-queued total-sparsity jobs if
-  they are later found, but do not launch additional total-sparsity jobs from
-  this session unless Jacob explicitly says something is missing.
+- Monitor the existing baseline repair runs, remaining baseline runs, expert-granularity runs, and the requeued total-sparsity Cx1/Cx2 checks. Do not touch already-running non-sparsity jobs for systems-only changes; queued EG promotions were relaunched on 2026-06-14 with the locked higher-microbatch settings.
 - Current Cx2 repair policy supersedes older Cx2 notes:
   - 275M baseline, `eg24e2k`, and `eg96e8k`: `b384k`, 2 GPUs, EP=1, mb8,
     LRs `9e-4`, `1.8e-3`, `3.6e-3`.
@@ -122,7 +119,7 @@ Active/queued job snapshot at handoff:
 | 1.2B Cx2 `b384k` baseline | `1.5e-4` is running at 15.639B tokens, W&B `dtd8qeiv`; `6e-4` is running at 14.950B tokens, W&B `54pt8zj7`; `3e-4` had one failed job on a B200 node with `ModuleNotFoundError: olmo_core` before training and now has a fresh pending retry under the same experiment `01KTZ163MP8B3VFGGY7YWHSFB6`. Do not intervene unless the retry also fails. |
 | 480M expert granularity full ladder | Finished: coarse Cx1 `2.5817` avg250M (`rcgxm5qv`), coarse Cx2 `2.4767` avg250M (`ksfrmhct`), fine Cx1 `2.5546` avg250M (`nvndg2tr`). Running: fine Cx2 7.058B tokens (`fzk2affn`), coarse Cx4 18.315B (`wq8gib5l`), fine Cx4 7.711B (`ezokso90`), coarse Cx8 29.148B (`epx7o7ty`), fine Cx8 10.789B (`8676ezla`). |
 | 810M Cx2 `b384k` repair | All three r3 jobs succeeded. Results: `2.8e-4` avg250M `2.3333` (`uh4el1df`), `5.6e-4` avg250M `2.3204` (`v5puakhq`, best observed), `1.12e-3` avg250M `2.3268` (`sxivrph5`); fitted optimum from plotted results is about `6.29e-4`. |
-| 810M expert granularity | All Cx1/Cx4 checks succeeded. Cx1: coarse `2.4191` avg250M (`1nqxk9iw`), fine `2.3985` (`wjto6qtp`), baseline `2.4104`. Cx4: coarse `2.2585` (`q50qk891`), fine `2.2353` (`7cbm4c9b`), baseline `2.2424`. Fine beats baseline at both checked Cx values; coarse is worse at both. Additional 810M expert-granularity full-ladder promotions are waiting for idle compute. |
+| 810M / 1.2B expert granularity promotions | Cx1/Cx4 checks for 810M succeeded. Additional queued promotions were relaunched on 2026-06-14: 810M Cx2 uses `gpu8-ep1mb6`, 810M Cx8 uses `gpu8-ep1mb6`, and 1.2B Cx1 uses `gpu8-ep1mb4`; see `RUNS.md` for IDs. |
 | 480M Cx2 `b384k` repair | `4.5e-4`, `9e-4`, `1.8e-3` all finished cleanly; plotted canonical b384k summary has best observed `9e-4` avg250M `2.4630`, fit LR about `9.73e-4`. Historical wider Cx2 rows remain visible in expert plots for context. |
 | 275M expert-granularity Cx2 repair | Coarse/fine `9e-4`, `1.8e-3`, `3.6e-3` all finished cleanly; Beaker IDs are in `RUNS.md`. |
 | 1.2B Cx8 one-node replacements | `2e-4` (`01KTWB5V3CBHWS868FKGBX342D`) and `8e-4` (`01KTWB65YRYR8K44RYXBZ7T5WJ`) are running, both around 66B tokens. W&B live summaries: `2e-4` at 66.141B / CE `2.1968` (`jdrvfvfn`), `8e-4` at 66.415B / CE `2.3780` (`ja7yu1c3`). These are live summaries, not final-window decisions. |
