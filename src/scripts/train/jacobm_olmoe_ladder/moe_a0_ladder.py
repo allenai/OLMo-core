@@ -153,6 +153,14 @@ class TotalSparsitySpec:
     tag: str
 
 
+@dataclass(frozen=True)
+class SharedExpertSpec:
+    num_shared_experts: Optional[int]
+    shared_hidden_mult: Optional[float]
+    routed_hidden_mult: Optional[float]
+    tag: str
+
+
 MODEL_SIZE_SPECS = {
     "275m": ModelSizeSpec(
         d_model=768,
@@ -253,6 +261,22 @@ TOTAL_SPARSITY_SPECS = {
 }
 
 
+SHARED_EXPERT_SPECS = {
+    "baseline": SharedExpertSpec(
+        num_shared_experts=None,
+        shared_hidden_mult=None,
+        routed_hidden_mult=None,
+        tag="sebase",
+    ),
+    "no_shared_matched_active": SharedExpertSpec(
+        num_shared_experts=0,
+        shared_hidden_mult=0.0,
+        routed_hidden_mult=9 / 8,
+        tag="se0m9",
+    ),
+}
+
+
 def prepare_s3_environment(opts: argparse.Namespace) -> None:
     if (
         str(opts.data_root).startswith("s3://")
@@ -283,6 +307,16 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Total expert capacity variant at fixed active routed compute. "
             "Use only with baseline expert geometry."
+        ),
+    )
+    parser.add_argument(
+        "--shared-expert-config",
+        choices=sorted(SHARED_EXPERT_SPECS),
+        default="baseline",
+        help=(
+            "Shared-expert ablation axis. 'no_shared_matched_active' removes the "
+            "shared expert and sets routed expert hidden size to 9/8 * d_model, "
+            "matching baseline active MoE hidden units for top-4 baseline geometry."
         ),
     )
     parser.add_argument(
@@ -468,6 +502,7 @@ def configure_model_size(opts: argparse.Namespace) -> None:
     spec = MODEL_SIZE_SPECS[opts.model_size]
     expert_geometry = EXPERT_GEOMETRY_SPECS[opts.expert_geometry]
     total_sparsity = TOTAL_SPARSITY_SPECS[opts.total_sparsity]
+    shared_expert = SHARED_EXPERT_SPECS[opts.shared_expert_config]
     if spec.dense_prefix_layers != 1:
         raise ValueError("Only one dense prefix layer is currently implemented")
     if (
@@ -475,6 +510,14 @@ def configure_model_size(opts: argparse.Namespace) -> None:
         and opts.total_sparsity != "baseline_48e_top4"
     ):
         raise ValueError("--expert-geometry and --total-sparsity are independent ablation axes")
+    if opts.shared_expert_config != "baseline" and (
+        opts.expert_geometry != "baseline_48e_top4"
+        or opts.total_sparsity != "baseline_48e_top4"
+    ):
+        raise ValueError(
+            "--shared-expert-config is an independent ablation axis; use it only "
+            "with baseline expert geometry and baseline total sparsity for now"
+        )
 
     NUM_EXPERTS = expert_geometry.num_experts
     TOP_K = expert_geometry.top_k
@@ -490,6 +533,12 @@ def configure_model_size(opts: argparse.Namespace) -> None:
     MOE_HIDDEN_SIZE = int(spec.d_model * expert_geometry.moe_hidden_mult)
     NUM_SHARED_EXPERTS = spec.num_shared_experts
     SHARED_MLP_HIDDEN_SIZE = spec.shared_mlp_hidden_size
+    if shared_expert.routed_hidden_mult is not None:
+        MOE_HIDDEN_SIZE = int(round(spec.d_model * shared_expert.routed_hidden_mult))
+    if shared_expert.num_shared_experts is not None:
+        NUM_SHARED_EXPERTS = shared_expert.num_shared_experts
+    if shared_expert.shared_hidden_mult is not None:
+        SHARED_MLP_HIDDEN_SIZE = int(round(spec.d_model * shared_expert.shared_hidden_mult))
     EFFECTIVE_MLP = MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS
     MLP_RATIO = EFFECTIVE_MLP / D_MODEL
     DENSE_LAYER_MLP = spec.dense_layer_mlp
@@ -499,6 +548,8 @@ def configure_model_size(opts: argparse.Namespace) -> None:
         if opts.total_sparsity != "baseline_48e_top4"
         else expert_geometry.tag
     )
+    if opts.shared_expert_config != "baseline":
+        EXPERT_GEOMETRY_TAG = f"{EXPERT_GEOMETRY_TAG}-{shared_expert.tag}"
 
     if PP_DIM > 1:
         _, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=1)
@@ -519,6 +570,9 @@ def consume_script_overrides(opts: argparse.Namespace, overrides: List[str]) -> 
         if override.startswith("total_sparsity="):
             opts.total_sparsity = override.split("=", 1)[1]
             continue
+        if override.startswith("shared_expert_config="):
+            opts.shared_expert_config = override.split("=", 1)[1]
+            continue
         filtered_overrides.append(override)
     if opts.model_size not in MODEL_SIZE_SPECS:
         raise ValueError(f"--model-size must be one of {sorted(MODEL_SIZE_SPECS)}")
@@ -526,6 +580,8 @@ def consume_script_overrides(opts: argparse.Namespace, overrides: List[str]) -> 
         raise ValueError(f"--expert-geometry must be one of {sorted(EXPERT_GEOMETRY_SPECS)}")
     if opts.total_sparsity not in TOTAL_SPARSITY_SPECS:
         raise ValueError(f"--total-sparsity must be one of {sorted(TOTAL_SPARSITY_SPECS)}")
+    if opts.shared_expert_config not in SHARED_EXPERT_SPECS:
+        raise ValueError(f"--shared-expert-config must be one of {sorted(SHARED_EXPERT_SPECS)}")
     return filtered_overrides
 
 
