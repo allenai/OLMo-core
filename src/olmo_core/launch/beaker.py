@@ -354,6 +354,9 @@ class BeakerLaunchConfig(Config):
     system_python: bool = True
     """Use the system Python installation in the Beaker image."""
 
+    no_python: bool = False
+    """Skip Gantry's Python environment setup."""
+
     num_execution_units: int | None = None
     """
     Number of "execution units", defaults to 1. An "execution unit" is abstraction
@@ -650,6 +653,7 @@ class BeakerLaunchConfig(Config):
             results=self.result_dir,
             # Python settings.
             system_python=self.system_python,
+            no_python=self.no_python,
             torchrun=torchrun,
             # Hooks.
             pre_setup=self.pre_setup,
@@ -931,6 +935,11 @@ def _parse_args():
         help="""If the command should be run via torchrun. This will default to true multi-GPU jobs.""",
     )
     parser.add_argument(
+        "--no-python",
+        action="store_true",
+        help="""Skip Gantry's Python environment setup and use the Beaker image as-is.""",
+    )
+    parser.add_argument(
         "--slack-notifications",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -1012,6 +1021,7 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
             BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in (opts.weka or [])
         ],
         torchrun=opts.torchrun,
+        no_python=opts.no_python,
     )
 
 

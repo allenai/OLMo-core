@@ -1,5 +1,0 @@
-# Keep Holmes CUDA 13 smoke tests on the cuBLAS build baked into
-# tianhuat/olmo-core-torch212-2404-cu130. Without this constraint, Gantry's
-# local uv install has been observed to replace it with nvidia-cublas==13.1.1.3,
-# which is ABI-incompatible with transformer-engine-cu13==2.16.0 in that image.
-nvidia-cublas==13.2.0.9
