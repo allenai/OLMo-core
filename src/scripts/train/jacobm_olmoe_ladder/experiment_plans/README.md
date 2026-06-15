@@ -23,6 +23,8 @@ Current plans:
   active routed compute.
 - `swa_full_attention_ratio.md`: sliding-window versus full-attention layer
   ratio sweep, separate from larger hybrid-attention changes.
+- `qwen3_like.md`: Qwen3-30B-A3B-inspired no-shared, all-sparse, fine-grained
+  top-8 MoE geometry variants.
 
 Plan template:
 
