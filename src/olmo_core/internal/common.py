@@ -83,6 +83,7 @@ def get_root_dir(cluster: str) -> str:
         "ai2/titan",
         "ai2/rhea",
         "ai2/phobos",
+        "ai2/holmes",
     ]:
         return "/weka/oe-training-default/ai2-llm"
     elif cluster in GOOGLE_CLUSTERS:
@@ -263,6 +264,7 @@ CLUSTER_TO_GPU_TYPE = {
     "ai2/augusta": "NVIDIA H100 80GB HBM3",
     "ai2/ceres": "NVIDIA H100 80GB HBM3",
     "ai2/titan": "NVIDIA B200",
+    "ai2/holmes": "NVIDIA B300",
 }
 
 
