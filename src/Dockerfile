@@ -200,16 +200,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     # uv \
     && curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install MLNX OFED user-space drivers
-# See https://docs.nvidia.com/networking/pages/releaseview.action?pageId=15049785#Howto:DeployRDMAacceleratedDockercontaineroverInfiniBandfabric.-Dockerfile
-ARG UBUNTU_VERSION
-ARG TARGET_PLATFORM
-ENV MOFED_VER="24.04-0.6.6.0"
-RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}.tgz && \
-    tar -xvf MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}.tgz && \
-    MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}/mlnxofedinstall --basic --user-space-only --without-fw-update -q && \
-    rm -rf MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM} && \
-    rm MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}.tgz
+# RDMA/OFED user-space is intentionally not baked into this app image.
+# B300 / ConnectX-8 jobs should use the host or runtime-provided NVIDIA DOCA
+# networking stack so libibverbs/libmlx5 match the node kernel drivers.
 
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda
