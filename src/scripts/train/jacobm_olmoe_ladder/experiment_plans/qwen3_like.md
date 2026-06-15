@@ -7,8 +7,9 @@ active-parameter ladder.
 
 Compare the current OLMoE3 ladder MoE shape against Qwen3-like sparse FFN
 shapes while keeping the non-MoE backbone fixed per size for the first pass.
-The first wave is 275M-only: it is an LR-transfer/geometry test, not yet a full
-multi-size promotion.
+The current launch wave is 275M-only: it is an LR-transfer/geometry test, not
+yet a full multi-size promotion. The tables below also record the 480M, 810M,
+and 1.2B configs we would use if the 275M results justify promotion.
 
 Qwen3-like means:
 
