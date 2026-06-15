@@ -893,3 +893,62 @@ PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
 | `se-1p2b-cx2-se0m9-lr6e-4-r1` | 1.2B | 2 | 6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KV69ADE3VQ7JPXSEZ00KK4S8 | Baseline best-observed LR; Holmes compile-on. |
 | `se-1p2b-cx4-se0m9-lr3e-4-r1` | 1.2B | 4 | 3e-4 | 524,288 | 64 | 8 | 1 | 2 | https://beaker.org/ex/01KV69ASNJF9D05MM7KDBHKPH7 | Baseline best-observed LR; Holmes compile-on. |
 
+
+
+## 2026-06-15 Qwen3-Like 275M Geometry Ladder
+
+Implemented and launched the dedicated Qwen3-like geometry lane from commit
+`ffd8810e` using `experiments/qwen3_like/qwen3_like_ladder.py`. Both smoke tests
+were launched first on Holmes low-priority/preemptible with torch compilation on;
+`q3td128e8k` reached training, and `q3am128e8k` reached active training steps
+before the full grid was queued.
+
+Common settings:
+
+```text
+cluster = ai2/holmes
+workspace = ai2/holmes-testing
+image = tianhuat/olmo-core-torch212-2404-cu130
+priority = low
+preemptible = true
+--model-size=275m
+--compile
+--no-python
+PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
+```
+
+Smoke tests:
+
+| Name | Variant | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-smoke-q3am128e8k-lr2e-3-r1` | `active_matched` | 0.02 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6R4Z8ADQP70ZVNZE5RMSPF | Reached training steps before full queue launch. |
+| `q3-smoke-q3td128e8k-lr2e-3-r1` | `true_3d_depth_matched` | 0.02 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6R5AXD5HP21TPS5VBYRMAF | Reached training before full queue launch. |
+
+Full 275M LR grid:
+
+| Name | Variant | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-275m-cx1-q3am128e8k-lr1e-3-r1` | `active_matched` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RMBYP05EPB71BCG64WV5J | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3am128e8k-lr2e-3-r1` | `active_matched` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RMS0N53D1VZCBB9R6JG0T | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3am128e8k-lr4e-3-r1` | `active_matched` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RN4JS2HANRBAX8Z41EB8Q | Baseline-centered LR grid. |
+| `q3-275m-cx2-q3am128e8k-lr9e-4-r1` | `active_matched` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RNG802VM2J0HH70MBSY7W | Repaired b384k batch. |
+| `q3-275m-cx2-q3am128e8k-lr1.8e-3-r1` | `active_matched` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RNVR1Q44NKSSMY1ZD2J2T | Repaired b384k batch. |
+| `q3-275m-cx2-q3am128e8k-lr3.6e-3-r1` | `active_matched` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RP8FGPDWMK9QCANHQNRQX | Repaired b384k batch. |
+| `q3-275m-cx4-q3am128e8k-lr8e-4-r1` | `active_matched` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RPPAG49RDBG9H7HK0657P | Baseline-centered LR grid. |
+| `q3-275m-cx4-q3am128e8k-lr1.6e-3-r1` | `active_matched` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RQ316ECRHW85A24Y6EWX7 | Baseline-centered LR grid. |
+| `q3-275m-cx4-q3am128e8k-lr3.2e-3-r1` | `active_matched` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RQEPEVWZ77BBVYKTHDA40 | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3am128e8k-lr8e-4-r1` | `active_matched` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RQTG0Y3R2QCETC3PZRS5V | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3am128e8k-lr1.6e-3-r1` | `active_matched` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RR7EKF1PEHD6RZGT1PJW3 | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3am128e8k-lr3.2e-3-r1` | `active_matched` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RRKMSA7A9S2XWJX3BZP6J | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3td128e8k-lr1e-3-r1` | `true_3d_depth_matched` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RS0SNE0DGCS9FZKRMPVK1 | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3td128e8k-lr2e-3-r1` | `true_3d_depth_matched` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RSCPRRXPWBA75ZYTM0K4Z | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3td128e8k-lr4e-3-r1` | `true_3d_depth_matched` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RSREYKWXKV2ZTR7KRK3R6 | Baseline-centered LR grid. |
+| `q3-275m-cx2-q3td128e8k-lr9e-4-r1` | `true_3d_depth_matched` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RT54YM8Z83MVEFCQ9DWMF | Repaired b384k batch. |
+| `q3-275m-cx2-q3td128e8k-lr1.8e-3-r1` | `true_3d_depth_matched` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RTJVQGMHH0Z869ARDACS8 | Repaired b384k batch. |
+| `q3-275m-cx2-q3td128e8k-lr3.6e-3-r1` | `true_3d_depth_matched` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RTZZ758F5W6S7MFH637CK | Repaired b384k batch. |
+| `q3-275m-cx4-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RVBEDK4VKXEVP76T3Z36W | Baseline-centered LR grid. |
+| `q3-275m-cx4-q3td128e8k-lr1.6e-3-r1` | `true_3d_depth_matched` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RVQ417KSG7TVRYT9JNKZN | Baseline-centered LR grid. |
+| `q3-275m-cx4-q3td128e8k-lr3.2e-3-r1` | `true_3d_depth_matched` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RW2YYJ7ET11CR9BYG6ZBH | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RWF257HD2QCVHF5MX6TXH | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3td128e8k-lr1.6e-3-r1` | `true_3d_depth_matched` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RWTWKDD665W7SXHMJHYTG | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3td128e8k-lr3.2e-3-r1` | `true_3d_depth_matched` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RX6DTPYBJCC6RJ6JCFR8W | Baseline-centered LR grid. |
