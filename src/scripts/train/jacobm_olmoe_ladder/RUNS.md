@@ -812,3 +812,46 @@ centered on the current 275M baseline best observed settings: Cx1 around
 | `ds-275m-cx8-ds4-sh-lr8e-4-r1` | `dense4_shared` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YDRDXA3DWNKS46NRZQ21C | Low Cx8 LR point; queued at launch status sweep. |
 | `ds-275m-cx8-ds4-sh-lr1.6e-3-r1` | `dense4_shared` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YE44K6ZZ4W95C28TQ9M5P | Centered Cx8 LR point; queued at launch status sweep. |
 | `ds-275m-cx8-ds4-sh-lr3.2e-3-r1` | `dense4_shared` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YEFSFN2VRRWKRW9X8PWMW | High Cx8 LR point; queued at launch status sweep. |
+
+## 2026-06-15 Titan Compile-On Reroute From Holmes
+
+After Holmes/B300 jobs on the CUDA 13 image showed TorchInductor backward failures
+with compile-on, and very slow throughput with `--no-compile`, the expensive
+jobs were moved back to the known-good Titan path. These replacements use
+`ai2/titan`, workspace `ai2/OLMo-3-moe-experiments`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, Gantry-managed Python, and torch
+compile enabled. The 275M dense Cx1/Cx2 Holmes compile-off jobs were left alive
+because they are small enough to finish overnight; compile should not materially
+change the training-loss comparison, aside from normal kernel-level numerical
+noise, but it has a large throughput impact.
+
+1.2B reroutes:
+
+| Name | Canceled Holmes experiment | Titan replacement | Notes |
+| --- | --- | --- | --- |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr1.2e-3-r1` | https://beaker.org/ex/01KV4S0G40B8VGFZXNHPEZXP6D | https://beaker.org/ex/01KV4ZH073A7T1VYKV30HCPKB6 | Holmes run had already finalized failed after repeated auto-resume attempts; Titan replacement is compile-on. |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV4XHHY9GSZQ308RJXBZ61RM | https://beaker.org/ex/01KV4ZJCSV6NFW52ENF8T7DNPH | Holmes compile-off run canceled; Titan replacement is compile-on. |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4XHXP1E2S8QM01YCDPWZ2K | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | Holmes compile-off run canceled; Titan replacement is compile-on. |
+
+Dense-schedule Cx4/Cx8 reroutes:
+
+| Name | Canceled Holmes experiment | Titan replacement |
+| --- | --- | --- |
+| `ds-275m-cx4-ds0-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4Y3X786SVGDT4W5A08Z3EZ | https://beaker.org/ex/01KV4ZKJH33EH0CJK5M17X0VDT |
+| `ds-275m-cx4-ds0-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4Y48ZP5YGE41G2CSF009S5 | https://beaker.org/ex/01KV4ZKZFJH2ZYYD77HPZ65DBP |
+| `ds-275m-cx4-ds0-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4Y4M9ZQNZBZY83M5EJGNXV | https://beaker.org/ex/01KV4ZMACPFM2N8D4Y4TPGG7MN |
+| `ds-275m-cx8-ds0-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4Y4ZYWG8Q1FSKT1TBB1DWE | https://beaker.org/ex/01KV4ZMP17CSGYVNDY3RS4NPG7 |
+| `ds-275m-cx8-ds0-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4Y5AKVA9Z8DVAMKVZ99VM7 | https://beaker.org/ex/01KV4ZN2FK9R17YY57ED785E4N |
+| `ds-275m-cx8-ds0-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4Y5NQK9H0EWYXHK7929JYN | https://beaker.org/ex/01KV4ZNDVC78PK6CM8X8JAKJBZ |
+| `ds-275m-cx4-ds2-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4Y89CK7ANNQ2GSM7V0TNQ7 | https://beaker.org/ex/01KV4ZNT2JCKR4Y5J27QQX897T |
+| `ds-275m-cx4-ds2-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4Y8KFCNV116NX5PF2EWMCX | https://beaker.org/ex/01KV4ZP5H7A4SD26S7DBA1S63Y |
+| `ds-275m-cx4-ds2-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4Y8YPVRBA9Z2EQAMG18KAV | https://beaker.org/ex/01KV4ZPHPHD728WDG8KH0K0DJM |
+| `ds-275m-cx8-ds2-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4Y9A5WVZQ0TP3H2W1Z7XQE | https://beaker.org/ex/01KV4ZPXPZ92ZAZJKB35ZV911T |
+| `ds-275m-cx8-ds2-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4Y9NWCFM7W68XAP8X96DPY | https://beaker.org/ex/01KV4ZQ8TT6EFGYCMBZVKWB948 |
+| `ds-275m-cx8-ds2-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4YA1YPHX0MNJJPJX7EXV2P | https://beaker.org/ex/01KV4ZQMYM262S4HBWA30H32F4 |
+| `ds-275m-cx4-ds4-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4YCN2PTK9M89HJGEKSPNBJ | https://beaker.org/ex/01KV4ZR0P5P8RMFN05270PGEA6 |
+| `ds-275m-cx4-ds4-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4YD2P9FPNE426Q55PHEB0D | https://beaker.org/ex/01KV4ZRCAXBEC0677NXHYK8AM1 |
+| `ds-275m-cx4-ds4-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4YDDW3D4BDVEQDCPA82D6A | https://beaker.org/ex/01KV4ZRRP14CRDQR5DN668RD1W |
+| `ds-275m-cx8-ds4-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4YDRDXA3DWNKS46NRZQ21C | https://beaker.org/ex/01KV4ZS4W0WS9XRZHNJ4WXDKJQ |
+| `ds-275m-cx8-ds4-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4YE44K6ZZ4W95C28TQ9M5P | https://beaker.org/ex/01KV4ZSFWZFGFW5FA3BP6EEWYA |
+| `ds-275m-cx8-ds4-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4YEFSFN2VRRWKRW9X8PWMW | https://beaker.org/ex/01KV4ZSW494V171PW9XX2197EK |
