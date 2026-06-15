@@ -800,9 +800,15 @@ class FastLandmarkAttention(Attention):
         does not attend to itself: the training kernel decrements the causal bound on the last row of
         a block, so the landmark token sees only its block's content tokens ``[block_start, qpos-1]``
         plus past blocks via landmark gating. Drop the self key to match.
+
+        In eval mode only *generated* queries (``qpos >= prompt_len``) use the "one long local block"
+        decode (:meth:`_decode_one_eval`). Prompt-position queries (``qpos < prompt_len``) keep the
+        per-block decode below so they reproduce prefill -- this is the path taken by the final prompt
+        token, which the generation loop decodes first so hard top-k retrieval also gates the first
+        generated token (prefill itself never applies top-k).
         """
         Lb = self.block_size
-        if self._eval_prompt_len is not None:
+        if self._eval_prompt_len is not None and qpos >= self._eval_prompt_len:
             return self._decode_one_eval(q, k, v, qpos)
         if qpos % Lb == Lb - 1:
             k = k[:, :, :qpos]  # keys 0..qpos-1 (drop the landmark's own position)

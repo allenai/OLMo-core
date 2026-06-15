@@ -97,6 +97,41 @@ def test_fast_topk_decode_retrieval():
     assert attn._eval_top_k is None
 
 
+def test_fast_prompt_token_decode_per_block_with_topk():
+    # The generation loop decodes the *final prompt token* as the first decode step (rather than
+    # letting prefill produce the first generated token) so hard top-k retrieval also gates that
+    # first token. That query has ``qpos < prompt_len``, so it must (a) use the per-block decode --
+    # not the one-long-local-block generated-token rule -- and (b) still apply top-k.
+    attn = _build(AttentionType.fast_landmark, mem_freq=15, head_dim=53)
+
+    # (a) Routing: a prompt-position query in an *earlier* block than the prompt boundary would be
+    # mangled by the eval-mode rule (its "local block" [section_start, qpos] is empty). With eval
+    # mode set it must instead match the cleared per-block decode bit-for-bit.
+    total, qpos, P = 53, 20, 40  # query at 20 sits in block [16..31]; prompt boundary at 40
+    torch.manual_seed(3)
+    q = torch.randn(1, 1, 1, total)
+    k = torch.randn(1, 1, total, total)
+    attn.clear_landmark_eval_decode()
+    per_block = _decode_probs(attn, q, k, qpos=qpos, total=total)
+    attn.set_landmark_eval_decode(P, "extend_last_block")
+    assert torch.equal(_decode_probs(attn, q, k, qpos=qpos, total=total), per_block)
+
+    # (b) top-k applies to such a prompt-position query. Use the final prompt token (qpos = P-1) with
+    # three past blocks; top_k=1 keeps only the argmax block's content (the rest hard-zeroed).
+    total, qpos, P = 53, 52, 53
+    landmarks = [15, 31, 47]
+    local = list(range(48, 53))
+    torch.manual_seed(0)
+    q = torch.randn(1, 1, 1, total)
+    k = torch.randn(1, 1, total, total)
+    scores = (q @ k.transpose(-1, -2)).view(-1) * attn.softmax_scale
+    best = landmarks[int(scores[landmarks].argmax())]
+    attn.set_landmark_eval_decode(P, "extend_last_block", top_k=1)
+    probs = _decode_probs(attn, q, k, qpos=qpos, total=total)
+    assert _support(probs) == sorted(list(range(best - 15, best)) + local)
+    assert abs(float(probs.sum()) - 1.0) < 1e-4
+
+
 def test_fast_topk_decode_default_path():
     # top-k also applies to the default (non-eval) per-block decode path.
     attn = _build(AttentionType.fast_landmark, mem_freq=15, head_dim=53)

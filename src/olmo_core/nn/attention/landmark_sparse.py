@@ -367,11 +367,17 @@ class SparseLandmarkAttention(Attention):
         j = torch.arange(total, device=q.device)
         is_lm = (j % L) >= (L - G)
 
-        if self._eval_prompt_len is not None:
+        # Only *generated* queries (``qpos >= prompt_len``) use the "one long local block" eval decode.
+        # Prompt-position queries keep the per-chunk rule so they reproduce prefill -- the final prompt
+        # token is decoded first by the generation loop so top-k retrieval also gates the first
+        # generated token (prefill itself never applies top-k).
+        eval_mode = self._eval_prompt_len is not None and qpos >= self._eval_prompt_len
+        if eval_mode:
             # Landmark eval mode: the generated query is part of "one long local block". It attends
             # directly to the growing block ``[section_start, qpos]`` and reaches earlier prompt
             # blocks only through their landmarks (generated positions are never landmarks).
             P = self._eval_prompt_len
+            assert P is not None
             section_start = (P // L) * L if self._eval_decode_mode == "extend_last_block" else P
             allowed = ((j >= section_start) & (j <= qpos)) | (is_lm & (j < section_start))
         else:
@@ -381,7 +387,7 @@ class SparseLandmarkAttention(Attention):
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
         scores = scores.masked_fill(~allowed.view(1, 1, 1, total), float("-inf"))
-        if self._eval_prompt_len is not None:
+        if eval_mode:
             retrievable = allowed & is_lm & (j < section_start)
         else:
             retrievable = allowed & is_lm & (ck < cq)

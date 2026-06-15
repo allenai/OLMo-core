@@ -345,6 +345,18 @@ class TransformerGenerationModule(GenerationModule):
         else:
             self.free_inference_cache()
 
+        # Landmark hard top-k retrieval is applied only on single-query decode steps, never during the
+        # batched prefill. The first generated token's logits come from the *last prompt token's*
+        # query, so if prefill produced it that token would escape top-k entirely. Instead, prefill all
+        # but the final prompt token here and let the decode loop below start from that final token --
+        # then retrieval gates the first generated token too. (Requires a KV cache and >= 2 prompt
+        # tokens; landmark generation already requires use_cache and batch_size=1 / no left-padding.)
+        landmark_decode_first_token = (
+            landmark_active and generation_config.use_cache and prompt_len >= 2
+        )
+        if landmark_decode_first_token:
+            self.model(input_ids[:, :-1], logits_to_keep=1, cache_leftpad=prefill_cache_leftpad)
+
         pbar = tqdm(
             desc="Generating tokens",
             unit="tokens",
@@ -355,15 +367,23 @@ class TransformerGenerationModule(GenerationModule):
         )
         while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
             # Determine model inputs based on if we are prefilling or decoding
-            is_first_forward = generated.shape[1] == prompt_len
-            input_ids_for_model = (
-                generated
-                if (is_first_forward or not generation_config.use_cache)
-                else generated[:, -1:]
-            )
-            cache_leftpad = (
-                prefill_cache_leftpad if is_first_forward and generation_config.use_cache else None
-            )
+            if landmark_decode_first_token:
+                # Prompt[:-1] is already cached above; every step is a single-token decode, starting
+                # from the final prompt token (whose query yields the first generated token).
+                input_ids_for_model = generated[:, -1:]
+                cache_leftpad = None
+            else:
+                is_first_forward = generated.shape[1] == prompt_len
+                input_ids_for_model = (
+                    generated
+                    if (is_first_forward or not generation_config.use_cache)
+                    else generated[:, -1:]
+                )
+                cache_leftpad = (
+                    prefill_cache_leftpad
+                    if is_first_forward and generation_config.use_cache
+                    else None
+                )
 
             # Forward pass - handles both prefill and decode phases
             forward_start_time = time.perf_counter()
