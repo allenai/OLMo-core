@@ -16,7 +16,8 @@ LADDER_DIR = Path(__file__).parent
 EXPERT_DIR = LADDER_DIR / "experiments" / "expert_granularity"
 TOTAL_SPARSITY_DIR = LADDER_DIR / "experiments" / "total_sparsity"
 SHARED_EXPERT_DIR = LADDER_DIR / "experiments" / "shared_expert"
-for path in (LADDER_DIR, EXPERT_DIR, TOTAL_SPARSITY_DIR, SHARED_EXPERT_DIR):
+DENSE_SCHEDULE_DIR = LADDER_DIR / "experiments" / "dense_schedule"
+for path in (LADDER_DIR, EXPERT_DIR, TOTAL_SPARSITY_DIR, SHARED_EXPERT_DIR, DENSE_SCHEDULE_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -30,6 +31,7 @@ from plot_wandb_ladder import (
 from wandb_cache import DEFAULT_CACHE_DIR
 
 import plot_expert_granularity as eg
+import plot_dense_schedule as ds
 import plot_shared_expert as se
 import plot_total_sparsity as ts
 
@@ -48,6 +50,7 @@ MODEL_LABELS = {
 EXPERIMENT_MODULES = {
     "Total Sparsity": ts,
     "Shared Expert": se,
+    "Dense Schedule": ds,
 }
 VARIANT_LABELS = {
     "baseline_48e_top4": "baseline 48E/top4",
@@ -67,6 +70,11 @@ VARIANT_LABELS = {
     "huge_total_192e_top4": "huge total 192E/top4",
     "baseline_48e_top4_sparsity_tag": "sparsity baseline 48E/top4",
     "no_shared_matched_active": "no shared, routed 9/8 d",
+    "baseline_dense1_shared": "baseline dense1 + shared",
+    "baseline_dense1_shared_b384k": "baseline dense1 + shared (b384k)",
+    "dense0_shared": "dense0 + shared",
+    "dense2_shared": "dense2 + shared",
+    "dense4_shared": "dense4 + shared",
 }
 
 
