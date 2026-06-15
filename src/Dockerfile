@@ -200,9 +200,30 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     # uv \
     && curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# RDMA/OFED user-space is intentionally not baked into this app image.
-# B300 / ConnectX-8 jobs should use the host or runtime-provided NVIDIA DOCA
-# networking stack so libibverbs/libmlx5 match the node kernel drivers.
+# Minimal DOCA RDMA user-space for NCCL IB/GDRDMA.
+# Keep this narrower than doca-ofed/doca-ofed-userspace: kernel drivers and DKMS
+# belong to the host, while the container only needs verbs libraries and providers.
+ARG UBUNTU_VERSION
+ARG INSTALL_DOCA_RDMA=0
+ARG DOCA_VERSION=3.3.0
+ARG DOCA_RDMA_CORE_VERSION=2601.0.7-1
+ARG DOCA_PERFTEST_VERSION=26.01.5-1
+RUN set -eux; \
+    if [ "${INSTALL_DOCA_RDMA}" = "1" ]; then \
+        curl -fsSL https://linux.mellanox.com/public/repo/doca/GPG-KEY-Mellanox.pub \
+          | gpg --batch --yes --dearmor -o /usr/share/keyrings/doca-mellanox.gpg; \
+        echo "deb [signed-by=/usr/share/keyrings/doca-mellanox.gpg] https://linux.mellanox.com/public/repo/doca/${DOCA_VERSION}/ubuntu${UBUNTU_VERSION}/x86_64 /" \
+          > /etc/apt/sources.list.d/doca.list; \
+        apt-get update; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          rdma-core=${DOCA_RDMA_CORE_VERSION} \
+          libibverbs1=${DOCA_RDMA_CORE_VERSION} \
+          ibverbs-providers=${DOCA_RDMA_CORE_VERSION} \
+          librdmacm1=${DOCA_RDMA_CORE_VERSION} \
+          ibverbs-utils=${DOCA_RDMA_CORE_VERSION} \
+          perftest=${DOCA_PERFTEST_VERSION}; \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda

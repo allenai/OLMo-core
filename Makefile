@@ -70,6 +70,10 @@ FLASH_ATTN_4_EXTRAS =
 # NOTE: Quack currently requires CUDA 12.9 or higher and PyTorch 2.9.1
 # QUACK_VERSION = 0.2.4
 QUACK_VERSION = ""
+INSTALL_DOCA_RDMA = 0
+DOCA_VERSION = 3.3.0
+DOCA_RDMA_CORE_VERSION = 2601.0.7-1
+DOCA_PERFTEST_VERSION = 26.01.5-1
 
 #--------------#
 # Build naming #
@@ -104,6 +108,10 @@ docker-image :
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
 		--build-arg QUACK_VERSION=$(QUACK_VERSION) \
+		--build-arg INSTALL_DOCA_RDMA=$(INSTALL_DOCA_RDMA) \
+		--build-arg DOCA_VERSION=$(DOCA_VERSION) \
+		--build-arg DOCA_RDMA_CORE_VERSION=$(DOCA_RDMA_CORE_VERSION) \
+		--build-arg DOCA_PERFTEST_VERSION=$(DOCA_PERFTEST_VERSION) \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
 	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
@@ -129,7 +137,8 @@ b300-image :
 		FLASH_ATTN_4_VERSION=4.0.0b16 \
 		FLASH_ATTN_4_EXTRAS="[cu13]" \
 		TE_VERSION=2.16.0 \
-		LIGER_KERNEL_VERSION=0.8.0
+		LIGER_KERNEL_VERSION=0.8.0 \
+		INSTALL_DOCA_RDMA=1
 
 .PHONY : ghcr-image
 ghcr-image : docker-image
