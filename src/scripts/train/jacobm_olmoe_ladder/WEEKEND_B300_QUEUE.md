@@ -1,7 +1,7 @@
 # Weekend B300 Queue Plan
 
-Status: planning snapshot from 2026-06-15 04:05 UTC, after canceling the queued
-shared-expert retries.
+Status: refreshed 2026-06-15 23:30 UTC after the Qwen3-like 275M launch and
+plot refresh.
 
 This note is the short-term launch surface for the low-priority, preemptible
 B300 allocation. It complements `RUNS.md` and should be refreshed from Beaker
@@ -27,33 +27,35 @@ changes can resume the same checkpoint.
 
 ## Current Queue Snapshot
 
-The six shared-expert no-shared matched-active experiments were canceled before
-their queued retries started:
+Live Beaker snapshot across the recently tracked launch surface in `RUNS.md`,
+`CURRENT_PLAN.md`, and this file:
 
-- `se-275m-cx1-se0m9-lr1e-3-r1`
-- `se-275m-cx1-se0m9-lr2e-3-r1`
-- `se-275m-cx1-se0m9-lr4e-3-r1`
-- `se-275m-cx2-se0m9-lr9e-4-r1`
-- `se-275m-cx2-se0m9-lr1.8e-3-r1`
-- `se-275m-cx2-se0m9-lr3.6e-3-r1`
+- 43 started jobs using 168 GPUs.
+- 9 created/queued jobs requesting 40 GPUs.
+- 110 finalized jobs.
+- 1 stale tracker entry is a Beaker job id rather than an experiment id:
+  `01KTSB2H1TMF7Z1T2MY40J2QM0`.
 
-Live Beaker snapshot for the main current-family jobs:
-
-- 28 succeeded.
-- 11 running.
-- 4 queued.
+The finalized nonzero-exit entries are known historical failures, intentional
+cancellations, or replaced attempts: Holmes compile failures, legal-microbatch
+relaunches, and Titan reroutes. The current live surface did not show new failed
+or canceled jobs in this status pass.
 
 Still open:
 
-- Expert granularity:
-  - Running: 810M Cx8 coarse, 1.2B Cx1 coarse, 1.2B Cx4 fine.
-  - Queued: 810M Cx8 fine, 1.2B Cx1 fine, 1.2B Cx4 coarse.
-- Total sparsity:
-  - Running: several 275M Cx4/Cx8 tail jobs.
-  - Queued: `sp-275m-cx8-sp192e4k-lr3.2e-3-r1`.
+- Qwen3-like 275M: all 24 full-grid jobs are started on Holmes; the two smoke
+  tests finalized.
+- Shared expert promoted ladder: 10 jobs are started on Holmes across 480M,
+  810M, and 1.2B. The legal-microbatch retries for 480M Cx2 and 810M Cx2 are
+  the active versions.
+- Expert granularity: 1.2B Cx4 fine and 1.2B Cx8 coarse are started; 1.2B Cx8
+  fine is still created/queued.
+- Dense schedule: six Cx4 Titan reroutes are started; eight Cx8 Titan reroutes
+  are still created/queued.
+- 1.2B baseline: the Titan `Cx2 b384k lr1.2e-3` hot-side run is started.
 
-The 1.2B Cx2 `b384k` baseline triplet has now succeeded on Beaker; refresh
-plots/results before selecting 1.2B EG Cx2 LRs.
+Plots were refreshed after this status pass with stale-cache updates and running
+jobs excluded from LR/summary decisions.
 
 ## Experiment Catalog
 
