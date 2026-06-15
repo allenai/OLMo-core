@@ -64,7 +64,7 @@ import logging
 import math
 import os
 from dataclasses import dataclass
-from typing import List, Optional, cast
+from typing import List, Optional, Tuple, cast
 
 import torch
 
@@ -158,6 +158,12 @@ class SharedExpertSpec:
     num_shared_experts: Optional[int]
     shared_hidden_mult: Optional[float]
     routed_hidden_mult: Optional[float]
+    tag: str
+
+
+@dataclass(frozen=True)
+class DenseScheduleSpec:
+    dense_layers: Tuple[int, ...]
     tag: str
 
 
@@ -277,6 +283,14 @@ SHARED_EXPERT_SPECS = {
 }
 
 
+DENSE_SCHEDULE_SPECS = {
+    "dense1_shared": DenseScheduleSpec(dense_layers=(0,), tag="ds1-sh"),
+    "dense0_shared": DenseScheduleSpec(dense_layers=(), tag="ds0-sh"),
+    "dense2_shared": DenseScheduleSpec(dense_layers=(0, 1), tag="ds2-sh"),
+    "dense4_shared": DenseScheduleSpec(dense_layers=(0, 1, 2, 3), tag="ds4-sh"),
+}
+
+
 def prepare_s3_environment(opts: argparse.Namespace) -> None:
     if (
         str(opts.data_root).startswith("s3://")
@@ -318,6 +332,12 @@ def get_parser() -> argparse.ArgumentParser:
             "shared expert and sets routed expert hidden size to 9/8 * d_model, "
             "matching baseline active MoE hidden units for top-4 baseline geometry."
         ),
+    )
+    parser.add_argument(
+        "--dense-schedule",
+        choices=sorted(DENSE_SCHEDULE_SPECS),
+        default="dense1_shared",
+        help="Dense-prefix schedule ablation. Keeps the shared expert fixed.",
     )
     parser.add_argument(
         "--lr",
@@ -366,6 +386,12 @@ def get_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=USE_ROWWISE_A2A,
         help="Use the rowwise all-to-all EP path. Disable for the slower dropless EP sanity check.",
+    )
+    parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=USE_COMPILE,
+        help="Enable torch.compile for the model and optimizer.",
     )
     parser.add_argument(
         "--warmup-fraction",
@@ -439,7 +465,7 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
     global GLOBAL_BATCH_SIZE_SEQ, GLOBAL_BATCH_SIZE, NUM_MICRO_BATCHES, GLOBAL_BATCH_TOKENS_IN_M
     global SCHED_WARMUP_FRACTION, SCHED_WARMUP_TOKENS
     global LR, EXPERT_LR, TAG, MONKEY_PATCH_DECAY_DURATION_TOKENS
-    global USE_ROWWISE_A2A
+    global USE_ROWWISE_A2A, USE_COMPILE
 
     if opts.chinchilla_multiple <= 0:
         raise ValueError("--chinchilla-multiple must be > 0")
@@ -474,6 +500,7 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
     MICRO_BSZ = opts.micro_batch_size
     EP_DIM = opts.ep_dim
     USE_ROWWISE_A2A = opts.use_rowwise_a2a
+    USE_COMPILE = opts.compile
     GLOBAL_BATCH_SIZE_SEQ = opts.global_batch_size_seq
     GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * sequence_length
     NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * REF_GPUS_PER_NODE) // MICRO_BSZ * PP_DIM
@@ -496,15 +523,14 @@ def configure_sweep_hparams(opts: argparse.Namespace, sequence_length: int, max_
 def configure_model_size(opts: argparse.Namespace) -> None:
     global NUM_EXPERTS, TOP_K, D_MODEL, D_ATTN, HEAD_DIM, NUM_HEAD, NUM_KV_HEAD
     global MOE_HIDDEN_SIZE, NUM_SHARED_EXPERTS, SHARED_MLP_HIDDEN_SIZE
-    global EFFECTIVE_MLP, MLP_RATIO, DENSE_LAYER_MLP, NUM_LAYERS, SPLIT_POINTS
-    global EXPERT_GEOMETRY_TAG
+    global EFFECTIVE_MLP, MLP_RATIO, DENSE_LAYER_MLP, DENSE_BLOCK_LAYERS
+    global NUM_LAYERS, SPLIT_POINTS, EXPERT_GEOMETRY_TAG
 
     spec = MODEL_SIZE_SPECS[opts.model_size]
     expert_geometry = EXPERT_GEOMETRY_SPECS[opts.expert_geometry]
     total_sparsity = TOTAL_SPARSITY_SPECS[opts.total_sparsity]
     shared_expert = SHARED_EXPERT_SPECS[opts.shared_expert_config]
-    if spec.dense_prefix_layers != 1:
-        raise ValueError("Only one dense prefix layer is currently implemented")
+    dense_schedule = DENSE_SCHEDULE_SPECS[opts.dense_schedule]
     if (
         opts.expert_geometry != "baseline_48e_top4"
         and opts.total_sparsity != "baseline_48e_top4"
@@ -518,6 +544,17 @@ def configure_model_size(opts: argparse.Namespace) -> None:
             "--shared-expert-config is an independent ablation axis; use it only "
             "with baseline expert geometry and baseline total sparsity for now"
         )
+    if opts.dense_schedule != "dense1_shared" and (
+        opts.expert_geometry != "baseline_48e_top4"
+        or opts.total_sparsity != "baseline_48e_top4"
+        or opts.shared_expert_config != "baseline"
+    ):
+        raise ValueError(
+            "--dense-schedule is an independent ablation axis; use it only with "
+            "baseline expert geometry, baseline total sparsity, and the baseline shared expert"
+        )
+    if dense_schedule.dense_layers and max(dense_schedule.dense_layers) >= spec.n_layers:
+        raise ValueError("Dense schedule references a layer outside the model depth")
 
     NUM_EXPERTS = expert_geometry.num_experts
     TOP_K = expert_geometry.top_k
@@ -542,6 +579,7 @@ def configure_model_size(opts: argparse.Namespace) -> None:
     EFFECTIVE_MLP = MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS
     MLP_RATIO = EFFECTIVE_MLP / D_MODEL
     DENSE_LAYER_MLP = spec.dense_layer_mlp
+    DENSE_BLOCK_LAYERS = dense_schedule.dense_layers
     NUM_LAYERS = spec.n_layers
     EXPERT_GEOMETRY_TAG = (
         total_sparsity.tag
@@ -550,6 +588,8 @@ def configure_model_size(opts: argparse.Namespace) -> None:
     )
     if opts.shared_expert_config != "baseline":
         EXPERT_GEOMETRY_TAG = f"{EXPERT_GEOMETRY_TAG}-{shared_expert.tag}"
+    if opts.dense_schedule != "dense1_shared":
+        EXPERT_GEOMETRY_TAG = f"{EXPERT_GEOMETRY_TAG}-{dense_schedule.tag}"
 
     if PP_DIM > 1:
         _, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=1)
@@ -573,6 +613,9 @@ def consume_script_overrides(opts: argparse.Namespace, overrides: List[str]) -> 
         if override.startswith("shared_expert_config="):
             opts.shared_expert_config = override.split("=", 1)[1]
             continue
+        if override.startswith("dense_schedule="):
+            opts.dense_schedule = override.split("=", 1)[1]
+            continue
         filtered_overrides.append(override)
     if opts.model_size not in MODEL_SIZE_SPECS:
         raise ValueError(f"--model-size must be one of {sorted(MODEL_SIZE_SPECS)}")
@@ -582,6 +625,8 @@ def consume_script_overrides(opts: argparse.Namespace, overrides: List[str]) -> 
         raise ValueError(f"--total-sparsity must be one of {sorted(TOTAL_SPARSITY_SPECS)}")
     if opts.shared_expert_config not in SHARED_EXPERT_SPECS:
         raise ValueError(f"--shared-expert-config must be one of {sorted(SHARED_EXPERT_SPECS)}")
+    if opts.dense_schedule not in DENSE_SCHEDULE_SPECS:
+        raise ValueError(f"--dense-schedule must be one of {sorted(DENSE_SCHEDULE_SPECS)}")
     return filtered_overrides
 
 
@@ -627,6 +672,7 @@ EFFECTIVE_MLP = MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EX
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 
 DENSE_LAYER_MLP = TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS
+DENSE_BLOCK_LAYERS: Tuple[int, ...] = (0,)
 
 EP_DIM = 1
 PP_DIM = 1
@@ -846,8 +892,9 @@ def build_model_config(tokenizer_config: TokenizerConfig) -> MoEFusedV2Transform
     )
     from copy import deepcopy
 
-    # First block is a regular (non-MoE) transformer block.
-    config.block_overrides = {0: deepcopy(dense_block_config)}
+    config.block_overrides = {
+        layer_idx: deepcopy(dense_block_config) for layer_idx in DENSE_BLOCK_LAYERS
+    }
 
     return config
 

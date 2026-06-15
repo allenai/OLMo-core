@@ -12,6 +12,15 @@ NUM_NODES="${NUM_NODES:-1}"
 GPUS="${GPUS:-8}"
 EP_DIM="${EP_DIM:-1}"
 MICRO_BSZ="${MICRO_BSZ:-2}"
+CLUSTER="${CLUSTER:-ai2/titan}"
+BEAKER_IMAGE="${BEAKER_IMAGE:-tianhuat/olmo-core-torch211-2404-cu128}"
+WORKSPACE="${WORKSPACE:-ai2/OLMo-3-moe-experiments}"
+BUDGET="${BUDGET:-ai2/oe-other}"
+PRIORITY="${PRIORITY:-urgent}"
+PREEMPTIBLE="${PREEMPTIBLE:-0}"
+NO_PYTHON="${NO_PYTHON:-0}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
+PYTHONPATH_ENV="${PYTHONPATH_ENV:-}"
 GLOBAL_BATCH_SIZE_SEQ=48
 CHINCHILLA_MULTIPLE=2
 SWEEP_SUFFIX="${SWEEP_SUFFIX:-r1}"
@@ -58,17 +67,26 @@ launch_one() {
   local name="olmoe3-moe-a0-1p2b-cx2-b384k-${lr_tag}-${SWEEP_SUFFIX}"
   local log_path="${LOG_DIR}/${name}.log"
   local common_beaker_args=(
-    --cluster ai2/titan
+    --cluster "${CLUSTER}"
     --nodes "${NUM_NODES}"
     --gpus "${GPUS}"
     --weka oe-training-default
-    --beaker-image tianhuat/olmo-core-torch211-2404-cu128
-    --workspace ai2/OLMo-3-moe-experiments
-    --budget ai2/oe-other
-    --priority urgent
+    --beaker-image "${BEAKER_IMAGE}"
+    --workspace "${WORKSPACE}"
+    --budget "${BUDGET}"
+    --priority "${PRIORITY}"
     --env OLMO_SYMM_VDEV2D_AUTO_BUILD=1
     --env-secret AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY WANDB_API_KEY=jacobm_WANDB_API_KEY
   )
+  if [[ "${PREEMPTIBLE}" == "1" ]]; then
+    common_beaker_args+=(--preemptible)
+  fi
+  if [[ "${NO_PYTHON}" == "1" ]]; then
+    common_beaker_args+=(--no-python)
+  fi
+  if [[ -n "${PYTHONPATH_ENV}" ]]; then
+    common_beaker_args+=(--env "PYTHONPATH=${PYTHONPATH_ENV}")
+  fi
 
   local cmd=(
     uv run --extra dev --extra beaker python -m olmo_core.launch.beaker
@@ -76,7 +94,7 @@ launch_one() {
     --name="${name}"
     "${common_beaker_args[@]}"
     --
-    python "${SCRIPT}"
+    "${PYTHON_BIN}" "${SCRIPT}"
     --model-size=1p2b
     --save-folder="${CHECKPOINT_ROOT}/${name}"
     --name="${name}"

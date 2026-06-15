@@ -7,7 +7,7 @@ interpret.
 
 ## Status
 
-Planned, not yet implemented or launched.
+Implemented in `moe_a0_ladder.py`; not yet launched.
 
 Run independently against the MoE A0 baseline, not on top of the
 expert-granularity or total-sparsity winner. The integration run comes later,
@@ -138,12 +138,14 @@ moe_hidden_size = d_model for shared and no-shared-unmatched variants
 moe_hidden_size = 9/8 * d_model for active-matched no-shared variants
 ```
 
-## Required Code Changes
+## Implementation
 
-Add a dense/shared schedule option to
-`src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py`.
+Dense schedule support is implemented in
+`src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py`. The script also exposes
+`--compile/--no-compile`; the Holmes/B300 dense launcher defaults to `--no-compile`
+after heavier Holmes jobs hit a TorchInductor dry-run backward failure with compile on.
 
-Recommended CLI:
+CLI:
 
 ```text
 --dense-schedule {dense1_shared,dense0_shared,dense2_shared,dense4_shared,dense1_no_shared_am,dense1_no_shared_unmatched}
@@ -151,26 +153,34 @@ Recommended CLI:
 
 Implementation notes:
 
-1. Generalize the current hard-coded dense block override at layer 0.
-2. Support arbitrary dense-prefix layer lists for `[]`, `[0]`, `[0, 1]`, and
+1. The previous hard-coded dense block override at layer 0 now comes from
+   `--dense-schedule`.
+2. Supported dense-prefix layer lists are `[]`, `[0]`, `[0, 1]`, and
    `[0, 1, 2, 3]`.
-3. Keep alternating dense/MoE schedules out of the first implementation unless
-   the plan changes.
-4. Set shared expert fields and `moe_hidden_size` from the selected
-   dense-schedule variant.
-5. Add compact run-name tags:
+3. Alternating dense/MoE schedules are intentionally out of scope for this first
+   implementation.
+4. The dense-count variants keep the shared expert fixed; no-shared variants
+   remain part of the separate shared-expert ablation.
+5. Compact run-name tags:
    - `ds0-sh`
    - `ds1-sh`
    - `ds2-sh`
    - `ds4-sh`
-   - `ds1-nosh-am`
-   - `ds1-nosh`
 
 Do not change existing baseline run names retroactively.
 
 ## Parameter Check
 
-Before launch, instantiate each variant locally and record:
+Local 275M config instantiation on 2026-06-15 produced:
+
+| Variant | Dense block overrides | Active params incl emb/head | Total params |
+| --- | --- | ---: | ---: |
+| `dense0_shared` | `[]` | 278,487,552 | 1,212,768,768 |
+| `dense1_shared` | `[0]` | 278,450,688 | 1,134,875,136 |
+| `dense2_shared` | `[0, 1]` | 278,413,824 | 1,056,981,504 |
+| `dense4_shared` | `[0, 1, 2, 3]` | 278,340,096 | 901,194,240 |
+
+Before launch at larger sizes, instantiate each variant locally and record:
 
 - active params including embeddings/head;
 - active non-embedding params;

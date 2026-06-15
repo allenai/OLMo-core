@@ -724,3 +724,43 @@ These are single-point promoted checks for the two main expert-granularity varia
 | `eg-1p2b-cx1-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KV1XQZZNEANQ47WX1TZ1YSHE | Requeued on 2026-06-14 with `mb4` after stopping old queued `mb2` experiment `01KV12Z1ZNT7TR9814FRT7MR9W`. Uses baseline best observed 1.2B Cx1 LR. |
 | `eg-1p2b-cx4-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KV299VFSQ8879TGTB56T8PW1 | Queued on 2026-06-14 with one-node `gpu8-ep1mb4`. Uses baseline best observed/center 1.2B Cx4 LR. |
 | `eg-1p2b-cx4-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KV29A65FTV4YHJACBMZB6TVG | Queued on 2026-06-14 with one-node `gpu8-ep1mb4`. Uses baseline best observed/center 1.2B Cx4 LR. |
+
+
+## 2026-06-15 Holmes B300 Low-Priority Launches
+
+These launches use `ai2/holmes`, workspace `ai2/holmes-testing`, low priority,
+preemptible scheduling, image `tianhuat/olmo-core-torch212-2404-cu130`,
+`--no-python`, and `PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src`.
+Run names remain semantic and omit systems-only settings.
+
+Shared expert no-shared matched-active full 275M ladder:
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `se-275m-cx1-se0m9-lr1e-3-r2` | `no_shared_matched_active` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4S1A2VJ8W6A36JZJ30MRQC | First Cx1 low LR point; created before the GitHub timeout and kept live. |
+| `se-275m-cx1-se0m9-lr2e-3-r2` | `no_shared_matched_active` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4S1SE6Y9WG241RFHW13FM6 | Centered Cx1 point; created before the GitHub timeout and kept live. |
+| `se-275m-cx1-se0m9-lr4e-3-r2` | `no_shared_matched_active` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VYBME3W6GA0ZA7GRTE1AE | High Cx1 LR point. |
+| `se-275m-cx2-se0m9-lr9e-4-r2` | `no_shared_matched_active` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VYPWP0WHX21GYM3ZF9FNW | Low repaired Cx2 point. |
+| `se-275m-cx2-se0m9-lr1.8e-3-r2` | `no_shared_matched_active` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VZ2A7057V3BS39DZRYT1S | Centered repaired Cx2 point. |
+| `se-275m-cx2-se0m9-lr3.6e-3-r2` | `no_shared_matched_active` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VZE4SVATSS6K9Y773GHV8 | High repaired Cx2 point. |
+| `se-275m-cx4-se0m9-lr8e-4-r2` | `no_shared_matched_active` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VZT5Y8BJY5FR2MC1MYJM0 | Low Cx4 point. |
+| `se-275m-cx4-se0m9-lr1.6e-3-r2` | `no_shared_matched_active` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4W05X15D8AQZEM1MQ5GXNN | Centered Cx4 point. |
+| `se-275m-cx4-se0m9-lr3.2e-3-r2` | `no_shared_matched_active` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4W0HWFHAWQCFHWVEK49F2F | High Cx4 point. |
+| `se-275m-cx8-se0m9-lr8e-4-r2` | `no_shared_matched_active` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4W0X8APJ53CE4CDTCBTMJD | Low Cx8 point. |
+| `se-275m-cx8-se0m9-lr1.6e-3-r2` | `no_shared_matched_active` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4W19KKRJRY1PM5D6DZJFCJ | Centered Cx8 point. |
+| `se-275m-cx8-se0m9-lr3.2e-3-r2` | `no_shared_matched_active` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4W1KD8DW2JGM23NYZPGDAX | High Cx8 point. |
+
+Total sparsity `sp192e4k` colder repaired Cx2 probes:
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx2-sp192e4k-lr2.25e-4-r2` | `huge_total_192e_top4` | 2 | 2.25e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4XGKGSJR5DZ0JPAFPTTEH1 | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WT73YXVN6TXCVQ9Q08P20` failed during TorchInductor dry-run backward. Colder LR probe after the first Cx2 grid failed to bracket cleanly. |
+| `sp-275m-cx2-sp192e4k-lr4.5e-4-r2` | `huge_total_192e_top4` | 2 | 4.5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4XGWHF7RPS67AR49Y6ZMVQ | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WTJ3RASB9ZDA4ZW873RBM` failed during TorchInductor dry-run backward. Colder LR probe after the first Cx2 grid failed to bracket cleanly. |
+| `sp-275m-cx2-sp192e4k-lr6e-4-r2` | `huge_total_192e_top4` | 2 | 6e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4XH6DQW29CVTF5J0R8QN90 | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WTYAGKJ3ARRQ6X1MNZYNE` failed during TorchInductor dry-run backward. Colder LR probe after the first Cx2 grid failed to bracket cleanly. |
+
+1.2B expert-granularity Cx8 promotions:
+
+| Name | Variant | Model | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV4XHHY9GSZQ308RJXBZ61RM | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WW43MVJZ12ZNSHZ1E8T9M` failed during TorchInductor dry-run backward. Uses the 1.2B Cx8 baseline best observed LR and canonical one-node `gpu8-ep1mb4` setting. |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV4XHXP1E2S8QM01YCDPWZ2K | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WWG4BTFH6XZN1NHN71A7Y` failed during TorchInductor dry-run backward. Uses the 1.2B Cx8 baseline best observed LR and canonical one-node `gpu8-ep1mb4` setting. |

@@ -2,26 +2,26 @@
 set -euo pipefail
 
 SCRIPT="src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py"
-RUN_PREFIX="se-275m"
-CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/shared_expert}"
-LOG_DIR="${LOG_DIR:-/tmp/olmoe3-shared-expert-275m-ladder-launch-logs}"
+RUN_PREFIX="${RUN_PREFIX:-ds-275m}"
+CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/dense_schedule}"
+LOG_DIR="${LOG_DIR:-/tmp/olmoe3-dense-schedule-275m-ladder-launch-logs}"
 JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
 NUM_NODES="${NUM_NODES:-1}"
 EP_DIM=1
-CLUSTER="${CLUSTER:-ai2/titan}"
-BEAKER_IMAGE="${BEAKER_IMAGE:-tianhuat/olmo-core-torch211-2404-cu128}"
-WORKSPACE="${WORKSPACE:-ai2/OLMo-3-moe-experiments}"
+CLUSTER="${CLUSTER:-ai2/holmes}"
+BEAKER_IMAGE="${BEAKER_IMAGE:-tianhuat/olmo-core-torch212-2404-cu130}"
+WORKSPACE="${WORKSPACE:-ai2/holmes-testing}"
 BUDGET="${BUDGET:-ai2/oe-other}"
-PRIORITY="${PRIORITY:-urgent}"
-PREEMPTIBLE="${PREEMPTIBLE:-0}"
-NO_PYTHON="${NO_PYTHON:-0}"
-PYTHON_BIN="${PYTHON_BIN:-python}"
-PYTHONPATH_ENV="${PYTHONPATH_ENV:-}"
+PRIORITY="${PRIORITY:-low}"
+PREEMPTIBLE="${PREEMPTIBLE:-1}"
+NO_PYTHON="${NO_PYTHON:-1}"
+PYTHON_BIN="${PYTHON_BIN:-/opt/conda/bin/python}"
+PYTHONPATH_ENV="${PYTHONPATH_ENV:-/gantry-runtime/src:/workspace/OLMo-core/src}"
+COMPILE="${COMPILE:-0}"
 SWEEP_SUFFIX="${SWEEP_SUFFIX:-r1}"
 EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
 EVAL_INTERVAL="${EVAL_INTERVAL:-2000}"
-SHARED_EXPERT_CONFIG="${SHARED_EXPERT_CONFIG:-no_shared_matched_active}"
-SHARED_EXPERT_TAG="${SHARED_EXPERT_TAG:-se0m9}"
+DENSE_SCHEDULES="${DENSE_SCHEDULES:-dense0_shared dense2_shared dense4_shared}"
 CX_LIST="${CX_LIST:-1 2 4 8}"
 CX1_LR_SPECS="${CX1_LR_SPECS:-1e-3:lr1e-3 2e-3:lr2e-3 4e-3:lr4e-3}"
 CX2_LR_SPECS="${CX2_LR_SPECS:-9e-4:lr9e-4 1.8e-3:lr1.8e-3 3.6e-3:lr3.6e-3}"
@@ -51,15 +51,34 @@ if [[ -n "${PYTHONPATH_ENV}" ]]; then
   common_beaker_args+=(--env "PYTHONPATH=${PYTHONPATH_ENV}")
 fi
 
+compile_args=()
+compile_tag=compile-on
+if [[ "${COMPILE}" == "0" ]]; then
+  compile_args+=(--no-compile)
+  compile_tag=compile-off
+fi
+
+dense_tag_for() {
+  case "$1" in
+    dense0_shared) echo ds0-sh ;;
+    dense1_shared) echo ds1-sh ;;
+    dense2_shared) echo ds2-sh ;;
+    dense4_shared) echo ds4-sh ;;
+    *) echo "Unknown dense schedule: $1" >&2; return 1 ;;
+  esac
+}
+
 launch_one() {
-  local cx="$1"
-  local batch_tag="$2"
-  local global_batch_size_seq="$3"
-  local gpus="$4"
-  local micro_bsz="$5"
-  local lr="$6"
-  local lr_tag="$7"
-  local name="${RUN_PREFIX}-cx${cx}-${SHARED_EXPERT_TAG}-${lr_tag}-${SWEEP_SUFFIX}"
+  local dense_schedule="$1"
+  local dense_tag="$2"
+  local cx="$3"
+  local batch_tag="$4"
+  local global_batch_size_seq="$5"
+  local gpus="$6"
+  local micro_bsz="$7"
+  local lr="$8"
+  local lr_tag="$9"
+  local name="${RUN_PREFIX}-cx${cx}-${dense_tag}-${lr_tag}-${SWEEP_SUFFIX}"
   local log_path="${LOG_DIR}/${name}.log"
   local systems_tag="${batch_tag}-gpu${gpus}-ep${EP_DIM}mb${micro_bsz}"
 
@@ -72,7 +91,8 @@ launch_one() {
     --
     "${PYTHON_BIN}" "${SCRIPT}"
     --model-size=275m
-    --shared-expert-config="${SHARED_EXPERT_CONFIG}"
+    --dense-schedule="${dense_schedule}"
+    "${compile_args[@]}"
     --save-folder="${CHECKPOINT_ROOT}/${name}"
     --name="${name}"
     --data-root=s3://ai2-llm
@@ -89,20 +109,22 @@ launch_one() {
     --save-interval=999999999
     --ephemeral-save-interval="${EPHEMERAL_SAVE_INTERVAL}"
     --no-pre-train-checkpoint
-    --tag="${SHARED_EXPERT_TAG}-cx${cx}-${lr_tag}-${SWEEP_SUFFIX}"
-    --wandb-tag=exp_shared_expert
-    --wandb-tag="${SHARED_EXPERT_TAG}"
+    --tag="${dense_tag}-cx${cx}-${lr_tag}-${SWEEP_SUFFIX}"
+    --wandb-tag=exp_dense_schedule
+    --wandb-tag="${dense_tag}"
     --wandb-tag=275m
     --wandb-tag="cx${cx}"
     --wandb-tag="${lr_tag}"
     --wandb-tag="${systems_tag}"
+    --wandb-tag="${compile_tag}"
     --wandb-tag=baseline-centered
   )
 
   echo "Launching ${name}..."
   printf 'Command:'
   printf ' %q' "${cmd[@]}"
-  printf '\n'
+  printf '
+'
 
   "${cmd[@]}" >"${log_path}" 2>&1 &
   local pid=$!
@@ -133,31 +155,34 @@ launch_one() {
   return 1
 }
 
-for cx in ${CX_LIST}; do
-  case "${cx}" in
-    1)
-      for lr_spec in ${CX1_LR_SPECS}; do
-        launch_one 1 b256k 32 2 8 "${lr_spec%%:*}" "${lr_spec##*:}"
-      done
-      ;;
-    2)
-      for lr_spec in ${CX2_LR_SPECS}; do
-        launch_one 2 b384k 48 2 8 "${lr_spec%%:*}" "${lr_spec##*:}"
-      done
-      ;;
-    4)
-      for lr_spec in ${CX4_LR_SPECS}; do
-        launch_one 4 b512k 64 2 8 "${lr_spec%%:*}" "${lr_spec##*:}"
-      done
-      ;;
-    8)
-      for lr_spec in ${CX8_LR_SPECS}; do
-        launch_one 8 b768k 96 4 8 "${lr_spec%%:*}" "${lr_spec##*:}"
-      done
-      ;;
-    *)
-      echo "Unsupported Cx for this launcher: ${cx}" >&2
-      exit 1
-      ;;
-  esac
+for dense_schedule in ${DENSE_SCHEDULES}; do
+  dense_tag="$(dense_tag_for "${dense_schedule}")"
+  for cx in ${CX_LIST}; do
+    case "${cx}" in
+      1)
+        for lr_spec in ${CX1_LR_SPECS}; do
+          launch_one "${dense_schedule}" "${dense_tag}" 1 b256k 32 2 8 "${lr_spec%%:*}" "${lr_spec##*:}"
+        done
+        ;;
+      2)
+        for lr_spec in ${CX2_LR_SPECS}; do
+          launch_one "${dense_schedule}" "${dense_tag}" 2 b384k 48 2 8 "${lr_spec%%:*}" "${lr_spec##*:}"
+        done
+        ;;
+      4)
+        for lr_spec in ${CX4_LR_SPECS}; do
+          launch_one "${dense_schedule}" "${dense_tag}" 4 b512k 64 2 8 "${lr_spec%%:*}" "${lr_spec##*:}"
+        done
+        ;;
+      8)
+        for lr_spec in ${CX8_LR_SPECS}; do
+          launch_one "${dense_schedule}" "${dense_tag}" 8 b768k 96 4 8 "${lr_spec%%:*}" "${lr_spec##*:}"
+        done
+        ;;
+      *)
+        echo "Unsupported Cx for this launcher: ${cx}" >&2
+        exit 1
+        ;;
+    esac
+  done
 done
