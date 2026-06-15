@@ -110,7 +110,7 @@ def cx_from_name(name: str) -> int | None:
 
 
 def model_from_name(name: str) -> str | None:
-    if "tiny-275m" in name or "sp-275m" in name or "se-275m" in name or "eg-275m" in name:
+    if "tiny-275m" in name or "sp-275m" in name or "se-275m" in name or "eg-275m" in name or "ds-275m" in name:
         return "275m"
     if "mid_480m" in name or "mid-480m" in name or "m480-cx" in name or "eg-480m" in name:
         return "480m"
@@ -147,7 +147,7 @@ def baseline_variant_name(name: str) -> str | None:
             return "baseline_48e_top4_b384k"
         return "baseline_48e_top4"
 
-    if "olmoe3-moe-a0-1p2b-cx" in name:
+    if "olmoe3-moe-a0-1p2b-cx" in name or "olmoe3-moe-a0-1p2b-cx2-b384k" in name:
         if "cx2" in name and "b384k" in name:
             return "baseline_48e_top4_b384k"
         return "baseline_48e_top4"
@@ -179,8 +179,10 @@ def load_points(
                     {"tags": {"$all": [EXPERIMENT_TAG]}},
                     {"display_name": {"$regex": "olmoe3-tiny-275m-cx(1|2|4|8).*gpu(2|4)-ep1mb(8|16)"}},
                     {"display_name": {"$regex": "m480-cx(1|2|4|8)"}},
+                    {"display_name": {"$regex": "olmoe3-moe-a0-480m-cx(1|2|4|8)"}},
                     {"display_name": {"$regex": "olmoe3-moe-a0-810m-cx(1|2|4|8)"}},
                     {"display_name": {"$regex": "olmoe3-moe-a0-1p2b-cx(1|2|4|8)"}},
+                    {"display_name": {"$regex": "olmoe3-moe-a0-1p2b-cx2-b384k"}},
                 ]
             },
         )

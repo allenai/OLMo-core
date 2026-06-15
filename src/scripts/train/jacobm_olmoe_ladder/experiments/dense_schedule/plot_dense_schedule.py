@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Plot expert-granularity U-curves from W&B history."""
+"""Plot dense-layer schedule U-curves from W&B history."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ LADDER_DIR = Path(__file__).parents[2]
 if str(LADDER_DIR) not in sys.path:
     sys.path.insert(0, str(LADDER_DIR))
 
-from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
 from experiment_summary_plots import SummaryVariant, plot_observed_best_summary
+from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
 
 
 PROJECT = "ai2-llm/jacobm-olmoe-ladder"
@@ -29,24 +29,34 @@ TOKENS_KEY = "throughput/total tokens"
 FIELDS = ["_step", TOKENS_KEY, LOSS_KEY]
 LR_RE = re.compile(r"lr([0-9]+(?:\.[0-9]+)?e-[0-9]+)")
 
+EXPERIMENT_TAG = "exp_dense_schedule"
+OUTPUT_SUBDIR = "dense_schedule"
+PLOT_TITLE = "Dense-layer schedule"
+VARIANT_LABELS = {
+    "baseline_dense1_shared": "baseline dense1 + shared",
+    "baseline_dense1_shared_b384k": "baseline dense1 + shared (b384k)",
+    "dense0_shared": "dense0 + shared",
+    "dense2_shared": "dense2 + shared",
+    "dense4_shared": "dense4 + shared",
+}
+VARIANT_ORDER = [
+    "baseline_dense1_shared",
+    "baseline_dense1_shared_b384k",
+    "dense0_shared",
+    "dense2_shared",
+    "dense4_shared",
+]
 SUMMARY_VARIANTS = [
     SummaryVariant(
         "baseline",
-        ("baseline_48e_top4", "baseline_48e_top4_b384k"),
-        "baseline 48E/top4",
+        ("baseline_dense1_shared", "baseline_dense1_shared_b384k"),
+        "baseline dense1 + shared",
         color="black",
         linestyle="--",
     ),
-    SummaryVariant(
-        "coarse_24e_top2",
-        ("coarse_24e_top2", "coarse_24e_top2_b384k"),
-        "coarse 24E/top2",
-    ),
-    SummaryVariant(
-        "fine_96e_top8",
-        ("fine_96e_top8", "fine_96e_top8_b384k"),
-        "fine 96E/top8",
-    ),
+    SummaryVariant("dense0_shared", ("dense0_shared",), "dense0 + shared"),
+    SummaryVariant("dense2_shared", ("dense2_shared",), "dense2 + shared"),
+    SummaryVariant("dense4_shared", ("dense4_shared",), "dense4 + shared"),
 ]
 
 
@@ -114,9 +124,9 @@ def cx_from_name(name: str) -> int | None:
 
 
 def model_from_name(name: str) -> str | None:
-    if "tiny-275m" in name or "eg-275m" in name or "sp-275m" in name or "se-275m" in name or "ds-275m" in name:
+    if "tiny-275m" in name or "sp-275m" in name or "se-275m" in name or "eg-275m" in name or "ds-275m" in name:
         return "275m"
-    if "mid_480m" in name or "mid-480m" in name or "m480-cx" in name or "eg-480m" in name:
+    if "mid_480m" in name or "mid-480m" in name or "m480-cx" in name or "eg-480m" in name or "480m" in name:
         return "480m"
     if "810m" in name:
         return "810m"
@@ -127,67 +137,41 @@ def model_from_name(name: str) -> str | None:
 
 def baseline_variant_name(name: str) -> str | None:
     if "olmoe3-tiny-275m-cx" in name:
-        if "b384k" in name and "gpu2-ep1mb8" in name and "cx2" in name:
-            return "baseline_48e_top4_b384k"
-        if "gpu2-ep1mb16" in name and "cx1" in name:
-            return "baseline_48e_top4"
+        if "b384k" in name and "cx2" in name:
+            return "baseline_dense1_shared_b384k"
         if "gpu2-ep1mb16" in name and "cx2" in name:
-            return "baseline_48e_top4_b256k"
-        if "gpu4-ep1mb16" in name and "cx4" in name:
-            return "baseline_48e_top4"
-        if "gpu4-ep1mb8" in name and "cx8" in name:
-            return "baseline_48e_top4"
+            return "baseline_dense1_shared"
+        if "cx" in name:
+            return "baseline_dense1_shared"
         return None
+
+    if "m480-cx" in name or "olmoe3-moe-a0-480m-cx" in name:
+        if "cx2" in name and "b384k" in name:
+            return "baseline_dense1_shared_b384k"
+        return "baseline_dense1_shared"
 
     if "olmoe3-moe-a0-810m-cx" in name:
-        if "cx1" in name and ("gpu4-ep1mb4" in name or "gpu8-ep1mb4" in name):
-            return "baseline_48e_top4"
-        if "cx4" in name and "gpu8-ep1mb4" in name:
-            return "baseline_48e_top4"
-        if "cx8" in name and "gpu8-ep1mb4" in name:
-            return "baseline_48e_top4"
-        if "cx2" in name and "b384k" in name and "gpu8-ep1mb2" in name:
-            return "baseline_48e_top4_b384k"
-        return None
-
-    if "olmoe3-moe-a0-1p2b-cx" in name or "olmoe3-moe-a0-1p2b-cx2-b384k" in name:
         if "cx2" in name and "b384k" in name:
-            return "baseline_48e_top4_b384k"
-        if "cx1" in name and "gpu8-ep1mb2" in name:
-            return "baseline_48e_top4"
-        if "cx4" in name and "gpu8-ep1mb2" in name:
-            return "baseline_48e_top4"
-        if "cx8" in name and "gpu8-ep1mb4" in name:
-            return "baseline_48e_top4"
-        return None
+            return "baseline_dense1_shared_b384k"
+        return "baseline_dense1_shared"
 
-    if "m480-cx" in name:
+    if "olmoe3-moe-a0-1p2b-cx" in name:
         if "cx2" in name and "b384k" in name:
-            return "baseline_48e_top4_b384k"
-        if "cx2" in name and "b512k" in name:
-            return "baseline_48e_top4_b512k"
-        return "baseline_48e_top4"
+            return "baseline_dense1_shared_b384k"
+        return "baseline_dense1_shared"
 
     return None
 
 
-def expert_variant_name(name: str) -> str | None:
-    if "eg24e2k" in name:
-        if "cx2" in name and ("b384k" in name or "eg-480m" in name):
-            return "coarse_24e_top2_b384k"
-        if "cx2" in name:
-            return "coarse_24e_top2_b512k"
-        return "coarse_24e_top2"
-    if "eg96e8k" in name:
-        if "cx2" in name and ("b384k" in name or "eg-480m" in name):
-            return "fine_96e_top8_b384k"
-        if "cx2" in name:
-            return "fine_96e_top8_b512k"
-        return "fine_96e_top8"
-    if "eg192e16k" in name:
-        return "extreme_192e_top16"
-    if "eg384e32k" in name:
-        return "ultra_384e_top32"
+def experiment_variant_name(name: str) -> str | None:
+    if "ds0-sh" in name or "dense0_shared" in name:
+        return "dense0_shared"
+    if "ds2-sh" in name or "dense2_shared" in name:
+        return "dense2_shared"
+    if "ds4-sh" in name or "dense4_shared" in name:
+        return "dense4_shared"
+    if "ds1-sh" in name or "dense1_shared" in name:
+        return "baseline_dense1_shared"
     return None
 
 
@@ -206,24 +190,13 @@ def load_points(
             project,
             filters={
                 "$or": [
-                    {"tags": {"$all": ["exp_expert_granularity"]}},
-                    {
-                        "display_name": {
-                            "$regex": "olmoe3-tiny-275m-cx(1|2|4|8).*gpu(2|4)-ep1mb(8|16)"
-                        }
-                    },
-                    {
-                        "display_name": {
-                            "$regex": "olmoe3-moe-a0-810m-cx(1|2|4|8).*gpu(4|8)-ep1mb(2|4)"
-                        }
-                    },
-                    {
-                        "display_name": {
-                            "$regex": "olmoe3-moe-a0-1p2b-cx(1|2|4|8).*gpu8-ep1mb(2|4)|olmoe3-moe-a0-1p2b-cx2-b384k"
-                        }
-                    },
+                    {"tags": {"$all": [EXPERIMENT_TAG]}},
+                    {"display_name": {"$regex": "olmoe3-tiny-275m-cx(1|2|4|8).*gpu(2|4)-ep1mb(8|16)"}},
                     {"display_name": {"$regex": "m480-cx(1|2|4|8)"}},
                     {"display_name": {"$regex": "olmoe3-moe-a0-480m-cx(1|2|4|8)"}},
+                    {"display_name": {"$regex": "olmoe3-moe-a0-810m-cx(1|2|4|8)"}},
+                    {"display_name": {"$regex": "olmoe3-moe-a0-1p2b-cx(1|2|4|8)"}},
+                    {"display_name": {"$regex": "olmoe3-moe-a0-1p2b-cx2-b384k"}},
                 ]
             },
         )
@@ -232,11 +205,12 @@ def load_points(
         if not include_running and run.state != "finished":
             continue
         name = run.display_name or run.name
-        if any(marker in name.lower() for marker in ("smoke", "sanity", "evaltest")):
+        lowered = name.lower()
+        if any(marker in lowered for marker in ("smoke", "sanity", "evaltest")):
             continue
 
         model = model_from_name(name)
-        variant = expert_variant_name(name) or baseline_variant_name(name)
+        variant = experiment_variant_name(name) or baseline_variant_name(name)
         if model is None or variant is None:
             continue
         cx = cx_from_name(name)
@@ -299,48 +273,24 @@ def fit_lr(group: list[Point]) -> tuple[float, float] | None:
 
 def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: int) -> None:
     fig, ax = plt.subplots(figsize=(8.2, 5.2))
-    labels = {
-        "baseline_48e_top4": "baseline 48E/top4",
-        "baseline_48e_top4_b256k": "baseline 48E/top4 (b256k)",
-        "baseline_48e_top4_b384k": "baseline 48E/top4 (b384k)",
-        "baseline_48e_top4_b512k": "baseline 48E/top4 (b512k)",
-        "coarse_24e_top2": "coarse 24E/top2",
-        "coarse_24e_top2_b512k": "coarse 24E/top2 (b512k)",
-        "coarse_24e_top2_b384k": "coarse 24E/top2 (b384k)",
-        "fine_96e_top8": "fine 96E/top8",
-        "fine_96e_top8_b512k": "fine 96E/top8 (b512k)",
-        "fine_96e_top8_b384k": "fine 96E/top8 (b384k)",
-        "extreme_192e_top16": "extreme 192E/top16",
-        "ultra_384e_top32": "ultra 384E/top32",
-    }
-    variants = [
-        "baseline_48e_top4",
-        "baseline_48e_top4_b256k",
-        "baseline_48e_top4_b384k",
-        "baseline_48e_top4_b512k",
-        "coarse_24e_top2",
-        "coarse_24e_top2_b512k",
-        "coarse_24e_top2_b384k",
-        "fine_96e_top8",
-        "fine_96e_top8_b512k",
-        "fine_96e_top8_b384k",
-        "extreme_192e_top16",
-        "ultra_384e_top32",
-    ]
-    for variant in variants:
-        group = sorted([p for p in points if p.model == model and p.cx == cx and p.variant == variant], key=lambda p: p.lr)
+    for variant in VARIANT_ORDER:
+        group = sorted(
+            [p for p in points if p.model == model and p.cx == cx and p.variant == variant],
+            key=lambda p: p.lr,
+        )
         if not group:
             continue
         finished = [p for p in group if p.state == "finished"]
         running = [p for p in group if p.state != "finished"]
         color = None
+        label = VARIANT_LABELS[variant]
         if finished:
             (line,) = ax.plot(
                 [p.lr for p in finished],
                 [p.loss for p in finished],
                 marker="o",
                 linewidth=1.8,
-                label=labels[variant],
+                label=label,
             )
             color = line.get_color()
         if running:
@@ -348,9 +298,9 @@ def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: 
                 [p.lr for p in running],
                 [p.loss for p in running],
                 marker="x",
-                alpha=0.5,
+                alpha=0.55,
                 color=color,
-                label=f"{labels[variant]} running",
+                label=f"{label} running",
             )
         fit = fit_lr(group)
         if fit is not None:
@@ -379,7 +329,7 @@ def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: 
     ax.set_xscale("log")
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"train CE avg{window_m}M")
-    ax.set_title(f"Expert granularity {model} Cx{cx}")
+    ax.set_title(f"{PLOT_TITLE} {model} Cx{cx}")
     ax.grid(True, which="both", alpha=0.25)
     ax.legend(loc="best")
     fig.tight_layout()
@@ -406,7 +356,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path(__file__).parents[2] / "plots" / "expert_granularity",
+        default=Path(__file__).parents[2] / "plots" / OUTPUT_SUBDIR,
     )
     parser.add_argument(
         "--include-running",
@@ -423,18 +373,19 @@ def main() -> None:
         refresh_cache=args.refresh_cache,
         refresh_stale_cache=args.refresh_stale_cache,
     )
-    models_with_expert_runs = {
-        point.model for point in points if not point.variant.startswith("baseline_")
+    experiment_keys = {
+        (point.model, point.cx)
+        for point in points
+        if not point.variant.startswith("baseline_")
     }
-    points = [point for point in points if point.model in models_with_expert_runs]
+    points = [point for point in points if (point.model, point.cx) in experiment_keys]
     model_order = {"275m": 0, "480m": 1, "810m": 2, "1p2b": 3}
-    for model in sorted({point.model for point in points}, key=lambda m: model_order.get(m, 99)):
-        for cx in sorted({point.cx for point in points if point.model == model}):
-            plot_cx(points, model, cx, args.output_dir / f"{model}_cx{cx}_uplot.png", args.window_m)
+    for model, cx in sorted(experiment_keys, key=lambda key: (model_order.get(key[0], 99), key[1])):
+        plot_cx(points, model, cx, args.output_dir / f"{model}_cx{cx}_uplot.png", args.window_m)
     plot_observed_best_summary(
         points,
         out_path=args.output_dir / "summary_observed_best.png",
-        title="Expert granularity observed best",
+        title="Dense-layer schedule observed best",
         variants=SUMMARY_VARIANTS,
         window_m=args.window_m,
     )

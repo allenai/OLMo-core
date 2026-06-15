@@ -60,11 +60,11 @@ CANONICAL_FAMILY_BY_CX = {
 CANONICAL_FAMILY_BY_MODEL_CX = {
     "275m": CANONICAL_FAMILY_BY_CX,
     "480m": {
-        1: "gpu4-ep1mb8",
-        2: "gpu4-ep1mb4",
-        4: "gpu4-ep1mb8",
-        8: "gpu8-ep1mb4",
-        16: "gpu4-ep1mb8",
+        1: ("gpu4-ep1mb8", "original"),
+        2: ("gpu4-ep1mb4", "b384k", "original"),
+        4: ("gpu4-ep1mb8", "original"),
+        8: ("gpu8-ep1mb4", "original"),
+        16: ("gpu4-ep1mb8", "original"),
     },
     "810m": {
         1: ("gpu4-ep1mb4", "gpu8-ep1mb4"),
@@ -73,9 +73,10 @@ CANONICAL_FAMILY_BY_MODEL_CX = {
         8: "gpu8-ep1mb4",
     },
     "1p2b": {
-        1: "gpu8-ep1mb2",
-        2: "b384k",
-        4: "gpu8-ep1mb2",
+        1: ("gpu8-ep1mb2", "original"),
+        2: ("b384k", "original"),
+        4: ("gpu8-ep1mb2", "original"),
+        8: ("gpu8-ep1mb4", "original"),
     },
 }
 
@@ -362,7 +363,7 @@ def main() -> None:
     parser.add_argument("--project", default="ai2-llm/jacobm-olmoe-ladder")
     parser.add_argument(
         "--name-regex",
-        default="olmoe3-tiny-275m-cx|olmoe3-moe-a0-810m-cx|olmoe3-moe-a0-1p2b-cx|olmoe3-810m-cx|m480-cx",
+        default="olmoe3-tiny-275m-cx|olmoe3-moe-a0-480m-cx|olmoe3-moe-a0-810m-cx|olmoe3-moe-a0-1p2b-cx|olmoe3-810m-cx|m480-cx",
     )
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     parser.add_argument(

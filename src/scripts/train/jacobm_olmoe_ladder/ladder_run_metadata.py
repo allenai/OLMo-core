@@ -48,6 +48,7 @@ def is_ladder_run_name(name: str) -> bool:
             "olmoe3-moe-a0-1p2b-cx",
             "olmoe3-810m-cx",
             "m480-cx",
+            "olmoe3-moe-a0-480m-cx",
         )
     )
 
@@ -70,7 +71,16 @@ def parse_run_spec(name: str) -> RunSpec | None:
             break
 
     if batch_label is None:
-        if "cx1-lr" in name:
+        stable_semantic_name = name.startswith("olmoe3-moe-a0-")
+        if stable_semantic_name and "cx1-lr" in name:
+            batch_label, batch_tokens = "256k", 262_144
+        elif stable_semantic_name and "cx2-b384k" in name:
+            batch_label, batch_tokens = "384k", 393_216
+        elif stable_semantic_name and "cx4-lr" in name:
+            batch_label, batch_tokens = "512k", 524_288
+        elif stable_semantic_name and "cx8-lr" in name:
+            batch_label, batch_tokens = "768k", 786_432
+        elif "cx1-lr" in name:
             batch_label, batch_tokens = "2M", 2_097_152
         else:
             return None

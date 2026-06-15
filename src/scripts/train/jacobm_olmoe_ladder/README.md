@@ -34,6 +34,10 @@ Read in this order:
 - `tiny_275m.py` is retained as a historical copy for reproducing old records.
 - New launch scripts should use `--model-size=480m`; `mid_480m` remains accepted
   as a compatibility alias.
+- To refresh all current plot families, run
+  `src/scripts/train/jacobm_olmoe_ladder/experiments/plot_all_experiments.sh`.
+  By default it uses cached finished-run histories and refreshes only stale/missing
+  cache entries. Set `REFRESH_CACHE=1` only for a full W&B history re-download.
 
 ## Current Operating Mode
 
