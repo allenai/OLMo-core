@@ -882,11 +882,11 @@ PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
 | Name | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
 | `se-480m-cx1-se0m9-lr1.2e-3-r1` | 480M | 1 | 1.2e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KV6973XM7G19ZPA1NS7Y1GNK | Baseline best-observed LR; Holmes compile-on. |
-| `se-480m-cx2-se0m9-lr9e-4-r1` | 480M | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 8 | https://beaker.org/ex/01KV697F0TCYCCJNX0VQCJAXAE | Baseline best-observed LR; Holmes compile-on. |
+| `se-480m-cx2-se0m9-lr9e-4-r1` | 480M | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV69N19B2G4B5VCH375PW7AT | Legal microbatch relaunch after initial `mb8` failed divisibility (`01KV697F0TCYCCJNX0VQCJAXAE`). |
 | `se-480m-cx4-se0m9-lr8e-4-r1` | 480M | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KV697TS4XZ3DC834CDMZ7G49 | Baseline best-observed LR; Holmes compile-on. |
 | `se-480m-cx8-se0m9-lr8e-4-r1` | 480M | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV6986KXTDCGEV6P7QT8QRRS | Baseline best-observed LR; Holmes compile-on. |
 | `se-810m-cx1-se0m9-lr6e-4-r1` | 810M | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KV698JMNYGCGVMVWSG9ZYKG5 | Baseline best-observed LR; Holmes compile-on. |
-| `se-810m-cx2-se0m9-lr5.6e-4-r1` | 810M | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 4 | https://beaker.org/ex/01KV698ZE9BBNTE7Z3B43Q82MX | Baseline best-observed LR; Holmes compile-on. |
+| `se-810m-cx2-se0m9-lr5.6e-4-r1` | 810M | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KV69NCK5KQPSSVEET8GKZ833 | Legal microbatch relaunch after initial `mb4` failed divisibility (`01KV698ZE9BBNTE7Z3B43Q82MX`). |
 | `se-810m-cx4-se0m9-lr4e-4-r1` | 810M | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KV699AA6XVSNJ33WTJPDR9JT | Baseline best-observed LR; Holmes compile-on. |
 | `se-810m-cx8-se0m9-lr4e-4-r1` | 810M | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV699NQMH6B3ZR5SXQKVBGPF | Baseline best-observed LR; 8-GPU cap rather than old >8-GPU plan. |
 | `se-1p2b-cx1-se0m9-lr4e-4-r1` | 1.2B | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KV69A1ZGD6SZH4A7TT3F7C54 | Baseline best-observed LR; Holmes compile-on. |
