@@ -317,9 +317,15 @@ QWEN3_LIKE_SPECS = {
         top_k=8,
         moe_hidden_mult=3 / 8,
         dense_layers=(),
-        layer_overrides={"275m": 16},
+        layer_overrides={
+            "275m": 16,
+            "480m": 22,
+            "mid_480m": 22,
+            "810m": 27,
+            "1p2b": 29,
+        },
         tag="q3td128e8k",
-        description="Qwen3-like 3.0d active FFN width, depth-expanded at 275M for active-param matching.",
+        description="Qwen3-like 3.0d active FFN width, depth-expanded for active-param matching.",
     ),
 }
 

@@ -45,6 +45,9 @@ current OLMoE3 ladder baseline.
 | Size | Layers | Experts | `top_k` | `moe_hidden_size` | Shared experts | Dense prefix | Active routed width | Total routed width |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 275m | 12 | 128 | 8 | 432 | 0 | 0 | 3456 = 4.5d | 55296 = 72d |
+| 480m | 16 | 128 | 8 | 576 | 0 | 0 | 4608 = 4.5d | 73728 = 72d |
+| 810m | 20 | 128 | 8 | 720 | 0 | 0 | 5760 = 4.5d | 92160 = 72d |
+| 1p2b | 22 | 128 | 8 | 864 | 0 | 0 | 6912 = 4.5d | 110592 = 72d |
 
 This is the cleaner active-budget comparison, but it is not literal Qwen3 total
 capacity because total routed expert width increases from 48d to 72d.
@@ -57,11 +60,15 @@ parameter count closer to the baseline.
 | Size | Layers | Experts | `top_k` | `moe_hidden_size` | Shared experts | Dense prefix | Active routed width | Total routed width |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 275m | 16 | 128 | 8 | 288 | 0 | 0 | 2304 = 3.0d | 36864 = 48d |
+| 480m | 22 | 128 | 8 | 384 | 0 | 0 | 3072 = 3.0d | 49152 = 48d |
+| 810m | 27 | 128 | 8 | 480 | 0 | 0 | 3840 = 3.0d | 61440 = 48d |
+| 1p2b | 29 | 128 | 8 | 576 | 0 | 0 | 4608 = 3.0d | 73728 = 48d |
 
 This matches Qwen3-30B-A3B's routed capacity ratio:
 `expert_hidden = 0.375 * d_model`, `top_k / num_experts = 8 / 128`, and
-`num_experts * expert_hidden = 48 * d_model`. The 275M version uses 16 layers
-instead of 12 to make the active-parameter comparison less underpowered.
+`num_experts * expert_hidden = 48 * d_model`. This variant expands depth per
+size to keep active parameter counts close to the baseline ladder while preserving
+3.0d active routed width.
 
 ## 275M LR Search
 
@@ -106,13 +113,19 @@ Before launch, dry-run and record:
 
 ## Dry-Run Parameter Counts
 
-Local config dry-run on 2026-06-15 with `--model-size=275m`, Cx0.02 smoke
-batch settings, and LR `2e-3` produced:
+Local config dry-run on 2026-06-15 with Cx0.02 smoke batch settings and
+LR `2e-3` produced:
 
-| Variant | Tag | Layers | Total params | Active params | Active non-embedding params | Active/total | Active width |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `active_matched` | `q3am128e8k` | 12 | 1,712,497,152 | 279,224,832 | 202,154,496 | 16.305% | 3456 = 4.5d |
-| `true_3d_depth_matched` | `q3td128e8k` | 16 | 1,552,471,552 | 278,451,712 | 201,381,376 | 17.936% | 2304 = 3.0d |
+| Variant | Tag | Size | Layers | Total params | Active params | Active non-embedding params | Active/total | Active width |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `active_matched` | `q3am128e8k` | 275m | 12 | 1,712,497,152 | 279,224,832 | 202,154,496 | 16.305% | 3456 = 4.5d |
+| `active_matched` | `q3am128e8k` | 480m | 16 | 3,881,900,032 | 484,513,792 | 381,753,344 | 12.481% | 4608 = 4.5d |
+| `active_matched` | `q3am128e8k` | 810m | 20 | 7,456,140,800 | 820,620,800 | 692,170,240 | 11.006% | 5760 = 4.5d |
+| `active_matched` | `q3am128e8k` | 1p2b | 22 | 11,731,743,232 | 1,221,079,552 | 1,066,938,880 | 10.408% | 6912 = 4.5d |
+| `true_3d_depth_matched` | `q3td128e8k` | 275m | 16 | 1,552,471,552 | 278,451,712 | 201,381,376 | 17.936% | 2304 = 3.0d |
+| `true_3d_depth_matched` | `q3td128e8k` | 480m | 22 | 3,599,597,056 | 485,326,336 | 382,565,888 | 13.483% | 3072 = 3.0d |
+| `true_3d_depth_matched` | `q3td128e8k` | 810m | 27 | 6,790,824,192 | 818,856,192 | 690,405,632 | 12.058% | 3840 = 3.0d |
+| `true_3d_depth_matched` | `q3td128e8k` | 1p2b | 29 | 10,440,270,080 | 1,203,626,240 | 1,049,485,568 | 11.529% | 4608 = 3.0d |
 
 ## Launchers
 
