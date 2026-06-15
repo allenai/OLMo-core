@@ -764,3 +764,51 @@ Total sparsity `sp192e4k` colder repaired Cx2 probes:
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
 | `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV4XHHY9GSZQ308RJXBZ61RM | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WW43MVJZ12ZNSHZ1E8T9M` failed during TorchInductor dry-run backward. Uses the 1.2B Cx8 baseline best observed LR and canonical one-node `gpu8-ep1mb4` setting. |
 | `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV4XHXP1E2S8QM01YCDPWZ2K | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WWG4BTFH6XZN1NHN71A7Y` failed during TorchInductor dry-run backward. Uses the 1.2B Cx8 baseline best observed LR and canonical one-node `gpu8-ep1mb4` setting. |
+
+Dense-layer scheduling 275M full ladder:
+
+These jobs test baseline shared-expert MoE geometry with different numbers of
+early dense layers. They were launched on 2026-06-15 with `--no-compile` after
+TorchInductor dry-run failures on Holmes/B300 compiled jobs. LR grids are
+centered on the current 275M baseline best observed settings: Cx1 around
+`2e-3`, Cx2 around `1.8e-3`, and Cx4/Cx8 around `1.6e-3`. Cx1/Cx2/Cx4 use
+2 GPUs with `mb8`; Cx8 uses 4 GPUs with `mb8`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `ds-275m-cx1-ds0-sh-lr1e-3-r1` | `dense0_shared` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y1PEJ6DDH97CKF8RE1TB0 | Low Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds0-sh-lr2e-3-r1` | `dense0_shared` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y21HSRAZP1QZPFPFS4PMG | Centered Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds0-sh-lr4e-3-r1` | `dense0_shared` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y2DPM77KHXD71WMVT1DQ7 | High Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds0-sh-lr9e-4-r1` | `dense0_shared` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y2SXNE1XVP4SFVZ0ZBKTP | Low repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds0-sh-lr1.8e-3-r1` | `dense0_shared` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y34QW7DA1SRS3GYJE4XS6 | Centered repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds0-sh-lr3.6e-3-r1` | `dense0_shared` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y3H3RE6RV1VWXMT3W6CAW | High repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx4-ds0-sh-lr8e-4-r1` | `dense0_shared` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y3X786SVGDT4W5A08Z3EZ | Low Cx4 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx4-ds0-sh-lr1.6e-3-r1` | `dense0_shared` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y48ZP5YGE41G2CSF009S5 | Centered Cx4 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx4-ds0-sh-lr3.2e-3-r1` | `dense0_shared` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y4M9ZQNZBZY83M5EJGNXV | High Cx4 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx8-ds0-sh-lr8e-4-r1` | `dense0_shared` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y4ZYWG8Q1FSKT1TBB1DWE | Low Cx8 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx8-ds0-sh-lr1.6e-3-r1` | `dense0_shared` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y5AKVA9Z8DVAMKVZ99VM7 | Centered Cx8 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx8-ds0-sh-lr3.2e-3-r1` | `dense0_shared` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y5NQK9H0EWYXHK7929JYN | High Cx8 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds2-sh-lr1e-3-r1` | `dense2_shared` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y61NZSQXB6ZT3GE6HZNVV | Low Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds2-sh-lr2e-3-r1` | `dense2_shared` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y6EHR069XE2B27SF8X57M | Centered Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds2-sh-lr4e-3-r1` | `dense2_shared` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y6SH495P38DS006SXJSD0 | High Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds2-sh-lr9e-4-r1` | `dense2_shared` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y7572MZJRK73GX75M9SA2 | Low repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds2-sh-lr1.8e-3-r1` | `dense2_shared` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y7HJYE1M76JNEB2S9TGCQ | Centered repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds2-sh-lr3.6e-3-r1` | `dense2_shared` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y7XHH7M0B093XKKKNXMTD | High repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx4-ds2-sh-lr8e-4-r1` | `dense2_shared` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y89CK7ANNQ2GSM7V0TNQ7 | Low Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds2-sh-lr1.6e-3-r1` | `dense2_shared` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y8KFCNV116NX5PF2EWMCX | Centered Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds2-sh-lr3.2e-3-r1` | `dense2_shared` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y8YPVRBA9Z2EQAMG18KAV | High Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds2-sh-lr8e-4-r1` | `dense2_shared` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y9A5WVZQ0TP3H2W1Z7XQE | Low Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds2-sh-lr1.6e-3-r1` | `dense2_shared` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y9NWCFM7W68XAP8X96DPY | Centered Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds2-sh-lr3.2e-3-r1` | `dense2_shared` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YA1YPHX0MNJJPJX7EXV2P | High Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx1-ds4-sh-lr1e-3-r1` | `dense4_shared` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YADSKN7S4HWZ1TVARACQ4 | Low Cx1 LR point; queued at launch status sweep. |
+| `ds-275m-cx1-ds4-sh-lr2e-3-r1` | `dense4_shared` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YASSZBX5P7HVHMJQBBQ1K | Centered Cx1 LR point; queued at launch status sweep. |
+| `ds-275m-cx1-ds4-sh-lr4e-3-r1` | `dense4_shared` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YB5CE4B31YSCDV0K3WNRR | High Cx1 LR point; queued at launch status sweep. |
+| `ds-275m-cx2-ds4-sh-lr9e-4-r1` | `dense4_shared` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YBHMJTNCP0SM3YK08EZ4K | Low repaired Cx2 LR point; queued at launch status sweep. |
+| `ds-275m-cx2-ds4-sh-lr1.8e-3-r1` | `dense4_shared` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YBXPAE5M8J21NTRKRBSRZ | Centered repaired Cx2 LR point; queued at launch status sweep. |
+| `ds-275m-cx2-ds4-sh-lr3.6e-3-r1` | `dense4_shared` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YC900HRN7ZBNFT5N78KQG | High repaired Cx2 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds4-sh-lr8e-4-r1` | `dense4_shared` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YCN2PTK9M89HJGEKSPNBJ | Low Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds4-sh-lr1.6e-3-r1` | `dense4_shared` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YD2P9FPNE426Q55PHEB0D | Centered Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds4-sh-lr3.2e-3-r1` | `dense4_shared` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YDDW3D4BDVEQDCPA82D6A | High Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds4-sh-lr8e-4-r1` | `dense4_shared` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YDRDXA3DWNKS46NRZQ21C | Low Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds4-sh-lr1.6e-3-r1` | `dense4_shared` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YE44K6ZZ4W95C28TQ9M5P | Centered Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds4-sh-lr3.2e-3-r1` | `dense4_shared` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YEFSFN2VRRWKRW9X8PWMW | High Cx8 LR point; queued at launch status sweep. |
