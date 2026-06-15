@@ -855,3 +855,41 @@ Dense-schedule Cx4/Cx8 reroutes:
 | `ds-275m-cx8-ds4-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4YDRDXA3DWNKS46NRZQ21C | https://beaker.org/ex/01KV4ZS4W0WS9XRZHNJ4WXDKJQ |
 | `ds-275m-cx8-ds4-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4YE44K6ZZ4W95C28TQ9M5P | https://beaker.org/ex/01KV4ZSFWZFGFW5FA3BP6EEWYA |
 | `ds-275m-cx8-ds4-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4YEFSFN2VRRWKRW9X8PWMW | https://beaker.org/ex/01KV4ZSW494V171PW9XX2197EK |
+
+## 2026-06-15 Shared-Expert No-Shared Promoted Holmes Runs
+
+Launched the active-matched no-shared shared-expert ablation after the 275M
+Cx1/Cx2/Cx4/Cx8 LR-transfer ladders finished and broadly confirmed baseline LR
+transfer. These jobs intentionally use Holmes/B300 low-priority preemptible
+capacity with torch compilation enabled. Every job is single-node and capped at
+8 GPUs because Holmes InfiniBand is unhealthy; `1p2b Cx8` is intentionally held
+out for now.
+
+Common settings:
+
+```text
+cluster = ai2/holmes
+workspace = ai2/holmes-testing
+image = tianhuat/olmo-core-torch212-2404-cu130
+priority = low
+preemptible = true
+--shared-expert-config=no_shared_matched_active
+--compile
+--no-python
+PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
+```
+
+| Name | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `se-480m-cx1-se0m9-lr1.2e-3-r1` | 480M | 1 | 1.2e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KV6973XM7G19ZPA1NS7Y1GNK | Baseline best-observed LR; Holmes compile-on. |
+| `se-480m-cx2-se0m9-lr9e-4-r1` | 480M | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 8 | https://beaker.org/ex/01KV697F0TCYCCJNX0VQCJAXAE | Baseline best-observed LR; Holmes compile-on. |
+| `se-480m-cx4-se0m9-lr8e-4-r1` | 480M | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KV697TS4XZ3DC834CDMZ7G49 | Baseline best-observed LR; Holmes compile-on. |
+| `se-480m-cx8-se0m9-lr8e-4-r1` | 480M | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV6986KXTDCGEV6P7QT8QRRS | Baseline best-observed LR; Holmes compile-on. |
+| `se-810m-cx1-se0m9-lr6e-4-r1` | 810M | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KV698JMNYGCGVMVWSG9ZYKG5 | Baseline best-observed LR; Holmes compile-on. |
+| `se-810m-cx2-se0m9-lr5.6e-4-r1` | 810M | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 4 | https://beaker.org/ex/01KV698ZE9BBNTE7Z3B43Q82MX | Baseline best-observed LR; Holmes compile-on. |
+| `se-810m-cx4-se0m9-lr4e-4-r1` | 810M | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KV699AA6XVSNJ33WTJPDR9JT | Baseline best-observed LR; Holmes compile-on. |
+| `se-810m-cx8-se0m9-lr4e-4-r1` | 810M | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV699NQMH6B3ZR5SXQKVBGPF | Baseline best-observed LR; 8-GPU cap rather than old >8-GPU plan. |
+| `se-1p2b-cx1-se0m9-lr4e-4-r1` | 1.2B | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KV69A1ZGD6SZH4A7TT3F7C54 | Baseline best-observed LR; Holmes compile-on. |
+| `se-1p2b-cx2-se0m9-lr6e-4-r1` | 1.2B | 2 | 6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KV69ADE3VQ7JPXSEZ00KK4S8 | Baseline best-observed LR; Holmes compile-on. |
+| `se-1p2b-cx4-se0m9-lr3e-4-r1` | 1.2B | 4 | 3e-4 | 524,288 | 64 | 8 | 1 | 2 | https://beaker.org/ex/01KV69ASNJF9D05MM7KDBHKPH7 | Baseline best-observed LR; Holmes compile-on. |
+
