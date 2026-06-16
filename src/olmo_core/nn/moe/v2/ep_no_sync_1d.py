@@ -26,11 +26,11 @@ from .ep_no_sync_buffers import (
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def combined_forward_ep_no_sync_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,

@@ -305,8 +305,8 @@ class TransformerBlockConfig(ModuleConfig):
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_fused_v2:
-                from ..moe.v2.block import MoEFusedV2TransformerBlock
-                return MoEFusedV2TransformerBlock(**kwargs)
+                from ..ddp.block import OLMoDDPTransformerBlock
+                return OLMoDDPTransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:

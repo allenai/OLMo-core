@@ -15,7 +15,7 @@ from ...moe.utils import (
 )
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def padded_local_expert_splits_for_capacity(
@@ -112,7 +112,7 @@ def build_keep_reorder(
 
 @nvtx.annotate("SyncTokenCount", color="green")
 def sync_tail_drop_allowed_splits_single_a2a(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     requested_splits: torch.Tensor,
     *,
     rank_capacity: int,
@@ -208,7 +208,7 @@ def sync_tail_drop_allowed_splits_single_a2a(
 
 @nvtx.annotate("_restore_drop_unpermute_1d")
 def restore_drop_unpermute_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     *,
     combine_out: torch.Tensor,
     local_inverse_reorder_indices: torch.Tensor,

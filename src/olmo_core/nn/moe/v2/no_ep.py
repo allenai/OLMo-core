@@ -11,7 +11,7 @@ from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
 from .routed_experts import requires_host_side_split_sizes
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def _debug_tensors_enabled() -> bool:
@@ -24,7 +24,7 @@ def _debug_tensors_enabled() -> bool:
 
 
 def combined_forward_no_ep(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,

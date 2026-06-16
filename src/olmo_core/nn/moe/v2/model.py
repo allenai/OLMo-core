@@ -25,11 +25,8 @@ from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.kernels import olmo_symm_mem
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock, OLMoDDPTransformerBlockConfig
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
-from .block import (
-    MoEFusedV2TransformerBlock,
-    MoEFusedV2TransformerBlockConfig,
-)
 from .ep_no_sync_buffers import (
     _NoSyncSymmSharedPool,
     _NoSyncTboPendingContext,
@@ -182,7 +179,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 found_moe = True
                 first_moe_idx = idx
             if block.is_moe:
-                moe_block = cast(MoEFusedV2TransformerBlock, block)
+                moe_block = cast(OLMoDDPTransformerBlock, block)
                 if moe_block.ep_no_sync and moe_block.ep_no_sync_shared_slots < 2:
                     raise OLMoConfigurationError(
                         "When TBO and EP no-sync are enabled, ep_no_sync_shared_slots must be >= 2 "
@@ -195,14 +192,14 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # set all events to None (so that the model can be deepcopied in PP split)
         for layer in self.blocks.values():
             if layer.is_moe:
-                layer = cast(MoEFusedV2TransformerBlock, layer)
+                layer = cast(OLMoDDPTransformerBlock, layer)
                 layer.purge_cuda_events()
 
     def install_cuda_events(self):
         # re-install events after deepcopy
         for layer in self.blocks.values():
             if layer.is_moe:
-                layer = cast(MoEFusedV2TransformerBlock, layer)
+                layer = cast(OLMoDDPTransformerBlock, layer)
                 layer.install_cuda_events()
 
     @property
@@ -227,7 +224,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         for block_idx, block in self.blocks.items():
             if not block.is_moe:
                 continue
-            block = cast(MoEFusedV2TransformerBlock, block)
+            block = cast(OLMoDDPTransformerBlock, block)
             block_metrics = block.compute_metrics(reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
                 out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
@@ -252,14 +249,14 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         for block in self.blocks.values():
             if not block.is_moe:
                 continue
-            cast(MoEFusedV2TransformerBlock, block).reset_metrics()
+            cast(OLMoDDPTransformerBlock, block).reset_metrics()
 
     def count_ep_no_sync_blocks(self) -> int:
         return sum(
             1
             for block in self.blocks.values()
             if block.is_moe
-            and isinstance(block, MoEFusedV2TransformerBlock)
+            and isinstance(block, OLMoDDPTransformerBlock)
             and block.ep_no_sync
         )
 
@@ -268,7 +265,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             1
             for block in self.blocks.values()
             if block.is_moe
-            and isinstance(block, MoEFusedV2TransformerBlock)
+            and isinstance(block, OLMoDDPTransformerBlock)
             and block.ep_no_sync
             and not block.ep_no_sync_use_rowwise_all_to_all
         )
@@ -276,7 +273,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     @torch.no_grad()
     def refresh_rowwise_fp8_cache(self) -> None:
         for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
                 continue
             block.refresh_rowwise_fp8_cache()
 
@@ -305,7 +302,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def disable_fp8_weight_anchor_grads(self) -> None:
         for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
                 continue
             block.disable_fp8_weight_anchor_grads()
 
@@ -314,7 +311,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def release_fp8_weight_anchor_storage(self) -> None:
         for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
                 continue
             block.release_fp8_weight_anchor_storage()
 
@@ -323,7 +320,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def sync_fp8_weight_store_grads_from_anchor(self) -> None:
         for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
                 continue
             block.sync_fp8_weight_store_grads_from_anchor()
 
@@ -343,10 +340,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         rowwise_lifetime_lease_slots: Optional[int] = None,
     ) -> None:
         ep_blocks = [
-            (block_key, cast(MoEFusedV2TransformerBlock, block))
+            (block_key, cast(OLMoDDPTransformerBlock, block))
             for block_key, block in self.blocks.items()
             if block.is_moe
-            and isinstance(block, MoEFusedV2TransformerBlock)
+            and isinstance(block, OLMoDDPTransformerBlock)
             and block.ep_no_sync
         ]
         if not ep_blocks:
@@ -590,11 +587,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         """
 
         shared_pool_to_return = ep_no_sync_shared_pool
-        ep_no_sync_blocks: List[MoEFusedV2TransformerBlock] = []
+        ep_no_sync_blocks: List[OLMoDDPTransformerBlock] = []
         for block in self.blocks.values():
             if not block.is_moe:
                 continue
-            block = cast(MoEFusedV2TransformerBlock, block)
+            block = cast(OLMoDDPTransformerBlock, block)
             # ep_mp_group is the optional high-priority NCCL group for
             # synchronized EP collectives that should start promptly while shared
             # experts run. It is intentionally not used by no-sync blocks.
@@ -736,7 +733,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         for block in self.blocks.values():
             if not block.is_moe:
                 continue
-            block = cast(MoEFusedV2TransformerBlock, block)
+            block = cast(OLMoDDPTransformerBlock, block)
             block.post_batch(dry_run=dry_run)
 
     @torch.no_grad()
@@ -749,7 +746,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         world_mesh: Dict[str, Optional[DeviceMesh]],
         model_part_idx: int = 0,
     ) -> torch.Generator:
-        from .block import MoEFusedV2TransformerBlock
+        from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
         from olmo_core.nn.attention import (
             Attention,
             FusedAttention,
@@ -812,9 +809,9 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         for block in self.blocks.values():
             # This might fail if it's wrapped.
-            if isinstance(block, MoEFusedV2TransformerBlock):
+            if isinstance(block, OLMoDDPTransformerBlock):
 
-                block = cast(MoEFusedV2TransformerBlock, block)
+                block = cast(OLMoDDPTransformerBlock, block)
 
                 # v2 MoE blocks.
                 att = cast(Union[Attention, FusedAttention], block.attention)
@@ -997,7 +994,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 continue
 
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
-                block = cast(MoEFusedV2TransformerBlock, block)
+                block = cast(OLMoDDPTransformerBlock, block)
                 # with self.offload_context:
                 # x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
                 x0, x1_ctx = block.combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **all_block_kwargs)

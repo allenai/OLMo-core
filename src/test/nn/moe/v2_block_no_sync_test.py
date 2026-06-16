@@ -7,7 +7,7 @@ from olmo_core.config import DType
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
-from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_gpu, requires_grouped_gemm, requires_multi_gpu, run_distributed_test
@@ -61,7 +61,7 @@ def _build_block(
     uniform_expert_assignment: bool = True,
     init_device: str = "cuda",
     ep_no_sync_use_2d_all_to_all: bool = False,
-) -> MoEFusedV2TransformerBlock:
+) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
         eps=1e-6,
@@ -70,7 +70,7 @@ def _build_block(
     )
     from olmo_core.nn.attention import AttentionConfig, AttentionType
 
-    return MoEFusedV2TransformerBlock(
+    return OLMoDDPTransformerBlock(
         d_model=d_model,
         block_idx=0,
         n_layers=1,
@@ -111,7 +111,7 @@ def _build_block(
     )
 
 
-def _init_block_params(block: MoEFusedV2TransformerBlock):
+def _init_block_params(block: OLMoDDPTransformerBlock):
     torch.manual_seed(1234)
     with torch.no_grad():
         for p in block.parameters():
@@ -119,7 +119,7 @@ def _init_block_params(block: MoEFusedV2TransformerBlock):
                 p.normal_(mean=0.0, std=0.02)
 
 
-def _install_forced_router(block: MoEFusedV2TransformerBlock):
+def _install_forced_router(block: OLMoDDPTransformerBlock):
     def _make_forced_forward(router):
         def _forced_forward(local_x, scores_only, loss_div_factor=None):
             del loss_div_factor
@@ -163,7 +163,7 @@ def _install_forced_router(block: MoEFusedV2TransformerBlock):
         block.shared_experts_router.forward = _make_forced_forward(block.shared_experts_router)
 
 
-def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
+def _install_deterministic_topk_router(block: OLMoDDPTransformerBlock):
     def _make_deterministic_forward(router):
         def _deterministic_forward(local_x, scores_only, loss_div_factor=None):
             del loss_div_factor
@@ -332,7 +332,7 @@ def _run_ep_no_sync_quota_invariants():
 
 
 def _run_ep_no_sync_hard_fail_setup():
-    import olmo_core.nn.moe.v2.block as block_module
+    import olmo_core.nn.ddp.block as block_module
 
     ep_mesh = _build_ep_mesh()
     old_symm = block_module._symm_mem

@@ -10,7 +10,7 @@ import torch.distributed as dist
 from olmo_core.distributed.utils import get_rank
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def _rowwise_route_debug_enabled() -> bool:
@@ -41,7 +41,7 @@ def _rowwise_route_tensor_desc(name: str, tensor: Optional[torch.Tensor]) -> str
 
 
 def _rowwise_route_debug_print(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     label: str,
     **tensors: Optional[torch.Tensor],
 ) -> None:
@@ -57,14 +57,14 @@ def _rowwise_route_debug_print(
     print(" | ".join(str(part) for part in parts), flush=True)
 
 
-def reset_ep_no_sync_rowwise_metrics(block: MoEFusedV2TransformerBlock) -> None:
+def reset_ep_no_sync_rowwise_metrics(block: OLMoDDPTransformerBlock) -> None:
     block._ep_no_sync_rowwise_drop_tokens_sum = None
     block._ep_no_sync_rowwise_total_tokens_sum = None
     block._ep_no_sync_rowwise_symm_util_max = None
 
 
 def add_ep_no_sync_rowwise_metrics(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]],
     reduce_type_cls,
 ) -> None:
@@ -86,7 +86,7 @@ def add_ep_no_sync_rowwise_metrics(
 
 
 def accumulate_ep_no_sync_rowwise_metrics(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     *,
     drop_token_cnt: torch.Tensor,
     num_out_tokens: int,
@@ -125,7 +125,7 @@ def accumulate_ep_no_sync_rowwise_metrics(
 
 @nvtx.annotate("_build_rowwise_route_maps")
 def build_rowwise_route_maps(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     *,
     routing_map: torch.Tensor,
     allowed_splits: torch.Tensor,

@@ -347,7 +347,7 @@ class Transformer(nn.Module):
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
-            from ..moe.v2.block import MoEFusedV2TransformerBlock
+            from ..ddp.block import OLMoDDPTransformerBlock
             att = cast(SequenceMixer, block.attention)
 
             # Sequence-mixer weights.
@@ -360,7 +360,7 @@ class Transformer(nn.Module):
                 generator=generator,
             )
 
-            if isinstance(block, MoEFusedV2TransformerBlock):
+            if isinstance(block, OLMoDDPTransformerBlock):
                 # MoE weights.
                 self.init_method.init_moe_v2(
                     block,

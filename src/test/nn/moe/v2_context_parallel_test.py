@@ -19,7 +19,7 @@ from olmo_core.distributed.parallel.pipeline_parallel import (
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
-from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.rope import RoPEConfig, RoPEType
@@ -47,14 +47,14 @@ def _build_block(
     *,
     ep_no_sync: bool = False,
     ep_no_sync_use_rowwise_all_to_all: bool = False,
-) -> MoEFusedV2TransformerBlock:
+) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
         eps=1e-6,
         bias=False,
         dtype=DType.float32,
     )
-    return MoEFusedV2TransformerBlock(
+    return OLMoDDPTransformerBlock(
         d_model=128,
         block_idx=0,
         n_layers=1,
@@ -102,7 +102,7 @@ def _build_model(
     ep_no_sync_use_rowwise_all_to_all: bool = False,
 ):
     from olmo_core.nn.lm_head import LMHeadConfig
-    from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlockConfig
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.transformer import (
         MoEFusedV2TransformerConfig,
         TransformerBlockType,
@@ -123,7 +123,7 @@ def _build_model(
         recompute_each_block=False,
         recompute_all_blocks_by_chunk=False,
         lm_head=LMHeadConfig(bias=False, dtype=DType.float32),
-        block=MoEFusedV2TransformerBlockConfig(
+        block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             sequence_mixer=AttentionConfig(
                 name=AttentionType.default,
@@ -487,7 +487,7 @@ def _run_moe_v2_folded_cp_ep_model_forward_backward() -> None:
     )
     _init_module_params(model)
     for block in model.blocks.values():
-        assert isinstance(block, MoEFusedV2TransformerBlock)
+        assert isinstance(block, OLMoDDPTransformerBlock)
         _install_deterministic_topk_router(block)
     model.train()
 
@@ -512,7 +512,7 @@ def _run_moe_v2_folded_cp_ep_model_forward_backward() -> None:
     assert torch.isfinite(model.embeddings.weight.grad).all()
 
     first_block = next(iter(model.blocks.values()))
-    assert isinstance(first_block, MoEFusedV2TransformerBlock)
+    assert isinstance(first_block, OLMoDDPTransformerBlock)
     expert_grad = first_block.routed_experts.w_up_gate.grad
     assert expert_grad is not None
     assert torch.isfinite(expert_grad).all()
@@ -565,7 +565,7 @@ def _run_moe_v2_folded_cp_ep_logits_parity_cuda() -> None:
     _init_module_params(cp_model)
     for model in (ref_model, cp_model):
         for block in model.blocks.values():
-            assert isinstance(block, MoEFusedV2TransformerBlock)
+            assert isinstance(block, OLMoDDPTransformerBlock)
             _install_forced_router(block)
         model.eval()
 
@@ -621,7 +621,7 @@ def _run_moe_v2_folded_cp_rowwise_ep_train_module_cuda() -> None:
     for model_part in train_module.model_parts:
         unwrapped = getattr(model_part, "module", model_part)
         for block in unwrapped.blocks.values():
-            assert isinstance(block, MoEFusedV2TransformerBlock)
+            assert isinstance(block, OLMoDDPTransformerBlock)
             assert block.ep_no_sync
             assert block.ep_no_sync_use_rowwise_all_to_all
             _install_deterministic_topk_router(block)
@@ -656,7 +656,7 @@ def _run_moe_v2_folded_cp_rowwise_ep_train_module_cuda() -> None:
     for model_part in train_module.model_parts:
         unwrapped = getattr(model_part, "module", model_part)
         for block in unwrapped.blocks.values():
-            assert isinstance(block, MoEFusedV2TransformerBlock)
+            assert isinstance(block, OLMoDDPTransformerBlock)
             for param in (block.routed_experts.w_up_gate, block.routed_experts.w_down):
                 grad = getattr(param, "_main_grad_fp32", None)
                 if grad is None:
@@ -712,7 +712,7 @@ def _run_moe_v2_folded_cp_ep_pp_train_module_cuda() -> None:
     for model_part in train_module.model_parts:
         unwrapped = getattr(model_part, "module", model_part)
         for block in unwrapped.blocks.values():
-            assert isinstance(block, MoEFusedV2TransformerBlock)
+            assert isinstance(block, OLMoDDPTransformerBlock)
             _install_deterministic_topk_router(block)
 
     recorded_ce_losses: list[torch.Tensor] = []
@@ -744,7 +744,7 @@ def _run_moe_v2_folded_cp_ep_pp_train_module_cuda() -> None:
     for model_part in train_module.model_parts:
         unwrapped = getattr(model_part, "module", model_part)
         for block in unwrapped.blocks.values():
-            assert isinstance(block, MoEFusedV2TransformerBlock)
+            assert isinstance(block, OLMoDDPTransformerBlock)
             for param in (block.routed_experts.w_up_gate, block.routed_experts.w_down):
                 grad = getattr(param, "_main_grad_fp32", None)
                 if grad is None:
@@ -803,7 +803,7 @@ def _run_moe_v2_folded_cp_rowwise_ep_pp_train_module_cuda() -> None:
     for model_part in train_module.model_parts:
         unwrapped = getattr(model_part, "module", model_part)
         for block in unwrapped.blocks.values():
-            assert isinstance(block, MoEFusedV2TransformerBlock)
+            assert isinstance(block, OLMoDDPTransformerBlock)
             assert block.ep_no_sync
             assert block.ep_no_sync_use_rowwise_all_to_all
             _install_deterministic_topk_router(block)
@@ -838,7 +838,7 @@ def _run_moe_v2_folded_cp_rowwise_ep_pp_train_module_cuda() -> None:
     for model_part in train_module.model_parts:
         unwrapped = getattr(model_part, "module", model_part)
         for block in unwrapped.blocks.values():
-            assert isinstance(block, MoEFusedV2TransformerBlock)
+            assert isinstance(block, OLMoDDPTransformerBlock)
             for param in (block.routed_experts.w_up_gate, block.routed_experts.w_down):
                 grad = getattr(param, "_main_grad_fp32", None)
                 if grad is None:

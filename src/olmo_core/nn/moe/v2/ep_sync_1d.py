@@ -15,11 +15,11 @@ from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
 from .routed_experts import requires_host_side_split_sizes
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def routed_experts_unpermute_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     global_x: torch.Tensor,
     global_x_local_expert_indices: torch.Tensor,
     parallel_batch_size_per_local_expert_cpu,
@@ -45,7 +45,7 @@ def routed_experts_unpermute_1d(
 
 
 def checkpointed_permute_routed_experts_unpermute_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     global_x: torch.Tensor,
     global_x_local_expert_indices: torch.Tensor,
     parallel_batch_size_per_local_expert_cpu,
@@ -92,7 +92,7 @@ def checkpointed_permute_routed_experts_unpermute_1d(
 
 
 def combined_forward_ep_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,

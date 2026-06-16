@@ -280,8 +280,8 @@ class InitMethod(StrEnum):
         generator: Optional[torch.Generator] = None,
         ep_generator: Optional[torch.Generator] = None,
     ):
-        from ..moe.v2.block import MoEFusedV2TransformerBlock
-        b = cast(MoEFusedV2TransformerBlock, b)
+        from ..ddp.block import OLMoDDPTransformerBlock
+        b = cast(OLMoDDPTransformerBlock, b)
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:

@@ -15,7 +15,7 @@ from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig, LMLossImplementation
 from olmo_core.nn.moe import MoELoadBalancingLossGranularity, MoERouterGatingFunction
-from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlockConfig
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
@@ -129,9 +129,9 @@ def _require_linear_attention_kwargs(
 
 
 def _resolve_block_config(
-    blocks: dict[str, MoEFusedV2TransformerBlockConfig],
+    blocks: dict[str, OLMoDDPTransformerBlockConfig],
     layer_types: Sequence[str],
-) -> tuple[MoEFusedV2TransformerBlockConfig | dict[str, MoEFusedV2TransformerBlockConfig], list[str] | None]:
+) -> tuple[OLMoDDPTransformerBlockConfig | dict[str, OLMoDDPTransformerBlockConfig], list[str] | None]:
     if len(set(layer_types)) == 1:
         return blocks[layer_types[0]], None
     return blocks, list(layer_types)
@@ -194,8 +194,8 @@ def _make_full_attention_block(
     attention_backend: AttentionBackendName,
     layer_norm: LayerNormConfig,
     dtype: DType,
-) -> MoEFusedV2TransformerBlockConfig:
-    return MoEFusedV2TransformerBlockConfig(
+) -> OLMoDDPTransformerBlockConfig:
+    return OLMoDDPTransformerBlockConfig(
         sequence_mixer=AttentionConfig(
             name=AttentionType.default,
             n_heads=num_attention_heads,
@@ -233,9 +233,9 @@ def _make_linear_attention_block(
     linear_conv_kernel_dim: int,
     rms_norm_eps: float,
     dtype: DType,
-) -> MoEFusedV2TransformerBlockConfig:
+) -> OLMoDDPTransformerBlockConfig:
     linear_expand_v = linear_value_head_dim / linear_key_head_dim
-    return MoEFusedV2TransformerBlockConfig(
+    return OLMoDDPTransformerBlockConfig(
         sequence_mixer=GatedDeltaNetConfig(
             n_heads=linear_num_key_heads,
             n_v_heads=linear_num_value_heads,
@@ -335,7 +335,7 @@ def build_qwen3_moe_config(
         shared_experts_router=deepcopy(shared_router),
     )
 
-    blocks: dict[str, MoEFusedV2TransformerBlockConfig] = {}
+    blocks: dict[str, OLMoDDPTransformerBlockConfig] = {}
     if QWEN3_DENSE_MOE_LAYER_TYPE in set(layer_types):
         blocks[QWEN3_DENSE_MOE_LAYER_TYPE] = _make_full_attention_block(
             common_block_kwargs=common_block_kwargs,

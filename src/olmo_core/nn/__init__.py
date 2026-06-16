@@ -35,6 +35,8 @@ _VISION_EXPORTS = {
 _DDP_EXPORTS = {
     "OLMoDDPModel",
     "OLMoDDPModelConfig",
+    "OLMoDDPTransformerBlock",
+    "OLMoDDPTransformerBlockConfig",
 }
 
 
@@ -59,6 +61,8 @@ __all__ = [
     "OutputDiscardCheckpoint",
     "OLMoDDPModel",
     "OLMoDDPModelConfig",
+    "OLMoDDPTransformerBlock",
+    "OLMoDDPTransformerBlockConfig",
     "VisionEncoderType",
     "VisionEncoderConfig",
     "VisionTransformer",

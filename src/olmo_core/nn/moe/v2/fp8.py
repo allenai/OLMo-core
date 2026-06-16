@@ -14,7 +14,7 @@ from olmo_core.kernels import (
 )
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 class MoERowwiseFP8ScaleMode(StrEnum):
@@ -66,7 +66,7 @@ def normalize_rowwise_fp8_config(
     )
 
 
-def reset_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+def reset_shared_rowwise_fp8_cache(block: OLMoDDPTransformerBlock) -> None:
     block._shared_rowwise_fp8_up_prequant = None
     block._shared_rowwise_fp8_down_prequant = None
     block._shared_rowwise_fp8_up_prequant_t = None
@@ -84,14 +84,14 @@ def _rowwise_fp8_enabled(cfg: Optional[MoERowwiseFP8Config]) -> bool:
     return cfg is not None and cfg.enabled
 
 
-def invalidate_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+def invalidate_rowwise_fp8_cache(block: OLMoDDPTransformerBlock) -> None:
     if block.routed_experts is not None:
         block.routed_experts.invalidate_rowwise_fp8_cache()
     reset_shared_rowwise_fp8_cache(block)
 
 
 @torch.no_grad()
-def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+def refresh_shared_rowwise_fp8_cache(block: OLMoDDPTransformerBlock) -> None:
     cfg = block.rowwise_fp8
     if not _rowwise_fp8_enabled(cfg):
         reset_shared_rowwise_fp8_cache(block)
@@ -172,7 +172,7 @@ def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
 
 
 @torch.no_grad()
-def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+def refresh_rowwise_fp8_cache(block: OLMoDDPTransformerBlock) -> None:
     block_cfg = block.rowwise_fp8
     routed_cfg = (
         block.routed_experts.rowwise_fp8 if block.routed_experts is not None else None
@@ -193,7 +193,7 @@ def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
 
 
 def shared_experts_forward1_rowwise_fp8(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     use_fast_accum: bool,
@@ -248,7 +248,7 @@ def shared_experts_forward1_rowwise_fp8(
 
 
 def shared_experts_forward_rowwise_fp8(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     use_fast_accum: bool,
@@ -330,7 +330,7 @@ def shared_experts_forward_rowwise_fp8(
 
 
 def shared_experts_forward2_rowwise_fp8(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     up: torch.Tensor,
     gate: torch.Tensor,
     xshape: torch.Size,

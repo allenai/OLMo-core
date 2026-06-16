@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from olmo_core.nn.moe.v2 import block as block_mod
+import olmo_core.nn.ddp.block as block_mod
 from olmo_core.nn.moe.v2 import ep_no_sync_tbo_rowwise as rowwise_tbo
 from olmo_core.nn.moe.v2 import model as model_mod
 
@@ -26,7 +26,7 @@ def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
     monkeypatch.setattr(block_mod, "_combined_forward_ep_no_sync_tbo", fake_1d)
 
     fake_block = SimpleNamespace(ep_no_sync_use_rowwise_all_to_all=True)
-    out, ctx = block_mod.MoEFusedV2TransformerBlock.combined_forward_ep_no_sync_tbo(
+    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
         fake_block,
         "x0",
         {"x1": "x1"},
@@ -63,7 +63,7 @@ def test_block_keeps_existing_1d_tbo_when_rowwise_disabled(monkeypatch):
     monkeypatch.setattr(block_mod, "_combined_forward_ep_no_sync_tbo", fake_1d)
 
     fake_block = SimpleNamespace(ep_no_sync_use_rowwise_all_to_all=False)
-    out, ctx = block_mod.MoEFusedV2TransformerBlock.combined_forward_ep_no_sync_tbo(
+    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
         fake_block,
         "x0",
         {"x1": "x1"},
@@ -242,17 +242,11 @@ def test_rowwise_stage_d_launch_uses_comm_stream_and_dispatch(monkeypatch):
     assert d_state.dispatch_done_event is event
     assert calls[0] == ("wait_stream", comm_stream, "current-stream")
     assert calls[1][0] == "dispatch"
-    assert calls[1][1] == (
-        a_state.moe_inp,
-        None,
-        a_state.dst_ranks,
-        a_state.dst_rows,
-        buffers.dispatch_out,
-        None,
-        "ep_group",
-        "pg",
-        64,
-        True,
-        True,
-    )
+    dispatch_args = calls[1][1]
+    assert torch.equal(dispatch_args[0], a_state.moe_inp)
+    assert dispatch_args[1] is None
+    assert torch.equal(dispatch_args[2], a_state.dst_ranks)
+    assert torch.equal(dispatch_args[3], a_state.dst_rows)
+    assert dispatch_args[4] is buffers.dispatch_out
+    assert dispatch_args[5:] == (None, "ep_group", "pg", 64, False, True, True, True)
     assert calls[2] == ("record_event", comm_stream)

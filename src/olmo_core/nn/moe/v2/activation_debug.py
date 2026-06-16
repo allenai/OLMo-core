@@ -11,7 +11,7 @@ import torch
 from olmo_core.distributed.utils import get_rank
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENV_VAR = "OLMO_EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG"
@@ -47,7 +47,7 @@ def record_named_saved_activation(tensor: torch.Tensor, name: str) -> None:
 
 
 def maybe_dump_ep_no_sync_saved_activations(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     loss_div_factor: Optional[Union[torch.Tensor, float]],

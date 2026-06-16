@@ -15,11 +15,11 @@ from .ep_sync_1d import checkpointed_permute_routed_experts_unpermute_1d
 from .tbo_state import SyncedTboPendingContext
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def combined_forward_ep_tbo(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x0: torch.Tensor,
     x1_ctx: object,
     x1_is_fresh: bool,

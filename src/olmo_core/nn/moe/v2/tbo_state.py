@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, List, Optional
 import torch
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 @dataclass
@@ -20,4 +20,4 @@ class SyncedTboPendingContext:
     in_shape: torch.Size
     mixed_shared_out: Optional[torch.Tensor]
     attn_res_out: torch.Tensor
-    last_block: MoEFusedV2TransformerBlock
+    last_block: OLMoDDPTransformerBlock

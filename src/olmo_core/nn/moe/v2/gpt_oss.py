@@ -13,7 +13,7 @@ from olmo_core.nn.attention import (
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig, LMLossImplementation
 from olmo_core.nn.moe import MoELoadBalancingLossGranularity, MoERouterGatingFunction
-from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlockConfig
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.moe.v2.routed_experts import ExpertActivation, RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.rope import RoPEConfig, RoPEType, YaRNRoPEScalingConfig
@@ -105,8 +105,8 @@ def _make_attention_block(
     sliding_window: int | None,
     attention_backend: AttentionBackendName,
     dtype: DType,
-) -> MoEFusedV2TransformerBlockConfig:
-    return MoEFusedV2TransformerBlockConfig(
+) -> OLMoDDPTransformerBlockConfig:
+    return OLMoDDPTransformerBlockConfig(
         sequence_mixer=AttentionConfig(
             name=AttentionType.default,
             n_heads=num_attention_heads,
@@ -258,7 +258,7 @@ def build_gpt_oss_20b_config(
         ),
     }
 
-    block: MoEFusedV2TransformerBlockConfig | dict[str, MoEFusedV2TransformerBlockConfig]
+    block: OLMoDDPTransformerBlockConfig | dict[str, OLMoDDPTransformerBlockConfig]
     block_pattern: list[str] | None
     if len(set(layer_types)) == 1:
         block = blocks[layer_types[0]]

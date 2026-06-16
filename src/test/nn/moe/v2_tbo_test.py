@@ -7,7 +7,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from olmo_core.config import DType
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
-from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
@@ -26,7 +26,7 @@ def _build_ep_mesh() -> DeviceMesh:
 def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
     from olmo_core.nn.attention import AttentionConfig, AttentionType
     from olmo_core.nn.lm_head import LMHeadConfig
-    from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlockConfig
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.transformer import (
         MoEFusedV2TransformerConfig,
         TransformerBlockType,
@@ -48,7 +48,7 @@ def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
         recompute_each_block=False,
         recompute_all_blocks_by_chunk=False,
         lm_head=LMHeadConfig(bias=False, dtype=DType.float32),
-        block=MoEFusedV2TransformerBlockConfig(
+        block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             sequence_mixer=AttentionConfig(
                 name=AttentionType.default,
@@ -96,7 +96,7 @@ def _init_model_params(model):
                 param.normal_(mean=0.0, std=0.02)
 
 
-def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
+def _install_deterministic_topk_router(block: OLMoDDPTransformerBlock):
     def _deterministic_router_forward(self, router, local_x, scores_only, loss_div_factor):
         del loss_div_factor
         B, S, _ = local_x.shape
@@ -131,7 +131,7 @@ def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
 
 def _install_model_routers(model) -> None:
     for block in model.blocks.values():
-        assert isinstance(block, MoEFusedV2TransformerBlock)
+        assert isinstance(block, OLMoDDPTransformerBlock)
         _install_deterministic_topk_router(block)
 
 

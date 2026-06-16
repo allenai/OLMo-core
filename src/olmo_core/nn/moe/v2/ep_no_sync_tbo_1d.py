@@ -36,11 +36,11 @@ from .ep_no_sync_buffers import (
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def ep_no_sync_stage_a(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     lane_id: int,
@@ -209,7 +209,7 @@ def ep_no_sync_stage_a(
     )
 
 
-def ep_no_sync_stage_d_launch(block: MoEFusedV2TransformerBlock, a_state: _NoSyncStageAState) -> _NoSyncStageDState:
+def ep_no_sync_stage_d_launch(block: OLMoDDPTransformerBlock, a_state: _NoSyncStageAState) -> _NoSyncStageDState:
     self = block
     comm_stream = get_or_init_stream(id=f"ep_no_sync_comm_block_{self.block_idx}", priority=0)
     wait_stream_no_compile(this_stream=comm_stream, other_stream=torch.cuda.current_stream())
@@ -237,7 +237,7 @@ def ep_no_sync_stage_d_launch(block: MoEFusedV2TransformerBlock, a_state: _NoSyn
     )
 
 
-def ep_no_sync_stage_e(block: MoEFusedV2TransformerBlock, d_state: _NoSyncStageDState) -> _NoSyncTboPendingContext:
+def ep_no_sync_stage_e(block: OLMoDDPTransformerBlock, d_state: _NoSyncStageDState) -> _NoSyncTboPendingContext:
     self = block
     assert self.routed_experts is not None
     wait_event_no_compile(torch.cuda.current_stream(), d_state.dispatch_done_event)
@@ -296,7 +296,7 @@ def ep_no_sync_stage_e(block: MoEFusedV2TransformerBlock, d_state: _NoSyncStageD
 
 
 def ep_no_sync_stage_c_launch(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     pending_ctx: _NoSyncTboPendingContext,
 ) -> _NoSyncTboPendingContext:
     del block
@@ -325,7 +325,7 @@ def ep_no_sync_stage_c_launch(
     return pending_ctx
 
 
-def ep_no_sync_stage_tail(block: MoEFusedV2TransformerBlock, pending_ctx: _NoSyncTboPendingContext) -> torch.Tensor:
+def ep_no_sync_stage_tail(block: OLMoDDPTransformerBlock, pending_ctx: _NoSyncTboPendingContext) -> torch.Tensor:
     self = block
     if pending_ctx.combine_done_event is not None:
         wait_event_no_compile(torch.cuda.current_stream(), pending_ctx.combine_done_event)
@@ -364,7 +364,7 @@ def ep_no_sync_stage_tail(block: MoEFusedV2TransformerBlock, pending_ctx: _NoSyn
 
 
 def combined_forward_ep_no_sync_tbo(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x0: torch.Tensor,
     x1_ctx: object,
     x1_is_fresh: bool,

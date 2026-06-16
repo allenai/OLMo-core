@@ -11,7 +11,7 @@ from olmo_core.distributed.utils import get_rank
 from olmo_core.kernels import olmo_symm_mem
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 try:
     import torch.distributed._symmetric_memory as _symm_mem
@@ -446,7 +446,7 @@ class _NoSyncStageDState:
 
 @dataclass
 class _NoSyncTboPendingContext:
-    block: "MoEFusedV2TransformerBlock"
+    block: "OLMoDDPTransformerBlock"
     lane_id: int
     a_state: _NoSyncStageAState
     dispatch_rank_splits_offsets: torch.Tensor
@@ -701,7 +701,7 @@ class _NoSyncSymmSharedPool:
                 yield tensor
 
 
-def get_ep_no_sync_group_name(block: "MoEFusedV2TransformerBlock") -> str:
+def get_ep_no_sync_group_name(block: "OLMoDDPTransformerBlock") -> str:
     if not block.ep_no_sync:
         raise RuntimeError("EP no-sync is not enabled for this block")
     if block._ep_symm_group_name is None:
@@ -711,7 +711,7 @@ def get_ep_no_sync_group_name(block: "MoEFusedV2TransformerBlock") -> str:
     return block._ep_symm_group_name
 
 
-def ep_no_sync_slot_for_lane(block: "MoEFusedV2TransformerBlock", lane_id: int) -> int:
+def ep_no_sync_slot_for_lane(block: "OLMoDDPTransformerBlock", lane_id: int) -> int:
     if lane_id < 0:
         raise ValueError(f"lane_id must be >= 0 (got {lane_id})")
     base_slot = block._ep_no_sync_shared_slot
@@ -730,7 +730,7 @@ def resolve_ep_no_sync_chunk_reorder_backend() -> str:
 
 
 def get_or_init_ep_no_sync_symm_tensor(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     name: str,
     shape: Tuple[int, ...],
@@ -772,7 +772,7 @@ def get_or_init_ep_no_sync_symm_tensor(
 
 
 def _get_or_init_ep_no_sync_lease_pool(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     name: str,
 ) -> _NoSyncSymmLeasePool:
@@ -898,7 +898,7 @@ def _fp8_dispatch_out_specs(
 
 @torch.compiler.disable
 def acquire_ep_no_sync_dispatch_out_lease(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     dispatch_out_cap: int,
     d_model: int,
@@ -919,7 +919,7 @@ def acquire_ep_no_sync_dispatch_out_lease(
 
 @torch.compiler.disable
 def acquire_ep_no_sync_fp8_dispatch_out_lease(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     dispatch_out_cap: int,
     d_model: int,
@@ -940,7 +940,7 @@ def acquire_ep_no_sync_fp8_dispatch_out_lease(
 
 @torch.compiler.disable
 def acquire_ep_no_sync_combine_out_lease(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     combine_out_cap: int,
     d_model: int,
@@ -961,7 +961,7 @@ def acquire_ep_no_sync_combine_out_lease(
 
 @torch.compiler.disable
 def acquire_ep_no_sync_combine_gather_lease(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     combine_gather_cap: int,
     combine_gather_top_k: int,
@@ -984,7 +984,7 @@ def acquire_ep_no_sync_combine_gather_lease(
 
 @torch.compiler.disable
 def prewarm_ep_no_sync_rowwise_dispatch_out_leases(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     dispatch_out_cap: int,
     d_model: int,
@@ -1027,7 +1027,7 @@ def prewarm_ep_no_sync_rowwise_dispatch_out_leases(
 
 @torch.compiler.disable
 def prewarm_ep_no_sync_rowwise_lifetime_leases(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     dispatch_out_cap: int,
     combine_out_cap: int,
@@ -1088,7 +1088,7 @@ def prewarm_ep_no_sync_rowwise_lifetime_leases(
 
 @torch.compiler.disable
 def get_ep_no_sync_rowwise_fp8_buffers(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     dispatch_out_cap: int,
     combine_in_cap: int,
@@ -1211,7 +1211,7 @@ def _parse_bool_env(value: str, *, env_name: str) -> Optional[bool]:
     )
 
 
-def _rowwise_symm_auto_enabled(block: "MoEFusedV2TransformerBlock") -> bool:
+def _rowwise_symm_auto_enabled(block: "OLMoDDPTransformerBlock") -> bool:
     local_world_size = 0
     try:
         local_world_size = int(os.getenv("LOCAL_WORLD_SIZE", "0") or "0")
@@ -1223,7 +1223,7 @@ def _rowwise_symm_auto_enabled(block: "MoEFusedV2TransformerBlock") -> bool:
 
 
 def _resolve_rowwise_symm_option(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     attr_name: str,
     env_name: str,
@@ -1240,7 +1240,7 @@ def _resolve_rowwise_symm_option(
     return _rowwise_symm_auto_enabled(block) if auto_enabled else False
 
 
-def resolve_ep_no_sync_rowwise_symm_options(block: "MoEFusedV2TransformerBlock") -> None:
+def resolve_ep_no_sync_rowwise_symm_options(block: "OLMoDDPTransformerBlock") -> None:
     """Resolve rowwise symmetric-buffer policy before compiled forwards run."""
     if block.ep_no_sync_rowwise_symm_dispatch_in is None:
         block.ep_no_sync_rowwise_symm_dispatch_in = _resolve_rowwise_symm_option(
@@ -1305,7 +1305,7 @@ def _ep_no_sync_buffers_cache_key(
 
 
 def _ep_no_sync_buffers_cache_slot(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     slot_idx: Optional[int],
 ) -> Optional[int]:
     if slot_idx is not None:
@@ -1335,7 +1335,7 @@ def _ep_no_sync_fp8_buffers_cache_key(
 
 
 def get_cached_ep_no_sync_buffers(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     dispatch_in_cap: int,
     dispatch_out_cap: int,
@@ -1382,7 +1382,7 @@ def get_cached_ep_no_sync_buffers(
 
 
 def get_cached_ep_no_sync_rowwise_fp8_buffers(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     dispatch_out_cap: int,
     combine_in_cap: int,
@@ -1411,7 +1411,7 @@ def get_cached_ep_no_sync_rowwise_fp8_buffers(
     )
 
 
-def use_ep_no_sync_rowwise_symm_dispatch_in(block: "MoEFusedV2TransformerBlock") -> bool:
+def use_ep_no_sync_rowwise_symm_dispatch_in(block: "OLMoDDPTransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
         attr_name="ep_no_sync_rowwise_symm_dispatch_in",
@@ -1419,7 +1419,7 @@ def use_ep_no_sync_rowwise_symm_dispatch_in(block: "MoEFusedV2TransformerBlock")
     )
 
 
-def use_ep_no_sync_rowwise_symm_combine_out(block: "MoEFusedV2TransformerBlock") -> bool:
+def use_ep_no_sync_rowwise_symm_combine_out(block: "OLMoDDPTransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
         attr_name="ep_no_sync_rowwise_symm_combine_out",
@@ -1428,7 +1428,7 @@ def use_ep_no_sync_rowwise_symm_combine_out(block: "MoEFusedV2TransformerBlock")
     )
 
 
-def use_ep_no_sync_rowwise_symm_combine_gather(block: "MoEFusedV2TransformerBlock") -> bool:
+def use_ep_no_sync_rowwise_symm_combine_gather(block: "OLMoDDPTransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
         attr_name="ep_no_sync_rowwise_symm_combine_gather",
@@ -1438,7 +1438,7 @@ def use_ep_no_sync_rowwise_symm_combine_gather(block: "MoEFusedV2TransformerBloc
 
 @torch.compiler.disable
 def acquire_ep_no_sync_rowwise_lifetime_leases(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     dispatch_out_cap: int,
     combine_out_cap: int,
@@ -1491,7 +1491,7 @@ def acquire_ep_no_sync_rowwise_lifetime_leases(
 
 @torch.compiler.disable
 def get_ep_no_sync_buffers(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     *,
     dispatch_in_cap: int,
     dispatch_out_cap: int,
@@ -1806,7 +1806,7 @@ def get_ep_no_sync_buffers(
     return buffers
 
 
-def iter_ep_no_sync_symm_tensors(block: "MoEFusedV2TransformerBlock") -> Iterator[torch.Tensor]:
+def iter_ep_no_sync_symm_tensors(block: "OLMoDDPTransformerBlock") -> Iterator[torch.Tensor]:
     for tensor in block._ep_no_sync_symm_cache.values():
         if isinstance(tensor, torch.Tensor):
             yield tensor
@@ -1817,7 +1817,7 @@ def iter_ep_no_sync_symm_tensors(block: "MoEFusedV2TransformerBlock") -> Iterato
         yield from block._ep_no_sync_shared_pool.iter_tensors()
 
 
-def compute_ep_no_sync_rank_capacity(block: "MoEFusedV2TransformerBlock", num_out_tokens: int) -> int:
+def compute_ep_no_sync_rank_capacity(block: "OLMoDDPTransformerBlock", num_out_tokens: int) -> int:
     # `num_out_tokens` is the local routed-token count before EP dispatch.
     # Under balanced routing, the average received tokens per EP rank is this
     # same value (not divided by ep_world_size).

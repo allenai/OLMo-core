@@ -61,7 +61,7 @@ def _build_block(backend: str = "te_fused"):
     from olmo_core.nn.attention import AttentionConfig, AttentionType
     from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
     from olmo_core.nn.moe import MoERouterGatingFunction
-    from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
     from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 
@@ -71,7 +71,7 @@ def _build_block(backend: str = "te_fused"):
         bias=False,
         dtype=DType.float32,
     )
-    return MoEFusedV2TransformerBlock(
+    return OLMoDDPTransformerBlock(
         d_model=512,
         block_idx=0,
         n_layers=1,

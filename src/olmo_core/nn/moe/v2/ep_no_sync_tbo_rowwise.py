@@ -38,7 +38,7 @@ from .ep_no_sync_rowwise_helpers import (
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def _tbo_debug_enabled() -> bool:
@@ -77,7 +77,7 @@ def _tbo_tensor_desc(name: str, tensor: Optional[torch.Tensor]) -> str:
     return f"{name}=tensor"
 
 
-def _tbo_debug_print(block: "MoEFusedV2TransformerBlock", label: str, **tensors: Optional[torch.Tensor]) -> None:
+def _tbo_debug_print(block: "OLMoDDPTransformerBlock", label: str, **tensors: Optional[torch.Tensor]) -> None:
     if not _tbo_debug_enabled():
         return
     parts = [
@@ -90,7 +90,7 @@ def _tbo_debug_print(block: "MoEFusedV2TransformerBlock", label: str, **tensors:
     print(" | ".join(str(part) for part in parts), flush=True)
 
 
-def _tbo_debug_sync(block: "MoEFusedV2TransformerBlock", label: str, device: torch.device) -> None:
+def _tbo_debug_sync(block: "OLMoDDPTransformerBlock", label: str, device: torch.device) -> None:
     if not _tbo_debug_sync_enabled():
         return
     # _tbo_debug_print(block, f"sync-enter {label}")
@@ -134,7 +134,7 @@ class _NoSyncRowwiseStageDState:
 
 @dataclass
 class _NoSyncRowwiseTboPendingContext:
-    block: "MoEFusedV2TransformerBlock"
+    block: "OLMoDDPTransformerBlock"
     lane_id: int
     a_state: _NoSyncRowwiseStageAState
     global_x_rank_major: torch.Tensor
@@ -142,7 +142,7 @@ class _NoSyncRowwiseTboPendingContext:
     combine_done_event: Optional[torch.cuda.Event] = None
 
 
-def _check_rowwise_tbo_supported(block: "MoEFusedV2TransformerBlock") -> None:
+def _check_rowwise_tbo_supported(block: "OLMoDDPTransformerBlock") -> None:
     if not block.ep_no_sync_use_rowwise_all_to_all:
         raise RuntimeError("Rowwise no-sync TBO requires ep_no_sync_use_rowwise_all_to_all=True")
     if block.rowwise_fp8 is not None and block.rowwise_fp8.enabled:
@@ -153,7 +153,7 @@ def _check_rowwise_tbo_supported(block: "MoEFusedV2TransformerBlock") -> None:
 
 
 def ep_no_sync_rowwise_tbo_stage_a(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     x: torch.Tensor,
     *,
     lane_id: int,
@@ -363,7 +363,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
 
 
 def ep_no_sync_rowwise_tbo_stage_d_launch(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     a_state: _NoSyncRowwiseStageAState,
 ) -> _NoSyncRowwiseStageDState:
     self = block
@@ -413,7 +413,7 @@ def ep_no_sync_rowwise_tbo_stage_d_launch(
 
 
 def ep_no_sync_rowwise_tbo_stage_shared_launch(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     a_state: _NoSyncRowwiseStageAState,
 ) -> None:
     self = block
@@ -465,7 +465,7 @@ def ep_no_sync_rowwise_tbo_stage_shared_launch(
 
 
 def ep_no_sync_rowwise_tbo_stage_e(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     d_state: _NoSyncRowwiseStageDState,
 ) -> _NoSyncRowwiseTboPendingContext:
     self = block
@@ -502,7 +502,7 @@ def ep_no_sync_rowwise_tbo_stage_e(
 
 
 def ep_no_sync_rowwise_tbo_stage_c_launch(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     pending_ctx: _NoSyncRowwiseTboPendingContext,
 ) -> _NoSyncRowwiseTboPendingContext:
     del block
@@ -567,7 +567,7 @@ def ep_no_sync_rowwise_tbo_stage_c_launch(
 
 
 def ep_no_sync_rowwise_tbo_stage_tail(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     pending_ctx: _NoSyncRowwiseTboPendingContext,
 ) -> torch.Tensor:
     self = block
@@ -597,7 +597,7 @@ def ep_no_sync_rowwise_tbo_stage_tail(
 
 
 def combined_forward_ep_no_sync_tbo_rowwise(
-    block: "MoEFusedV2TransformerBlock",
+    block: "OLMoDDPTransformerBlock",
     x0: torch.Tensor,
     x1_ctx: object,
     x1_is_fresh: bool,

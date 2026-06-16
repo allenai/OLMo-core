@@ -43,7 +43,7 @@ from .ep_no_sync_rowwise_helpers import (
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def _debug_tensors_enabled() -> bool:
@@ -56,7 +56,7 @@ def _debug_tensors_enabled() -> bool:
 
 
 def combined_forward_ep_no_sync_rowwise(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     activation_checkpointing: Optional[bool] = None,
