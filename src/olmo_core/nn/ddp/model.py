@@ -163,6 +163,68 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     #         assert isinstance(self.offload_context, CpuOffloadHook)
     #         self.offload_context.offload_handler.groupid_reset()
 
+    def named_ddp_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.blocks.items():
+            if isinstance(block, OLMoDDPTransformerBlock):
+                yield block_key, block
+
+    def named_required_ddp_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.blocks.items():
+            if not isinstance(block, OLMoDDPTransformerBlock):
+                raise OLMoConfigurationError(
+                    "OLMoDDPModel only supports OLMoDDPTransformerBlock blocks. "
+                    "Use a shared-only OLMoDDPTransformerBlock for dense layers."
+                )
+            yield block_key, block
+
+    def ddp_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
+        for _, block in self.named_ddp_blocks():
+            yield block
+
+    def named_routed_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.named_ddp_blocks():
+            if block.has_routed_experts:
+                yield block_key, block
+
+    def routed_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
+        for _, block in self.named_routed_blocks():
+            yield block
+
+    def named_shared_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.named_ddp_blocks():
+            if block.has_shared_experts:
+                yield block_key, block
+
+    def shared_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
+        for _, block in self.named_shared_blocks():
+            yield block
+
+    def named_ep_no_sync_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.named_routed_blocks():
+            if block.ep_no_sync:
+                yield block_key, block
+
+    def ep_no_sync_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
+        for _, block in self.named_ep_no_sync_blocks():
+            yield block
+
+    def named_fp8_blocks(self) -> Iterator[tuple[str, object]]:
+        for block_key, block in self.blocks.items():
+            if getattr(block, "named_fp8_weight_stores", None) is not None:
+                yield block_key, block
+                continue
+            attention = getattr(block, "attention", None)
+            if getattr(attention, "named_fp8_weight_stores", None) is not None:
+                yield block_key, block
+
+    def fp8_blocks(self) -> Iterator[object]:
+        for _, block in self.named_fp8_blocks():
+            yield block
+
+    @property
+    def has_routed_blocks(self) -> bool:
+        return any(True for _ in self.routed_blocks())
+
     def _check_tbo_requirements(self):
         # make sure dense blocks only appear before moe blocks
         # because TBO requires that moe blocks are consecutive
@@ -171,14 +233,18 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         found_moe = False
         first_moe_idx = None
         for idx, block in enumerate(self.blocks.values()):
-            if found_moe and not block.is_moe:
+            is_routed_block = (
+                isinstance(block, OLMoDDPTransformerBlock)
+                and block.has_routed_experts
+            )
+            if found_moe and not is_routed_block:
                 raise OLMoConfigurationError(
                     "When TBO is enabled, all dense blocks must appear before MoE blocks."
                 )
-            if block.is_moe and not found_moe:
+            if is_routed_block and not found_moe:
                 found_moe = True
                 first_moe_idx = idx
-            if block.is_moe:
+            if is_routed_block:
                 moe_block = cast(OLMoDDPTransformerBlock, block)
                 if moe_block.ep_no_sync and moe_block.ep_no_sync_shared_slots < 2:
                     raise OLMoConfigurationError(
@@ -190,17 +256,13 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def purge_cuda_events(self):
         # set all events to None (so that the model can be deepcopied in PP split)
-        for layer in self.blocks.values():
-            if isinstance(layer, OLMoDDPTransformerBlock):
-                layer = cast(OLMoDDPTransformerBlock, layer)
-                layer.purge_cuda_events()
+        for layer in self.ddp_blocks():
+            layer.purge_cuda_events()
 
     def install_cuda_events(self):
         # re-install events after deepcopy
-        for layer in self.blocks.values():
-            if isinstance(layer, OLMoDDPTransformerBlock):
-                layer = cast(OLMoDDPTransformerBlock, layer)
-                layer.install_cuda_events()
+        for layer in self.ddp_blocks():
+            layer.install_cuda_events()
 
     @property
     def is_moe(self) -> bool:
@@ -221,10 +283,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             mean_offset = self._pp_group_size
 
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
-        for block_idx, block in self.blocks.items():
-            if not block.is_moe:
-                continue
-            block = cast(OLMoDDPTransformerBlock, block)
+        for block_idx, block in self.named_routed_blocks():
             block_metrics = block.compute_metrics(reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
                 out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
@@ -246,39 +305,26 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         return out
 
     def reset_auxiliary_metrics(self):
-        for block in self.blocks.values():
-            if not block.is_moe:
-                continue
-            cast(OLMoDDPTransformerBlock, block).reset_metrics()
+        for block in self.routed_blocks():
+            block.reset_metrics()
 
     def count_ep_no_sync_blocks(self) -> int:
-        return sum(
-            1
-            for block in self.blocks.values()
-            if block.is_moe
-            and isinstance(block, OLMoDDPTransformerBlock)
-            and block.ep_no_sync
-        )
+        return sum(1 for _ in self.ep_no_sync_blocks())
 
     def count_non_rowwise_ep_no_sync_blocks(self) -> int:
         return sum(
             1
-            for block in self.blocks.values()
-            if block.is_moe
-            and isinstance(block, OLMoDDPTransformerBlock)
-            and block.ep_no_sync
-            and not block.ep_no_sync_use_rowwise_all_to_all
+            for block in self.ep_no_sync_blocks()
+            if not block.ep_no_sync_use_rowwise_all_to_all
         )
 
     @torch.no_grad()
     def refresh_rowwise_fp8_cache(self) -> None:
-        for block in self.blocks.values():
-            if not isinstance(block, OLMoDDPTransformerBlock):
-                continue
+        for block in self.ddp_blocks():
             block.refresh_rowwise_fp8_cache()
 
     def named_fp8_weight_stores(self) -> Iterator[tuple[str, object]]:
-        for block_key, block in self.blocks.items():
+        for block_key, block in self.named_fp8_blocks():
             named_block_fp8_weight_stores = getattr(block, "named_fp8_weight_stores", None)
             if named_block_fp8_weight_stores is not None:
                 for name, weight in named_block_fp8_weight_stores():
@@ -301,27 +347,21 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         self.zero_fp8_weight_store_grads(set_to_none=set_to_none)
 
     def disable_fp8_weight_anchor_grads(self) -> None:
-        for block in self.blocks.values():
-            if not isinstance(block, OLMoDDPTransformerBlock):
-                continue
+        for block in self.ddp_blocks():
             block.disable_fp8_weight_anchor_grads()
 
     def disable_mxfp8_expert_anchor_grads(self) -> None:
         self.disable_fp8_weight_anchor_grads()
 
     def release_fp8_weight_anchor_storage(self) -> None:
-        for block in self.blocks.values():
-            if not isinstance(block, OLMoDDPTransformerBlock):
-                continue
+        for block in self.ddp_blocks():
             block.release_fp8_weight_anchor_storage()
 
     def release_mxfp8_expert_anchor_storage(self) -> None:
         self.release_fp8_weight_anchor_storage()
 
     def sync_fp8_weight_store_grads_from_anchor(self) -> None:
-        for block in self.blocks.values():
-            if not isinstance(block, OLMoDDPTransformerBlock):
-                continue
+        for block in self.ddp_blocks():
             block.sync_fp8_weight_store_grads_from_anchor()
 
     def sync_mxfp8_expert_weight_grads_from_anchor(self) -> None:
@@ -339,13 +379,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         pad_to_block_count: int,
         rowwise_lifetime_lease_slots: Optional[int] = None,
     ) -> None:
-        ep_blocks = [
-            (block_key, cast(OLMoDDPTransformerBlock, block))
-            for block_key, block in self.blocks.items()
-            if block.is_moe
-            and isinstance(block, OLMoDDPTransformerBlock)
-            and block.ep_no_sync
-        ]
+        ep_blocks = list(self.named_ep_no_sync_blocks())
         if not ep_blocks:
             if pad_to_block_count != 0:
                 raise RuntimeError(
@@ -588,10 +622,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         shared_pool_to_return = ep_no_sync_shared_pool
         ep_no_sync_blocks: List[OLMoDDPTransformerBlock] = []
-        for block in self.blocks.values():
-            if not block.is_moe:
-                continue
-            block = cast(OLMoDDPTransformerBlock, block)
+        for block in self.routed_blocks():
             # ep_mp_group is the optional high-priority NCCL group for
             # synchronized EP collectives that should start promptly while shared
             # experts run. It is intentionally not used by no-sync blocks.
@@ -724,16 +755,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         )
 
     def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
-        for block in self.blocks.values():
-            if not block.is_moe:
-                continue
+        for block in self.routed_blocks():
             pass # TODO: Anything to do here?
 
     def post_batch(self, dry_run: bool = False):
-        for block in self.blocks.values():
-            if not block.is_moe:
-                continue
-            block = cast(OLMoDDPTransformerBlock, block)
+        for block in self.ddp_blocks():
             block.post_batch(dry_run=dry_run)
 
     @torch.no_grad()
@@ -807,40 +833,30 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 generator=generator,
             )
 
-        for block in self.blocks.values():
+        for _, block in self.named_required_ddp_blocks():
             # This might fail if it's wrapped.
-            if isinstance(block, OLMoDDPTransformerBlock):
+            # v2 MoE/shared-only DDP blocks.
+            att = cast(Union[Attention, FusedAttention], block.attention)
 
-                block = cast(OLMoDDPTransformerBlock, block)
-
-                # v2 MoE blocks.
-                att = cast(Union[Attention, FusedAttention], block.attention)
-
-                # Attention weights.
-                self.init_method.init_attention(
-                    att,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=self.n_layers,
-                    std=self.init_std,
-                    generator=generator,
-                )
-                # MoE weights.
-                self.init_method.init_moe_v2(
-                    block,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=self.n_layers,
-                    std=self.init_std,
-                    generator=generator,
-                    ep_generator=ep_generator,
-                )
-
-            else:
-                raise OLMoConfigurationError(
-                    "OLMoDDPModel only supports OLMoDDPTransformerBlock blocks. "
-                    "Use a shared-only OLMoDDPTransformerBlock for dense layers."
-                )
+            # Attention weights.
+            self.init_method.init_attention(
+                att,
+                d_model=self.d_model,
+                block_idx=block.block_idx,
+                num_blocks=self.n_layers,
+                std=self.init_std,
+                generator=generator,
+            )
+            # MoE/shared-expert weights.
+            self.init_method.init_moe_v2(
+                block,
+                d_model=self.d_model,
+                block_idx=block.block_idx,
+                num_blocks=self.n_layers,
+                std=self.init_std,
+                generator=generator,
+                ep_generator=ep_generator,
+            )
 
             # Warm up RoPE cache for attention-like sequence mixers. Recurrent
             # mixers such as GDN do not have RoPE.
@@ -923,7 +939,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         # forward dense blocks
         for block_idx, (block_key, block) in enumerate(self.blocks.items()):
-            if block.is_moe: 
+            is_routed_block = (
+                isinstance(block, OLMoDDPTransformerBlock)
+                and block.has_routed_experts
+            )
+            if is_routed_block:
                 assert first_moe_idx == block_idx, f"first_moe_idx {first_moe_idx}, block_idx {block_idx}, block.block_idx {block.block_idx}"
                 break
             # Mark sizes as dynamic for torch.compile().
@@ -963,13 +983,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         x1_ctx: object = {
             "x1": x1,
         }
-        for block_idx, block in enumerate(self.blocks.values()):
-            # skip dense blocks
-            if not block.is_moe:
-                continue
-
-            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
-                block = cast(OLMoDDPTransformerBlock, block)
+        for block_key, block in self.named_routed_blocks():
+            with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
                 # with self.offload_context:
                 # x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
                 x0, x1_ctx = block.combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **all_block_kwargs)
