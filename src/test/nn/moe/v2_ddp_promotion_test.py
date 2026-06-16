@@ -21,6 +21,9 @@ from olmo_core.train.train_module.transformer import (
 from olmo_core.train.train_module.transformer.ddp_train_module import (
     OLMoDDPTrainModule as OLMoDDPTrainModuleFromBridge,
 )
+from olmo_core.train.train_module.transformer.moe_train_module import (
+    MoEV2TransformerTrainModule as MoEV2TransformerTrainModuleFromOldModule,
+)
 
 
 def test_olmo_ddp_promoted_names_keep_moe_v2_compatibility():
@@ -31,6 +34,7 @@ def test_olmo_ddp_promoted_names_keep_moe_v2_compatibility():
     assert OLMoDDPModelConfigFromDDP is OLMoDDPModelConfig
     assert OLMoDDPModelConfigFromNN is OLMoDDPModelConfig
     assert MoEV2TransformerTrainModule is OLMoDDPTrainModule
+    assert MoEV2TransformerTrainModuleFromOldModule is OLMoDDPTrainModule
     assert MoEV2TransformerTrainModuleConfig is OLMoDDPTrainModuleConfig
     assert OLMoDDPTrainModuleFromBridge is OLMoDDPTrainModule
     assert MoEFusedV2OptimizerConfig is OLMoDDPOptimizerConfig

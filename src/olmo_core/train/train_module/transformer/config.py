@@ -40,9 +40,9 @@ from .pipeline.pipeline_schedule import CustomPipelineStage
 if TYPE_CHECKING:
     from olmo_core.nn.ddp import OLMoDDPModel
 
+    from .ddp_train_module import OLMoDDPTrainModule
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
-    from .moe_train_module import OLMoDDPTrainModule
 
 log = logging.getLogger(__name__)
 
