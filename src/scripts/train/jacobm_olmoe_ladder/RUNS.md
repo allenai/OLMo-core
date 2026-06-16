@@ -1006,3 +1006,38 @@ PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
 | `q3-275m-cx4-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 4 | 4e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV7FPTF3J0KM1H7JBXK3TP50 | Cold-side extension, factor-2 below previous cold edge `8e-4`. |
 | `q3-275m-cx8-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 8 | 4e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV7FQ68QN0FJ35CTB13ASX1G | Cold-side extension, factor-2 below previous cold edge `8e-4`. |
 
+## 2026-06-16 Qwen3-Like 480M Promotion Partial Launch
+
+Started the Qwen3-like larger-size promotion wave on Holmes low-priority,
+preemptible, compile-on after the 275M Qwen results looked ready to promote.
+The original launcher included both 480M and 810M, but Jacob asked to hold 810M
+before the launcher reached that section. No 810M Qwen jobs were submitted.
+
+One 480M job also did not submit: `q3-480m-cx8-q3td128e8k-lr8e-4-r1` failed at
+Beaker image resolution with `BeakerImageNotFound: tianhuat/olmo-core-torch212-2404-cu130`.
+Do not retry it until Jacob explicitly asks, since the follow-up instruction was
+to stop additional launches and discuss the next plan.
+
+Common settings:
+
+```text
+cluster = ai2/holmes
+workspace = ai2/holmes-testing
+image = tianhuat/olmo-core-torch212-2404-cu130
+priority = low
+preemptible = true
+--compile
+--no-python
+PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
+```
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-480m-cx1-q3am128e8k-lr1.2e-3-r1` | `active_matched` | 480M | 1 | 1.2e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XQ15CGKKGDN4034HV5AB6 | Baseline best-observed LR; created before pausing 810M. |
+| `q3-480m-cx2-q3am128e8k-lr9e-4-r1` | `active_matched` | 480M | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV8XQCNKPEVVHSGG6C3M78XF | Baseline best-observed LR; repaired b384k batch. |
+| `q3-480m-cx4-q3am128e8k-lr8e-4-r1` | `active_matched` | 480M | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XQRFM73CADTDCZ051HN89 | Baseline best-observed LR. |
+| `q3-480m-cx8-q3am128e8k-lr8e-4-r1` | `active_matched` | 480M | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV8XR424AH5NFFTM5EQ43EGN | Baseline best-observed LR. |
+| `q3-480m-cx1-q3td128e8k-lr1.2e-3-r1` | `true_3d_depth_matched` | 480M | 1 | 1.2e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XRGQWNVWBH6XARJX9264H | Baseline best-observed LR. |
+| `q3-480m-cx2-q3td128e8k-lr9e-4-r1` | `true_3d_depth_matched` | 480M | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV8XRWC6XC3ZWWM2M61QBRKF | Baseline best-observed LR; repaired b384k batch. |
+| `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 480M | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | Baseline best-observed LR. |
+
