@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import fully_shard
-from torch.distributed.tensor import Placement
+from torch.distributed.tensor import DTensor, Placement, distribute_tensor
 
 from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
@@ -45,6 +45,13 @@ class NemotronBlockKind(StrEnum):
 
 def _relu2(x: torch.Tensor) -> torch.Tensor:
     return F.relu(x).square()
+
+
+def _copy_into_tensor_or_dtensor(dst: torch.Tensor, src: torch.Tensor) -> None:
+    if isinstance(dst, DTensor):
+        dst.copy_(distribute_tensor(src, dst.device_mesh, placements=dst.placements))
+    else:
+        dst.copy_(src)
 
 
 def _pad_tensor_by_size(input_tensor: torch.Tensor, pad_size: int) -> torch.Tensor:
@@ -239,8 +246,8 @@ class NemotronMamba2Mixer(SequenceMixer):
             if self.A_log.device.type != "meta":
                 values = torch.arange(
                     1, self.num_heads + 1, device=self.A_log.device, dtype=torch.float32
-                ).log()
-                self.A_log.copy_(values.to(dtype=self.A_log.dtype))
+                ).log().to(dtype=self.A_log.dtype)
+                _copy_into_tensor_or_dtensor(self.A_log, values)
             nn.init.ones_(self.dt_bias)
             nn.init.ones_(self.D)
             self.norm.reset_parameters()
