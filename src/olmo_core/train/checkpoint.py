@@ -325,6 +325,8 @@ class Checkpointer:
         dir = normalize_path(dir)
         if file_exists(f"{dir}/.metadata"):  # just model (and maybe optim state), no trainer state
             return True
+        if file_exists(f"{dir}/model_and_optim/.metadata"):  # model-only converted checkpoint root
+            return True
         paths_to_check = [
             f"{dir}/train/rank0.pt",
             f"{dir}/model_and_optim/.metadata",
