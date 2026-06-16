@@ -846,6 +846,7 @@ class PipelineSchedule:
         target: Optional[torch.Tensor] = None,
         forward_only: bool = False,
         num_microbatches: Optional[int] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
         **kwargs,
     ) -> List[List[Optional[LMOutputWithLoss]]]:
         """
@@ -879,7 +880,13 @@ class PipelineSchedule:
                 global_batch_size=input_ids.size(0),
                 seqlen=input_ids.size(1),
             )
-            step_output = self.schedule_impl.step(*args, target=target, forward_only=forward_only, **kwargs)
+            step_output = self.schedule_impl.step(
+                *args,
+                target=target,
+                forward_only=forward_only,
+                progress_callback=progress_callback,
+                **kwargs,
+            )
         finally:
             self.schedule_impl.clear_step_info()
 

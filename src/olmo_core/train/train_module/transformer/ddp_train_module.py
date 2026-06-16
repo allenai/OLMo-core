@@ -4,7 +4,7 @@ import logging
 import os
 from dataclasses import replace
 from functools import cached_property, lru_cache
-from typing import Any, Dict, Generator, Optional, Tuple, Union, Iterable, Sequence
+from typing import Any, Callable, Dict, Generator, Optional, Tuple, Union, Iterable, Sequence
 
 from olmo_core.nn.ddp import OLMoDDPModel
 import torch
@@ -1255,6 +1255,19 @@ class OLMoDDPTrainModule(TrainModule):
                 return key
         return None
 
+    def _print_dry_run_microbatch_progress(
+        self,
+        microbatch_idx: int,
+        num_microbatches: int,
+        *,
+        mode: str,
+    ) -> None:
+        if get_rank() == 0:
+            print(
+                f"[dry-run] {mode} microbatch {microbatch_idx + 1}/{num_microbatches}",
+                flush=True,
+            )
+
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._require_optimizer()
@@ -1321,6 +1334,12 @@ class OLMoDDPTrainModule(TrainModule):
 
             # Train one micro-batch at a time.
             for micro_batch_idx, micro_batch in enumerate(micro_batches):
+                if dry_run:
+                    self._print_dry_run_microbatch_progress(
+                        micro_batch_idx,
+                        num_micro_batches,
+                        mode="DDP",
+                    )
                 with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                     with nvtx.annotate(f"fwd_mb{micro_batch_idx}", color='blue'):
                         
@@ -1390,6 +1409,7 @@ class OLMoDDPTrainModule(TrainModule):
             ce_batch_loss = None
             z_batch_loss = None
             if dry_run and dry_run_mode == "independent":
+                self._print_dry_run_microbatch_progress(0, 1, mode="PP independent")
                 self._run_independent_pp_dry_run(
                     input_ids,
                     labels,
@@ -1397,6 +1417,15 @@ class OLMoDDPTrainModule(TrainModule):
                     **model_kwargs,
                 )
             else:
+                progress_callback = None
+                if dry_run:
+                    progress_callback = lambda microbatch_idx, num_microbatches: (
+                        self._print_dry_run_microbatch_progress(
+                            microbatch_idx,
+                            num_microbatches,
+                            mode="PP",
+                        )
+                    )
                 pp_outputs = self.run_pipeline(
                     input_ids,
                     labels,
@@ -1406,6 +1435,7 @@ class OLMoDDPTrainModule(TrainModule):
                     z_loss_multiplier=self.z_loss_multiplier,
                     return_logits=False,
                     num_microbatches=dry_run_num_microbatches,
+                    progress_callback=progress_callback,
                     **model_kwargs,
                 )
                 # Collect losses from all micro-batches and all stages.
@@ -1678,6 +1708,7 @@ class OLMoDDPTrainModule(TrainModule):
         labels: torch.Tensor,
         batch_num_tokens_for_loss: Union[int, float],
         num_microbatches: Optional[int] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
         **kwargs,
     ) -> List[List[Optional[LMOutputWithLoss]]]:
         """
@@ -1693,6 +1724,7 @@ class OLMoDDPTrainModule(TrainModule):
                 loss_div_factor=batch_num_tokens_for_loss,
                 labels=labels,
                 num_microbatches=num_microbatches,
+                progress_callback=progress_callback,
                 **kwargs,
             )
         return schedule_outputs

@@ -289,7 +289,14 @@ class CustomScheduleInterleaved1F1B():
 
 
 
-    def step(self, *args, target: Optional[torch.Tensor] =None, forward_only: bool = False, **kwargs) -> List[List[Optional[LMOutputWithLoss]]]:
+    def step(
+        self,
+        *args,
+        target: Optional[torch.Tensor] = None,
+        forward_only: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        **kwargs,
+    ) -> List[List[Optional[LMOutputWithLoss]]]:
         """
         Run one iteration of the pipeline schedule with *whole-batch* input.
         Will chunk the input into microbatches automatically, and go through the
@@ -314,7 +321,13 @@ class CustomScheduleInterleaved1F1B():
             targets_split = None
 
         # Run microbatches
-        self._step_microbatches(args_split, kwargs_split, targets_split, forward_only=forward_only)
+        self._step_microbatches(
+            args_split,
+            kwargs_split,
+            targets_split,
+            forward_only=forward_only,
+            progress_callback=progress_callback,
+        )
 
         outputs: List[List[Optional[LMOutputWithLoss]]] = [stage.get_stage_outputs_as_list() for stage in self._stages]
         
@@ -471,6 +484,7 @@ class CustomScheduleInterleaved1F1B():
         kwarg_mbs: list,
         target_mbs: Optional[list] = None,
         forward_only: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ):
         
         if not self._stages_initialized:
@@ -515,6 +529,7 @@ class CustomScheduleInterleaved1F1B():
         # count either full_backward or backward_weight together, to determine when to sync DP grads
         backward_counter: Counter[int] = Counter()
         forward_counter: Counter[int] = Counter()
+        reported_progress: set[int] = set()
         past_first_backward = False
         # Loop interleaved 1F1B launches one tick-wide P2P batch, but waits
         # recv handles only when the next local compute consumes them. 1F1B-V
@@ -634,6 +649,10 @@ class CustomScheduleInterleaved1F1B():
                     "All currently supported action types require valid microbatch_index"
                 )
                 if computation_type == PipelineActionType.FORWARD:
+                    if progress_callback is not None and mb_index not in reported_progress:
+                        progress_callback(mb_index, self._n_microbatches)
+                        reported_progress.add(mb_index)
+
                     # perform forward computation
                     stage = stage_index_to_stage[stage_index]
                     offload_group = f"{action.stage_index}F{mb_index}"
@@ -919,6 +938,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
         kwarg_mbs: list,
         target_mbs: Optional[list] = None,
         forward_only: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ):
         
         if not self._stages_initialized:
@@ -963,6 +983,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
         # count either full_backward or backward_weight together, to determine when to sync DP grads
         backward_counter: Counter[int] = Counter()
         forward_counter: Counter[int] = Counter()
+        reported_progress: set[int] = set()
         past_first_backward = False
         outstanding_p2p: dict[
             tuple[str, int, int, int],
@@ -1070,6 +1091,10 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                     "All currently supported action types require valid microbatch_index"
                 )
                 if computation_type == PipelineActionType.FORWARD:
+                    if progress_callback is not None and mb_index not in reported_progress:
+                        progress_callback(mb_index, self._n_microbatches)
+                        reported_progress.add(mb_index)
+
                     # perform forward computation
                     stage = stage_index_to_stage[stage_index]
                     offload_group = f"{action.stage_index}F{mb_index}"
