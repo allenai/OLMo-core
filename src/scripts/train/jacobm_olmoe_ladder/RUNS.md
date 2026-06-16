@@ -952,3 +952,27 @@ Full 275M LR grid:
 | `q3-275m-cx8-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RWF257HD2QCVHF5MX6TXH | Baseline-centered LR grid. |
 | `q3-275m-cx8-q3td128e8k-lr1.6e-3-r1` | `true_3d_depth_matched` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RWTWKDD665W7SXHMJHYTG | Baseline-centered LR grid. |
 | `q3-275m-cx8-q3td128e8k-lr3.2e-3-r1` | `true_3d_depth_matched` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RX6DTPYBJCC6RJ6JCFR8W | Baseline-centered LR grid. |
+
+## 2026-06-16 Total-Sparsity `sp192e4k` Colder LR Probes
+
+Queued one colder LR probe each for the two unbracketed huge-total sparsity
+settings after the 275M `sp192e4k` Cx4/Cx8 curves showed their best completed
+points at the cold edge. Both probes use `lr4e-4`, a full factor of two below
+the previous cold edge `8e-4`, rather than a small interpolation.
+
+Common settings:
+
+```text
+cluster = ai2/titan
+workspace = ai2/OLMo-3-moe-experiments
+image = tianhuat/olmo-core-torch211-2404-cu128
+priority = urgent
+--model-size=275m
+--total-sparsity=huge_total_192e_top4
+```
+
+| Name | Variant | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx4-sp192e4k-lr4e-4-r1` | `huge_total_192e_top4` | 4 | 4e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV7F27DNMKAZC7A4P6095GEB | Colder Cx4 probe after `8e-4` beat `1.6e-3`/`3.2e-3`; factor-2 below previous cold edge. |
+| `sp-275m-cx8-sp192e4k-lr4e-4-r1` | `huge_total_192e_top4` | 8 | 4e-4 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV7F2X1CSZPQ5D8DPW2PZ94Q | Colder Cx8 probe after `8e-4` beat `1.6e-3` and the hot point was missing/unfinished in the current plotted set; factor-2 below previous cold edge. |
+
