@@ -310,9 +310,6 @@ if triton is not None:
 
             do = tl.load(do_ptrs)
 
-            full_kv = tl.dot(full_dist.to(Q.dtype.element_ty), v, allow_tf32=False)
-            full_D = tl.sum(do * full_kv, 1)
-
             # dv: every token (incl. landmark) gets within-block weight p * full_dist.
             dv += tl.dot(
                 tl.trans((p[:, None] * full_dist).to(Q.dtype.element_ty)),
@@ -322,6 +319,10 @@ if triton is not None:
 
             Di = tl.load(D_ptrs + offs_m)
             dpv = tl.dot(do, tl.trans(v), allow_tf32=False)  # do_scaled . v_n per col
+            # full_D = do_scaled . fv = sum_n full_dist_n * (do_scaled . v_n). Computing it from dpv
+            # avoids a separate ``dot(full_dist, v)`` and its (BLOCK_M, head_dim) accumulator, which
+            # keeps the head_dim=256 / block=64 backward within A100 shared memory.
+            full_D = tl.sum(full_dist * dpv, 1)
             within_ds = p[:, None] * full_dist * (dpv - full_D[:, None])
             gate_ds = p * (full_D - Di)  # lands on the landmark column only
             ds = within_ds + tl.where(
@@ -414,9 +415,9 @@ if triton is not None:
             full_p = tl.exp(qk - full_m[:, None])
             full_dist = full_p / tl.sum(full_p, 1)[:, None]
             p = tl.exp(landmark_qk - m)
-            full_kv = tl.dot(full_dist.to(Q.dtype.element_ty), v, allow_tf32=False)
-            full_D = tl.sum(do * full_kv, 1)
             dpv = tl.dot(do, tl.trans(v), allow_tf32=False)
+            # full_D = do_scaled . fv = sum_n full_dist_n * (do_scaled . v_n); see _bwd_kv_kernel.
+            full_D = tl.sum(full_dist * dpv, 1)
             within_ds = p[:, None] * full_dist * (dpv - full_D[:, None])
             gate_ds = p * (full_D - Di)
             ds = within_ds + tl.where(
