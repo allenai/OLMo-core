@@ -976,3 +976,33 @@ priority = urgent
 | `sp-275m-cx4-sp192e4k-lr4e-4-r1` | `huge_total_192e_top4` | 4 | 4e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV7F27DNMKAZC7A4P6095GEB | Colder Cx4 probe after `8e-4` beat `1.6e-3`/`3.2e-3`; factor-2 below previous cold edge. |
 | `sp-275m-cx8-sp192e4k-lr4e-4-r1` | `huge_total_192e_top4` | 8 | 4e-4 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV7F2X1CSZPQ5D8DPW2PZ94Q | Colder Cx8 probe after `8e-4` beat `1.6e-3` and the hot point was missing/unfinished in the current plotted set; factor-2 below previous cold edge. |
 
+## 2026-06-16 Qwen3-Like True-3D Cold-Side LR Probes
+
+Queued one colder LR probe for each 275M `true_3d_depth_matched`
+(`q3td128e8k`) data multiple after the left side of the Cx1/Cx2 curves looked
+flat and the larger Cx4/Cx8 true-3D runs were still in flight. These do not
+include the `active_matched` / `q3am128e8k` 4.5d variant, which looked adequately
+bracketed so far.
+
+Common settings:
+
+```text
+cluster = ai2/holmes
+workspace = ai2/holmes-testing
+image = tianhuat/olmo-core-torch212-2404-cu130
+priority = low
+preemptible = true
+--model-size=275m
+--qwen3-like=true_3d_depth_matched
+--compile
+--no-python
+PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
+```
+
+| Name | Variant | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-275m-cx1-q3td128e8k-lr5e-4-r1` | `true_3d_depth_matched` | 1 | 5e-4 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV7FP61XF8FRHNCBAYG41P11 | Cold-side extension, factor-2 below previous cold edge `1e-3`. |
+| `q3-275m-cx2-q3td128e8k-lr4.5e-4-r1` | `true_3d_depth_matched` | 2 | 4.5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV7FPG0XN8XS0M3GF28JV43C | Cold-side extension, factor-2 below previous cold edge `9e-4`. |
+| `q3-275m-cx4-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 4 | 4e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV7FPTF3J0KM1H7JBXK3TP50 | Cold-side extension, factor-2 below previous cold edge `8e-4`. |
+| `q3-275m-cx8-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 8 | 4e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV7FQ68QN0FJ35CTB13ASX1G | Cold-side extension, factor-2 below previous cold edge `8e-4`. |
+
