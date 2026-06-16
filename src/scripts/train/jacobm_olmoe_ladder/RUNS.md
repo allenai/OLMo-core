@@ -1013,10 +1013,12 @@ preemptible, compile-on after the 275M Qwen results looked ready to promote.
 The original launcher included both 480M and 810M, but Jacob asked to hold 810M
 before the launcher reached that section. No 810M Qwen jobs were submitted.
 
-One 480M job also did not submit: `q3-480m-cx8-q3td128e8k-lr8e-4-r1` failed at
-Beaker image resolution with `BeakerImageNotFound: tianhuat/olmo-core-torch212-2404-cu130`.
-Do not retry it until Jacob explicitly asks, since the follow-up instruction was
-to stop additional launches and discuss the next plan.
+One 480M job did not submit in the original Holmes wave:
+`q3-480m-cx8-q3td128e8k-lr8e-4-r1` failed at Beaker image resolution with
+`BeakerImageNotFound: tianhuat/olmo-core-torch212-2404-cu130`. Jacob later asked
+to re-queue this missing 480M job. Two normal Gantry retries from the submit host
+failed before Beaker submission on a GitHub visibility-check timeout, so the job
+was created directly from a Titan Beaker spec in the original workspace.
 
 Common settings:
 
@@ -1040,4 +1042,5 @@ PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
 | `q3-480m-cx1-q3td128e8k-lr1.2e-3-r1` | `true_3d_depth_matched` | 480M | 1 | 1.2e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XRGQWNVWBH6XARJX9264H | Baseline best-observed LR. |
 | `q3-480m-cx2-q3td128e8k-lr9e-4-r1` | `true_3d_depth_matched` | 480M | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV8XRWC6XC3ZWWM2M61QBRKF | Baseline best-observed LR; repaired b384k batch. |
 | `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 480M | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | Baseline best-observed LR. |
+| `q3-480m-cx8-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 480M | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV8ZS3CB95G6BK2DPSX90X6F | Re-queued on Titan/original workspace from a direct Beaker spec after the Holmes image lookup miss and local GitHub submitter timeouts. |
 
