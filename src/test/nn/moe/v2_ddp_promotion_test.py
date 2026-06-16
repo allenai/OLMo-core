@@ -11,6 +11,7 @@ from olmo_core.nn.ddp import OLMoDDPTransformerBlock as OLMoDDPTransformerBlockF
 from olmo_core.nn.ddp import (
     OLMoDDPTransformerBlockConfig as OLMoDDPTransformerBlockConfigFromDDP,
 )
+from olmo_core.nn.ddp.model import OLMoDDPModel as OLMoDDPModelFromCanonicalModule
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock, OLMoDDPTransformerBlockConfig
 from olmo_core.nn.moe.v2.block import (
     MoEFusedV2TransformerBlock,
@@ -41,6 +42,7 @@ from olmo_core.train.train_module.transformer.moe_train_module import (
 
 def test_olmo_ddp_promoted_names_keep_moe_v2_compatibility():
     assert MoEFusedV2Transformer is OLMoDDPModel
+    assert OLMoDDPModelFromCanonicalModule is OLMoDDPModel
     assert OLMoDDPModelFromDDP is OLMoDDPModel
     assert OLMoDDPModelFromNN is OLMoDDPModel
     assert MoEFusedV2TransformerConfig is OLMoDDPModelConfig

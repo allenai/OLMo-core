@@ -7,8 +7,8 @@ import pytest
 import torch
 
 import olmo_core.nn.ddp.block as block_mod
+import olmo_core.nn.ddp.model as model_mod
 from olmo_core.nn.moe.v2 import ep_no_sync_tbo_rowwise as rowwise_tbo
-from olmo_core.nn.moe.v2 import model as model_mod
 
 
 def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
@@ -111,7 +111,7 @@ def test_model_finalizes_rowwise_pending_context(monkeypatch):
         global_x_rank_major=torch.ones(1, 2),
     )
 
-    h0, h1 = model_mod.MoEFusedV2Transformer._tbo_last_step(
+    h0, h1 = model_mod.OLMoDDPModel._tbo_last_step(
         FakeModel(),
         "x0-final",
         pending,
