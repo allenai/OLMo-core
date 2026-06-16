@@ -25,3 +25,4 @@ fi
 "${PYTHON_CMD[@]}" "${SCRIPT_DIR}/total_sparsity/plot_total_sparsity.py" "${CACHE_ARGS[@]}"
 "${PYTHON_CMD[@]}" "${SCRIPT_DIR}/shared_expert/plot_shared_expert.py" "${CACHE_ARGS[@]}"
 "${PYTHON_CMD[@]}" "${SCRIPT_DIR}/dense_schedule/plot_dense_schedule.py" "${CACHE_ARGS[@]}"
+"${PYTHON_CMD[@]}" "${SCRIPT_DIR}/qwen3_like/plot_qwen3_like.py" "${CACHE_ARGS[@]}"
