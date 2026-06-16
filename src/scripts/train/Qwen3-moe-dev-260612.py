@@ -127,7 +127,7 @@ def _qwen_tokenizer_config(identifier: str) -> TokenizerConfig:
 
 
 def _tokenizer_config() -> TokenizerConfig:
-    identifier = os.getenv("QWEN_TOKENIZER_ID", "dolma2").strip()
+    identifier = os.getenv("QWEN_TOKENIZER_ID", MODEL_ID).strip()
     if identifier in {"dolma2", "allenai/dolma2-tokenizer"}:
         return TokenizerConfig.dolma2()
     return _qwen_tokenizer_config(identifier)
@@ -137,8 +137,8 @@ MODEL_ID = os.getenv("QWEN_MODEL_ID", "Qwen/Qwen3.6-35B-A3B")
 MODEL_SCALE = os.getenv("QWEN_MODEL_SCALE", "debug").strip().lower()
 TOKENIZER_CONFIG = _tokenizer_config()
 
-SEQUENCE_LENGTH = _env_int("QWEN_SEQUENCE_LENGTH", 1024 if MODEL_SCALE == "debug" else 8192)
-MAX_STEPS = _env_int("QWEN_MAX_STEPS", 500)
+SEQUENCE_LENGTH = _env_int("QWEN_SEQUENCE_LENGTH", 512 if MODEL_SCALE == "debug" else 8192)
+MAX_STEPS = _env_int("QWEN_MAX_STEPS", 10)
 GLOBAL_BATCH_SEQS = _env_int("QWEN_GLOBAL_BATCH_SEQS", 8 if MODEL_SCALE == "debug" else 64)
 MICRO_BATCH_SEQS = _env_int("QWEN_MICRO_BATCH_SEQS", 1)
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SEQS * SEQUENCE_LENGTH
@@ -150,10 +150,7 @@ SEED = _env_int("QWEN_SEED", 2026)
 
 DTYPE = DType(os.getenv("QWEN_DTYPE", DType.bfloat16.value))
 ATTENTION_BACKEND = AttentionBackendName(
-    os.getenv(
-        "QWEN_ATTENTION_BACKEND",
-        AttentionBackendName.flash_4.value if torch.cuda.is_available() else AttentionBackendName.torch.value,
-    )
+    os.getenv("QWEN_ATTENTION_BACKEND", AttentionBackendName.torch.value)
 )
 USE_COMPILE = _env_bool("QWEN_USE_COMPILE", False)
 PER_LAYER_RECOMPUTE = _env_bool("QWEN_PER_LAYER_RECOMPUTE", False)
@@ -164,8 +161,16 @@ USE_ROWWISE_A2A = EP_DIM > 1 and _env_bool("QWEN_USE_ROWWISE_A2A", True)
 
 DATA_MIX = os.getenv("QWEN_DATA_MIX", DataMix.OLMo_mix_0925.value)
 DATA_MIX_BASE_DIR = os.getenv("QWEN_MIX_BASE_DIR", "s3://ai2-llm")
-DATA_PATHS = _env_list("QWEN_DATA_PATHS")
-DATA_NUM_WORKERS = _env_int("QWEN_DATA_NUM_WORKERS", 4)
+DEFAULT_DATA_PATH = (
+    "/workspace/tasks/june12/scratch/qwen3_6_loss/"
+    "qwen36_retokenized_olmo_mix_0925_education_jobs_first1m.uint32.npy"
+)
+DATA_PATHS = (
+    _env_list("QWEN_DATA_PATHS")
+    if os.getenv("QWEN_DATA_PATHS") is not None
+    else [DEFAULT_DATA_PATH]
+)
+DATA_NUM_WORKERS = _env_int("QWEN_DATA_NUM_WORKERS", 0)
 LOAD_PATH = os.getenv("QWEN_LOAD_PATH") or None
 
 torch.set_float32_matmul_precision("high")
@@ -300,7 +305,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 load_thread_count=1,
                 throttle_uploads=False,
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=1,
             cancel_check_interval=10,
             max_duration=Duration.steps(MAX_STEPS),
         )
@@ -311,6 +316,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 ephemeral_save_interval=None,
                 save_async=False,
                 pre_train_checkpoint=False,
+                enabled=_env_bool("QWEN_CHECKPOINTER", False),
             ),
         )
         .with_callback(

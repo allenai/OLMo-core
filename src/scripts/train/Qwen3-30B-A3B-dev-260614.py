@@ -15,6 +15,11 @@ from pathlib import Path
 
 os.environ.setdefault("QWEN_MODEL_ID", "Qwen/Qwen3-30B-A3B")
 os.environ.setdefault("QWEN_TOKENIZER_ID", "Qwen/Qwen3-30B-A3B")
+os.environ.setdefault(
+    "QWEN_DATA_PATHS",
+    "/workspace/tasks/june12/scratch/qwen3_30b_loss/"
+    "qwen_retokenized_olmo_mix_0925_education_jobs_first1m.uint32.npy",
+)
 
 runpy.run_path(
     str(Path(__file__).with_name("Qwen3-moe-dev-260612.py")),
