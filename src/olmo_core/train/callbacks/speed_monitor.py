@@ -109,9 +109,6 @@ class SpeedMonitorCallback(Callback):
         from olmo_core.train.train_module.transformer.ddp_train_module import (
             OLMoDDPTrainModule,
         )
-        from olmo_core.train.train_module.transformer.moe_train_module import (
-            MoEV2TransformerTrainModule,
-        )
 
         if self.num_params is None and isinstance(
             self.trainer.train_module, TransformerTrainModule
@@ -124,7 +121,7 @@ class SpeedMonitorCallback(Callback):
             and (
                 isinstance(self.trainer.train_module, TransformerTrainModule)
                 or isinstance(self.trainer.train_module, TransformerPipelineTrainModule)
-                or isinstance(self.trainer.train_module, (OLMoDDPTrainModule, MoEV2TransformerTrainModule))
+                or isinstance(self.trainer.train_module, OLMoDDPTrainModule)
             )
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
@@ -133,7 +130,7 @@ class SpeedMonitorCallback(Callback):
             using_half_precision = (
                 tm.autocast_precision == torch.bfloat16
                 or (tm.dp_config is not None and tm.dp_config.param_dtype == DType.bfloat16)
-                or isinstance(tm, (OLMoDDPTrainModule, MoEV2TransformerTrainModule))
+                or isinstance(tm, OLMoDDPTrainModule)
             )  # MoE models use bfloat16 for expert weights and activations
             self.device_peak_flops_per_second = get_device_peak_flops_per_second(
                 device_name, using_half_precision=using_half_precision

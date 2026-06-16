@@ -221,10 +221,10 @@ class MoEFusedV2OptimizerConfig(Config):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        from ..train.train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
-        from ..nn.moe.v2.model import MoEFusedV2Transformer
-        model_parts = cast(List[MoEFusedV2Transformer], model_parts)
-        train_module = cast(MoEV2TransformerTrainModule, train_module)
+        from ..nn.ddp import OLMoDDPModel
+        from ..train.train_module.transformer.ddp_train_module import OLMoDDPTrainModule
+        model_parts = cast(List[OLMoDDPModel], model_parts)
+        train_module = cast(OLMoDDPTrainModule, train_module)
 
         # not used: train_module (was); now used to pass process groups
         kwargs = self.as_dict()

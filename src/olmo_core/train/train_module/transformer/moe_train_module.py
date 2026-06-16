@@ -6,7 +6,7 @@ from dataclasses import replace
 from functools import cached_property, lru_cache
 from typing import Any, Dict, Generator, Optional, Tuple, Union, Iterable, Sequence
 
-from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
+from olmo_core.nn.ddp import OLMoDDPModel
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
@@ -87,7 +87,7 @@ import nvtx
 log = logging.getLogger(__name__)
 
 
-M = TypeVar("M", bound=List[MoEFusedV2Transformer])
+M = TypeVar("M", bound=List[OLMoDDPModel])
 
 def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
     # gpu_mesh.mesh is a CPU int tensor of ranks with the mesh's shape
@@ -135,10 +135,10 @@ from torch.distributed.checkpoint.planner_helpers import (
 )
 
 
-class MoEV2TransformerTrainModule(TrainModule):
+class OLMoDDPTrainModule(TrainModule):
     def __init__(
         self,
-        model: Transformer,
+        model: OLMoDDPModel,
         optim: MoEFusedV2OptimizerConfig,
         rank_microbatch_size: int,
         max_sequence_length: int,
@@ -164,11 +164,10 @@ class MoEV2TransformerTrainModule(TrainModule):
         eval_only: bool = False,
     ):
         super().__init__()
-        from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
-        assert isinstance(model, MoEFusedV2Transformer), "MoEV2TransformerTrainModule only supports MoEFusedV2Transformer model"
+        assert isinstance(model, OLMoDDPModel), "OLMoDDPTrainModule only supports OLMoDDPModel"
         if not isinstance(model.config, MoEFusedV2TransformerConfig):
             raise OLMoConfigurationError(
-                "MoEV2TransformerTrainModule requires a global MoEFusedV2TransformerConfig "
+                "OLMoDDPTrainModule requires a global MoEFusedV2TransformerConfig "
                 "on model.config for FLOP accounting. Build the model from its config, or "
                 "attach the global config before constructing the train module."
             )
@@ -347,7 +346,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
         return self.model_parts[0]
 
-    def _cast_to_fwd_bwd_precision(self, model: Union[MoEFusedV2Transformer, List[MoEFusedV2Transformer]]) -> None:
+    def _cast_to_fwd_bwd_precision(self, model: Union[OLMoDDPModel, List[OLMoDDPModel]]) -> None:
         """
         Cast the model to the forward and backward precision.
         """
@@ -1802,7 +1801,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
 
     @contextlib.contextmanager
-    def ddp_no_sync(self, model_parts: List[MoEFusedV2Transformer]):
+    def ddp_no_sync(self, model_parts: List[OLMoDDPModel]):
         for module in model_parts:
             assert callable(getattr(module, "set_requires_gradient_sync", None)), \
         f"{type(module).__name__} must implement set_requires_gradient_sync(flag: bool). " \
@@ -1902,7 +1901,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     def parallelize_and_init_model(
         self,
-        model: MoEFusedV2Transformer, # the full model before sharding, the same on all models
+        model: OLMoDDPModel, # the full model before sharding, the same on all ranks
         *,
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
@@ -1913,9 +1912,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         pp_config: Optional[TransformerPipelineParallelConfig] = None,
         eval_only: bool = False,
-    ) -> List["MoEFusedV2Transformer"]:
-        from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
-        assert isinstance(model, MoEFusedV2Transformer), "model must be an instance of Transformer"
+    ) -> List["OLMoDDPModel"]:
+        assert isinstance(model, OLMoDDPModel), "model must be an instance of OLMoDDPModel"
 
         if tp_config is not None:
             raise NotImplementedError("TP not supported yet")
@@ -1943,10 +1941,10 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
             stages = stages_and_model_parts[0]
 
-            model_parts: List[MoEFusedV2Transformer] = cast(List[MoEFusedV2Transformer], stages_and_model_parts[1])
+            model_parts: List[OLMoDDPModel] = cast(List[OLMoDDPModel], stages_and_model_parts[1])
 
             for model_part in model_parts:
-                assert isinstance(model_part, MoEFusedV2Transformer)
+                assert isinstance(model_part, OLMoDDPModel)
                 model_part.install_cuda_events()
 
             self._pp_stages = stages
@@ -1962,7 +1960,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 m.apply_pp(self.pp_mesh)
 
         else:
-            model_parts: List[MoEFusedV2Transformer] = [model] # no PP, single part
+            model_parts: List[OLMoDDPModel] = [model] # no PP, single part
 
         # Maybe apply FP8 training.
         if float8_config is not None and float8_config.enabled:
@@ -2027,8 +2025,8 @@ class MoEV2TransformerTrainModule(TrainModule):
 
             share_ep_no_sync_scratch_pool = len(model_parts) > 1 and all(
                 (
-                    cast(MoEFusedV2Transformer, m).recompute_each_block
-                    or cast(MoEFusedV2Transformer, m).recompute_all_blocks_by_chunk
+                    cast(OLMoDDPModel, m).recompute_each_block
+                    or cast(OLMoDDPModel, m).recompute_all_blocks_by_chunk
                 )
                 for m in model_parts
             )
@@ -2043,7 +2041,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             for m in model_parts:
                 if not m.is_moe:
                     raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
-                returned_shared_pool = cast(MoEFusedV2Transformer, m).apply_ep(
+                returned_shared_pool = cast(OLMoDDPModel, m).apply_ep(
                     dp_mesh=dp_mesh,
                     ep_mesh=ep_mesh,
                     ep_mp_group=ep_mp_group_override,
@@ -2077,7 +2075,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             dense_param_group = self.dense_dp_cp_group
             expert_param_group = None
             # for m in model_parts:
-            #     cast(MoEFusedV2Transformer, m).apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model, param_dtype=param_dtype)
+            #     cast(OLMoDDPModel, m).apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model, param_dtype=param_dtype)
             # log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
 
         # Maybe apply activation checkpointing.
@@ -2145,12 +2143,12 @@ class MoEV2TransformerTrainModule(TrainModule):
         max_sequence_length: int,
         rank_microbatch_size: int,
     ):
-        from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
+        from olmo_core.nn.ddp import OLMoDDPModel
         
         # Materialize and init parameters.
         log.info("Initializing model weights...")
         for model_part_idx, m in enumerate(model_parts):
-            m = cast(MoEFusedV2Transformer, m)
+            m = cast(OLMoDDPModel, m)
             m.init_weights(
                 max_seq_len=max_sequence_length,
                 max_local_microbatch_size=rank_microbatch_size,
@@ -2206,7 +2204,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             return
         from olmo_core.kernels import olmo_symm_mem
 
-        typed_parts = [cast(MoEFusedV2Transformer, m) for m in model_parts]
+        typed_parts = [cast(OLMoDDPModel, m) for m in model_parts]
         local_counts = [m.count_ep_no_sync_blocks() for m in typed_parts]
         if not any(local_counts):
             return
@@ -2338,12 +2336,5 @@ class MoEV2TransformerTrainModule(TrainModule):
         return x
 
 
-class OLMoDDPTrainModule(MoEV2TransformerTrainModule):
-    """
-    DDP-stack train module entry point.
-
-    This promoted name keeps the current MoE V2 orchestration intact while the
-    stack is generalized for dense and MoE DDP training.
-    """
-
-    pass
+# Compatibility name for existing configs, scripts, and imports.
+MoEV2TransformerTrainModule = OLMoDDPTrainModule

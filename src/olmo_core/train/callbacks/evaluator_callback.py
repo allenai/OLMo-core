@@ -30,7 +30,7 @@ from olmo_core.utils import (
 )
 
 from ..common import Duration, MetricMergeStrategy
-from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, MoEV2TransformerTrainModule, OLMoDDPTrainModule, TransformerTrainModule
+from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, OLMoDDPTrainModule, TransformerTrainModule
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
@@ -93,7 +93,7 @@ class EvaluatorCallback(Callback):
     def post_attach(self):
         if not (
             isinstance(self.trainer.train_module, TransformerTrainModule)
-            or isinstance(self.trainer.train_module, (OLMoDDPTrainModule, MoEV2TransformerTrainModule))
+            or isinstance(self.trainer.train_module, OLMoDDPTrainModule)
         ):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' or '{OLMoDDPTrainModule.__name__}' train module"

@@ -38,9 +38,11 @@ from olmo_core.train.train_module.config import TrainModuleConfig
 from .pipeline.pipeline_schedule import CustomPipelineStage
 
 if TYPE_CHECKING:
+    from olmo_core.nn.ddp import OLMoDDPModel
+
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
-    from .moe_train_module import MoEV2TransformerTrainModule, OLMoDDPTrainModule
+    from .moe_train_module import OLMoDDPTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -414,7 +416,13 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
 from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
 
 @dataclass
-class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
+class OLMoDDPTrainModuleConfig(TrainModuleConfig):
+    """
+    Configuration for :class:`OLMoDDPTrainModule`.
+
+    ``MoEV2TransformerTrainModuleConfig`` is a compatibility alias for this
+    class.
+    """
     
     rank_microbatch_size: int
     max_sequence_length: int
@@ -467,14 +475,14 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
 
     def build(
         self,
-        model: Transformer,
+        model: "OLMoDDPModel",
         device: Optional[torch.device] = None,
         eval_only: bool = False,
-    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "MoEV2TransformerTrainModule"]:
+    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "OLMoDDPTrainModule"]:
         """
-        Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.
+        Build the corresponding :class:`OLMoDDPTrainModule`.
 
-        :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
+        :param model: The :class:`~olmo_core.nn.ddp.OLMoDDPModel` model to train.
         :param device: The device to train on.
         """
         from .ddp_train_module import OLMoDDPTrainModule
@@ -487,27 +495,4 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
         )
 
 
-@dataclass
-class OLMoDDPTrainModuleConfig(MoEV2TransformerTrainModuleConfig):
-    """
-    Configuration for :class:`OLMoDDPTrainModule`.
-
-    This is the promoted DDP-stack name for the current MoE V2 train-module
-    configuration. ``MoEV2TransformerTrainModuleConfig`` is kept for existing
-    scripts while new DDP-stack users can depend on this class.
-    """
-
-    def build(
-        self,
-        model: Transformer,
-        device: Optional[torch.device] = None,
-        eval_only: bool = False,
-    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "OLMoDDPTrainModule"]:
-        from .ddp_train_module import OLMoDDPTrainModule
-
-        return OLMoDDPTrainModule(
-            model=model,
-            device=device,
-            eval_only=eval_only,
-            **self._build_kwargs(),
-        )
+MoEV2TransformerTrainModuleConfig = OLMoDDPTrainModuleConfig

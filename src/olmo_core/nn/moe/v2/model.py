@@ -126,7 +126,7 @@ def _fp32_post_grad_acc_hook(param: torch.Tensor):
     param.grad = None
 
 
-class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
+class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     """
     An MoE transformer implementation, to be used with one of the
     :class:`MoETransformerBlock` block types.
@@ -1303,17 +1303,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         return out
 
 
-class OLMoDDPModel(MoEFusedV2Transformer):
-    """
-    DDP-stack transformer model entry point.
-
-    This is the promoted name for the MoE V2 model implementation while the
-    DDP stack is generalized beyond MoE-only training. The old
-    ``MoEFusedV2Transformer`` name remains the implementation base for
-    compatibility.
-    """
-
-    pass
+# Compatibility name for existing configs, scripts, and imports.
+MoEFusedV2Transformer = OLMoDDPModel
 
 
 def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
