@@ -2,6 +2,7 @@ import contextlib
 from itertools import product
 import logging
 import os
+import time
 from dataclasses import replace
 from functools import cached_property, lru_cache
 from typing import Any, Callable, Dict, Generator, Optional, Tuple, Union, Iterable, Sequence
@@ -1255,6 +1256,18 @@ class OLMoDDPTrainModule(TrainModule):
                 return key
         return None
 
+    def _reset_dry_run_progress_timer(self) -> None:
+        now = time.perf_counter()
+        self._dry_run_progress_started_at = now
+        self._dry_run_progress_last_log_at = now
+
+    def _dry_run_progress_timing(self) -> Tuple[float, float]:
+        now = time.perf_counter()
+        started_at = getattr(self, "_dry_run_progress_started_at", now)
+        last_log_at = getattr(self, "_dry_run_progress_last_log_at", started_at)
+        self._dry_run_progress_last_log_at = now
+        return now - last_log_at, now - started_at
+
     def _print_dry_run_microbatch_progress(
         self,
         microbatch_idx: int,
@@ -1263,14 +1276,27 @@ class OLMoDDPTrainModule(TrainModule):
         mode: str,
     ) -> None:
         if get_rank() == 0:
+            elapsed, total = self._dry_run_progress_timing()
             print(
-                f"[dry-run] {mode} microbatch {microbatch_idx + 1}/{num_microbatches}",
+                f"[dry-run] {mode} microbatch {microbatch_idx + 1}/{num_microbatches} "
+                f"(+{elapsed:.2f}s since last log, {total:.2f}s total)",
+                flush=True,
+            )
+
+    def _print_dry_run_progress_complete(self, *, mode: str) -> None:
+        if get_rank() == 0:
+            elapsed, total = self._dry_run_progress_timing()
+            print(
+                f"[dry-run] {mode} complete "
+                f"(+{elapsed:.2f}s since last log, {total:.2f}s total)",
                 flush=True,
             )
 
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._require_optimizer()
+        if dry_run:
+            self._reset_dry_run_progress_timer()
 
         # Set model to train mode if it isn't already.
         for m in self.model_parts:
@@ -1464,6 +1490,9 @@ class OLMoDDPTrainModule(TrainModule):
             model.post_batch(dry_run=dry_run)
 
         if dry_run:
+            self._print_dry_run_progress_complete(
+                mode="PP" if self.pp_enabled else "DDP",
+            )
             for model in self.model_parts:
                 model.reset_auxiliary_metrics()
 
