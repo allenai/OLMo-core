@@ -42,6 +42,7 @@ from ..layer_norm import LayerNormConfig
 from ..moe import MoERouterGatingFunction
 from ..moe import MoERouterConfig as MoERouterConfigV1
 from ..moe.loss import MoELoadBalancingLossGranularity
+from ..moe.utils import wait_stream_no_compile
 from ..moe.v2.routed_experts import (
     RoutedExperts,
     RoutedExpertsConfig,
