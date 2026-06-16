@@ -32,8 +32,18 @@ _VISION_EXPORTS = {
     "VisionTransformer",
 }
 
+_DDP_EXPORTS = {
+    "OLMoDDPModel",
+}
+
 
 def __getattr__(name: str) -> Any:
+    if name in _DDP_EXPORTS:
+        from . import ddp
+
+        value = getattr(ddp, name)
+        globals()[name] = value
+        return value
     if name in _VISION_EXPORTS:
         from . import vision
 
@@ -46,6 +56,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "MXFP8Linear",
     "OutputDiscardCheckpoint",
+    "OLMoDDPModel",
     "VisionEncoderType",
     "VisionEncoderConfig",
     "VisionTransformer",

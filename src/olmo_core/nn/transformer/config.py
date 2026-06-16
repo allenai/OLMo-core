@@ -1958,7 +1958,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         )
         model: Transformer
         if self.name == TransformerType.moe_fused_v2:
-            from ..moe.v2.model import OLMoDDPModel
+            from ..ddp import OLMoDDPModel
             model = OLMoDDPModel(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,

@@ -1,3 +1,5 @@
+from olmo_core.nn import OLMoDDPModel as OLMoDDPModelFromNN
+from olmo_core.nn.ddp import OLMoDDPModel as OLMoDDPModelFromDDP
 from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer, OLMoDDPModel
 from olmo_core.train.train_module.transformer import (
     MoEV2TransformerTrainModule,
@@ -12,6 +14,8 @@ from olmo_core.train.train_module.transformer.ddp_train_module import (
 
 def test_olmo_ddp_promoted_names_keep_moe_v2_compatibility():
     assert issubclass(OLMoDDPModel, MoEFusedV2Transformer)
+    assert OLMoDDPModelFromDDP is OLMoDDPModel
+    assert OLMoDDPModelFromNN is OLMoDDPModel
     assert issubclass(OLMoDDPTrainModule, MoEV2TransformerTrainModule)
     assert issubclass(OLMoDDPTrainModuleConfig, MoEV2TransformerTrainModuleConfig)
     assert OLMoDDPTrainModuleFromBridge is OLMoDDPTrainModule
