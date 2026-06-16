@@ -40,13 +40,12 @@ from olmo_core.nn.moe.v2.gpt_oss import (
     build_debug_gpt_oss_20b_config,
     build_gpt_oss_20b_config_from_hf_config,
 )
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride
-from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
+from olmo_core.optim import CosWithWarmup, OLMoDDPOptimizerConfig, OptimGroupOverride
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.train.train_module import (
-    MoEV2TransformerTrainModuleConfig,
+    OLMoDDPTrainModuleConfig,
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
 )
@@ -191,11 +190,11 @@ def build_model_config(common: CommonComponents):
     )
 
 
-def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
-    return MoEV2TransformerTrainModuleConfig(
+def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleConfig:
+    return OLMoDDPTrainModuleConfig(
         rank_microbatch_size=MICRO_BATCH_SEQS * SEQUENCE_LENGTH,
         max_sequence_length=common.max_sequence_length,
-        optim=MoEFusedV2OptimizerConfig(
+        optim=OLMoDDPOptimizerConfig(
             lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),

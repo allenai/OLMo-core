@@ -649,7 +649,7 @@ class TransformerTrainModule(TrainModule):
                 # For DDP, only sync gradients on the final micro-batch.
                 if not is_last_mb:
                     stack.enter_context(self.model.no_sync())
-            elif self.dp_config.name == DataParallelType.ddp: # temp fix
+            elif self.dp_config is not None and self.dp_config.name == DataParallelType.ddp: # temp fix
                 if not is_last_mb and self.dp_config.only_allreduce_last_microbatch:
                     stack.enter_context(self.ddp_no_sync(self.model)) # only DDP has no_sync(), can only call set_requires_gradient_sync()
             yield

@@ -30,6 +30,7 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.experiment import (
     CommonComponents,
     DataComponents,
@@ -127,6 +128,7 @@ ATTENTION_BACKEND = AttentionBackendName(
 )
 USE_COMPILE = _env_bool("NEMOTRON_USE_COMPILE", False)
 USE_FUSED_ADAMW = _env_bool("NEMOTRON_USE_FUSED_ADAMW", torch.cuda.is_available())
+DATA_PARALLEL = os.getenv("NEMOTRON_DATA_PARALLEL", "none").strip().lower()
 
 DATA_MIX = os.getenv("NEMOTRON_DATA_MIX", DataMix.OLMo_mix_0925.value)
 DATA_MIX_BASE_DIR = os.getenv("NEMOTRON_MIX_BASE_DIR", "s3://ai2-llm")
@@ -135,6 +137,26 @@ DATA_NUM_WORKERS = _env_int("NEMOTRON_DATA_NUM_WORKERS", 4)
 LOAD_PATH = os.getenv("NEMOTRON_LOAD_PATH") or None
 
 torch.set_float32_matmul_precision("high")
+
+
+def _dp_config() -> TransformerDataParallelConfig | None:
+    if DATA_PARALLEL in {"", "none", "off", "false", "0"}:
+        return None
+    if DATA_PARALLEL == DataParallelType.ddp.value:
+        raise OLMoConfigurationError(
+            "Nemotron uses custom NemotronBlock instances, so it is not yet compatible with "
+            "OLMoDDPTrainModule/OLMoDDPModel. Use NEMOTRON_DATA_PARALLEL=none for single-rank "
+            "smoke tests or NEMOTRON_DATA_PARALLEL=fsdp for the generic Transformer stack."
+        )
+    if DATA_PARALLEL not in {DataParallelType.fsdp.value, DataParallelType.hsdp.value}:
+        raise OLMoConfigurationError(
+            "NEMOTRON_DATA_PARALLEL must be one of: none, fsdp, hsdp, ddp"
+        )
+    return TransformerDataParallelConfig(
+        name=DataParallelType(DATA_PARALLEL),
+        reduce_grads_in_fp32=True,
+        accumulate_grads_in_fp32=True,
+    )
 
 
 def build_model_config(common: CommonComponents):
@@ -188,11 +210,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             ],
         ),
         compile_model=USE_COMPILE,
-        dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.ddp,
-            reduce_grads_in_fp32=True,
-            accumulate_grads_in_fp32=True,
-        ),
+        dp_config=_dp_config(),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup=WARMUP_STEPS, t_max=MAX_STEPS, alpha_f=0.1),
