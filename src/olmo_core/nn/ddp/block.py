@@ -166,7 +166,10 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> olmo_core.nn.transformer.block.TransformerBlockBase:
-        assert self.feed_forward is None and self.feed_forward_moe is None, "OLMoDDPTransformerBlock does not support `feed_forward` or `feed_forward_moe` (use TransformerBlockConfig instead). Set `shared_experts` and `routed_experts` instead."
+        assert self.feed_forward is None and self.feed_forward_moe is None, (
+            "OLMoDDPTransformerBlock does not support `feed_forward` or `feed_forward_moe`. "
+            "Use `shared_experts` for dense/shared MLPs and `routed_experts` for routed MoE."
+        )
 
         kwargs = self.as_dict(exclude_none=False, recurse=False)
         kwargs.pop("name")
@@ -701,8 +704,20 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         reset_ep_no_sync_rowwise_metrics(self)
 
     @property
+    def has_routed_experts(self) -> bool:
+        return self.routed_experts is not None
+
+    @property
+    def has_shared_experts(self) -> bool:
+        return self.shared_experts is not None
+
+    @property
+    def is_shared_only(self) -> bool:
+        return self.has_shared_experts and not self.has_routed_experts
+
+    @property
     def is_moe(self) -> bool:
-        return True
+        return self.has_routed_experts
 
     @property
     def ep_enabled(self) -> bool:
@@ -1011,11 +1026,50 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        """Reserved for no-routed-experts case (only shared experts), equivalent to a dense model"""
+        """Forward for shared-only blocks, equivalent to a dense DDP-stack MLP."""
         assert self.routed_experts is None
         assert self.routed_experts_router is None
         assert self.shared_experts is not None
-        raise NotImplementedError("combined_forward_shared_only is not implemented")
+
+        block_inp = x
+        del x
+
+        attn_res_out = self._res_norm_attn(block_inp, **kwargs)
+        kwargs.pop("max_doc_len", None)
+        kwargs.pop("cu_doc_lens", None)
+        mlp_inp = self._prepare_moe_input(attn_res_out)
+
+        if self.shared_experts_router:
+            shared_expert_weights, _, _, _ = self.shared_experts_router(
+                mlp_inp,
+                True,
+                loss_div_factor=loss_div_factor,
+            )
+        else:
+            shared_expert_weights = None
+
+        if mlp_inp.is_cuda:
+            wait_stream_no_compile(
+                this_stream=self.get_dense_stream(),
+                other_stream=torch.cuda.current_stream(),
+            )
+            with torch.cuda.stream(self.get_dense_stream()):
+                shared_out = self.shared_experts(mlp_inp)
+                mlp_out = self._mix_shared_out(
+                    shared_out,
+                    shared_expert_weights,
+                    attn_res_out.shape,
+                )
+            wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
+        else:
+            shared_out = self.shared_experts(mlp_inp)
+            mlp_out = self._mix_shared_out(
+                shared_out,
+                shared_expert_weights,
+                attn_res_out.shape,
+            )
+
+        return self._res_norm_mlp(attn_res_out, mlp_out)
 
     def combined_forward_no_ep(
         self,

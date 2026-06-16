@@ -48,7 +48,6 @@ from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleTyp
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.moe import (
     MoEConfig,
@@ -255,13 +254,10 @@ from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
 from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig
-from olmo_core.nn.transformer import TransformerBlockConfig
 
 # from olmo_core.nn.moe.v2.block import LayerNormConfigV2
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    from olmo_core.nn.moe.v2.block import (
-        MoEFusedV2TransformerBlockConfig
-    )
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
     from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
@@ -287,7 +283,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         n_layers=NUM_LAYERS,
         embed_scale=math.sqrt(d_model),
         embedding_norm=layer_norm,
-        block=MoEFusedV2TransformerBlockConfig(
+        block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             use_peri_norm=USE_PERI_NORM,
             ep_no_sync=USE_NO_SYNC_EP,
@@ -388,8 +384,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         pattern=[WINDOW_SIZE, -1]
     )
 
-    dense_block_config = TransformerBlockConfig(
-        name=TransformerBlockType.peri_norm if USE_PERI_NORM else TransformerBlockType.default,
+    dense_block_config = OLMoDDPTransformerBlockConfig(
+        name=TransformerBlockType.moe_fused_v2,
+        use_peri_norm=USE_PERI_NORM,
+        rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
         attention=AttentionConfig(
             name=AttentionType.fused_v2,
             # name=AttentionType.default,
@@ -408,8 +406,16 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             use_recompute_qkv_prep=False,
             # use_recompute_qkv_prep=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
         ),
-        feed_forward_moe=None,
-        feed_forward=FeedForwardConfig(hidden_size=( DENSE_LAYER_MLP ), bias=False), # optionally double this: dense mlp is twice as fast as moe mlp
+        routed_experts=None,
+        routed_experts_router=None,
+        shared_experts=SharedExpertsConfig(
+            d_model=d_model,
+            hidden_size=DENSE_LAYER_MLP,
+            num_experts=1,
+            bias=False,
+            dtype=dtype,
+        ),
+        shared_experts_router=None,
         attention_norm=layer_norm,
         feed_forward_norm=layer_norm,
     ) 

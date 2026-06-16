@@ -16,8 +16,14 @@ from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock, OLMoDDPTransformerBl
 from olmo_core.nn.moe.v2.block import (
     MoEFusedV2TransformerBlock,
     MoEFusedV2TransformerBlockConfig,
+    MoERouterConfigV2 as MoERouterConfigV2FromOldBlock,
+    RoutedExpertsConfig as RoutedExpertsConfigFromOldBlock,
+    SharedExpertsConfig as SharedExpertsConfigFromOldBlock,
 )
 from olmo_core.nn.moe.v2.qwen import build_debug_qwen3_moe_config
+from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
+from olmo_core.nn.moe.v2.router import MoERouterConfigV2
+from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer, OLMoDDPModel
 from olmo_core.nn.transformer import MoEFusedV2TransformerConfig, OLMoDDPModelConfig
 from olmo_core.optim import (
@@ -54,6 +60,9 @@ def test_olmo_ddp_promoted_names_keep_moe_v2_compatibility():
     assert OLMoDDPTransformerBlockConfigFromDDP is OLMoDDPTransformerBlockConfig
     assert OLMoDDPTransformerBlockFromNN is OLMoDDPTransformerBlock
     assert OLMoDDPTransformerBlockConfigFromNN is OLMoDDPTransformerBlockConfig
+    assert MoERouterConfigV2FromOldBlock is MoERouterConfigV2
+    assert RoutedExpertsConfigFromOldBlock is RoutedExpertsConfig
+    assert SharedExpertsConfigFromOldBlock is SharedExpertsConfig
     assert MoEV2TransformerTrainModule is OLMoDDPTrainModule
     assert MoEV2TransformerTrainModuleFromOldModule is OLMoDDPTrainModule
     assert MoEV2TransformerTrainModuleConfig is OLMoDDPTrainModuleConfig

@@ -191,14 +191,14 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     def purge_cuda_events(self):
         # set all events to None (so that the model can be deepcopied in PP split)
         for layer in self.blocks.values():
-            if layer.is_moe:
+            if isinstance(layer, OLMoDDPTransformerBlock):
                 layer = cast(OLMoDDPTransformerBlock, layer)
                 layer.purge_cuda_events()
 
     def install_cuda_events(self):
         # re-install events after deepcopy
         for layer in self.blocks.values():
-            if layer.is_moe:
+            if isinstance(layer, OLMoDDPTransformerBlock):
                 layer = cast(OLMoDDPTransformerBlock, layer)
                 layer.install_cuda_events()
 
@@ -273,7 +273,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     @torch.no_grad()
     def refresh_rowwise_fp8_cache(self) -> None:
         for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
+            if not isinstance(block, OLMoDDPTransformerBlock):
                 continue
             block.refresh_rowwise_fp8_cache()
 
@@ -302,7 +302,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def disable_fp8_weight_anchor_grads(self) -> None:
         for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
+            if not isinstance(block, OLMoDDPTransformerBlock):
                 continue
             block.disable_fp8_weight_anchor_grads()
 
@@ -311,7 +311,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def release_fp8_weight_anchor_storage(self) -> None:
         for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
+            if not isinstance(block, OLMoDDPTransformerBlock):
                 continue
             block.release_fp8_weight_anchor_storage()
 
@@ -320,7 +320,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def sync_fp8_weight_store_grads_from_anchor(self) -> None:
         for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
+            if not isinstance(block, OLMoDDPTransformerBlock):
                 continue
             block.sync_fp8_weight_store_grads_from_anchor()
 
@@ -837,35 +837,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 )
 
             else:
-                # usually this is for the first dense layer
-                from ..transformer.block import TransformerBlock
-                block = cast(TransformerBlock, block)
-                att = cast(Union[Attention, FusedAttention], block.attention)
-
-                # Attention weights.
-                self.init_method.init_attention(
-                    att,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=self.n_layers,
-                    std=self.init_std,
-                    generator=generator,
+                raise OLMoConfigurationError(
+                    "OLMoDDPModel only supports OLMoDDPTransformerBlock blocks. "
+                    "Use a shared-only OLMoDDPTransformerBlock for dense layers."
                 )
-
-                # Feed-forward weights.
-                if hasattr(block, "feed_forward"):
-                    self.init_method.init_feed_forward(
-                        block.feed_forward,
-                        d_model=self.d_model,
-                        block_idx=block.block_idx,
-                        num_blocks=self.n_layers,
-                        std=self.init_std,
-                        generator=generator,
-                    )
-
-                # MoE weights.
-                if hasattr(block, "feed_forward_moe"):
-                    raise OLMoConfigurationError("Do not use the old MoE block")
 
             # Warm up RoPE cache for attention-like sequence mixers. Recurrent
             # mixers such as GDN do not have RoPE.
