@@ -482,14 +482,18 @@ def patch_torch_stream_custom_ops():
 
     PyTorch 2.11's ``streams::sync_dealloc`` op can be inserted by AOTAutograd when compiling
     models that use side streams. Without a fake implementation, Inductor fails while tracing.
-    In compiled pipeline-parallel backward graphs the generated stream ops can also execute after
-    PyTorch has cleared its weakref side table for graph-created stream/event objects. In that case
-    we fall back to stable per-process stream/event objects keyed by the generated integer index.
+    In compiled backward graphs the generated stream ops can also execute after PyTorch has cleared
+    its weakref side table for graph-created stream/event objects. Missing streams fall back to the
+    current stream so correctness does not depend on an unsynchronized replacement side stream.
     """
     try:
         from torch._dynamo.variables import streams
     except (AttributeError, ImportError):
         return
+    try:
+        from torch._dynamo import graph_bytecode_inputs
+    except (AttributeError, ImportError):
+        graph_bytecode_inputs = None
 
     sync_dealloc = getattr(streams, "sync_dealloc", None)
     if sync_dealloc is not None and getattr(sync_dealloc, "_abstract_fn", None) is None:
@@ -509,10 +513,12 @@ def patch_torch_stream_custom_ops():
     if getattr(streams, "_olmo_stream_lookup_patch", False):
         return
 
-    original_get_event_by_index = streams._get_event_by_index
-    original_get_stream_by_index = streams._get_stream_by_index
+    original_get_external_object_by_index = (
+        graph_bytecode_inputs.get_external_object_by_index
+        if graph_bytecode_inputs is not None
+        else None
+    )
     fallback_events: Dict[Tuple[int, int], torch.Event] = {}
-    fallback_streams: Dict[Tuple[int, int], torch.Stream] = {}
 
     def _is_missing_external_object_error(exc: AssertionError) -> bool:
         message = str(exc)
@@ -525,9 +531,17 @@ def patch_torch_stream_custom_ops():
             device_index = -1
         return int(device_index), int(index)
 
+    def _get_registered_external_object(index: int) -> Any:
+        assert original_get_external_object_by_index is not None
+        return original_get_external_object_by_index(index)
+
     def _get_event_by_index(index: int) -> torch.Event:
         try:
-            return original_get_event_by_index(index)
+            event = _get_registered_external_object(index)
+            assert isinstance(event, torch.Event), (
+                f"Record/wait event expected an event object at index {index}"
+            )
+            return event
         except AssertionError as e:
             if not _is_missing_external_object_error(e):
                 raise
@@ -540,19 +554,27 @@ def patch_torch_stream_custom_ops():
 
     def _get_stream_by_index(index: int) -> torch.Stream:
         try:
-            return original_get_stream_by_index(index)
+            stream = _get_registered_external_object(index)
+            assert isinstance(stream, torch.Stream), (
+                f"Fork/join stream expected a stream object at index {index}"
+            )
+            return stream
         except AssertionError as e:
             if not _is_missing_external_object_error(e):
                 raise
-            if int(index) == 0:
-                return torch.accelerator.current_stream()
-            key = _current_device_key(index)
-            stream = fallback_streams.get(key)
-            if stream is None:
-                stream = torch.Stream()
-                fallback_streams[key] = stream
-            return stream
+            return torch.accelerator.current_stream()
 
+    def _get_external_object_by_index(index: int) -> Any:
+        try:
+            return _get_registered_external_object(index)
+        except AssertionError as e:
+            if not _is_missing_external_object_error(e):
+                raise
+            return _get_stream_by_index(index)
+
+    if graph_bytecode_inputs is not None:
+        graph_bytecode_inputs.get_external_object_by_index = _get_external_object_by_index
+        streams.get_external_object_by_index = _get_external_object_by_index
     streams._get_event_by_index = _get_event_by_index
     streams._get_stream_by_index = _get_stream_by_index
     streams._olmo_stream_lookup_patch = True

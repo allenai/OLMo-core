@@ -845,6 +845,7 @@ class PipelineSchedule:
         input_ids: torch.Tensor,
         target: Optional[torch.Tensor] = None,
         forward_only: bool = False,
+        num_microbatches: Optional[int] = None,
         **kwargs,
     ) -> List[List[Optional[LMOutputWithLoss]]]:
         """
@@ -864,23 +865,25 @@ class PipelineSchedule:
         else:
             args = (input_ids,)
 
-        # in inference mode, change to one seq per microbatch
+        # In inference mode, change to one seq per microbatch. Training dry
+        # runs can also request a temporary smaller schedule.
         old_num_microbatches = None
-        if forward_only:
+        temporary_num_microbatches = input_ids.size(0) // 1 if forward_only else num_microbatches
+        if temporary_num_microbatches is not None:
             old_num_microbatches = self.schedule_impl._n_microbatches
-            self.schedule_impl.reset_n_microbatches(input_ids.size(0) // 1) # one seq per microbatch
+            if temporary_num_microbatches != old_num_microbatches:
+                self.schedule_impl.reset_n_microbatches(temporary_num_microbatches)
 
-        self.schedule_impl.prepare_step(
-            global_batch_size=input_ids.size(0),
-            seqlen=input_ids.size(1),
-        )
-        step_output = self.schedule_impl.step(*args, target=target, forward_only=forward_only, **kwargs)
+        try:
+            self.schedule_impl.prepare_step(
+                global_batch_size=input_ids.size(0),
+                seqlen=input_ids.size(1),
+            )
+            step_output = self.schedule_impl.step(*args, target=target, forward_only=forward_only, **kwargs)
+        finally:
+            self.schedule_impl.clear_step_info()
 
-        self.schedule_impl.clear_step_info()
-
-        # reset
-        if forward_only:
-            assert old_num_microbatches is not None
-            self.schedule_impl.reset_n_microbatches(old_num_microbatches)
+            if old_num_microbatches is not None:
+                self.schedule_impl.reset_n_microbatches(old_num_microbatches)
 
         return step_output

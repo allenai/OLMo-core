@@ -776,6 +776,214 @@ class MoEV2TransformerTrainModule(TrainModule):
         )
         return slots_by_part
 
+    def _pp_dry_run_num_microbatches(self, full_num_microbatches: int) -> int:
+        raw_value = os.getenv("OLMO_PP_DRY_RUN_MICROBATCHES")
+        if raw_value is None:
+            requested = 2 * max(1, self.pp_group_size)
+        else:
+            normalized = raw_value.strip().lower()
+            if normalized in {"", "0", "false", "no", "off", "full"}:
+                return full_num_microbatches
+            try:
+                requested = int(normalized)
+            except ValueError as exc:
+                raise OLMoConfigurationError(
+                    "OLMO_PP_DRY_RUN_MICROBATCHES must be a positive integer, "
+                    "'0', or 'full'"
+                ) from exc
+            if requested <= 0:
+                return full_num_microbatches
+
+        return max(1, min(full_num_microbatches, requested))
+
+    def _pp_dry_run_mode(self) -> str:
+        raw_value = os.getenv("OLMO_PP_DRY_RUN_MODE", "full")
+        normalized = raw_value.strip().lower().replace("-", "_")
+        if normalized in {"", "full", "legacy", "full_pp"}:
+            return "full"
+        if normalized in {"true_pp", "reduced", "reduced_pp"}:
+            return "true_pp"
+        if normalized in {"independent", "local", "stage", "stage_local"}:
+            raise OLMoConfigurationError(
+                "OLMO_PP_DRY_RUN_MODE=independent is disabled because it has shown "
+                "first-step gradient instability under PP. Use 'full' or 'true_pp'."
+            )
+        raise OLMoConfigurationError(
+            "OLMO_PP_DRY_RUN_MODE must be one of: full or true_pp"
+        )
+
+    def _pp_full_num_microbatches(self) -> int:
+        assert self.pp_enabled
+        assert self._train_pp_schedule is not None
+
+        schedule_impl = getattr(self._train_pp_schedule, "schedule_impl", None)
+        return int(
+            getattr(schedule_impl, "_n_microbatches", self._train_pp_schedule.num_microbatches)
+        )
+
+    @staticmethod
+    def _slice_pp_batch_dim(value: Any, original_batch_size: int, batch_size: int) -> Any:
+        if isinstance(value, torch.Tensor) and value.size(0) == original_batch_size:
+            return value[:batch_size].contiguous()
+        if isinstance(value, list) and len(value) == original_batch_size:
+            return value[:batch_size]
+        if isinstance(value, tuple) and len(value) == original_batch_size:
+            return value[:batch_size]
+        return value
+
+    def _maybe_reduce_pp_dry_run_batch(
+        self,
+        input_ids: torch.Tensor,
+        labels: torch.Tensor,
+        model_kwargs: Dict[str, Any],
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, Any], Optional[int]]:
+        assert self.pp_enabled
+
+        full_num_microbatches = self._pp_full_num_microbatches()
+        dry_run_num_microbatches = self._pp_dry_run_num_microbatches(full_num_microbatches)
+        if dry_run_num_microbatches >= full_num_microbatches:
+            return input_ids, labels, model_kwargs, None
+
+        original_batch_size = input_ids.size(0)
+        if original_batch_size % full_num_microbatches != 0:
+            raise OLMoConfigurationError(
+                "Cannot reduce PP dry-run microbatches without changing per-microbatch shape: "
+                f"input batch size {original_batch_size} is not divisible by "
+                f"full_num_microbatches={full_num_microbatches}"
+            )
+
+        instances_per_microbatch = original_batch_size // full_num_microbatches
+        dry_run_batch_size = dry_run_num_microbatches * instances_per_microbatch
+
+        log.info(
+            "Reducing PP dry-run from %d to %d microbatches "
+            "(rank batch %d -> %d, per-microbatch batch size %d)",
+            full_num_microbatches,
+            dry_run_num_microbatches,
+            original_batch_size,
+            dry_run_batch_size,
+            instances_per_microbatch,
+        )
+
+        return (
+            input_ids[:dry_run_batch_size].contiguous(),
+            labels[:dry_run_batch_size].contiguous(),
+            {
+                key: self._slice_pp_batch_dim(value, original_batch_size, dry_run_batch_size)
+                for key, value in model_kwargs.items()
+            },
+            dry_run_num_microbatches,
+        )
+
+    @staticmethod
+    def _clear_pp_stage_dry_run_runtime(stage: Any) -> None:
+        for attr_name in (
+            "fwd_cache",
+            "bwd_cache",
+            "received_activations",
+            "received_grads",
+            "stage_outputs",
+        ):
+            runtime_state = getattr(stage, attr_name, None)
+            if hasattr(runtime_state, "clear"):
+                runtime_state.clear()
+
+        clear_step_info = getattr(stage, "clear_step_info", None)
+        if callable(clear_step_info):
+            clear_step_info()
+
+    def _run_independent_pp_dry_run(
+        self,
+        input_ids: torch.Tensor,
+        labels: torch.Tensor,
+        batch_num_tokens_for_loss: Union[int, float],
+        **kwargs,
+    ) -> None:
+        assert self.pp_enabled
+        assert self._pp_stages is not None
+
+        full_num_microbatches = self._pp_full_num_microbatches()
+        original_batch_size = input_ids.size(0)
+        if original_batch_size % full_num_microbatches != 0:
+            raise OLMoConfigurationError(
+                "Cannot run independent PP dry-run without preserving per-microbatch shape: "
+                f"input batch size {original_batch_size} is not divisible by "
+                f"full_num_microbatches={full_num_microbatches}"
+            )
+
+        micro_batch_size = original_batch_size // full_num_microbatches
+        if micro_batch_size <= 0:
+            raise OLMoConfigurationError(
+                "Cannot run independent PP dry-run with empty pipeline microbatches"
+            )
+
+        input_ids_mb = input_ids[:micro_batch_size].contiguous()
+        labels_mb = labels[:micro_batch_size].contiguous()
+        kwargs_mb = {
+            key: self._slice_pp_batch_dim(value, original_batch_size, micro_batch_size)
+            for key, value in kwargs.items()
+        }
+
+        supported_model_kwargs = {"cp_already_sharded", "cp_original_seq_len"}
+        unexpected_model_kwargs = set(kwargs_mb) - supported_model_kwargs
+        if unexpected_model_kwargs:
+            raise OLMoConfigurationError(
+                "Independent PP dry-run only supports the same model kwargs as the PP "
+                f"schedule splitter, got unsupported keys: {sorted(unexpected_model_kwargs)}"
+            )
+
+        stage_kwargs = {
+            **kwargs_mb,
+            "labels": labels_mb,
+            "ignore_index": self.label_ignore_index,
+            "loss_reduction": "sum",
+            "z_loss_multiplier": self.z_loss_multiplier,
+            "loss_div_factor": batch_num_tokens_for_loss,
+            "return_logits": False,
+        }
+
+        log.info(
+            "Running independent PP dry-run on %d local stage(s) "
+            "(full microbatches=%d, dry-run microbatch batch size=%d, seqlen=%d)",
+            len(self._pp_stages),
+            full_num_microbatches,
+            micro_batch_size,
+            input_ids_mb.size(1),
+        )
+
+        with self._model_forward_context():
+            for stage in self._pp_stages:
+                self._clear_pp_stage_dry_run_runtime(stage)
+                stage.prepare_step(
+                    global_batch_size=micro_batch_size,
+                    micro_batch_size=micro_batch_size,
+                    seqlen=input_ids_mb.size(1),
+                )
+
+                if stage.is_first:
+                    args_mb = (input_ids_mb,)
+                else:
+                    stage.received_activations[0] = torch.randn(
+                        (
+                            micro_batch_size,
+                            input_ids_mb.size(1),
+                            stage.d_model,
+                        ),
+                        device=stage.device,
+                        dtype=stage.p2p_dtype,
+                    )
+                    args_mb = ()
+
+                try:
+                    stage._prepare_forward_backward_meta(1, args_mb, stage_kwargs)
+                    stage.forward_one_chunk(0, args_mb, stage_kwargs, last_forward=True)
+                    if not stage.is_last:
+                        stage_output = stage.fwd_cache[0][1]
+                        stage.received_grads[0] = torch.ones_like(stage_output)
+                    stage.backward_one_chunk(0, last_backward=True)
+                finally:
+                    self._clear_pp_stage_dry_run_runtime(stage)
+
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         raise NotImplementedError("Use load_state_dict_direct instead")
 
@@ -1149,12 +1357,20 @@ class MoEV2TransformerTrainModule(TrainModule):
             
         else:
             # pipeline parallel forward / backward
+            # Run pipeline schedule.
+            input_ids, labels, model_kwargs = self._prepare_batch(batch, batch['labels'])
+            assert labels is not None
+            dry_run_mode = self._pp_dry_run_mode() if dry_run else "true_pp"
+            dry_run_num_microbatches = None
+            if dry_run and dry_run_mode == "true_pp":
+                input_ids, labels, model_kwargs, dry_run_num_microbatches = (
+                    self._maybe_reduce_pp_dry_run_batch(input_ids, labels, model_kwargs)
+                )
+
             # Calculate how many tokens are going to be used in the loss.
-            batch_num_tokens_for_loss = (batch['labels'] != self.label_ignore_index).sum().item()
+            batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum().item()
 
-
-
-            if instance_mask is not None:
+            if instance_mask is not None and not dry_run:
 
                 # WARN: When we mask out instances with the instance filter, we count those tokens
                 # for the loss anyways. They will count as tokens with a zero loss. This means we
@@ -1166,42 +1382,48 @@ class MoEV2TransformerTrainModule(TrainModule):
             if batch_num_tokens_for_loss == 0:
                 print(f'[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0')
 
-            # Run pipeline schedule.
-            input_ids, labels, model_kwargs = self._prepare_batch(batch, batch['labels'])
-            assert labels is not None
             input_ids, labels, model_kwargs = self._prepare_pipeline_context_parallel_batch(
                 input_ids,
                 labels,
                 model_kwargs,
             )
             assert labels is not None
-            pp_outputs = self.run_pipeline(
-                input_ids,
-                labels,
-                batch_num_tokens_for_loss,
-                ignore_index=self.label_ignore_index,
-                loss_reduction="sum",
-                z_loss_multiplier=self.z_loss_multiplier,
-                return_logits=False,
-                **model_kwargs,
-            )   
-            # Collect losses from all micro-batches and all stages.
             ce_batch_loss = None
             z_batch_loss = None
-            for stage_outputs in pp_outputs:
-                for mb_output in stage_outputs:
-                    if mb_output is None: # non-last stage
-                        continue
-                    else:
-                        assert isinstance(mb_output, LMOutputWithLoss)
-                        _, loss, ce_loss, z_loss = mb_output
+            if dry_run and dry_run_mode == "independent":
+                self._run_independent_pp_dry_run(
+                    input_ids,
+                    labels,
+                    batch_num_tokens_for_loss,
+                    **model_kwargs,
+                )
+            else:
+                pp_outputs = self.run_pipeline(
+                    input_ids,
+                    labels,
+                    batch_num_tokens_for_loss,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="sum",
+                    z_loss_multiplier=self.z_loss_multiplier,
+                    return_logits=False,
+                    num_microbatches=dry_run_num_microbatches,
+                    **model_kwargs,
+                )
+                # Collect losses from all micro-batches and all stages.
+                for stage_outputs in pp_outputs:
+                    for mb_output in stage_outputs:
+                        if mb_output is None: # non-last stage
+                            continue
+                        else:
+                            assert isinstance(mb_output, LMOutputWithLoss)
+                            _, loss, ce_loss, z_loss = mb_output
 
-                        # ce_loss should always be not None
-                        ce_batch_loss = (ce_batch_loss + ce_loss.detach()) if ce_batch_loss is not None else ce_loss.detach()
+                            # ce_loss should always be not None
+                            ce_batch_loss = (ce_batch_loss + ce_loss.detach()) if ce_batch_loss is not None else ce_loss.detach()
 
-                        # z loss is optional
-                        if z_loss is not None: 
-                            z_batch_loss = (z_batch_loss + z_loss.detach()) if z_batch_loss is not None else z_loss.detach()
+                            # z loss is optional
+                            if z_loss is not None:
+                                z_batch_loss = (z_batch_loss + z_loss.detach()) if z_batch_loss is not None else z_loss.detach()
 
             for idx, model in enumerate(self.model_parts):
                 model.finalize_grad_reduce()
@@ -1456,6 +1678,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         input_ids: torch.Tensor,
         labels: torch.Tensor,
         batch_num_tokens_for_loss: Union[int, float],
+        num_microbatches: Optional[int] = None,
         **kwargs,
     ) -> List[List[Optional[LMOutputWithLoss]]]:
         """
@@ -1470,6 +1693,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 target=labels,
                 loss_div_factor=batch_num_tokens_for_loss,
                 labels=labels,
+                num_microbatches=num_microbatches,
                 **kwargs,
             )
         return schedule_outputs
