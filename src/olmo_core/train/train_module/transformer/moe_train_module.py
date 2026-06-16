@@ -2336,3 +2336,14 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
         return x
+
+
+class OLMoDDPTrainModule(MoEV2TransformerTrainModule):
+    """
+    DDP-stack train module entry point.
+
+    This promoted name keeps the current MoE V2 orchestration intact while the
+    stack is generalized for dense and MoE DDP training.
+    """
+
+    pass

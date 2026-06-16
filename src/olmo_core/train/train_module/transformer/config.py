@@ -40,7 +40,7 @@ from .pipeline.pipeline_schedule import CustomPipelineStage
 if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
-    from .moe_train_module import MoEV2TransformerTrainModule
+    from .moe_train_module import MoEV2TransformerTrainModule, OLMoDDPTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -453,6 +453,18 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
 
     label_ignore_index: int = -100
 
+    def _build_kwargs(self) -> Dict[str, Any]:
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+
+        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
+            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
+        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
+            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
+
+        # remove old arg "grad_accum_in_fp32"
+        kwargs.pop("grad_accum_in_fp32", None)
+        return kwargs
+
     def build(
         self,
         model: Transformer,
@@ -465,21 +477,37 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
         :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
         :param device: The device to train on.
         """
-        from .moe_train_module import MoEV2TransformerTrainModule
+        from .ddp_train_module import OLMoDDPTrainModule
 
-        kwargs = self.as_dict(exclude_none=True, recurse=False)
-
-        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
-            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
-        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
-            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
-
-        # remove old arg "grad_accum_in_fp32"
-        kwargs.pop("grad_accum_in_fp32", None)
-
-        return MoEV2TransformerTrainModule(
+        return OLMoDDPTrainModule(
             model=model,
             device=device,
             eval_only=eval_only,
-            **kwargs,
+            **self._build_kwargs(),
+        )
+
+
+@dataclass
+class OLMoDDPTrainModuleConfig(MoEV2TransformerTrainModuleConfig):
+    """
+    Configuration for :class:`OLMoDDPTrainModule`.
+
+    This is the promoted DDP-stack name for the current MoE V2 train-module
+    configuration. ``MoEV2TransformerTrainModuleConfig`` is kept for existing
+    scripts while new DDP-stack users can depend on this class.
+    """
+
+    def build(
+        self,
+        model: Transformer,
+        device: Optional[torch.device] = None,
+        eval_only: bool = False,
+    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "OLMoDDPTrainModule"]:
+        from .ddp_train_module import OLMoDDPTrainModule
+
+        return OLMoDDPTrainModule(
+            model=model,
+            device=device,
+            eval_only=eval_only,
+            **self._build_kwargs(),
         )

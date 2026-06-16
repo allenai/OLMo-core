@@ -782,12 +782,13 @@ class Trainer:
         log.info("Training complete")
 
     def eval_checkpoints(self):
+        from .train_module.transformer.ddp_train_module import OLMoDDPTrainModule
         from .train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
 
-        if not isinstance(self.train_module, MoEV2TransformerTrainModule):
+        if not isinstance(self.train_module, (OLMoDDPTrainModule, MoEV2TransformerTrainModule)):
             raise NotImplementedError(
                 f"{self.__class__.__name__}.eval_checkpoints() only supports "
-                f"'{MoEV2TransformerTrainModule.__name__}'"
+                f"'{OLMoDDPTrainModule.__name__}'"
             )
         if self.no_evals:
             raise OLMoConfigurationError(
@@ -846,7 +847,7 @@ class Trainer:
                 )
 
                 self.record_metric("throughput/total tokens", self.global_train_tokens_seen)
-                if isinstance(self.train_module, MoEV2TransformerTrainModule):
+                if isinstance(self.train_module, (OLMoDDPTrainModule, MoEV2TransformerTrainModule)):
                     num_flops_per_token = self.train_module.num_flops_per_token(
                         self.train_module.max_sequence_length
                     )

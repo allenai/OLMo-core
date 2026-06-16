@@ -10,9 +10,11 @@ from .config import (
     TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
     MoEV2TransformerTrainModuleConfig,
+    OLMoDDPTrainModuleConfig,
 )
 from .pipeline_train_module import TransformerPipelineTrainModule
 from .train_module import TransformerTrainModule
+from .ddp_train_module import OLMoDDPTrainModule
 from .moe_train_module import MoEV2TransformerTrainModule
 from .pipeline.pipeline_schedule import (
     CustomPipelineStage,
@@ -38,6 +40,8 @@ __all__ = [
     # "CustomSchedule1F1B",
     "CustomSchedule1F1BV",
     "CustomScheduleInterleaved1F1B",
+    "OLMoDDPTrainModule",
+    "OLMoDDPTrainModuleConfig",
     "MoEV2TransformerTrainModule",
     "MoEV2TransformerTrainModuleConfig"
 ]

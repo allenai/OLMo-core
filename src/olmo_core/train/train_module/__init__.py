@@ -21,6 +21,8 @@ from .transformer import (
     TransformerTrainModuleConfig,
     MoEV2TransformerTrainModuleConfig,
     MoEV2TransformerTrainModule,
+    OLMoDDPTrainModuleConfig,
+    OLMoDDPTrainModule,
 )
 
 __all__ = [
@@ -42,6 +44,8 @@ __all__ = [
     "TransformerTensorParallelConfig",
     "TransformerContextParallelConfig",
     "TransformerPipelineParallelConfig",
+    "OLMoDDPTrainModule",
+    "OLMoDDPTrainModuleConfig",
     "MoEV2TransformerTrainModule",
     "MoEV2TransformerTrainModuleConfig"
 ]

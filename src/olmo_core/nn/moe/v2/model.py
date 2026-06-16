@@ -1302,6 +1302,20 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             out = h
         return out
 
+
+class OLMoDDPModel(MoEFusedV2Transformer):
+    """
+    DDP-stack transformer model entry point.
+
+    This is the promoted name for the MoE V2 model implementation while the
+    DDP stack is generalized beyond MoE-only training. The old
+    ``MoEFusedV2Transformer`` name remains the implementation base for
+    compatibility.
+    """
+
+    pass
+
+
 def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
     del m
     # Keep CPU-only metadata out of wrappers/hooks that assume every tensor kwarg
