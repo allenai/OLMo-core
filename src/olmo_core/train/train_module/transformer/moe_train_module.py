@@ -448,7 +448,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             if ep.degree <= 1 or folded_dp_cp_world_size % ep.degree != 0:
                 raise OLMoConfigurationError(
                     f"{ep.__class__.__name__}.degree must be at least 1 and divide into the "
-                    f"folded DP x CP world size"
+                    f"folded DP x CP world size, got folded_dp_cp_world_size={folded_dp_cp_world_size} and ep.degree={ep.degree}"
                 )
 
 

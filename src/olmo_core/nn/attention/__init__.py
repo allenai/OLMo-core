@@ -1183,6 +1183,7 @@ class FusedAttentionV2(Attention):
             self.head_dim = head_dim
         else:
             self.head_dim = d_attn // n_heads
+        self.sinks = None
 
         self.q_dim = n_heads * self.head_dim
         self.kv_dim = self.n_kv_heads * self.head_dim

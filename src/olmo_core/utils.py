@@ -37,6 +37,8 @@ _log_extra_fields: Dict[str, Any] = {}
 _LOGGING_CONFIGURED: bool = False
 log = logging.getLogger(__name__)
 
+_CUTLASS_SCALAR_PTR_DEPRECATION_MESSAGE = "Use explicit `struct.scalar.ptr` for pointer instead."
+
 
 def generate_uuid() -> str:
     """
@@ -463,6 +465,28 @@ def filter_warnings():
         message="failed to load.*",
         module="torchvision.io.image",
     )
+    # CUTLASS DSL emits this warning from inside warnings.catch_warnings() with
+    # simplefilter("always"), so a regular filterwarnings() rule cannot hide it.
+    suppress_cutlass_scalar_ptr_deprecation_warning()
+
+
+def suppress_cutlass_scalar_ptr_deprecation_warning():
+    current_showwarning = warnings.showwarning
+    if getattr(current_showwarning, "_olmo_suppresses_cutlass_scalar_ptr", False):
+        return
+
+    def showwarning(message, category, filename, lineno, file=None, line=None):
+        normalized_filename = filename.replace(os.sep, "/")
+        if (
+            category is DeprecationWarning
+            and str(message) == _CUTLASS_SCALAR_PTR_DEPRECATION_MESSAGE
+            and "nvidia_cutlass_dsl/python_packages/cutlass/cute/core.py" in normalized_filename
+        ):
+            return
+        return current_showwarning(message, category, filename, lineno, file=file, line=line)
+
+    setattr(showwarning, "_olmo_suppresses_cutlass_scalar_ptr", True)
+    warnings.showwarning = showwarning
 
 
 def set_env_variables():
