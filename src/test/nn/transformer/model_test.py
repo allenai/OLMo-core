@@ -20,6 +20,7 @@ from olmo_core.distributed.parallel import (
     build_world_mesh,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
@@ -92,6 +93,20 @@ def test_small_llama2_builder_config(init_device, device):
     # Make sure block_idx is set correctly.
     assert model.blocks["0"].block_idx == 0
     assert model.blocks[str(len(model.blocks) - 1)].block_idx == len(model.blocks) - 1
+
+
+def test_transformer_apply_ddp_is_disabled():
+    config = TransformerConfig.llama_like(
+        d_model=16,
+        vocab_size=32,
+        n_layers=1,
+        n_heads=2,
+        feed_forward=FeedForwardConfig(hidden_size=32, bias=False),
+    )
+    model = config.build(init_device="meta")
+
+    with pytest.raises(OLMoConfigurationError, match="legacy DDP backend"):
+        model.apply_ddp()
 
 
 def check_ngpt_matrices(model: nn.Module, d_model: int):

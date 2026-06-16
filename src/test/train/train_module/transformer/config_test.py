@@ -187,7 +187,7 @@ def _run_pp_num_flops_per_token():
     pp_config = TransformerPipelineParallelConfig(
         degree=2, schedule=PipelineScheduleType.single_1F1B, style=PipelineSplitStyle.loop
     )
-    dp_config = TransformerDataParallelConfig(name=DataParallelType.ddp)
+    dp_config = TransformerDataParallelConfig(name=DataParallelType.fsdp)
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=seq_len,
         max_sequence_length=seq_len,
@@ -208,4 +208,36 @@ def _run_pp_num_flops_per_token():
 def test_pp_num_flops_per_token():
     run_distributed_test(
         _run_pp_num_flops_per_token, world_size=2, backend="gloo", start_method="spawn"
+    )
+
+
+def _run_transformer_train_module_rejects_legacy_ddp():
+    seq_len = 16
+    transformer_config = TransformerConfig.llama_like(
+        d_model=16,
+        vocab_size=32,
+        n_layers=1,
+        n_heads=2,
+        feed_forward=FeedForwardConfig(hidden_size=32, bias=False),
+    )
+    train_module_config = TransformerTrainModuleConfig(
+        rank_microbatch_size=seq_len,
+        max_sequence_length=seq_len,
+        optim=AdamWConfig(),
+        dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="legacy DDP backend"):
+        train_module_config.build(
+            transformer_config.build(init_device="meta"),
+            device=torch.device("cpu"),
+        )
+
+
+def test_transformer_train_module_rejects_legacy_ddp():
+    run_distributed_test(
+        _run_transformer_train_module_rejects_legacy_ddp,
+        world_size=2,
+        backend="gloo",
+        start_method="spawn",
     )

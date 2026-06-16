@@ -135,11 +135,10 @@ def parallelize_model(
                 )
             log.info(f"Applied FSDP to the model with {get_device_mesh_info(dp_mesh)}")
         elif dp_config.name == DataParallelType.ddp:
-            for m in model_parts:
-                if m.is_moe:
-                    cast(MoETransformer, m).prepare_experts_for_ddp(world_mesh)
-                m.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model, param_dtype=param_dtype)
-            log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
+            raise OLMoConfigurationError(
+                "The legacy DDP backend on TransformerTrainModule is disabled. "
+                "Use OLMoDDPTrainModule with an OLMoDDPModel instead."
+            )
         else:
             raise NotImplementedError(dp_config.name)
 

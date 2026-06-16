@@ -899,7 +899,7 @@ class Transformer(nn.Module):
 
         .. warning::
             This must be called after :meth:`apply_activation_checkpointing()` but
-            before :meth:`apply_fsdp()` or :meth:`apply_ddp()`.
+            before :meth:`apply_fsdp()`.
         """
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
@@ -999,31 +999,12 @@ class Transformer(nn.Module):
         autograd_compile_enabled: bool = False,
     ):
         """
-        Apply DDP to the model.
+        Legacy DDP entry point retained only to reject this stack.
         """
-        from torch.distributed._composable.replicate import replicate
-
-        # Cast model explicitly to the specified dtype before applying DDP
-        target_dtype = param_dtype or self.dtype
-        if target_dtype != self.dtype:
-            self.to(dtype=target_dtype)
-
-        # Adapted from
-        # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
-        if compile_enabled:
-            if autograd_compile_enabled:
-                torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
-            else:
-                torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
-                
-        self.to(torch.bfloat16) # HACK, need fix
-        
-        replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
-        # Some inputs need to be on CPU initially, but DDP will move everything to model's
-        # device if we don't hide it.
-        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
-        self.register_forward_pre_hook(
-            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        del dp_mesh, param_dtype, compile_enabled, autograd_compile_enabled
+        raise OLMoConfigurationError(
+            "The legacy DDP backend on Transformer is disabled. "
+            "Use OLMoDDPTrainModule with an OLMoDDPModel instead."
         )
 
     @cached_property
