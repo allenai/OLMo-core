@@ -1,4 +1,3 @@
-import inspect
 import logging
 from dataclasses import replace
 from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
@@ -60,22 +59,6 @@ from olmo_core.testing.utils import FLA_MARKS, has_fla
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
-
-
-def test_transformer_exposes_olmo_ddp_apply_dp_contract():
-    signature = inspect.signature(
-        TransformerConfig.llama2_271M(vocab_size=128).build().apply_dp
-    )
-
-    assert list(signature.parameters) == [
-        "dp_mesh",
-        "ep_mesh",
-        "dense_process_group",
-        "expert_process_group",
-        "accumulate_grads_in_fp32",
-        "reduce_grads_in_fp32",
-        "bucket_cap_mb",
-    ]
 
 
 @pytest.mark.parametrize(

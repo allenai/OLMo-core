@@ -15,7 +15,6 @@ from typing import (
 )
 
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
@@ -1026,49 +1025,6 @@ class Transformer(nn.Module):
         self.register_forward_pre_hook(
             _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
         )
-
-    def apply_dp(
-        self,
-        dp_mesh: DeviceMesh,
-        ep_mesh: Optional[DeviceMesh] = None,
-        dense_process_group: Optional[dist.ProcessGroup] = None,
-        expert_process_group: Optional[dist.ProcessGroup] = None,
-        accumulate_grads_in_fp32: bool = True,
-        reduce_grads_in_fp32: bool = True,
-        bucket_cap_mb: Optional[int] = None,
-    ):
-        """
-        Apply the OLMo-owned DDP wrapper to a dense transformer model.
-        """
-        if ep_mesh is not None or expert_process_group is not None:
-            raise OLMoConfigurationError(
-                "Dense Transformer.apply_dp() does not support expert process groups"
-            )
-
-        from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
-
-        # TODO(dtype): match the current MoE V2 DDP path for now. Replace this
-        # with an explicit DDP precision policy before making dense DDP broadly
-        # user-facing.
-        self.to(torch.bfloat16)
-
-        dp_group = dense_process_group if dense_process_group is not None else dp_mesh.get_group()
-        ddp_model = MultiGroupDistributedDataParallel(
-            module=self,
-            dim=0,
-            init_sync=True,
-            process_group=dp_group,
-            accumulate_grads_in_fp32=accumulate_grads_in_fp32,
-            reduce_grads_in_fp32=reduce_grads_in_fp32,
-            bucket_cap_mb=bucket_cap_mb,
-        )
-        ddp_model.register_forward_pre_hook(
-            _hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True
-        )
-        ddp_model.register_forward_pre_hook(
-            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
-        )
-        return ddp_model
 
     @cached_property
     def num_params(self) -> int:
