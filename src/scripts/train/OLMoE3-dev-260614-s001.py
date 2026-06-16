@@ -34,7 +34,7 @@ _default_triton_cache_dir()
 
 # Keep this before any olmo_core imports: several modules import nvtx at import
 # time, and NVTX_DISABLE only works if it is set before nvtx is imported.
-USE_NV_PROFILE = True
+USE_NV_PROFILE = False
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
@@ -142,9 +142,9 @@ if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 2000
+SAVE_INTERVAL = 100
 
-NUM_EXPERTS = 128
+NUM_EXPERTS = 32
 TOP_K = 4
 ORIGINAL_TOP_K=None
 D_MODEL=3 * 1024
@@ -164,7 +164,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=2
 PP_DIM=2
 
 # ref
@@ -176,7 +176,7 @@ LR_ALPHA = 0.53
 # stage 1 - xM - 
 MAX_DURATION = int(150e9)
 MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 16
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 2
 # NO LR_REF_BSZ=6M
 
 # stage 2 - 6M - 
@@ -206,7 +206,7 @@ GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
 SCHED_WARMUP_TOKENS = int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((29990e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_LONG_DECAY_TOKENS = int((990e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 1.0
 SCHED_FINAL_FRACTION = 0.5
 
@@ -220,7 +220,7 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=32
+NUM_LAYERS=16
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -240,7 +240,7 @@ USE_TBO=False
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
-RANDOM_ASSIGN=True
+RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
 USE_FP8=False
 USE_FP8_ATTN_QKV=USE_FP8
