@@ -37,7 +37,7 @@ from .ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )
-from .te_attn_api import TEDotProductAttention, has_te_attn
+from .te_attn_api import TEDotProductAttention, has_te_attn, te_attn_import_error
 
 
 class AttentionBackendName(StrEnum):
@@ -1050,7 +1050,7 @@ class TEAttentionBackend(AttentionBackend):
             cache=cache,
         )
         if not has_te_attn():
-            raise RuntimeError("TransformerEngine attention is not available")
+            raise RuntimeError("TransformerEngine attention is not available") from te_attn_import_error()
         assert TEDotProductAttention is not None
         self.te_attn = TEDotProductAttention(
             self.n_heads,
@@ -1068,7 +1068,7 @@ class TEAttentionBackend(AttentionBackend):
         if not has_te_attn():
             raise RuntimeError(
                 f"'{cls.__name__}' is missing the TransformerEngine package or is not supported on this platform."
-            )
+            ) from te_attn_import_error()
 
     @classmethod
     def assert_supports_swa(cls):

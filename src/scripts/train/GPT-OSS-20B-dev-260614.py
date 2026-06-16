@@ -114,7 +114,7 @@ def _gpt_oss_tokenizer_config(identifier: str) -> TokenizerConfig:
 
 
 def _tokenizer_config() -> TokenizerConfig:
-    identifier = os.getenv("GPT_OSS_TOKENIZER_ID", "openai/gpt-oss-20b").strip()
+    identifier = os.getenv("GPT_OSS_TOKENIZER_ID", "dolma2").strip()
     if identifier in {"dolma2", "allenai/dolma2-tokenizer"}:
         return TokenizerConfig.dolma2()
     return _gpt_oss_tokenizer_config(identifier)
@@ -147,14 +147,11 @@ EP_NO_SYNC_CAPACITY_FACTOR = _env_float("GPT_OSS_EP_NO_SYNC_CAPACITY_FACTOR", 1.
 
 DATA_MIX = os.getenv("GPT_OSS_DATA_MIX", DataMix.OLMo_mix_0925.value)
 DATA_MIX_BASE_DIR = os.getenv("GPT_OSS_MIX_BASE_DIR", "s3://ai2-llm")
-DEFAULT_DATA_PATH = (
-    "/workspace/tasks/june12/scratch/gpt_oss_20b_loss/"
-    "gpt_oss_retokenized_olmo_mix_0925_education_jobs_first1m.uint32.npy"
-)
+DEFAULT_DATA_PATH = os.getenv("GPT_OSS_DEFAULT_DATA_PATH")
 DATA_PATHS = (
     _env_list("GPT_OSS_DATA_PATHS")
     if os.getenv("GPT_OSS_DATA_PATHS") is not None
-    else [DEFAULT_DATA_PATH]
+    else ([DEFAULT_DATA_PATH] if DEFAULT_DATA_PATH else [])
 )
 DATA_NUM_WORKERS = _env_int("GPT_OSS_DATA_NUM_WORKERS", 0)
 LOAD_PATH = os.getenv("GPT_OSS_LOAD_PATH") or None

@@ -101,7 +101,7 @@ def _nemotron_tokenizer_config(identifier: str) -> TokenizerConfig:
 
 
 def _tokenizer_config() -> TokenizerConfig:
-    identifier = os.getenv("NEMOTRON_TOKENIZER_ID", MODEL_ID).strip()
+    identifier = os.getenv("NEMOTRON_TOKENIZER_ID", "dolma2").strip()
     if identifier in {"dolma2", "allenai/dolma2-tokenizer"}:
         return TokenizerConfig.dolma2()
     return _nemotron_tokenizer_config(identifier)
@@ -132,14 +132,11 @@ DATA_PARALLEL = os.getenv("NEMOTRON_DATA_PARALLEL", "fsdp").strip().lower()
 
 DATA_MIX = os.getenv("NEMOTRON_DATA_MIX", DataMix.OLMo_mix_0925.value)
 DATA_MIX_BASE_DIR = os.getenv("NEMOTRON_MIX_BASE_DIR", "s3://ai2-llm")
-DEFAULT_DATA_PATH = (
-    "/workspace/tasks/june12/scratch/nemotron3_nano_loss/"
-    "nemotron_retokenized_olmo_mix_0925_education_jobs_first1m.uint32.npy"
-)
+DEFAULT_DATA_PATH = os.getenv("NEMOTRON_DEFAULT_DATA_PATH")
 DATA_PATHS = (
     _env_list("NEMOTRON_DATA_PATHS")
     if os.getenv("NEMOTRON_DATA_PATHS") is not None
-    else [DEFAULT_DATA_PATH]
+    else ([DEFAULT_DATA_PATH] if DEFAULT_DATA_PATH else [])
 )
 DATA_NUM_WORKERS = _env_int("NEMOTRON_DATA_NUM_WORKERS", 0)
 LOAD_PATH = os.getenv("NEMOTRON_LOAD_PATH") or None
