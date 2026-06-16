@@ -19,6 +19,7 @@ from olmo_core.kernels.moe_unpermute_bwd import moe_unpermute_bwd as moe_unpermu
 from olmo_core.utils import get_or_init_stream
 
 try:
+    import transformer_engine  # type: ignore  # noqa: F401
     import transformer_engine_torch as tex
     from transformer_engine.pytorch.constants import TE_DType
     from transformer_engine.pytorch.permutation import (

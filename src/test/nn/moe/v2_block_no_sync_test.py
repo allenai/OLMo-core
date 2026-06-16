@@ -61,6 +61,7 @@ def _build_block(
     uniform_expert_assignment: bool = True,
     init_device: str = "cuda",
     ep_no_sync_use_2d_all_to_all: bool = False,
+    ep_no_sync_use_rowwise_all_to_all: bool = False,
 ) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
@@ -105,6 +106,7 @@ def _build_block(
         feed_forward_norm=layer_norm,
         ep_no_sync=ep_no_sync,
         ep_no_sync_use_2d_all_to_all=ep_no_sync_use_2d_all_to_all,
+        ep_no_sync_use_rowwise_all_to_all=ep_no_sync_use_rowwise_all_to_all,
         ep_no_sync_capacity_factor=ep_no_sync_capacity_factor,
         ep_no_sync_major_align=1,
         init_device=init_device,
@@ -362,6 +364,7 @@ def _run_ep_no_sync_rowwise_matches_synced():
     )
     block_rowwise = _build_block(
         ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
         d_model=512,
         hidden_size=1024,
         num_experts=8,
@@ -376,7 +379,6 @@ def _run_ep_no_sync_rowwise_matches_synced():
     _install_deterministic_topk_router(block_ep)
     _install_deterministic_topk_router(block_rowwise)
 
-    block_rowwise.ep_no_sync_use_rowwise_all_to_all = True
     block_rowwise.ep_no_sync_rowwise_nblocks = 128
 
     block_ep.train()
@@ -410,6 +412,7 @@ def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
 
     block_a = _build_block(
         ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
         ep_no_sync_capacity_factor=0.5,
         d_model=512,
         hidden_size=1024,
@@ -419,6 +422,7 @@ def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
     )
     block_b = _build_block(
         ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
         ep_no_sync_capacity_factor=0.5,
         d_model=512,
         hidden_size=1024,
@@ -434,10 +438,8 @@ def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
     _install_deterministic_topk_router(block_a)
     _install_deterministic_topk_router(block_b)
 
-    block_a.ep_no_sync_use_rowwise_all_to_all = True
     block_a.ep_no_sync_rowwise_nblocks = 128
 
-    block_b.ep_no_sync_use_rowwise_all_to_all = True
     block_b.ep_no_sync_rowwise_nblocks = 128
 
     block_a.train()
