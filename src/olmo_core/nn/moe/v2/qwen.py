@@ -21,7 +21,7 @@ from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.nn.transformer import TransformerBlockType, TransformerType
-from olmo_core.nn.transformer.config import MoEFusedV2TransformerConfig
+from olmo_core.nn.transformer.config import OLMoDDPModelConfig
 
 
 QWEN3_MOE_LAYER_PATTERN = (
@@ -284,7 +284,7 @@ def build_qwen3_moe_config(
     use_ep_no_sync: bool = False,
     use_rowwise_all_to_all: bool = False,
     ep_no_sync_capacity_factor: float = 1.25,
-) -> MoEFusedV2TransformerConfig:
+) -> OLMoDDPModelConfig:
     layer_types = _resolve_layer_types(layer_types, n_layers)
     layer_norm = LayerNormConfig(
         name=norm_type,
@@ -378,7 +378,7 @@ def build_qwen3_moe_config(
         raise ValueError(f"Unsupported Qwen MoE layer_types: {sorted(missing)}")
     block, block_pattern = _resolve_block_config(blocks, layer_types)
 
-    config = MoEFusedV2TransformerConfig(
+    config = OLMoDDPModelConfig(
         init_seed=init_seed,
         init_std=init_std,
         d_model=d_model,
@@ -401,7 +401,7 @@ def build_qwen3_moe_config(
 def build_qwen3_moe_config_from_hf_config(
     hf_config: Mapping[str, Any],
     **overrides: Any,
-) -> MoEFusedV2TransformerConfig:
+) -> OLMoDDPModelConfig:
     kwargs = get_qwen3_moe_text_config_overrides(hf_config)
     kwargs.update(overrides)
     return build_qwen3_moe_config(**kwargs)
@@ -419,7 +419,7 @@ def build_debug_qwen3_moe_config(
     dtype: DType = DType.bfloat16,
     attention_backend: AttentionBackendName = AttentionBackendName.flash_4,
     **kwargs: Any,
-) -> MoEFusedV2TransformerConfig:
+) -> OLMoDDPModelConfig:
     return build_qwen3_moe_config(
         vocab_size=vocab_size,
         d_model=d_model,

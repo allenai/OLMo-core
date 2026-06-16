@@ -16,6 +16,7 @@ from .config import (
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
+    OLMoDDPModelConfig,
     MoEFusedV2TransformerConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerType,
@@ -45,5 +46,6 @@ __all__ = [
     "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingMode",
     "InitMethod",
+    "OLMoDDPModelConfig",
     "MoEFusedV2TransformerConfig",
 ]

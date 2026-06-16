@@ -18,7 +18,7 @@ from olmo_core.nn.moe.v2.routed_experts import ExpertActivation, RoutedExpertsCo
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.rope import RoPEConfig, RoPEType, YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerBlockType, TransformerType
-from olmo_core.nn.transformer.config import MoEFusedV2TransformerConfig
+from olmo_core.nn.transformer.config import OLMoDDPModelConfig
 
 
 GPT_OSS_SLIDING_ATTENTION = "sliding_attention"
@@ -173,7 +173,7 @@ def build_gpt_oss_20b_config(
     use_ep_no_sync: bool = False,
     use_rowwise_all_to_all: bool = False,
     ep_no_sync_capacity_factor: float = 1.25,
-) -> MoEFusedV2TransformerConfig:
+) -> OLMoDDPModelConfig:
     layer_types = _resolve_layer_types(layer_types, n_layers)
     unsupported = set(layer_types) - {GPT_OSS_SLIDING_ATTENTION, GPT_OSS_FULL_ATTENTION}
     if unsupported:
@@ -267,7 +267,7 @@ def build_gpt_oss_20b_config(
         block = blocks
         block_pattern = list(layer_types)
 
-    config = MoEFusedV2TransformerConfig(
+    config = OLMoDDPModelConfig(
         init_seed=init_seed,
         init_std=init_std,
         d_model=d_model,
@@ -290,7 +290,7 @@ def build_gpt_oss_20b_config(
 def build_gpt_oss_20b_config_from_hf_config(
     hf_config: Mapping[str, Any],
     **overrides: Any,
-) -> MoEFusedV2TransformerConfig:
+) -> OLMoDDPModelConfig:
     kwargs = get_gpt_oss_20b_config_overrides(hf_config)
     kwargs.update(overrides)
     return build_gpt_oss_20b_config(**kwargs)
@@ -307,7 +307,7 @@ def build_debug_gpt_oss_20b_config(
     dtype: DType = DType.bfloat16,
     attention_backend: AttentionBackendName = AttentionBackendName.torch,
     **kwargs: Any,
-) -> MoEFusedV2TransformerConfig:
+) -> OLMoDDPModelConfig:
     return build_gpt_oss_20b_config(
         vocab_size=vocab_size,
         d_model=d_model,

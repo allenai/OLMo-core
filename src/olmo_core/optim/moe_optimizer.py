@@ -219,7 +219,7 @@ def _is_fp8_only_expert_anchor_param(param: Any) -> bool:
 
 
 @dataclass
-class MoEFusedV2OptimizerConfig(Config): 
+class OLMoDDPOptimizerConfig(Config):
 
     group_overrides: Optional[List[OptimGroupOverride]] = None
     """
@@ -383,7 +383,7 @@ class MoEFusedV2OptimizerConfig(Config):
 
     @classmethod
     def optimizer(cls):
-        return MoEFusedV2Optimizer
+        return OLMoDDPOptimizer
 
 
     def _collect_ep_param_ids(self, model_parts: List[nn.Module]) -> Set[int]:
@@ -414,7 +414,7 @@ class MoEFusedV2OptimizerConfig(Config):
         train_module: "TrainModule",
         strict: bool = True,
         param_filter=None,
-    ) -> "MoEFusedV2Optimizer":
+    ) -> "OLMoDDPOptimizer":
         """
         Build the optimizer.
 
@@ -562,7 +562,7 @@ class _FlatModelParamSyncGroup:
 # FP8 cache refresh, and checkpoint serialization directly. Revisit the choice
 # if trainer/callback integration starts needing more of the torch optimizer
 # interface.
-class MoEFusedV2Optimizer:
+class OLMoDDPOptimizer:
     LOSSES_STATE_DICT_KEY = "__moe_skip_step_losses"
     GRAD_NORMS_STATE_DICT_KEY = "__moe_skip_step_grad_norms"
     ADAM_MOMENT_STATE_SUFFIXES = ("exp_avg", "exp_avg_sq")
@@ -2415,6 +2415,10 @@ class MoEFusedV2Optimizer:
 
     def _global_numel(self, tag: str) -> int:
         raise NotImplementedError()
+
+
+MoEFusedV2OptimizerConfig = OLMoDDPOptimizerConfig
+MoEFusedV2Optimizer = OLMoDDPOptimizer
 
 
 from typing import List, Optional

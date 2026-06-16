@@ -53,11 +53,11 @@ from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import Transformer
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
-from olmo_core.optim import OptimConfig, SkipStepOptimizer, MoEFusedV2OptimizerConfig
+from olmo_core.optim import OptimConfig, SkipStepOptimizer, OLMoDDPOptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 from typing import List, Optional, TypeVar, cast
-from olmo_core.nn.transformer import MoEFusedV2TransformerConfig, MoETransformer, Transformer
+from olmo_core.nn.transformer import OLMoDDPModelConfig, MoETransformer, Transformer
 from collections import OrderedDict
 from ...common import ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
@@ -139,7 +139,7 @@ class OLMoDDPTrainModule(TrainModule):
     def __init__(
         self,
         model: OLMoDDPModel,
-        optim: MoEFusedV2OptimizerConfig,
+        optim: OLMoDDPOptimizerConfig,
         rank_microbatch_size: int,
         max_sequence_length: int,
         compile_model: bool = False,
@@ -165,9 +165,9 @@ class OLMoDDPTrainModule(TrainModule):
     ):
         super().__init__()
         assert isinstance(model, OLMoDDPModel), "OLMoDDPTrainModule only supports OLMoDDPModel"
-        if not isinstance(model.config, MoEFusedV2TransformerConfig):
+        if not isinstance(model.config, OLMoDDPModelConfig):
             raise OLMoConfigurationError(
-                "OLMoDDPTrainModule requires a global MoEFusedV2TransformerConfig "
+                "OLMoDDPTrainModule requires a global OLMoDDPModelConfig "
                 "on model.config for FLOP accounting. Build the model from its config, or "
                 "attach the global config before constructing the train module."
             )
@@ -263,7 +263,7 @@ class OLMoDDPTrainModule(TrainModule):
         # Keep the global model config as the source of truth for FLOP accounting.
         # The local modules may be PP/EP/TP sharded, or may never have existed as
         # a full unsharded model in future init flows.
-        self._global_model_config = cast(MoEFusedV2TransformerConfig, model.config)
+        self._global_model_config = cast(OLMoDDPModelConfig, model.config)
 
         # Parallelize model.
         self.model_parts = self.parallelize_and_init_model(
@@ -311,9 +311,9 @@ class OLMoDDPTrainModule(TrainModule):
             # Build optimizer(s).
             log.info("Building optimizer...")
 
-            from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer, MoEFusedV2OptimizerConfig
-            assert isinstance(optim, MoEFusedV2OptimizerConfig)
-            optim = cast(MoEFusedV2OptimizerConfig, optim)
+            from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer, OLMoDDPOptimizerConfig
+            assert isinstance(optim, OLMoDDPOptimizerConfig)
+            optim = cast(OLMoDDPOptimizerConfig, optim)
             self.optim = optim.build(
                 self.model_parts, 
                 self, 
@@ -1443,7 +1443,7 @@ class OLMoDDPTrainModule(TrainModule):
             return
 
         # Record loss metrics.
-        from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
+        from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer
         optim = self._require_optimizer()
         with nvtx.annotate("record_metrics"):
             if self.pp_enabled:
@@ -1700,7 +1700,7 @@ class OLMoDDPTrainModule(TrainModule):
 
 
     def optim_step(self):
-        from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
+        from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer
         optim = self._require_optimizer()
 
         # dist.barrier()
@@ -1740,7 +1740,7 @@ class OLMoDDPTrainModule(TrainModule):
                 "total grad norm", total_grad_norm, reduce_type=None, namespace="optim"
             )
 
-        if isinstance(optim, MoEFusedV2Optimizer):
+        if isinstance(optim, OLMoDDPOptimizer):
             self.record_metric("step skipped", optim.step_skipped, namespace="optim")
 
         for model in self.model_parts:

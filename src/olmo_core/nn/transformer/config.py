@@ -497,7 +497,7 @@ class TransformerConfig(ModelConfig):
                 block_pattern=self.block_pattern,
             )
         elif self.name == TransformerType.moe_fused_v2:
-            raise RuntimeError("Use MoEFusedV2TransformerConfig")
+            raise RuntimeError("Use OLMoDDPModelConfig")
         else:
             raise NotImplementedError(self.name)
 
@@ -1926,7 +1926,7 @@ class TransformerConfig(ModelConfig):
 
 
 @dataclass
-class MoEFusedV2TransformerConfig(TransformerConfig):
+class OLMoDDPModelConfig(TransformerConfig):
 
     # Two-batch-overlap to overlap the compute and all2all communication when EP is enabled. Micro batch size needs to be a multiple of 2.
     two_batch_overlap: bool = False
@@ -2005,6 +2005,9 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
 
     def num_flops_per_token(self, seq_len: int) -> int:
         return super().num_flops_per_token(seq_len)
+
+
+MoEFusedV2TransformerConfig = OLMoDDPModelConfig
 
 
 def validate_block_resolution_config(

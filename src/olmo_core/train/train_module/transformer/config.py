@@ -413,7 +413,7 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
         if self.pp_config is None:
             raise OLMoConfigurationError("'pp_config' is required")
 
-from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
+from olmo_core.optim.moe_optimizer import OLMoDDPOptimizerConfig
 
 @dataclass
 class OLMoDDPTrainModuleConfig(TrainModuleConfig):
@@ -429,7 +429,7 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
 
     # Optimizer settings.
 
-    optim: MoEFusedV2OptimizerConfig
+    optim: OLMoDDPOptimizerConfig
     max_grad_norm: Optional[float] = None
     scheduler: Optional[Scheduler] = None
 
