@@ -73,6 +73,7 @@ __all__ = [
     "NormalizedAttention",
     "LandmarkAttention",
     "FastLandmarkAttention",
+    "FastCompressiveLandmarkAttention",
     "SparseLandmarkAttention",
     "RingAttentionLoadBalancerType",
     "RingAttentionLoadBalancer",
@@ -188,6 +189,12 @@ class AttentionType(StrEnum):
     ➡️ :class:`FastLandmarkAttention` (landmark attention with the optimized FA2-style kernel)
     """
 
+    fast_compressive_landmark = "fast_compressive_landmark"
+    """
+    ➡️ :class:`FastCompressiveLandmarkAttention` (fast landmark attention that also folds each
+    block's landmark token into the attention output -- a compressed summary of the block)
+    """
+
     sparse_landmark = "sparse_landmark"
     """
     ➡️ :class:`SparseLandmarkAttention` (sparse landmark-only-across-chunks attention)
@@ -251,6 +258,7 @@ class AttentionTypePatternConfig(Config):
 _LANDMARK_ATTENTION_TYPES = (
     AttentionType.landmark,
     AttentionType.fast_landmark,
+    AttentionType.fast_compressive_landmark,
     AttentionType.sparse_landmark,
 )
 
@@ -303,6 +311,12 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
     For :class:`SparseLandmarkAttention` (``name="sparse_landmark"``) only: number of landmark
     tokens per chunk (the last ``num_landmarks`` tokens of each chunk). Defaults to 1.
+    """
+    nonselected_landmark_mass: Optional[float] = None
+    """
+    For :class:`FastCompressiveLandmarkAttention` (``name="fast_compressive_landmark"``) only: the
+    fraction of attention mass reserved at top-k decode time for the landmark tokens of the
+    non-selected blocks. Defaults to 0.1. See :class:`FastCompressiveLandmarkAttention`.
     """
 
     def num_params(self, d_model: int) -> int:
@@ -427,6 +441,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         mem_freq = kwargs.pop("mem_freq", None)
         landmark_use_kernel = kwargs.pop("landmark_use_kernel", None)
         num_landmarks = kwargs.pop("num_landmarks", None)
+        nonselected_landmark_mass = kwargs.pop("nonselected_landmark_mass", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
                 "'mem_freq' is only supported with landmark attention variants "
@@ -441,6 +456,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             raise OLMoConfigurationError(
                 "'num_landmarks' is only supported with sparse_landmark attention "
                 f"(got name='{self.name}')"
+            )
+        if (
+            nonselected_landmark_mass is not None
+            and AttentionType.fast_compressive_landmark not in possible_types
+        ):
+            raise OLMoConfigurationError(
+                "'nonselected_landmark_mass' is only supported with fast_compressive_landmark "
+                f"attention (got name='{self.name}')"
             )
 
         try:
@@ -471,6 +494,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                         "fast_landmark attention requires 'mem_freq' to be set"
                     )
                 return FastLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "fast_compressive_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "fast_compressive_landmark attention requires 'mem_freq' to be set"
+                    )
+                if nonselected_landmark_mass is not None:
+                    kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
+                return FastCompressiveLandmarkAttention(mem_freq=mem_freq, **kwargs)
             elif effective_name == "sparse_landmark":
                 if mem_freq is None:
                     raise OLMoConfigurationError(
@@ -1657,5 +1688,6 @@ class FusedAttention(SequenceMixer):
 # New landmark-attention sequence mixers. These live in their own modules and subclass ``Attention``
 # (defined above), so they are imported at the end of this package to avoid a circular import; the
 # ``AttentionConfig.build`` branches above reference them by name at call time.
+from .landmark_compressive import FastCompressiveLandmarkAttention  # noqa: E402
 from .landmark_fast import FastLandmarkAttention  # noqa: E402
 from .landmark_sparse import SparseLandmarkAttention  # noqa: E402

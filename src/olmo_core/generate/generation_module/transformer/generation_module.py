@@ -35,6 +35,7 @@ from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import (
     Attention,
     AttentionBackendName,
+    FastCompressiveLandmarkAttention,
     FastLandmarkAttention,
     SparseLandmarkAttention,
 )
@@ -188,9 +189,23 @@ class TransformerGenerationModule(GenerationModule):
                 layers.append(cast(Attention, attn))
         return layers
 
-    def _set_landmark_eval_decode(self, prompt_len: int, mode: str, top_k: Optional[int] = None):
+    def _set_landmark_eval_decode(
+        self,
+        prompt_len: int,
+        mode: str,
+        top_k: Optional[int] = None,
+        nonselected_landmark_mass: Optional[float] = None,
+    ):
         for attn in self._landmark_attention_layers():
-            attn.set_landmark_eval_decode(prompt_len, mode, top_k=top_k)  # type: ignore[attr-defined]
+            if isinstance(attn, FastCompressiveLandmarkAttention):
+                attn.set_landmark_eval_decode(
+                    prompt_len,
+                    mode,
+                    top_k=top_k,
+                    nonselected_landmark_mass=nonselected_landmark_mass,
+                )
+            else:
+                attn.set_landmark_eval_decode(prompt_len, mode, top_k=top_k)  # type: ignore[attr-defined]
 
     def _clear_landmark_eval_decode(self):
         for attn in self._landmark_attention_layers():
@@ -295,6 +310,7 @@ class TransformerGenerationModule(GenerationModule):
                 prompt_len,
                 generation_config.landmark_decode_mode,
                 top_k=generation_config.landmark_top_k_blocks,
+                nonselected_landmark_mass=generation_config.landmark_nonselected_mass,
             )
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         stop_tokens = (

@@ -84,6 +84,15 @@ class GenerationConfig(Config):
     unaffected (it remains single-shot dense over the full prompt).
     """
 
+    landmark_nonselected_mass: Optional[float] = None
+    """
+    For :class:`~olmo_core.nn.attention.FastCompressiveLandmarkAttention` models with top-k decode
+    (``landmark_top_k_blocks`` set) only: the fraction of attention mass reserved for the landmark
+    tokens of the non-selected blocks (split among them by a softmax over their landmark scores).
+    ``None`` uses the value baked into the attention module (default 0.1). Ignored by other models
+    and when top-k retrieval is disabled.
+    """
+
     def __post_init__(self):
         self.validate()
 
@@ -115,4 +124,11 @@ class GenerationConfig(Config):
         if self.landmark_top_k_blocks is not None and self.landmark_top_k_blocks < 1:
             raise ValueError(
                 f"landmark_top_k_blocks must be >= 1 or None, got {self.landmark_top_k_blocks}"
+            )
+        if self.landmark_nonselected_mass is not None and not (
+            0.0 <= self.landmark_nonselected_mass < 1.0
+        ):
+            raise ValueError(
+                "landmark_nonselected_mass must be in [0, 1) or None, "
+                f"got {self.landmark_nonselected_mass}"
             )

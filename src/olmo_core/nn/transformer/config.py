@@ -1639,6 +1639,8 @@ class TransformerConfig(ModelConfig):
         mem_freq: Optional[int] = None,
         landmark_use_kernel: bool = False,
         fast_landmark: bool = False,
+        fast_compressive_landmark: bool = False,
+        nonselected_landmark_mass: Optional[float] = None,
         sparse_landmark: bool = False,
         num_landmarks: Optional[int] = None,
         layer_types: Optional[AttentionTypePatternConfig] = None,
@@ -1692,21 +1694,33 @@ class TransformerConfig(ModelConfig):
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
 
-        if sum([landmark, fast_landmark, sparse_landmark]) > 1:
+        if sum([landmark, fast_landmark, fast_compressive_landmark, sparse_landmark]) > 1:
             raise OLMoConfigurationError(
-                "Only one of 'landmark', 'fast_landmark', 'sparse_landmark' may be set."
+                "Only one of 'landmark', 'fast_landmark', 'fast_compressive_landmark', "
+                "'sparse_landmark' may be set."
             )
 
-        uses_uniform_landmark = landmark or fast_landmark or sparse_landmark
+        uses_uniform_landmark = (
+            landmark or fast_landmark or fast_compressive_landmark or sparse_landmark
+        )
         pattern_landmark_types = layer_types.landmark_types() if layer_types is not None else set()
         pattern_has_plain_landmark = AttentionType.landmark in pattern_landmark_types
         pattern_has_sparse_landmark = AttentionType.sparse_landmark in pattern_landmark_types
+        pattern_has_compressive_landmark = (
+            AttentionType.fast_compressive_landmark in pattern_landmark_types
+        )
+        uses_compressive_landmark = fast_compressive_landmark or pattern_has_compressive_landmark
+        if nonselected_landmark_mass is not None and not uses_compressive_landmark:
+            raise OLMoConfigurationError(
+                "'nonselected_landmark_mass' is only valid with fast_compressive_landmark attention."
+            )
 
         if layer_types is not None:
             if uses_uniform_landmark:
                 raise OLMoConfigurationError(
                     "'layer_types' selects the attention type per layer and cannot be combined "
-                    "with the uniform 'landmark' / 'fast_landmark' / 'sparse_landmark' flags."
+                    "with the uniform 'landmark' / 'fast_landmark' / 'fast_compressive_landmark' / "
+                    "'sparse_landmark' flags."
                 )
             if pattern_landmark_types and mem_freq is None:
                 raise OLMoConfigurationError(
@@ -1738,6 +1752,8 @@ class TransformerConfig(ModelConfig):
                 if landmark
                 else AttentionType.fast_landmark
                 if fast_landmark
+                else AttentionType.fast_compressive_landmark
+                if fast_compressive_landmark
                 else AttentionType.sparse_landmark
             )
             if num_landmarks is not None and not sparse_landmark:
@@ -1788,6 +1804,9 @@ class TransformerConfig(ModelConfig):
                 ),
                 num_landmarks=(
                     num_landmarks if (sparse_landmark or pattern_has_sparse_landmark) else None
+                ),
+                nonselected_landmark_mass=(
+                    nonselected_landmark_mass if uses_compressive_landmark else None
                 ),
                 dtype=dtype,
             ),
@@ -2052,12 +2071,19 @@ class TransformerConfig(ModelConfig):
             apply_scaling(new_config.block)
             return new_config
 
-        # Add rope scaling only to layers that do not use sliding window attention
-        # We supply "block_overrides" for the layers we want to scale.
+        # Add rope scaling only to layers that use full attention (no sliding window and no
+        # non-default attention type from the layer_types pattern). We supply "block_overrides"
+        # for the layers we want to scale.
         overrides: Dict[int, TransformerBlockConfig] = {}
         for i in range(new_config.n_layers):
             sliding_window_cfg = new_config.block.sequence_mixer.sliding_window
             if sliding_window_cfg and sliding_window_cfg.should_use_swa(i, new_config.n_layers):
+                continue
+            layer_types_cfg = new_config.block.sequence_mixer.layer_types
+            if (
+                layer_types_cfg is not None
+                and layer_types_cfg.get_type(i, new_config.n_layers) != AttentionType.default
+            ):
                 continue
             block_copy = new_config.block.copy()
             apply_scaling(block_copy)
