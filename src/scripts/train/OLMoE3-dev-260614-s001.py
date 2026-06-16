@@ -56,7 +56,9 @@ from olmo_core.nn.moe import (
     MoERouterGatingFunction,
     MoEType,
 )
-from olmo_core.nn.moe.v2.block import SharedExpertsConfig, RoutedExpertsConfig, MoERouterConfigV2
+from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
+from olmo_core.nn.moe.v2.router import MoERouterConfigV2
+from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from typing import cast
 from olmo_core.train.callbacks import WandBCallback
 
@@ -75,11 +77,17 @@ from olmo_core.data import (
 )
 from olmo_core.nn.transformer import (
     TransformerBlockType,
-    TransformerConfig,
     TransformerType,
-    MoEFusedV2TransformerConfig,
+    OLMoDDPModelConfig,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig
+from olmo_core.optim import (
+    AdamWConfig,
+    OLMoDDPOptimizerConfig,
+    OptimGroupOverride,
+    SchedulerUnits,
+    SkipStepAdamWConfig,
+    WSD,
+)
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
     ComposableSchedulerMonkeyPatchDecay,
@@ -102,11 +110,10 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerExpertParallelConfig,
-    MoEV2TransformerTrainModuleConfig
+    OLMoDDPTrainModuleConfig
 )
 from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
 from dataclasses import replace
-from olmo_core.train.train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -130,7 +137,7 @@ torch.set_float32_matmul_precision('high')
 
 IN_EVAL_MODE = False
 import sys
-if sys.argv[1] == "eval_checkpoints":
+if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
     IN_EVAL_MODE = True
 
 
@@ -255,12 +262,9 @@ from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig
 
-# from olmo_core.nn.moe.v2.block import LayerNormConfigV2
-def build_model_config(common: CommonComponents) -> TransformerConfig:
+def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
-    from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
-    from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
     from olmo_core.nn.attention.backend import AttentionBackendName
     
     d_model = D_MODEL
@@ -272,7 +276,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         bias=False,
         dtype=dtype,
     )
-    config = MoEFusedV2TransformerConfig(
+    config = OLMoDDPModelConfig(
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
@@ -440,13 +444,12 @@ MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_B
 MONKEY_PATCH_DECAY_END_FRACTION = SCHED_FINAL_FRACTION
 MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine
 
-def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
-    from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
-    return MoEV2TransformerTrainModuleConfig(
+def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleConfig:
+    return OLMoDDPTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.max_sequence_length,
         # reset_optimizer_states_on_load=True, # TODO: only on first load step0,
-        optim=MoEFusedV2OptimizerConfig(
+        optim=OLMoDDPOptimizerConfig(
             lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
