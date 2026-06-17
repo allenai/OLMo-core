@@ -173,7 +173,7 @@ launch_variant() {
       launch_if_enabled "${total_sparsity}" "${sp_tag}" 8 b768k 96 8 4 7e-4 lr7e-4
       ;;
     sp192e4k)
-      launch_if_enabled "${total_sparsity}" "${sp_tag}" 1 b256k 32 4 8 8e-4 lr8e-4
+      launch_if_enabled "${total_sparsity}" "${sp_tag}" 1 b256k 32 4 4 8e-4 lr8e-4
       launch_if_enabled "${total_sparsity}" "${sp_tag}" 2 b384k 48 4 4 6e-4 lr6e-4
       launch_if_enabled "${total_sparsity}" "${sp_tag}" 4 b512k 64 4 4 6e-4 lr6e-4
       launch_if_enabled "${total_sparsity}" "${sp_tag}" 8 b768k 96 8 4 6e-4 lr6e-4
