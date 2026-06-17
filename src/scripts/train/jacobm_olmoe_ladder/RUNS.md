@@ -1099,3 +1099,42 @@ settings are only in tags/config.
 | Name | Model | LR | Batch tokens | Batch seqs | Nodes | GPUs / node | EP | Microbatch | Beaker experiment | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
 | `olmoe3-moe-a0-1p2b-cx2-b384k-lr2.4e-3-r1` | `1p2b` | 2.4e-3 | 393,216 | 48 | 2 | 8 | 1 | 3 | https://beaker.org/ex/01KV9X79WWBY9JYS3WWAS8M1SW | Titan/original workspace, compile-on, urgent priority. `48 / (2 nodes * 8 GPUs * mb3) = 1`, so the repaired Cx2 optimizer batch is legal. Factor-2 hot-side extension above `lr1.2e-3`. |
+
+
+## 2026-06-17 Follow-Up Status Check and Plot Refresh
+
+Status check again scoped to tracker rows that were open or ambiguous, plus recent
+Qwen 480M promoted rows and the new 1.2B Cx2 hot-side baseline run.
+
+Queried 111 candidate open/ambiguous Beaker experiments:
+
+- 83 finalized
+- 27 canceled
+- 1 still running
+
+Still running:
+
+| Name | Beaker | Started | Notes |
+| --- | --- | --- | --- |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr2.4e-3-r1` | https://beaker.org/ex/01KV9X79WWBY9JYS3WWAS8M1SW | 2026-06-17 04:29 UTC | 2-node Titan hot-side baseline extension. |
+
+New status changes since the previous check:
+
+| Name | Beaker | State | Time | Notes |
+| --- | --- | --- | --- | --- |
+| `q3-480m-cx8-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8ZS3CB95G6BK2DPSX90X6F | finalized | 2026-06-17 13:07 UTC | True-3D 480M Cx8 promoted point. |
+| `q3-480m-cx8-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XR424AH5NFFTM5EQ43EGN | finalized | 2026-06-17 09:53 UTC | Active-matched 480M Cx8 promoted point. |
+| `q3-480m-cx2-q3td128e8k-lr9e-4-r1` | https://beaker.org/ex/01KV8XRWC6XC3ZWWM2M61QBRKF | finalized | 2026-06-17 04:08 UTC | True-3D 480M Cx2 promoted point. |
+| `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | canceled | 2026-06-17 07:36 UTC | True-3D 480M Cx4 promoted point; not a completed data point. |
+| `q3-480m-cx4-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XQRFM73CADTDCZ051HN89 | canceled | 2026-06-17 07:36 UTC | Active-matched 480M Cx4 promoted point; not a completed data point. |
+
+Plot refresh completed with stale-cache refresh only. Changed/generated plot files:
+
+- `plots/qwen3_like/480m_cx2_uplot.png`
+- `plots/qwen3_like/480m_cx4_uplot.png`
+- `plots/qwen3_like/480m_cx8_uplot.png`
+- `plots/qwen3_like/summary_observed_best.png`
+- `plots/shared_expert/810m_cx8_uplot.png`
+- `plots/shared_expert/summary_observed_best.png`
+
+No additional jobs were launched during this status check.
