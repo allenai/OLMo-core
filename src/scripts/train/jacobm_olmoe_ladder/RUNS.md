@@ -653,6 +653,26 @@ tracked compatibility entrypoint from commit `fabfbc7`.
 | `sp-275m-cx8-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 8 | 1.6e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B7SVC1SEGHT2SQ9F0N9MF | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; centered on the 275M Cx8 baseline-best LR. Pending at 2026-06-14 status check. |
 | `sp-275m-cx8-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 8 | 3.2e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B858VQ1W3CS7W9TYHAW0K | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; high LR bracket around the 275M Cx8 baseline-best center. Pending at 2026-06-14 status check. |
 
+480M promoted sparsity points queued on 2026-06-17:
+
+These use the smoothed LR-transfer rule from the completed 275M sparsity fits:
+estimate the sparsity multiplier from fitted 275M optima, anchor it to the
+trusted/best-observed 480M baseline LR for each Cx, and round to clean launch
+LRs. Launched on Titan/original workspace with torch compilation enabled via
+`--compile`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-480m-cx1-sp96e4k-lr1e-3-r1` | `high_total_96e_top4` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KVBBJ4G374KH0N4CBT9NTVGC | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+| `sp-480m-cx2-sp96e4k-lr8e-4-r1` | `high_total_96e_top4` | 2 | 8e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KVBBJFM780945FPFQNMY2GXW | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+| `sp-480m-cx4-sp96e4k-lr7e-4-r1` | `high_total_96e_top4` | 4 | 7e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KVBBJW1K1STV1DJAS2G3F6NF | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+| `sp-480m-cx8-sp96e4k-lr7e-4-r1` | `high_total_96e_top4` | 8 | 7e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVBBK7C63XDYRTQX7G8Z0X1Z | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+| `sp-480m-cx1-sp192e4k-lr8e-4-r1` | `huge_total_192e_top4` | 1 | 8e-4 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KVBBKK4RH7KV0M5A55FDD160 | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+| `sp-480m-cx2-sp192e4k-lr6e-4-r1` | `huge_total_192e_top4` | 2 | 6e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KVBBKZ0S4CV16WZ7XSCK2SEW | Promoted 480M single point; uses smoothed LR shift rather than overreacting to the unusually cold 275M Cx2 fit. |
+| `sp-480m-cx4-sp192e4k-lr6e-4-r1` | `huge_total_192e_top4` | 4 | 6e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KVBBMATGRB22ZHSJ49A3GYH2 | Failed on 2026-06-17 during dry-run backward with CUDA OOM at `mb8`; replaced by `r2` with `mb4`. |
+| `sp-480m-cx4-sp192e4k-lr6e-4-r2` | `huge_total_192e_top4` | 4 | 6e-4 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KVBC1XJ7GNVVA4XE2JHB6QGS | Replacement for OOMed `r1`; same LR/global batch, lower per-GPU microbatch so grad accumulation is `64 / (4 GPUs * mb4) = 4`. |
+| `sp-480m-cx8-sp192e4k-lr6e-4-r1` | `huge_total_192e_top4` | 8 | 6e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVBBMQ9C8DEGWQXVQVMWJWAE | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+
 275M shared-expert no-shared matched-active LR checks queued on 2026-06-14:
 
 These are the first shared-expert ablation probes. They use
@@ -1108,8 +1128,8 @@ Qwen 480M promoted rows and the new 1.2B Cx2 hot-side baseline run.
 
 Queried 111 candidate open/ambiguous Beaker experiments:
 
-- 83 finalized
-- 27 canceled
+- 85 finalized
+- 25 canceled
 - 1 still running
 
 Still running:
@@ -1125,8 +1145,8 @@ New status changes since the previous check:
 | `q3-480m-cx8-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8ZS3CB95G6BK2DPSX90X6F | finalized | 2026-06-17 13:07 UTC | True-3D 480M Cx8 promoted point. |
 | `q3-480m-cx8-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XR424AH5NFFTM5EQ43EGN | finalized | 2026-06-17 09:53 UTC | Active-matched 480M Cx8 promoted point. |
 | `q3-480m-cx2-q3td128e8k-lr9e-4-r1` | https://beaker.org/ex/01KV8XRWC6XC3ZWWM2M61QBRKF | finalized | 2026-06-17 04:08 UTC | True-3D 480M Cx2 promoted point. |
-| `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | canceled | 2026-06-17 07:36 UTC | True-3D 480M Cx4 promoted point; not a completed data point. |
-| `q3-480m-cx4-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XQRFM73CADTDCZ051HN89 | canceled | 2026-06-17 07:36 UTC | Active-matched 480M Cx4 promoted point; not a completed data point. |
+| `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | finalized | 2026-06-17 09:38 UTC | True-3D 480M Cx4 promoted point. Earlier low-priority attempt was preempted at 07:36 UTC; auto-resume completed successfully. W&B run `umqcq7bm`. |
+| `q3-480m-cx4-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XQRFM73CADTDCZ051HN89 | finalized | 2026-06-17 10:23 UTC | Active-matched 480M Cx4 promoted point. Earlier low-priority attempts were preempted at 07:36 and 08:15 UTC; auto-resume completed successfully. W&B run `v7vgfj0v`. |
 
 Plot refresh completed with stale-cache refresh only. Changed/generated plot files:
 
