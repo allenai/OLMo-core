@@ -331,12 +331,20 @@ def combined_forward_ep_no_sync_rowwise(
     ).int()
 
     with torch.no_grad():
+        batch_size_per_local_expert = recv_splits_by_src_local.sum(dim=0, dtype=torch.long)
         padded_batch_size_per_local_expert = padded_local_expert_splits_for_capacity(
             recv_splits_by_src_local,
             rank_capacity=rank_capacity,
         )
+        # FP8 dispatch buffers are capacity-sized, but grouped FP8 expert
+        # compute/wgrad must not include unwritten capacity tail rows.
+        expert_batch_size_per_local_expert = (
+            batch_size_per_local_expert
+            if use_rowwise_fp8
+            else padded_batch_size_per_local_expert
+        )
         routed_expert_offsets = torch.cumsum(
-            padded_batch_size_per_local_expert.to(dtype=torch.int32),
+            expert_batch_size_per_local_expert.to(dtype=torch.int32),
             dim=0,
             dtype=torch.int32,
         )
@@ -475,7 +483,7 @@ def combined_forward_ep_no_sync_rowwise(
             self._debug_rowwise_dst_rows = dst_rows.detach()
         dispatch_rank_major = self.routed_experts(
             dispatch_rank_major,
-            padded_batch_size_per_local_expert,
+            expert_batch_size_per_local_expert,
             down_proj_out=(None if use_rowwise_fp8 else buffers.combine_in.detach()),  # type: ignore[union-attr]
             up_proj_input_grad_out=(None if use_rowwise_fp8 else buffers.dispatch_out.detach()),  # type: ignore[union-attr]
             use_rowwise_fp8=use_rowwise_fp8,

@@ -797,19 +797,23 @@ class OLMoDDPTrainModule(TrainModule):
         return max(1, min(full_num_microbatches, requested))
 
     def _pp_dry_run_mode(self) -> str:
-        raw_value = os.getenv("OLMO_PP_DRY_RUN_MODE", "full")
+        raw_value = os.getenv("OLMO_PP_DRY_RUN_MODE", "independent")
         normalized = raw_value.strip().lower().replace("-", "_")
-        if normalized in {"", "full", "legacy", "full_pp"}:
+        if normalized in {"", "independent", "local", "stage", "stage_local", "accelerated", "hybrid"}:
+            return "independent"
+        if normalized in {"full", "legacy", "full_pp", "true_pp"}:
             return "full"
-        if normalized in {"true_pp", "reduced", "reduced_pp"}:
-            return "true_pp"
-        if normalized in {"independent", "local", "stage", "stage_local"}:
-            raise OLMoConfigurationError(
-                "OLMO_PP_DRY_RUN_MODE=independent is disabled because it has shown "
-                "first-step gradient instability under PP. Use 'full' or 'true_pp'."
-            )
+        if normalized in {
+            "reduced",
+            "reduced_pp",
+            "reduced_true_pp",
+            "debug_reduced",
+            "debug_reduced_pp",
+        }:
+            return "reduced_true_pp"
         raise OLMoConfigurationError(
-            "OLMO_PP_DRY_RUN_MODE must be one of: full or true_pp"
+            "OLMO_PP_DRY_RUN_MODE must be one of: independent, full/true_pp, "
+            "or reduced_true_pp"
         )
 
     def _pp_full_num_microbatches(self) -> int:
@@ -892,11 +896,31 @@ class OLMoDDPTrainModule(TrainModule):
         if callable(clear_step_info):
             clear_step_info()
 
+    def _split_pp_dry_run_model_kwargs(
+        self,
+        kwargs: Dict[str, Any],
+        *,
+        original_batch_size: int,
+        micro_batch_size: int,
+        num_microbatches: int,
+    ) -> List[Dict[str, Any]]:
+        kwargs_mbs = [{} for _ in range(num_microbatches)]
+        for key, value in kwargs.items():
+            if isinstance(value, torch.Tensor) and value.size(0) == original_batch_size:
+                for mb_idx in range(num_microbatches):
+                    start = mb_idx * micro_batch_size
+                    end = start + micro_batch_size
+                    kwargs_mbs[mb_idx][key] = value[start:end].contiguous()
+            else:
+                for kwargs_mb in kwargs_mbs:
+                    kwargs_mb[key] = value
+        return kwargs_mbs
+
     def _run_independent_pp_dry_run(
         self,
         input_ids: torch.Tensor,
         labels: torch.Tensor,
-        batch_num_tokens_for_loss: Union[int, float],
+        batch_num_tokens_for_loss: Union[torch.Tensor, int, float],
         **kwargs,
     ) -> None:
         assert self.pp_enabled
@@ -917,70 +941,115 @@ class OLMoDDPTrainModule(TrainModule):
                 "Cannot run independent PP dry-run with empty pipeline microbatches"
             )
 
-        input_ids_mb = input_ids[:micro_batch_size].contiguous()
-        labels_mb = labels[:micro_batch_size].contiguous()
-        kwargs_mb = {
-            key: self._slice_pp_batch_dim(value, original_batch_size, micro_batch_size)
-            for key, value in kwargs.items()
-        }
-
         supported_model_kwargs = {"cp_already_sharded", "cp_original_seq_len"}
-        unexpected_model_kwargs = set(kwargs_mb) - supported_model_kwargs
+        unexpected_model_kwargs = set(kwargs) - supported_model_kwargs
         if unexpected_model_kwargs:
             raise OLMoConfigurationError(
                 "Independent PP dry-run only supports the same model kwargs as the PP "
                 f"schedule splitter, got unsupported keys: {sorted(unexpected_model_kwargs)}"
             )
 
-        stage_kwargs = {
-            **kwargs_mb,
-            "labels": labels_mb,
-            "ignore_index": self.label_ignore_index,
-            "loss_reduction": "sum",
-            "z_loss_multiplier": self.z_loss_multiplier,
-            "loss_div_factor": batch_num_tokens_for_loss,
-            "return_logits": False,
-        }
+        input_id_mbs = [
+            input_ids[start:start + micro_batch_size].contiguous()
+            for start in range(0, original_batch_size, micro_batch_size)
+        ]
+        label_mbs = [
+            labels[start:start + micro_batch_size].contiguous()
+            for start in range(0, original_batch_size, micro_batch_size)
+        ]
+        kwargs_mbs = self._split_pp_dry_run_model_kwargs(
+            kwargs,
+            original_batch_size=original_batch_size,
+            micro_batch_size=micro_batch_size,
+            num_microbatches=full_num_microbatches,
+        )
 
         log.info(
             "Running independent PP dry-run on %d local stage(s) "
-            "(full microbatches=%d, dry-run microbatch batch size=%d, seqlen=%d)",
+            "(microbatches=%d, per-microbatch batch size=%d, seqlen=%d)",
             len(self._pp_stages),
             full_num_microbatches,
             micro_batch_size,
-            input_ids_mb.size(1),
+            input_ids.size(1),
         )
 
         with self._model_forward_context():
-            for stage in self._pp_stages:
+            for stage_idx, stage in enumerate(self._pp_stages):
+                self._print_dry_run_stage_progress(
+                    stage_idx,
+                    len(self._pp_stages),
+                    mode="PP independent",
+                    global_stage_idx=stage.stage_index,
+                )
                 self._clear_pp_stage_dry_run_runtime(stage)
                 stage.prepare_step(
-                    global_batch_size=micro_batch_size,
+                    global_batch_size=original_batch_size,
                     micro_batch_size=micro_batch_size,
-                    seqlen=input_ids_mb.size(1),
+                    seqlen=input_ids.size(1),
                 )
 
-                if stage.is_first:
-                    args_mb = (input_ids_mb,)
-                else:
-                    stage.received_activations[0] = torch.randn(
-                        (
-                            micro_batch_size,
-                            input_ids_mb.size(1),
-                            stage.d_model,
-                        ),
-                        device=stage.device,
-                        dtype=stage.p2p_dtype,
-                    )
-                    args_mb = ()
-
                 try:
+                    args_mb = (input_id_mbs[0],) if stage.is_first else ()
+                    stage_kwargs = {
+                        **kwargs_mbs[0],
+                        "labels": label_mbs[0],
+                        "ignore_index": self.label_ignore_index,
+                        "loss_reduction": "sum",
+                        "z_loss_multiplier": self.z_loss_multiplier,
+                        "loss_div_factor": batch_num_tokens_for_loss,
+                        "return_logits": False,
+                    }
                     stage._prepare_forward_backward_meta(1, args_mb, stage_kwargs)
-                    stage.forward_one_chunk(0, args_mb, stage_kwargs, last_forward=True)
-                    if not stage.is_last:
-                        stage_output = stage.fwd_cache[0][1]
-                        stage.received_grads[0] = torch.ones_like(stage_output)
-                    stage.backward_one_chunk(0, last_backward=True)
+
+                    for mb_idx in range(full_num_microbatches):
+                        self._print_dry_run_microbatch_progress(
+                            mb_idx,
+                            full_num_microbatches,
+                            mode=f"PP independent stage {stage.stage_index}",
+                        )
+                        if stage.is_first:
+                            args_mb = (input_id_mbs[mb_idx],)
+                        else:
+                            stage.received_activations[mb_idx] = torch.randn(
+                                (
+                                    micro_batch_size,
+                                    input_ids.size(1),
+                                    stage.d_model,
+                                ),
+                                device=stage.device,
+                                dtype=stage.p2p_dtype,
+                            )
+                            args_mb = ()
+
+                        stage_kwargs = {
+                            **kwargs_mbs[mb_idx],
+                            "labels": label_mbs[mb_idx],
+                            "ignore_index": self.label_ignore_index,
+                            "loss_reduction": "sum",
+                            "z_loss_multiplier": self.z_loss_multiplier,
+                            "loss_div_factor": batch_num_tokens_for_loss,
+                            "return_logits": False,
+                        }
+                        is_last_microbatch = mb_idx == full_num_microbatches - 1
+                        stage.forward_one_chunk(
+                            mb_idx,
+                            args_mb,
+                            stage_kwargs,
+                            last_forward=is_last_microbatch,
+                        )
+                        if not stage.is_last:
+                            stage_output = stage.fwd_cache[mb_idx][1]
+                            if isinstance(batch_num_tokens_for_loss, torch.Tensor):
+                                grad_scale = batch_num_tokens_for_loss.detach().float().reciprocal()
+                            else:
+                                grad_scale = 1.0 / max(float(batch_num_tokens_for_loss), 1.0)
+                            stage.received_grads[mb_idx] = torch.ones_like(
+                                stage_output
+                            ).mul_(grad_scale)
+                        stage.backward_one_chunk(
+                            mb_idx,
+                            last_backward=is_last_microbatch,
+                        )
                 finally:
                     self._clear_pp_stage_dry_run_runtime(stage)
 
@@ -1127,8 +1196,22 @@ class OLMoDDPTrainModule(TrainModule):
                 ):
                     if optional_key not in checkpoint_keys:
                         sd_to_load.pop(optional_key, None)
-                    elif isinstance(metadata.state_dict_metadata[optional_key], BytesStorageMetadata):
+                        continue
+
+                    optional_meta = metadata.state_dict_metadata[optional_key]
+                    if isinstance(optional_meta, BytesStorageMetadata):
                         sd_to_load[optional_key] = []
+                    elif isinstance(optional_meta, TensorStorageMetadata):
+                        current_value = sd_to_load.get(optional_key)
+                        if (
+                            not isinstance(current_value, torch.Tensor)
+                            or tuple(current_value.shape) != tuple(optional_meta.size)
+                        ):
+                            sd_to_load[optional_key] = torch.empty(
+                                tuple(optional_meta.size),
+                                dtype=optional_meta.properties.dtype,
+                                device=optim.device,
+                            )
 
                 if reset_optimizer_moments_on_load:
                     log.info("Resetting optimizer exp_avg and exp_avg_sq buffers during checkpoint load")
@@ -1283,6 +1366,25 @@ class OLMoDDPTrainModule(TrainModule):
                 flush=True,
             )
 
+    def _print_dry_run_stage_progress(
+        self,
+        stage_idx: int,
+        num_stages: int,
+        *,
+        mode: str,
+        global_stage_idx: Optional[int] = None,
+    ) -> None:
+        if get_rank() == 0:
+            elapsed, total = self._dry_run_progress_timing()
+            stage_desc = f"{stage_idx + 1}/{num_stages}"
+            if global_stage_idx is not None:
+                stage_desc = f"{stage_desc} (global stage {global_stage_idx})"
+            print(
+                f"[dry-run] {mode} stage {stage_desc} "
+                f"(+{elapsed:.2f}s since last log, {total:.2f}s total)",
+                flush=True,
+            )
+
     def _print_dry_run_progress_complete(self, *, mode: str) -> None:
         if get_rank() == 0:
             elapsed, total = self._dry_run_progress_timing()
@@ -1404,15 +1506,12 @@ class OLMoDDPTrainModule(TrainModule):
             # Run pipeline schedule.
             input_ids, labels, model_kwargs = self._prepare_batch(batch, batch['labels'])
             assert labels is not None
-            dry_run_mode = self._pp_dry_run_mode() if dry_run else "true_pp"
+            dry_run_mode = self._pp_dry_run_mode() if dry_run else "full"
+            dry_run_complete_mode = "PP"
             dry_run_num_microbatches = None
-            if dry_run and dry_run_mode == "true_pp":
-                input_ids, labels, model_kwargs, dry_run_num_microbatches = (
-                    self._maybe_reduce_pp_dry_run_batch(input_ids, labels, model_kwargs)
-                )
 
             # Calculate how many tokens are going to be used in the loss.
-            batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum().item()
+            batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum()
 
             if instance_mask is not None and not dry_run:
 
@@ -1422,9 +1521,43 @@ class OLMoDDPTrainModule(TrainModule):
                 # to do this properly in a distributed setup. We add back in the full number of tokens
                 # for the loss so that each rank contributes to the loss calculation fairly.
                 batch_num_tokens_for_loss += (~instance_mask).sum() * (batch["labels"].shape[1] - 1) # shifted labels does not count last token
-            
-            if batch_num_tokens_for_loss == 0:
+
+            if batch_num_tokens_for_loss.item() == 0:
                 print(f'[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0')
+
+            batch_num_tokens_for_loss = move_to_device(batch_num_tokens_for_loss, self.device)
+            if is_distributed():
+                global_batch_num_tokens_for_loss = batch_num_tokens_for_loss.clone()
+                dist.all_reduce(global_batch_num_tokens_for_loss, group=self.dp_process_group)
+                batch_num_tokens_for_loss = global_batch_num_tokens_for_loss.clamp_min(1)
+                batch_num_tokens_for_loss = batch_num_tokens_for_loss / get_world_size(
+                    self.dp_process_group
+                )
+            else:
+                batch_num_tokens_for_loss = batch_num_tokens_for_loss.clamp_min(1)
+
+            if dry_run and dry_run_mode == "reduced_true_pp":
+                input_ids, labels, model_kwargs, dry_run_num_microbatches = (
+                    self._maybe_reduce_pp_dry_run_batch(input_ids, labels, model_kwargs)
+                )
+                batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum()
+                if batch_num_tokens_for_loss.item() == 0:
+                    print(f'[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0')
+                batch_num_tokens_for_loss = move_to_device(batch_num_tokens_for_loss, self.device)
+                if is_distributed():
+                    global_batch_num_tokens_for_loss = batch_num_tokens_for_loss.clone()
+                    dist.all_reduce(global_batch_num_tokens_for_loss, group=self.dp_process_group)
+                    batch_num_tokens_for_loss = global_batch_num_tokens_for_loss.clamp_min(1)
+                    batch_num_tokens_for_loss = batch_num_tokens_for_loss / get_world_size(
+                        self.dp_process_group
+                    )
+                else:
+                    batch_num_tokens_for_loss = batch_num_tokens_for_loss.clamp_min(1)
+                dry_run_complete_mode = "PP reduced true"
+            elif dry_run and dry_run_mode == "independent":
+                dry_run_complete_mode = "PP independent"
+            elif dry_run and dry_run_mode == "full":
+                dry_run_complete_mode = "PP full"
 
             input_ids, labels, model_kwargs = self._prepare_pipeline_context_parallel_batch(
                 input_ids,
@@ -1435,7 +1568,6 @@ class OLMoDDPTrainModule(TrainModule):
             ce_batch_loss = None
             z_batch_loss = None
             if dry_run and dry_run_mode == "independent":
-                self._print_dry_run_microbatch_progress(0, 1, mode="PP independent")
                 self._run_independent_pp_dry_run(
                     input_ids,
                     labels,
@@ -1445,11 +1577,16 @@ class OLMoDDPTrainModule(TrainModule):
             else:
                 progress_callback = None
                 if dry_run:
+                    progress_mode = (
+                        "PP reduced true"
+                        if dry_run_mode == "reduced_true_pp"
+                        else "PP"
+                    )
                     progress_callback = lambda microbatch_idx, num_microbatches: (
                         self._print_dry_run_microbatch_progress(
                             microbatch_idx,
                             num_microbatches,
-                            mode="PP",
+                            mode=progress_mode,
                         )
                     )
                 pp_outputs = self.run_pipeline(
@@ -1491,7 +1628,11 @@ class OLMoDDPTrainModule(TrainModule):
 
         if dry_run:
             self._print_dry_run_progress_complete(
-                mode="PP" if self.pp_enabled else "DDP",
+                mode=(
+                    dry_run_complete_mode
+                    if self.pp_enabled and "dry_run_complete_mode" in locals()
+                    else "DDP"
+                ),
             )
             for model in self.model_parts:
                 model.reset_auxiliary_metrics()

@@ -145,10 +145,12 @@ def rowwise_dispatch_put_scaled(
     nblocks: int = 0,
     pre_barrier: bool = False,
     post_barrier: bool = True,
+    zero_unwritten: bool = False,
 ) -> None:
-    # Optional debug safety init for stale-capacity issues; off by default to
-    # avoid full-buffer memset overhead in the fp8 hot path.
-    if os.getenv("OLMO_ROWWISE_FP8_DISPATCH_INIT_OUT", "0") == "1":
+    # The rowwise dispatch kernel only writes rows referenced by valid route
+    # maps. Keep an opt-in safety init for diagnostics or callers that knowingly
+    # include padded rows in downstream math.
+    if zero_unwritten or os.getenv("OLMO_ROWWISE_FP8_DISPATCH_INIT_OUT", "0") == "1":
         out_q.zero_()
         out_scales.fill_(1.0)
 

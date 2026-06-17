@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import math
+import os
 from typing import TYPE_CHECKING, Optional, Tuple, Type, Union
 
 import torch
@@ -798,7 +799,7 @@ class OLMoDDPOptimizer:
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():
                 total_params += param.numel()
-        log.info(f'[MoEFusedV2Optimizer] Total model params: {total_params:,}')
+        log.info(f'Total model params: {total_params:,}')
         self._mxfp8_cache_sz = 0
         seen_mxfp8_weights: Set[int] = set()
         for param_group in self.param_groups:
@@ -837,7 +838,7 @@ class OLMoDDPOptimizer:
 
         def info_str(tag: str, stat: Tuple[int, int, int, int, int, int]):
             info_str = ''
-            info_str += f'[MoEFusedV2Optimizer] {tag} - Global params: {to_str_N_B_GB(stat[0])}, Local params: {to_str_N_B_GB(stat[1])}\n'
+            info_str += f'{tag} - Global params: {to_str_N_B_GB(stat[0])}, Local params: {to_str_N_B_GB(stat[1])}\n'
             info_str += f'    Sharded tensors: {stat[2]}, total local sharded params: {to_str_N_B_GB(stat[4])}\n'
             info_str += f'    Replicated tensors: {stat[3]}, total local replicated params: {to_str_N_B_GB(stat[5])}\n'
             return info_str
@@ -874,23 +875,23 @@ class OLMoDDPOptimizer:
         ) / BYTES_IN_GB
         total_model_gb = normal_model_param_gb
         total_mxfp8_cache_gb = self._mxfp8_cache_sz / BYTES_IN_GB
-        print_str += f'[MoEFusedV2Optimizer] Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n'
+        print_str += f'Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n'
 
         if self.model_has_grad_accum_fp32_buffer:
             logical_mxfp8_grad_gb = self._mxfp8_logical_param_sz / BYTES_IN_GB
             total_model_grad_gb = 2 * normal_model_param_gb + logical_mxfp8_grad_gb # extra fp32 grad buffer for normal params
         else:
             total_model_grad_gb = total_model_gb # bf16 grad only
-        print_str += f'[MoEFusedV2Optimizer] Model params size (GB): {total_model_gb:.4f} GB, model grads size (GB): {total_model_grad_gb:.4f} GB\n'
+        print_str += f'Model params size (GB): {total_model_gb:.4f} GB, model grads size (GB): {total_model_grad_gb:.4f} GB\n'
         if self._mxfp8_logical_param_sz > 0:
             logical_mxfp8_param_gb = self._mxfp8_logical_param_sz / BYTES_IN_GB
             print_str += (
-                f'[MoEFusedV2Optimizer] FP8 logical bf16-equivalent params skipped from model storage: '
+                f'FP8 logical bf16-equivalent params skipped from model storage: '
                 f'{logical_mxfp8_param_gb:.4f} GB, FP8 RHS caches: {total_mxfp8_cache_gb:.4f} GB\n'
             )
         total_static = total_local_optim_gb + total_model_gb + total_model_grad_gb + total_mxfp8_cache_gb
 
-        print_str += f'[MoEFusedV2Optimizer] Total estimated static memory (GB): {total_static:.4f} GB\n'
+        print_str += f'Total estimated static memory (GB): {total_static:.4f} GB\n'
 
         log.info(print_str)
 
@@ -1032,7 +1033,7 @@ class OLMoDDPOptimizer:
             else:
                 # small tensor, do not shard
                 placements=[Replicate()]
-                log.info(f"[MoEFusedV2Optimizer] A tensor of size {num_elements} is replicated.")
+                log.info(f"A tensor of size {num_elements} is replicated.")
         else:
             # always no shard
             placements=[Replicate()]
@@ -1159,6 +1160,7 @@ class OLMoDDPOptimizer:
             ep_dp_grads_replicated,
             ep_dp_grads_sharded,
         )
+        self._maybe_log_debug_grad_norms(total_grad_norm)
 
         clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
         # Note: multiplying by the clamped coef is redundant when the coef is clamped to 1, but doing so
@@ -1175,6 +1177,53 @@ class OLMoDDPOptimizer:
 
 
         return total_grad_norm
+
+    def _maybe_log_debug_grad_norms(self, total_grad_norm: torch.Tensor) -> None:
+        raw_limit = os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS")
+        if raw_limit is None:
+            return
+        try:
+            limit = int(raw_limit)
+        except ValueError:
+            limit = 20
+        if limit <= 0:
+            return
+        rank_filter = os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS_RANKS", "0").strip().lower()
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+        if rank_filter not in {"all", "*"} and str(rank) not in {
+            part.strip() for part in rank_filter.split(",")
+        }:
+            return
+
+        entries: List[Tuple[float, str, str, str]] = []
+        for param_group in self.param_groups:
+            for name, param in param_group["named_params"].items():
+                if not param.requires_grad:
+                    continue
+                grad = self.main_grad.get(name)
+                if grad is None:
+                    continue
+                local_grad = _to_local_tensor(grad)
+                if local_grad.numel() == 0:
+                    continue
+                local_norm = torch.linalg.vector_norm(
+                    local_grad.detach().float(),
+                    ord=2,
+                ).item()
+                placements = ",".join(str(p) for p in self.states[f"{name}.main"].placements)
+                entries.append((local_norm, name, param_group["pg"], placements))
+
+        entries.sort(reverse=True, key=lambda item: item[0])
+        top_lines = "\n".join(
+            f"  {idx + 1:02d}. norm={norm:.6g} pg={pg} placements={placements} name={name}"
+            for idx, (norm, name, pg, placements) in enumerate(entries[:limit])
+        )
+        log.warning(
+            "Debug grad norms on rank %s: total=%s top local entries:\n%s",
+            rank,
+            total_grad_norm.detach().float().item(),
+            top_lines,
+        )
 
     def _local_total_norm(self, grads: List[torch.Tensor]) -> torch.Tensor:
         norms: List[torch.Tensor] = []
@@ -1229,7 +1278,7 @@ class OLMoDDPOptimizer:
         return norm
 
     @torch.no_grad()
-    @nvtx.annotate("MoEFusedV2Optimizer.step")
+    @nvtx.annotate("OLMoDDPOptimizer.step")
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
 
         dbg_mem_before_cp1 = torch.cuda.memory_allocated()/1024**3
@@ -1420,7 +1469,7 @@ class OLMoDDPOptimizer:
         )
         state_dt.to_local().copy_(ckpt_local)
 
-    @nvtx.annotate("MoEFusedV2Optimizer._reduce_scatter_model_grads")
+    @nvtx.annotate("OLMoDDPOptimizer._reduce_scatter_model_grads")
     def _reduce_scatter_model_grads(self) -> None:
         
         for param_group in self.param_groups:
@@ -1675,7 +1724,7 @@ class OLMoDDPOptimizer:
         flush_all_reduce_bucket()
         entries.clear()
 
-    @nvtx.annotate("MoEFusedV2Optimizer._copy_model_grads_to_main_grads")
+    @nvtx.annotate("OLMoDDPOptimizer._copy_model_grads_to_main_grads")
     def _copy_model_grads_to_main_grads(self):
         for param_group in self.param_groups:
             fp8_entries: List[Tuple[str, FP8WeightStore, torch.Tensor, DTensor]] = []
@@ -1755,7 +1804,7 @@ class OLMoDDPOptimizer:
 
 
     @torch._dynamo.disable()
-    @nvtx.annotate("MoEFusedV2Optimizer._copy_main_params_to_model_params")
+    @nvtx.annotate("OLMoDDPOptimizer._copy_main_params_to_model_params")
     def _copy_main_params_to_model_params(self):
         if self._flat_model_sync_groups:
             self._copy_main_params_to_flat_model_buffers()
@@ -1992,7 +2041,7 @@ class OLMoDDPOptimizer:
                     gathered_matrix[:, entry.local_offset : entry.local_offset + entry.local_numel]
                 )
 
-    @nvtx.annotate("MoEFusedV2Optimizer._refresh_rowwise_fp8_caches_from_model_params")
+    @nvtx.annotate("OLMoDDPOptimizer._refresh_rowwise_fp8_caches_from_model_params")
     def _refresh_rowwise_fp8_caches_from_model_params(self) -> None:
         owners: List[Any] = []
         seen: Set[int] = set()
@@ -2050,7 +2099,7 @@ class OLMoDDPOptimizer:
 
         return step_factor.float()
 
-    @nvtx.annotate("MoEFusedV2Optimizer._step_foreach")
+    @nvtx.annotate("OLMoDDPOptimizer._step_foreach")
     def _step_foreach(self, closure=None) -> None:
         """Performs adamw step using foreach impl, limiting chunk size to reduce memory usage."""
 

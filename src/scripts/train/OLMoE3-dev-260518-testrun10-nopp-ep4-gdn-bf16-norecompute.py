@@ -19,7 +19,6 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
-from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.moe import (
     MoEConfig,
@@ -28,7 +27,9 @@ from olmo_core.nn.moe import (
     MoERouterGatingFunction,
     MoEType,
 )
-from olmo_core.nn.moe.v2.block import SharedExpertsConfig, RoutedExpertsConfig, MoERouterConfigV2
+from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
+from olmo_core.nn.moe.v2.router import MoERouterConfigV2
+from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from typing import cast
 from olmo_core.train.callbacks import WandBCallback
 
@@ -47,11 +48,17 @@ from olmo_core.data import (
 )
 from olmo_core.nn.transformer import (
     TransformerBlockType,
-    TransformerConfig,
     TransformerType,
-    MoEFusedV2TransformerConfig,
+    OLMoDDPModelConfig,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig
+from olmo_core.optim import (
+    AdamWConfig,
+    OLMoDDPOptimizerConfig,
+    OptimGroupOverride,
+    SchedulerUnits,
+    SkipStepAdamWConfig,
+    WSD,
+)
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
     ComposableSchedulerMonkeyPatchDecay,
@@ -74,11 +81,10 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerExpertParallelConfig,
-    MoEV2TransformerTrainModuleConfig
+    OLMoDDPTrainModuleConfig
 )
 from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
 from dataclasses import replace
-from olmo_core.train.train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +127,7 @@ VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun10-nopp-ep4-gdn-
 
 IN_EVAL_MODE = False
 import sys
-if sys.argv[1] == "eval_checkpoints":
+if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
     IN_EVAL_MODE = True
 
 
@@ -237,13 +243,10 @@ if not USE_COMPILE:
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig
-from olmo_core.nn.transformer import TransformerBlockConfig
 
 # from olmo_core.nn.moe.v2.block import LayerNormConfigV2
-def build_model_config(common: CommonComponents) -> TransformerConfig:
-    from olmo_core.nn.moe.v2.block import (
-        MoEFusedV2TransformerBlockConfig
-    )
+def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
     from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
@@ -257,7 +260,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         bias=False,
         dtype=dtype,
     )
-    config = MoEFusedV2TransformerConfig(
+    config = OLMoDDPModelConfig(
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
@@ -268,7 +271,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         n_layers=NUM_LAYERS,
         embed_scale=math.sqrt(d_model),
         embedding_norm=layer_norm,
-        block=MoEFusedV2TransformerBlockConfig(
+        block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             use_peri_norm=USE_PERI_NORM,
             ep_no_sync=USE_NO_SYNC_EP,
@@ -353,8 +356,12 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
 
-    dense_block_config = TransformerBlockConfig(
-        name=TransformerBlockType.peri_norm if USE_PERI_NORM else TransformerBlockType.default,
+    dense_block_config = OLMoDDPTransformerBlockConfig(
+        name=TransformerBlockType.moe_fused_v2,
+        use_peri_norm=USE_PERI_NORM,
+        rowwise_fp8=MoERowwiseFP8Config(
+            enabled=USE_FP8,
+        ) if USE_ROWWISE_A2A else None,
         sequence_mixer=GatedDeltaNetConfig(
             n_heads=NUM_HEAD,
             n_v_heads=NUM_HEAD,
@@ -363,8 +370,16 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             allow_neg_eigval=True,
             dtype=dtype,
         ),
-        feed_forward_moe=None,
-        feed_forward=FeedForwardConfig(hidden_size=( DENSE_LAYER_MLP ), bias=False), # optionally double this: dense mlp is twice as fast as moe mlp
+        routed_experts=None,
+        routed_experts_router=None,
+        shared_experts=SharedExpertsConfig(
+            d_model=d_model,
+            hidden_size=DENSE_LAYER_MLP,
+            num_experts=1,
+            bias=False,
+            dtype=dtype,
+        ),
+        shared_experts_router=None,
         attention_norm=layer_norm,
         feed_forward_norm=layer_norm,
     ) 
@@ -388,13 +403,12 @@ MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_B
 MONKEY_PATCH_DECAY_END_FRACTION = SCHED_FINAL_FRACTION
 MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine
 
-def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
-    from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
-    return MoEV2TransformerTrainModuleConfig(
+def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleConfig:
+    return OLMoDDPTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.max_sequence_length,
         # reset_optimizer_states_on_load=True, # TODO: only on first load step0,
-        optim=MoEFusedV2OptimizerConfig(
+        optim=OLMoDDPOptimizerConfig(
             lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
@@ -507,7 +521,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            load_path=None,
+            load_path=os.environ.get("OLMOE3_TESTRUN_LOAD_PATH"),
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
