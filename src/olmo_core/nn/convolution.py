@@ -2,6 +2,7 @@ from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.nn.attention.flash_linear_attn_api import dispatch_causal_conv1d
@@ -81,6 +82,59 @@ class CausalConv1d(nn.Conv1d):
             cu_seqlens=cu_seqlens,
         )
         return output[0]
+
+    @property
+    def state_width(self) -> int:
+        """The width of the cached conv state needed for single-step decoding: ``kernel_size - 1``."""
+        return self.kernel_size[0] - 1
+
+    def _local_weight_bias(self):
+        weight = self.weight
+        bias = self.bias
+        if self.cp_enabled:
+            weight = weight[self._cp_channel_slice]
+            if bias is not None:
+                bias = bias[self._cp_channel_slice]
+        return weight, bias
+
+    def prefill_state(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Capture the conv state for cached decoding from a prefill input.
+
+        :param x: The prefill conv input of shape ``(batch_size, seq_len, hidden_size)`` (the same
+            tensor passed to :meth:`forward`).
+        :returns: The last ``kernel_size - 1`` inputs, channel-first and left-padded with zeros if
+            ``seq_len < kernel_size - 1``, of shape ``(batch_size, hidden_size, kernel_size - 1)``.
+        """
+        w = self.state_width
+        xt = x.transpose(1, 2)  # (B, hidden, seq_len)
+        if xt.shape[-1] < w:
+            xt = F.pad(xt, (w - xt.shape[-1], 0))
+        return xt[:, :, -w:].contiguous()
+
+    def step(self, x_t: torch.Tensor, conv_state: torch.Tensor) -> torch.Tensor:
+        """
+        Single-step causal convolution for cached decoding, updating ``conv_state`` in place.
+
+        Mirrors the reference ``causal_conv1d_update``: the new input is concatenated onto the
+        cached window, convolved, and the trailing ``kernel_size - 1`` inputs are written back.
+
+        :param x_t: The new conv input of shape ``(batch_size, 1, hidden_size)``.
+        :param conv_state: The cached window of shape ``(batch_size, hidden_size, kernel_size - 1)``,
+            updated in place.
+        :returns: The conv output of shape ``(batch_size, 1, hidden_size)``.
+        """
+        weight, bias = self._local_weight_bias()
+        hidden_size = weight.shape[0]
+        xt = x_t.transpose(1, 2)  # (B, hidden, 1)
+        window = torch.cat([conv_state, xt], dim=-1)  # (B, hidden, kernel_size)
+        conv_state.copy_(window[:, :, -self.state_width :])
+        out = F.conv1d(
+            window.to(weight.dtype), weight, bias, padding=0, groups=hidden_size
+        )  # (B, hidden, 1)
+        if self.activation in ("silu", "swish"):
+            out = F.silu(out)
+        return out.transpose(1, 2).to(x_t.dtype)  # (B, 1, hidden)
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         """

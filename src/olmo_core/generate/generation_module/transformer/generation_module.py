@@ -3,7 +3,7 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -166,19 +166,42 @@ class TransformerGenerationModule(GenerationModule):
     def prepare_inference_cache(self, batch_size: int, max_seq_len: int):
         # Note: not all models use key-value caches, which is why this method
         # is called "prepare_inference_cache" rather than "prepare_kv_cache".
-        # For example, Mamba requires cache state but doesn't use a kv-cache.
+        # Attention blocks get a KV cache; recurrent mixers (e.g. GatedDeltaNet) get a
+        # conv+recurrent state cache via init_state_cache.
         for block in self.model.blocks.values():
-            assert isinstance(block.attention, Attention)
-            attn = cast(Attention, block.attention)
-            if attn.kv_cache_manager is None:
-                attn.init_kv_cache_manager(batch_size, max_seq_len)
-            else:
-                attn.kv_cache_manager.reset(batch_size, max_seq_len)
+            mixer = block.attention
+            if isinstance(mixer, Attention):
+                if mixer.kv_cache_manager is None:
+                    mixer.init_kv_cache_manager(batch_size, max_seq_len)
+                else:
+                    mixer.kv_cache_manager.reset(batch_size, max_seq_len)
+            elif hasattr(mixer, "init_state_cache"):
+                mixer.init_state_cache(batch_size, max_seq_len)  # type: ignore[attr-defined]
 
     def free_inference_cache(self):
         for block in self.model.blocks.values():
-            assert isinstance(block.attention, Attention)
-            cast(Attention, block.attention).kv_cache_manager = None
+            mixer = block.attention
+            if isinstance(mixer, Attention):
+                mixer.kv_cache_manager = None
+            elif hasattr(mixer, "state_cache"):
+                mixer.state_cache = None  # type: ignore[attr-defined]
+
+    def _non_kv_cache_mixer_types(self) -> Set[str]:
+        """
+        Return the type names of any sequence mixers in the model that support neither a KV cache
+        (:class:`~olmo_core.nn.attention.Attention`) nor a recurrent state cache (mixers exposing
+        ``init_state_cache``, e.g. :class:`~olmo_core.nn.attention.recurrent.GatedDeltaNet`).
+
+        Such a mixer keeps no decode state, so step-by-step decoding with ``use_cache=True`` would
+        feed it only the latest token while silently dropping all prior context. Used to guard
+        against that wrong code path. Empty for attention and recurrent-with-cache models.
+        """
+        return {
+            type(block.attention).__name__
+            for block in self.model.blocks.values()
+            if not isinstance(block.attention, Attention)
+            and not hasattr(block.attention, "init_state_cache")
+        }
 
     def _landmark_attention_layers(self) -> List[Attention]:
         """Return the model's landmark attention layers (empty if this is not a landmark model)."""
@@ -263,6 +286,21 @@ class TransformerGenerationModule(GenerationModule):
         generation_config = self._generation_config.replace(**generation_kwargs)
         eos = generation_config.eos_token_id
         pad = generation_config.pad_token_id
+
+        # Guard the no-decode-state wrong path: a sequence mixer that supports neither a KV cache
+        # nor a recurrent state cache carries no per-step state, so cached decoding would feed it
+        # only the latest token and silently drop all prompt context. Attention (KV cache) and
+        # GatedDeltaNet (conv+recurrent state cache) are both fine; this only fires for a mixer that
+        # supports neither. Fail loudly rather than decode garbage.
+        if generation_config.use_cache:
+            non_kv_cache_mixers = self._non_kv_cache_mixer_types()
+            if non_kv_cache_mixers:
+                raise OLMoConfigurationError(
+                    "use_cache=True is not supported for models with sequence mixers "
+                    f"{sorted(non_kv_cache_mixers)} that have no decode-time cache (neither a KV "
+                    "cache nor a recurrent state cache). Set use_cache=False to generate correctly "
+                    "(slower), or add state caching for these layers."
+                )
 
         input_ids = move_to_device(input_ids, self.device)
 

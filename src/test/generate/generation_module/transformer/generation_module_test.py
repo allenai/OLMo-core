@@ -14,11 +14,20 @@ from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.generate.generation_module.transformer.config import (
     TransformerGenerationModuleConfig,
 )
-from olmo_core.nn.attention import AttentionConfig
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
+from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+from olmo_core.nn.lm_head import LMHeadConfig
+from olmo_core.nn.rope import RoPEConfig, RoPEType
+from olmo_core.nn.transformer import (
+    TransformerBlockConfig,
+    TransformerBlockType,
+    TransformerConfig,
+)
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.testing.utils import (
     has_flash_attn_2,
+    requires_fla,
     requires_flash_attn_2,
     requires_gpu,
 )
@@ -40,6 +49,164 @@ def small_transformer_config(n_layers: int = 2, use_rope: bool = True, **kwargs)
         assert isinstance(config.block.sequence_mixer, AttentionConfig)
         config.block.sequence_mixer.rope = None
     return config
+
+
+def small_gdn_transformer_config(n_layers: int = 2, **kwargs) -> TransformerConfig:
+    """A tiny pure-GatedDeltaNet transformer (no attention layers), for exercising the recurrent
+    decode-state cache in isolation (no flash-attn / KV cache involved)."""
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
+    return TransformerConfig(
+        d_model=128,
+        vocab_size=512,
+        n_layers=n_layers,
+        block=TransformerBlockConfig(
+            name=TransformerBlockType.reordered_norm,
+            sequence_mixer=GatedDeltaNetConfig(n_heads=4),
+            layer_norm=layer_norm,
+            feed_forward=FeedForwardConfig(hidden_size=256, bias=False),
+        ),
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+        **kwargs,
+    )
+
+
+def small_hybrid_gdn_transformer_config(
+    n_layers: int = 4, use_flash: bool = True, **kwargs
+) -> TransformerConfig:
+    """A tiny hybrid transformer that interleaves GatedDeltaNet and full-attention blocks
+    (pattern ``[gdn, gdn, gdn, attn]``), like the Qwen3.5 dense models. Exercises the GDN recurrent
+    state cache and the attention KV cache together in one decode."""
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
+    feed_forward = FeedForwardConfig(hidden_size=256, bias=False)
+    gdn_block = TransformerBlockConfig(
+        name=TransformerBlockType.reordered_norm,
+        sequence_mixer=GatedDeltaNetConfig(n_heads=4),
+        layer_norm=layer_norm,
+        feed_forward=feed_forward,
+    )
+    attn_block = TransformerBlockConfig(
+        name=TransformerBlockType.reordered_norm,
+        sequence_mixer=AttentionConfig(
+            n_heads=4,
+            rope=RoPEConfig(name=RoPEType.default, theta=10_000),
+            use_flash=use_flash,
+        ),
+        layer_norm=layer_norm,
+        feed_forward=feed_forward,
+    )
+    return TransformerConfig(
+        d_model=128,
+        vocab_size=512,
+        n_layers=n_layers,
+        block={"gdn": gdn_block, "attn": attn_block},
+        block_pattern=["gdn", "gdn", "gdn", "attn"],
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+        **kwargs,
+    )
+
+
+@requires_gpu
+@requires_fla
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_generation_module_gdn_cache_equivalence(batch_size: int):
+    """
+    For a GatedDeltaNet model, greedy decoding must produce identical tokens (and matching logits)
+    whether or not the decode-state cache is used. ``use_cache=True`` advances the conv + recurrent
+    state one token at a time; ``use_cache=False`` recomputes the full sequence each step. They must
+    agree -- this is the guarantee the GDN state cache has to uphold.
+    """
+    device = torch.device("cuda")
+    seed_all(0)
+
+    # One model -> both runs share identical weights; we only flip use_cache per call.
+    transformer_config = small_gdn_transformer_config(dtype=DType.bfloat16)
+    generation_module = TransformerGenerationModule(
+        model=transformer_config.build(),
+        generation_config=GenerationConfig(
+            max_length=24, do_sample=False, eos_token_id=1, pad_token_id=0, use_cache=True
+        ),
+        device=device,
+    )
+
+    context_len = 12
+    input_ids = torch.randint(2, 500, (batch_size, context_len), device=device)
+    attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
+
+    cached_ids, cached_logits, _ = generation_module.generate_batch(
+        input_ids,
+        attention_mask=attention_mask,
+        return_logits=True,
+        completions_only=False,
+        use_cache=True,
+    )
+    uncached_ids, uncached_logits, _ = generation_module.generate_batch(
+        input_ids,
+        attention_mask=attention_mask,
+        return_logits=True,
+        completions_only=False,
+        use_cache=False,
+    )
+
+    # Greedy decoding -> the chosen tokens must be exactly identical.
+    assert torch.equal(cached_ids, uncached_ids), (
+        f"cached vs uncached GDN decode diverged:\ncached:   {cached_ids.tolist()}\n"
+        f"uncached: {uncached_ids.tolist()}"
+    )
+    # And the underlying logits must match within bf16 tolerance.
+    assert isinstance(cached_logits, torch.Tensor) and isinstance(uncached_logits, torch.Tensor)
+    torch.testing.assert_close(cached_logits, uncached_logits, atol=BF16_ATOL, rtol=BF16_RTOL)
+
+
+@requires_gpu
+@requires_fla
+@requires_flash_attn_2
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_generation_module_hybrid_gdn_attn_cache_equivalence(batch_size: int):
+    """
+    Same cache-equivalence guarantee as the pure-GDN test, but for a hybrid model that interleaves
+    GatedDeltaNet and full-attention blocks (the Qwen3.5 dense layout). Greedy decoding must give
+    identical tokens (and matching logits) with the decode-state caches on vs off, so the GDN
+    recurrent cache and the attention KV cache stay consistent together. Both runs use flash
+    attention (use_cache only toggles KV reuse, not the attention kernel), so the only variable is
+    caching.
+    """
+    device = torch.device("cuda")
+    seed_all(0)
+
+    transformer_config = small_hybrid_gdn_transformer_config(use_flash=True, dtype=DType.bfloat16)
+    generation_module = TransformerGenerationModule(
+        model=transformer_config.build(),
+        generation_config=GenerationConfig(
+            max_length=24, do_sample=False, eos_token_id=1, pad_token_id=0, use_cache=True
+        ),
+        device=device,
+    )
+
+    context_len = 12
+    input_ids = torch.randint(2, 500, (batch_size, context_len), device=device)
+    attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
+
+    cached_ids, cached_logits, _ = generation_module.generate_batch(
+        input_ids,
+        attention_mask=attention_mask,
+        return_logits=True,
+        completions_only=False,
+        use_cache=True,
+    )
+    uncached_ids, uncached_logits, _ = generation_module.generate_batch(
+        input_ids,
+        attention_mask=attention_mask,
+        return_logits=True,
+        completions_only=False,
+        use_cache=False,
+    )
+
+    assert torch.equal(cached_ids, uncached_ids), (
+        f"cached vs uncached hybrid decode diverged:\ncached:   {cached_ids.tolist()}\n"
+        f"uncached: {uncached_ids.tolist()}"
+    )
+    assert isinstance(cached_logits, torch.Tensor) and isinstance(uncached_logits, torch.Tensor)
+    torch.testing.assert_close(cached_logits, uncached_logits, atol=BF16_ATOL, rtol=BF16_RTOL)
 
 
 @requires_gpu
