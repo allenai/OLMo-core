@@ -48,7 +48,10 @@ ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
-ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
+# NOTE: include "10.3" (B300 / Blackwell Ultra, sm_103) only when building with CUDA >= 12.9,
+# otherwise nvcc will reject the arch when compiling the from-source extensions below.
+ARG TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
+ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
 
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
@@ -58,8 +61,14 @@ ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grou
 RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
 # Install flash-attn 2
+# NOTE: flash-attn 2 picks build archs from FLASH_ATTN_CUDA_ARCHS (it does NOT read
+# TORCH_CUDA_ARCH_LIST). Its default is "80;90;100;120" which omits 103 (B300 / sm_103),
+# so for B300 set FLASH_ATTN_CUDA_ARCHS to include "103" (requires CUDA >= 12.9). Left unset
+# here to preserve the default image's arch selection.
 ARG FLASH_ATTN_VERSION=2.8.2
-RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+ARG FLASH_ATTN_CUDA_ARCHS=""
+RUN if [ -n "${FLASH_ATTN_CUDA_ARCHS}" ]; then export FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS}"; fi && \
+    pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install flash-attn 3
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"

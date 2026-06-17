@@ -51,10 +51,16 @@ CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.12
 TORCH_VERSION = 2.9.1
+# Archs the from-source extensions are compiled for. Add "10.3" for B300 (Blackwell Ultra,
+# sm_103) — requires CUDA_VERSION >= 12.9. See the 'beaker-image-b300' target below.
+TORCH_CUDA_ARCH_LIST = 8.0 9.0 10.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 FLASH_ATTN_VERSION = 2.8.2
+# Archs flash-attn 2 is compiled for (semicolon-separated, e.g. "80;90;100;103"). Empty = use
+# flash-attn's own default ("80;90;100;120"). Add "103" for B300 (sm_103); requires CUDA >= 12.9.
+FLASH_ATTN_CUDA_ARCHS =
 FLASH_ATTN_3_SHA = "92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
 FA3_MAX_JOBS = 64
 TE_VERSION = 2.9
@@ -78,9 +84,11 @@ docker-image :
 		--build-arg CUDA_VERSION_PATH=$(CUDA_VERSION_PATH) \
 		--build-arg PYTHON_VERSION=$(PYTHON_VERSION) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
+		--build-arg TORCH_CUDA_ARCH_LIST="$(TORCH_CUDA_ARCH_LIST)" \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
 		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
+		--build-arg FLASH_ATTN_CUDA_ARCHS="$(FLASH_ATTN_CUDA_ARCHS)" \
 		--build-arg FLASH_ATTN_3_SHA=$(FLASH_ATTN_3_SHA) \
 		--build-arg FA3_MAX_JOBS=$(FA3_MAX_JOBS) \
 		--build-arg TE_VERSION=$(TE_VERSION) \
@@ -103,6 +111,16 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 .PHONY : beaker-image
 beaker-image : docker-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
+
+# Build + register a B300 (Blackwell Ultra, sm_103) image: CUDA 12.9 so nvrtc/ptxas know sm_103,
+# and "10.3" added to the arch list so the from-source extensions are built for B300.
+# Produces an image tagged 'olmo-core-tch<torch>cu129-<date>'.
+.PHONY : beaker-image-b300
+beaker-image-b300 :
+	$(MAKE) beaker-image \
+		CUDA_VERSION=12.9.1 \
+		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0 10.3" \
+		FLASH_ATTN_CUDA_ARCHS="80;90;100;103"
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
