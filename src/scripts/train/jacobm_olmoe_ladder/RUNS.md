@@ -1044,3 +1044,46 @@ PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
 | `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 480M | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | Baseline best-observed LR. |
 | `q3-480m-cx8-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 480M | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV8ZS3CB95G6BK2DPSX90X6F | Re-queued on Titan/original workspace from a direct Beaker spec after the Holmes image lookup miss and local GitHub submitter timeouts. |
 
+
+## 2026-06-17 Status Check and Plot Refresh
+
+Status check scoped to tracker rows that were still open or ambiguous, plus recent
+Qwen3-like rows without completion notes. This avoids re-querying old rows already
+marked finished/canceled in this document.
+
+Queried 139 candidate open/ambiguous Beaker experiments:
+
+- 110 finalized
+- 24 canceled
+- 5 still running
+
+Still running as of the check:
+
+| Name | Beaker | Started | Notes |
+| --- | --- | --- | --- |
+| `q3-480m-cx2-q3td128e8k-lr9e-4-r1` | https://beaker.org/ex/01KV8XRWC6XC3ZWWM2M61QBRKF | 2026-06-16 19:18 UTC | True-3D 480M Cx2 promoted point. |
+| `q3-480m-cx4-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XQRFM73CADTDCZ051HN89 | 2026-06-16 19:17 UTC | Active-matched 480M Cx4 promoted point. |
+| `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | 2026-06-16 19:18 UTC | True-3D 480M Cx4 promoted point. |
+| `q3-480m-cx8-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XR424AH5NFFTM5EQ43EGN | 2026-06-16 19:17 UTC | Active-matched 480M Cx8 promoted point. |
+| `q3-480m-cx8-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8ZS3CB95G6BK2DPSX90X6F | 2026-06-16 20:53 UTC | True-3D 480M Cx8 promoted point, re-queued on Titan. |
+
+Newly finalized/high-signal since the last status pass:
+
+| Name | Beaker | Finalized | Notes |
+| --- | --- | --- | --- |
+| `q3-480m-cx2-q3am128e8k-lr9e-4-r1` | https://beaker.org/ex/01KV8XQCNKPEVVHSGG6C3M78XF | 2026-06-17 02:57 UTC | Active-matched 480M Cx2 promoted point. |
+| `q3-480m-cx1-q3td128e8k-lr1.2e-3-r1` | https://beaker.org/ex/01KV8XRGQWNVWBH6XARJX9264H | 2026-06-16 23:53 UTC | True-3D 480M Cx1 promoted point. |
+| `q3-480m-cx1-q3am128e8k-lr1.2e-3-r1` | https://beaker.org/ex/01KV8XQ15CGKKGDN4034HV5AB6 | 2026-06-16 23:26 UTC | Active-matched 480M Cx1 promoted point. |
+| `q3-275m-cx{1,2,4,8}-q3td128e8k` cold-side probes | see 2026-06-16 table above | 2026-06-16 | All four true-3D cold-side probes finalized. |
+
+Plot refresh completed with stale-cache refresh only. Changed/generated plot files:
+
+- `plots/qwen3_like/480m_cx1_uplot.png`
+- `plots/qwen3_like/480m_cx2_uplot.png`
+- `plots/qwen3_like/summary_observed_best.png`
+- `plots/shared_expert/1p2b_cx2_uplot.png`
+- `plots/shared_expert/summary_observed_best.png`
+- `plots/dense_schedule/275m_cx8_uplot.png`
+- `plots/total_sparsity/275m_cx8_uplot.png`
+
+No additional jobs were launched during this status check.
