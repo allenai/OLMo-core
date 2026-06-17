@@ -1087,3 +1087,15 @@ Plot refresh completed with stale-cache refresh only. Changed/generated plot fil
 - `plots/total_sparsity/275m_cx8_uplot.png`
 
 No additional jobs were launched during this status check.
+
+
+## 2026-06-17 1.2B Cx2 Baseline Hot-Side Extension
+
+Queued one additional hot-side repaired-batch 1.2B Cx2 baseline point because the
+current Cx2 U-curve still was not bracketed on the hot side. This uses the same
+semantic/resume-stable run name policy as the earlier repaired Cx2 runs; systems
+settings are only in tags/config.
+
+| Name | Model | LR | Batch tokens | Batch seqs | Nodes | GPUs / node | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr2.4e-3-r1` | `1p2b` | 2.4e-3 | 393,216 | 48 | 2 | 8 | 1 | 3 | https://beaker.org/ex/01KV9X79WWBY9JYS3WWAS8M1SW | Titan/original workspace, compile-on, urgent priority. `48 / (2 nodes * 8 GPUs * mb3) = 1`, so the repaired Cx2 optimizer batch is legal. Factor-2 hot-side extension above `lr1.2e-3`. |
