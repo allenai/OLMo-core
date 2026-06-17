@@ -107,7 +107,7 @@ def small_hybrid_gdn_transformer_config(
         dtype=dtype,
         block={"gdn": gdn_block, "attn": attn_block},
         block_pattern=["gdn", "gdn", "gdn", "attn"],
-        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
         **kwargs,
     )
 
