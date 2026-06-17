@@ -79,6 +79,7 @@ IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)-$(IMAGE_SUFFIX)
 .PHONY : docker-image
 docker-image :
 	docker build -f src/Dockerfile \
+		--platform=linux/amd64 \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg CUDA_VERSION_PATH=$(CUDA_VERSION_PATH) \
