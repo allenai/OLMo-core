@@ -51,36 +51,41 @@ def small_transformer_config(n_layers: int = 2, use_rope: bool = True, **kwargs)
     return config
 
 
-def small_gdn_transformer_config(n_layers: int = 2, **kwargs) -> TransformerConfig:
+def small_gdn_transformer_config(
+    n_layers: int = 2, dtype: DType = DType.bfloat16, **kwargs
+) -> TransformerConfig:
     """A tiny pure-GatedDeltaNet transformer (no attention layers), for exercising the recurrent
-    decode-state cache in isolation (no flash-attn / KV cache involved)."""
-    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
+    decode-state cache in isolation (no flash-attn / KV cache involved). ``dtype`` is threaded into
+    every sub-config so the built model is uniformly typed (generation does not autocast)."""
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False, dtype=dtype)
     return TransformerConfig(
         d_model=128,
         vocab_size=512,
         n_layers=n_layers,
+        dtype=dtype,
         block=TransformerBlockConfig(
             name=TransformerBlockType.reordered_norm,
-            sequence_mixer=GatedDeltaNetConfig(n_heads=4),
+            sequence_mixer=GatedDeltaNetConfig(n_heads=4, dtype=dtype),
             layer_norm=layer_norm,
-            feed_forward=FeedForwardConfig(hidden_size=256, bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=256, bias=False, dtype=dtype),
         ),
-        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
         **kwargs,
     )
 
 
 def small_hybrid_gdn_transformer_config(
-    n_layers: int = 4, use_flash: bool = True, **kwargs
+    n_layers: int = 4, use_flash: bool = True, dtype: DType = DType.bfloat16, **kwargs
 ) -> TransformerConfig:
     """A tiny hybrid transformer that interleaves GatedDeltaNet and full-attention blocks
     (pattern ``[gdn, gdn, gdn, attn]``), like the Qwen3.5 dense models. Exercises the GDN recurrent
-    state cache and the attention KV cache together in one decode."""
-    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
-    feed_forward = FeedForwardConfig(hidden_size=256, bias=False)
+    state cache and the attention KV cache together in one decode. ``dtype`` is threaded into every
+    sub-config so the built model is uniformly typed (generation does not autocast)."""
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False, dtype=dtype)
+    feed_forward = FeedForwardConfig(hidden_size=256, bias=False, dtype=dtype)
     gdn_block = TransformerBlockConfig(
         name=TransformerBlockType.reordered_norm,
-        sequence_mixer=GatedDeltaNetConfig(n_heads=4),
+        sequence_mixer=GatedDeltaNetConfig(n_heads=4, dtype=dtype),
         layer_norm=layer_norm,
         feed_forward=feed_forward,
     )
@@ -90,6 +95,7 @@ def small_hybrid_gdn_transformer_config(
             n_heads=4,
             rope=RoPEConfig(name=RoPEType.default, theta=10_000),
             use_flash=use_flash,
+            dtype=dtype,
         ),
         layer_norm=layer_norm,
         feed_forward=feed_forward,
@@ -98,6 +104,7 @@ def small_hybrid_gdn_transformer_config(
         d_model=128,
         vocab_size=512,
         n_layers=n_layers,
+        dtype=dtype,
         block={"gdn": gdn_block, "attn": attn_block},
         block_pattern=["gdn", "gdn", "gdn", "attn"],
         lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
