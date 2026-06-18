@@ -144,6 +144,17 @@ DEFAULT_SETUP_STEPS = (
     f'git checkout "${GIT_REF_ENV_VAR}"',
     "git submodule update --init --recursive",
     "conda shell.bash activate base",
+    # transformer-engine locates libnvrtc by grepping `ldconfig -p`, but on CUDA 13 images nvrtc
+    # ships as a pip wheel under site-packages and isn't in the linker cache, so `import
+    # transformer_engine` fails. Register the wheel's lib dir with ldconfig before anything imports
+    # it. No-op on images where libnvrtc isn't found.
+    'NVRTC_DIR=$(find /opt/conda -name "libnvrtc.so*" 2>/dev/null | head -n1 | xargs -r dirname || true); '
+    'if [ -n "$NVRTC_DIR" ]; then echo "$NVRTC_DIR" > /etc/ld.so.conf.d/zz-nvrtc.conf && ldconfig; fi',
+    # Triton bundles its own (older) ptxas which doesn't know newer GPU archs (e.g. sm_103a on
+    # B300). torch ships a newer ptxas at torch/bin/ptxas; point Triton at it so torch.compile can
+    # assemble kernels. No-op if torch's ptxas isn't found (Triton keeps its default).
+    'TORCH_PTXAS=$(find /opt/conda -path "*/torch/bin/ptxas" 2>/dev/null | head -n1 || true); '
+    'if [ -n "$TORCH_PTXAS" ]; then export TRITON_PTXAS_PATH="$TORCH_PTXAS"; fi',
     "pip install -e '.[all]'",
     "pip freeze",
 )
