@@ -47,6 +47,9 @@ build :
 #  * The corresponding versions specified in 'pyproject.toml' include the new version.
 #  * The versions installed in '.github/actions/setup-venv/action.yml' match if necessary.
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
+# The devel base image is nvidia/cuda:$(CUDA_VERSION)-cudnn-devel-ubuntu$(UBUNTU_VERSION); make sure
+# that exact tag exists (CUDA 13.x may only publish ubuntu24.04 — override UBUNTU_VERSION if so).
+UBUNTU_VERSION = 22.04
 CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.12
@@ -81,6 +84,7 @@ docker-image :
 	docker build -f src/Dockerfile \
 		--platform=linux/amd64 \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
+		--build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) \
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg CUDA_VERSION_PATH=$(CUDA_VERSION_PATH) \
 		--build-arg PYTHON_VERSION=$(PYTHON_VERSION) \
@@ -113,13 +117,20 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 beaker-image : docker-image
 	./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
 
-# Build + register a B300 (Blackwell Ultra, sm_103) image: CUDA 12.9 so nvrtc/ptxas know sm_103,
-# and "10.3" added to the arch list so the from-source extensions are built for B300.
-# Produces an image tagged 'olmo-core-tch<torch>cu129-<date>'.
+# Build + register a B300 (Blackwell Ultra, sm_103) image.
+#  - torch 2.11.0 bundles Triton 3.6.0, whose bundled `ptxas` knows sm_103a (torch 2.9.x's
+#    Triton did not — that's why torch.compile failed on B300 even with a CUDA 12.9 toolkit).
+#  - cu130 (CUDA 13.0): newer torch only ships cu128/cu130 wheels (no cu129), and 13.0 keeps
+#    nvrtc/toolkit on sm_103. NOTE: this makes the from-source extensions compile against
+#    CUDA 13 — if flash-attn / transformer-engine / grouped-gemm fail to build, bump their
+#    versions (FLASH_ATTN_VERSION, TE_VERSION) to CUDA-13-compatible releases.
+#  - "10.3" / "103" added to the arch lists so those extensions target B300.
+# Produces an image tagged 'olmo-core-tch2110cu130-<date>'.
 .PHONY : beaker-image-b300
 beaker-image-b300 :
 	$(MAKE) beaker-image \
-		CUDA_VERSION=12.9.1 \
+		CUDA_VERSION=13.0.1 \
+		TORCH_VERSION=2.11.0 \
 		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0 10.3" \
 		FLASH_ATTN_CUDA_ARCHS="80;90;100;103"
 
