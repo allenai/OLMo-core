@@ -65,7 +65,10 @@ beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute
 comet = ["comet_ml"]
 eval = ["ai2-olmo-eval @ git+https://github.com/allenai/OLMo-in-loop-evals.git@962c2e25268469fdc1ed253158af2e04a41a5297"]
 torchao = ["torchao==0.15.0"]
-transformers = ["transformers"]
+# NOTE: capped below 4.57 — that release added the Parakeet RNN-T loss, which does an eager
+# `import torchaudio` in transformers.modeling_utils and breaks import when the torchaudio
+# extension can't load. OLMo-core does not use torchaudio. See the 'fla' import chain.
+transformers = ["transformers<4.57"]
 wandb = ["wandb"]
 fla = [
     "flash-linear-attention",
