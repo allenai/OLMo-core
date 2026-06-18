@@ -37,29 +37,31 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# ── Preprocessor constants (SigLIP2-SO400M/14, 378×378, multi-crop) ──────────
-PATCH_SIZE = 14
-IMAGE_SIZE = 378  # 27 × 27 patches per crop
-N_PATCHES = 27  # IMAGE_SIZE // PATCH_SIZE
-N_PATCHES_SQ = 729  # N_PATCHES ** 2
-PATCH_DIM = 588  # 3 * PATCH_SIZE ** 2
-POOL_H = 2
-POOL_W = 2
-DEFAULT_MAX_CROPS = 8
-OVERLAP_MARGINS = (4, 4)
-
-# Molmo2 special token IDs (identical across 4B / 8B variants).
-IM_PATCH_ID = 151938  # <im_patch>
-IM_COL_ID = 151939  # <im_col>
-IM_START_ID = 151936  # <im_start>
-LOW_RES_IM_START_ID = 151940  # <low_res_im_start>
-IM_END_ID = 151937  # <im_end>
-IMAGE_PLACEHOLDER_ID = 151941  # <|image|>
-
-DEFAULT_MODEL_ID = "allenai/Molmo2-4B"
-EOS_TOKEN_ID = 151643  # Qwen2.5 <|endoftext|>
-IM_END_TURN_ID = 151645  # Qwen2.5 <|im_end|> (chat end-of-turn)
-
+# Token constants and image-token-sequence construction live in a shared module
+# (``olmo_core.nn.vision.molmo2_tokens``) so the training data pipeline can reuse
+# them without importing from ``examples/``. Re-exported here for backward compat.
+from olmo_core.nn.vision.molmo2_tokens import (  # noqa: E402,F401
+    DEFAULT_MAX_CROPS,
+    DEFAULT_MODEL_ID,
+    EOS_TOKEN_ID,
+    IM_COL_ID,
+    IM_END_ID,
+    IM_END_TURN_ID,
+    IM_PATCH_ID,
+    IM_START_ID,
+    IMAGE_PLACEHOLDER_ID,
+    IMAGE_SIZE,
+    IMAGE_TOKEN_IDS,
+    LOW_RES_IM_START_ID,
+    N_PATCHES,
+    N_PATCHES_SQ,
+    OVERLAP_MARGINS,
+    PATCH_DIM,
+    PATCH_SIZE,
+    POOL_H,
+    POOL_W,
+    build_image_token_ids,
+)
 
 # ---------------------------------------------------------------------------
 # Image preprocessing (multi-crop via OLMo-core native preprocessor)
@@ -94,40 +96,6 @@ def preprocess_image_multicrop(
         pool_h=POOL_H,
         pool_w=POOL_W,
     )
-
-
-def build_image_token_ids(
-    resized_h: int,
-    resized_w: int,
-    h: int,
-    w: int,
-    low_res_col_tokens: bool = False,
-) -> list[int]:
-    """Return the expanded image token-ID sequence for a multi-crop image.
-
-    Token structure (matching ``Molmo2Processor.get_image_tokens`` — the
-    low-res/global section has **no** ``<im_col>`` separators)::
-
-        <low_res_im_start>
-        resized_h × resized_w × <im_patch>
-        <im_end> <im_start>
-        h × (w × <im_patch> + <im_col>)
-        <im_end>
-
-    ``low_res_col_tokens=True`` reproduces the legacy ``pixmo_cap_eval``
-    layout that also put ``<im_col>`` separators in the low-res section.
-    """
-    tokens: list[int] = [LOW_RES_IM_START_ID]
-    if low_res_col_tokens:
-        for _ in range(resized_h):
-            tokens += [IM_PATCH_ID] * resized_w + [IM_COL_ID]
-    else:
-        tokens += [IM_PATCH_ID] * (resized_h * resized_w)
-    tokens += [IM_END_ID, IM_START_ID]
-    for _ in range(h):
-        tokens += [IM_PATCH_ID] * w + [IM_COL_ID]
-    tokens += [IM_END_ID]
-    return tokens
 
 
 def build_input_ids(
@@ -447,13 +415,19 @@ def greedy_decode(
     encoder re-encodes the image patches at the correct positions each time.
     This is O(max_new_tokens × ViT_forward); use a small ``max_new_tokens``
     for fast smoke tests.
+
+    Image tokens are marked via ``token_type_ids`` so they attend to each other
+    bidirectionally (matching HF Molmo2); text stays causal.
     """
+    image_id_tensor = torch.tensor(sorted(IMAGE_TOKEN_IDS), device=input_ids.device)
     gen_ids = input_ids.clone()
     for _ in range(max_new_tokens):
+        token_type_ids = torch.isin(gen_ids, image_id_tensor).long()
         logits = model(
             input_ids=gen_ids,
             images=images,
             pooled_patches_idx=pooled_patches_idx,
+            token_type_ids=token_type_ids,
             logits_to_keep=1,
         )
         next_id = int(logits[0, -1].argmax().item())

@@ -141,6 +141,8 @@ class MultimodalLM(nn.Module):
         pooled_patches_idx: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
+        subsegment_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -162,9 +164,20 @@ class MultimodalLM(nn.Module):
             each other **bidirectionally** (causal order is ignored among image
             tokens) while text stays causal, matching HF Molmo2's attention mask.
             Requires the dense (``"torch"``) attention backend.
+        :param subsegment_ids: Optional ``(B, seq_len)`` int tensor marking subsegments
+            for packed multi-annotation data: a shared prefix (``ATTEND_ALL`` id) that
+            branches into several mutually-isolated response branches (one id each). A
+            query may only attend to keys with a ``>=`` subsegment id (matching mm_olmo's
+            ``attention_mask & (subseg_q <= subseg_k)``). Requires ``position_ids`` and
+            the dense (``"torch"``) attention backend.
+        :param position_ids: Optional ``(B, seq_len)`` int tensor of explicit RoPE
+            positions. Required with ``subsegment_ids`` (parallel branches share an
+            overlapping position range and cannot use sequential positions).
         :returns: Logits or loss (same as
             :meth:`~olmo_core.nn.transformer.Transformer.forward`).
         """
+        if subsegment_ids is not None and position_ids is None:
+            raise ValueError("`position_ids` is required when `subsegment_ids` is provided")
         assert (
             self.lm.embeddings is not None
         ), "MultimodalLM requires the LM to have an embedding table"
@@ -190,10 +203,19 @@ class MultimodalLM(nn.Module):
 
             image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
 
+            # Keep only valid pooled rows (a row is padding iff *all* its patch
+            # indices are -1, e.g. added by a batch collator to equalize ``n_pooled``
+            # across examples). Selecting in row-major order keeps each example's
+            # features aligned with its ``<im_patch>`` positions, so batches with a
+            # variable number of image tokens per example work. For unpadded / B=1
+            # inputs every row is valid and this is a no-op.
+            valid_rows = (pooled_patches_idx >= 0).any(dim=-1)  # (B, n_pooled)
+            image_features = image_features[valid_rows]  # (total_valid, d)
+
             # Splice into LM embeddings at every <im_patch> position.
             is_image_patch = input_ids.view(-1) == self.cfg.image_patch_token_id
             n_patches_in_seq = int(is_image_patch.sum())
-            n_features = image_features.shape[0] * image_features.shape[1]
+            n_features = image_features.shape[0]
             if n_patches_in_seq != n_features:
                 raise ValueError(
                     f"Number of <im_patch> tokens in input_ids ({n_patches_in_seq}) does not "
@@ -217,4 +239,25 @@ class MultimodalLM(nn.Module):
             is_image = token_type_ids.to(device) != 0  # (B, S)
             or_mask = (is_image[:, :, None] & is_image[:, None, :]).unsqueeze(1)  # (B, 1, S, S)
 
-        return self.lm(input_ids, input_embeddings=h, labels=labels, or_mask=or_mask, **kwargs)
+        # Build a restrictive subsegment (branch-isolation) allow-mask: a query at
+        # position q may attend a key at position k only if ``subseg[q] <= subseg[k]``,
+        # matching mm_olmo's ``attention_mask & subsegment_mask``. The shared prefix uses
+        # the largest id so it only attends itself, while each branch attends the prefix
+        # and itself but not sibling branches.
+        and_mask: Optional[torch.Tensor] = None
+        if subsegment_ids is not None:
+            seg = subsegment_ids.to(device)
+            and_mask = (seg[:, :, None] <= seg[:, None, :]).unsqueeze(1)  # (B, 1, S, S)
+
+        if position_ids is not None:
+            position_ids = position_ids.to(device)
+
+        return self.lm(
+            input_ids,
+            input_embeddings=h,
+            labels=labels,
+            or_mask=or_mask,
+            and_mask=and_mask,
+            position_ids=position_ids,
+            **kwargs,
+        )

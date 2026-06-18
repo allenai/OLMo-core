@@ -138,6 +138,12 @@ class AttentionBackend(nn.Module):
     OR'd onto the causal/sliding base, e.g. for bidirectional image-token attention).
     Only the dense SDPA backend supports it; flash/TE backends do not."""
 
+    SUPPORTS_AND_MASK: bool = False
+    """Whether :meth:`forward` honors the ``and_mask`` argument (a boolean keep-mask
+    AND'd onto the (causal | or_mask) base, e.g. for subsegment / branch isolation in
+    packed multi-annotation multimodal data). Only the dense SDPA backend supports it;
+    flash/TE backends do not."""
+
     def __init__(
         self,
         *,
@@ -237,6 +243,7 @@ class AttentionBackend(nn.Module):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the attention operation.
@@ -271,6 +278,7 @@ class TorchAttentionBackend(AttentionBackend):
     """
 
     SUPPORTS_OR_MASK = True
+    SUPPORTS_AND_MASK = True
 
     @classmethod
     def assert_supported(cls):
@@ -316,6 +324,7 @@ class TorchAttentionBackend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 
@@ -346,6 +355,17 @@ class TorchAttentionBackend(AttentionBackend):
             if base is None:
                 base = torch.ones(q.shape[1], k.shape[1], device=q.device, dtype=torch.bool).tril()
             attn_mask = base | or_mask.to(device=q.device, dtype=torch.bool)
+
+        if and_mask is not None:
+            # AND a boolean keep-mask onto the (causal | or_mask) base, mirroring
+            # mm_olmo's `attention_mask & subsegment_mask`: a query may only attend
+            # to keys allowed by *both* masks. Used for subsegment / branch isolation
+            # in packed multi-annotation multimodal data. Build an explicit causal
+            # base first when we don't already have one.
+            base = attn_mask
+            if base is None:
+                base = torch.ones(q.shape[1], k.shape[1], device=q.device, dtype=torch.bool).tril()
+            attn_mask = base & and_mask.to(device=q.device, dtype=torch.bool)
 
         if any(
             opt is not None
@@ -511,6 +531,7 @@ class FlashAttention2Backend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -736,6 +757,7 @@ class FlashAttention3Backend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -933,6 +955,7 @@ class FlashAttention4Backend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
         assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
@@ -1121,6 +1144,7 @@ class TEAttentionBackend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 
