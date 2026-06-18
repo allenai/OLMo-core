@@ -1159,3 +1159,26 @@ Plot refresh completed with stale-cache refresh only. Changed/generated plot fil
 - `plots/shared_expert/summary_observed_best.png`
 
 No additional jobs were launched during this status check.
+
+
+## 2026-06-18 810M Total-Sparsity Relaunches
+
+The first 810M total-sparsity promotion wave used EP1 everywhere for full comparability. The `sp96e4k` jobs fit on one Titan node; Cx1 finished cleanly and Cx2/Cx4/Cx8 were still running at the status check. The `sp192e4k` jobs OOMed/finalized with exit code 1 at `1 node x 8 GPUs`, `EP=1`, `microbatch=1`, so they were relaunched as `r2` on 2 Titan nodes while preserving EP1, LR, global batch, and microbatch.
+
+Original failed `sp192e4k` attempts:
+
+| Name | Cx | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-810m-cx1-sp192e4k-lr4e-4-r1` | 1 | 4e-4 | 32 | 1 | 8 | 1 | 1 | https://beaker.org/ex/01KVCYAEJEJ2NBQ58FHAQB9B52 | Failed quickly with exit code 1/OOM. |
+| `sp-810m-cx2-sp192e4k-lr4e-4-r1` | 2 | 4e-4 | 48 | 1 | 8 | 1 | 1 | https://beaker.org/ex/01KVCYATNRJ4ZTJBVMW599BYY3 | Failed quickly with exit code 1/OOM. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r1` | 4 | 3e-4 | 64 | 1 | 8 | 1 | 1 | https://beaker.org/ex/01KVCYB6C56R079ZEJ1D4FXXDB | Failed quickly with exit code 1/OOM. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r1` | 8 | 3e-4 | 96 | 1 | 8 | 1 | 1 | https://beaker.org/ex/01KVCYBJ8PNDKSASQXBGRM7CAB | Failed quickly with exit code 1/OOM. |
+
+Replacement `sp192e4k` attempts:
+
+| Name | Cx | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-810m-cx1-sp192e4k-lr4e-4-r2` | 1 | 4e-4 | 32 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGEKW8E218NNY0XTHWTJ9W | Legal accumulation: `32 / (2 * 8 * 1) = 2`. |
+| `sp-810m-cx2-sp192e4k-lr4e-4-r2` | 2 | 4e-4 | 48 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGF07SQE61D4JJXQ9H6S7V | Legal accumulation: `48 / (2 * 8 * 1) = 3`. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r2` | 4 | 3e-4 | 64 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGFC3RQVYFW07077WNKMV0 | Legal accumulation: `64 / (2 * 8 * 1) = 4`. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r2` | 8 | 3e-4 | 96 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGFQWQGQ6JWNBHC5YR23B1 | Legal accumulation: `96 / (2 * 8 * 1) = 6`. |
