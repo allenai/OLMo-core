@@ -29,6 +29,10 @@ jobs:
     name: ${{ matrix.task.name }}
     runs-on: [ubuntu-latest]
     timeout-minutes: 15
+    env:
+      # HF models downloaded by the HF roundtrip tests are cached here across runs
+      # (see the "Cache HuggingFace models" step) to avoid re-downloading every run.
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface
     strategy:
       fail-fast: false
       matrix:
@@ -131,6 +135,16 @@ jobs:
           restore-keys: |
             mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}-${{ github.ref }}
             mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: Cache HuggingFace models
+        # The "Test" task runs the HF roundtrip tests, which download Qwen3-0.6B and
+        # Gemma-3-270m. Persist HF_HOME so they're only downloaded once. Bump the key
+        # suffix when the set of models pulled by these tests changes.
+        if: matrix.task.name == 'Test'
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HF_HOME }}
+          key: hf-models-${{ env.CACHE_PREFIX }}-${{ runner.os }}-qwen3-0.6b-gemma3-270m
 
       - name: ${{ matrix.task.name }}
         run: |
@@ -239,8 +253,10 @@ jobs:
           echo "BRANCH_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
 
       # The '--weka' mount + 'HF_HOME' below point HuggingFace at a checkpoint cache on Weka so
-      # the Qwen3.5 comparison test reads the official weights from the mount instead of
-      # downloading them and timing out. Populate the cache once from a Weka-mounted machine via:
+      # the Qwen3.5 comparison test reads the official weights from the mount. 'HF_HUB_OFFLINE=1'
+      # forbids any network access, so a cache miss fails fast (the test skips) instead of
+      # downloading the ~GB checkpoint and blowing the task timeout. Populate the cache once from a
+      # Weka-mounted machine via:
       #   HF_HOME=/weka/oe-training-default/test-fixtures/hf hf download Qwen/Qwen3.5-0.8B
       - name: GPU Tests
         if: env.BEAKER_TOKEN != ''
@@ -268,6 +284,7 @@ jobs:
             --env 'TOKENIZERS_PARALLELISM=false' \
             --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
             --env 'HF_HOME=/weka/oe-training-default/test-fixtures/hf' \
+            --env 'HF_HUB_OFFLINE=1' \
             --env-secret 'AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID' \
             --env-secret 'AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY' \
             -- ${{ matrix.task.run }}
