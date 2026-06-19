@@ -1202,3 +1202,9 @@ yet scheduled or started.
 The 810M `sp192e4k` total-sparsity `r2` replacements from 2026-06-18 were also
 still created but unscheduled at this refresh. They should not be requeued again
 unless those replacement attempts fail.
+
+Dense-schedule cleanup added to the same manual-restart batch:
+
+| Run | Beaker experiment | Latest job attempt | Created UTC | Status | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `ds-275m-cx4-ds2-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4ZNT2JCKR4Y5J27QQX897T | `01KVEREHTQ3467H8Q5SZ5YME4M` | 2026-06-19 01:38 | created, not scheduled | Previous replacement reached 14.50B tokens but did not finish. This is the missing low-LR Cx4 point for `dense2_shared`. |
