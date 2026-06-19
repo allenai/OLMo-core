@@ -60,3 +60,7 @@ site/
 /scratch/
 core
 /dataset-cache/
+
+# local-only artifacts (never commit): preserved eval-score dumps + scratch configs
+/eval_results_kept/
+/configfile.txt
