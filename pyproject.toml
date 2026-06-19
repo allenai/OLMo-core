@@ -76,7 +76,10 @@ fla = [
 # Provides a CUDA 12.9 ptxas (knows sm_103a / B300) for Triton on images whose bundled ptxas is too
 # old. Linux-only so macOS dev installs still work. Paired with the TRITON_PTXAS_PATH shim in the
 # B300 training script.
-b300 = ["nvidia-cuda-nvcc-cu12==12.9.86; platform_system == 'Linux'"]
+b300 = [
+    "nvidia-cuda-nvcc-cu12==12.9.86; platform_system == 'Linux'",
+    "nvidia-cuda-cupti-cu12==12.9.86; platform_system == 'Linux'",
+]
 all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,fla,b300]"]
 
 

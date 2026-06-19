@@ -16,6 +16,22 @@ if "TRITON_PTXAS_PATH" not in _os.environ:
             _os.environ["TRITON_PTXAS_PATH"] = _hits[0]
             break
 
+# --- B300 (sm_103) CUPTI workaround (for torch.profiler) ---
+# torch's kineto loads a CUPTI too old for sm_103 (CUPTI_ERROR_INVALID_DEVICE), so the profiler
+# can't capture CUDA activities. Preload a newer CUPTI (12.9, from the 'b300' extra) by full path
+# BEFORE torch is imported — once its soname (libcupti.so.12) is in the process, kineto's later
+# dlopen binds to it. LD_LIBRARY_PATH can't be used here (glibc caches the loader path at startup).
+import ctypes as _ctypes
+
+for _cupti in sorted(
+    _glob.glob("/opt/conda/lib/python*/site-packages/nvidia/cuda_cupti/lib/libcupti.so*")
+):
+    try:
+        _ctypes.CDLL(_cupti, mode=_ctypes.RTLD_GLOBAL)
+        break
+    except OSError:
+        pass
+
 import logging
 from datetime import datetime
 from functools import partial
