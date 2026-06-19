@@ -71,7 +71,9 @@ torchao = ["torchao==0.15.0"]
 transformers = ["transformers<4.57"]
 wandb = ["wandb"]
 fla = [
-    "flash-linear-attention",
+    # Pinned to force an upgrade past the image's baked 0.5.0 (unpinned won't upgrade an
+    # already-satisfied dep). Bumped to pick up any newer Triton kernel / autotune configs for B300.
+    "flash-linear-attention==0.5.1",
 ]
 # Provides a CUDA 12.9 ptxas (knows sm_103a / B300) for Triton on images whose bundled ptxas is too
 # old. Linux-only so macOS dev installs still work. Paired with the TRITON_PTXAS_PATH shim in the
