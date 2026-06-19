@@ -33,8 +33,12 @@ for _cupti in sorted(
         pass
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
+from typing import Any, Dict, List
+
+import torch
 
 from olmo_core.config import DType
 from olmo_core.data import (
@@ -56,8 +60,10 @@ from olmo_core.nn.fla.layer import FLAConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.distributed.utils import get_rank
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
+    Callback,
     CheckpointerCallback,
     ProfilerCallback,
     WandBCallback,
@@ -69,6 +75,84 @@ from olmo_core.train.train_module import (
 )
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class CudaEventBlockTimer(Callback):
+    """
+    Measures per-block-type forward GPU wall-time with ``torch.cuda.Event`` (no CUPTI needed),
+    to localize the B300 per-step gap to attention vs the FLA/GatedDeltaNet blocks. Registers
+    block-level forward hooks on rank 0 for a window of steps (after compile settles), then logs
+    the attention-vs-FLA split and removes itself.
+
+    Notes:
+    - Block-level hooks fire *outside* the per-block compiled region, so they add no graph breaks.
+    - Times are GPU wall-time on the compute stream, so they include any exposed FSDP comm wait.
+    - If activation checkpointing is on, the forward hook also fires during backward recompute;
+      that's counted for both block types, so the relative split stays valid.
+    """
+
+    start_step: int = 25
+    num_steps: int = 5
+    _records: List[Any] = field(default_factory=list)
+    _pending: Dict[int, Any] = field(default_factory=dict)
+    _handles: List[Any] = field(default_factory=list)
+    _active: bool = False
+
+    @staticmethod
+    def _classify(block) -> str:
+        if hasattr(block, "fla"):
+            return "fla"
+        if hasattr(block, "attention"):
+            return "attn"
+        return "other"
+
+    def pre_step(self, batch):
+        if get_rank() != 0 or self._active or self.step != self.start_step:
+            return
+        self._active = True
+        model = self.trainer.train_module.model
+        for block in model.blocks.values():
+            btype = self._classify(block)
+
+            def _pre(mod, args, _bt=btype):
+                ev = torch.cuda.Event(enable_timing=True)
+                ev.record()
+                self._pending[id(mod)] = (_bt, ev)
+
+            def _post(mod, args, output):
+                ev = torch.cuda.Event(enable_timing=True)
+                ev.record()
+                bt, start = self._pending.pop(id(mod))
+                self._records.append((bt, start, ev))
+
+            self._handles.append(block.register_forward_pre_hook(_pre))
+            self._handles.append(block.register_forward_hook(_post))
+        log.info(f"[cuda-event timer] hooked {len(model.blocks)} blocks at step {self.step}")
+
+    def post_step(self):
+        if not self._active or self.step < self.start_step + self.num_steps - 1:
+            return
+        torch.cuda.synchronize()
+        totals: Dict[str, float] = {}
+        counts: Dict[str, int] = {}
+        for bt, start, end in self._records:
+            totals[bt] = totals.get(bt, 0.0) + start.elapsed_time(end)
+            counts[bt] = counts.get(bt, 0) + 1
+        parts = [
+            f"{bt}={totals[bt]:.1f}ms/{counts[bt]}calls ({totals[bt] / max(counts[bt], 1):.2f}ms each)"
+            for bt in sorted(totals)
+        ]
+        log.info(
+            f"[cuda-event block timing | forward | {self.num_steps} steps, rank0] " + " | ".join(parts)
+        )
+        for h in self._handles:
+            h.remove()
+        self._handles.clear()
+        self._records.clear()
+        self._pending.clear()
+        self._active = False
+
 
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
@@ -224,19 +308,24 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
+        # NOTE: torch.profiler disabled — CUPTI is blocked on this B300 cluster
+        # (CUPTI_ERROR_INVALID_DEVICE), so it only captured CPU activities while with_stack=True
+        # added heavy overhead. Using CudaEventBlockTimer below instead. Re-enable if CUPTI works.
+        # .with_callback(
+        #     "profiler",
+        #     ProfilerCallback(
+        #         skip_first=10,
+        #         wait=1,
+        #         warmup=3,
+        #         active=5,
+        #         repeat=1,
+        #         with_stack=True,
+        #     ),
+        # )
         .with_callback(
-            "profiler",
-            # Profiles steady-state steps (~14-18) on rank 0, after torch.compile settles. Logs a
-            # self_cuda_time op table and saves a chrome trace to <save_folder>/profiler/. Cancel the
-            # job once it fires; profiled steps are slower so don't read TPS from them.
-            ProfilerCallback(
-                skip_first=10,
-                wait=1,
-                warmup=3,
-                active=5,
-                repeat=1,
-                with_stack=True,
-            ),
+            # CUPTI-free per-block GPU timing (attention vs FLA). Fires steps 25-29 on rank 0.
+            "block_timer",
+            CudaEventBlockTimer(start_step=25, num_steps=5),
         )
         .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
     )
