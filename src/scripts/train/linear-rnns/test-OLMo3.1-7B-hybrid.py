@@ -365,20 +365,20 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        # NOTE: torch.profiler disabled — CUPTI is blocked on this B300 cluster
-        # (CUPTI_ERROR_INVALID_DEVICE), so it only captured CPU activities while with_stack=True
-        # added heavy overhead. Using CudaEventBlockTimer below instead. Re-enable if CUPTI works.
-        # .with_callback(
-        #     "profiler",
-        #     ProfilerCallback(
-        #         skip_first=10,
-        #         wait=1,
-        #         warmup=3,
-        #         active=5,
-        #         repeat=1,
-        #         with_stack=True,
-        #     ),
-        # )
+        # Re-enabled for a profiling run on the cu130 / torch-2.11 image, which ships CUDA 13.0
+        # CUPTI (13.0.85) that DOES support sm_103 (B300) — unlike the cu129 image's 12.9 CUPTI,
+        # which returned CUPTI_ERROR_INVALID_DEVICE. Disable again for normal cu129 training.
+        .with_callback(
+            "profiler",
+            ProfilerCallback(
+                skip_first=10,
+                wait=1,
+                warmup=3,
+                active=5,
+                repeat=1,
+                with_stack=True,
+            ),
+        )
         # NOTE: one-off profiling callbacks disabled for normal training — re-enable to re-run the
         # attention-vs-FLA timing / GPU-util investigation (see hybrid_run_status.md).
         # .with_callback(
