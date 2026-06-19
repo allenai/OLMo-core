@@ -1,3 +1,21 @@
+# --- B300 (sm_103) Triton ptxas workaround ---
+# Triton's bundled ptxas is too old for sm_103a (B300). Point it at a newer ptxas: torch's bundled
+# one (13.0 on cu130 images) if present, else the CUDA 12.9 nvcc wheel pulled in via the 'b300'
+# extra. Done here (in-container, before any torch.compile) so it doesn't depend on the launcher's
+# installed olmo_core / setup_steps.
+import glob as _glob
+import os as _os
+
+if "TRITON_PTXAS_PATH" not in _os.environ:
+    for _pat in (
+        "/opt/conda/lib/python*/site-packages/torch/bin/ptxas",
+        "/opt/conda/lib/python*/site-packages/nvidia/cuda_nvcc/bin/ptxas",
+    ):
+        _hits = _glob.glob(_pat)
+        if _hits:
+            _os.environ["TRITON_PTXAS_PATH"] = _hits[0]
+            break
+
 import logging
 from datetime import datetime
 from functools import partial
