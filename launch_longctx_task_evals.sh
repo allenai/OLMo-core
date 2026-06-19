@@ -56,8 +56,10 @@ OLMO_CORE_COMMIT="${OLMO_CORE_COMMIT:-$(git -C "${OLMO_CORE_REPO}" rev-parse HEA
 # launch_long_context_evals.sh for the wheel-variant rationale).
 FLASH_ATTN_WHEEL="${FLASH_ATTN_WHEEL:-https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl}"
 
+# olmo-cookbook-eval parses -l/--gantry-args as comma-split key=value pairs (key, value = arg.split("=", 1)),
+# NOT JSON. Pass the install command as a single install=... pair (the command itself has no commas).
 INSTALL_CMD="uv sync --python 3.11 && uv pip install --no-deps ${FLASH_ATTN_WHEEL} && uv pip install --no-deps git+https://github.com/allenai/OLMo-core.git@${OLMO_CORE_COMMIT}"
-GANTRY_ARGS_JSON="{\"install\": \"${INSTALL_CMD}\"}"
+GANTRY_ARGS="install=${INSTALL_CMD}"
 
 OOLONG_TASKS=()
 for ctx in 1024 2048 4096 8192 16384 32768 65536; do
@@ -96,7 +98,7 @@ for mode in "${MODES[@]}"; do
       -g \
       --oe-eval-branch "${OE_EVAL_BRANCH}" \
       --name-suffix "${suffix}" \
-      -l "${GANTRY_ARGS_JSON}" \
+      -l "${GANTRY_ARGS}" \
       --model-args "trust_remote_code=true,max_length=65536,tokenizer=${OLMO_CORE_TOKENIZER}"
   done
 done
