@@ -379,16 +379,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         #         with_stack=True,
         #     ),
         # )
-        .with_callback(
-            # CUPTI-free per-block GPU timing (attention vs FLA). Fires steps 25-29 on rank 0.
-            "block_timer",
-            CudaEventBlockTimer(start_step=25, num_steps=5),
-        )
-        .with_callback(
-            # GPU SM/mem utilization sampling (launch-bound vs GPU-bound). ~15s from step 25, rank 0.
-            "gpu_util",
-            GpuUtilSampler(start_step=25, seconds=15),
-        )
+        # NOTE: one-off profiling callbacks disabled for normal training — re-enable to re-run the
+        # attention-vs-FLA timing / GPU-util investigation (see hybrid_run_status.md).
+        # .with_callback(
+        #     # CUPTI-free per-block GPU timing (attention vs FLA). Fires steps 25-29 on rank 0.
+        #     "block_timer",
+        #     CudaEventBlockTimer(start_step=25, num_steps=5),
+        # )
+        # .with_callback(
+        #     # GPU SM/mem utilization sampling (launch-bound vs GPU-bound). ~15s from step 25, rank 0.
+        #     "gpu_util",
+        #     GpuUtilSampler(start_step=25, seconds=15),
+        # )
         .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
     )
 
