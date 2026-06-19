@@ -1182,3 +1182,23 @@ Replacement `sp192e4k` attempts:
 | `sp-810m-cx2-sp192e4k-lr4e-4-r2` | 2 | 4e-4 | 48 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGF07SQE61D4JJXQ9H6S7V | Legal accumulation: `48 / (2 * 8 * 1) = 3`. |
 | `sp-810m-cx4-sp192e4k-lr3e-4-r2` | 4 | 3e-4 | 64 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGFC3RQVYFW07077WNKMV0 | Legal accumulation: `64 / (2 * 8 * 1) = 4`. |
 | `sp-810m-cx8-sp192e4k-lr3e-4-r2` | 8 | 3e-4 | 96 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGFQWQGQ6JWNBHC5YR23B1 | Legal accumulation: `96 / (2 * 8 * 1) = 6`. |
+
+
+## 2026-06-19 Manual Restarts Status Refresh
+
+Jacob manually restarted the remaining failed/canceled expert-granularity tail jobs.
+The restarts reuse the original Beaker experiment IDs and add new job attempts on
+those experiments. At this status refresh the new attempts were created but not
+yet scheduled or started.
+
+| Run | Beaker experiment | Latest job attempt | Created UTC | Status | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV1XQMPM62PXBRPGX1MYD059 | `01KVERB5G3CXQP564R4GE8ZGKQ` | 2026-06-19 01:36 | created, not scheduled | Previous attempts failed; no finished W&B retry found yet. |
+| `eg-1p2b-cx4-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV299VFSQ8879TGTB56T8PW1 | `01KVERBW94NECDFG1WNJE3GE7R` | 2026-06-19 01:36 | created, not scheduled | Previous attempts reached up to 64.70B tokens but did not finish. |
+| `eg-1p2b-cx4-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV29A65FTV4YHJACBMZB6TVG | `01KVERCFF9931AVS5EDETW9DW1` | 2026-06-19 01:37 | created, not scheduled | Previous attempt reached 44.83B tokens but did not finish. |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJCSV6NFW52ENF8T7DNPH | `01KVERD285WWF9BKE5CP60HNP9` | 2026-06-19 01:37 | created, not scheduled | Previous attempts reached up to 74.07B tokens but did not finish. |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | `01KVERDHRD5ZYT41V8K0CG5MFP` | 2026-06-19 01:37 | created, not scheduled | Previous attempt reached 24.63B tokens but did not finish. |
+
+The 810M `sp192e4k` total-sparsity `r2` replacements from 2026-06-18 were also
+still created but unscheduled at this refresh. They should not be requeued again
+unless those replacement attempts fail.
