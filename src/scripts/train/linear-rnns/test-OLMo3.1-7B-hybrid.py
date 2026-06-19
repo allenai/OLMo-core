@@ -41,7 +41,11 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    ProfilerCallback,
+    WandBCallback,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -202,6 +206,20 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 project="holmes-testing",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
+            ),
+        )
+        .with_callback(
+            "profiler",
+            # Profiles steady-state steps (~14-18) on rank 0, after torch.compile settles. Logs a
+            # self_cuda_time op table and saves a chrome trace to <save_folder>/profiler/. Cancel the
+            # job once it fires; profiled steps are slower so don't read TPS from them.
+            ProfilerCallback(
+                skip_first=10,
+                wait=1,
+                warmup=3,
+                active=5,
+                repeat=1,
+                with_stack=True,
             ),
         )
         .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
