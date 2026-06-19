@@ -150,11 +150,14 @@ DEFAULT_SETUP_STEPS = (
     # it. No-op on images where libnvrtc isn't found.
     'NVRTC_DIR=$(find /opt/conda -name "libnvrtc.so*" 2>/dev/null | head -n1 | xargs -r dirname || true); '
     'if [ -n "$NVRTC_DIR" ]; then echo "$NVRTC_DIR" > /etc/ld.so.conf.d/zz-nvrtc.conf && ldconfig; fi',
-    # Triton bundles its own (older) ptxas which doesn't know newer GPU archs (e.g. sm_103a on
-    # B300). torch ships a newer ptxas at torch/bin/ptxas; point Triton at it so torch.compile can
-    # assemble kernels. No-op if torch's ptxas isn't found (Triton keeps its default).
-    'TORCH_PTXAS=$(find /opt/conda -path "*/torch/bin/ptxas" 2>/dev/null | head -n1 || true); '
-    'if [ -n "$TORCH_PTXAS" ]; then export TRITON_PTXAS_PATH="$TORCH_PTXAS"; fi',
+    # Triton bundles its own ptxas which doesn't know newer GPU archs (e.g. sm_103a on B300).
+    # Point Triton at a newer one: prefer torch's bundled ptxas (torch 2.11 ships a 13.0 one at
+    # torch/bin/ptxas); if absent (e.g. torch 2.9.x), install a CUDA 12.9 ptxas wheel (knows
+    # sm_103a) and use that. No-op if neither is available (Triton keeps its default).
+    'PTXAS=$(find /opt/conda -path "*/torch/bin/ptxas" 2>/dev/null | head -n1 || true); '
+    'if [ -z "$PTXAS" ]; then pip install "nvidia-cuda-nvcc-cu12==12.9.86" >/dev/null 2>&1 || true; '
+    'PTXAS=$(find /opt/conda -path "*cuda_nvcc*/bin/ptxas" 2>/dev/null | head -n1 || true); fi; '
+    'if [ -n "$PTXAS" ]; then export TRITON_PTXAS_PATH="$PTXAS"; fi',
     "pip install -e '.[all]'",
     "pip freeze",
 )
