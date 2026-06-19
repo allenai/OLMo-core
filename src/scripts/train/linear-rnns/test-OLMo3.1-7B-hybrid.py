@@ -97,7 +97,8 @@ class CudaEventBlockTimer(Callback):
     _records: List[Any] = field(default_factory=list)
     _pending: Dict[int, Any] = field(default_factory=dict)
     _handles: List[Any] = field(default_factory=list)
-    _active: bool = False
+    _collecting: bool = False
+    _done: bool = False
 
     @staticmethod
     def _classify(block) -> str:
@@ -107,20 +108,26 @@ class CudaEventBlockTimer(Callback):
             return "attn"
         return "other"
 
-    def pre_step(self, batch):
-        if get_rank() != 0 or self._active or self.step != self.start_step:
+    def pre_train(self):
+        # Register hooks ONCE, before the first step / compile — registering mid-run mutates the
+        # modules and forces a torch.compile recapture, after which the recorded events are invalid
+        # ("Both events must be recorded"). Hooks are no-ops until _collecting is set in the window.
+        if get_rank() != 0:
             return
-        self._active = True
         model = self.trainer.train_module.model
         for block in model.blocks.values():
             btype = self._classify(block)
 
             def _pre(mod, args, _bt=btype):
+                if not self._collecting:
+                    return
                 ev = torch.cuda.Event(enable_timing=True)
                 ev.record()
                 self._pending[id(mod)] = (_bt, ev)
 
             def _post(mod, args, output):
+                if not self._collecting or id(mod) not in self._pending:
+                    return
                 ev = torch.cuda.Event(enable_timing=True)
                 ev.record()
                 bt, start = self._pending.pop(id(mod))
@@ -128,30 +135,41 @@ class CudaEventBlockTimer(Callback):
 
             self._handles.append(block.register_forward_pre_hook(_pre))
             self._handles.append(block.register_forward_hook(_post))
-        log.info(f"[cuda-event timer] hooked {len(model.blocks)} blocks at step {self.step}")
+        log.info(f"[cuda-event timer] hooked {len(model.blocks)} blocks (collect at step {self.start_step})")
+
+    def pre_step(self, batch):
+        if get_rank() == 0 and not self._done and self.step == self.start_step:
+            self._collecting = True
 
     def post_step(self):
-        if not self._active or self.step < self.start_step + self.num_steps - 1:
+        if get_rank() != 0 or self._done or not self._collecting:
             return
+        if self.step < self.start_step + self.num_steps - 1:
+            return
+        self._collecting = False
+        self._done = True
         torch.cuda.synchronize()
         totals: Dict[str, float] = {}
         counts: Dict[str, int] = {}
+        skipped = 0
         for bt, start, end in self._records:
-            totals[bt] = totals.get(bt, 0.0) + start.elapsed_time(end)
+            try:
+                dt = start.elapsed_time(end)
+            except (ValueError, RuntimeError):
+                skipped += 1
+                continue
+            totals[bt] = totals.get(bt, 0.0) + dt
             counts[bt] = counts.get(bt, 0) + 1
         parts = [
             f"{bt}={totals[bt]:.1f}ms/{counts[bt]}calls ({totals[bt] / max(counts[bt], 1):.2f}ms each)"
             for bt in sorted(totals)
         ]
         log.info(
-            f"[cuda-event block timing | forward | {self.num_steps} steps, rank0] " + " | ".join(parts)
+            f"[cuda-event block timing | forward | rank0 | skipped={skipped}] " + " | ".join(parts)
         )
         for h in self._handles:
             h.remove()
         self._handles.clear()
-        self._records.clear()
-        self._pending.clear()
-        self._active = False
 
 
 SEQUENCE_LENGTH = 8 * 1024
