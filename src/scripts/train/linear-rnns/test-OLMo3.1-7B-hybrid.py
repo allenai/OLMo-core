@@ -374,9 +374,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 skip_first=10,
                 wait=1,
                 warmup=3,
-                active=5,
+                # with_stack=False + fewer active steps → a much smaller chrome trace that actually
+                # exports/saves (with_stack=True over 5 steps + CUDA events was too big). The
+                # self_cuda_time table is unaffected; we lose only Python source-line attribution.
+                active=2,
                 repeat=1,
-                with_stack=True,
+                with_stack=False,
             ),
         )
         # NOTE: one-off profiling callbacks disabled for normal training — re-enable to re-run the
