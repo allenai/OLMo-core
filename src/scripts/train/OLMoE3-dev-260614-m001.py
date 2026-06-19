@@ -142,7 +142,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 1000
+SAVE_INTERVAL = 2500
 
 NUM_EXPERTS = 256
 TOP_K = 4
@@ -174,16 +174,16 @@ TAG=f'p1'
 LR_ALPHA = 0.53
 
 # stage 1 - xM -
-MAX_DURATION = int(150e9)
-MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 24
+# MAX_DURATION = int(150e9)
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 24
 # NO LR_REF_BSZ=16M
 
-# stage 2 - 6M -
-# MAX_DURATION = int(500e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 36
-# NO LR_REF_BSZ=32M
+# stage 2 - xM -
+MAX_DURATION = int(500e9)
+MICRO_BSZ = 3
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 48
+# NO LR_REF_BSZ=64M
 
 # stage 3 - 9M -
 # MAX_DURATION = int(300e9)
@@ -214,7 +214,7 @@ SCHED_FINAL_FRACTION = 0.5
 LR= 8e-4  # the LR is set for stable stage
 LR= LR / SCHED_MID_FRACTION # transform LR to peak at fast warmup
 
-LR=LR * (GLOBAL_BATCH_SIZE / (16 * 1024 * 1024))**LR_ALPHA # lr is for X Million token
+LR=LR * (GLOBAL_BATCH_SIZE / (64 * 1024 * 1024))**LR_ALPHA # lr is for X Million token
 
 EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
@@ -338,8 +338,8 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                lb_loss_weight=0.01,
-                z_loss_weight=1e-3,
+                lb_loss_weight=0.02,
+                z_loss_weight=1e-4,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
                 normalize_expert_weights=1.0,
@@ -668,7 +668,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8, prefetch_factor=8,
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)

@@ -1,5 +1,6 @@
 
 import logging
+import os
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -724,16 +725,50 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # Dense params → DP group
             return dp_group
 
+        init_sync_env = os.environ.get("OLMO_DDP_INIT_SYNC")
+        init_sync = (
+            True
+            if init_sync_env is None
+            else init_sync_env.strip().lower() in {"1", "true", "yes", "on"}
+        )
+
+        total_params = 0
+        total_numel = 0
+        ep_params = 0
+        ep_numel = 0
+        for param in self.parameters():
+            total_params += 1
+            total_numel += param.numel()
+            if param in ep_sharded_params:
+                ep_params += 1
+                ep_numel += param.numel()
+        dense_params = total_params - ep_params
+        dense_numel = total_numel - ep_numel
+        log.info(
+            "Applying OLMo MultiGroup DDP "
+            "(init_sync=%s, dense_pg_size=%s, expert_pg_size=%s, "
+            "dense_params=%d/%d, expert_params=%d/%d, device=%s)",
+            "enabled" if init_sync else "disabled",
+            dist.get_world_size(dp_group),
+            dist.get_world_size(epdp_group),
+            dense_params,
+            dense_numel,
+            ep_params,
+            ep_numel,
+            self.device,
+        )
+
         ddp_model = MultiGroupDistributedDataParallel(
             module=self,
             dim=0, # for scatter/gather
-            init_sync=True, # meta device
+            init_sync=init_sync,
             process_group=dp_group,
             param_process_group_fn=param_process_group_fn,
             accumulate_grads_in_fp32=accumulate_grads_in_fp32,
             reduce_grads_in_fp32=reduce_grads_in_fp32,
             bucket_cap_mb=bucket_cap_mb,
         )
+        log.info("Finished applying OLMo MultiGroup DDP")
 
         from ..transformer.model import _hide_cpu_inputs_from_torch, _unhide_cpu_inputs_from_torch
         ddp_model.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)

@@ -2131,7 +2131,28 @@ class OLMoDDPTrainModule(TrainModule):
             self.pp_prev_rank = (self.pp_group_rank - 1) % self.pp_group_size
             self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
             self.pp_final_stage_rank = pp_config.final_stage_rank()
+            log.info(
+                "Creating pipeline P2P process groups "
+                "(global_rank=%d, pp_rank=%d/%d)",
+                dist.get_rank(),
+                self.pp_group_rank,
+                self.pp_group_size,
+            )
             pp_p2p_group = pp_config.build_p2p_process_group(self.world_mesh["dense"])
+            log.info(
+                "Created pipeline P2P process groups "
+                "(global_rank=%d, pp_rank=%d/%d)",
+                dist.get_rank(),
+                self.pp_group_rank,
+                self.pp_group_size,
+            )
+            if is_distributed():
+                log.info(
+                    "Synchronizing after pipeline P2P process-group creation "
+                    "(global_rank=%d)",
+                    dist.get_rank(),
+                )
+                dist.barrier()
 
             # Split model into pipeline stages.
             model.purge_cuda_events() # set event to None so that can be deepcopied
@@ -2207,6 +2228,11 @@ class OLMoDDPTrainModule(TrainModule):
                 # overlap from delaying the collective start. Revalidate whether it
                 # still buys useful overlap on current NCCL/torch versions.
                 nccl_opts = dist.ProcessGroupNCCL.Options(is_high_priority_stream=True)
+                log.info(
+                    "Creating high-priority NCCL EP-MP process groups "
+                    "(global_rank=%d)",
+                    dist.get_rank(),
+                )
                 ep_mp_group, ep_mp_groups = dist.new_subgroups_by_enumeration(
                     ranks_per_subgroup_list=ep_mp_rank_groups,
                     backend="nccl",
@@ -2219,6 +2245,13 @@ class OLMoDDPTrainModule(TrainModule):
                 self.ep_mp_high_priority_group = ep_mp_group_override
                 self.ep_mp_high_priority_groups = ep_mp_groups
                 log.info("Created high-priority NCCL EP-MP process groups")
+                if is_distributed():
+                    log.info(
+                        "Synchronizing after high-priority EP-MP process-group creation "
+                        "(global_rank=%d)",
+                        dist.get_rank(),
+                    )
+                    dist.barrier()
             else:
                 log.warning(
                     "Skipping EP-MP high-priority group creation because backend is '%s'",
@@ -2312,6 +2345,11 @@ class OLMoDDPTrainModule(TrainModule):
 
         ddp_model_parts = []
         for idx, m in enumerate(model_parts):
+            log.info(
+                "Wrapping OLMo DDP model part %d/%d with MultiGroupDistributedDataParallel",
+                idx + 1,
+                len(model_parts),
+            )
             ddp_m = m.apply_dp(
                 dp_mesh=dp_mesh,
                 ep_mesh=ep_mesh,
@@ -2320,6 +2358,11 @@ class OLMoDDPTrainModule(TrainModule):
                 accumulate_grads_in_fp32=dp_config.accumulate_grads_in_fp32,
                 reduce_grads_in_fp32=dp_config.reduce_grads_in_fp32,
                 bucket_cap_mb=dp_config.bucket_cap_mb,
+            )
+            log.info(
+                "Wrapped OLMo DDP model part %d/%d with MultiGroupDistributedDataParallel",
+                idx + 1,
+                len(model_parts),
             )
             ddp_model_parts.append(ddp_m)
 

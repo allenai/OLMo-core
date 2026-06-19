@@ -142,20 +142,20 @@ if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 1000
+SAVE_INTERVAL = 2000
 
-NUM_EXPERTS = 128
+NUM_EXPERTS = 64
 TOP_K = 4
 ORIGINAL_TOP_K=None
-D_MODEL=6 * 1024
-D_ATTN=8 * 1024
+D_MODEL=3 * 1024 - 512
+D_ATTN=4 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 8 * 1024
+MOE_HIDDEN_SIZE = 3 * 1024 - 512
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 4 * 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 3 * 1024 - 512   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -165,27 +165,27 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 # DP_DIM=2
 EP_DIM=8
-PP_DIM=8
+PP_DIM=2
 
 # ref
-REF_NUM_NODES=16
+REF_NUM_NODES=32
 TAG=f'p1'
 
 LR_ALPHA = 0.53
 
-# stage 1 - xM - 
-MAX_DURATION = int(150e9)
-MICRO_BSZ = 1
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 16
-# NO LR_REF_BSZ=6M
+# stage 1 - xM -
+# MAX_DURATION = int(200e9)
+# MICRO_BSZ = 2
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 32
+# LR_REF_BSZ_IN_M=32
 
-# stage 2 - 6M - 
-# MAX_DURATION = int(100e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 6
-# NO LR_REF_BSZ=6M
+# stage 2 - xM -
+MAX_DURATION = int(200e9)
+MICRO_BSZ = 3
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 48
+LR_REF_BSZ_IN_M=32
 
-# stage 3 - 9M - 
+# stage 3 - 9M -
 # MAX_DURATION = int(300e9)
 # MICRO_BSZ = 3
 # GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (2) * 9
@@ -197,16 +197,16 @@ if IN_EVAL_MODE:
 
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
-)  
+)
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ * PP_DIM
 
 GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
 
 
-SCHED_WARMUP_TOKENS = int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_WARMUP_TOKENS = int((20e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
-SCHED_LONG_DECAY_TOKENS = int((990e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_LONG_DECAY_TOKENS = int((19990e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 1.0
 SCHED_FINAL_FRACTION = 0.5
 
@@ -214,13 +214,13 @@ SCHED_FINAL_FRACTION = 0.5
 LR= 8e-4  # the LR is set for stable stage
 LR= LR / SCHED_MID_FRACTION # transform LR to peak at fast warmup
 
-LR=LR * (GLOBAL_BATCH_SIZE / (16 * 1024 * 1024))**LR_ALPHA # lr is for X Million token
+LR=LR * (GLOBAL_BATCH_SIZE / (LR_REF_BSZ_IN_M * 1024 * 1024))**LR_ALPHA # lr is for X Million token
 
 EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=64
+NUM_LAYERS=32
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
@@ -235,14 +235,14 @@ else:
 USE_COMPILE=True
 USE_NO_SYNC_EP=True
 # USE_AC=False
-PER_LAYER_RECOMPUTE=True
+PER_LAYER_RECOMPUTE=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-USE_FP8=True
+USE_FP8=False
 USE_FP8_ATTN_QKV=USE_FP8
 USE_FP8_ATTN_OUT=USE_FP8
 USE_FP8_ATTN_SAVE_QKV=False
@@ -250,7 +250,7 @@ ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blo
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = False
+PRODUCTION_RUN = True
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -266,10 +266,10 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
     from olmo_core.nn.attention.backend import AttentionBackendName
-    
+
     d_model = D_MODEL
     dtype = DType.float32
-    
+
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
         eps=1e-6,
@@ -307,7 +307,6 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
             attention=AttentionConfig(
                 name=AttentionType.fused_v2,
                 # name=AttentionType.default,
-                
                 n_heads=NUM_HEAD,
                 n_kv_heads=NUM_KV_HEAD,
                 bias=False,
@@ -339,7 +338,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 lb_loss_weight=0.01,
-                z_loss_weight=1e-3,
+                z_loss_weight=1e-4,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
                 normalize_expert_weights=1.0,
@@ -378,7 +377,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         init_std=0.01,
         dtype=dtype
     )
-    
+
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
     WINDOW_SIZE=2048
@@ -422,18 +421,18 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         shared_experts_router=None,
         attention_norm=layer_norm,
         feed_forward_norm=layer_norm,
-    ) 
+    )
     from copy import deepcopy
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
         # 1: deepcopy(dense_block_config),
         # 2: deepcopy(dense_block_config),
-        
+
         # also make last layer dense
         # NUM_LAYERS-1: deepcopy(dense_block_config),
     }
-    
+
     return config
 
 
@@ -457,24 +456,24 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
             group_overrides=[
                 OptimGroupOverride(
                     params=[
-                        "*embeddings.weight", 
-                        "*embedding_norm.weight", 
-                        "*q_norm.weight", 
-                        "*k_norm.weight", 
-                        "*input_norm.weight", 
-                        # "*norm.weight", 
+                        "*embeddings.weight",
+                        "*embedding_norm.weight",
+                        "*q_norm.weight",
+                        "*k_norm.weight",
+                        "*input_norm.weight",
+                        # "*norm.weight",
                         # "*lm_head.w_out.weight",
                         "*lm_head.norm.weight",
-                        "*attention_norm.weight", 
-                        "*feed_forward_norm.weight", 
+                        "*attention_norm.weight",
+                        "*feed_forward_norm.weight",
                     ],
                     opts=dict(weight_decay=0.0, use_muon=False),
                 ),
                 # OptimGroupOverride(
                 #     params=[
-                #         "*.w_q.weight", 
-                #         "*.w_k.weight", 
-                #         "*.w_v.weight", 
+                #         "*.w_q.weight",
+                #         "*.w_k.weight",
+                #         "*.w_v.weight",
                 #         "*attention.w_out.weight", # to exclude "lm_head.w_out.weight"
                 #         "*.w1.weight", "*.w2.weight", "*.w3.weight"
                 #         ], # attention + dense mlp
@@ -485,7 +484,7 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
                 #     opts=dict(lr=EXPERT_LR, use_muon=USE_MUON),
                 # ),
             ],
-            compile=USE_COMPILE, 
+            compile=USE_COMPILE,
             dtype=DType.float32,
             sigma_factor=12,
             use_distributed=True
@@ -553,7 +552,7 @@ WORK_DIR = "/workspace"
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
-    
+
     cluster = 'ai2/jupiter'
     # cluster = 'cirrascale'
     from olmo_core.train.common import StepSkipRange
@@ -599,7 +598,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
 
         .with_callback(
-            "profiler", 
+            "profiler",
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
                                    start=31,
@@ -620,7 +619,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         config = config.with_recommended_evals(
             common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
         )
-    
+
     return config
 
 
@@ -668,7 +667,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8, prefetch_factor=8,
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
@@ -688,7 +687,7 @@ if __name__ == "__main__":
         include_default_evals=False,
         finalize_config=finalize_config,
     )
-        
+
     main(
         config_builder=config_builder,
     )

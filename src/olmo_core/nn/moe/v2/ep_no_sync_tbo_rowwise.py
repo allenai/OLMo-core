@@ -113,6 +113,7 @@ class _NoSyncRowwiseStageAState:
     shared_done_event: Optional[torch.cuda.Event]
     local_x_global_routed_expert_weights: torch.Tensor
     routed_expert_router_aux_loss_info: Optional[Tuple[object, ...]]
+    batch_size_per_local_expert: torch.Tensor
     padded_batch_size_per_local_expert: torch.Tensor
     dst_ranks: torch.Tensor
     dst_rows: torch.Tensor
@@ -315,6 +316,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
     ).int()
 
     with torch.no_grad():
+        batch_size_per_local_expert = recv_splits_by_src_local.sum(dim=0, dtype=torch.long)
         padded_batch_size_per_local_expert = padded_local_expert_splits_for_capacity(
             recv_splits_by_src_local,
             rank_capacity=rank_capacity,
@@ -350,6 +352,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
         shared_done_event=shared_done_event,
         local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
         routed_expert_router_aux_loss_info=routed_expert_router_aux_loss_info,
+        batch_size_per_local_expert=batch_size_per_local_expert,
         padded_batch_size_per_local_expert=padded_batch_size_per_local_expert,
         dst_ranks=dst_ranks,
         dst_rows=dst_rows,
@@ -486,7 +489,7 @@ def ep_no_sync_rowwise_tbo_stage_e(
     # )
     global_x_rank_major = self.routed_experts(
         d_state.dispatch_out,
-        a_state.padded_batch_size_per_local_expert,
+        a_state.batch_size_per_local_expert,
         down_proj_out=a_state.buffers.combine_in.detach(),
         up_proj_input_grad_out=a_state.buffers.dispatch_out.detach(),
     )

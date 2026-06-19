@@ -902,7 +902,8 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             symm_grad_expert_out = ctx.symm_expert_out
             # rowwise_dispatch_put only writes rows referenced by valid (src_ranks, src_rows).
             # symm_grad_expert_out is a reused shared buffer, so untouched rows can contain stale data.
-            # routed_experts uses batch_size_per_expert = recv_splits_by_src_local.sum(dim=0), so backward should only consume the valid prefix/segments, not tail capacity rows.
+            # routed_experts must use batch_size_per_expert = recv_splits_by_src_local.sum(dim=0),
+            # so grouped-mm backward/wgrad consumes only the valid prefix/segments, not tail capacity rows.
             # Route rows are built densely for kept routes, so consumed rows should be fully overwritten.
             # symm_grad_expert_out.zero_()  <----- Likely not necessary
             dispatch_source = grad_out_contig

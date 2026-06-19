@@ -565,13 +565,59 @@ class MultiGroupDistributedDataParallel(Module):
 
 
     def init_sync(self):
-        for process_group, parameters in self.process_group_to_params.items():
+        debug_init_sync = os.environ.get("OLMO_DDP_DEBUG_INIT_SYNC", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        num_groups = len(self.process_group_to_params)
+        for group_idx, (process_group, parameters) in enumerate(
+            self.process_group_to_params.items()
+        ):
+            if debug_init_sync:
+                first_param = parameters[0] if parameters else None
+                last_param = parameters[-1] if parameters else None
+                logger.info(
+                    "MultiGroupDDP init_sync: verifying group %d/%d "
+                    "(global_rank=%s, group_rank=%s, group_size=%s, "
+                    "params=%d, numel=%d, first=%s%s, last=%s%s)",
+                    group_idx + 1,
+                    num_groups,
+                    dist.get_rank(),
+                    dist.get_rank(group=process_group),
+                    dist.get_world_size(process_group),
+                    len(parameters),
+                    sum(param.numel() for param in parameters),
+                    self._param_to_name.get(first_param, "<none>") if first_param is not None else "<none>",
+                    tuple(first_param.shape) if first_param is not None else "",
+                    self._param_to_name.get(last_param, "<none>") if last_param is not None else "<none>",
+                    tuple(last_param.shape) if last_param is not None else "",
+                )
             # Verify model equivalence.
             _verify_param_shape_across_processes(process_group, parameters)
+            if debug_init_sync:
+                logger.info(
+                    "MultiGroupDDP init_sync: verified group %d/%d "
+                    "(global_rank=%s, group_rank=%s)",
+                    group_idx + 1,
+                    num_groups,
+                    dist.get_rank(),
+                    dist.get_rank(group=process_group),
+                )
 
             for param in parameters:
                 dist.broadcast(
                     param.data, src=dist.get_global_rank(process_group, 0), group=process_group, async_op=False
+                )
+            if debug_init_sync:
+                logger.info(
+                    "MultiGroupDDP init_sync: broadcast group %d/%d "
+                    "(global_rank=%s, group_rank=%s)",
+                    group_idx + 1,
+                    num_groups,
+                    dist.get_rank(),
+                    dist.get_rank(group=process_group),
                 )
 
 

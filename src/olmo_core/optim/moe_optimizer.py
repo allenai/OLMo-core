@@ -176,6 +176,14 @@ def _to_local_tensor(tensor: torch.Tensor) -> torch.Tensor:
     return tensor
 
 
+def _assert_finite_async(tensor: torch.Tensor, name: str) -> None:
+    tensor = _to_local_tensor(tensor)
+    torch._assert_async(
+        torch.isfinite(tensor.detach()).all(),
+        f"Non-finite {name} encountered in OLMoDDPOptimizer",
+    )
+
+
 def _is_fp8_weight_store(param: Any) -> bool:
     return isinstance(param, FP8WeightStore)
 
@@ -274,6 +282,14 @@ class OLMoDDPOptimizerConfig(Config):
     """
 
     max_grad_norm: float = 1.0
+
+    check_nan_inf_grad: bool = True
+    """
+    Fail before the optimizer update if the latest loss or total grad norm is non-finite.
+
+    This uses an async device assertion so CUDA training does not pay a host sync on the
+    normal finite path.
+    """
 
     use_distributed: bool = True
     reset_optimizer_moments_on_load: bool = False
@@ -1160,6 +1176,8 @@ class OLMoDDPOptimizer:
             ep_dp_grads_replicated,
             ep_dp_grads_sharded,
         )
+        if self.check_nan_inf_grad:
+            _assert_finite_async(total_grad_norm, "total grad norm")
         self._maybe_log_debug_grad_norms(total_grad_norm)
 
         clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
@@ -1195,6 +1213,16 @@ class OLMoDDPOptimizer:
         }:
             return
 
+        total_value = total_grad_norm.detach().float().item()
+        raw_min = os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS_MIN")
+        if raw_min is not None:
+            try:
+                min_total_norm = float(raw_min)
+            except ValueError:
+                min_total_norm = 0.0
+            if total_value < min_total_norm:
+                return
+
         entries: List[Tuple[float, str, str, str]] = []
         for param_group in self.param_groups:
             for name, param in param_group["named_params"].items():
@@ -1221,7 +1249,7 @@ class OLMoDDPOptimizer:
         log.warning(
             "Debug grad norms on rank %s: total=%s top local entries:\n%s",
             rank,
-            total_grad_norm.detach().float().item(),
+            total_value,
             top_lines,
         )
 
@@ -1292,10 +1320,10 @@ class OLMoDDPOptimizer:
             # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
             self._copy_model_grads_to_main_grads()
 
-        total_grad_norm = self._clip_grad()
+        if self.check_nan_inf_grad and self.latest_loss is not None:
+            _assert_finite_async(self.latest_loss, "loss")
 
-        if self.check_nan_inf_grad and (total_grad_norm.isnan() or total_grad_norm.isinf()):
-            assert False, (f"[Error] rank={dist.get_rank()} grad norm is {total_grad_norm}, skipping step")
+        total_grad_norm = self._clip_grad()
 
         self.latest_grad_norm = total_grad_norm
 

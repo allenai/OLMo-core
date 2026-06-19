@@ -336,13 +336,12 @@ def combined_forward_ep_no_sync_rowwise(
             recv_splits_by_src_local,
             rank_capacity=rank_capacity,
         )
-        # FP8 dispatch buffers are capacity-sized, but grouped FP8 expert
-        # compute/wgrad must not include unwritten capacity tail rows.
-        expert_batch_size_per_local_expert = (
-            batch_size_per_local_expert
-            if use_rowwise_fp8
-            else padded_batch_size_per_local_expert
-        )
+        # Rowwise dispatch buffers are capacity-sized, but valid routed rows are
+        # laid out densely at the front of the rank-major buffer. Keep capacity
+        # padding out of grouped-mm forward/backward; the tail may contain stale
+        # values and is only safe because combine kernels address explicit route
+        # rows.
+        expert_batch_size_per_local_expert = batch_size_per_local_expert
         routed_expert_offsets = torch.cumsum(
             expert_batch_size_per_local_expert.to(dtype=torch.int32),
             dim=0,
