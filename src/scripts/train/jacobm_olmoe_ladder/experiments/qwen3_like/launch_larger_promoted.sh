@@ -29,6 +29,7 @@ common_beaker_args=(
   --cluster "${CLUSTER}"
   --nodes "${NUM_NODES}"
   --weka oe-training-default
+  --shared-filesystem
   --beaker-image "${BEAKER_IMAGE}"
   --workspace "${WORKSPACE}"
   --budget "${BUDGET}"

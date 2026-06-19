@@ -1208,3 +1208,32 @@ Dense-schedule cleanup added to the same manual-restart batch:
 | Run | Beaker experiment | Latest job attempt | Created UTC | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `ds-275m-cx4-ds2-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4ZNT2JCKR4Y5J27QQX897T | `01KVEREHTQ3467H8Q5SZ5YME4M` | 2026-06-19 01:38 | created, not scheduled | Previous replacement reached 14.50B tokens but did not finish. This is the missing low-LR Cx4 point for `dense2_shared`. |
+
+
+## 2026-06-19 EG Cx2 and Qwen3-Like 810M Launches
+
+Queued the missing 1.2B expert-granularity Cx2 promoted points after the 1.2B
+Cx2 baseline hot-side extension completed. Both use the repaired `b384k` batch,
+`EP=1`, `mb=2`, compile-on, Titan/original workspace, and the baseline-best
+observed Cx2 LR `3e-4`.
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-1p2b-cx2-eg24e2k-lr3e-4-r1` | `coarse_24e_top2` | 1.2B | 2 | 3e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVFDD6YEDEZD7F06RYB6FPK5 | Legal accumulation: `48 / (1 * 8 * 2) = 3`. |
+| `eg-1p2b-cx2-eg96e8k-lr3e-4-r1` | `fine_96e_top8` | 1.2B | 2 | 3e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVFDG3FS2GVD8Z3Q26CQJ7MV | Legal accumulation: `48 / (1 * 8 * 2) = 3`. |
+
+Queued the first 810M Qwen3-like promoted wave. No prior 810M qwen-like W&B rows
+existed before launch. These run on Holmes low-priority/preemptible with
+compile-on, `--shared-filesystem`, Weka checkpoint folders, and Beaker-reported
+`autoResume=true`.
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-810m-cx1-q3am128e8k-lr6e-4-r1` | `active_matched` | 810M | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDKEW4XR0RV06QZ2TKY6FE | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx2-q3am128e8k-lr5.6e-4-r1` | `active_matched` | 810M | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVFDM5KWV2FHX2NYASD43GWF | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx4-q3am128e8k-lr4e-4-r1` | `active_matched` | 810M | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDMV84805JW8VJYEXZ4SPW | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx8-q3am128e8k-lr4e-4-r1` | `active_matched` | 810M | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDNGV9TDAP885HG5MD68FB | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx1-q3td128e8k-lr6e-4-r1` | `true_3d_depth_matched` | 810M | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDP5S2C89BXMFEAZV0DHZD | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx2-q3td128e8k-lr5.6e-4-r1` | `true_3d_depth_matched` | 810M | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVFDPNGJDX45X41MZ247N717 | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx4-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 810M | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDQ2FHVRFFD97SDYBMD694 | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx8-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 810M | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDQH6BQSBMRHBKZD5RE46W | Holmes low-priority/preemptible; autoResume true. |
