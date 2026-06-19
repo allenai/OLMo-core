@@ -172,6 +172,45 @@ class CudaEventBlockTimer(Callback):
         self._handles.clear()
 
 
+@dataclass
+class GpuUtilSampler(Callback):
+    """
+    Samples GPU SM/mem utilization via ``nvidia-smi dmon`` in a background thread during steady-state
+    training (rank 0's node). Distinguishes **launch-bound** (sm% well below ~100% — the GatedDeltaNet
+    chunked kernels can't keep the GPU fed) from **GPU-bound** (sm% near 100%) — which decides whether
+    B300 kernel tuning can help. Uses basic NVML, so it's unaffected by the CUPTI profiling restriction.
+    """
+
+    start_step: int = 25
+    seconds: int = 15
+    _started: bool = False
+
+    def pre_step(self, batch):
+        if get_rank() != 0 or self._started or self.step != self.start_step:
+            return
+        self._started = True
+        import subprocess
+        import threading
+
+        def _run():
+            try:
+                out = subprocess.run(
+                    ["nvidia-smi", "dmon", "-s", "u", "-d", "1", "-c", str(self.seconds)],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.seconds + 60,
+                )
+                log.info(
+                    f"[gpu-util | nvidia-smi dmon -s u | ~{self.seconds}s steady-state, rank0 node]\n"
+                    + out.stdout
+                    + (("\n" + out.stderr) if out.stderr else "")
+                )
+            except Exception as e:  # noqa: BLE001
+                log.warning(f"[gpu-util] nvidia-smi dmon failed: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
@@ -344,6 +383,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             # CUPTI-free per-block GPU timing (attention vs FLA). Fires steps 25-29 on rank 0.
             "block_timer",
             CudaEventBlockTimer(start_step=25, num_steps=5),
+        )
+        .with_callback(
+            # GPU SM/mem utilization sampling (launch-bound vs GPU-bound). ~15s from step 25, rank 0.
+            "gpu_util",
+            GpuUtilSampler(start_step=25, seconds=15),
         )
         .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
     )
