@@ -11,9 +11,15 @@ serially, so the backward is badly under-parallelized and dominates the step (~2
   * :func:`_bwd_kv_kernel` -- one program per ``(key-block, head)``, computes ``dk``/``dv``.
   * :func:`_bwd_q_kernel`  -- one program per ``(query-block, head)``, computes ``dq`` (causal half).
 
-Gradients are bit-identical to the original (``dk``/``dv`` same accumulation order; ``dq`` accumulated
-ascending with no atomics), and fwd+bwd is ~17-20x faster at 4k-8k (~1.4x FlashAttention). Tuned
-launch config (H200, head_dim 128): ``num_warps=4, num_stages=2``.
+Gradients follow the original's accumulation order (``dk``/``dv`` per key block; ``dq`` ascending
+with no atomics) and match it up to last-ulp reassociation noise (the two backwards use different
+``num_warps``, which retiles the ``tl.dot`` reductions); the forward output is bit-identical.
+fwd+bwd is ~17-20x faster at 4k-8k (~1.4x FlashAttention). Tuned launch config (H200, head_dim
+128): ``num_warps=4, num_stages=2``. Head dims up to 256 (e.g. Qwen3.5) are supported:
+``head_dim > 128`` switches to ``num_warps=8`` (and fewer stages) to fit register/shared-memory
+budgets, leaving the ``<= 128`` launch configs untouched. Note that at head_dim 256 with the usual
+``block_size=64``, the *fp32* backward exceeds H100 shared memory (the dot/trans operand tiles
+alone need ~278KB); bf16/fp16 -- what training uses -- fit fine.
 
 ``FastLandmarkAttention`` is a drop-in :class:`Attention` variant (a *new* sequence mixer, selected
 via ``AttentionType.fast_landmark``); it supports Ulysses context parallelism exactly as the
@@ -34,9 +40,7 @@ from olmo_core.distributed.parallel.context_parallel import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 
-from . import (
-    Attention,  # base mixer (defined before the end-of-module import in __init__)
-)
+from . import Attention  # base mixer (defined before the end-of-module import in __init__)
 from .kv_cache import KVCacheManager
 from .landmark import landmark_grouped_softmax, repeat_kv
 from .landmark_kernel import (
@@ -340,7 +344,7 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         k = k.contiguous()
         v = v.contiguous()
         batch, nheads, seqlen_q, d = q.shape
-        assert d <= 128 and q.dtype == k.dtype == v.dtype and q.is_cuda
+        assert d <= 256 and q.dtype == k.dtype == v.dtype and q.is_cuda
 
         BLOCK = block_size
         o = torch.empty_like(q)
@@ -349,8 +353,15 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         m = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         # Tuned forward launch (H200, head_dim 128): num_warps=4, num_stages=3 (~1.5x over the
         # original 8/2). Env-overridable. Identical numerics to the original forward.
-        num_warps = _env_int("LM_FAST_FWD_WARPS", 4)
-        num_stages = _env_int("LM_FAST_FWD_STAGES", 3)
+        # head_dim > 128 (e.g. Qwen3.5's 256) gets its own defaults: more warps to spread the
+        # (BLOCK, 256) fp32 accumulator across registers, fewer stages so the pipelined K/V tiles
+        # fit in shared memory. The <= 128 defaults are untouched.
+        if d > 128:
+            num_warps = _env_int("LM_FAST_FWD_WARPS", 8)
+            num_stages = _env_int("LM_FAST_FWD_STAGES", 2)
+        else:
+            num_warps = _env_int("LM_FAST_FWD_WARPS", 4)
+            num_stages = _env_int("LM_FAST_FWD_STAGES", 3)
         _fwd_kernel[grid](
             q,
             k,
@@ -454,8 +465,16 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
             k.shape[2],
         )
         const = dict(BLOCK=BLOCK, BLOCK_DMODEL=ctx.BLOCK_DMODEL, N_PREFIX_Q=ctx.N_PREFIX_Q)
-        warps = _env_int("LM_FAST_WARPS", 4)
-        stages = _env_int("LM_FAST_STAGES", 2)
+        # head_dim > 128 needs 8 warps: the dk/dv (and dq) fp32 accumulators are (BLOCK, 256), and
+        # at 4 warps they alone exceed the per-thread register budget. It also needs num_stages=1:
+        # at 2 stages the pipelined (BLOCK, 256) Q/DO tiles of _bwd_kv_kernel overflow H100 shared
+        # memory (279KB required vs 232KB available at BLOCK=64, fp32). <= 128 defaults untouched.
+        if ctx.BLOCK_DMODEL > 128:
+            warps = _env_int("LM_FAST_WARPS", 8)
+            stages = _env_int("LM_FAST_STAGES", 1)
+        else:
+            warps = _env_int("LM_FAST_WARPS", 4)
+            stages = _env_int("LM_FAST_STAGES", 2)
         n_kv_blocks = triton.cdiv(k.shape[2], BLOCK)
         _bwd_kv_kernel[(ctx.grid[1], n_kv_blocks)](
             *args, **const, num_warps=warps, num_stages=stages
@@ -518,25 +537,38 @@ class FastLandmarkAttention(Attention):
         # :meth:`set_landmark_eval_decode`.
         self._eval_prompt_len: Optional[int] = None
         self._eval_decode_mode: str = "extend_last_block"
+        self._eval_top_k: Optional[int] = None
 
-    def set_landmark_eval_decode(self, prompt_len: int, mode: str = "extend_last_block") -> None:
+    def set_landmark_eval_decode(
+        self, prompt_len: int, mode: str = "extend_last_block", top_k: Optional[int] = None
+    ) -> None:
         """Enable "one long local block" decoding (see :class:`GenerationConfig.landmark_decode_mode`).
 
         :param prompt_len: Length of the (landmark-inserted) prompt. Generated tokens occupy absolute
             positions ``>= prompt_len`` and are never treated as landmarks.
         :param mode: ``"extend_last_block"`` or ``"generation_only"``.
+        :param top_k: If set, decode uses hard top-k landmark block retrieval as in the landmark
+            attention paper's inference procedure (Mohtashami & Jaggi 2023, section 3.2): each head
+            scores the query against the cached landmark keys, keeps the ``top_k`` highest-scoring
+            blocks, and gives every other past block exactly zero attention weight (the grouped
+            softmax renormalizes over the local block plus the retrieved blocks' landmarks). ``None``
+            keeps the dense soft gating over all past blocks. Prefill is unaffected either way.
         """
         if mode not in ("extend_last_block", "generation_only"):
             raise OLMoConfigurationError(
                 f"Unknown landmark decode mode {mode!r} "
                 "(expected 'extend_last_block' or 'generation_only')."
             )
+        if top_k is not None and top_k < 1:
+            raise OLMoConfigurationError(f"top_k must be >= 1 or None (got {top_k})")
         self._eval_prompt_len = prompt_len
         self._eval_decode_mode = mode
+        self._eval_top_k = top_k
 
     def clear_landmark_eval_decode(self) -> None:
         """Disable "one long local block" decoding, restoring the default per-block decode."""
         self._eval_prompt_len = None
+        self._eval_top_k = None
 
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         # Fast landmark attention implements its own cached prefill/decode in ``_forward_generate``
@@ -729,6 +761,34 @@ class FastLandmarkAttention(Attention):
         att = self._attn_core(q, k, v)
         return att[:, :, :T]
 
+    def _apply_topk_landmark_retrieval(
+        self, scores: torch.Tensor, is_mem: torch.Tensor
+    ) -> torch.Tensor:
+        """Hard top-k landmark block retrieval (the paper's inference procedure, section 3.2).
+
+        Masks the scores of all but the ``top_k`` highest-scoring landmark keys (independently per
+        batch/head) to ``-inf``. A masked landmark gets zero probability in the grouped softmax's
+        top-level group, so its block's content is gated to exactly zero weight and the remaining
+        mass renormalizes over the local section plus the retrieved blocks -- matching the paper's
+        retrieve-then-``GroupedSoftmax`` order. Content scores are left untouched: a retrieved
+        block's within-block softmax is unchanged.
+
+        :param scores: Attention logits of shape ``(B, H, 1, total)``.
+        :param is_mem: Boolean landmark-key mask of shape ``(1, 1, 1, total)``.
+        """
+        top_k = self._eval_top_k
+        if top_k is None:
+            return scores
+        lm_idx = is_mem.view(-1).nonzero(as_tuple=True)[0]  # (n_lm,)
+        if lm_idx.numel() <= top_k:
+            return scores
+        lm_scores = scores[..., lm_idx]  # (B, H, 1, n_lm)
+        keep = torch.zeros_like(lm_scores, dtype=torch.bool)
+        keep.scatter_(-1, lm_scores.topk(top_k, dim=-1).indices, True)
+        scores = scores.clone()
+        scores[..., lm_idx] = lm_scores.masked_fill(~keep, float("-inf"))
+        return scores
+
     def _decode_one(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, qpos: int
     ) -> torch.Tensor:
@@ -740,9 +800,15 @@ class FastLandmarkAttention(Attention):
         does not attend to itself: the training kernel decrements the causal bound on the last row of
         a block, so the landmark token sees only its block's content tokens ``[block_start, qpos-1]``
         plus past blocks via landmark gating. Drop the self key to match.
+
+        In eval mode only *generated* queries (``qpos >= prompt_len``) use the "one long local block"
+        decode (:meth:`_decode_one_eval`). Prompt-position queries (``qpos < prompt_len``) keep the
+        per-block decode below so they reproduce prefill -- this is the path taken by the final prompt
+        token, which the generation loop decodes first so hard top-k retrieval also gates the first
+        generated token (prefill itself never applies top-k).
         """
         Lb = self.block_size
-        if self._eval_prompt_len is not None:
+        if self._eval_prompt_len is not None and qpos >= self._eval_prompt_len:
             return self._decode_one_eval(q, k, v, qpos)
         if qpos % Lb == Lb - 1:
             k = k[:, :, :qpos]  # keys 0..qpos-1 (drop the landmark's own position)
@@ -753,6 +819,7 @@ class FastLandmarkAttention(Attention):
         last_section = ((j // Lb) == (qpos // Lb)).view(1, 1, 1, total)
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
+        scores = self._apply_topk_landmark_retrieval(scores, is_mem)
         Bsz, Hn = scores.shape[0], scores.shape[1]
         probs = landmark_grouped_softmax(
             scores,
@@ -786,6 +853,7 @@ class FastLandmarkAttention(Attention):
         last_section = (j >= section_start).view(1, 1, 1, total)
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
+        scores = self._apply_topk_landmark_retrieval(scores, is_mem)
         Bsz, Hn = scores.shape[0], scores.shape[1]
         probs = landmark_grouped_softmax(
             scores,
