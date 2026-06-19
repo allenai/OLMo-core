@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
 from itertools import cycle, islice
-from typing import TYPE_CHECKING, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
@@ -1624,6 +1624,54 @@ class TransformerConfig(ModelConfig):
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
             dtype=dtype,
             tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_5_from_hf_config(
+        cls,
+        hf_config: Any,
+        *,
+        vocab_size: Optional[int] = None,
+        attn_backend: Optional[AttentionBackendName] = None,
+        dtype: DType = DType.float32,
+        **kwargs,
+    ) -> "TransformerConfig":
+        """
+        Build a Qwen3.5 hybrid config from a HuggingFace config.
+
+        Maps the HF fields onto :meth:`qwen3_5_like`. Accepts either a full
+        multimodal config (reads its ``text_config``) or a text config directly,
+        so both the text-only and multimodal (Qwen3.5-VL) load paths can share a
+        single mapping.
+
+        :param hf_config: An HF ``Qwen3_5Config`` / ``Qwen3_5TextConfig`` (or any
+            object exposing the same attributes).
+        :param vocab_size: Override the vocabulary size; defaults to the HF
+            config's ``vocab_size``.
+        :param attn_backend: Attention backend for the full-attention layers.
+        :param dtype: Parameter dtype.
+        """
+        text_cfg = getattr(hf_config, "text_config", hf_config)
+        rope_params = getattr(text_cfg, "rope_parameters", None) or {}
+        return cls.qwen3_5_like(
+            d_model=text_cfg.hidden_size,
+            vocab_size=text_cfg.vocab_size if vocab_size is None else vocab_size,
+            n_layers=text_cfg.num_hidden_layers,
+            n_heads=text_cfg.num_attention_heads,
+            n_kv_heads=text_cfg.num_key_value_heads,
+            head_dim=text_cfg.head_dim,
+            intermediate_size=text_cfg.intermediate_size,
+            linear_num_key_heads=text_cfg.linear_num_key_heads,
+            linear_num_value_heads=text_cfg.linear_num_value_heads,
+            linear_key_head_dim=text_cfg.linear_key_head_dim,
+            linear_value_head_dim=text_cfg.linear_value_head_dim,
+            linear_conv_kernel_dim=text_cfg.linear_conv_kernel_dim,
+            rope_theta=rope_params.get("rope_theta", getattr(text_cfg, "rope_theta", 10_000_000)),
+            partial_rotary_factor=text_cfg.partial_rotary_factor,
+            attn_backend=attn_backend,
+            dtype=dtype,
+            tie_word_embeddings=getattr(text_cfg, "tie_word_embeddings", True),
             **kwargs,
         )
 
