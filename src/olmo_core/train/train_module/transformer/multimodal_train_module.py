@@ -112,8 +112,9 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         if compile_model:
             log.info("Compiling model.lm ...")
             model.lm = torch.compile(model.lm)  # type: ignore[assignment]
-        if self.world_mesh is not None:
-            model = DDP(model, process_group=get_dp_process_group(self.world_mesh))
+        # NOTE: keep ``model`` unwrapped for now. The optimizer is built below on the
+        # unwrapped module so group-override patterns (e.g. ``connector.*``) match
+        # parameter names without DDP's ``module.`` prefix; DDP is applied afterwards.
         self.model = model
         self._model_mode = None
 
@@ -136,8 +137,15 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         )
         self.load_key_mapping = load_key_mapping
 
+        # Build the optimizer on the *unwrapped* model so group-override patterns like
+        # "connector.*" match parameter names without DDP's "module." prefix.
         log.info("Building optimizer...")
         self.optim = optim.build(self.model, strict=True)
+
+        # Now wrap in DDP. The optimizer holds references to the same Parameter objects,
+        # so gradient all-reduce (DDP) and the optimizer step stay consistent.
+        if self.world_mesh is not None:
+            self.model = DDP(self.model, process_group=get_dp_process_group(self.world_mesh))
 
     # -- helpers to reach the underlying MultimodalLM / its Transformer ----------
 
