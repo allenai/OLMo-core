@@ -93,8 +93,10 @@ BEAKER_BUDGET = "ai2/oe-other"
 
 # Logging. Set WANDB_PROJECT to None to disable W&B (requires the WANDB_API_KEY secret
 # in the Beaker workspace). Metrics always go to the console regardless.
+# WANDB_ENTITY=None uses the API key's default entity (personal account), avoiding 403s
+# from writing to a team the key lacks access to; set it to a team you can write to.
 WANDB_PROJECT: Optional[str] = "molmo2-stage1"
-WANDB_ENTITY: Optional[str] = "ai2"
+WANDB_ENTITY: Optional[str] = None
 
 ###########################
 #### END CONFIGURATION ####
