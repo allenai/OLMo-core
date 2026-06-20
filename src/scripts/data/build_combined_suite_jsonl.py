@@ -48,6 +48,28 @@ def is_cot_variant(filename: str) -> bool:
     return "cotmix" in filename or filename.endswith("_cot.jsonl")
 
 
+def normalize_example(ex: dict, task: str) -> dict:
+    """Reconcile schema variants so every row matches what build_prompt(task=...) expects.
+
+    rerank: the HELMET train files are ``{qid, query, ctxs:[{id,label,score,text}]}`` (graded
+    relevance), but the rerank eval + build_prompt use the standard ``{documents, queries,
+    gold_doc_indices}`` schema. Convert ctxs -> documents and derive binary qrels from the graded
+    label (label > 0 == relevant), so train matches the standard-rerank eval distribution.
+    """
+    if task == "rerank" and "ctxs" in ex and "documents" not in ex:
+        ctxs = ex["ctxs"]
+        ex = {
+            "documents": [{"text": c.get("text", "")} for c in ctxs],
+            "queries": [ex.get("query", "")],
+            "gold_doc_indices": [i for i, c in enumerate(ctxs) if int(c.get("label", 0)) > 0],
+            "answers": [""],
+            "source": ex.get("source", "msmarco_helmet_rerank"),
+            "_task": ex.get("_task"),
+            "_cot_mode": ex.get("_cot_mode"),
+        }
+    return ex
+
+
 def read_manifest(path: str) -> List[dict]:
     rows = []
     with open(path) as f:
@@ -67,10 +89,13 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="output combined JSONL path")
     ap.add_argument("--manifest", default=None, help="manifest path (default: <data-dir>/suite_manifest.tsv)")
     ap.add_argument("--total-budget", type=int, default=0,
-                    help="approx TOTAL examples across all tasks (debug builds). Mutually exclusive "
-                         "with --per-rung-budget; the per-file cap = ceil(total / n_files).")
+                    help="approx TOTAL examples across all tasks (debug builds), balanced per task "
+                         "(per_task = total / n_tasks).")
+    ap.add_argument("--per-task-budget", type=int, default=0,
+                    help="EQUAL rows per task (distributed across that task's rungs). The default "
+                         "balancing mode for the full build.")
     ap.add_argument("--per-rung-budget", type=int, default=0,
-                    help="max examples taken from EACH (task x rung) file (0 = all).")
+                    help="max examples taken from EACH (task x rung) file (0 = all). Not task-balanced.")
     ap.add_argument("--tasks", nargs="*", default=None, help="only these task types (default: all in-train)")
     ap.add_argument("--cot", choices=("both", "plain", "cot"), default="both",
                     help="include both plain+CoT files, plain-only, or cot-only.")
@@ -103,25 +128,28 @@ def main() -> None:
     log.info(f"selected {len(selected)} train files across "
              f"{len(set(r['task'] for r in selected))} tasks; excluded {len(held_out_seen)} held-out files")
 
-    # Per-file cap.
-    if args.total_budget and args.per_rung_budget:
-        raise SystemExit("Pass only one of --total-budget / --per-rung-budget.")
-    per_file_cap = 0
-    if args.total_budget:
-        per_file_cap = max(1, math.ceil(args.total_budget / len(selected)))
-    elif args.per_rung_budget:
-        per_file_cap = args.per_rung_budget
+    if sum(bool(x) for x in (args.total_budget, args.per_task_budget, args.per_rung_budget)) > 1:
+        raise SystemExit("Pass at most one of --total-budget / --per-task-budget / --per-rung-budget.")
 
-    rng = random.Random(args.seed)
-    out_rows = []
-    by_task: dict = defaultdict(int)
-    by_file: dict = {}
+    # Group selected files by task so we can balance rows ACROSS tasks (equal-per-task).
+    files_by_task: dict = defaultdict(list)
     for r in selected:
+        files_by_task[r["task"]].append(r)
+    n_tasks = len(files_by_task)
+
+    if args.per_task_budget:
+        per_task_target = args.per_task_budget
+    elif args.total_budget:
+        per_task_target = max(1, math.ceil(args.total_budget / n_tasks))
+    else:
+        per_task_target = 0  # all (or capped per-file by --per-rung-budget)
+
+    def read_file(r) -> list:
         path = os.path.join(args.data_dir, r["file"])
         if not os.path.exists(path):
             log.warning(f"missing file (skipped): {r['file']}")
-            continue
-        rows_in_file = []
+            return []
+        rows = []
         with open(path) as f:
             for line in f:
                 line = line.strip()
@@ -132,12 +160,32 @@ def main() -> None:
                     ex = ex["ex"]
                 ex["_task"] = r["task"]
                 ex["_cot_mode"] = r["cot_mode"]
-                rows_in_file.append(ex)
-        if per_file_cap and len(rows_in_file) > per_file_cap:
-            rows_in_file = rng.sample(rows_in_file, per_file_cap)
-        out_rows.extend(rows_in_file)
-        by_task[r["task"]] += len(rows_in_file)
-        by_file[r["file"]] = len(rows_in_file)
+                ex = normalize_example(ex, r["task"])  # schema reconciliation (e.g. rerank)
+                rows.append(ex)
+        return rows
+
+    rng = random.Random(args.seed)
+    out_rows: list = []
+    by_task: dict = defaultdict(int)
+    for task, files in files_by_task.items():
+        # per-file cap: from --per-rung-budget, else spread the per-task target across this task's files.
+        if args.per_rung_budget:
+            per_file_cap = args.per_rung_budget
+        elif per_task_target:
+            per_file_cap = max(1, math.ceil(per_task_target / len(files)))
+        else:
+            per_file_cap = 0
+        task_rows: list = []
+        for r in files:
+            rows_in_file = read_file(r)
+            if per_file_cap and len(rows_in_file) > per_file_cap:
+                rows_in_file = rng.sample(rows_in_file, per_file_cap)
+            task_rows.extend(rows_in_file)
+        # trim to an equal per-task total
+        if per_task_target and len(task_rows) > per_task_target:
+            task_rows = rng.sample(task_rows, per_task_target)
+        out_rows.extend(task_rows)
+        by_task[task] = len(task_rows)
 
     # Defense in depth: assert nothing held-out leaked.
     leaked = [ex for ex in out_rows if is_held_out(str(ex.get("source", "")) + ".jsonl")]
@@ -164,9 +212,15 @@ def main() -> None:
         "held_out_globs": HELD_OUT_GLOBS,
         "held_out_files_excluded": sorted(held_out_seen),
         "cot": args.cot,
-        "per_file_cap": per_file_cap,
+        "budget_mode": (
+            f"per_task={args.per_task_budget}" if args.per_task_budget
+            else f"total={args.total_budget}" if args.total_budget
+            else f"per_rung={args.per_rung_budget}" if args.per_rung_budget
+            else "all"
+        ),
+        "per_task_target": per_task_target,
         "seed": args.seed,
-        "n_files": len([f for f in by_file]),
+        "n_files": len(selected),
     }
     with open(args.out + ".manifest.json", "w") as f:
         json.dump(sidecar, f, indent=2)
