@@ -102,6 +102,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         beaker_launch_config.priority = "urgent"
 
     tokenizer_config = TokenizerConfig.qwen3()
+    # Qwen3 sets bos_token_id == eos_token_id, which makes NumpyDocumentSource's boundary detection
+    # require a *doubled* EOS -- single-EOS-terminated SFT docs wouldn't split (the whole shard would
+    # become one giant document and get dropped by the packer). Drop the BOS for doc splitting.
+    from dataclasses import replace
+
+    doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
 
     model_config = TransformerConfig.qwen3_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
@@ -146,7 +152,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     instance_source_config = LandmarkPackingInstanceSourceConfig(
         source=NumpyDocumentSourceConfig(
             source_paths=[f"{clean_path}/token_ids_part_*.npy"],
-            tokenizer=tokenizer_config,
+            tokenizer=doc_tokenizer_config,
             label_mask_paths=[f"{clean_path}/labels_mask_*.npy"],
             expand_glob=True,
         ),
