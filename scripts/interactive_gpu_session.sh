@@ -30,7 +30,7 @@ ARGS=(
   --budget "${BUDGET}"
   --workspace "${WORKSPACE}"
   --image "${IMAGE}"
-  --mount "src=weka://${WEKA},dst=/weka/${WEKA}"
+  --mount "src=weka,ref=${WEKA},dst=/weka/${WEKA}"
   --shared-memory "${SHM}"
   --name "${NAME}"
 )
