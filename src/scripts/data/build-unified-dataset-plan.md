@@ -92,13 +92,58 @@ Runs on CPU; testable locally on a small downloaded subset.
 5. **query_position** per task — must match the eval suite (eval default `both`). [`both`]
 6. **CPT mixing** — separate composable source, **v2** (not in this combined JSONL).
 
-## 8. Known issue — rerank train/eval schema mismatch
+## 9. CPT mixing ("longmino") — design
 
-The rerank **train** files (`msmarco_helmet_rerank_train_*`) are HELMET-native schema
-(`{ctxs, qid, query}` → `rerank_helmet`), but the rerank **eval** files (`msmarco_dev_rerank_*`)
-and the manifest tag are standard `rerank` (`{documents, gold_doc_indices}`). So training and eval
-rerank would use **different prompt formats**. `convert_unified_to_sft.py` now skips rows whose
-`build_prompt` fails (logged + counted in `metadata.json` `skipped_build_by_task`), so rerank rows
-are dropped rather than crashing the job — meaning **rerank is currently absent from train**. To
-include it, reconcile the schemas: either generate standard-`rerank` train data, or tag the helmet
-files `rerank_helmet` AND add a `rerank_helmet` eval (the scorer already exists). **Decision needed.**
+**Goal:** interleave a fixed fraction of raw continued-pretraining text so the model keeps
+long-range LM fluency / general ability while learning the tasks. **Default `CPT_FRAC = 0.15`**
+(token fraction), a tunable knob.
+
+Two integration points:
+
+- **Option A — per-row `_task=cpt` in the combined JSONL.** Add raw-text rows (`{_task:"cpt",
+  text:"..."}`) and give `convert_unified_to_sft.py` a `cpt` branch that tokenizes the raw text
+  with **full-sequence loss** (label_mask all-True, no chat template / completion split). One JSONL,
+  one shard dir. Con: CPT text isn't unified-schema, so it needs its own converter branch and the
+  token-fraction accounting must be done at build time.
+
+- **Option B (recommended) — separate CPT document source, mixed at the data loader.** Tokenize the
+  CPT corpus once (reuse `tokenize_dolma3_longmino_sample.py` — the dolma3longmino CPT shards already
+  exist on weka) as a `NumpyDocumentSource` with **no mask file ⇒ full-sequence loss** (the SFT
+  shards keep their completion masks). Mix it with the SFT document source by **token fraction** via
+  `MixingDocumentSource` (each spec has a `ratio`), then pack:
+
+  ```python
+  mixed = MixingDocumentSourceConfig(source_specs=[
+      MixingDocumentSourceSpecConfig(source=sft_doc_src, ratio=1 - CPT_FRAC),
+      MixingDocumentSourceSpecConfig(source=cpt_doc_src, ratio=CPT_FRAC),
+  ])
+  instance_source = LandmarkPackingInstanceSourceConfig(source=mixed, ...)   # or ConcatAndChunk (dense)
+  ```
+
+  **Why B fits here:** the packing already inserts landmarks per-document and masks per-document, so a
+  CPT doc is just another (long, full-loss) document in a packed window — which is exactly the
+  landmark *pretraining* regime. The mix ratio becomes a one-line, sweepable knob; SFT and CPT keep
+  independent loss masks; and it reuses the existing CPT shards (no re-materialization).
+
+**Subtleties / decisions:**
+- **CPT loss** = full sequence (every token), via all-True masks (a maskless `NumpyDocumentSource`
+  already defaults to all-True). SFT rows keep completion-only loss.
+- **CPT length spread:** pack CPT to span the 1k→64k ladder (don't make it all-short) so the
+  long-context rungs get LM signal, not just task signal.
+- **Landmark:** CPT docs get per-doc landmark insertion automatically (no special handling).
+- **Apply CPT only to the FULL build**, not the 1k debug (keep the debug pure-SFT to isolate
+  pipeline bugs).
+- **Open:** confirm `CPT_FRAC` (0.15 default) and the CPT corpus (dolma3longmino vs another
+  "longmino" source). v2 after the no-CPT SFT mix is validated end-to-end.
+
+## 8. rerank train/eval schema — RECONCILED
+
+The rerank **train** files (`msmarco_helmet_rerank_train_*`) are HELMET-native
+(`{ctxs:[{id,label,score,text}], qid, query}`); the rerank **eval** (`msmarco_dev_rerank_*`) is
+standard (`{documents, queries, gold_doc_indices}`). Fixed in `build_combined_suite_jsonl.py`:
+`normalize_example()` converts the HELMET train rows to the standard schema — `documents` from
+`ctxs`, binary `gold_doc_indices` from the graded `label > 0` — so train matches the standard-rerank
+eval and its `score_rerank` (MRR@10 / recall@10). Validated: rerank now builds prompts and is kept
+in the mix. (`convert_unified_to_sft.py` still skip-and-logs any residual unbuildable rows as a
+safety net.) Note: this maps HELMET's graded relevance to binary qrels — fine for MRR/recall;
+revisit if we want graded NDCG.
