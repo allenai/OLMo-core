@@ -1237,3 +1237,50 @@ compile-on, `--shared-filesystem`, Weka checkpoint folders, and Beaker-reported
 | `q3-810m-cx2-q3td128e8k-lr5.6e-4-r1` | `true_3d_depth_matched` | 810M | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVFDPNGJDX45X41MZ247N717 | Holmes low-priority/preemptible; autoResume true. |
 | `q3-810m-cx4-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 810M | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDQ2FHVRFFD97SDYBMD694 | Holmes low-priority/preemptible; autoResume true. |
 | `q3-810m-cx8-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 810M | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDQH6BQSBMRHBKZD5RE46W | Holmes low-priority/preemptible; autoResume true. |
+
+## 2026-06-20 Status Check and Plot Refresh
+
+Status check scoped to the recent/open surface from the tracker rather than the full historical run set. Plots were regenerated with `INCLUDE_RUNNING=1 REFRESH_STALE_CACHE=1`, and `PLOTTED_RESULTS.md` was regenerated from the same cached W&B data with completed runs only. The stats writer now includes Qwen3-like rows in addition to baseline, expert granularity, total sparsity, shared expert, and dense schedule.
+
+Newly finalized since the previous tracker update:
+
+| Name | Beaker | Finalized UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-810m-cx1-q3am128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVFDKEW4XR0RV06QZ2TKY6FE | 2026-06-19 21:23 | Active-matched Qwen-like 810M Cx1 finished cleanly. |
+| `q3-810m-cx1-q3td128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVFDP5S2C89BXMFEAZV0DHZD | 2026-06-20 07:31 | True-3D Qwen-like 810M Cx1 finished cleanly. |
+| `eg-1p2b-cx4-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV299VFSQ8879TGTB56T8PW1 | 2026-06-19 14:36 | Manual restart finished cleanly. |
+| `eg-1p2b-cx4-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV29A65FTV4YHJACBMZB6TVG | 2026-06-20 07:29 | Manual restart finished cleanly. |
+| `ds-275m-cx4-ds2-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4ZNT2JCKR4Y5J27QQX897T | 2026-06-19 13:19 | Dense-schedule cleanup point finished cleanly. |
+| `sp-810m-cx1-sp192e4k-lr4e-4-r2` | https://beaker.org/ex/01KVEGEKW8E218NNY0XTHWTJ9W | 2026-06-20 04:28 | 2-node replacement finished cleanly. |
+| `sp-810m-cx1-sp96e4k-lr5e-4-r1` | https://beaker.org/ex/01KVCY8ZT9SQ45ZSBA9V3C3FXB | 2026-06-18 17:11 | Finished cleanly. |
+| `sp-810m-cx2-sp96e4k-lr5e-4-r1` | https://beaker.org/ex/01KVCY9BH97KKXV64MBSQ8Z50H | 2026-06-19 00:36 | Finished cleanly. |
+| `sp-810m-cx4-sp96e4k-lr3.5e-4-r1` | https://beaker.org/ex/01KVCY9Q1T233BQHBRND8D95JJ | 2026-06-19 09:12 | Finished cleanly. |
+| `sp-810m-cx8-sp96e4k-lr3.5e-4-r1` | https://beaker.org/ex/01KVCYA2XT84N5XVZBNS0QKJKN | 2026-06-20 04:29 | Finished cleanly. |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr2.4e-3-r1` | https://beaker.org/ex/01KV9X79WWBY9JYS3WWAS8M1SW | 2026-06-17 21:44 | Hot-side 1.2B Cx2 baseline extension finished cleanly. |
+
+Still running at the status check:
+
+| Name | Beaker | Started UTC | Notes |
+| --- | --- | --- | --- |
+| `eg-1p2b-cx2-eg24e2k-lr3e-4-r1` | https://beaker.org/ex/01KVFDD6YEDEZD7F06RYB6FPK5 | 2026-06-19 17:44 | New EG Cx2 coarse run. |
+| `eg-1p2b-cx2-eg96e8k-lr3e-4-r1` | https://beaker.org/ex/01KVFDG3FS2GVD8Z3Q26CQJ7MV | 2026-06-20 04:28 | New EG Cx2 fine run. |
+| `q3-810m-cx4-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQ2FHVRFFD97SDYBMD694 | 2026-06-20 04:06 | True-3D Qwen-like 810M Cx4. |
+| `q3-810m-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQH6BQSBMRHBKZD5RE46W | 2026-06-20 04:05 | True-3D Qwen-like 810M Cx8. |
+| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV1XQMPM62PXBRPGX1MYD059 | 2026-06-19 02:14 | Manual restart running. |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJCSV6NFW52ENF8T7DNPH | 2026-06-19 09:51 | Manual restart running. |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | 2026-06-19 12:04 | Manual restart running. |
+| `sp-810m-cx2-sp192e4k-lr4e-4-r2` | https://beaker.org/ex/01KVEGF07SQE61D4JJXQ9H6S7V | 2026-06-20 04:31 | 2-node replacement running. |
+
+Created but not scheduled/started in the latest Beaker job attempt:
+
+| Name | Beaker | Created UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-810m-cx2-q3am128e8k-lr5.6e-4-r1` | https://beaker.org/ex/01KVFDM5KWV2FHX2NYASD43GWF | 2026-06-20 08:04 | Waiting on Holmes capacity/latest attempt. |
+| `q3-810m-cx4-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDMV84805JW8VJYEXZ4SPW | 2026-06-20 08:04 | Waiting on Holmes capacity/latest attempt. |
+| `q3-810m-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDNGV9TDAP885HG5MD68FB | 2026-06-20 08:04 | Waiting on Holmes capacity/latest attempt. |
+| `q3-810m-cx2-q3td128e8k-lr5.6e-4-r1` | https://beaker.org/ex/01KVFDPNGJDX45X41MZ247N717 | 2026-06-20 08:04 | Waiting on Holmes capacity/latest attempt. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFC3RQVYFW07077WNKMV0 | 2026-06-18 23:18 | Still unscheduled. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFQWQGQ6JWNBHC5YR23B1 | 2026-06-18 23:19 | Still unscheduled. |
+
+Tracked plot/stat updates from this refresh were focused on expert granularity, total sparsity, dense schedule Cx4, and the Qwen3-like summary. No new jobs were launched during this status check.
+

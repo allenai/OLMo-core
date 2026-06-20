@@ -17,7 +17,8 @@ EXPERT_DIR = LADDER_DIR / "experiments" / "expert_granularity"
 TOTAL_SPARSITY_DIR = LADDER_DIR / "experiments" / "total_sparsity"
 SHARED_EXPERT_DIR = LADDER_DIR / "experiments" / "shared_expert"
 DENSE_SCHEDULE_DIR = LADDER_DIR / "experiments" / "dense_schedule"
-for path in (LADDER_DIR, EXPERT_DIR, TOTAL_SPARSITY_DIR, SHARED_EXPERT_DIR, DENSE_SCHEDULE_DIR):
+QWEN3_LIKE_DIR = LADDER_DIR / "experiments" / "qwen3_like"
+for path in (LADDER_DIR, EXPERT_DIR, TOTAL_SPARSITY_DIR, SHARED_EXPERT_DIR, DENSE_SCHEDULE_DIR, QWEN3_LIKE_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -32,6 +33,7 @@ from wandb_cache import DEFAULT_CACHE_DIR
 
 import plot_expert_granularity as eg
 import plot_dense_schedule as ds
+import plot_qwen3_like as q3
 import plot_shared_expert as se
 import plot_total_sparsity as ts
 
@@ -51,6 +53,7 @@ EXPERIMENT_MODULES = {
     "Total Sparsity": ts,
     "Shared Expert": se,
     "Dense Schedule": ds,
+    "Qwen3-Like": q3,
 }
 VARIANT_LABELS = {
     "baseline_48e_top4": "baseline 48E/top4",
@@ -75,6 +78,8 @@ VARIANT_LABELS = {
     "dense0_shared": "dense0 + shared",
     "dense2_shared": "dense2 + shared",
     "dense4_shared": "dense4 + shared",
+    "active_matched": "Qwen-like active matched 4.5d",
+    "true_3d_depth_matched": "Qwen-like true 3.0d + depth",
 }
 
 
