@@ -17,6 +17,7 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_single_hp2cp,
 )
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
+from olmo_core.distributed.utils import get_rank
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
@@ -44,7 +45,12 @@ from .backend import (
     TEAttentionBackend,
     TorchAttentionBackend,
 )
-from .landmark import build_block_doc_id, landmark_grouped_softmax, repeat_kv
+from .landmark import (
+    build_block_doc_id,
+    build_local_packed_position_ids,
+    landmark_grouped_softmax,
+    repeat_kv,
+)
 from .landmark_kernel import fused_landmark_attention, has_landmark_kernel
 from .ring import (
     RingAttentionLlama3LoadBalancer,
@@ -731,16 +737,20 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor],
         freqs_cis: Optional[torch.Tensor],
         cu_doc_lens: Optional[torch.Tensor],
+        position_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         assert self.rope is not None
         rope_kwargs = {}
-        if cu_doc_lens is not None:
+        if cu_doc_lens is not None or position_ids is not None:
             if not isinstance(self.rope, RotaryEmbedding):
                 raise NotImplementedError(
-                    "Intra-document RoPE (cu_doc_lens) is only supported by RotaryEmbedding; "
-                    f"got {type(self.rope).__name__}"
+                    "Intra-document RoPE (cu_doc_lens / position_ids) is only supported by "
+                    f"RotaryEmbedding; got {type(self.rope).__name__}"
                 )
-            rope_kwargs["cu_doc_lens"] = cu_doc_lens
+            if cu_doc_lens is not None:
+                rope_kwargs["cu_doc_lens"] = cu_doc_lens
+            if position_ids is not None:
+                rope_kwargs["position_ids"] = position_ids
         return self.rope(
             q,
             k,
@@ -760,6 +770,7 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Compute the query, key, and value tensors from the input, applying QKV clipping,
@@ -812,7 +823,9 @@ class Attention(SequenceMixer):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
-            q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
+            q, k = self._apply_rope(
+                q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens, position_ids
+            )
 
         return q, k, v
 
@@ -1090,12 +1103,16 @@ class LandmarkAttention(Attention):
       path for long-context training; it is CUDA + triton only.
 
     .. note::
-        Intra-document masking for sequence packing (``cu_doc_lens``) is supported on the **eager**
-        path: documents are masked block-diagonally so a query never attends across a document
-        boundary, and RoPE positions reset per document. This requires every packed document length
-        to be a multiple of the landmark ``block_size`` (so the periodic ``is_mem`` pattern stays
-        valid). Packing on the fused kernel path, generation / KV-caching, context parallelism, and
-        long-context landmark retrieval are not yet supported.
+        Intra-document masking for sequence packing (``cu_doc_lens``) is supported on both the
+        **eager** and **fused-kernel** paths: documents are masked block-diagonally so a query never
+        attends across a document boundary, and RoPE positions reset per document. This requires every
+        packed document length to be a multiple of the landmark ``block_size`` (so the periodic
+        ``is_mem`` pattern stays valid). Packing also composes with **Ulysses context parallelism**:
+        each rank applies per-document RoPE to its sequence slice (documents straddling a rank
+        boundary stay positionally continuous; see
+        :func:`~olmo_core.nn.attention.landmark.build_local_packed_position_ids`) before the
+        all-to-all gathers the full sequence, on which the block-diagonal document mask is built.
+        Generation / KV-caching and long-context landmark retrieval are not yet supported.
 
     :param mem_freq: The number of regular tokens between landmark tokens. The landmark block size
         is ``mem_freq + 1``.
@@ -1219,11 +1236,6 @@ class LandmarkAttention(Attention):
             raise NotImplementedError(
                 "KV-caching / generation is not yet supported with landmark attention"
             )
-        if cu_doc_lens is not None and self.cp_enabled:
-            raise NotImplementedError(
-                "Intra-document packing (cu_doc_lens) is not supported together with context "
-                "parallelism."
-            )
 
         # ``T_local`` is the per-rank sequence length: the full sequence when CP is disabled, or the
         # CP shard (``T / cp_degree``) under Ulysses CP. RoPE is applied below in ``_prepare_qkv``
@@ -1231,11 +1243,28 @@ class LandmarkAttention(Attention):
         # before the Ulysses all-to-all gathers the full sequence.
         B, T_local, _ = x.shape
 
+        # Per-document RoPE for sequence packing. Without CP the local shard *is* the full sequence,
+        # so the standard ``cu_doc_lens`` RoPE path (positions reset to 0 per document) applies. Under
+        # Ulysses CP the shard is a contiguous slice of the full sequence while ``cu_doc_lens`` still
+        # describes the full sequence, and RoPE runs on the slice *before* the all-to-all gather; so
+        # we pass explicit per-document positions for this rank's slice -- correct even for documents
+        # that straddle a rank boundary (their positions stay continuous across the boundary).
+        rope_cu_doc_lens, position_ids = cu_doc_lens, None
+        if cu_doc_lens is not None and self.cp_enabled:
+            assert self._cp_pg is not None
+            position_ids = build_local_packed_position_ids(
+                cu_doc_lens, B, T_local, get_rank(self._cp_pg), self._cp_world_size
+            )
+            rope_cu_doc_lens = None
+
         # shape: (B, T_local, n_heads, head_dim), (B, T_local, n_kv_heads, head_dim) x2
-        # ``cu_doc_lens`` (when packing) resets RoPE positions per document so each document sees
-        # positions starting at 0, exactly as if it were processed on its own.
         q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=cu_doc_lens
+            x,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            cu_doc_lens=rope_cu_doc_lens,
+            position_ids=position_ids,
         )
 
         if self.cp_enabled:

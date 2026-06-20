@@ -27,6 +27,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -52,9 +53,11 @@ from olmo_core.train.train_module import (
 #     not from EOS tokens. (EOS-derived boundaries are NOT block-aligned and would be rejected by the
 #     landmark attention with a clear error -- this is the guard against the *wrong* kind of packing.)
 #
-#   * NO context parallelism. Packing relies on ``cu_doc_lens``, which the landmark attention does not
-#     support together with context parallelism (it raises ``NotImplementedError``). We shard with
-#     FSDP instead. If you OOM, increase ``shard_degree`` (or lower ``SEQUENCE_LENGTH``).
+#   * Ulysses context parallelism (degree 8). Packing relies on ``cu_doc_lens``, which the fast
+#     landmark attention now supports together with CP: each rank applies per-document RoPE to its
+#     sequence slice (documents straddling a rank boundary stay positionally continuous) before the
+#     all-to-all gathers the full sequence, on which the block-diagonal document mask is built. CP
+#     shards the 64k window across the 8 GPUs of a node, which is the memory win for long context.
 #
 # Contrast with the cross-attending script: there, packed conversations attend across each other
 # (matching landmark *pretraining*). Use this script when you want each SFT example masked off.
@@ -81,8 +84,9 @@ BASE_CHECKPOINT = "/weka/oe-training-default/ai2-llm/checkpoints/q4b-fast-landma
 
 NUM_NODES = 4
 
-# Global batch in *tokens* (incl. landmark and pad tokens). With rank_microbatch=SEQUENCE_LENGTH and
-# 32 GPUs (no CP, so every rank is its own DP replica), SEQUENCE_LENGTH * 32 ~ 2M tokens.
+# Global batch in *tokens* (incl. landmark and pad tokens). With rank_microbatch=SEQUENCE_LENGTH,
+# 32 GPUs and cp_degree=8, each CP group of 8 ranks collectively processes one SEQUENCE_LENGTH
+# window -> 4 DP replicas, SEQUENCE_LENGTH * 32 ~ 2M tokens.
 GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 32
 
 LR = 5e-5
@@ -124,7 +128,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=SEQUENCE_LENGTH,  # one packed window per rank
+        rank_microbatch_size=SEQUENCE_LENGTH,  # one packed window per CP group (B=1, required by CP)
         max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=LR,
@@ -141,11 +145,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            # No context parallelism with packing (cu_doc_lens + CP is unsupported); shard with FSDP.
-            # Bump this if you OOM at SEQUENCE_LENGTH=65536.
-            shard_degree=8,
+            # CP (degree 8) carries the long-context sharding now; replicate params per CP group.
+            shard_degree=1,
         ),
-        # NOTE: cp_config intentionally omitted -- packing (cu_doc_lens) is incompatible with CP.
+        # Ulysses CP: the fast-landmark mixer gathers the full sequence (with n_heads/8 heads) per
+        # rank before the grouped softmax. Qwen3-4B: n_heads=32, n_kv_heads=8 -> divisible by 8.
+        # Packing is supported under CP (per-document RoPE is applied per shard, masking on the
+        # gathered sequence). If you OOM, raise dp_config.shard_degree (FSDP within each CP group).
+        cp_config=TransformerContextParallelConfig.ulysses(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.7,

@@ -18,7 +18,94 @@ from olmo_core.nn.attention.landmark_sparse_kernel import (
     has_sparse_kernel,
     sparse_landmark_attention_triton_train,
 )
-from olmo_core.testing import requires_gpu
+from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.testing import requires_gpu, run_distributed_test
+
+
+def _sparse_landmark_transformer_config(seq_len: int) -> TransformerConfig:
+    # Small sparse-landmark transformer (eager torch fallback on CPU) for the context-parallel test.
+    # n_heads / n_kv_heads must be divisible by the CP degree (world_size=2).
+    return TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=256,
+        n_layers=2,
+        n_heads=8,
+        n_kv_heads=2,
+        qk_norm=True,
+        rope_theta=10_000,
+        sparse_landmark=True,
+        mem_freq=3,
+        num_landmarks=1,  # block_size = mem_freq + num_landmarks = 4
+    )
+
+
+def _run_sparse_landmark_ulysses_cp_packed(
+    checkpoint_dir: str, inputs_path: str, doc_lens, max_doc_len: int, seq_len: int
+):
+    from torch.distributed.tensor import DTensor, Shard, init_device_mesh
+
+    from olmo_core.distributed.checkpoint import load_model_and_optim_state
+    from olmo_core.distributed.utils import get_full_tensor, get_world_size
+
+    mesh = init_device_mesh("cpu", (get_world_size(),), mesh_dim_names=("cp",))
+
+    model = _sparse_landmark_transformer_config(seq_len).build()
+    model.apply_cp(mesh["cp"], uly=UlyssesContextParallelStyle())
+    model.init_weights(device=torch.device("cpu"), max_seq_len=seq_len)
+    load_model_and_optim_state(checkpoint_dir, model)
+    model.eval()
+
+    input_ids = torch.load(inputs_path, map_location="cpu")
+    with torch.no_grad():
+        local_logits = model(
+            input_ids=input_ids,
+            doc_lens=torch.tensor([doc_lens], dtype=torch.int32),
+            max_doc_lens=[max_doc_len],
+        )
+    logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
+
+    # Reference: the same packed forward on a single rank (no CP), the already-validated non-CP path.
+    model_full = _sparse_landmark_transformer_config(seq_len).build()
+    model_full.init_weights(device=torch.device("cpu"), max_seq_len=seq_len)
+    load_model_and_optim_state(checkpoint_dir, model_full)
+    model_full.eval()
+    with torch.no_grad():
+        expected = model_full(
+            input_ids=input_ids,
+            doc_lens=torch.tensor([doc_lens], dtype=torch.int32),
+            max_doc_lens=[max_doc_len],
+        )
+    torch.testing.assert_close(get_full_tensor(logits), expected, rtol=1e-4, atol=1e-4)
+
+
+def test_sparse_landmark_ulysses_cp_packing_matches_full(tmp_path):
+    # Ulysses CP + sequence packing for SparseLandmarkAttention, with a document straddling the CP
+    # rank boundary. CP must reproduce the single-rank packed forward exactly.
+    from olmo_core.distributed.checkpoint import save_model_and_optim_state
+
+    torch.manual_seed(0)
+    seq_len = 16  # world_size=2 -> T_local=8; block_size=4
+    doc_lens = [4, 8, 4]  # the 8-token doc spans global [4, 12), straddling the rank boundary at 8
+    assert sum(doc_lens) == seq_len
+
+    model = _sparse_landmark_transformer_config(seq_len).build()
+    model.init_weights(device=torch.device("cpu"), max_seq_len=seq_len)
+    model.eval()
+
+    input_ids = torch.randint(0, 256, (1, seq_len))  # B must be 1 for CP + intra-document masking
+
+    inputs_path = tmp_path / "x.pt"
+    checkpoint_dir = tmp_path / "checkpoint"
+    torch.save(input_ids, inputs_path)
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        _run_sparse_landmark_ulysses_cp_packed,
+        backend="gloo",
+        world_size=2,
+        func_args=(str(checkpoint_dir), str(inputs_path), doc_lens, max(doc_lens), seq_len),
+    )
 
 
 def _layout(block_size, device="cpu"):

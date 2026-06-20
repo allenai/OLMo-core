@@ -19,7 +19,9 @@ from olmo_core.nn.attention.landmark_kernel import (
     fused_landmark_attention,
     has_landmark_kernel,
 )
-from olmo_core.testing import requires_gpu
+from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
 
 
 def _eager_landmark_reference(q, k, v, block_size):
@@ -247,3 +249,98 @@ def test_fast_kernel_unchanged_vs_original_for_small_head_dims(head_dim: int, dt
     torch.testing.assert_close(dq_f, dq_o)
     torch.testing.assert_close(dk_f, dk_o)
     torch.testing.assert_close(dv_f, dv_o)
+
+
+def _fast_landmark_transformer_config(seq_len: int, mem_freq: int) -> TransformerConfig:
+    # Small fast-landmark transformer (fused Triton kernel path) for the context-parallel test.
+    # n_heads / n_kv_heads must be divisible by the CP degree (world_size=2); mem_freq >= 15.
+    return TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=256,
+        n_layers=2,
+        n_heads=8,
+        n_kv_heads=2,
+        qk_norm=True,
+        rope_theta=10_000,
+        fast_landmark=True,
+        mem_freq=mem_freq,
+    )
+
+
+def _run_fast_landmark_ulysses_cp_packed(
+    checkpoint_dir: str, inputs_path: str, doc_lens, max_doc_len: int, seq_len: int, mem_freq: int
+):
+    from torch.distributed.tensor import DTensor, Shard, init_device_mesh
+
+    from olmo_core.distributed.checkpoint import load_model_and_optim_state
+    from olmo_core.distributed.utils import get_full_tensor, get_world_size
+    from olmo_core.utils import get_default_device
+
+    device = get_default_device()
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
+
+    def _build():
+        model = _fast_landmark_transformer_config(seq_len, mem_freq).build()
+        model.init_weights(device=device, max_seq_len=seq_len)
+        load_model_and_optim_state(checkpoint_dir, model)
+        model.eval()
+        return model
+
+    model = _build()
+    model.apply_cp(mesh["cp"], uly=UlyssesContextParallelStyle())
+
+    input_ids = torch.load(inputs_path, map_location=device)
+    doc_lens_t = torch.tensor([doc_lens], dtype=torch.int32)
+    with torch.no_grad():
+        local_logits = model(input_ids=input_ids, doc_lens=doc_lens_t, max_doc_lens=[max_doc_len])
+    logits = get_full_tensor(DTensor.from_local(local_logits, mesh, (Shard(1),)))
+
+    # Reference: the same packed forward on a single rank (no CP) -- the already-validated non-CP
+    # packing path of the fused kernel. Matching it proves CP shard reconstruction + per-document
+    # RoPE (incl. the boundary-straddling document) under the fused kernel.
+    model_full = _build()
+    with torch.no_grad():
+        expected = model_full(input_ids=input_ids, doc_lens=doc_lens_t, max_doc_lens=[max_doc_len])
+    torch.testing.assert_close(logits, expected, rtol=1e-3, atol=1e-3)
+
+
+@requires_multi_gpu
+@pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
+def test_fast_landmark_ulysses_cp_packing_matches_full(tmp_path):
+    # Ulysses CP + sequence packing on the fused fast-landmark kernel, with a document straddling the
+    # CP rank boundary. CP must reproduce the single-rank packed forward. This is the GPU-only
+    # counterpart to the eager CPU checks in landmark_test.py (the fused kernel is CUDA + triton only).
+    from olmo_core.distributed.checkpoint import save_model_and_optim_state
+    from olmo_core.utils import get_default_device
+
+    torch.manual_seed(0)
+    mem_freq = 15  # block_size = 16 (kernel requires mem_freq >= 15)
+    seq_len = 64  # world_size=2 -> T_local=32; 4 landmark blocks of 16
+    doc_lens = [16, 32, 16]  # the 32-token doc spans global [16, 48), straddling the boundary at 32
+    assert sum(doc_lens) == seq_len
+
+    device = get_default_device()
+    model = _fast_landmark_transformer_config(seq_len, mem_freq).build()
+    model.init_weights(device=device, max_seq_len=seq_len)
+    model.eval()
+
+    input_ids = torch.randint(0, 256, (1, seq_len))  # B must be 1 for CP + intra-document masking
+
+    inputs_path = tmp_path / "x.pt"
+    checkpoint_dir = tmp_path / "checkpoint"
+    torch.save(input_ids, inputs_path)
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        _run_fast_landmark_ulysses_cp_packed,
+        backend="nccl",
+        world_size=2,
+        func_args=(
+            str(checkpoint_dir),
+            str(inputs_path),
+            doc_lens,
+            max(doc_lens),
+            seq_len,
+            mem_freq,
+        ),
+    )

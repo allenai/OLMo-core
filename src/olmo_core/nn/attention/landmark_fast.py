@@ -38,13 +38,17 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_single_cp2hp,
     all_to_all_single_hp2cp,
 )
+from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoConfigurationError
 
-from . import (
-    Attention,  # base mixer (defined before the end-of-module import in __init__)
-)
+from . import Attention  # base mixer (defined before the end-of-module import in __init__)
 from .kv_cache import KVCacheManager
-from .landmark import build_block_doc_id, landmark_grouped_softmax, repeat_kv
+from .landmark import (
+    build_block_doc_id,
+    build_local_packed_position_ids,
+    landmark_grouped_softmax,
+    repeat_kv,
+)
 from .landmark_kernel import (
     FusedLandmarkAttention,
     _bwd_preprocess,
@@ -698,11 +702,6 @@ class FastLandmarkAttention(Attention):
                 "FastLandmarkAttention supports symmetric intra-document masking via 'cu_doc_lens' "
                 "only; the cross-attention variants are not supported"
             )
-        if cu_doc_lens is not None and self.cp_enabled:
-            raise NotImplementedError(
-                "Intra-document packing (cu_doc_lens) is not supported together with context "
-                "parallelism."
-            )
         # Generation path: incremental decode / prefill with a KV cache.
         if self.kv_cache_manager is not None:
             if self.cp_enabled:
@@ -716,9 +715,26 @@ class FastLandmarkAttention(Attention):
             )
 
         B, T_local, _ = x.shape
-        # ``cu_doc_lens`` (when packing) resets RoPE positions per document.
+        # Per-document RoPE for sequence packing. Without CP the local shard *is* the full sequence,
+        # so the standard ``cu_doc_lens`` RoPE path (positions reset to 0 per document) applies. Under
+        # Ulysses CP the shard is a contiguous slice of the full sequence while ``cu_doc_lens`` still
+        # describes the full sequence, and RoPE runs on the slice *before* the all-to-all gather; so
+        # we pass explicit per-document positions for this rank's slice -- correct even for documents
+        # that straddle a rank boundary (their positions stay continuous across the boundary).
+        rope_cu_doc_lens, position_ids = cu_doc_lens, None
+        if cu_doc_lens is not None and self.cp_enabled:
+            assert self._cp_pg is not None
+            position_ids = build_local_packed_position_ids(
+                cu_doc_lens, B, T_local, get_rank(self._cp_pg), self._cp_world_size
+            )
+            rope_cu_doc_lens = None
         q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=cu_doc_lens
+            x,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            cu_doc_lens=rope_cu_doc_lens,
+            position_ids=position_ids,
         )
         if self.cp_enabled:
             assert self._cp_pg is not None

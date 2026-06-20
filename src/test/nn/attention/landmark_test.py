@@ -10,7 +10,11 @@ from olmo_core.data.composable.landmark_instance_source import LandmarkInstanceS
 from olmo_core.data.composable.token_source import InMemoryTokenSource
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType, LandmarkAttention
-from olmo_core.nn.attention.landmark import build_block_doc_id, landmark_grouped_softmax
+from olmo_core.nn.attention.landmark import (
+    build_block_doc_id,
+    build_local_packed_position_ids,
+    landmark_grouped_softmax,
+)
 from olmo_core.nn.attention.landmark_kernel import (
     fused_landmark_attention,
     has_landmark_kernel,
@@ -176,6 +180,37 @@ def _packing_equivalence_check(*, mem_freq: int, doc_lens, d_model: int = 64, n_
         torch.testing.assert_close(
             packed_param_grads[name], accum_param_grads[name], rtol=1e-9, atol=1e-9, msg=name
         )
+
+
+def test_build_local_packed_position_ids_straddling_doc():
+    # Full sequence T=16 sharded across cp_world_size=2 (T_local=8). Documents [4, 8, 4]: the middle
+    # 8-token document straddles the rank boundary at position 8, so rank 1's first four of its tokens
+    # must continue that document's positions (4,5,6,7) rather than reset to 0.
+    cu_doc_lens = torch.tensor([0, 4, 12, 16], dtype=torch.int32)
+    pos0 = build_local_packed_position_ids(cu_doc_lens, 1, 8, cp_rank=0, cp_world_size=2)
+    pos1 = build_local_packed_position_ids(cu_doc_lens, 1, 8, cp_rank=1, cp_world_size=2)
+    torch.testing.assert_close(pos0, torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]]))
+    torch.testing.assert_close(pos1, torch.tensor([[4, 5, 6, 7, 0, 1, 2, 3]]))
+
+    # Concatenating the per-rank shards must reproduce the full-sequence per-document positions (i.e.
+    # the standard ``cu_doc_lens`` reset over the whole sequence), which is what the non-CP path uses.
+    full = torch.cat([pos0, pos1], dim=1)
+    flat = torch.arange(16)
+    doc_id = torch.bucketize(flat, cu_doc_lens.to(torch.long)[1:], right=True)
+    expected_full = (flat - cu_doc_lens.to(torch.long)[doc_id]).view(1, 16)
+    torch.testing.assert_close(full, expected_full)
+
+
+def test_build_local_packed_position_ids_batched():
+    # Flattened-over-batch convention with B=2, T=8, cp_world_size=2 (T_local=4). Each row has its own
+    # layout; row 0 docs [4, 4], row 1 docs [8] (one document straddling the boundary at local pos 4).
+    cu_doc_lens = torch.tensor([0, 4, 8, 16], dtype=torch.int32)
+    pos0 = build_local_packed_position_ids(cu_doc_lens, 2, 4, cp_rank=0, cp_world_size=2)
+    pos1 = build_local_packed_position_ids(cu_doc_lens, 2, 4, cp_rank=1, cp_world_size=2)
+    # Row 0: global [0,4)->doc0 pos 0-3 (rank0), [4,8)->doc1 pos 0-3 (rank1).
+    # Row 1: global flat [8,16) is one doc; rank0 holds [8,12) pos 0-3, rank1 holds [12,16) pos 4-7.
+    torch.testing.assert_close(pos0, torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]]))
+    torch.testing.assert_close(pos1, torch.tensor([[0, 1, 2, 3], [4, 5, 6, 7]]))
 
 
 def test_landmark_packing_matches_grad_accumulation():
@@ -654,6 +689,80 @@ def test_landmark_ulysses_cp_matches_full(tmp_path):
         backend="gloo",
         world_size=2,
         func_args=(str(checkpoint_dir), str(inputs_path), str(outputs_path), seq_len),
+    )
+
+
+def _run_landmark_ulysses_cp_packed(
+    checkpoint_dir: str, inputs_path: str, doc_lens, max_doc_len: int, seq_len: int
+):
+    from torch.distributed.tensor import DTensor, Shard, init_device_mesh
+
+    from olmo_core.distributed.checkpoint import load_model_and_optim_state
+    from olmo_core.distributed.utils import get_full_tensor, get_world_size
+
+    mesh = init_device_mesh("cpu", (get_world_size(),), mesh_dim_names=("cp",))
+
+    model = _landmark_transformer_config(seq_len).build()
+    model.apply_cp(mesh["cp"], uly=UlyssesContextParallelStyle())
+    model.init_weights(device=torch.device("cpu"), max_seq_len=seq_len)
+    load_model_and_optim_state(checkpoint_dir, model)
+    model.eval()
+
+    # The model shards input_ids and the RoPE buffers internally via the Ulysses load balancer (the
+    # document boundaries are passed through unchanged). Each rank returns its sequence shard.
+    input_ids = torch.load(inputs_path, map_location="cpu")
+    with torch.no_grad():
+        local_logits = model(
+            input_ids=input_ids,
+            doc_lens=torch.tensor([doc_lens], dtype=torch.int32),
+            max_doc_lens=[max_doc_len],
+        )
+    logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
+
+    # Reference: the same packed forward on a single rank (no CP). This is the already-validated
+    # non-CP packing path, so matching it proves the CP shard reconstruction + per-document RoPE
+    # (including the boundary-straddling document) are correct.
+    model_full = _landmark_transformer_config(seq_len).build()
+    model_full.init_weights(device=torch.device("cpu"), max_seq_len=seq_len)
+    load_model_and_optim_state(checkpoint_dir, model_full)
+    model_full.eval()
+    with torch.no_grad():
+        expected = model_full(
+            input_ids=input_ids,
+            doc_lens=torch.tensor([doc_lens], dtype=torch.int32),
+            max_doc_lens=[max_doc_len],
+        )
+    torch.testing.assert_close(get_full_tensor(logits), expected, rtol=1e-4, atol=1e-4)
+
+
+def test_landmark_ulysses_cp_packing_matches_full(tmp_path):
+    # Ulysses CP + sequence packing (intra-document masking). The packed sequence contains a document
+    # that *straddles* the CP rank boundary, which exercises the per-document RoPE reset on the local
+    # shard (positions must stay continuous across the boundary) and the block-diagonal masking built
+    # on the gathered full sequence. CP must reproduce the single-rank packed forward exactly.
+    from olmo_core.distributed.checkpoint import save_model_and_optim_state
+
+    torch.manual_seed(0)
+    seq_len = 16  # world_size=2 -> T_local=8; block_size=4
+    doc_lens = [4, 8, 4]  # the 8-token doc spans global [4, 12), straddling the rank boundary at 8
+    assert sum(doc_lens) == seq_len
+
+    model = _landmark_transformer_config(seq_len).build()
+    model.init_weights(device=torch.device("cpu"), max_seq_len=seq_len)
+    model.eval()
+
+    input_ids = torch.randint(0, 256, (1, seq_len))  # B must be 1 for CP + intra-document masking
+
+    inputs_path = tmp_path / "x.pt"
+    checkpoint_dir = tmp_path / "checkpoint"
+    torch.save(input_ids, inputs_path)
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        _run_landmark_ulysses_cp_packed,
+        backend="gloo",
+        world_size=2,
+        func_args=(str(checkpoint_dir), str(inputs_path), doc_lens, max(doc_lens), seq_len),
     )
 
 

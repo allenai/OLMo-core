@@ -28,6 +28,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -52,10 +53,10 @@ from olmo_core.train.train_module import (
 #     (EOS-derived boundaries are NOT chunk-aligned and the landmark attention would reject them --
 #     the guard against the *wrong* kind of packing.)
 #
-# Parallelism is unchanged from the cross-attending sparse script: SparseLandmarkAttention does not
-# support context parallelism, so each rank processes the full window and we shard with FSDP
-# (shard_degree=8) + full activation checkpointing. (Context parallelism is doubly out here: it is
-# also incompatible with packing's cu_doc_lens.)
+# Parallelism: Ulysses context parallelism (degree 8). SparseLandmarkAttention now performs the
+# cp2hp/hp2cp all-to-all itself (gathering the full sequence per rank before the chunked attention),
+# and packing's ``cu_doc_lens`` is supported under CP (per-document RoPE per shard, masking on the
+# gathered sequence). CP shards the 64k window across a node's 8 GPUs -- the long-context memory win.
 # ---------------------------------------------------------------------------
 
 MEM_FREQ = 63
@@ -123,7 +124,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=SEQUENCE_LENGTH,  # full window per rank (no CP)
+        rank_microbatch_size=SEQUENCE_LENGTH,  # one packed window per CP group (B=1, required by CP)
         max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=LR,
@@ -140,10 +141,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=8,
+            # CP (degree 8) carries the long-context sharding now; replicate params per CP group.
+            shard_degree=1,
         ),
-        # No context parallelism (sparse landmark doesn't support it, and packing's cu_doc_lens is
-        # incompatible with CP regardless); full activation checkpointing for the 64k window.
+        # Ulysses CP: the sparse-landmark mixer gathers the full sequence (with n_heads/8 heads) per
+        # rank before the chunked attention. Qwen3-4B: n_heads=32, n_kv_heads=8 -> divisible by 8.
+        # Packing is supported under CP. If you OOM, raise dp_config.shard_degree (FSDP per CP group).
+        cp_config=TransformerContextParallelConfig.ulysses(degree=8),
+        # Full activation checkpointing for the 64k window.
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full,
         ),

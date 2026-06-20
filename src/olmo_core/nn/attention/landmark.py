@@ -20,6 +20,7 @@ __all__ = [
     "landmark_grouped_softmax",
     "LandmarkGroupedSoftmaxFunction",
     "build_block_doc_id",
+    "build_local_packed_position_ids",
 ]
 
 
@@ -76,6 +77,53 @@ def build_block_doc_id(
     flat_first = z[:, None] * seq_len + b[None, :] * block_size  # (batch_size, n_blocks)
     doc_id = torch.searchsorted(interior, flat_first, right=True)
     return doc_id.to(torch.int32)
+
+
+def build_local_packed_position_ids(
+    cu_doc_lens: torch.Tensor,
+    batch_size: int,
+    seq_len_local: int,
+    cp_rank: int,
+    cp_world_size: int,
+) -> torch.Tensor:
+    """
+    Build per-document RoPE positions for a Ulysses context-parallel shard of a packed sequence.
+
+    Under Ulysses CP the sequence is sharded *contiguously*: rank ``r`` holds the global sequence
+    positions ``[r * seq_len_local, (r + 1) * seq_len_local)`` of every batch row, while
+    ``cu_doc_lens`` still describes the **full** (unsharded) ``(batch_size, seq_len)`` micro-batch --
+    the Ulysses load balancer passes the document boundaries through unchanged
+    (see :meth:`~olmo_core.nn.attention.ring.UlyssesLoadBalancer.batch_shard_by_document`). RoPE is
+    applied on the local shard *before* the Ulysses all-to-all gathers the full sequence, so each
+    local token needs its position *within its document*. For a document that straddles a rank
+    boundary that position continues across the boundary (it does **not** reset to 0 at the start of
+    the shard), which is exactly what this function computes.
+
+    This mirrors the per-document position reset of
+    :meth:`~olmo_core.nn.rope.RotaryEmbedding.forward` (the ``cu_doc_lens`` branch), but offset to
+    the rank's slice of the global sequence so straddling documents stay continuous.
+
+    :param cu_doc_lens: 1D cumulative document lengths over the flattened full ``(batch_size,
+        seq_len)`` micro-batch (flash-attention convention), i.e. ``[0, ..., batch_size * seq_len]``.
+    :param batch_size: Number of sequences in the micro-batch.
+    :param seq_len_local: Per-rank (sharded) sequence length ``seq_len // cp_world_size``.
+    :param cp_rank: This rank's index within the CP process group.
+    :param cp_world_size: The CP degree.
+
+    :returns: An int64 tensor of shape ``(batch_size, seq_len_local)`` giving each local token's
+        position within its (global) document.
+    """
+    seq_len = seq_len_local * cp_world_size
+    device = cu_doc_lens.device
+    boundaries = cu_doc_lens.to(dtype=torch.long)
+    z = torch.arange(batch_size, device=device)[:, None]
+    t = torch.arange(seq_len_local, device=device)[None, :]
+    # Flattened-over-batch global position of local token (z, t): z * seq_len + (rank shard offset).
+    global_flat = z * seq_len + cp_rank * seq_len_local + t  # (batch_size, seq_len_local)
+    flat = global_flat.reshape(-1)
+    doc_id = torch.bucketize(flat, boundaries[1:], right=True)
+    pos = flat - boundaries[doc_id]
+    return pos.view(batch_size, seq_len_local)
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:

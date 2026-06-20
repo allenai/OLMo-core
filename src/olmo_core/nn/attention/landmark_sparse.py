@@ -28,15 +28,22 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 
+from olmo_core.distributed.parallel.context_parallel import (
+    all_to_all_cp2hp,
+    all_to_all_single_cp2hp,
+    all_to_all_single_hp2cp,
+)
+from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoConfigurationError
 
 from . import Attention
 from .kv_cache import KVCacheManager
-from .landmark import build_block_doc_id, repeat_kv
+from .landmark import build_block_doc_id, build_local_packed_position_ids, repeat_kv
 from .landmark_sparse_kernel import (
     has_sparse_kernel,
     sparse_landmark_attention_triton_train,
 )
+from .ring import RingContextParallelStyle, UlyssesContextParallelStyle
 
 
 def sparse_landmark_attention_ref(
@@ -150,7 +157,9 @@ class SparseLandmarkAttention(Attention):
     Sparse landmark-only-across-chunks attention as a drop-in :class:`Attention` variant
     (``AttentionType.sparse_landmark``). Each chunk is ``block_size = mem_freq + num_landmarks``
     tokens, the last ``num_landmarks`` of which are landmarks. Pure-torch (autograd) -- works on
-    CPU/GPU; context parallelism is not yet supported. Supports the optional output gate inherited
+    CPU/GPU. Supports Ulysses context parallelism (the cp2hp/hp2cp all-to-all is performed in
+    :meth:`forward`, exactly as the other landmark variants), including in combination with
+    intra-document sequence packing (``cu_doc_lens``). Supports the optional output gate inherited
     from :class:`Attention` (``att * sigmoid(w_g(x))``), so it drops into gated models like Qwen3.5.
     """
 
@@ -177,6 +186,11 @@ class SparseLandmarkAttention(Attention):
         self.num_landmarks = num_landmarks
         self.block_size = mem_freq + num_landmarks
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
+        # Ulysses context-parallel state, populated by ``apply_cp`` (see :meth:`apply_cp`). Like the
+        # other landmark variants, sparse landmark attention has its own forward and does not route
+        # through ``self.backend``, so it performs the Ulysses all-to-all itself in ``forward``.
+        self._cp_pg: Optional[torch.distributed.ProcessGroup] = None
+        self._cp_world_size: int = 1
         # Eval-decode state (set by the generation module for landmark HELMET/RULER-style eval). When
         # ``_eval_prompt_len`` is not None, the decode step treats all post-prompt positions as one
         # growing local block instead of continuing the fixed per-block structure. See
@@ -226,10 +240,46 @@ class SparseLandmarkAttention(Attention):
             dtype=self.w_k.weight.dtype,  # eager decode matmuls q against the cache directly
         )
 
-    def apply_cp(self, *args, **kwargs):
-        raise NotImplementedError(
-            "Context parallelism is not yet supported for SparseLandmarkAttention"
-        )
+    def apply_cp(
+        self,
+        cp_mesh,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
+    ):
+        """Prepare sparse landmark attention for Ulysses context parallelism.
+
+        Ring/zigzag CP splits the sequence into per-rank chunks, which breaks the sparse landmark
+        attention (a query must see the landmark tokens of *all* preceding chunks). Ulysses CP instead
+        splits the heads: each rank gathers the full sequence (with ``n_heads / cp_degree`` heads) via
+        an all-to-all, so the sparse chunked attention sees the complete sequence. We therefore only
+        support Ulysses, performing the all-to-all in :meth:`forward`.
+
+        :param cp_mesh: The context parallel device sub-mesh.
+        :param ring: Must be ``None``; ring CP is not supported.
+        :param uly: The Ulysses context parallel style.
+
+        :raises OLMoConfigurationError: If ring CP is requested, or if the (KV) head count is not
+            divisible by the CP degree.
+        """
+        if ring is not None:
+            raise OLMoConfigurationError(
+                "SparseLandmarkAttention only supports Ulysses context parallelism, not ring/zigzag "
+                "CP (which splits the sequence and breaks the sparse landmark attention)."
+            )
+        if uly is None:
+            raise ValueError("One of 'ring' or 'uly' must be specified")
+        cp_size = cp_mesh.size()
+        if self.n_heads % cp_size != 0 or self.n_kv_heads % cp_size != 0:
+            raise OLMoConfigurationError(
+                f"Ulysses CP degree ({cp_size}) must divide n_heads ({self.n_heads}) and "
+                f"n_kv_heads ({self.n_kv_heads})"
+            )
+        self._cp_pg = cp_mesh.get_group()
+        self._cp_world_size = cp_size
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_pg is not None
 
     @torch.compiler.disable
     def forward(
@@ -263,17 +313,48 @@ class SparseLandmarkAttention(Attention):
             )
         # Generation path: incremental decode / prefill with a KV cache.
         if self.kv_cache_manager is not None:
+            if self.cp_enabled:
+                raise NotImplementedError(
+                    "Context parallelism is not supported with sparse landmark generation"
+                )
             return self._forward_generate(x, pos_sin, pos_cos, freqs_cis, cache_leftpad)
         if cache_leftpad is not None:
             raise NotImplementedError(
                 "cache_leftpad is only supported together with a KV cache manager"
             )
 
-        B, T, _ = x.shape
-        # ``cu_doc_lens`` (when packing) resets RoPE positions per document.
+        # ``T_local`` is the per-rank sequence length: the full sequence without CP, or the CP shard
+        # (``T / cp_degree``) under Ulysses CP. Per-document RoPE for sequence packing: without CP the
+        # local shard *is* the full sequence, so the standard ``cu_doc_lens`` RoPE path (positions
+        # reset to 0 per document) applies. Under Ulysses CP the shard is a contiguous slice of the
+        # full sequence while ``cu_doc_lens`` still describes the full sequence, and RoPE runs on the
+        # slice *before* the all-to-all gather; so we pass explicit per-document positions for this
+        # rank's slice -- correct even for documents straddling a rank boundary.
+        B, T_local, _ = x.shape
+        rope_cu_doc_lens, position_ids = cu_doc_lens, None
+        if cu_doc_lens is not None and self.cp_enabled:
+            assert self._cp_pg is not None
+            position_ids = build_local_packed_position_ids(
+                cu_doc_lens, B, T_local, get_rank(self._cp_pg), self._cp_world_size
+            )
+            rope_cu_doc_lens = None
         q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=cu_doc_lens
+            x,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            cu_doc_lens=rope_cu_doc_lens,
+            position_ids=position_ids,
         )
+        if self.cp_enabled:
+            assert self._cp_pg is not None
+            # Ulysses: gather the full sequence and scatter the heads across CP ranks.
+            # (B, T/CP, H, D) -> (B, T, H/CP, D); likewise for the KV heads.
+            q = all_to_all_single_cp2hp(q, self._cp_pg)
+            k, v = all_to_all_cp2hp([k, v], self._cp_pg)
+
+        # Each rank now holds the full sequence ``T`` (= ``T_local`` without CP).
+        T = q.shape[1]
         if T % self.block_size != 0:
             raise OLMoConfigurationError(
                 f"Sequence length ({T}) must be a multiple of block_size "
@@ -285,14 +366,21 @@ class SparseLandmarkAttention(Attention):
         v = repeat_kv(v.transpose(1, 2), n_rep)
 
         # Per-chunk document ids for sequence packing (None for the single-document path). The sparse
-        # "chunk" is exactly the landmark block, so ``build_block_doc_id`` gives one id per chunk.
+        # "chunk" is exactly the landmark block, so ``build_block_doc_id`` gives one id per chunk. Under
+        # CP this is built on the full gathered sequence, so the document boundaries line up.
         doc_id = (
             build_block_doc_id(cu_doc_lens, B, T, self.block_size)
             if cu_doc_lens is not None
             else None
         )
         att = self._attn_core(q, k, v, doc_id=doc_id)
-        att = att.transpose(1, 2).contiguous().view(B, T, -1)
+        # shape: (B, T, n_heads (local), head_dim)
+        att = att.transpose(1, 2)
+        if self.cp_enabled:
+            assert self._cp_pg is not None
+            # Ulysses: scatter the sequence back and gather the heads. (B, T, H/CP, D) -> (B, T/CP, H, D)
+            att = all_to_all_single_hp2cp(att.contiguous(), self._cp_pg)
+        att = att.contiguous().view(B, T_local, -1)
         att = self._apply_gate(att, x)
         return self.w_out(att)
 
