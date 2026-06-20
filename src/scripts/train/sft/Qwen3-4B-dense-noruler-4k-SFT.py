@@ -13,7 +13,6 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
@@ -50,8 +49,9 @@ from olmo_core.train.train_module import (
 
 SEQUENCE_LENGTH = 4096  # short, fast packed window (well within Qwen3's native 32k)
 
-# 1k SFT shards that EXCLUDE ruler (and the held-out tasks). Built by the suite-build-noruler job.
-DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/suite_it_sft_qwen/combined_debug_noruler"
+# 1k SFT shards that EXCLUDE ruler (and held-out tasks), capped at 4096 tokens/instance so no
+# document spans multiple loss-free 4k chunks (which would give a NaN loss over 0 unmasked tokens).
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/suite_it_sft_qwen/combined_debug_noruler_4k"
 
 # Dense CPT checkpoint to initialize from (same base as the full dense unified SFT).
 BASE_CHECKPOINT = "/weka/oe-training-default/ai2-llm/checkpoints/q4b-dense-dolma3longmino/step2385/model_and_optim"
@@ -93,11 +93,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
 
+    # No YaRN: the base is natively 32k and we train at 4k, so native rope is correct (and keeps the
+    # baseline CPT-base rope == SFT-ckpt rope, so the RULER before/after comparison is apples-to-apples).
     model_config = TransformerConfig.qwen3_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
         attn_backend=AttentionBackendName.flash_2,
-    ).with_rope_scaling(
-        YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
     )
 
     train_module_config = TransformerTrainModuleConfig(
@@ -112,7 +112,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             ],
         ),
         scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
-        compile_model=True,
+        compile_model=False,  # tiny probe; skip compile startup cost
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
