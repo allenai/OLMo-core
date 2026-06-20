@@ -29,7 +29,7 @@ WEKA="${WEKA:-oe-training-default}"
 PRIORITY="${PRIORITY:-normal}"
 CPUS="${CPUS:-8}"
 NAME="${NAME:-cr-suite-eval-land}"
-DEST_REL="${DEST_REL:-ai2-llm/checkpoints/prasanns/cr_suite_eval}"
+DEST_REL="${DEST_REL:-ai2-llm/checkpoints/prasanns/cr_suite_data}"
 
 CLUSTER_ARGS=()
 IFS=',' read -ra _CLUSTERS <<< "${CLUSTER}"
