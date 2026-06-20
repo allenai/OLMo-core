@@ -240,7 +240,9 @@ class LandmarkPackingInstanceSource(InstanceSource):
         for doc_i in self._windows[idx]:
             s, e = self._offsets[doc_i]
             rng = self._source.get_token_range(s, e)
-            content = list(rng["input_ids"])
+            # Cast uint32 token ids (vocab > 65535) to Python int so the emitted instance tensors
+            # are int64, not uint32 (uint32 can't promote with the model's Long tensors).
+            content = [int(x) for x in rng["input_ids"]]
             raw_mask = rng.get("label_mask")
             mask = list(raw_mask) if raw_mask is not None else [True] * len(content)
             ids, m = self._emit_document(content, mask)
