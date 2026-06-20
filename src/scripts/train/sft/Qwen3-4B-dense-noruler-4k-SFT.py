@@ -118,9 +118,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=1,
+            # Full FSDP across the node's 8 GPUs: a 4B model + full AdamW state does NOT fit on one
+            # 80GB GPU replicated (shard_degree=1 OOMs at optim.step). Sharding params+optim 8 ways
+            # (~0.5B params/GPU) fits comfortably; the 8 ranks are still the data-parallel dim.
+            shard_degree=8,
         ),
-        # No CP: at 4k the sequence fits comfortably on one GPU; each GPU is its own DP replica.
+        # No CP: at 4k the sequence fits comfortably on one GPU; FSDP handles param/optim memory.
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.7,
