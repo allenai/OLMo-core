@@ -62,7 +62,10 @@ NUM_NODES = 1
 GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 8
 
 LR = 5e-5
-NUM_EPOCHS = 1  # deliberately small-scale; bump via --trainer.max_duration.value if no effect shows
+# 425 instances pack into ~204 windows of 4096 tokens; at 8 windows/step (8 GPUs, the floor) that's
+# only ~25 steps/epoch. Train a fixed 120 steps (~4.7 passes) so the SFT actually moves the model
+# (>=100 steps) -- the point is to give it a real chance to forget RULER.
+NUM_STEPS = 120
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
@@ -159,7 +162,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             load_trainer_state=False,
             metrics_collect_interval=10,
             cancel_check_interval=10,
-            max_duration=Duration.epochs(NUM_EPOCHS),
+            max_duration=Duration.steps(NUM_STEPS),
         )
         .with_callback(
             "checkpointer",
