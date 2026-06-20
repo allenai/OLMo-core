@@ -77,13 +77,6 @@ from olmo_core.train.train_module.transformer import TransformerPipelineParallel
 log = logging.getLogger(__name__)
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() not in {"", "0", "false", "no", "off"}
-
-
 def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stage: int = 0):
     if original_num_layers % num_stages != 0:
         raise ValueError(
@@ -95,27 +88,27 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
     return new_num_layers, split_points
 
 
-WORK_DIR = os.getenv("OLMO_RMA_DEBUG_ROOT_DIR", "/workspace")
-SEED = int(os.getenv("OLMO_RMA_DEBUG_SEED", "2026"))
+WORK_DIR = "/workspace"
+SEED = 2026
 
-SEQUENCE_LENGTH = int(os.getenv("OLMO_RMA_DEBUG_SEQUENCE_LENGTH", "512"))
-D_MODEL = int(os.getenv("OLMO_RMA_DEBUG_D_MODEL", "4096"))
-D_ATTN = int(os.getenv("OLMO_RMA_DEBUG_D_ATTN", str(D_MODEL)))
-HEAD_DIM = int(os.getenv("OLMO_RMA_DEBUG_HEAD_DIM", "64"))
+SEQUENCE_LENGTH = 512
+D_MODEL = 4096
+D_ATTN = D_MODEL
+HEAD_DIM = 64
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD = int(os.getenv("OLMO_RMA_DEBUG_NUM_KV_HEAD", str(max(1, NUM_HEAD // 4))))
+NUM_KV_HEAD = max(1, NUM_HEAD // 4)
 
-NUM_EXPERTS = int(os.getenv("OLMO_RMA_DEBUG_NUM_EXPERTS", "8"))
-TOP_K = int(os.getenv("OLMO_RMA_DEBUG_TOP_K", "2"))
+NUM_EXPERTS = 8
+TOP_K = 2
 ORIGINAL_TOP_K = None
-MOE_HIDDEN_SIZE = int(os.getenv("OLMO_RMA_DEBUG_MOE_HIDDEN_SIZE", "512"))
-NUM_SHARED_EXPERTS = int(os.getenv("OLMO_RMA_DEBUG_NUM_SHARED_EXPERTS", "1"))
-SHARED_MLP_HIDDEN_SIZE = int(os.getenv("OLMO_RMA_DEBUG_SHARED_MLP_HIDDEN_SIZE", "512"))
+MOE_HIDDEN_SIZE = 512
+NUM_SHARED_EXPERTS = 1
+SHARED_MLP_HIDDEN_SIZE = 512
 DENSE_LAYER_MLP = TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS
 
-EP_DIM = int(os.getenv("OLMO_RMA_DEBUG_EP_DIM", "2"))
-PP_DIM = int(os.getenv("OLMO_RMA_DEBUG_PP_DIM", "2"))
-ORIGINAL_NUM_LAYERS = int(os.getenv("OLMO_RMA_DEBUG_NUM_LAYERS", "8"))
+EP_DIM = 2
+PP_DIM = 2
+ORIGINAL_NUM_LAYERS = 8
 if PP_DIM > 1:
     NUM_LAYERS, SPLIT_POINTS = _get_split_points(
         ORIGINAL_NUM_LAYERS,
@@ -126,22 +119,22 @@ else:
     NUM_LAYERS = ORIGINAL_NUM_LAYERS
     SPLIT_POINTS = None
 
-MICRO_BSZ = int(os.getenv("OLMO_RMA_DEBUG_MICRO_BSZ", "1"))
-GLOBAL_BATCH_SIZE_SEQ = int(os.getenv("OLMO_RMA_DEBUG_GLOBAL_BATCH_SIZE_SEQ", "16"))
+MICRO_BSZ = 1
+GLOBAL_BATCH_SIZE_SEQ = 16
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_SIZE_SEQ * SEQUENCE_LENGTH
-MAX_STEPS = int(os.getenv("OLMO_RMA_DEBUG_MAX_STEPS", "1"))
-RANDOM_NUM_INSTANCES = int(os.getenv("OLMO_RMA_DEBUG_RANDOM_NUM_INSTANCES", "4096"))
+MAX_STEPS = 5
+RANDOM_NUM_INSTANCES = 4096
 
-P2P_BACKEND = os.getenv("OLMO_RMA_DEBUG_P2P_BACKEND", "nccl_rma")
-USE_COMPILE = _env_bool("OLMO_RMA_DEBUG_COMPILE", False)
-USE_NO_SYNC_EP = _env_bool("OLMO_RMA_DEBUG_NO_SYNC_EP", True)
-USE_ROWWISE_A2A = _env_bool("OLMO_RMA_DEBUG_ROWWISE_A2A", True)
-USE_RANDOM_ROUTING = _env_bool("OLMO_RMA_DEBUG_RANDOM_ROUTING", False)
-USE_FP8 = _env_bool("OLMO_RMA_DEBUG_FP8", False)
-USE_PERI_NORM = _env_bool("OLMO_RMA_DEBUG_PERI_NORM", True)
-GRAD_ACC_IN_FP32 = _env_bool("OLMO_RMA_DEBUG_GRAD_ACC_FP32", True)
-GRAD_REDUCE_IN_FP32 = _env_bool("OLMO_RMA_DEBUG_GRAD_REDUCE_FP32", True)
-ROWWISE_A2A_NBLOCKS = int(os.getenv("OLMO_RMA_DEBUG_ROWWISE_A2A_NBLOCKS", "256"))
+P2P_BACKEND = "nccl_rma_ack"
+USE_COMPILE = False
+USE_NO_SYNC_EP = True
+USE_ROWWISE_A2A = True
+USE_RANDOM_ROUTING = True
+USE_FP8 = False
+USE_PERI_NORM = True
+GRAD_ACC_IN_FP32 = True
+GRAD_REDUCE_IN_FP32 = True
+ROWWISE_A2A_NBLOCKS = 256
 
 assert D_ATTN % HEAD_DIM == 0, "D_ATTN must be divisible by HEAD_DIM"
 assert NUM_HEAD > 0, "NUM_HEAD must be positive"
@@ -159,14 +152,8 @@ def build_debug_common(
     max_sequence_length: int,
     **_: object,
 ) -> CommonComponents:
-    work_dir = os.getenv(
-        "OLMO_RMA_DEBUG_WORK_DIR",
-        str(Path(WORK_DIR) / "tmp" / "olmo-rma-debug-work" / cli_context.run_name),
-    )
-    save_folder = os.getenv(
-        "OLMO_RMA_DEBUG_SAVE_FOLDER",
-        str(Path(WORK_DIR) / "checkpoint" / cli_context.run_name),
-    )
+    work_dir = str(Path(WORK_DIR) / "tmp" / "olmo-rma-debug-work" / cli_context.run_name)
+    save_folder = str(Path(WORK_DIR) / "checkpoint" / cli_context.run_name)
     return CommonComponents(
         run_name=cli_context.run_name,
         root_dir=WORK_DIR,
@@ -329,7 +316,7 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.max_sequence_length,
         optim=OLMoDDPOptimizerConfig(
-            lr=float(os.getenv("OLMO_RMA_DEBUG_LR", "1e-4")),
+            lr=1e-4,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             compile=USE_COMPILE,
