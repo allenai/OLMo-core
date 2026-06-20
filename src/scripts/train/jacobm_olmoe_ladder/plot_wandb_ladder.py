@@ -80,6 +80,8 @@ CANONICAL_FAMILY_BY_MODEL_CX = {
     },
 }
 
+PLOTTABLE_STATES = {"finished", "running"}
+
 MODEL_SORT_ORDER = {
     "275m": 0,
     "480m": 1,
@@ -96,7 +98,8 @@ def summarize_rows(rows, window_m: int, finished_only: bool, canonical_only: boo
             continue
         if not is_analysis_run(row.name):
             continue
-        if finished_only and row.state != "finished":
+        allowed_states = {"finished"} if finished_only else PLOTTABLE_STATES
+        if row.state not in allowed_states:
             continue
         model = model_label_from_name(row.name)
         canonical_batch = CANONICAL_BATCH_BY_MODEL_CX.get(model, CANONICAL_BATCH_BY_CX).get(row.spec.cx)
@@ -398,7 +401,7 @@ def main() -> None:
         refresh_stale_cache=args.refresh_stale_cache,
         current_family=False,
         exclude_current_family=False,
-        states=None if args.include_running else ["finished"],
+        states=sorted(PLOTTABLE_STATES) if args.include_running else ["finished"],
         spec_filter=None if args.include_noncanonical else should_load_canonical_history,
     )
     rows = load_rows(loader_args)

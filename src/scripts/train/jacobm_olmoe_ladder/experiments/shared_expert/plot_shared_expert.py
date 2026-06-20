@@ -33,6 +33,8 @@ EXPERIMENT_TAG = "exp_shared_expert"
 OUTPUT_SUBDIR = "shared_expert"
 PLOT_TITLE = "Shared expert"
 VARIANT_LABELS = {'baseline_48e_top4': 'baseline shared d/2', 'baseline_48e_top4_b256k': 'baseline shared d/2 (b256k)', 'baseline_48e_top4_b384k': 'baseline shared d/2 (b384k)', 'baseline_48e_top4_b512k': 'baseline shared d/2 (b512k)', 'no_shared_matched_active': 'no shared, routed 9/8 d'}
+PLOTTABLE_STATES = {"finished", "running"}
+
 VARIANT_ORDER = ['baseline_48e_top4', 'baseline_48e_top4_b256k', 'baseline_48e_top4_b384k', 'baseline_48e_top4_b512k', 'no_shared_matched_active']
 SUMMARY_VARIANTS = [
     SummaryVariant(
@@ -188,7 +190,8 @@ def load_points(
         )
     )
     for run in runs:
-        if not include_running and run.state != "finished":
+        allowed_states = PLOTTABLE_STATES if include_running else {"finished"}
+        if run.state not in allowed_states:
             continue
         name = run.display_name or run.name
         lowered = name.lower()
@@ -267,7 +270,7 @@ def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: 
         if not group:
             continue
         finished = [p for p in group if p.state == "finished"]
-        running = [p for p in group if p.state != "finished"]
+        running = [p for p in group if p.state == "running"]
         color = None
         label = VARIANT_LABELS[variant]
         if finished:

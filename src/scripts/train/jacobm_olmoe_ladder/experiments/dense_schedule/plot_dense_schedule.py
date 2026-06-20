@@ -39,6 +39,8 @@ VARIANT_LABELS = {
     "dense2_shared": "dense2 + shared",
     "dense4_shared": "dense4 + shared",
 }
+PLOTTABLE_STATES = {"finished", "running"}
+
 VARIANT_ORDER = [
     "baseline_dense1_shared",
     "baseline_dense1_shared_b384k",
@@ -202,7 +204,8 @@ def load_points(
         )
     )
     for run in runs:
-        if not include_running and run.state != "finished":
+        allowed_states = PLOTTABLE_STATES if include_running else {"finished"}
+        if run.state not in allowed_states:
             continue
         name = run.display_name or run.name
         lowered = name.lower()
@@ -281,7 +284,7 @@ def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: 
         if not group:
             continue
         finished = [p for p in group if p.state == "finished"]
-        running = [p for p in group if p.state != "finished"]
+        running = [p for p in group if p.state == "running"]
         color = None
         label = VARIANT_LABELS[variant]
         if finished:

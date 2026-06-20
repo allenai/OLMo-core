@@ -229,7 +229,8 @@ def load_points(
         )
     )
     for run in runs:
-        if not include_running and run.state != "finished":
+        allowed_states = PLOTTABLE_STATES if include_running else {"finished"}
+        if run.state not in allowed_states:
             continue
         name = run.display_name or run.name
         if any(marker in name.lower() for marker in ("smoke", "sanity", "evaltest")):
@@ -332,7 +333,7 @@ def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: 
         if not group:
             continue
         finished = [p for p in group if p.state == "finished"]
-        running = [p for p in group if p.state != "finished"]
+        running = [p for p in group if p.state == "running"]
         color = None
         if finished:
             (line,) = ax.plot(

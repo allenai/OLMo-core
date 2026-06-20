@@ -33,6 +33,8 @@ EXPERIMENT_TAG = "exp_total_sparsity"
 OUTPUT_SUBDIR = "total_sparsity"
 PLOT_TITLE = "Total sparsity"
 VARIANT_LABELS = {'baseline_48e_top4': 'baseline 48E/top4', 'baseline_48e_top4_b256k': 'baseline 48E/top4 (b256k)', 'baseline_48e_top4_b384k': 'baseline 48E/top4 (b384k)', 'baseline_48e_top4_b512k': 'baseline 48E/top4 (b512k)', 'baseline_48e_top4_sparsity_tag': 'sparsity baseline 48E/top4', 'low_total_24e_top4': 'low total 24E/top4', 'high_total_96e_top4': 'high total 96E/top4', 'huge_total_192e_top4': 'huge total 192E/top4'}
+PLOTTABLE_STATES = {"finished", "running"}
+
 VARIANT_ORDER = ['baseline_48e_top4', 'baseline_48e_top4_b256k', 'baseline_48e_top4_b384k', 'baseline_48e_top4_b512k', 'baseline_48e_top4_sparsity_tag', 'low_total_24e_top4', 'high_total_96e_top4', 'huge_total_192e_top4']
 SUMMARY_VARIANTS = [
     SummaryVariant(
@@ -202,7 +204,8 @@ def load_points(
         )
     )
     for run in runs:
-        if not include_running and run.state != "finished":
+        allowed_states = PLOTTABLE_STATES if include_running else {"finished"}
+        if run.state not in allowed_states:
             continue
         name = run.display_name or run.name
         lowered = name.lower()
@@ -281,7 +284,7 @@ def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: 
         if not group:
             continue
         finished = [p for p in group if p.state == "finished"]
-        running = [p for p in group if p.state != "finished"]
+        running = [p for p in group if p.state == "running"]
         color = None
         label = VARIANT_LABELS[variant]
         if finished:

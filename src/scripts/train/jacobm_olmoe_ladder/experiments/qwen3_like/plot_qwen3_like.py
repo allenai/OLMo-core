@@ -40,6 +40,8 @@ VARIANT_LABELS = {
     "active_matched": "Qwen-like active matched 4.5d",
     "true_3d_depth_matched": "Qwen-like true 3.0d + depth",
 }
+PLOTTABLE_STATES = {"finished", "running"}
+
 VARIANT_ORDER = [
     "baseline_48e_top4",
     "baseline_48e_top4_b256k",
@@ -212,7 +214,8 @@ def load_points(
         )
     )
     for run in runs:
-        if not include_running and run.state != "finished":
+        allowed_states = PLOTTABLE_STATES if include_running else {"finished"}
+        if run.state not in allowed_states:
             continue
         name = run.display_name or run.name
         lowered = name.lower()
@@ -291,7 +294,7 @@ def plot_cx(points: list[Point], model: str, cx: int, out_path: Path, window_m: 
         if not group:
             continue
         finished = [p for p in group if p.state == "finished"]
-        running = [p for p in group if p.state != "finished"]
+        running = [p for p in group if p.state == "running"]
         color = None
         label = VARIANT_LABELS[variant]
         if finished:
