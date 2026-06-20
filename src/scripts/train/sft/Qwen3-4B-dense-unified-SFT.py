@@ -176,7 +176,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             WandBCallback(
                 name=run_name_with_ts,
                 group=cli_context.run_name,
-                entity="ai2-llm",
+                entity="prasanns-allen-institute-for-ai",
                 project="memory-networks",
                 enabled=True,
                 cancel_check_interval=10,
