@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import tempfile
 import time
 from pathlib import Path
@@ -334,9 +335,10 @@ class TransformerGenerationModule(GenerationModule):
             pad_id = generation_config.landmark_pad_id
             if pad_id is None:
                 pad_id = generation_config.pad_token_id
+            mem_freq = mem_freqs.pop()
             input_ids = _build_landmark_prompt(
                 input_ids,
-                mem_freqs.pop(),
+                mem_freq,
                 generation_config.landmark_mem_id,
                 mode=generation_config.landmark_decode_mode,
                 pad_id=pad_id,
@@ -344,10 +346,17 @@ class TransformerGenerationModule(GenerationModule):
 
         batch_size, prompt_len = input_ids.shape
         if landmark_active:
+            # Default to hard top-k retrieval at ~landmark_top_k_fraction of the prompt's blocks
+            # (top 10% by default); an explicit landmark_top_k_blocks overrides the fraction. None
+            # for both falls back to dense soft-gating over all past blocks.
+            top_k = generation_config.landmark_top_k_blocks
+            if top_k is None and generation_config.landmark_top_k_fraction is not None:
+                num_blocks = max(1, prompt_len // (mem_freq + 1))
+                top_k = max(1, math.ceil(generation_config.landmark_top_k_fraction * num_blocks))
             self._set_landmark_eval_decode(
                 prompt_len,
                 generation_config.landmark_decode_mode,
-                top_k=generation_config.landmark_top_k_blocks,
+                top_k=top_k,
                 nonselected_landmark_mass=generation_config.landmark_nonselected_mass,
             )
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
