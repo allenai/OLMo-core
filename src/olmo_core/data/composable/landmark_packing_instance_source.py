@@ -2,7 +2,7 @@ import functools as ft
 import hashlib
 import logging
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
@@ -39,6 +39,7 @@ class LandmarkPackingInstanceSourceConfig(InstanceSourceConfig):
     pad_id: int
     exclude_landmark_predictors: bool = False
     warn_drop_fraction: float = 0.01
+    label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> "LandmarkPackingInstanceSource":
         from .token_source import ConcatenatedDocumentSource
