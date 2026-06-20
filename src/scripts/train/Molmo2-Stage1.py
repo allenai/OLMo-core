@@ -19,6 +19,7 @@ Run without arguments for usage. Quick local smoke test on synthetic data::
 import logging
 import sys
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import List, Optional, cast
 
 from olmo_core.config import Config, DType
@@ -195,7 +196,10 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
             "checkpointer",
-            CheckpointerCallback(save_interval=2000, ephemeral_save_interval=500, save_async=True),
+            # Synchronous checkpointing: avoids the async checkpoint thread pool whose
+            # teardown raced/failed on this cluster ("cannot schedule new futures after
+            # interpreter shutdown"). Saves block briefly but complete reliably.
+            CheckpointerCallback(save_interval=2000, ephemeral_save_interval=500, save_async=False),
         )
         .with_callback(
             "wandb",
@@ -337,7 +341,10 @@ Launch on Beaker:
     script, cmd, run_name, *overrides = sys.argv
 
     if cmd == "train":
-        prepare_training_environment()
+        # Use a generous process-group timeout (gloo + NCCL). The default 15 min was the
+        # exact watchdog timeout that aborted runs when a rank lagged on a collective
+        # during checkpointing / bookkeeping (and W&B network stalls can add latency).
+        prepare_training_environment(timeout=timedelta(minutes=60))
     else:
         prepare_cli_environment()
 
