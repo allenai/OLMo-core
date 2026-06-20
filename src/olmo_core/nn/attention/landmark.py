@@ -15,7 +15,67 @@ kernel lives in :mod:`olmo_core.nn.attention.landmark_kernel`.
 
 import torch
 
-__all__ = ["repeat_kv", "landmark_grouped_softmax", "LandmarkGroupedSoftmaxFunction"]
+__all__ = [
+    "repeat_kv",
+    "landmark_grouped_softmax",
+    "LandmarkGroupedSoftmaxFunction",
+    "build_block_doc_id",
+]
+
+
+def build_block_doc_id(
+    cu_doc_lens: torch.Tensor,
+    batch_size: int,
+    seq_len: int,
+    block_size: int,
+) -> torch.Tensor:
+    """
+    Build a per-landmark-block document id for sequence packing, used by the fused landmark kernels.
+
+    ``cu_doc_lens`` follows the flattened-over-batch convention of the flash-attention backend (see
+    :func:`olmo_core.data.utils.get_cumulative_document_lengths`): the cumulative sum of every
+    document length across the whole ``(batch_size, seq_len)`` micro-batch, i.e.
+    ``[0, ..., batch_size * seq_len]``. Because document boundaries are required to be block-aligned,
+    every landmark block (``block_size`` consecutive tokens) lies in exactly one document, so a single
+    id per block suffices.
+
+    :param cu_doc_lens: 1D cumulative document lengths over the flattened batch.
+    :param batch_size: Number of sequences in the micro-batch.
+    :param seq_len: Per-sequence length ``T`` (a multiple of ``block_size``).
+    :param block_size: Landmark block size (``mem_freq + 1``).
+
+    :returns: An int32 tensor of shape ``(batch_size, seq_len // block_size)`` giving each block's
+        document id (monotonic within each row; absolute values are irrelevant, only equality is used).
+
+    :raises ValueError: If a boundary is not block-aligned or ``cu_doc_lens`` does not total
+        ``batch_size * seq_len`` tokens.
+    """
+    boundaries = cu_doc_lens.to(dtype=torch.long)
+    block_size_t = block_size
+    if bool((boundaries % block_size_t != 0).any().item()):
+        raise ValueError(
+            f"Landmark packing requires every document boundary to be a multiple of the landmark "
+            f"block size ({block_size}), but got cu_doc_lens={cu_doc_lens.tolist()}. This almost "
+            f"always means the document lengths came from the wrong source: EOS-derived "
+            f"'generate_doc_lengths' or a generic token packer (PackingInstanceSource / "
+            f"ConcatAndChunk) do NOT produce block-aligned landmark documents. Build packed landmark "
+            f"SFT data with LandmarkPackingInstanceSource (it inserts landmarks per document and "
+            f"emits block-aligned doc_lens) and set generate_doc_lengths=False."
+        )
+    total = batch_size * seq_len
+    if int(boundaries[-1].item()) != total:
+        raise ValueError(
+            f"cu_doc_lens must total batch_size * seq_len = {total} tokens (flattened over the "
+            f"batch), but its last entry is {int(boundaries[-1].item())}."
+        )
+    n_blocks = seq_len // block_size
+    interior = boundaries[(boundaries > 0) & (boundaries < total)]
+    # Flat position of each block's first token: z * seq_len + b * block_size.
+    z = torch.arange(batch_size, device=cu_doc_lens.device)
+    b = torch.arange(n_blocks, device=cu_doc_lens.device)
+    flat_first = z[:, None] * seq_len + b[None, :] * block_size  # (batch_size, n_blocks)
+    doc_id = torch.searchsorted(interior, flat_first, right=True)
+    return doc_id.to(torch.int32)
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:

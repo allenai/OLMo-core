@@ -18,8 +18,6 @@ The autograd ``Function`` :class:`_SparseLandmarkAttnFn` wires fwd+bwd together;
 helper. Verified against the dense reference + autograd in
 ``landmark_investigation/diagnostic_sparse_triton.py``.
 """
-import math
-from typing import Optional
 
 import torch
 
@@ -39,16 +37,42 @@ if triton is not None:
 
     @triton.jit
     def _sparse_fwd_kernel(
-        Q, K, V, KLM, VLM, Out, Lse, sm_scale,
-        sqz, sqh, sqm, sqd,
-        slz, slh, sln, sld,
-        H, N_CTX, N_LM,
-        L: tl.constexpr, BLOCK_DMODEL: tl.constexpr, G: tl.constexpr, BLOCK_N: tl.constexpr,
+        Q,
+        K,
+        V,
+        KLM,
+        VLM,
+        Out,
+        Lse,
+        sm_scale,
+        sqz,
+        sqh,
+        sqm,
+        sqd,
+        slz,
+        slh,
+        sln,
+        sld,
+        DocId,
+        H,
+        N_CTX,
+        N_LM,
+        N_CHUNK,
+        L: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        G: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        DOC_MASK: tl.constexpr,
     ):
         qb = tl.program_id(0)
         off_hz = tl.program_id(1)
         offs_l = tl.arange(0, L)
         offs_d = tl.arange(0, BLOCK_DMODEL)
+
+        # Per-chunk document id (sequence packing): a query-chunk attends a past chunk's landmarks
+        # only if they belong to the same document. Own-chunk keys are always same-document.
+        if DOC_MASK:
+            q_doc = tl.load(DocId + (off_hz // H) * N_CHUNK + qb)
 
         q_base = off_hz * sqh + (qb * L + offs_l)[:, None] * sqm + offs_d[None, :] * sqd
         q = tl.load(Q + q_base)
@@ -72,6 +96,11 @@ if triton is not None:
         for start in range(0, n_lm, BLOCK_N):
             offs_n = start + tl.arange(0, BLOCK_N)
             mask = offs_n < n_lm
+            if DOC_MASK:
+                lm_doc = tl.load(
+                    DocId + (off_hz // H) * N_CHUNK + (offs_n // G), mask=mask, other=-1
+                )
+                mask = mask & (lm_doc == q_doc)
             lm_base = off_hz * slh + offs_n[:, None] * sln + offs_d[None, :] * sld
             k_lm = tl.load(KLM + lm_base, mask=mask[:, None], other=0.0)
             v_lm = tl.load(VLM + lm_base, mask=mask[:, None], other=0.0)
@@ -92,11 +121,36 @@ if triton is not None:
 
     @triton.jit
     def _bwd_dq_kernel(
-        Q, K, V, KLM, VLM, DO, DQ, DK, DV, Lse, Delta, sm_scale,
-        sqz, sqh, sqm, sqd,
-        slz, slh, sln, sld,
-        H, N_CTX, N_LM,
-        L: tl.constexpr, BLOCK_DMODEL: tl.constexpr, G: tl.constexpr, BLOCK_N: tl.constexpr,
+        Q,
+        K,
+        V,
+        KLM,
+        VLM,
+        DO,
+        DQ,
+        DK,
+        DV,
+        Lse,
+        Delta,
+        sm_scale,
+        sqz,
+        sqh,
+        sqm,
+        sqd,
+        slz,
+        slh,
+        sln,
+        sld,
+        DocId,
+        H,
+        N_CTX,
+        N_LM,
+        N_CHUNK,
+        L: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        G: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        DOC_MASK: tl.constexpr,
     ):
         # dq (own chunk + past landmarks) and dk/dv for the chunk's OWN keys. One program per
         # (query-chunk, head). Atomic-free: dq/dk_own/dv_own are unique to this chunk.
@@ -105,6 +159,8 @@ if triton is not None:
         offs_l = tl.arange(0, L)
         offs_d = tl.arange(0, BLOCK_DMODEL)
         q_base = off_hz * sqh + (qb * L + offs_l)[:, None] * sqm + offs_d[None, :] * sqd
+        if DOC_MASK:
+            q_doc = tl.load(DocId + (off_hz // H) * N_CHUNK + qb)
 
         q = tl.load(Q + q_base)
         do = tl.load(DO + q_base)
@@ -132,6 +188,11 @@ if triton is not None:
         for start in range(0, n_lm, BLOCK_N):
             offs_n = start + tl.arange(0, BLOCK_N)
             mask = offs_n < n_lm
+            if DOC_MASK:
+                lm_doc = tl.load(
+                    DocId + (off_hz // H) * N_CHUNK + (offs_n // G), mask=mask, other=-1
+                )
+                mask = mask & (lm_doc == q_doc)
             lm_base = off_hz * slh + offs_n[:, None] * sln + offs_d[None, :] * sld
             k_lm = tl.load(KLM + lm_base, mask=mask[:, None], other=0.0)
             v_lm = tl.load(VLM + lm_base, mask=mask[:, None], other=0.0)
@@ -145,11 +206,33 @@ if triton is not None:
 
     @triton.jit
     def _bwd_dklm_kernel(
-        Q, KLM, VLM, DO, DKLM, DVLM, Lse, Delta, sm_scale,
-        sqz, sqh, sqm, sqd,
-        slz, slh, sln, sld,
-        H, N_CTX, N_LM, N_CHUNK,
-        L: tl.constexpr, BLOCK_DMODEL: tl.constexpr, G: tl.constexpr, BLOCK_N: tl.constexpr,
+        Q,
+        KLM,
+        VLM,
+        DO,
+        DKLM,
+        DVLM,
+        Lse,
+        Delta,
+        sm_scale,
+        sqz,
+        sqh,
+        sqm,
+        sqd,
+        slz,
+        slh,
+        sln,
+        sld,
+        DocId,
+        H,
+        N_CTX,
+        N_LM,
+        N_CHUNK,
+        L: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        G: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        DOC_MASK: tl.constexpr,
     ):
         # dk/dv for a tile of landmark keys, accumulated over all future query-chunks. One program
         # per (landmark-tile, head). Atomic-free: each landmark key is written by exactly one program.
@@ -159,6 +242,8 @@ if triton is not None:
         offs_n = tile * BLOCK_N + tl.arange(0, BLOCK_N)
         nmask = offs_n < N_LM
         lm_chunk = offs_n // G  # chunk each landmark belongs to
+        if DOC_MASK:
+            lm_doc = tl.load(DocId + (off_hz // H) * N_CHUNK + lm_chunk, mask=nmask, other=-1)
 
         lm_base = off_hz * slh + offs_n[:, None] * sln + offs_d[None, :] * sld
         k_lm = tl.load(KLM + lm_base, mask=nmask[:, None], other=0.0)
@@ -178,6 +263,9 @@ if triton is not None:
 
             qk = tl.dot(q, tl.trans(k_lm), allow_tf32=False) * sm_scale  # (L, BLOCK_N)
             attend = (qb > lm_chunk[None, :]) & nmask[None, :]
+            if DOC_MASK:
+                q_doc = tl.load(DocId + (off_hz // H) * N_CHUNK + qb)
+                attend = attend & (q_doc == lm_doc[None, :])
             p = tl.where(attend, tl.exp(qk - lse[:, None]), 0.0)
             dv_lm += tl.dot(tl.trans(p.to(do.dtype)), do, allow_tf32=False)
             dp = tl.dot(do, tl.trans(v_lm), allow_tf32=False)  # (L, BLOCK_N)
@@ -189,36 +277,68 @@ if triton is not None:
 
 
 def _gather_landmarks(k, v, B, H, C, L, G, D):
-    k_lm = k.view(B, H, C, L, D)[:, :, :, L - G:, :].reshape(B, H, C * G, D).contiguous()
-    v_lm = v.view(B, H, C, L, D)[:, :, :, L - G:, :].reshape(B, H, C * G, D).contiguous()
+    k_lm = k.view(B, H, C, L, D)[:, :, :, L - G :, :].reshape(B, H, C * G, D).contiguous()
+    v_lm = v.view(B, H, C, L, D)[:, :, :, L - G :, :].reshape(B, H, C * G, D).contiguous()
     return k_lm, v_lm
 
 
-def _fwd(q, k, v, L, G, scale):
+def _doc_id_arg(doc_id, B, C, device):
+    """Validate/normalize a per-chunk document id (B, C) int32, or a dummy when not packing."""
+    if doc_id is None:
+        return torch.empty(1, dtype=torch.int32, device=device), False
+    assert doc_id.shape == (B, C), (doc_id.shape, (B, C))
+    return doc_id.to(device=device, dtype=torch.int32).contiguous(), True
+
+
+def _fwd(q, k, v, L, G, scale, doc_id=None):
     B, H, T, D = q.shape
     C = T // L
     q, k, v = q.contiguous(), k.contiguous(), v.contiguous()
     k_lm, v_lm = _gather_landmarks(k, v, B, H, C, L, G, D)
     o = torch.empty_like(q)
     lse = torch.empty((B * H, T), device=q.device, dtype=torch.float32)
+    doc_id_arg, doc_mask = _doc_id_arg(doc_id, B, C, q.device)
     grid = (C, B * H)
     _sparse_fwd_kernel[grid](
-        q, k, v, k_lm, v_lm, o, lse, scale,
-        q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-        k_lm.stride(0), k_lm.stride(1), k_lm.stride(2), k_lm.stride(3),
-        H, T, C * G,
-        L=L, BLOCK_DMODEL=D, G=G, BLOCK_N=L, num_warps=4, num_stages=2,
+        q,
+        k,
+        v,
+        k_lm,
+        v_lm,
+        o,
+        lse,
+        scale,
+        q.stride(0),
+        q.stride(1),
+        q.stride(2),
+        q.stride(3),
+        k_lm.stride(0),
+        k_lm.stride(1),
+        k_lm.stride(2),
+        k_lm.stride(3),
+        doc_id_arg,
+        H,
+        T,
+        C * G,
+        C,
+        L=L,
+        BLOCK_DMODEL=D,
+        G=G,
+        BLOCK_N=L,
+        DOC_MASK=doc_mask,
+        num_warps=4,
+        num_stages=2,
     )
     return o, lse, k_lm, v_lm
 
 
-def sparse_landmark_attention_triton(q, k, v, block_size, num_landmarks=1, scale=None):
+def sparse_landmark_attention_triton(q, k, v, block_size, num_landmarks=1, scale=None, doc_id=None):
     """Forward-only (inference) fused sparse-landmark attention. ``q,k,v``: (B,H,T,D)."""
     assert has_sparse_kernel()
     L, G = block_size, num_landmarks
     assert q.shape[2] % L == 0 and 1 <= G < L
     scale = scale if scale is not None else q.shape[-1] ** -0.5
-    o, _, _, _ = _fwd(q, k, v, L, G, scale)
+    o, _, _, _ = _fwd(q, k, v, L, G, scale, doc_id=doc_id)
     return o
 
 
@@ -226,12 +346,15 @@ if triton is not None:
 
     class _SparseLandmarkAttnFn(torch.autograd.Function):
         @staticmethod
-        def forward(ctx, q, k, v, block_size, num_landmarks, scale):
+        def forward(ctx, q, k, v, block_size, num_landmarks, scale, doc_id):
             L, G = block_size, num_landmarks
             scale = scale if scale is not None else q.shape[-1] ** -0.5
-            o, lse, k_lm, v_lm = _fwd(q, k, v, L, G, scale)
-            ctx.save_for_backward(q.contiguous(), k.contiguous(), v.contiguous(), k_lm, v_lm, o, lse)
+            o, lse, k_lm, v_lm = _fwd(q, k, v, L, G, scale, doc_id=doc_id)
+            ctx.save_for_backward(
+                q.contiguous(), k.contiguous(), v.contiguous(), k_lm, v_lm, o, lse
+            )
             ctx.L, ctx.G, ctx.scale = L, G, scale
+            ctx.doc_id = doc_id  # None when not packing
             return o
 
         @staticmethod
@@ -242,6 +365,7 @@ if triton is not None:
             C = T // L
             do = do.contiguous()
             delta = (do.float() * o.float()).sum(-1).reshape(B * H, T).contiguous()
+            doc_id_arg, doc_mask = _doc_id_arg(ctx.doc_id, B, C, q.device)
 
             dq = torch.empty_like(q)
             dk = torch.empty_like(k)
@@ -250,29 +374,87 @@ if triton is not None:
             dv_lm = torch.zeros_like(v_lm)
             grid = (C, B * H)
             _bwd_dq_kernel[grid](
-                q, k, v, k_lm, v_lm, do, dq, dk, dv, lse, delta, scale,
-                q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                k_lm.stride(0), k_lm.stride(1), k_lm.stride(2), k_lm.stride(3),
-                H, T, C * G,
-                L=L, BLOCK_DMODEL=D, G=G, BLOCK_N=L, num_warps=4, num_stages=2,
+                q,
+                k,
+                v,
+                k_lm,
+                v_lm,
+                do,
+                dq,
+                dk,
+                dv,
+                lse,
+                delta,
+                scale,
+                q.stride(0),
+                q.stride(1),
+                q.stride(2),
+                q.stride(3),
+                k_lm.stride(0),
+                k_lm.stride(1),
+                k_lm.stride(2),
+                k_lm.stride(3),
+                doc_id_arg,
+                H,
+                T,
+                C * G,
+                C,
+                L=L,
+                BLOCK_DMODEL=D,
+                G=G,
+                BLOCK_N=L,
+                DOC_MASK=doc_mask,
+                num_warps=4,
+                num_stages=2,
             )
             n_tiles = triton.cdiv(C * G, L)
             _bwd_dklm_kernel[(n_tiles, B * H)](
-                q, k_lm, v_lm, do, dk_lm, dv_lm, lse, delta, scale,
-                q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                k_lm.stride(0), k_lm.stride(1), k_lm.stride(2), k_lm.stride(3),
-                H, T, C * G, C,
-                L=L, BLOCK_DMODEL=D, G=G, BLOCK_N=L, num_warps=4, num_stages=2,
+                q,
+                k_lm,
+                v_lm,
+                do,
+                dk_lm,
+                dv_lm,
+                lse,
+                delta,
+                scale,
+                q.stride(0),
+                q.stride(1),
+                q.stride(2),
+                q.stride(3),
+                k_lm.stride(0),
+                k_lm.stride(1),
+                k_lm.stride(2),
+                k_lm.stride(3),
+                doc_id_arg,
+                H,
+                T,
+                C * G,
+                C,
+                L=L,
+                BLOCK_DMODEL=D,
+                G=G,
+                BLOCK_N=L,
+                DOC_MASK=doc_mask,
+                num_warps=4,
+                num_stages=2,
             )
             # scatter-add landmark grads back into the last-G positions of each chunk
-            dk.view(B, H, C, L, D)[:, :, :, L - G:, :] += dk_lm.view(B, H, C, G, D)
-            dv.view(B, H, C, L, D)[:, :, :, L - G:, :] += dv_lm.view(B, H, C, G, D)
-            return dq, dk, dv, None, None, None
+            dk.view(B, H, C, L, D)[:, :, :, L - G :, :] += dk_lm.view(B, H, C, G, D)
+            dv.view(B, H, C, L, D)[:, :, :, L - G :, :] += dv_lm.view(B, H, C, G, D)
+            return dq, dk, dv, None, None, None, None
 
 
-def sparse_landmark_attention_triton_train(q, k, v, block_size, num_landmarks=1, scale=None):
-    """Autograd-enabled fused sparse-landmark attention (Triton fwd + bwd). ``q,k,v``: (B,H,T,D)."""
+def sparse_landmark_attention_triton_train(
+    q, k, v, block_size, num_landmarks=1, scale=None, doc_id=None
+):
+    """Autograd-enabled fused sparse-landmark attention (Triton fwd + bwd). ``q,k,v``: (B,H,T,D).
+
+    ``doc_id`` is an optional int32 ``(B, T // block_size)`` per-chunk document id for sequence
+    packing (see :func:`~olmo_core.nn.attention.landmark.build_block_doc_id`); when given, a query
+    only attends to past chunks' landmarks within its own document.
+    """
     assert has_sparse_kernel()
     L, G = block_size, num_landmarks
     assert q.shape[2] % L == 0 and 1 <= G < L
-    return _SparseLandmarkAttnFn.apply(q, k, v, L, G, scale)
+    return _SparseLandmarkAttnFn.apply(q, k, v, L, G, scale, doc_id)

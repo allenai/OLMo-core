@@ -27,7 +27,12 @@ from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
-from ..rope import ComplexRotaryEmbedding, FusedRotaryEmbedding, RoPEConfig, RotaryEmbedding
+from ..rope import (
+    ComplexRotaryEmbedding,
+    FusedRotaryEmbedding,
+    RoPEConfig,
+    RotaryEmbedding,
+)
 from ..utils import get_tp_wrappers
 from . import flash_attn_api
 from .backend import (
@@ -39,7 +44,7 @@ from .backend import (
     TEAttentionBackend,
     TorchAttentionBackend,
 )
-from .landmark import landmark_grouped_softmax, repeat_kv
+from .landmark import build_block_doc_id, landmark_grouped_softmax, repeat_kv
 from .landmark_kernel import fused_landmark_attention, has_landmark_kernel
 from .ring import (
     RingAttentionLlama3LoadBalancer,
@@ -1085,8 +1090,12 @@ class LandmarkAttention(Attention):
       path for long-context training; it is CUDA + triton only.
 
     .. note::
-        Generation / KV-caching, context parallelism, intra-document masking, and long-context
-        landmark retrieval are not yet supported.
+        Intra-document masking for sequence packing (``cu_doc_lens``) is supported on the **eager**
+        path: documents are masked block-diagonally so a query never attends across a document
+        boundary, and RoPE positions reset per document. This requires every packed document length
+        to be a multiple of the landmark ``block_size`` (so the periodic ``is_mem`` pattern stays
+        valid). Packing on the fused kernel path, generation / KV-caching, context parallelism, and
+        long-context landmark retrieval are not yet supported.
 
     :param mem_freq: The number of regular tokens between landmark tokens. The landmark block size
         is ``mem_freq + 1``.
@@ -1194,21 +1203,26 @@ class LandmarkAttention(Attention):
         if any(
             v is not None
             for v in (
-                cu_doc_lens,
                 cu_doc_lens_q,
                 cu_doc_lens_k,
-                max_doc_len,
                 max_doc_len_q,
                 max_doc_len_k,
                 local_k_slice,
             )
         ):
             raise NotImplementedError(
-                "Intra-document masking (cu_doc_lens) is not supported with landmark attention"
+                "Landmark attention supports symmetric intra-document masking via 'cu_doc_lens' "
+                "only; the cross-attention variants (cu_doc_lens_q/k, max_doc_len_q/k, "
+                "local_k_slice) are not supported"
             )
         if cache_leftpad is not None or self.kv_cache_manager is not None:
             raise NotImplementedError(
                 "KV-caching / generation is not yet supported with landmark attention"
+            )
+        if cu_doc_lens is not None and self.cp_enabled:
+            raise NotImplementedError(
+                "Intra-document packing (cu_doc_lens) is not supported together with context "
+                "parallelism."
             )
 
         # ``T_local`` is the per-rank sequence length: the full sequence when CP is disabled, or the
@@ -1218,8 +1232,10 @@ class LandmarkAttention(Attention):
         B, T_local, _ = x.shape
 
         # shape: (B, T_local, n_heads, head_dim), (B, T_local, n_kv_heads, head_dim) x2
+        # ``cu_doc_lens`` (when packing) resets RoPE positions per document so each document sees
+        # positions starting at 0, exactly as if it were processed on its own.
         q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
+            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=cu_doc_lens
         )
 
         if self.cp_enabled:
@@ -1258,15 +1274,27 @@ class LandmarkAttention(Attention):
                     f"{self.block_size} < 16); tl.dot needs tile dimensions of at least 16."
                 )
             is_mem = (torch.arange(T, device=q.device) % self.block_size) == (self.block_size - 1)
+            # Per-block document ids for sequence packing (None for the single-document path).
+            doc_id = (
+                build_block_doc_id(cu_doc_lens, B, T, self.block_size)
+                if cu_doc_lens is not None
+                else None
+            )
             # shape: (B, n_heads, T, head_dim)
             att = fused_landmark_attention(
-                q, k, v, is_mem, sm_scale=self.softmax_scale, block_size=self.block_size
+                q,
+                k,
+                v,
+                is_mem,
+                sm_scale=self.softmax_scale,
+                block_size=self.block_size,
+                doc_id=doc_id,
             )
         else:
             # Eager grouped-softmax path: works on CPU/GPU and is fully autograd-differentiable,
             # so it provides a working training backward without the fused kernel.
             # shape: (B, n_heads, T, head_dim)
-            att = self._eager_forward(q, k, v)
+            att = self._eager_forward(q, k, v, cu_doc_lens=cu_doc_lens)
 
         # shape: (B, T, n_heads (local), head_dim)
         att = att.transpose(1, 2)
@@ -1286,9 +1314,17 @@ class LandmarkAttention(Attention):
         # shape: (B, T_local, d_model)
         return self.w_out(att)
 
-    def _eager_forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def _eager_forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         B, n_heads, T, _ = q.shape
-        attn_mask, is_mem, last_section_mask = self._landmark_masks(T, q.device, q.dtype)
+        attn_mask, is_mem, last_section_mask = self._landmark_masks(
+            T, q.device, q.dtype, cu_doc_lens=cu_doc_lens, batch_size=B
+        )
 
         attn = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale
         attn = attn + attn_mask
@@ -1307,12 +1343,35 @@ class LandmarkAttention(Attention):
         return torch.matmul(probs, v)
 
     def _landmark_masks(
-        self, T: int, device: torch.device, dtype: torch.dtype
+        self,
+        T: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        batch_size: int = 1,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Build the additive causal attention mask, the landmark mask (``is_mem``), and the
-        ``last_section_mask`` for the eager grouped-softmax path. All are batch-independent
-        (built with a batch dim of 1) and depend only on ``T`` and the landmark block size.
+        ``last_section_mask`` for the eager grouped-softmax path. Without ``cu_doc_lens`` these are
+        batch-independent (leading dim 1) and depend only on ``T`` and the landmark block size; with
+        ``cu_doc_lens`` the additive mask gains a batch dimension because each batch element can have
+        its own document layout.
+
+        :param cu_doc_lens: Optional 1D tensor of cumulative document lengths for sequence packing.
+            This follows the same *flattened-over-batch* convention as the flash-attention backend
+            (see :func:`olmo_core.data.utils.get_cumulative_document_lengths`): it is the cumulative
+            sum of every document length across the whole ``(batch_size, T)`` micro-batch, i.e.
+            ``[0, ..., batch_size * T]``, with an implicit boundary at every multiple of ``T`` (since
+            each instance is exactly ``T`` tokens). An additive block-diagonal document mask is
+            folded into the causal mask so a query never attends across a document boundary (nor to
+            another document's landmark tokens). Because the landmark ``is_mem`` pattern is the
+            *global* periodic one, every document boundary must fall on a landmark block boundary,
+            i.e. each cumulative length must be a multiple of ``block_size``.
+        :param batch_size: The number of sequences in the micro-batch. Used to reshape the flattened
+            ``cu_doc_lens`` into per-sequence document ids.
+
+        :raises OLMoConfigurationError: If a document boundary is not a multiple of ``block_size``,
+            or ``cu_doc_lens`` does not describe exactly ``batch_size * T`` tokens.
         """
         block_size = self.block_size
         finfo_min = torch.finfo(dtype).min
@@ -1320,6 +1379,40 @@ class LandmarkAttention(Attention):
         # additive causal mask, shape (1, 1, T, T): 0 on/below the diagonal, -inf above.
         causal = torch.full((T, T), finfo_min, dtype=dtype, device=device)
         attn_mask = torch.triu(causal, diagonal=1)[None, None].clone()
+
+        if cu_doc_lens is not None:
+            # Fold in a block-diagonal document mask: keys in a different document than the query
+            # are set to -inf. The periodic ``is_mem`` pattern (below) is computed over global
+            # positions, so each document boundary must coincide with a block boundary or the
+            # landmark tokens of one document would be mis-grouped with another's.
+            boundaries = cu_doc_lens.to(device=device, dtype=torch.long)
+            if bool((boundaries % block_size != 0).any().item()):
+                raise OLMoConfigurationError(
+                    f"Landmark packing requires every document boundary to be a multiple of the "
+                    f"landmark block size (mem_freq + 1 = {block_size}), but got "
+                    f"cu_doc_lens={cu_doc_lens.tolist()}. This almost always means the document "
+                    f"lengths came from the wrong source: EOS-derived 'generate_doc_lengths' or a "
+                    f"generic token packer (PackingInstanceSource / ConcatAndChunk) do NOT produce "
+                    f"block-aligned landmark documents. Build packed landmark SFT data with "
+                    f"LandmarkPackingInstanceSource (it inserts landmarks per document and emits "
+                    f"block-aligned doc_lens) and set generate_doc_lengths=False."
+                )
+            total = batch_size * T
+            if int(boundaries[-1].item()) != total:
+                raise OLMoConfigurationError(
+                    f"cu_doc_lens must describe exactly batch_size * T = {total} tokens "
+                    f"(flattened over the batch), but its last entry is {int(boundaries[-1].item())}."
+                )
+            # Per-token document id over the flattened batch, shape (batch_size * T,): document 0,
+            # then 1, etc. ``searchsorted`` maps each flat position to the count of boundaries at or
+            # below it. Reshape to (batch_size, T): the implicit boundary at every multiple of T (each
+            # instance is exactly T tokens) means a document never straddles two batch elements.
+            interior = boundaries[(boundaries > 0) & (boundaries < total)]
+            positions = torch.arange(total, device=device)
+            doc_id = torch.searchsorted(interior, positions, right=True).view(batch_size, T)
+            # (B, 1, T, T): True where a query and key are in different documents.
+            cross_doc = doc_id[:, None, :, None] != doc_id[:, None, None, :]
+            attn_mask = attn_mask.masked_fill(cross_doc, finfo_min)
 
         # shape: (1, 1, 1, T)
         is_mem = ((torch.arange(T, device=device) % block_size) == (block_size - 1)).view(

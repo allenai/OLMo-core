@@ -56,7 +56,7 @@ Basic Examples
 Create a simple instance source that chunks up in-memory token sources::
 
    from olmo_core.data.composable import *
-   
+
    work_dir = "/tmp/dataset-common"
    source = ConcatAndChunkInstanceSource(
        InMemoryTokenSource(list(range(100)), work_dir=work_dir),
@@ -81,7 +81,7 @@ Split the source into train and test sets::
    SlicedInstanceSource(d01d0e2): 80 tokens
    └─ ConcatAndChunkInstanceSource(ee7a76d): 100 tokens
       └─ InMemoryTokenSource(73b91ee): 100 tokens
- 
+
    SlicedInstanceSource(a5a511f): 20 tokens
    └─ ConcatAndChunkInstanceSource(ee7a76d): 100 tokens
       └─ InMemoryTokenSource(73b91ee): 100 tokens
@@ -186,8 +186,8 @@ to get a source with 30B tokens::
        return ConcatAndChunkInstanceSource.Config(
            sources=[token_sources[label]], label=label, sequence_length=sequence_length
        )
-   
-   
+
+
    mix_config = MixingInstanceSource.Config(
        source_specs=[
            ################
@@ -328,7 +328,7 @@ And then we can create two separate mixes with the splits::
            ratio=ratio,
            label=label,
        )
-   
+
    mix_config1 = MixingInstanceSource.Config(
        source_specs=[
            MixingInstanceSource.Spec.Config(
@@ -353,7 +353,7 @@ And then we can create two separate mixes with the splits::
            ),
        ],
    )
-   
+
    mix_config2 = MixingInstanceSource.Config(
        source_specs=[
            MixingInstanceSource.Spec.Config(
@@ -378,7 +378,7 @@ And then we can create two separate mixes with the splits::
            ),
        ],
    )
-   
+
    mix1 = mix_config1.build("/tmp/dataset-common")
    mix1.visualize()
    mix2 = mix_config2.build("/tmp/dataset-common")
@@ -407,7 +407,7 @@ And then we can create two separate mixes with the splits::
             └─ SlicedInstanceSource(75c18b6): 13.7B tokens [dolminos2math]
                └─ ConcatAndChunkInstanceSource(b768b9a): 18.3B tokens [dolminos2math]
                   └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
-      
+
    MixingInstanceSource(02f0d21): 20.3B tokens
    ├─ SamplingInstanceSource(76da23b): 15.2B tokens [code]
    │  └─ MixingInstanceSource(cb963a6): 28.3B tokens
@@ -471,7 +471,14 @@ from .instance_source import (
     InstanceSourceConfig,
     SplitInstanceSourceConfig,
 )
-from .landmark_instance_source import LandmarkInstanceSource, LandmarkInstanceSourceConfig
+from .landmark_instance_source import (
+    LandmarkInstanceSource,
+    LandmarkInstanceSourceConfig,
+)
+from .landmark_packing_instance_source import (
+    LandmarkPackingInstanceSource,
+    LandmarkPackingInstanceSourceConfig,
+)
 from .mixing_document_source import (
     MixingDocumentSource,
     MixingDocumentSourceConfig,
@@ -506,8 +513,14 @@ from .pad_to_length_instance_source import (
     PadToLengthInstanceSourceConfig,
 )
 from .random_instance_source import RandomInstanceSource, RandomInstanceSourceConfig
-from .sampling_document_source import SamplingDocumentSource, SamplingDocumentSourceConfig
-from .sampling_instance_source import SamplingInstanceSource, SamplingInstanceSourceConfig
+from .sampling_document_source import (
+    SamplingDocumentSource,
+    SamplingDocumentSourceConfig,
+)
+from .sampling_instance_source import (
+    SamplingInstanceSource,
+    SamplingInstanceSourceConfig,
+)
 from .sampling_token_source import SamplingTokenSource, SamplingTokenSourceConfig
 from .sliced_instance_source import SlicedInstanceSource
 from .sliced_token_source import SlicedTokenSource
@@ -567,6 +580,8 @@ __all__ = [
     "ConcatAndChunkInstanceSourceConfig",
     "LandmarkInstanceSource",
     "LandmarkInstanceSourceConfig",
+    "LandmarkPackingInstanceSource",
+    "LandmarkPackingInstanceSourceConfig",
     "PackingInstanceSource",
     "PackingInstanceSourceConfig",
     "PadToLengthInstanceSource",

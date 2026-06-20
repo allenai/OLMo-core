@@ -661,11 +661,22 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
                 )
             self.nonselected_landmark_mass = nonselected_landmark_mass
 
-    def _attn_core(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def _attn_core(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        doc_id: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         if not has_landmark_kernel():
             raise RuntimeError(
                 "FastCompressiveLandmarkAttention requires the fused Triton kernel "
                 "(install 'triton', run on CUDA)."
+            )
+        if doc_id is not None:
+            raise NotImplementedError(
+                "Intra-document packing (cu_doc_lens) is not yet supported by "
+                "FastCompressiveLandmarkAttention's fused kernel."
             )
         T = q.shape[2]
         is_mem = (torch.arange(T, device=q.device) % self.block_size) == (self.block_size - 1)
