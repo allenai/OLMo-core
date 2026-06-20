@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -51,7 +52,11 @@ from olmo_core.train.train_module import (
 
 MEM_FREQ = 63
 BLOCK_SIZE = MEM_FREQ + 1  # 64
-SEQUENCE_LENGTH = 65536  # emitted (landmark-space) instance length; must be divisible by BLOCK_SIZE
+# Emitted (landmark-space) instance length; must be a multiple of BLOCK_SIZE. Env-overridable for
+# memory tuning / smoke tests (e.g. UNIFIED_SEQ_LEN=16384). Landmark packing can't use context
+# parallelism, so activations are NOT sequence-sharded -- 64k may OOM on 80GB without aggressive
+# activation checkpointing; lower this (or raise shard_degree / AC) if you OOM.
+SEQUENCE_LENGTH = int(os.environ.get("UNIFIED_SEQ_LEN", 65536))
 
 LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
 
@@ -100,6 +105,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
+        # Forward the seq-len knob to the training job; the node re-builds this config and would
+        # otherwise not see the launching env (only CLI overrides propagate automatically).
+        if "UNIFIED_SEQ_LEN" in os.environ:
+            from olmo_core.launch.beaker import BeakerEnvVar
+
+            beaker_launch_config.env_vars.append(
+                BeakerEnvVar(name="UNIFIED_SEQ_LEN", value=os.environ["UNIFIED_SEQ_LEN"])
+            )
 
     tokenizer_config = TokenizerConfig.qwen3()
     # Qwen3 sets bos_token_id == eos_token_id, which makes NumpyDocumentSource's boundary detection
