@@ -172,6 +172,12 @@ launch_model() {
       launch_one 810m "${qwen_variant}" "${qwen_tag}" 4 b512k 64 8 4 4e-4 lr4e-4
       launch_one 810m "${qwen_variant}" "${qwen_tag}" 8 b768k 96 8 4 4e-4 lr4e-4
       ;;
+    1p2b)
+      launch_one 1p2b "${qwen_variant}" "${qwen_tag}" 1 b256k 32 8 2 4e-4 lr4e-4
+      launch_one 1p2b "${qwen_variant}" "${qwen_tag}" 2 b384k 48 8 2 6e-4 lr6e-4
+      launch_one 1p2b "${qwen_variant}" "${qwen_tag}" 4 b512k 64 8 2 3e-4 lr3e-4
+      launch_one 1p2b "${qwen_variant}" "${qwen_tag}" 8 b768k 96 8 4 2e-4 lr2e-4
+      ;;
     *)
       echo "Unsupported promoted Qwen3-like model size: ${model_size}" >&2
       exit 1

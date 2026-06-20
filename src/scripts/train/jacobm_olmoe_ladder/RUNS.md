@@ -1284,3 +1284,18 @@ Created but not scheduled/started in the latest Beaker job attempt:
 
 Tracked plot/stat updates from this refresh were focused on expert granularity, total sparsity, dense schedule Cx4, and the Qwen3-like summary. No new jobs were launched during this status check.
 
+## 2026-06-20 Qwen3-Like 1.2B Launches
+
+Queued the first 1.2B Qwen3-like promoted wave after 275M/480M results showed good LR transfer and the first 810M Cx1 points also looked healthy. These use the canonical baseline-best observed LR policy from `PLOTTED_RESULTS.md`: Cx1 `4e-4`, repaired Cx2 `6e-4`, Cx4 `3e-4`, and canonical one-node Cx8 `2e-4`. All jobs run on Holmes low-priority/preemptible with compile-on, `--shared-filesystem`, Weka checkpoint folders, and Beaker-reported `autoResume=true`.
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-1p2b-cx1-q3am128e8k-lr4e-4-r1` | `active_matched` | 1.2B | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ3237BYM0Y9NVA6FWM3H4Z | Legal accumulation: `32 / (1 * 8 * 2) = 2`. |
+| `q3-1p2b-cx2-q3am128e8k-lr6e-4-r1` | `active_matched` | 1.2B | 2 | 6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ32E9D5MQ00NNAW4QJTGMW | Legal accumulation: `48 / (1 * 8 * 2) = 3`. |
+| `q3-1p2b-cx4-q3am128e8k-lr3e-4-r1` | `active_matched` | 1.2B | 4 | 3e-4 | 524,288 | 64 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ32TJEXX4XR9FY0QN8PA0T | Legal accumulation: `64 / (1 * 8 * 2) = 4`. |
+| `q3-1p2b-cx8-q3am128e8k-lr2e-4-r1` | `active_matched` | 1.2B | 8 | 2e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ335S4S3YXSVDQ56NX4PG1 | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
+| `q3-1p2b-cx1-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 1.2B | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ33HPRPCQ6ERM46864M1Z3 | Legal accumulation: `32 / (1 * 8 * 2) = 2`. |
+| `q3-1p2b-cx2-q3td128e8k-lr6e-4-r1` | `true_3d_depth_matched` | 1.2B | 2 | 6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ33YG7A5DKD5EPZDTSFRPR | Legal accumulation: `48 / (1 * 8 * 2) = 3`. |
+| `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | `true_3d_depth_matched` | 1.2B | 4 | 3e-4 | 524,288 | 64 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | Legal accumulation: `64 / (1 * 8 * 2) = 4`. |
+| `q3-1p2b-cx8-q3td128e8k-lr2e-4-r1` | `true_3d_depth_matched` | 1.2B | 8 | 2e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ34PWJAAAD3AWB58SVQCKT | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
+
