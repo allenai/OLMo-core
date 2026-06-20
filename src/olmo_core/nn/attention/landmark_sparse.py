@@ -32,7 +32,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from . import Attention
 from .kv_cache import KVCacheManager
-from .landmark import repeat_kv
+from .landmark import build_block_doc_id, repeat_kv
 from .landmark_sparse_kernel import (
     has_sparse_kernel,
     sparse_landmark_attention_triton_train,
@@ -46,12 +46,16 @@ def sparse_landmark_attention_ref(
     block_size: int,
     num_landmarks: int = 1,
     scale: Optional[float] = None,
+    doc_id: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Dense O(T^2) reference. ``q,k,v``: ``(B, H, T, D)``; ``T`` a multiple of ``block_size``.
     A query at position i (chunk ``c = i // L``) attends to key j iff:
       - same chunk and causal: ``j // L == c`` and ``j <= i``, OR
       - j is a landmark of a strictly-past chunk: ``(j % L) >= L - G`` and ``j // L < c``.
+
+    ``doc_id`` is an optional int32 ``(B, C)`` per-chunk document id for sequence packing; when given,
+    the past-landmark term additionally requires the query and key chunks to share a document.
     """
     B, H, T, D = q.shape
     L, G = block_size, num_landmarks
@@ -65,10 +69,14 @@ def sparse_landmark_attention_ref(
 
     same_chunk_causal = (chunk[:, None] == chunk[None, :]) & (pos[None, :] <= pos[:, None])
     past_landmark = is_lm[None, :] & (chunk[None, :] < chunk[:, None])
-    allowed = same_chunk_causal | past_landmark
+    allowed = (same_chunk_causal | past_landmark).expand(B, T, T).clone()  # (B, T, T)
+    if doc_id is not None:
+        # Per-token document id from per-chunk ids, then require same document.
+        doc_tok = doc_id[:, chunk]  # (B, T)
+        allowed = allowed & (doc_tok[:, :, None] == doc_tok[:, None, :])
 
     att = torch.matmul(q, k.transpose(-1, -2)) * scale
-    att = att.masked_fill(~allowed[None, None], float("-inf"))
+    att = att.masked_fill(~allowed[:, None], float("-inf"))
     return torch.matmul(torch.softmax(att, dim=-1), v)
 
 
@@ -79,6 +87,7 @@ def sparse_landmark_attention(
     block_size: int,
     num_landmarks: int = 1,
     scale: Optional[float] = None,
+    doc_id: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Efficient chunked form, numerically equal to :func:`sparse_landmark_attention_ref`.
@@ -86,6 +95,10 @@ def sparse_landmark_attention(
 
     Own-chunk scores are ``(B,H,C,L,L)`` and landmark scores are ``(B,H,C,L,C,G)`` (``C=T/L``), so
     compute/peak-memory is ``O(B*H*T*(L + G*T/L))`` instead of ``O(B*H*T^2)``.
+
+    ``doc_id`` is an optional int32 ``(B, C)`` per-chunk document id for sequence packing; when given,
+    a query only attends to past chunks' landmarks within its own document (own-chunk attention is
+    unaffected, since each chunk lies in a single document).
     """
     B, H, T, D = q.shape
     L, G = block_size, num_landmarks
@@ -108,8 +121,12 @@ def sparse_landmark_attention(
 
     s_lm = torch.einsum("bhcld,bhkgd->bhclkg", qc, k_lm) * scale
     cidx = torch.arange(C, device=dev)
-    past = cidx[None, :] < cidx[:, None]
-    s_lm = s_lm.masked_fill(~past[None, None, :, None, :, None], neg_inf)
+    past = (cidx[None, :] < cidx[:, None]).expand(B, C, C).clone()  # (B, query-chunk, key-chunk)
+    if doc_id is not None:
+        # Restrict to past chunks in the same document as the query chunk.
+        past = past & (doc_id[:, :, None] == doc_id[:, None, :])
+    # (B, 1, query-chunk, 1, key-chunk, 1) broadcast over the (B,H,C,L,C,G) scores.
+    s_lm = s_lm.masked_fill(~past[:, None, :, None, :, None], neg_inf)
     s_lm = s_lm.reshape(B, H, C, L, C * G)
 
     s = torch.cat([s_own, s_lm], dim=-1)
@@ -233,17 +250,16 @@ class SparseLandmarkAttention(Attention):
         if any(
             v is not None
             for v in (
-                cu_doc_lens,
                 cu_doc_lens_q,
                 cu_doc_lens_k,
-                max_doc_len,
                 max_doc_len_q,
                 max_doc_len_k,
                 local_k_slice,
             )
         ):
             raise NotImplementedError(
-                "Intra-document masking (cu_doc_lens) is not supported with sparse landmark attention"
+                "SparseLandmarkAttention supports symmetric intra-document masking via 'cu_doc_lens' "
+                "only; the cross-attention variants are not supported"
             )
         # Generation path: incremental decode / prefill with a KV cache.
         if self.kv_cache_manager is not None:
@@ -254,8 +270,9 @@ class SparseLandmarkAttention(Attention):
             )
 
         B, T, _ = x.shape
+        # ``cu_doc_lens`` (when packing) resets RoPE positions per document.
         q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
+            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=cu_doc_lens
         )
         if T % self.block_size != 0:
             raise OLMoConfigurationError(
@@ -267,23 +284,48 @@ class SparseLandmarkAttention(Attention):
         k = repeat_kv(k.transpose(1, 2), n_rep)
         v = repeat_kv(v.transpose(1, 2), n_rep)
 
-        att = self._attn_core(q, k, v)
+        # Per-chunk document ids for sequence packing (None for the single-document path). The sparse
+        # "chunk" is exactly the landmark block, so ``build_block_doc_id`` gives one id per chunk.
+        doc_id = (
+            build_block_doc_id(cu_doc_lens, B, T, self.block_size)
+            if cu_doc_lens is not None
+            else None
+        )
+        att = self._attn_core(q, k, v, doc_id=doc_id)
         att = att.transpose(1, 2).contiguous().view(B, T, -1)
         att = self._apply_gate(att, x)
         return self.w_out(att)
 
-    def _attn_core(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def _attn_core(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        doc_id: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """Sparse landmark self-attention on ``(B, H, T, D)`` with ``T`` a multiple of block_size.
 
         Fused Triton fwd+bwd kernel when available (much faster); eager torch fallback otherwise.
-        Disable the kernel with ``LM_SPARSE_KERNEL=0``.
+        Disable the kernel with ``LM_SPARSE_KERNEL=0``. ``doc_id`` enables packing masking.
         """
         if q.is_cuda and has_sparse_kernel() and os.environ.get("LM_SPARSE_KERNEL", "1") != "0":
             return sparse_landmark_attention_triton_train(
-                q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
+                q,
+                k,
+                v,
+                self.block_size,
+                num_landmarks=self.num_landmarks,
+                scale=self.softmax_scale,
+                doc_id=doc_id,
             )
         return sparse_landmark_attention(
-            q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
+            q,
+            k,
+            v,
+            self.block_size,
+            num_landmarks=self.num_landmarks,
+            scale=self.softmax_scale,
+            doc_id=doc_id,
         )
 
     def _forward_generate(
