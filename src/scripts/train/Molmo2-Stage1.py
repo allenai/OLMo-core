@@ -12,8 +12,8 @@ Run without arguments for usage. Quick local smoke test on synthetic data::
         --trainer.max_duration.unit=steps
 
 .. note::
-    Only single-GPU / DDP is supported (the multimodal model is not a
-    :class:`~olmo_core.nn.transformer.Transformer`, so FSDP/TP/CP/PP are out of scope).
+    Single-GPU, DDP, and FSDP/HSDP data parallelism are supported. TP/CP/PP/EP of the
+    multimodal model are out of scope.
 """
 
 import logging
@@ -28,6 +28,7 @@ from olmo_core.data.multimodal import (
     PixMoCapDatasetConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.internal.common import (
     build_launch_config,
     get_beaker_username,
@@ -168,7 +169,11 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             schedulers={"connector": CosWithWarmup(warmup=CONNECTOR_WARMUP, alpha_f=ALPHA_F)},
             default=CosWithWarmup(warmup=LLM_WARMUP, alpha_f=ALPHA_F),
         ),
-        dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+        ),
     )
 
     trainer_config = (
@@ -189,21 +194,32 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         .with_callback("beaker", BeakerCallback())
     )  # NOTE: no in-loop eval callbacks (out of scope for stage 1).
 
+    launch_config = build_launch_config(
+        name=run_name,
+        root_dir=root_dir,
+        cmd=[script, "train", run_name, *overrides],
+        cluster=BEAKER_CLUSTER,
+        workspace=BEAKER_WORKSPACE,
+        budget=BEAKER_BUDGET,
+        num_nodes=NUM_NODES,
+    )
+    # Stage-1 reads data and writes checkpoints on weka, so no S3 / GCS secrets are required.
+    launch_config.aws_config_secret = None
+    launch_config.aws_credentials_secret = None
+    launch_config.google_credentials_secret = None
+    # Only request env secrets that exist in the (debug) workspace; drop optional ones
+    # (COMET / R2 / WEKA / SLACK) that aren't provisioned there.
+    launch_config.env_secrets = [
+        s for s in launch_config.env_secrets if s.name in ("BEAKER_TOKEN", "WANDB_API_KEY")
+    ]
+
     return ExperimentConfig(
         model=model_config,
         dataset=dataset_config,
         collator=collator_config,
         train_module=train_module_config,
         trainer=trainer_config,
-        launch=build_launch_config(
-            name=run_name,
-            root_dir=root_dir,
-            cmd=[script, "train", run_name, *overrides],
-            cluster=BEAKER_CLUSTER,
-            workspace=BEAKER_WORKSPACE,
-            budget=BEAKER_BUDGET,
-            num_nodes=NUM_NODES,
-        ),
+        launch=launch_config,
     ).merge(overrides)
 
 
@@ -246,14 +262,17 @@ def train(config: ExperimentConfig):
 
     dataset = config.dataset.build(tokenizer)
     collator = config.collator.build()
+    # Derive the data-parallel world size / rank from the train module's DP process
+    # group so each rank reads its own shard (must match the trainer's DP degree).
+    dp_pg = train_module.dp_process_group
     data_loader = MultimodalDataLoader(
         dataset,
         collator,
         work_dir=config.trainer.save_folder,
         global_batch_size=GLOBAL_BATCH_SIZE,
         seed=config.data_seed,
-        dp_world_size=1,
-        dp_rank=0,
+        dp_world_size=get_world_size(dp_pg),
+        dp_rank=get_rank(dp_pg),
     )
 
     trainer = config.trainer.build(train_module, data_loader)

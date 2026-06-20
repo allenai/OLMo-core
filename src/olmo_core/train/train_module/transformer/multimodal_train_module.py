@@ -6,8 +6,8 @@
 three ways:
 
 1. The model is **not** routed through ``parallelize_model`` (which requires a
-   ``Transformer``); only single-GPU or DDP is supported here. FSDP/TP/CP/PP/EP of the
-   multimodal model are out of scope (a later effort can shard ``model.lm``).
+   ``Transformer``). DDP (``replicate``) and FSDP/HSDP (``fully_shard`` of the LM,
+   vision encoder, and connector) are applied here directly; TP/CP/PP/EP are out of scope.
 2. The loss uses **float per-token** ``loss_masks`` (response-only, ``root_subsegments``
    weighted by the data pipeline) via
    :func:`~olmo_core.nn.functional.weighted_cross_entropy_loss`, reproducing mm_olmo.
@@ -26,11 +26,14 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from olmo_core.config import DType
 from olmo_core.data.utils import split_batch
-from olmo_core.distributed.parallel import build_world_mesh, get_dp_process_group
+from olmo_core.distributed.parallel import (
+    DataParallelType,
+    build_world_mesh,
+    get_dp_model_mesh,
+)
 from olmo_core.distributed.utils import get_local_tensor, get_world_size, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
@@ -81,10 +84,14 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
                 f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
             )
-        if dp_config is not None and dp_config.name not in ("ddp",):
+        if dp_config is not None and dp_config.name not in (
+            DataParallelType.ddp,
+            DataParallelType.fsdp,
+            DataParallelType.hsdp,
+        ):
             raise OLMoConfigurationError(
-                "MultimodalTransformerTrainModule only supports DDP data parallelism "
-                f"(got dp_config.name={dp_config.name!r}); FSDP/TP/CP/PP/EP of the "
+                "MultimodalTransformerTrainModule only supports DDP / FSDP / HSDP data "
+                f"parallelism (got dp_config.name={dp_config.name!r}); TP/CP/PP/EP of the "
                 "multimodal model are not yet supported."
             )
 
@@ -112,9 +119,6 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         if compile_model:
             log.info("Compiling model.lm ...")
             model.lm = torch.compile(model.lm)  # type: ignore[assignment]
-        # NOTE: keep ``model`` unwrapped for now. The optimizer is built below on the
-        # unwrapped module so group-override patterns (e.g. ``connector.*``) match
-        # parameter names without DDP's ``module.`` prefix; DDP is applied afterwards.
         self.model = model
         self._model_mode = None
 
@@ -137,21 +141,53 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         )
         self.load_key_mapping = load_key_mapping
 
-        # Build the optimizer on the *unwrapped* model so group-override patterns like
-        # "connector.*" match parameter names without DDP's "module." prefix.
+        # Apply data parallelism IN-PLACE *before* building the optimizer: composable
+        # DDP/FSDP keep the model's type, attributes, and (prefix-free) parameter names,
+        # and FSDP additionally needs the optimizer built on the sharded DTensor params.
+        if self.world_mesh is not None:
+            self._parallelize(dp_config)
+
         log.info("Building optimizer...")
         self.optim = optim.build(self.model, strict=True)
 
-        # Now wrap in DDP. The optimizer holds references to the same Parameter objects,
-        # so gradient all-reduce (DDP) and the optimizer step stay consistent.
-        if self.world_mesh is not None:
-            self.model = DDP(self.model, process_group=get_dp_process_group(self.world_mesh))
+    def _parallelize(self, dp_config: TransformerDataParallelConfig) -> None:
+        """Apply DDP (``replicate``) or FSDP (``fully_shard``) to the multimodal model
+        in-place. FSDP shards the LM (the bulk of the parameters), the vision encoder,
+        and the connector across the DP mesh so the 4B model + optimizer fit per GPU."""
+        assert self.world_mesh is not None
+        dp_mesh = get_dp_model_mesh(self.world_mesh)
+        if dp_config.name == DataParallelType.ddp:
+            from torch.distributed._composable.replicate import replicate
+
+            replicate(self.model, device_mesh=dp_mesh, bucket_cap_mb=100)
+        else:  # fsdp / hsdp
+            from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
+
+            param_dtype = (
+                dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
+            )
+            reduce_dtype = dp_config.reduce_dtype.as_pt()
+            # Shard the language model with its own (per-block) FSDP wrapping.
+            self.model.lm.apply_fsdp(
+                dp_mesh=dp_mesh,
+                param_dtype=param_dtype,
+                reduce_dtype=reduce_dtype,
+                wrapping_strategy=dp_config.wrapping_strategy,
+                prefetch_factor=dp_config.prefetch_factor,
+            )
+            # Shard the vision encoder + connector, then the root so ``self.model`` is an
+            # FSDPModule (the inherited micro-batch / gradient-sync handling keys off this).
+            mp = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=reduce_dtype)
+            fully_shard(self.model.vision, mesh=dp_mesh, mp_policy=mp)
+            fully_shard(self.model.connector, mesh=dp_mesh, mp_policy=mp)
+            fully_shard(self.model, mesh=dp_mesh, mp_policy=mp)
 
     # -- helpers to reach the underlying MultimodalLM / its Transformer ----------
 
     @property
     def _multimodal(self) -> torch.nn.Module:
-        return self.model.module if isinstance(self.model, DDP) else self.model
+        # ``replicate`` is applied in-place, so ``self.model`` is the MultimodalLM itself.
+        return self.model
 
     @property
     def _lm(self) -> torch.nn.Module:

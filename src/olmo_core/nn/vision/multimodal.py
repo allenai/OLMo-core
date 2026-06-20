@@ -3,6 +3,8 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributed.tensor import DTensor
 
 from olmo_core.config import Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
@@ -100,6 +102,35 @@ class MultimodalLM(nn.Module):
         self.vision = cfg.vision.build(init_device=init_device)
         self.connector = cfg.connector.build(init_device=init_device)
 
+    # -- model introspection (mirrors the Transformer API used by the trainer / callbacks) --
+
+    @property
+    def num_params(self) -> int:
+        """Total number of parameters (LM + vision + connector)."""
+        return sum(p.numel() for p in self.parameters())
+
+    @property
+    def num_trainable_params(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    @property
+    def num_non_embedding_params(self) -> int:
+        """All parameters excluding the LM token-embedding table (the vision encoder
+        and connector have no token embeddings, so they count in full)."""
+        vision_connector = sum(
+            p.numel() for m in (self.vision, self.connector) for p in m.parameters()
+        )
+        return self.lm.num_non_embedding_params + vision_connector
+
+    @property
+    def is_moe(self) -> bool:
+        return self.lm.is_moe
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        """Idealized FLOPs/token. Delegates to the LM (vision-tower FLOPs are not
+        counted, matching how throughput/MFU is reported for the language model)."""
+        return self.lm.num_flops_per_token(seq_len)
+
     def _encode_images(
         self,
         images: torch.Tensor,
@@ -187,8 +218,16 @@ class MultimodalLM(nn.Module):
         if labels is not None:
             labels = labels.to(device)
 
-        # Compute LM token embeddings with any configured scale / norm.
-        h = self.lm.embeddings(input_ids)
+        # Compute LM token embeddings with any configured scale / norm. We embed here
+        # (rather than inside ``self.lm``) so image features can be spliced in below.
+        # Under FSDP the embedding weight is a sharded ``DTensor`` that only the LM's own
+        # forward would unshard, so gather it to a full tensor for the lookup (a no-op for
+        # DDP / single-GPU where the weight is already a plain tensor).
+        emb = self.lm.embeddings
+        emb_weight = emb.weight
+        if isinstance(emb_weight, DTensor):
+            emb_weight = emb_weight.full_tensor()
+        h = F.embedding(input_ids, emb_weight, padding_idx=emb.padding_idx)
         if self.lm.embed_scale is not None:
             h = h * self.lm.embed_scale
         if self.lm.embedding_norm is not None:
