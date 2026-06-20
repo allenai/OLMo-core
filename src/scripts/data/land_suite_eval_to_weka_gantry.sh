@@ -57,6 +57,7 @@ gantry run \
   --timeout 0 \
   --env "OUT=${DEST}" \
   --env "TASKS=${TASKS:-}" \
+  --env "PARALLEL=${PARALLEL:-16}" \
   --yes \
   -- bash src/scripts/data/download_suite_data.sh ${SPLIT_FLAG}
 
