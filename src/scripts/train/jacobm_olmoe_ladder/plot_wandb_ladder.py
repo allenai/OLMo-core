@@ -218,20 +218,20 @@ def should_load_canonical_history(name: str, spec) -> bool:
 def plot_cx(points, model: str, cx: int, out_path: Path, window_m: int) -> None:
     fig, ax = plt.subplots(figsize=(7.2, 4.8))
     cx_points = sorted([p for p in points if p["model"] == model and p["cx"] == cx], key=lambda p: p["lr"])
-    colors_by_family = {}
-    for state, family in sorted({(p["state"], p["family"]) for p in cx_points}):
-        group = [p for p in cx_points if p["state"] == state and p["family"] == family]
+    colors_by_batch = {}
+    for state, batch in sorted({(p["state"], p["batch"]) for p in cx_points}):
+        group = [p for p in cx_points if p["state"] == state and p["batch"] == batch]
         style = style_for_state(state)
         (line,) = ax.plot(
             [p["lr"] for p in group],
             [p["loss"] for p in group],
-            label=f"{state} ({family})",
+            label=f"{state} ({batch})",
             **style,
         )
-        colors_by_family.setdefault(family, line.get_color())
-    for family in sorted({p["family"] for p in cx_points}):
-        group = [p for p in cx_points if p["family"] == family]
-        annotate_fitted_lr(ax, group, family, colors_by_family.get(family))
+        colors_by_batch.setdefault(batch, line.get_color())
+    for batch in sorted({p["batch"] for p in cx_points}):
+        group = [p for p in cx_points if p["batch"] == batch]
+        annotate_fitted_lr(ax, group, batch, colors_by_batch.get(batch))
     for point in cx_points:
         ax.annotate(
             point["lr_tag"],
@@ -260,23 +260,23 @@ def plot_model(points, model: str, out_path: Path, window_m: int) -> None:
         for p in points
         if p["model"] == model and is_canonical_family(p)
     ]
-    families_by_cx = {
-        cx: sorted({p["family"] for p in model_points if p["cx"] == cx and p["state"] == "finished"})
+    batches_by_cx = {
+        cx: sorted({p["batch"] for p in model_points if p["cx"] == cx and p["state"] == "finished"})
         for cx in sorted({p["cx"] for p in model_points})
     }
-    for cx in sorted(families_by_cx):
-        for family in families_by_cx[cx]:
+    for cx in sorted(batches_by_cx):
+        for batch in batches_by_cx[cx]:
             group = sorted(
                 [
                     p
                     for p in model_points
-                    if p["cx"] == cx and p["family"] == family and p["state"] == "finished"
+                    if p["cx"] == cx and p["batch"] == batch and p["state"] == "finished"
                 ],
                 key=lambda p: p["lr"],
             )
             if not group:
                 continue
-            label = f"Cx{cx}" if len(families_by_cx[cx]) == 1 else f"Cx{cx} ({family})"
+            label = f"Cx{cx}" if len(batches_by_cx[cx]) == 1 else f"Cx{cx} ({batch})"
             (line,) = ax.plot(
                 [p["lr"] for p in group],
                 [p["loss"] for p in group],
