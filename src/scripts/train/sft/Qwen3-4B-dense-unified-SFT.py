@@ -48,7 +48,9 @@ DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/suite_it_sft
 
 
 def resolve_dataset_path(run_name: str) -> str:
-    """Single combined suite mix (no per-task selection)."""
+    """Single combined suite mix; a '-debug' run name uses the small debug shards."""
+    if "debug" in run_name:
+        return DATA_ROOT.rstrip("/") + "_debug"
     return DATA_ROOT
 
 
