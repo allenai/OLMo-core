@@ -191,13 +191,6 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             metrics_collect_interval=5,
             cancel_check_interval=5,
             max_duration=Duration.steps(MAX_STEPS),
-            # Run bookkeeping (metric reduction, checkpoint bookkeeping) synchronously on
-            # the main process group. The prior run completed all 4000 steps but then hung
-            # in the async-bookkeeping teardown barrier on the separate gloo/CPU group
-            # (a peer's connection dropped -> non-zero exit). Synchronous bookkeeping
-            # avoids that fragile teardown path; the soft timeout is only a warning.
-            async_bookkeeping=False,
-            bookkeeping_soft_timeout=600,
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
